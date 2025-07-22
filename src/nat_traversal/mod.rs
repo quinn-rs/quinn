@@ -12,23 +12,12 @@
 
 // Re-export public NAT traversal API
 pub use crate::nat_traversal_api::{
-    NatTraversalEndpoint,
-    NatTraversalConfig,
-    EndpointRole,
-    PeerId,
-    BootstrapNode,
-    CandidateAddress,
-    NatTraversalEvent,
-    NatTraversalError,
-    NatTraversalStatistics,
+    BootstrapNode, CandidateAddress, EndpointRole, NatTraversalConfig, NatTraversalEndpoint,
+    NatTraversalError, NatTraversalEvent, NatTraversalStatistics, PeerId,
 };
 
 // Re-export NAT traversal types from connection module
-pub use crate::connection::nat_traversal::{
-    CandidateSource,
-    CandidateState,
-    NatTraversalRole,
-};
+pub use crate::connection::nat_traversal::{CandidateSource, CandidateState, NatTraversalRole};
 
 // Submodules
 pub mod bootstrap;

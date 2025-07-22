@@ -17,7 +17,7 @@ use tokio::sync::{Notify, futures::Notified, mpsc, oneshot};
 use tracing::{Instrument, Span, debug_span};
 
 use super::{
-    ConnectionEvent, 
+    ConnectionEvent,
     mutex::Mutex,
     recv_stream::RecvStream,
     runtime::{AsyncTimer, AsyncUdpSocket, Runtime, UdpPoller},
@@ -25,8 +25,8 @@ use super::{
     udp_transmit,
 };
 use crate::{
-    ConnectionError, ConnectionHandle, ConnectionStats, Dir, Duration, EndpointEvent, Instant, Side, StreamEvent,
-    StreamId, VarInt, congestion::Controller,
+    ConnectionError, ConnectionHandle, ConnectionStats, Dir, Duration, EndpointEvent, Instant,
+    Side, StreamEvent, StreamId, VarInt, congestion::Controller,
 };
 
 /// In-progress connection attempt future

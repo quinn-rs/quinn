@@ -5,8 +5,8 @@ use std::{
     task::{Context, Poll, ready},
 };
 
-use bytes::Bytes;
 use crate::{Chunk, Chunks, ClosedStream, ConnectionError, ReadableError, StreamId};
+use bytes::Bytes;
 use thiserror::Error;
 use tokio::io::ReadBuf;
 
@@ -412,7 +412,7 @@ impl RecvStream {
                 Poll::Ready(Err(ReadError::ConnectionLost(
                     ConnectionError::LocallyClosed,
                 )))
-            },
+            }
         }
     }
 }
@@ -565,9 +565,7 @@ impl From<ReadableError> for ReadError {
         match e {
             ReadableError::ClosedStream => Self::ClosedStream,
             ReadableError::IllegalOrderedRead => Self::IllegalOrderedRead,
-            ReadableError::ConnectionClosed => Self::ConnectionLost(
-                ConnectionError::LocallyClosed,
-            ),
+            ReadableError::ConnectionClosed => Self::ConnectionLost(ConnectionError::LocallyClosed),
         }
     }
 }

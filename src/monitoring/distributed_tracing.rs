@@ -9,13 +9,11 @@ use std::{
     time::{Duration, Instant, SystemTime},
 };
 
-use tokio::sync::{RwLock, Mutex};
-use tracing::{debug, info, warn, Span};
+use tokio::sync::{Mutex, RwLock};
+use tracing::{Span, debug, info, warn};
 use uuid::Uuid;
 
-use crate::monitoring::{
-    MonitoringError, NatTraversalAttempt, NatTraversalResult,
-};
+use crate::monitoring::{MonitoringError, NatTraversalAttempt, NatTraversalResult};
 
 /// Distributed trace collector for NAT traversal operations
 pub struct DistributedTraceCollector {
@@ -40,7 +38,7 @@ impl DistributedTraceCollector {
         let sampler = Arc::new(TraceSampler::new(config.sampling.clone()));
         let span_builder = Arc::new(SpanBuilder::new());
         let correlation_manager = Arc::new(CorrelationManager::new());
-        
+
         Ok(Self {
             config,
             active_traces: Arc::new(RwLock::new(HashMap::new())),
@@ -50,49 +48,54 @@ impl DistributedTraceCollector {
             correlation_manager,
         })
     }
-    
+
     /// Start tracing system
     pub async fn start(&self) -> Result<(), MonitoringError> {
         info!("Starting distributed trace collector");
-        
+
         // Initialize exporter
         self.exporter.start().await?;
-        
+
         info!("Distributed trace collector started");
         Ok(())
     }
-    
+
     /// Stop tracing system
     pub async fn stop(&self) -> Result<(), MonitoringError> {
         info!("Stopping distributed trace collector");
-        
+
         // Flush remaining traces
         self.flush_active_traces().await?;
-        
+
         // Stop exporter
         self.exporter.stop().await?;
-        
+
         info!("Distributed trace collector stopped");
         Ok(())
     }
-    
+
     /// Start NAT traversal trace
-    pub async fn start_nat_trace(&self, attempt: &NatTraversalAttempt) -> Result<TraceId, MonitoringError> {
+    pub async fn start_nat_trace(
+        &self,
+        attempt: &NatTraversalAttempt,
+    ) -> Result<TraceId, MonitoringError> {
         // Check sampling decision
         if !self.sampler.should_sample_nat_trace(attempt).await {
             return Ok(TraceId::new()); // Return empty trace ID
         }
-        
+
         let trace_id = TraceId::new();
         let correlation_id = self.correlation_manager.generate_correlation_id().await;
-        
+
         // Create root span for NAT traversal
-        let root_span = self.span_builder.create_nat_traversal_span(
-            &trace_id,
-            None, // No parent span
-            attempt,
-        ).await?;
-        
+        let root_span = self
+            .span_builder
+            .create_nat_traversal_span(
+                &trace_id, None, // No parent span
+                attempt,
+            )
+            .await?;
+
         // Create trace context
         let trace_context = TraceContext {
             trace_id: trace_id.clone(),
@@ -105,21 +108,27 @@ impl DistributedTraceCollector {
             bootstrap_nodes: attempt.bootstrap_nodes.clone(),
             events: Vec::new(),
         };
-        
+
         // Store active trace
         {
             let mut active_traces = self.active_traces.write().await;
             active_traces.insert(attempt.attempt_id.clone(), trace_context);
         }
-        
-        debug!("Started NAT traversal trace: {} (attempt: {})", trace_id, attempt.attempt_id);
+
+        debug!(
+            "Started NAT traversal trace: {} (attempt: {})",
+            trace_id, attempt.attempt_id
+        );
         Ok(trace_id)
     }
-    
+
     /// Complete NAT traversal trace
-    pub async fn complete_nat_trace(&self, result: &NatTraversalResult) -> Result<(), MonitoringError> {
+    pub async fn complete_nat_trace(
+        &self,
+        result: &NatTraversalResult,
+    ) -> Result<(), MonitoringError> {
         let mut active_traces = self.active_traces.write().await;
-        
+
         if let Some(mut trace_context) = active_traces.remove(&result.attempt_id) {
             // Add final result information
             let result_event = TraceEvent {
@@ -129,9 +138,9 @@ impl DistributedTraceCollector {
                 attributes: self.result_to_attributes(result),
                 duration: Some(result.duration),
             };
-            
+
             trace_context.events.push(result_event);
-            
+
             // Close root span
             trace_context.root_span.end_time = Some(SystemTime::now());
             trace_context.root_span.status = if result.success {
@@ -139,18 +148,21 @@ impl DistributedTraceCollector {
             } else {
                 SpanStatus::Error
             };
-            
+
             // Export completed trace
             self.exporter.export_trace(trace_context).await?;
-            
-            debug!("Completed NAT traversal trace for attempt: {}", result.attempt_id);
+
+            debug!(
+                "Completed NAT traversal trace for attempt: {}",
+                result.attempt_id
+            );
         } else {
             warn!("No active trace found for attempt: {}", result.attempt_id);
         }
-        
+
         Ok(())
     }
-    
+
     /// Add span to existing trace
     pub async fn add_span(
         &self,
@@ -160,26 +172,32 @@ impl DistributedTraceCollector {
         attributes: HashMap<String, AttributeValue>,
     ) -> Result<SpanId, MonitoringError> {
         let mut active_traces = self.active_traces.write().await;
-        
+
         if let Some(trace_context) = active_traces.get_mut(attempt_id) {
-            let span = self.span_builder.create_child_span(
-                &trace_context.trace_id,
-                parent_span_id.as_ref().unwrap_or(&trace_context.root_span.span_id),
-                span_name,
-                attributes,
-            ).await?;
-            
+            let span = self
+                .span_builder
+                .create_child_span(
+                    &trace_context.trace_id,
+                    parent_span_id
+                        .as_ref()
+                        .unwrap_or(&trace_context.root_span.span_id),
+                    span_name,
+                    attributes,
+                )
+                .await?;
+
             let span_id = span.span_id.clone();
             trace_context.active_spans.insert(span_id.clone(), span);
-            
+
             Ok(span_id)
         } else {
-            Err(MonitoringError::TracingError(
-                format!("No active trace found for attempt: {}", attempt_id)
-            ))
+            Err(MonitoringError::TracingError(format!(
+                "No active trace found for attempt: {}",
+                attempt_id
+            )))
         }
     }
-    
+
     /// Add event to trace
     pub async fn add_event(
         &self,
@@ -189,10 +207,13 @@ impl DistributedTraceCollector {
         attributes: HashMap<String, AttributeValue>,
     ) -> Result<(), MonitoringError> {
         let mut active_traces = self.active_traces.write().await;
-        
+
         if let Some(trace_context) = active_traces.get_mut(attempt_id) {
-            debug!("Adding event {:?} to trace for attempt: {}", event_type, attempt_id);
-            
+            debug!(
+                "Adding event {:?} to trace for attempt: {}",
+                event_type, attempt_id
+            );
+
             let event = TraceEvent {
                 timestamp: SystemTime::now(),
                 event_type,
@@ -200,15 +221,15 @@ impl DistributedTraceCollector {
                 attributes,
                 duration: None,
             };
-            
+
             trace_context.events.push(event);
         } else {
             warn!("No active trace found for attempt: {}", attempt_id);
         }
-        
+
         Ok(())
     }
-    
+
     /// Complete span in trace
     pub async fn complete_span(
         &self,
@@ -217,67 +238,106 @@ impl DistributedTraceCollector {
         status: SpanStatus,
     ) -> Result<(), MonitoringError> {
         let mut active_traces = self.active_traces.write().await;
-        
+
         if let Some(trace_context) = active_traces.get_mut(attempt_id) {
             if let Some(span) = trace_context.active_spans.get_mut(span_id) {
                 span.end_time = Some(SystemTime::now());
                 span.status = status;
-                
-                debug!("Completed span {} in trace for attempt: {}", span_id, attempt_id);
+
+                debug!(
+                    "Completed span {} in trace for attempt: {}",
+                    span_id, attempt_id
+                );
             }
         }
-        
+
         Ok(())
     }
-    
+
     /// Get trace status
     pub async fn get_status(&self) -> String {
         let active_traces = self.active_traces.read().await;
         format!("Active traces: {}", active_traces.len())
     }
-    
+
     /// Flush active traces
     async fn flush_active_traces(&self) -> Result<(), MonitoringError> {
         let mut active_traces = self.active_traces.write().await;
-        
+
         for (attempt_id, mut trace_context) in active_traces.drain() {
             // Mark as incomplete
             trace_context.root_span.status = SpanStatus::Cancelled;
             trace_context.root_span.end_time = Some(SystemTime::now());
-            
+
             // Export incomplete trace
             if let Err(e) = self.exporter.export_trace(trace_context).await {
-                warn!("Failed to export incomplete trace for {}: {}", attempt_id, e);
+                warn!(
+                    "Failed to export incomplete trace for {}: {}",
+                    attempt_id, e
+                );
             }
         }
-        
+
         Ok(())
     }
-    
+
     /// Convert result to trace attributes
     fn result_to_attributes(&self, result: &NatTraversalResult) -> HashMap<String, AttributeValue> {
         let mut attributes = HashMap::new();
-        
-        attributes.insert("nat.success".to_string(), AttributeValue::Bool(result.success));
-        attributes.insert("nat.duration_ms".to_string(), AttributeValue::Int(result.duration.as_millis() as i64));
-        
+
+        attributes.insert(
+            "nat.success".to_string(),
+            AttributeValue::Bool(result.success),
+        );
+        attributes.insert(
+            "nat.duration_ms".to_string(),
+            AttributeValue::Int(result.duration.as_millis() as i64),
+        );
+
         if let Some(error_info) = &result.error_info {
-            attributes.insert("error.category".to_string(), AttributeValue::String(format!("{:?}", error_info.error_category)));
-            attributes.insert("error.code".to_string(), AttributeValue::String(error_info.error_code.clone()));
-            attributes.insert("error.message".to_string(), AttributeValue::String(error_info.error_message.clone()));
+            attributes.insert(
+                "error.category".to_string(),
+                AttributeValue::String(format!("{:?}", error_info.error_category)),
+            );
+            attributes.insert(
+                "error.code".to_string(),
+                AttributeValue::String(error_info.error_code.clone()),
+            );
+            attributes.insert(
+                "error.message".to_string(),
+                AttributeValue::String(error_info.error_message.clone()),
+            );
         }
-        
+
         let perf = &result.performance_metrics;
-        attributes.insert("nat.connection_time_ms".to_string(), AttributeValue::Int(perf.connection_time_ms as i64));
-        attributes.insert("nat.candidates_tried".to_string(), AttributeValue::Int(perf.candidates_tried as i64));
-        attributes.insert("nat.round_trips".to_string(), AttributeValue::Int(perf.round_trips as i64));
-        
+        attributes.insert(
+            "nat.connection_time_ms".to_string(),
+            AttributeValue::Int(perf.connection_time_ms as i64),
+        );
+        attributes.insert(
+            "nat.candidates_tried".to_string(),
+            AttributeValue::Int(perf.candidates_tried as i64),
+        );
+        attributes.insert(
+            "nat.round_trips".to_string(),
+            AttributeValue::Int(perf.round_trips as i64),
+        );
+
         if let Some(conn_info) = &result.connection_info {
-            attributes.insert("connection.latency_ms".to_string(), AttributeValue::Int(conn_info.quality.latency_ms as i64));
-            attributes.insert("connection.throughput_mbps".to_string(), AttributeValue::Float(conn_info.quality.throughput_mbps as f64));
-            attributes.insert("connection.path_type".to_string(), AttributeValue::String(format!("{:?}", conn_info.path.path_type)));
+            attributes.insert(
+                "connection.latency_ms".to_string(),
+                AttributeValue::Int(conn_info.quality.latency_ms as i64),
+            );
+            attributes.insert(
+                "connection.throughput_mbps".to_string(),
+                AttributeValue::Float(conn_info.quality.throughput_mbps as f64),
+            );
+            attributes.insert(
+                "connection.path_type".to_string(),
+                AttributeValue::String(format!("{:?}", conn_info.path.path_type)),
+            );
         }
-        
+
         attributes
     }
 }
@@ -325,9 +385,9 @@ pub struct TraceSamplingConfig {
 impl Default for TraceSamplingConfig {
     fn default() -> Self {
         Self {
-            nat_traversal_rate: 0.1,  // 10% of NAT traversals
-            success_rate: 0.05,       // 5% of successful operations
-            failure_rate: 1.0,        // 100% of failures
+            nat_traversal_rate: 0.1, // 10% of NAT traversals
+            success_rate: 0.05,      // 5% of successful operations
+            failure_rate: 1.0,       // 100% of failures
             adaptive: AdaptiveTraceSamplingConfig::default(),
         }
     }
@@ -611,50 +671,52 @@ impl TraceSampler {
             last_adjustment: Arc::new(RwLock::new(Instant::now())),
         }
     }
-    
+
     async fn should_sample_nat_trace(&self, _attempt: &NatTraversalAttempt) -> bool {
         // Adjust sampling rate if adaptive sampling is enabled
         if self.config.adaptive.enabled {
             self.adjust_sampling_rate().await;
         }
-        
+
         let current_rate = *self.current_rate.read().await;
         let should_sample = rand::random::<f64>() < current_rate;
-        
+
         if should_sample {
             let mut traces_count = self.traces_this_period.write().await;
             *traces_count += 1;
         }
-        
+
         should_sample
     }
-    
+
     async fn adjust_sampling_rate(&self) {
         let mut last_adjustment = self.last_adjustment.write().await;
-        
+
         if last_adjustment.elapsed() < self.config.adaptive.adjustment_interval {
             return;
         }
-        
+
         let traces_count = {
             let mut count = self.traces_this_period.write().await;
             let current_count = *count;
             *count = 0; // Reset for next period
             current_count
         };
-        
+
         let period_seconds = self.config.adaptive.adjustment_interval.as_secs_f64();
         let current_traces_per_second = traces_count as f64 / period_seconds;
         let target_traces_per_second = self.config.adaptive.target_traces_per_second;
-        
+
         let mut current_rate = self.current_rate.write().await;
         let adjustment_factor = target_traces_per_second / current_traces_per_second.max(1.0);
         *current_rate = (*current_rate * adjustment_factor).min(1.0).max(0.001);
-        
+
         *last_adjustment = Instant::now();
-        
-        debug!("Adjusted trace sampling rate to {:.4} (current rate: {:.2} traces/sec, target: {:.2})",
-            *current_rate, current_traces_per_second, target_traces_per_second);
+
+        debug!(
+            "Adjusted trace sampling rate to {:.4} (current rate: {:.2} traces/sec, target: {:.2})",
+            *current_rate, current_traces_per_second, target_traces_per_second
+        );
     }
 }
 
@@ -665,7 +727,7 @@ impl SpanBuilder {
     fn new() -> Self {
         Self
     }
-    
+
     async fn create_nat_traversal_span(
         &self,
         _trace_id: &TraceId,
@@ -673,38 +735,74 @@ impl SpanBuilder {
         attempt: &NatTraversalAttempt,
     ) -> Result<TraceSpan, MonitoringError> {
         let mut attributes = HashMap::new();
-        
+
         // Add NAT traversal specific attributes
-        attributes.insert("nat.attempt_id".to_string(), AttributeValue::String(attempt.attempt_id.clone()));
-        attributes.insert("nat.client.region".to_string(), AttributeValue::String(
-            attempt.client_info.region.as_deref().unwrap_or("unknown").to_string()
-        ));
-        attributes.insert("nat.server.region".to_string(), AttributeValue::String(
-            attempt.server_info.region.as_deref().unwrap_or("unknown").to_string()
-        ));
-        attributes.insert("nat.bootstrap_nodes".to_string(), AttributeValue::Array(
-            attempt.bootstrap_nodes.iter()
-                .map(|node| AttributeValue::String(node.clone()))
-                .collect()
-        ));
-        
+        attributes.insert(
+            "nat.attempt_id".to_string(),
+            AttributeValue::String(attempt.attempt_id.clone()),
+        );
+        attributes.insert(
+            "nat.client.region".to_string(),
+            AttributeValue::String(
+                attempt
+                    .client_info
+                    .region
+                    .as_deref()
+                    .unwrap_or("unknown")
+                    .to_string(),
+            ),
+        );
+        attributes.insert(
+            "nat.server.region".to_string(),
+            AttributeValue::String(
+                attempt
+                    .server_info
+                    .region
+                    .as_deref()
+                    .unwrap_or("unknown")
+                    .to_string(),
+            ),
+        );
+        attributes.insert(
+            "nat.bootstrap_nodes".to_string(),
+            AttributeValue::Array(
+                attempt
+                    .bootstrap_nodes
+                    .iter()
+                    .map(|node| AttributeValue::String(node.clone()))
+                    .collect(),
+            ),
+        );
+
         if let Some(client_nat_type) = &attempt.client_info.nat_type {
-            attributes.insert("nat.client.type".to_string(), AttributeValue::String(format!("{:?}", client_nat_type)));
+            attributes.insert(
+                "nat.client.type".to_string(),
+                AttributeValue::String(format!("{:?}", client_nat_type)),
+            );
         }
-        
+
         if let Some(server_nat_type) = &attempt.server_info.nat_type {
-            attributes.insert("nat.server.type".to_string(), AttributeValue::String(format!("{:?}", server_nat_type)));
+            attributes.insert(
+                "nat.server.type".to_string(),
+                AttributeValue::String(format!("{:?}", server_nat_type)),
+            );
         }
-        
+
         // Add network conditions
         if let Some(rtt) = attempt.network_conditions.rtt_ms {
-            attributes.insert("network.rtt_ms".to_string(), AttributeValue::Int(rtt as i64));
+            attributes.insert(
+                "network.rtt_ms".to_string(),
+                AttributeValue::Int(rtt as i64),
+            );
         }
-        
+
         if let Some(loss_rate) = attempt.network_conditions.packet_loss_rate {
-            attributes.insert("network.packet_loss_rate".to_string(), AttributeValue::Float(loss_rate as f64));
+            attributes.insert(
+                "network.packet_loss_rate".to_string(),
+                AttributeValue::Float(loss_rate as f64),
+            );
         }
-        
+
         Ok(TraceSpan {
             span_id: SpanId::new(),
             parent_span_id,
@@ -716,7 +814,7 @@ impl SpanBuilder {
             tags: HashMap::new(),
         })
     }
-    
+
     async fn create_child_span(
         &self,
         _trace_id: &TraceId,
@@ -750,26 +848,26 @@ impl TraceExporter {
             pending_traces: Arc::new(Mutex::new(Vec::new())),
         }
     }
-    
+
     async fn start(&self) -> Result<(), MonitoringError> {
         // Start background export task
         info!("Trace exporter started");
         Ok(())
     }
-    
+
     async fn stop(&self) -> Result<(), MonitoringError> {
         // Flush remaining traces
         self.flush_pending_traces().await?;
         info!("Trace exporter stopped");
         Ok(())
     }
-    
+
     async fn export_trace(&self, trace_context: TraceContext) -> Result<(), MonitoringError> {
         // Add to pending traces
         {
             let mut pending = self.pending_traces.lock().await;
             pending.push(trace_context);
-            
+
             // Export if batch size reached
             if pending.len() >= self.config.batch_size {
                 let traces = pending.drain(..).collect::<Vec<_>>();
@@ -777,21 +875,21 @@ impl TraceExporter {
                 self.export_batch(traces).await?;
             }
         }
-        
+
         Ok(())
     }
-    
+
     async fn export_batch(&self, traces: Vec<TraceContext>) -> Result<(), MonitoringError> {
         for destination in &self.config.destinations {
             if let Err(e) = self.export_to_destination(destination, &traces).await {
                 warn!("Failed to export traces to {:?}: {}", destination, e);
             }
         }
-        
+
         debug!("Exported batch of {} traces", traces.len());
         Ok(())
     }
-    
+
     async fn export_to_destination(
         &self,
         destination: &TraceExportDestination,
@@ -810,52 +908,86 @@ impl TraceExporter {
             TraceExportDestination::CloudTrace { project_id } => {
                 self.export_to_cloud_trace(project_id, traces).await
             }
-            TraceExportDestination::XRay { region } => {
-                self.export_to_xray(region, traces).await
-            }
+            TraceExportDestination::XRay { region } => self.export_to_xray(region, traces).await,
         }
     }
-    
-    async fn export_to_jaeger(&self, endpoint: &str, traces: &[TraceContext]) -> Result<(), MonitoringError> {
-        debug!("Exporting {} traces to Jaeger at {}", traces.len(), endpoint);
+
+    async fn export_to_jaeger(
+        &self,
+        endpoint: &str,
+        traces: &[TraceContext],
+    ) -> Result<(), MonitoringError> {
+        debug!(
+            "Exporting {} traces to Jaeger at {}",
+            traces.len(),
+            endpoint
+        );
         // Would implement actual Jaeger export
         Ok(())
     }
-    
-    async fn export_to_zipkin(&self, endpoint: &str, traces: &[TraceContext]) -> Result<(), MonitoringError> {
-        debug!("Exporting {} traces to Zipkin at {}", traces.len(), endpoint);
+
+    async fn export_to_zipkin(
+        &self,
+        endpoint: &str,
+        traces: &[TraceContext],
+    ) -> Result<(), MonitoringError> {
+        debug!(
+            "Exporting {} traces to Zipkin at {}",
+            traces.len(),
+            endpoint
+        );
         // Would implement actual Zipkin export
         Ok(())
     }
-    
-    async fn export_to_otlp(&self, endpoint: &str, traces: &[TraceContext]) -> Result<(), MonitoringError> {
+
+    async fn export_to_otlp(
+        &self,
+        endpoint: &str,
+        traces: &[TraceContext],
+    ) -> Result<(), MonitoringError> {
         debug!("Exporting {} traces to OTLP at {}", traces.len(), endpoint);
         // Would implement actual OTLP export
         Ok(())
     }
-    
-    async fn export_to_cloud_trace(&self, project_id: &str, traces: &[TraceContext]) -> Result<(), MonitoringError> {
-        debug!("Exporting {} traces to Cloud Trace (project: {})", traces.len(), project_id);
+
+    async fn export_to_cloud_trace(
+        &self,
+        project_id: &str,
+        traces: &[TraceContext],
+    ) -> Result<(), MonitoringError> {
+        debug!(
+            "Exporting {} traces to Cloud Trace (project: {})",
+            traces.len(),
+            project_id
+        );
         // Would implement actual Cloud Trace export
         Ok(())
     }
-    
-    async fn export_to_xray(&self, region: &str, traces: &[TraceContext]) -> Result<(), MonitoringError> {
-        debug!("Exporting {} traces to X-Ray (region: {})", traces.len(), region);
+
+    async fn export_to_xray(
+        &self,
+        region: &str,
+        traces: &[TraceContext],
+    ) -> Result<(), MonitoringError> {
+        debug!(
+            "Exporting {} traces to X-Ray (region: {})",
+            traces.len(),
+            region
+        );
         // Would implement actual X-Ray export
         Ok(())
     }
-    
+
     async fn flush_pending_traces(&self) -> Result<(), MonitoringError> {
         let traces = {
             let mut pending = self.pending_traces.lock().await;
             pending.drain(..).collect::<Vec<_>>()
         };
-        
+
         if !traces.is_empty() {
             self.export_batch(traces).await?;
         }
-        
+
         Ok(())
     }
 }
@@ -871,19 +1003,19 @@ impl CorrelationManager {
             current_correlation: Arc::new(RwLock::new(None)),
         }
     }
-    
+
     async fn generate_correlation_id(&self) -> CorrelationId {
         let correlation_id = CorrelationId::new();
-        
+
         // Store current correlation ID
         {
             let mut current = self.current_correlation.write().await;
             *current = Some(correlation_id.clone());
         }
-        
+
         correlation_id
     }
-    
+
     async fn get_current_correlation(&self) -> Option<CorrelationId> {
         let current = self.current_correlation.read().await;
         current.clone()
@@ -898,21 +1030,29 @@ impl TracingUtils {
     pub fn create_span(name: &'static str) -> Span {
         tracing::info_span!("{}", name)
     }
-    
+
     /// Add attributes to current span
     pub fn add_span_attributes(attributes: HashMap<String, AttributeValue>) {
         let span = Span::current();
         for (key, value) in attributes {
             match value {
-                AttributeValue::String(s) => { span.record(key.as_str(), &s); }
-                AttributeValue::Int(i) => { span.record(key.as_str(), &i); }
-                AttributeValue::Float(f) => { span.record(key.as_str(), &f); }
-                AttributeValue::Bool(b) => { span.record(key.as_str(), &b); }
+                AttributeValue::String(s) => {
+                    span.record(key.as_str(), &s);
+                }
+                AttributeValue::Int(i) => {
+                    span.record(key.as_str(), &i);
+                }
+                AttributeValue::Float(f) => {
+                    span.record(key.as_str(), &f);
+                }
+                AttributeValue::Bool(b) => {
+                    span.record(key.as_str(), &b);
+                }
                 _ => {} // Complex types not supported by tracing
             }
         }
     }
-    
+
     /// Record an event in the current span
     pub fn record_event(event_name: &str, attributes: HashMap<String, AttributeValue>) {
         // Convert attributes to tracing format and record
@@ -928,11 +1068,11 @@ mod tests {
     async fn test_trace_collector_creation() {
         let config = TracingConfig::default();
         let collector = DistributedTraceCollector::new(config).await.unwrap();
-        
+
         let status = collector.get_status().await;
         assert!(status.contains("Active traces: 0"));
     }
-    
+
     #[tokio::test]
     async fn test_trace_sampling() {
         let config = TraceSamplingConfig {
@@ -941,9 +1081,9 @@ mod tests {
             failure_rate: 1.0,
             adaptive: AdaptiveTraceSamplingConfig::default(),
         };
-        
+
         let sampler = TraceSampler::new(config);
-        
+
         // Create mock attempt
         let attempt = NatTraversalAttempt {
             attempt_id: "test".to_string(),
@@ -971,18 +1111,18 @@ mod tests {
                 congestion_level: crate::monitoring::CongestionLevel::Low,
             },
         };
-        
+
         // Test sampling decision
         let should_sample = sampler.should_sample_nat_trace(&attempt).await;
         // With 50% rate, result is probabilistic, so we just ensure it doesn't panic
         assert!(should_sample || !should_sample);
     }
-    
+
     #[tokio::test]
     async fn test_span_builder() {
         let span_builder = SpanBuilder::new();
         let trace_id = TraceId::new();
-        
+
         // Create mock attempt
         let attempt = NatTraversalAttempt {
             attempt_id: "test".to_string(),
@@ -1010,9 +1150,12 @@ mod tests {
                 congestion_level: crate::monitoring::CongestionLevel::Low,
             },
         };
-        
-        let span = span_builder.create_nat_traversal_span(&trace_id, None, &attempt).await.unwrap();
-        
+
+        let span = span_builder
+            .create_nat_traversal_span(&trace_id, None, &attempt)
+            .await
+            .unwrap();
+
         assert_eq!(span.name, "nat_traversal");
         assert!(span.attributes.contains_key("nat.attempt_id"));
         assert!(span.attributes.contains_key("nat.client.region"));

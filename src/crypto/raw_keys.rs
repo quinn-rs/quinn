@@ -13,13 +13,13 @@ use thiserror::Error;
 pub enum RawKeyError {
     #[error("Invalid key format: {0}")]
     InvalidFormat(String),
-    
+
     #[error("Verification failed")]
     VerificationFailed,
-    
+
     #[error("Encoding error: {0}")]
     EncodingError(String),
-    
+
     #[error("Decoding error: {0}")]
     DecodingError(String),
 }
@@ -36,13 +36,13 @@ impl Ed25519KeyPair {
     pub fn generate() -> Self {
         let signing_key = SigningKey::generate(&mut OsRng);
         let verifying_key = VerifyingKey::from(&signing_key);
-        
+
         Self {
             signing_key,
             verifying_key,
         }
     }
-    
+
     /// Create a key pair from an existing signing key
     pub fn from_signing_key(signing_key: SigningKey) -> Self {
         let verifying_key = VerifyingKey::from(&signing_key);
@@ -51,30 +51,31 @@ impl Ed25519KeyPair {
             verifying_key,
         }
     }
-    
+
     /// Get the public key in SubjectPublicKeyInfo format
     pub fn public_key_spki(&self) -> Vec<u8> {
         create_ed25519_subject_public_key_info(&self.verifying_key)
     }
-    
+
     /// Get the raw public key bytes
     pub fn public_key_bytes(&self) -> [u8; 32] {
         *self.verifying_key.as_bytes()
     }
-    
+
     /// Get a reference to the verifying key
     pub fn verifying_key(&self) -> &VerifyingKey {
         &self.verifying_key
     }
-    
+
     /// Sign data with the private key
     pub fn sign(&self, data: &[u8]) -> Signature {
         self.signing_key.sign(data)
     }
-    
+
     /// Verify a signature with the public key
     pub fn verify(&self, data: &[u8], signature: &Signature) -> Result<(), RawKeyError> {
-        self.verifying_key.verify(data, signature)
+        self.verifying_key
+            .verify(data, signature)
             .map_err(|_| RawKeyError::VerificationFailed)
     }
 }
@@ -91,25 +92,25 @@ pub fn create_ed25519_subject_public_key_info(public_key: &VerifyingKey) -> Vec<
     //   }
     //   BIT STRING (32 bytes of public key)
     // }
-    
+
     // Pre-allocate the exact size needed (44 bytes)
     let mut spki = Vec::with_capacity(44);
-    
+
     // SEQUENCE tag and length (total length will be 44 bytes)
     spki.extend_from_slice(&[0x30, 0x2a]);
-    
+
     // Algorithm identifier SEQUENCE
     spki.extend_from_slice(&[0x30, 0x05]);
-    
+
     // Ed25519 OID: 1.3.101.112
     spki.extend_from_slice(&[0x06, 0x03, 0x2b, 0x65, 0x70]);
-    
+
     // Subject public key BIT STRING
     spki.extend_from_slice(&[0x03, 0x21, 0x00]); // BIT STRING, 33 bytes (32 + 1 unused bits byte)
-    
+
     // The actual 32-byte Ed25519 public key
     spki.extend_from_slice(public_key.as_bytes());
-    
+
     spki
 }
 
@@ -125,20 +126,20 @@ pub fn extract_ed25519_key_from_spki(spki_der: &[u8]) -> Result<[u8; 32], RawKey
             spki_der.len()
         )));
     }
-    
+
     // Look for Ed25519 OID pattern in the DER encoding
     let ed25519_oid = [0x30, 0x2a, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70];
-    
+
     if !spki_der.starts_with(&ed25519_oid) {
         return Err(RawKeyError::InvalidFormat(
-            "Invalid SPKI format: Ed25519 OID not found".to_string()
+            "Invalid SPKI format: Ed25519 OID not found".to_string(),
         ));
     }
-    
+
     // The public key should be at offset 12 and be 32 bytes long
     let mut public_key = [0u8; 32];
     public_key.copy_from_slice(&spki_der[12..44]);
-    
+
     Ok(public_key)
 }
 
@@ -156,22 +157,22 @@ pub fn verifying_key_from_spki(spki_der: &[u8]) -> Result<VerifyingKey, RawKeyEr
 /// direct key exposure.
 pub fn derive_peer_id_from_public_key(public_key: &VerifyingKey) -> [u8; 32] {
     // Use SHA-256 to hash the public key with a domain separator
-    use ring::digest::{digest, SHA256};
-    
+    use ring::digest::{SHA256, digest};
+
     let key_bytes = public_key.as_bytes();
-    
+
     // Create the input data with domain separator
     let mut input = Vec::with_capacity(20 + 32); // "AUTONOMI_PEER_ID_V1:" + key_bytes
     input.extend_from_slice(b"AUTONOMI_PEER_ID_V1:");
     input.extend_from_slice(key_bytes);
-    
+
     // Hash the input
     let hash = digest(&SHA256, &input);
     let hash_bytes = hash.as_ref();
-    
+
     let mut peer_id_bytes = [0u8; 32];
     peer_id_bytes.copy_from_slice(hash_bytes);
-    
+
     peer_id_bytes
 }
 
@@ -189,7 +190,7 @@ pub fn generate_ed25519_keypair() -> Ed25519KeyPair {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_keypair_generation() {
         let keypair = Ed25519KeyPair::generate();
@@ -197,51 +198,51 @@ mod tests {
         assert!(keypair.verify(b"test message", &signature).is_ok());
         assert!(keypair.verify(b"wrong message", &signature).is_err());
     }
-    
+
     #[test]
     fn test_spki_encoding_decoding() {
         let keypair = Ed25519KeyPair::generate();
         let spki = keypair.public_key_spki();
-        
+
         // Verify SPKI format
         assert_eq!(spki.len(), 44);
         assert_eq!(&spki[0..2], &[0x30, 0x2a]); // SEQUENCE tag and length
-        
+
         // Extract key from SPKI
         let extracted_key = extract_ed25519_key_from_spki(&spki).unwrap();
         assert_eq!(extracted_key, keypair.public_key_bytes());
-        
+
         // Create VerifyingKey from SPKI
         let verifying_key = verifying_key_from_spki(&spki).unwrap();
         assert_eq!(verifying_key.as_bytes(), keypair.verifying_key().as_bytes());
     }
-    
+
     #[test]
     fn test_peer_id_derivation() {
         let keypair1 = Ed25519KeyPair::generate();
         let keypair2 = Ed25519KeyPair::generate();
-        
+
         let peer_id1 = derive_peer_id_from_public_key(keypair1.verifying_key());
         let peer_id2 = derive_peer_id_from_public_key(keypair1.verifying_key());
         let peer_id3 = derive_peer_id_from_public_key(keypair2.verifying_key());
-        
+
         // Same key should produce same peer ID
         assert_eq!(peer_id1, peer_id2);
-        
+
         // Different keys should produce different peer IDs
         assert_ne!(peer_id1, peer_id3);
-        
+
         // Verify peer ID
         assert!(verify_peer_id(&peer_id1, keypair1.verifying_key()));
         assert!(!verify_peer_id(&peer_id1, keypair2.verifying_key()));
     }
-    
+
     #[test]
     fn test_invalid_spki() {
         // Too short
         let result = extract_ed25519_key_from_spki(&[0; 43]);
         assert!(result.is_err());
-        
+
         // Wrong OID
         let mut invalid_spki = vec![0; 44];
         invalid_spki[7] = 0xFF; // Corrupt the OID

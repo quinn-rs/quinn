@@ -33,7 +33,6 @@ pub mod timeouts;
 // Production-ready configuration validation
 pub(crate) mod validation;
 
-
 /// Global configuration for the endpoint, affecting all connections
 ///
 /// Default values should be suitable for most internet applications.

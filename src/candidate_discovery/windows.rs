@@ -5,7 +5,7 @@
 
 use std::{
     collections::HashMap,
-    ffi::{c_char, CStr, OsString},
+    ffi::{CStr, OsString, c_char},
     mem::{self, MaybeUninit},
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
     os::windows::ffi::OsStringExt,
@@ -14,25 +14,18 @@ use std::{
     time::Instant,
 };
 
-use windows::{
-    Win32::{
-        NetworkManagement::IpHelper::{
-            GetAdaptersAddresses, GetAdaptersInfo, GetIpForwardTable, MIB_IPFORWARDROW,
-            IP_ADAPTER_ADDRESSES_LH, IP_ADAPTER_INFO, GAA_FLAG_SKIP_ANYCAST,
-            GAA_FLAG_SKIP_MULTICAST, GAA_FLAG_SKIP_DNS_SERVER, MIB_IF_TYPE_ETHERNET,
-            MIB_IF_TYPE_LOOPBACK, MIB_IF_TYPE_PPP, MIB_IF_TYPE_SLIP, MIB_IF_TYPE_TOKENRING,
-        },
-        Networking::WinSock::{
-            SOCKADDR_IN, SOCKADDR_IN6, AF_INET, AF_INET6, ADDRESS_FAMILY,
-        },
-        Foundation::{
-            CloseHandle, ERROR_BUFFER_OVERFLOW, ERROR_IO_PENDING, HANDLE, WAIT_OBJECT_0, WAIT_TIMEOUT,
-        },
-        System::{
-            IO::OVERLAPPED,
-            Threading::WaitForSingleObject,
-        },
+use windows::Win32::{
+    Foundation::{
+        CloseHandle, ERROR_BUFFER_OVERFLOW, ERROR_IO_PENDING, HANDLE, WAIT_OBJECT_0, WAIT_TIMEOUT,
     },
+    NetworkManagement::IpHelper::{
+        GAA_FLAG_SKIP_ANYCAST, GAA_FLAG_SKIP_DNS_SERVER, GAA_FLAG_SKIP_MULTICAST,
+        GetAdaptersAddresses, GetAdaptersInfo, GetIpForwardTable, IP_ADAPTER_ADDRESSES_LH,
+        IP_ADAPTER_INFO, MIB_IF_TYPE_ETHERNET, MIB_IF_TYPE_LOOPBACK, MIB_IF_TYPE_PPP,
+        MIB_IF_TYPE_SLIP, MIB_IF_TYPE_TOKENRING, MIB_IPFORWARDROW,
+    },
+    Networking::WinSock::{ADDRESS_FAMILY, AF_INET, AF_INET6, SOCKADDR_IN, SOCKADDR_IN6},
+    System::{IO::OVERLAPPED, Threading::WaitForSingleObject},
 };
 
 use tracing::{debug, error, info, warn};
@@ -286,7 +279,8 @@ impl WindowsInterfaceDiscovery {
         loop {
             let result = unsafe {
                 windows::Win32::NetworkManagement::IpHelper::GetAdaptersInfo(
-                    Some(buffer.as_mut_ptr() as *mut windows::Win32::NetworkManagement::IpHelper::IP_ADAPTER_INFO),
+                    Some(buffer.as_mut_ptr()
+                        as *mut windows::Win32::NetworkManagement::IpHelper::IP_ADAPTER_INFO),
                     &mut buffer_size,
                 )
             };
@@ -309,12 +303,13 @@ impl WindowsInterfaceDiscovery {
         }
 
         // Parse adapter information
-        let mut current_adapter = buffer.as_ptr() as *const windows::Win32::NetworkManagement::IpHelper::IP_ADAPTER_INFO;
+        let mut current_adapter =
+            buffer.as_ptr() as *const windows::Win32::NetworkManagement::IpHelper::IP_ADAPTER_INFO;
         let mut adapter_count = 0;
 
         while !current_adapter.is_null() && adapter_count < self.adapter_config.max_interfaces {
             let adapter = unsafe { &*current_adapter };
-            
+
             match self.parse_adapter_info(adapter) {
                 Ok(interface) => {
                     if self.should_include_interface(&interface) {
@@ -359,10 +354,16 @@ impl WindowsInterfaceDiscovery {
 
         // Parse interface type
         let interface_type = match adapter.Type {
-            windows::Win32::NetworkManagement::IpHelper::MIB_IF_TYPE_ETHERNET => InterfaceType::Ethernet,
-            windows::Win32::NetworkManagement::IpHelper::MIB_IF_TYPE_TOKENRING => InterfaceType::Ethernet,
+            windows::Win32::NetworkManagement::IpHelper::MIB_IF_TYPE_ETHERNET => {
+                InterfaceType::Ethernet
+            }
+            windows::Win32::NetworkManagement::IpHelper::MIB_IF_TYPE_TOKENRING => {
+                InterfaceType::Ethernet
+            }
             windows::Win32::NetworkManagement::IpHelper::MIB_IF_TYPE_PPP => InterfaceType::Ppp,
-            windows::Win32::NetworkManagement::IpHelper::MIB_IF_TYPE_LOOPBACK => InterfaceType::Loopback,
+            windows::Win32::NetworkManagement::IpHelper::MIB_IF_TYPE_LOOPBACK => {
+                InterfaceType::Loopback
+            }
             windows::Win32::NetworkManagement::IpHelper::MIB_IF_TYPE_SLIP => InterfaceType::Ppp,
             other => InterfaceType::Unknown(other),
         };
@@ -370,7 +371,7 @@ impl WindowsInterfaceDiscovery {
         // Parse IPv4 addresses
         let mut ipv4_addresses = Vec::new();
         let mut current_addr = &adapter.IpAddressList;
-        
+
         loop {
             let ip_str = unsafe {
                 let ip_ptr = current_addr.IpAddress.String.as_ptr() as *const i8;
@@ -468,38 +469,40 @@ impl WindowsInterfaceDiscovery {
         }
 
         // Parse IPv6 addresses
-        let mut current_adapter = buffer.as_ptr() as *const windows::Win32::NetworkManagement::IpHelper::IP_ADAPTER_ADDRESSES_LH;
-        
+        let mut current_adapter = buffer.as_ptr()
+            as *const windows::Win32::NetworkManagement::IpHelper::IP_ADAPTER_ADDRESSES_LH;
+
         while !current_adapter.is_null() {
             let adapter = unsafe { &*current_adapter };
-            
+
             if adapter.Anonymous1.Anonymous.IfIndex == adapter_index {
                 let mut current_addr = adapter.FirstUnicastAddress;
-                
+
                 while !current_addr.is_null() {
                     let addr_info = unsafe { &*current_addr };
                     let sockaddr = unsafe { &*addr_info.Address.lpSockaddr };
-                    
+
                     if sockaddr.sa_family == AF_INET6 {
-                        let sockaddr_in6 = unsafe { 
-                            &*(addr_info.Address.lpSockaddr as *const windows::Win32::Networking::WinSock::SOCKADDR_IN6)
+                        let sockaddr_in6 = unsafe {
+                            &*(addr_info.Address.lpSockaddr
+                                as *const windows::Win32::Networking::WinSock::SOCKADDR_IN6)
                         };
-                        
-                        let ipv6_bytes = unsafe { 
+
+                        let ipv6_bytes = unsafe {
                             std::mem::transmute::<[u16; 8], [u8; 16]>(sockaddr_in6.sin6_addr.u.Word)
                         };
-                        
+
                         let ipv6_addr = Ipv6Addr::from(ipv6_bytes);
                         if !ipv6_addr.is_unspecified() && !ipv6_addr.is_loopback() {
                             addresses.push(ipv6_addr);
                         }
                     }
-                    
+
                     current_addr = addr_info.Next;
                 }
                 break;
             }
-            
+
             current_adapter = adapter.Next;
         }
 
@@ -534,20 +537,35 @@ impl WindowsInterfaceDiscovery {
     /// Determine if an interface is wireless based on name and description
     fn is_wireless_interface(&self, name: &str, description: &str) -> bool {
         let wireless_indicators = [
-            "wireless", "wi-fi", "wifi", "wlan", "802.11", "bluetooth", "mobile", "cellular",
-            "3g", "4g", "5g", "lte", "wimax", "radio",
+            "wireless",
+            "wi-fi",
+            "wifi",
+            "wlan",
+            "802.11",
+            "bluetooth",
+            "mobile",
+            "cellular",
+            "3g",
+            "4g",
+            "5g",
+            "lte",
+            "wimax",
+            "radio",
         ];
 
         let name_lower = name.to_lowercase();
         let desc_lower = description.to_lowercase();
 
-        wireless_indicators.iter().any(|&indicator| {
-            name_lower.contains(indicator) || desc_lower.contains(indicator)
-        })
+        wireless_indicators
+            .iter()
+            .any(|&indicator| name_lower.contains(indicator) || desc_lower.contains(indicator))
     }
 
     /// Convert Windows interface to generic NetworkInterface
-    fn convert_to_network_interface(&self, windows_interface: &WindowsInterface) -> NetworkInterface {
+    fn convert_to_network_interface(
+        &self,
+        windows_interface: &WindowsInterface,
+    ) -> NetworkInterface {
         let mut addresses = Vec::new();
 
         // Add IPv4 addresses
@@ -591,15 +609,16 @@ impl WindowsInterfaceDiscovery {
 impl NetworkInterfaceDiscovery for WindowsInterfaceDiscovery {
     fn start_scan(&mut self) -> Result<(), String> {
         debug!("Starting Windows network interface scan");
-        
+
         // Check if we need to scan or can use cache
         if self.is_cache_valid() && !self.check_network_changes() {
             debug!("Using cached interface data");
-            let interfaces: Vec<NetworkInterface> = self.cached_interfaces
+            let interfaces: Vec<NetworkInterface> = self
+                .cached_interfaces
                 .values()
                 .map(|wi| self.convert_to_network_interface(wi))
                 .collect();
-            
+
             self.scan_state = ScanState::Completed {
                 scan_results: interfaces,
             };
@@ -614,7 +633,7 @@ impl NetworkInterfaceDiscovery for WindowsInterfaceDiscovery {
         match self.enumerate_adapters() {
             Ok(interfaces) => {
                 debug!("Successfully enumerated {} interfaces", interfaces.len());
-                
+
                 // Convert to generic NetworkInterface format
                 let network_interfaces: Vec<NetworkInterface> = interfaces
                     .iter()
@@ -623,11 +642,11 @@ impl NetworkInterfaceDiscovery for WindowsInterfaceDiscovery {
 
                 // Update cache
                 self.update_cache(interfaces);
-                
+
                 self.scan_state = ScanState::Completed {
                     scan_results: network_interfaces,
                 };
-                
+
                 info!("Network interface scan completed successfully");
                 Ok(())
             }
@@ -673,14 +692,36 @@ impl Drop for WindowsInterfaceDiscovery {
 impl std::fmt::Display for WindowsNetworkError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::ApiCallFailed { function, error_code, message } => {
-                write!(f, "API call {} failed with code {}: {}", function, error_code, message)
+            Self::ApiCallFailed {
+                function,
+                error_code,
+                message,
+            } => {
+                write!(
+                    f,
+                    "API call {} failed with code {}: {}",
+                    function, error_code, message
+                )
             }
-            Self::BufferTooSmall { function, required_size } => {
-                write!(f, "Buffer too small for {}: {} bytes required", function, required_size)
+            Self::BufferTooSmall {
+                function,
+                required_size,
+            } => {
+                write!(
+                    f,
+                    "Buffer too small for {}: {} bytes required",
+                    function, required_size
+                )
             }
-            Self::InvalidParameter { function, parameter } => {
-                write!(f, "Invalid parameter {} for function {}", parameter, function)
+            Self::InvalidParameter {
+                function,
+                parameter,
+            } => {
+                write!(
+                    f,
+                    "Invalid parameter {} for function {}",
+                    parameter, function
+                )
             }
             Self::InterfaceNotFound { interface_index } => {
                 write!(f, "Network interface {} not found", interface_index)
@@ -692,7 +733,11 @@ impl std::fmt::Display for WindowsNetworkError {
                 write!(f, "Memory allocation failed: {} bytes", size)
             }
             Self::NetworkChangeNotificationFailed { error_code } => {
-                write!(f, "Network change notification failed with code {}", error_code)
+                write!(
+                    f,
+                    "Network change notification failed with code {}",
+                    error_code
+                )
             }
         }
     }
@@ -721,7 +766,7 @@ mod tests {
             min_mtu: 1000,
             max_interfaces: 32,
         };
-        
+
         discovery.set_adapter_config(config.clone());
         assert_eq!(discovery.adapter_config.include_loopback, true);
         assert_eq!(discovery.adapter_config.min_mtu, 1000);
@@ -730,7 +775,7 @@ mod tests {
     #[test]
     fn test_wireless_interface_detection() {
         let discovery = WindowsInterfaceDiscovery::new();
-        
+
         assert!(discovery.is_wireless_interface("wlan0", "Wireless LAN adapter"));
         assert!(discovery.is_wireless_interface("eth0", "Intel(R) Wireless-AC 9560"));
         assert!(!discovery.is_wireless_interface("eth0", "Ethernet adapter"));
@@ -739,14 +784,14 @@ mod tests {
     #[test]
     fn test_cache_validation() {
         let mut discovery = WindowsInterfaceDiscovery::new();
-        
+
         // No cache initially
         assert!(!discovery.is_cache_valid());
-        
+
         // Set cache time
         discovery.last_scan_time = Some(Instant::now());
         assert!(discovery.is_cache_valid());
-        
+
         // Expired cache
         discovery.last_scan_time = Some(Instant::now() - std::time::Duration::from_secs(60));
         assert!(!discovery.is_cache_valid());

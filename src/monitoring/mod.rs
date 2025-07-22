@@ -12,29 +12,29 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
-use tracing::{info, error};
+use tracing::{error, info};
 
 // Import from NAT traversal API for configuration types
 use crate::nat_traversal_api::NatTraversalConfig;
 
-pub mod metrics;
 pub mod alerting;
-pub mod distributed_tracing;
-pub mod diagnostics;
-pub mod health;
-pub mod export;
 pub mod dashboards;
-pub mod structured_logging;
+pub mod diagnostics;
+pub mod distributed_tracing;
 pub mod error_recovery;
+pub mod export;
+pub mod health;
+pub mod metrics;
+pub mod structured_logging;
 
 // Selective imports to avoid conflicts
-pub use metrics::{ProductionMetricsCollector, MetricsConfig};
-pub use alerting::{ProductionAlertManager, AlertingConfig};
-pub use distributed_tracing::{DistributedTraceCollector, TracingConfig};
+pub use alerting::{AlertingConfig, ProductionAlertManager};
+pub use dashboards::{DashboardConfig, DashboardManager};
 pub use diagnostics::{DiagnosticEngine, DiagnosticsConfig};
-pub use health::{HealthMonitor, HealthConfig};
-pub use export::{ExportManager, ExportConfig as MonitoringExportConfig};
-pub use dashboards::{DashboardManager, DashboardConfig};
+pub use distributed_tracing::{DistributedTraceCollector, TracingConfig};
+pub use export::{ExportConfig as MonitoringExportConfig, ExportManager};
+pub use health::{HealthConfig, HealthMonitor};
+pub use metrics::{MetricsConfig, ProductionMetricsCollector};
 
 /// Central monitoring system for NAT traversal operations
 pub struct MonitoringSystem {
@@ -62,38 +62,26 @@ impl MonitoringSystem {
     /// Create new monitoring system
     pub async fn new(config: MonitoringConfig) -> Result<Self, MonitoringError> {
         info!("Initializing production monitoring system");
-        
+
         // Initialize subsystems
-        let metrics_collector = Arc::new(
-            ProductionMetricsCollector::new(config.metrics.clone()).await?
-        );
-        
-        let alert_manager = Arc::new(
-            ProductionAlertManager::new(config.alerting.clone()).await?
-        );
-        
-        let trace_collector = Arc::new(
-            DistributedTraceCollector::new(config.tracing.clone()).await?
-        );
-        
-        let health_monitor = Arc::new(
-            HealthMonitor::new(config.health.clone()).await?
-        );
-        
-        let diagnostic_engine = Arc::new(
-            DiagnosticEngine::new(config.diagnostics.clone()).await?
-        );
-        
-        let export_manager = Arc::new(
-            ExportManager::new(config.export.clone()).await?
-        );
-        
-        let dashboard_manager = Arc::new(
-            DashboardManager::new(config.dashboards.clone()).await?
-        );
-        
+        let metrics_collector =
+            Arc::new(ProductionMetricsCollector::new(config.metrics.clone()).await?);
+
+        let alert_manager = Arc::new(ProductionAlertManager::new(config.alerting.clone()).await?);
+
+        let trace_collector =
+            Arc::new(DistributedTraceCollector::new(config.tracing.clone()).await?);
+
+        let health_monitor = Arc::new(HealthMonitor::new(config.health.clone()).await?);
+
+        let diagnostic_engine = Arc::new(DiagnosticEngine::new(config.diagnostics.clone()).await?);
+
+        let export_manager = Arc::new(ExportManager::new(config.export.clone()).await?);
+
+        let dashboard_manager = Arc::new(DashboardManager::new(config.dashboards.clone()).await?);
+
         let state = Arc::new(RwLock::new(MonitoringState::new()));
-        
+
         Ok(Self {
             metrics_collector,
             alert_manager,
@@ -106,18 +94,18 @@ impl MonitoringSystem {
             state,
         })
     }
-    
+
     /// Start monitoring system
     pub async fn start(&self) -> Result<(), MonitoringError> {
         info!("Starting production monitoring system");
-        
+
         // Update state
         {
             let mut state = self.state.write().await;
             state.start_time = Some(SystemTime::now());
             state.status = MonitoringStatus::Starting;
         }
-        
+
         // Start subsystems in dependency order
         self.metrics_collector.start().await?;
         self.trace_collector.start().await?;
@@ -126,27 +114,27 @@ impl MonitoringSystem {
         self.alert_manager.start().await?;
         self.export_manager.start().await?;
         self.dashboard_manager.start().await?;
-        
+
         // Update state to running
         {
             let mut state = self.state.write().await;
             state.status = MonitoringStatus::Running;
         }
-        
+
         info!("Production monitoring system started successfully");
         Ok(())
     }
-    
+
     /// Stop monitoring system
     pub async fn stop(&self) -> Result<(), MonitoringError> {
         info!("Stopping production monitoring system");
-        
+
         // Update state
         {
             let mut state = self.state.write().await;
             state.status = MonitoringStatus::Stopping;
         }
-        
+
         // Stop subsystems in reverse order
         self.dashboard_manager.stop().await?;
         self.export_manager.stop().await?;
@@ -155,63 +143,71 @@ impl MonitoringSystem {
         self.health_monitor.stop().await?;
         self.trace_collector.stop().await?;
         self.metrics_collector.stop().await?;
-        
+
         // Update state to stopped
         {
             let mut state = self.state.write().await;
             state.status = MonitoringStatus::Stopped;
             state.stop_time = Some(SystemTime::now());
         }
-        
+
         info!("Production monitoring system stopped");
         Ok(())
     }
-    
+
     /// Record NAT traversal attempt
-    pub async fn record_nat_attempt(&self, attempt: NatTraversalAttempt) -> Result<(), MonitoringError> {
+    pub async fn record_nat_attempt(
+        &self,
+        attempt: NatTraversalAttempt,
+    ) -> Result<(), MonitoringError> {
         // Record metrics
         self.metrics_collector.record_nat_attempt(&attempt).await?;
-        
+
         // Start trace if configured
         if self.config.tracing.enabled {
             self.trace_collector.start_nat_trace(&attempt).await?;
         }
-        
+
         // Check for alerts
         self.alert_manager.evaluate_nat_attempt(&attempt).await?;
-        
+
         Ok(())
     }
-    
+
     /// Record NAT traversal result
-    pub async fn record_nat_result(&self, result: NatTraversalResult) -> Result<(), MonitoringError> {
+    pub async fn record_nat_result(
+        &self,
+        result: NatTraversalResult,
+    ) -> Result<(), MonitoringError> {
         // Record metrics
         self.metrics_collector.record_nat_result(&result).await?;
-        
+
         // Complete trace
         if self.config.tracing.enabled {
             self.trace_collector.complete_nat_trace(&result).await?;
         }
-        
+
         // Update health status
         self.health_monitor.update_nat_health(&result).await?;
-        
+
         // Check for alerts
         self.alert_manager.evaluate_nat_result(&result).await?;
-        
+
         // Trigger diagnostics if needed
         if !result.success {
             self.diagnostic_engine.analyze_failure(&result).await?;
         }
-        
+
         Ok(())
     }
-    
+
     /// Get system status
     pub async fn get_status(&self) -> MonitoringSystemStatus {
         let state = self.state.read().await;
-        let uptime = state.start_time.map(|start| start.elapsed().unwrap_or_default());
-        
+        let uptime = state
+            .start_time
+            .map(|start| start.elapsed().unwrap_or_default());
+
         MonitoringSystemStatus {
             status: state.status.clone(),
             uptime,
@@ -227,17 +223,20 @@ impl MonitoringSystem {
             metrics_summary: self.get_metrics_summary().await,
         }
     }
-    
+
     /// Get metrics summary
     async fn get_metrics_summary(&self) -> MetricsSummary {
         self.metrics_collector.get_summary().await
     }
-    
+
     /// Trigger manual diagnostic
-    pub async fn trigger_diagnostic(&self, diagnostic_type: DiagnosticType) -> Result<DiagnosticReport, MonitoringError> {
+    pub async fn trigger_diagnostic(
+        &self,
+        diagnostic_type: DiagnosticType,
+    ) -> Result<DiagnosticReport, MonitoringError> {
         self.diagnostic_engine.run_diagnostic(diagnostic_type).await
     }
-    
+
     /// Get health check
     pub async fn health_check(&self) -> HealthCheckResult {
         self.health_monitor.comprehensive_health_check().await
@@ -832,25 +831,25 @@ pub struct MetricsSummary {
 pub enum MonitoringError {
     #[error("Metrics collection error: {0}")]
     MetricsError(String),
-    
+
     #[error("Alerting error: {0}")]
     AlertingError(String),
-    
+
     #[error("Tracing error: {0}")]
     TracingError(String),
-    
+
     #[error("Health monitoring error: {0}")]
     HealthError(String),
-    
+
     #[error("Diagnostics error: {0}")]
     DiagnosticsError(String),
-    
+
     #[error("Export error: {0}")]
     ExportError(String),
-    
+
     #[error("Configuration error: {0}")]
     ConfigError(String),
-    
+
     #[error("System error: {0}")]
     SystemError(String),
 }
@@ -863,11 +862,11 @@ mod tests {
     async fn test_monitoring_system_creation() {
         let config = MonitoringConfig::default();
         let monitoring = MonitoringSystem::new(config).await.unwrap();
-        
+
         let status = monitoring.get_status().await;
         assert!(matches!(status.status, MonitoringStatus::Stopped));
     }
-    
+
     #[test]
     fn test_config_serialization() {
         let config = MonitoringConfig::default();

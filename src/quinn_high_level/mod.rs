@@ -23,8 +23,8 @@ pub use self::connection::{
 pub use self::endpoint::{Accept, Endpoint, EndpointStats};
 pub use self::incoming::{Incoming, IncomingFuture, RetryError};
 pub use self::recv_stream::{ReadError, ReadExactError, ReadToEndError, RecvStream, ResetError};
-pub use self::send_stream::{SendStream, StoppedError, WriteError};
 pub use self::runtime::{AsyncTimer, AsyncUdpSocket, Runtime, UdpPoller, default_runtime};
+pub use self::send_stream::{SendStream, StoppedError, WriteError};
 
 // Runtime-specific exports
 #[cfg(feature = "runtime-async-std")]

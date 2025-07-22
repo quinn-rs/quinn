@@ -5,11 +5,11 @@
 //! the approach defined in draft-seemann-quic-nat-traversal-01, without relying on
 //! external protocols like STUN or ICE.
 
-use std::net::SocketAddr;
 use std::collections::HashMap;
+use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
-use crate::nat_traversal_api::{PeerId, BootstrapNode};
+use crate::nat_traversal_api::{BootstrapNode, PeerId};
 
 /// Manages bootstrap node connections and coordination
 pub struct BootstrapCoordinator {

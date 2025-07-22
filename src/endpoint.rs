@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, hash_map, VecDeque},
+    collections::{HashMap, VecDeque, hash_map},
     convert::TryFrom,
     fmt, mem,
     net::{IpAddr, SocketAddr},
@@ -101,7 +101,7 @@ impl RelayQueue {
         Self {
             pending: IndexMap::new(),
             next_seq: 0,
-            max_queue_size: 1000, // Reasonable default
+            max_queue_size: 1000,                     // Reasonable default
             request_timeout: Duration::from_secs(30), // 30 second timeout
             max_retries: 3,
             retry_interval: Duration::from_millis(500), // 500ms between retries
@@ -115,13 +115,19 @@ impl RelayQueue {
     fn enqueue(&mut self, target_peer_id: PeerId, frame: frame::PunchMeNow, now: Instant) -> bool {
         // Check queue size limit
         if self.pending.len() >= self.max_queue_size {
-            warn!("Relay queue full, dropping request for peer {:?}", target_peer_id);
+            warn!(
+                "Relay queue full, dropping request for peer {:?}",
+                target_peer_id
+            );
             return false;
         }
 
         // Check rate limit for this peer
         if !self.check_rate_limit(target_peer_id, now) {
-            warn!("Rate limit exceeded for peer {:?}, dropping relay request", target_peer_id);
+            warn!(
+                "Rate limit exceeded for peer {:?}, dropping relay request",
+                target_peer_id
+            );
             return false;
         }
 
@@ -136,11 +142,15 @@ impl RelayQueue {
         let seq = self.next_seq;
         self.next_seq += 1;
         self.pending.insert(seq, item);
-        
+
         // Record this request for rate limiting
         self.record_relay_request(target_peer_id, now);
-        
-        trace!("Queued relay request for peer {:?}, queue size: {}", target_peer_id, self.pending.len());
+
+        trace!(
+            "Queued relay request for peer {:?}, queue size: {}",
+            target_peer_id,
+            self.pending.len()
+        );
         true
     }
 
@@ -148,7 +158,7 @@ impl RelayQueue {
     fn check_rate_limit(&mut self, peer_id: PeerId, now: Instant) -> bool {
         // Clean up old entries first
         self.cleanup_rate_limiter(now);
-        
+
         // Check current request count for this peer
         if let Some(requests) = self.rate_limiter.get(&peer_id) {
             requests.len() < self.max_relays_per_peer
@@ -159,13 +169,18 @@ impl RelayQueue {
 
     /// Record a relay request for rate limiting
     fn record_relay_request(&mut self, peer_id: PeerId, now: Instant) {
-        self.rate_limiter.entry(peer_id).or_insert_with(VecDeque::new).push_back(now);
+        self.rate_limiter
+            .entry(peer_id)
+            .or_insert_with(VecDeque::new)
+            .push_back(now);
     }
 
     /// Clean up old rate limiting entries
     fn cleanup_rate_limiter(&mut self, now: Instant) {
         self.rate_limiter.retain(|_, requests| {
-            requests.retain(|&request_time| now.saturating_duration_since(request_time) <= self.rate_limit_window);
+            requests.retain(|&request_time| {
+                now.saturating_duration_since(request_time) <= self.rate_limit_window
+            });
             !requests.is_empty()
         });
     }
@@ -175,7 +190,7 @@ impl RelayQueue {
         // Find the first request that's ready to be retried
         let mut expired_keys = Vec::new();
         let mut ready_key = None;
-        
+
         for (seq, item) in &self.pending {
             // Check if request has timed out
             if now.saturating_duration_since(item.created_at) > self.request_timeout {
@@ -184,23 +199,27 @@ impl RelayQueue {
             }
 
             // Check if it's ready for retry
-            if item.attempts == 0 || 
-               item.last_attempt.map_or(true, |last| 
-                   now.saturating_duration_since(last) >= self.retry_interval) {
+            if item.attempts == 0
+                || item.last_attempt.map_or(true, |last| {
+                    now.saturating_duration_since(last) >= self.retry_interval
+                })
+            {
                 ready_key = Some(*seq);
                 break;
             }
         }
-        
+
         // Remove expired items
         for key in expired_keys {
             if let Some(expired) = self.pending.shift_remove(&key) {
-                debug!("Relay request for peer {:?} timed out after {:?}", 
-                       expired.target_peer_id, 
-                       now.saturating_duration_since(expired.created_at));
+                debug!(
+                    "Relay request for peer {:?} timed out after {:?}",
+                    expired.target_peer_id,
+                    now.saturating_duration_since(expired.created_at)
+                );
             }
         }
-        
+
         // Return ready item if found
         if let Some(key) = ready_key {
             if let Some(mut item) = self.pending.shift_remove(&key) {
@@ -216,23 +235,29 @@ impl RelayQueue {
     /// Requeue a failed relay request if it hasn't exceeded max retries
     fn requeue_failed(&mut self, item: RelayQueueItem) {
         if item.attempts < self.max_retries {
-            trace!("Requeuing failed relay request for peer {:?}, attempt {}/{}", 
-                   item.target_peer_id, item.attempts, self.max_retries);
+            trace!(
+                "Requeuing failed relay request for peer {:?}, attempt {}/{}",
+                item.target_peer_id, item.attempts, self.max_retries
+            );
             let seq = self.next_seq;
             self.next_seq += 1;
             self.pending.insert(seq, item);
         } else {
-            debug!("Dropping relay request for peer {:?} after {} failed attempts", 
-                   item.target_peer_id, item.attempts);
+            debug!(
+                "Dropping relay request for peer {:?} after {} failed attempts",
+                item.target_peer_id, item.attempts
+            );
         }
     }
 
     /// Clean up expired requests and return number of items cleaned
     fn cleanup_expired(&mut self, now: Instant) -> usize {
         let initial_len = self.pending.len();
-        
+
         // Collect expired keys
-        let expired_keys: Vec<u64> = self.pending.iter()
+        let expired_keys: Vec<u64> = self
+            .pending
+            .iter()
             .filter_map(|(seq, item)| {
                 if now.saturating_duration_since(item.created_at) > self.request_timeout {
                     Some(*seq)
@@ -241,11 +266,14 @@ impl RelayQueue {
                 }
             })
             .collect();
-        
+
         // Remove expired items
         for key in expired_keys {
             if let Some(expired) = self.pending.shift_remove(&key) {
-                debug!("Removing expired relay request for peer {:?}", expired.target_peer_id);
+                debug!(
+                    "Removing expired relay request for peer {:?}",
+                    expired.target_peer_id
+                );
             }
         }
 
@@ -256,7 +284,6 @@ impl RelayQueue {
     fn len(&self) -> usize {
         self.pending.len()
     }
-
 }
 
 /// The main entry point to the library
@@ -328,13 +355,19 @@ impl Endpoint {
     /// Register a peer ID with a connection handle for relay functionality
     pub fn register_peer(&mut self, peer_id: PeerId, connection_handle: ConnectionHandle) {
         self.peer_connections.insert(peer_id, connection_handle);
-        trace!("Registered peer {:?} with connection {:?}", peer_id, connection_handle);
+        trace!(
+            "Registered peer {:?} with connection {:?}",
+            peer_id, connection_handle
+        );
     }
 
     /// Unregister a peer ID from the connection mapping
     pub fn unregister_peer(&mut self, peer_id: &PeerId) {
         if let Some(handle) = self.peer_connections.remove(peer_id) {
-            trace!("Unregistered peer {:?} from connection {:?}", peer_id, handle);
+            trace!(
+                "Unregistered peer {:?} from connection {:?}",
+                peer_id, handle
+            );
         }
     }
 
@@ -344,18 +377,25 @@ impl Endpoint {
     }
 
     /// Queue a frame for relay to a target peer
-    pub(crate) fn queue_frame_for_peer(&mut self, peer_id: &PeerId, frame: frame::PunchMeNow) -> bool {
+    pub(crate) fn queue_frame_for_peer(
+        &mut self,
+        peer_id: &PeerId,
+        frame: frame::PunchMeNow,
+    ) -> bool {
         self.relay_stats.requests_received += 1;
-        
+
         if let Some(ch) = self.lookup_peer_connection(peer_id) {
             // Peer is currently connected, try to relay immediately
             if self.relay_frame_to_connection(ch, frame.clone()) {
                 self.relay_stats.requests_relayed += 1;
-                trace!("Immediately relayed frame to peer {:?} via connection {:?}", peer_id, ch);
+                trace!(
+                    "Immediately relayed frame to peer {:?} via connection {:?}",
+                    peer_id, ch
+                );
                 return true;
             }
         }
-        
+
         // Peer not connected or immediate relay failed, queue for later
         let now = Instant::now();
         if self.relay_queue.enqueue(*peer_id, frame, now) {
@@ -374,11 +414,15 @@ impl Endpoint {
     }
 
     /// Attempt to relay a frame to a specific connection
-    fn relay_frame_to_connection(&mut self, ch: ConnectionHandle, _frame: frame::PunchMeNow) -> bool {
+    fn relay_frame_to_connection(
+        &mut self,
+        ch: ConnectionHandle,
+        _frame: frame::PunchMeNow,
+    ) -> bool {
         // In a complete implementation, this would queue the frame in the connection's
         // pending frames. For now, we'll just return true to indicate success.
         // The actual frame queuing would need to be implemented at the connection level.
-        
+
         // TODO: Implement actual frame queuing to connection's pending frames
         trace!("Would relay frame to connection {:?}", ch);
         true
@@ -389,7 +433,7 @@ impl Endpoint {
         if let Some(connection) = self.connections.get_mut(connection_handle.0) {
             connection.peer_id = Some(peer_id);
             self.register_peer(peer_id, connection_handle);
-            
+
             // Process any queued relay requests for this peer
             self.process_queued_relays_for_peer(peer_id);
         }
@@ -399,11 +443,11 @@ impl Endpoint {
     fn process_queued_relays_for_peer(&mut self, peer_id: PeerId) {
         let _now = Instant::now();
         let mut processed = 0;
-        
+
         // Collect items to process for this peer
         let mut items_to_process = Vec::new();
         let mut keys_to_remove = Vec::new();
-        
+
         // Find all items for this peer
         for (seq, item) in &self.relay_queue.pending {
             if item.target_peer_id == peer_id {
@@ -411,12 +455,12 @@ impl Endpoint {
                 keys_to_remove.push(*seq);
             }
         }
-        
+
         // Remove items from queue
         for key in keys_to_remove {
             self.relay_queue.pending.shift_remove(&key);
         }
-        
+
         // Process the items
         for item in items_to_process {
             if let Some(ch) = self.lookup_peer_connection(&peer_id) {
@@ -431,11 +475,14 @@ impl Endpoint {
                 }
             }
         }
-        
+
         self.relay_stats.current_queue_size = self.relay_queue.len();
-        
+
         if processed > 0 {
-            debug!("Processed {} queued relay requests for peer {:?}", processed, peer_id);
+            debug!(
+                "Processed {} queued relay requests for peer {:?}",
+                processed, peer_id
+            );
         }
     }
 
@@ -444,14 +491,17 @@ impl Endpoint {
         let now = Instant::now();
         let mut processed = 0;
         let mut failed = 0;
-        
+
         // Process ready relay requests
         while let Some(item) = self.relay_queue.next_ready(now) {
             if let Some(ch) = self.lookup_peer_connection(&item.target_peer_id) {
                 if self.relay_frame_to_connection(ch, item.frame.clone()) {
                     self.relay_stats.requests_relayed += 1;
                     processed += 1;
-                    trace!("Successfully relayed frame to peer {:?}", item.target_peer_id);
+                    trace!(
+                        "Successfully relayed frame to peer {:?}",
+                        item.target_peer_id
+                    );
                 } else {
                     // Failed to relay, requeue for retry
                     self.relay_queue.requeue_failed(item);
@@ -464,19 +514,23 @@ impl Endpoint {
                 failed += 1;
             }
         }
-        
+
         // Clean up expired requests
         let expired = self.relay_queue.cleanup_expired(now);
         if expired > 0 {
             self.relay_stats.requests_timed_out += expired as u64;
             debug!("Cleaned up {} expired relay requests", expired);
         }
-        
+
         self.relay_stats.current_queue_size = self.relay_queue.len();
-        
+
         if processed > 0 || failed > 0 {
-            trace!("Relay queue processing: {} processed, {} failed, {} in queue", 
-                   processed, failed, self.relay_queue.len());
+            trace!(
+                "Relay queue processing: {} processed, {} failed, {} in queue",
+                processed,
+                failed,
+                self.relay_queue.len()
+            );
         }
     }
 
@@ -524,24 +578,37 @@ impl Endpoint {
                 // Handle relay request from bootstrap node
                 let peer_id = PeerId(target_peer_id);
                 if self.queue_frame_for_peer(&peer_id, punch_me_now) {
-                    trace!("Successfully queued PunchMeNow frame for relay to peer {:?}", peer_id);
+                    trace!(
+                        "Successfully queued PunchMeNow frame for relay to peer {:?}",
+                        peer_id
+                    );
                 } else {
                     warn!("Failed to queue PunchMeNow relay for peer {:?}", peer_id);
                 }
             }
             SendAddressFrame(add_address_frame) => {
                 // Handle bootstrap node request to send ADD_ADDRESS frame
-                trace!("Sending ADD_ADDRESS frame: seq={}, addr={}, priority={}", 
-                       add_address_frame.sequence, add_address_frame.address, add_address_frame.priority);
-                
+                trace!(
+                    "Sending ADD_ADDRESS frame: seq={}, addr={}, priority={}",
+                    add_address_frame.sequence,
+                    add_address_frame.address,
+                    add_address_frame.priority
+                );
+
                 // For now, log the frame since the queuing mechanism needs more integration
                 // TODO: Implement proper frame queuing in the connection layer
-                debug!("ADD_ADDRESS frame ready for transmission: {:?}", add_address_frame);
+                debug!(
+                    "ADD_ADDRESS frame ready for transmission: {:?}",
+                    add_address_frame
+                );
             }
             NatCandidateValidated { address, challenge } => {
                 // Handle successful NAT traversal candidate validation
-                trace!("NAT candidate validation succeeded for {} with challenge {:016x}", address, challenge);
-                
+                trace!(
+                    "NAT candidate validation succeeded for {} with challenge {:016x}",
+                    address, challenge
+                );
+
                 // The validation success is primarily handled by the connection-level state machine
                 // This event serves as notification to the endpoint for potential coordination
                 // with other components or logging/metrics collection
@@ -730,8 +797,7 @@ impl Endpoint {
         let padding_len = if max_padding_len <= IDEAL_MIN_PADDING_LEN {
             max_padding_len
         } else {
-            self.rng
-                .gen_range(IDEAL_MIN_PADDING_LEN..max_padding_len)
+            self.rng.gen_range(IDEAL_MIN_PADDING_LEN..max_padding_len)
         };
         buf.reserve(padding_len + RESET_TOKEN_SIZE);
         buf.resize(padding_len, 0);
@@ -1503,21 +1569,21 @@ impl ConnectionIndex {
     fn get(&self, addresses: &FourTuple, datagram: &PartialDecode) -> Option<RouteDatagramTo> {
         let dst_cid = datagram.dst_cid();
         let is_empty_cid = dst_cid.is_empty();
-        
+
         // Fast path: Try most common lookup first (non-empty CID)
         if !is_empty_cid {
             if let Some(&ch) = self.connection_ids.get(dst_cid) {
                 return Some(RouteDatagramTo::Connection(ch));
             }
         }
-        
+
         // Initial/0RTT packet lookup
         if datagram.is_initial() || datagram.is_0rtt() {
             if let Some(&ch) = self.connection_ids_initial.get(dst_cid) {
                 return Some(ch);
             }
         }
-        
+
         // Empty CID lookup (less common, do after fast path)
         if is_empty_cid {
             // Check incoming connections first (servers handle more incoming)
@@ -1528,7 +1594,7 @@ impl ConnectionIndex {
                 return Some(RouteDatagramTo::Connection(ch));
             }
         }
-        
+
         // Stateless reset token lookup (least common, do last)
         let data = datagram.data();
         if data.len() < RESET_TOKEN_SIZE {

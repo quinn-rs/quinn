@@ -4,7 +4,7 @@
 //! statistics, NAT traversal performance, and network health metrics.
 
 use crate::{
-    nat_traversal_api::{PeerId, NatTraversalStatistics, NatTraversalEvent},
+    nat_traversal_api::{NatTraversalEvent, NatTraversalStatistics, PeerId},
     quic_node::NodeStats,
     terminal_ui,
 };
@@ -27,29 +27,29 @@ pub enum BoxStyle {
 /// Draw a box with title and content
 fn draw_box(title: &str, content: &str, _style: BoxStyle, width: usize) -> String {
     let mut result = String::new();
-    
+
     // Top border with title
     let padding = width.saturating_sub(title.len() + 4);
     let left_pad = padding / 2;
     let right_pad = padding - left_pad;
-    
+
     result.push_str(&format!(
         "╭{} {} {}╮\n",
         "─".repeat(left_pad),
         title,
         "─".repeat(right_pad)
     ));
-    
+
     // Content lines
     for line in content.lines() {
         let line_len = line.chars().count();
         let padding = width.saturating_sub(line_len + 2);
         result.push_str(&format!("│ {}{} │\n", line, " ".repeat(padding)));
     }
-    
+
     // Bottom border
     result.push_str(&format!("╰{}╯", "─".repeat(width - 2)));
-    
+
     result
 }
 
@@ -151,19 +151,25 @@ impl StatsDashboard {
     /// Handle NAT traversal event
     pub async fn handle_nat_event(&self, event: &NatTraversalEvent) {
         match event {
-            NatTraversalEvent::ConnectionEstablished { peer_id, remote_address } => {
+            NatTraversalEvent::ConnectionEstablished {
+                peer_id,
+                remote_address,
+            } => {
                 let mut connections = self.connections.write().await;
-                connections.insert(*peer_id, ConnectionInfo {
-                    peer_id: *peer_id,
-                    remote_address: *remote_address,
-                    connected_at: Instant::now(),
-                    bytes_sent: 0,
-                    bytes_received: 0,
-                    last_activity: Instant::now(),
-                    rtt: None,
-                    packet_loss: 0.0,
-                    nat_type: "Unknown".to_string(),
-                });
+                connections.insert(
+                    *peer_id,
+                    ConnectionInfo {
+                        peer_id: *peer_id,
+                        remote_address: *remote_address,
+                        connected_at: Instant::now(),
+                        bytes_sent: 0,
+                        bytes_received: 0,
+                        last_activity: Instant::now(),
+                        rtt: None,
+                        packet_loss: 0.0,
+                        nat_type: "Unknown".to_string(),
+                    },
+                );
             }
             NatTraversalEvent::TraversalFailed { peer_id, .. } => {
                 let mut connections = self.connections.write().await;
@@ -202,16 +208,15 @@ impl StatsDashboard {
             0.0
         };
 
-        let total_bytes: u64 = connections.values()
+        let total_bytes: u64 = connections
+            .values()
             .map(|c| c.bytes_sent + c.bytes_received)
             .sum();
 
         let avg_rtt = if connections.is_empty() {
             Duration::from_millis(0)
         } else {
-            let total_rtt: Duration = connections.values()
-                .filter_map(|c| c.rtt)
-                .sum();
+            let total_rtt: Duration = connections.values().filter_map(|c| c.rtt).sum();
             let count = connections.values().filter(|c| c.rtt.is_some()).count();
             if count > 0 {
                 total_rtt / count as u32
@@ -246,7 +251,11 @@ impl StatsDashboard {
         output.push_str("\x1B[2J\x1B[H");
 
         // Title
-        output.push_str(&format!("{}🚀 ant-quic Connection Statistics Dashboard\n\n{}", terminal_ui::colors::BOLD, terminal_ui::colors::RESET));
+        output.push_str(&format!(
+            "{}🚀 ant-quic Connection Statistics Dashboard\n\n{}",
+            terminal_ui::colors::BOLD,
+            terminal_ui::colors::RESET
+        ));
 
         // System uptime
         let uptime = self.start_time.elapsed();
@@ -256,7 +265,7 @@ impl StatsDashboard {
         output.push_str(&self.render_overview_section().await);
         output.push_str(&self.render_nat_section().await);
         output.push_str(&self.render_connections_section().await);
-        
+
         if self.config.show_graphs {
             output.push_str(&self.render_graphs_section().await);
         }
@@ -272,7 +281,7 @@ impl StatsDashboard {
         let _connections = self.connections.read().await;
 
         let mut section = String::new();
-        
+
         section.push_str(&draw_box(
             "📊 Overview",
             &format!(
@@ -280,12 +289,19 @@ impl StatsDashboard {
                  Total Successful: {}\n\
                  Total Failed: {}\n\
                  Success Rate: {:.1}%",
-                format!("{}{}{}", terminal_ui::colors::GREEN, node_stats.active_connections, terminal_ui::colors::RESET),
+                format!(
+                    "{}{}{}",
+                    terminal_ui::colors::GREEN,
+                    node_stats.active_connections,
+                    terminal_ui::colors::RESET
+                ),
                 node_stats.successful_connections,
                 node_stats.failed_connections,
                 if node_stats.successful_connections + node_stats.failed_connections > 0 {
-                    (node_stats.successful_connections as f64 / 
-                     (node_stats.successful_connections + node_stats.failed_connections) as f64) * 100.0
+                    (node_stats.successful_connections as f64
+                        / (node_stats.successful_connections + node_stats.failed_connections)
+                            as f64)
+                        * 100.0
                 } else {
                     0.0
                 }
@@ -303,7 +319,7 @@ impl StatsDashboard {
         let nat_stats = self.nat_stats.read().await;
 
         let mut section = String::new();
-        
+
         section.push_str(&draw_box(
             "🌐 NAT Traversal",
             &format!(
@@ -316,7 +332,8 @@ impl StatsDashboard {
                 nat_stats.total_attempts,
                 nat_stats.successful_connections,
                 if nat_stats.total_attempts > 0 {
-                    (nat_stats.successful_connections as f64 / nat_stats.total_attempts as f64) * 100.0
+                    (nat_stats.successful_connections as f64 / nat_stats.total_attempts as f64)
+                        * 100.0
                 } else {
                     0.0
                 },
@@ -338,7 +355,7 @@ impl StatsDashboard {
         let connections = self.connections.read().await;
 
         let mut section = String::new();
-        
+
         if connections.is_empty() {
             section.push_str(&draw_box(
                 "🔗 Active Connections",
@@ -352,23 +369,30 @@ impl StatsDashboard {
                 if i > 0 {
                     content.push_str("\n─────────────────────────────────────────────\n");
                 }
-                
+
                 content.push_str(&format!(
                     "Peer: {}\n\
                      Address: {}\n\
                      Duration: {}\n\
                      Sent: {} | Received: {}\n\
                      RTT: {} | Loss: {:.1}%",
-                    format!("{}{}{}", terminal_ui::colors::DIM, hex::encode(&peer_id.0[..8]), terminal_ui::colors::RESET),
+                    format!(
+                        "{}{}{}",
+                        terminal_ui::colors::DIM,
+                        hex::encode(&peer_id.0[..8]),
+                        terminal_ui::colors::RESET
+                    ),
                     conn.remote_address,
                     format_duration(conn.connected_at.elapsed()),
                     format_bytes(conn.bytes_sent),
                     format_bytes(conn.bytes_received),
-                    conn.rtt.map(|d| format!("{:?}", d)).unwrap_or_else(|| "N/A".to_string()),
+                    conn.rtt
+                        .map(|d| format!("{:?}", d))
+                        .unwrap_or_else(|| "N/A".to_string()),
                     conn.packet_loss * 100.0,
                 ));
             }
-            
+
             section.push_str(&draw_box(
                 &format!("🔗 Active Connections ({})", connections.len()),
                 &content,
@@ -384,7 +408,7 @@ impl StatsDashboard {
     /// Render graphs section
     async fn render_graphs_section(&self) -> String {
         let history = self.history.read().await;
-        
+
         if history.len() < 2 {
             return String::new();
         }
@@ -392,10 +416,8 @@ impl StatsDashboard {
         let mut section = String::new();
 
         // Connection count graph
-        let conn_data: Vec<usize> = history.iter()
-            .map(|d| d.active_connections)
-            .collect();
-        
+        let conn_data: Vec<usize> = history.iter().map(|d| d.active_connections).collect();
+
         section.push_str(&draw_box(
             "📈 Connection History",
             &render_mini_graph(&conn_data, 20, 50),
@@ -405,10 +427,8 @@ impl StatsDashboard {
         section.push('\n');
 
         // Success rate graph
-        let success_data: Vec<f64> = history.iter()
-            .map(|d| d.nat_success_rate * 100.0)
-            .collect();
-        
+        let success_data: Vec<f64> = history.iter().map(|d| d.nat_success_rate * 100.0).collect();
+
         section.push_str(&draw_box(
             "📈 NAT Success Rate %",
             &render_mini_graph_float(&success_data, 20, 50),
@@ -423,11 +443,20 @@ impl StatsDashboard {
     /// Render footer
     async fn render_footer(&self) -> String {
         let last_update = *self.last_update.read().await;
-        
+
         format!(
             "\n{}\n{}",
-            format!("{}Last updated: {:?} ago{}", terminal_ui::colors::DIM, last_update.elapsed(), terminal_ui::colors::RESET),
-            format!("{}Press Ctrl+C to exit{}", terminal_ui::colors::DIM, terminal_ui::colors::RESET),
+            format!(
+                "{}Last updated: {:?} ago{}",
+                terminal_ui::colors::DIM,
+                last_update.elapsed(),
+                terminal_ui::colors::RESET
+            ),
+            format!(
+                "{}Press Ctrl+C to exit{}",
+                terminal_ui::colors::DIM,
+                terminal_ui::colors::RESET
+            ),
         )
     }
 }
@@ -449,12 +478,12 @@ fn format_bytes(bytes: u64) -> String {
     const UNITS: &[&str] = &["B", "KB", "MB", "GB", "TB"];
     let mut size = bytes as f64;
     let mut unit_index = 0;
-    
+
     while size >= 1024.0 && unit_index < UNITS.len() - 1 {
         size /= 1024.0;
         unit_index += 1;
     }
-    
+
     format!("{:.2} {}", size, UNITS[unit_index])
 }
 
@@ -466,34 +495,35 @@ fn render_mini_graph(data: &[usize], height: usize, width: usize) -> String {
 
     let max_val = *data.iter().max().unwrap_or(&1).max(&1) as f64;
     let step = data.len().max(1) / width.min(data.len()).max(1);
-    
+
     let mut graph = vec![vec![' '; width]; height];
-    
+
     for (i, chunk) in data.chunks(step).enumerate() {
         if i >= width {
             break;
         }
-        
+
         let avg = chunk.iter().sum::<usize>() as f64 / chunk.len() as f64;
         let normalized = (avg / max_val * (height - 1) as f64).round() as usize;
-        
+
         for y in 0..=normalized {
             let row = height - 1 - y;
             graph[row][i] = '█';
         }
     }
-    
+
     let mut output = String::new();
     for row in graph {
         output.push_str(&row.iter().collect::<String>());
         output.push('\n');
     }
-    
-    output.push_str(&format!("Max: {} | Latest: {}", 
+
+    output.push_str(&format!(
+        "Max: {} | Latest: {}",
         data.iter().max().unwrap_or(&0),
         data.last().unwrap_or(&0)
     ));
-    
+
     output
 }
 
@@ -503,35 +533,40 @@ fn render_mini_graph_float(data: &[f64], height: usize, width: usize) -> String 
         return "No data".to_string();
     }
 
-    let max_val = data.iter().cloned().fold(f64::NEG_INFINITY, f64::max).max(1.0);
+    let max_val = data
+        .iter()
+        .cloned()
+        .fold(f64::NEG_INFINITY, f64::max)
+        .max(1.0);
     let step = data.len().max(1) / width.min(data.len()).max(1);
-    
+
     let mut graph = vec![vec![' '; width]; height];
-    
+
     for (i, chunk) in data.chunks(step).enumerate() {
         if i >= width {
             break;
         }
-        
+
         let avg = chunk.iter().sum::<f64>() / chunk.len() as f64;
         let normalized = (avg / max_val * (height - 1) as f64).round() as usize;
-        
+
         for y in 0..=normalized {
             let row = height - 1 - y;
             graph[row][i] = '█';
         }
     }
-    
+
     let mut output = String::new();
     for row in graph {
         output.push_str(&row.iter().collect::<String>());
         output.push('\n');
     }
-    
-    output.push_str(&format!("Max: {:.1}% | Latest: {:.1}%", 
+
+    output.push_str(&format!(
+        "Max: {:.1}% | Latest: {:.1}%",
         data.iter().cloned().fold(f64::NEG_INFINITY, f64::max),
         data.last().unwrap_or(&0.0)
     ));
-    
+
     output
 }

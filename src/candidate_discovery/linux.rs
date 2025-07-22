@@ -6,12 +6,10 @@
 use std::{
     collections::HashMap,
     ffi::{CStr, CString},
-    io,
-    mem,
+    io, mem,
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
     os::unix::io::{AsRawFd, RawFd},
-    ptr,
-    slice,
+    ptr, slice,
     time::Instant,
 };
 
@@ -271,8 +269,10 @@ impl LinuxInterfaceDiscovery {
 
         if socket_fd < 0 {
             return Err(LinuxNetworkError::SocketCreationFailed {
-                error: format!("Failed to create netlink socket: {}", 
-                    std::io::Error::last_os_error()),
+                error: format!(
+                    "Failed to create netlink socket: {}",
+                    std::io::Error::last_os_error()
+                ),
             });
         }
 
@@ -280,7 +280,9 @@ impl LinuxInterfaceDiscovery {
         let mut addr: libc::sockaddr_nl = unsafe { std::mem::zeroed() };
         addr.nl_family = libc::AF_NETLINK as u16;
         addr.nl_pid = 0; // Kernel will assign PID
-        addr.nl_groups = (1 << (libc::RTNLGRP_LINK - 1)) | (1 << (libc::RTNLGRP_IPV4_IFADDR - 1)) | (1 << (libc::RTNLGRP_IPV6_IFADDR - 1));
+        addr.nl_groups = (1 << (libc::RTNLGRP_LINK - 1))
+            | (1 << (libc::RTNLGRP_IPV4_IFADDR - 1))
+            | (1 << (libc::RTNLGRP_IPV6_IFADDR - 1));
 
         // Bind socket
         let bind_result = unsafe {
@@ -292,10 +294,14 @@ impl LinuxInterfaceDiscovery {
         };
 
         if bind_result < 0 {
-            unsafe { libc::close(socket_fd); }
+            unsafe {
+                libc::close(socket_fd);
+            }
             return Err(LinuxNetworkError::SocketBindFailed {
-                error: format!("Failed to bind netlink socket: {}", 
-                    std::io::Error::last_os_error()),
+                error: format!(
+                    "Failed to bind netlink socket: {}",
+                    std::io::Error::last_os_error()
+                ),
             });
         }
 
@@ -310,10 +316,14 @@ impl LinuxInterfaceDiscovery {
         };
 
         if getsockname_result < 0 {
-            unsafe { libc::close(socket_fd); }
+            unsafe {
+                libc::close(socket_fd);
+            }
             return Err(LinuxNetworkError::SocketBindFailed {
-                error: format!("Failed to get socket name: {}", 
-                    std::io::Error::last_os_error()),
+                error: format!(
+                    "Failed to get socket name: {}",
+                    std::io::Error::last_os_error()
+                ),
             });
         }
 
@@ -374,12 +384,12 @@ impl LinuxInterfaceDiscovery {
             }
 
             // Parse netlink messages
-            let messages = Self::parse_netlink_messages(&socket.receive_buffer[..bytes_read as usize])?;
-            
+            let messages =
+                Self::parse_netlink_messages(&socket.receive_buffer[..bytes_read as usize])?;
+
             for message in messages {
                 match message.message_type {
-                    NetlinkMessageType::LinkStateChange |
-                    NetlinkMessageType::AddressChange => {
+                    NetlinkMessageType::LinkStateChange | NetlinkMessageType::AddressChange => {
                         changes_detected = true;
                         debug!("Network change detected: {:?}", message.message_type);
                     }
@@ -411,15 +421,9 @@ impl LinuxInterfaceDiscovery {
                 break; // Invalid or incomplete message
             }
 
-            let msg_type = u16::from_ne_bytes([
-                buffer[offset + 4],
-                buffer[offset + 5],
-            ]);
+            let msg_type = u16::from_ne_bytes([buffer[offset + 4], buffer[offset + 5]]);
 
-            let flags = u16::from_ne_bytes([
-                buffer[offset + 6],
-                buffer[offset + 7],
-            ]);
+            let flags = u16::from_ne_bytes([buffer[offset + 6], buffer[offset + 7]]);
 
             let sequence = u32::from_ne_bytes([
                 buffer[offset + 8],
@@ -490,7 +494,10 @@ impl LinuxInterfaceDiscovery {
                     }
                 }
                 Err(e) => {
-                    warn!("Failed to get interface details for {}: {:?}", interface_name, e);
+                    warn!(
+                        "Failed to get interface details for {}: {:?}",
+                        interface_name, e
+                    );
                 }
             }
 
@@ -504,19 +511,22 @@ impl LinuxInterfaceDiscovery {
     }
 
     /// Get detailed information about a specific interface
-    fn get_interface_details(&self, interface_name: &str) -> Result<LinuxInterface, LinuxNetworkError> {
+    fn get_interface_details(
+        &self,
+        interface_name: &str,
+    ) -> Result<LinuxInterface, LinuxNetworkError> {
         // Get interface index
         let interface_index = self.get_interface_index(interface_name)?;
-        
+
         // Get interface flags and state
         let (flags, state, mtu) = self.get_interface_flags_and_state(interface_name)?;
-        
+
         // Determine interface type
         let interface_type = self.determine_interface_type(interface_name, &flags)?;
-        
+
         // Get hardware address
         let hardware_address = self.get_hardware_address(interface_name).ok();
-        
+
         // Get IP addresses
         let ipv4_addresses = self.get_ipv4_addresses(interface_name)?;
         let ipv6_addresses = if self.interface_config.include_ipv6 {
@@ -558,7 +568,10 @@ impl LinuxInterfaceDiscovery {
     }
 
     /// Get interface flags and state
-    fn get_interface_flags_and_state(&self, interface_name: &str) -> Result<(InterfaceFlags, InterfaceState, u32), LinuxNetworkError> {
+    fn get_interface_flags_and_state(
+        &self,
+        interface_name: &str,
+    ) -> Result<(InterfaceFlags, InterfaceState, u32), LinuxNetworkError> {
         let socket_fd = unsafe { libc::socket(libc::AF_INET, libc::SOCK_DGRAM, 0) };
         if socket_fd < 0 {
             return Err(LinuxNetworkError::SocketCreationFailed {
@@ -569,7 +582,7 @@ impl LinuxInterfaceDiscovery {
         let mut ifreq: libc::ifreq = unsafe { std::mem::zeroed() };
         let name_bytes = interface_name.as_bytes();
         let copy_len = std::cmp::min(name_bytes.len(), libc::IFNAMSIZ - 1);
-        
+
         unsafe {
             std::ptr::copy_nonoverlapping(
                 name_bytes.as_ptr(),
@@ -581,7 +594,9 @@ impl LinuxInterfaceDiscovery {
         // Get interface flags
         let flags_result = unsafe { libc::ioctl(socket_fd, libc::SIOCGIFFLAGS, &mut ifreq) };
         if flags_result < 0 {
-            unsafe { libc::close(socket_fd); }
+            unsafe {
+                libc::close(socket_fd);
+            }
             return Err(LinuxNetworkError::InterfaceNotFound {
                 interface_name: format!("Failed to get flags for interface {}", interface_name),
             });
@@ -606,7 +621,9 @@ impl LinuxInterfaceDiscovery {
             1500 // Default MTU
         };
 
-        unsafe { libc::close(socket_fd); }
+        unsafe {
+            libc::close(socket_fd);
+        }
 
         // Determine interface state
         let state = if flags.is_up && flags.is_running {
@@ -621,7 +638,11 @@ impl LinuxInterfaceDiscovery {
     }
 
     /// Determine interface type from name and characteristics
-    fn determine_interface_type(&self, interface_name: &str, flags: &InterfaceFlags) -> Result<InterfaceType, LinuxNetworkError> {
+    fn determine_interface_type(
+        &self,
+        interface_name: &str,
+        flags: &InterfaceFlags,
+    ) -> Result<InterfaceType, LinuxNetworkError> {
         if flags.is_loopback {
             return Ok(InterfaceType::Loopback);
         }
@@ -690,7 +711,7 @@ impl LinuxInterfaceDiscovery {
         let mut ifreq: libc::ifreq = unsafe { std::mem::zeroed() };
         let name_bytes = interface_name.as_bytes();
         let copy_len = std::cmp::min(name_bytes.len(), libc::IFNAMSIZ - 1);
-        
+
         unsafe {
             std::ptr::copy_nonoverlapping(
                 name_bytes.as_ptr(),
@@ -700,7 +721,9 @@ impl LinuxInterfaceDiscovery {
         }
 
         let result = unsafe { libc::ioctl(socket_fd, libc::SIOCGIFHWADDR, &mut ifreq) };
-        unsafe { libc::close(socket_fd); }
+        unsafe {
+            libc::close(socket_fd);
+        }
 
         if result < 0 {
             return Err(LinuxNetworkError::InterfaceNotFound {
@@ -721,9 +744,12 @@ impl LinuxInterfaceDiscovery {
     }
 
     /// Get IPv4 addresses for interface
-    fn get_ipv4_addresses(&self, interface_name: &str) -> Result<Vec<(Ipv4Addr, u8)>, LinuxNetworkError> {
+    fn get_ipv4_addresses(
+        &self,
+        interface_name: &str,
+    ) -> Result<Vec<(Ipv4Addr, u8)>, LinuxNetworkError> {
         let mut addresses = Vec::new();
-        
+
         // Read /proc/net/fib_trie for IPv4 addresses
         // This is a simplified implementation - production code would use netlink
         let socket_fd = unsafe { libc::socket(libc::AF_INET, libc::SOCK_DGRAM, 0) };
@@ -734,7 +760,7 @@ impl LinuxInterfaceDiscovery {
         let mut ifreq: libc::ifreq = unsafe { std::mem::zeroed() };
         let name_bytes = interface_name.as_bytes();
         let copy_len = std::cmp::min(name_bytes.len(), libc::IFNAMSIZ - 1);
-        
+
         unsafe {
             std::ptr::copy_nonoverlapping(
                 name_bytes.as_ptr(),
@@ -745,19 +771,21 @@ impl LinuxInterfaceDiscovery {
 
         let result = unsafe { libc::ioctl(socket_fd, libc::SIOCGIFADDR, &mut ifreq) };
         if result >= 0 {
-            let sockaddr_in = unsafe { 
+            let sockaddr_in = unsafe {
                 &*(&ifreq.ifr_ifru.ifru_addr as *const libc::sockaddr as *const libc::sockaddr_in)
             };
-            
+
             if sockaddr_in.sin_family == libc::AF_INET as u16 {
                 let ip_bytes = sockaddr_in.sin_addr.s_addr.to_ne_bytes();
                 let ipv4_addr = Ipv4Addr::from(ip_bytes);
-                
+
                 // Get netmask
-                let netmask_result = unsafe { libc::ioctl(socket_fd, libc::SIOCGIFNETMASK, &mut ifreq) };
+                let netmask_result =
+                    unsafe { libc::ioctl(socket_fd, libc::SIOCGIFNETMASK, &mut ifreq) };
                 let prefix_len = if netmask_result >= 0 {
-                    let netmask_sockaddr_in = unsafe { 
-                        &*(&ifreq.ifr_ifru.ifru_netmask as *const libc::sockaddr as *const libc::sockaddr_in)
+                    let netmask_sockaddr_in = unsafe {
+                        &*(&ifreq.ifr_ifru.ifru_netmask as *const libc::sockaddr
+                            as *const libc::sockaddr_in)
                     };
                     let netmask_bytes = netmask_sockaddr_in.sin_addr.s_addr.to_ne_bytes();
                     let netmask = u32::from_ne_bytes(netmask_bytes);
@@ -765,19 +793,24 @@ impl LinuxInterfaceDiscovery {
                 } else {
                     24 // Default /24
                 };
-                
+
                 addresses.push((ipv4_addr, prefix_len));
             }
         }
 
-        unsafe { libc::close(socket_fd); }
+        unsafe {
+            libc::close(socket_fd);
+        }
         Ok(addresses)
     }
 
     /// Get IPv6 addresses for interface
-    fn get_ipv6_addresses(&self, interface_name: &str) -> Result<Vec<(Ipv6Addr, u8)>, LinuxNetworkError> {
+    fn get_ipv6_addresses(
+        &self,
+        interface_name: &str,
+    ) -> Result<Vec<(Ipv6Addr, u8)>, LinuxNetworkError> {
         let mut addresses = Vec::new();
-        
+
         // Read /proc/net/if_inet6 for IPv6 addresses
         let if_inet6_content = match std::fs::read_to_string("/proc/net/if_inet6") {
             Ok(content) => content,
@@ -790,7 +823,7 @@ impl LinuxInterfaceDiscovery {
                 let addr_str = parts[0];
                 let prefix_len_str = parts[1];
                 let if_name = parts[5];
-                
+
                 if if_name == interface_name {
                     if let Ok(prefix_len) = u8::from_str_radix(prefix_len_str, 16) {
                         // Parse IPv6 address from hex string
@@ -799,7 +832,9 @@ impl LinuxInterfaceDiscovery {
                             let mut ipv6_bytes = [0u8; 16];
                             let mut valid = true;
                             for i in 0..16 {
-                                if let Ok(byte) = u8::from_str_radix(&addr_str[i*2..i*2+2], 16) {
+                                if let Ok(byte) =
+                                    u8::from_str_radix(&addr_str[i * 2..i * 2 + 2], 16)
+                                {
                                     ipv6_bytes[i] = byte;
                                 } else {
                                     valid = false;
@@ -837,8 +872,12 @@ impl LinuxInterfaceDiscovery {
         }
 
         // Check interface type filter
-        if !self.interface_config.allowed_interface_types.is_empty() && 
-           !self.interface_config.allowed_interface_types.contains(&interface.interface_type) {
+        if !self.interface_config.allowed_interface_types.is_empty()
+            && !self
+                .interface_config
+                .allowed_interface_types
+                .contains(&interface.interface_type)
+        {
             return false;
         }
 
@@ -895,7 +934,7 @@ impl LinuxInterfaceDiscovery {
 impl NetworkInterfaceDiscovery for LinuxInterfaceDiscovery {
     fn start_scan(&mut self) -> Result<(), String> {
         debug!("Starting Linux network interface scan");
-        
+
         // Initialize netlink socket if monitoring is enabled
         if self.interface_config.enable_monitoring {
             if let Err(e) = self.initialize_netlink_socket() {
@@ -908,11 +947,12 @@ impl NetworkInterfaceDiscovery for LinuxInterfaceDiscovery {
             if let Ok(changes) = self.check_network_changes() {
                 if !changes {
                     debug!("Using cached interface data");
-                    let interfaces: Vec<NetworkInterface> = self.cached_interfaces
+                    let interfaces: Vec<NetworkInterface> = self
+                        .cached_interfaces
                         .values()
                         .map(|li| self.convert_to_network_interface(li))
                         .collect();
-                    
+
                     self.scan_state = ScanState::Completed {
                         scan_results: interfaces,
                     };
@@ -929,7 +969,7 @@ impl NetworkInterfaceDiscovery for LinuxInterfaceDiscovery {
         match self.enumerate_interfaces() {
             Ok(interfaces) => {
                 debug!("Successfully enumerated {} interfaces", interfaces.len());
-                
+
                 // Convert to generic NetworkInterface format
                 let network_interfaces: Vec<NetworkInterface> = interfaces
                     .iter()
@@ -938,11 +978,11 @@ impl NetworkInterfaceDiscovery for LinuxInterfaceDiscovery {
 
                 // Update cache
                 self.update_cache(interfaces);
-                
+
                 self.scan_state = ScanState::Completed {
                     scan_results: network_interfaces,
                 };
-                
+
                 info!("Network interface scan completed successfully");
                 Ok(())
             }
@@ -1047,7 +1087,7 @@ mod tests {
             enable_monitoring: false,
             allowed_interface_types: vec![InterfaceType::Ethernet],
         };
-        
+
         discovery.set_interface_config(config.clone());
         assert_eq!(discovery.interface_config.include_loopback, true);
         assert_eq!(discovery.interface_config.min_mtu, 1000);
@@ -1056,7 +1096,7 @@ mod tests {
     #[test]
     fn test_wireless_interface_detection() {
         let discovery = LinuxInterfaceDiscovery::new();
-        
+
         assert!(discovery.is_wireless_interface("wlan0"));
         assert!(discovery.is_wireless_interface("wl0"));
         assert!(!discovery.is_wireless_interface("eth0"));
@@ -1066,7 +1106,7 @@ mod tests {
     fn test_interface_type_determination() {
         let discovery = LinuxInterfaceDiscovery::new();
         let flags = InterfaceFlags::default();
-        
+
         assert_eq!(
             discovery.determine_interface_type("eth0", &flags).unwrap(),
             InterfaceType::Ethernet
@@ -1084,14 +1124,14 @@ mod tests {
     #[test]
     fn test_cache_validation() {
         let mut discovery = LinuxInterfaceDiscovery::new();
-        
+
         // No cache initially
         assert!(!discovery.is_cache_valid());
-        
+
         // Set cache time
         discovery.last_scan_time = Some(Instant::now());
         assert!(discovery.is_cache_valid());
-        
+
         // Expired cache
         discovery.last_scan_time = Some(Instant::now() - std::time::Duration::from_secs(60));
         assert!(!discovery.is_cache_valid());

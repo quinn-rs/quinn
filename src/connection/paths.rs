@@ -59,9 +59,11 @@ impl PathData {
         now: Instant,
         config: &TransportConfig,
     ) -> Self {
-        let congestion = config
-            .congestion_controller_factory
-            .new_controller(config.get_initial_mtu() as u64, 16 * 1024 * 1024, now);
+        let congestion = config.congestion_controller_factory.new_controller(
+            config.get_initial_mtu() as u64,
+            16 * 1024 * 1024,
+            now,
+        );
         Self {
             remote,
             rtt: RttEstimator::new(config.initial_rtt),
@@ -129,9 +131,11 @@ impl PathData {
     /// This is useful when it is known the underlying path has changed.
     pub(super) fn reset(&mut self, now: Instant, config: &TransportConfig) {
         self.rtt = RttEstimator::new(config.initial_rtt);
-        self.congestion = config
-            .congestion_controller_factory
-            .new_controller(config.get_initial_mtu() as u64, 16 * 1024 * 1024, now);
+        self.congestion = config.congestion_controller_factory.new_controller(
+            config.get_initial_mtu() as u64,
+            16 * 1024 * 1024,
+            now,
+        );
         self.mtud.reset(config.get_initial_mtu(), config.min_mtu);
     }
 
@@ -410,13 +414,13 @@ impl NatTraversalChallenges {
     pub(crate) fn push(&mut self, remote: SocketAddr, token: u64) {
         /// Arbitrary permissive limit to prevent abuse
         const MAX_NAT_CHALLENGES: usize = 10;
-        
+
         // Check if we already have a challenge for this address
         if let Some(existing) = self.pending.iter_mut().find(|x| x.remote == remote) {
             existing.token = token;
             return;
         }
-        
+
         if self.pending.len() < MAX_NAT_CHALLENGES {
             self.pending.push(NatTraversalChallenge { remote, token });
         } else {
@@ -424,8 +428,7 @@ impl NatTraversalChallenges {
             self.pending[0] = NatTraversalChallenge { remote, token };
         }
     }
-    
-    
+
     pub(crate) fn is_empty(&self) -> bool {
         self.pending.is_empty()
     }

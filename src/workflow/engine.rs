@@ -10,16 +10,15 @@ use std::{
 };
 
 use tokio::{
-    sync::{mpsc, RwLock, Mutex},
+    sync::{Mutex, RwLock, mpsc},
     time::{sleep, timeout},
 };
-use tracing::{debug, error, info, warn, instrument, span, Level};
+use tracing::{Level, debug, error, info, instrument, span, warn};
 
 use crate::workflow::{
-    RollbackStrategy, StageId, Version,
-    WorkflowContext, WorkflowDefinition, WorkflowError, WorkflowEvent,
-    WorkflowHandle, WorkflowId, WorkflowMetrics, WorkflowResult, WorkflowStage,
-    WorkflowStatus, WorkflowRegistry, StateStore,
+    RollbackStrategy, StageId, StateStore, Version, WorkflowContext, WorkflowDefinition,
+    WorkflowError, WorkflowEvent, WorkflowHandle, WorkflowId, WorkflowMetrics, WorkflowRegistry,
+    WorkflowResult, WorkflowStage, WorkflowStatus,
 };
 
 /// Configuration for the workflow engine
@@ -77,7 +76,7 @@ impl WorkflowEngine {
         state_store: Arc<dyn StateStore>,
     ) -> Self {
         let (shutdown_tx, shutdown_rx) = mpsc::channel(1);
-        
+
         Self {
             config,
             registry,
@@ -91,8 +90,11 @@ impl WorkflowEngine {
 
     /// Start the workflow engine
     pub async fn start(&self) -> Result<(), WorkflowError> {
-        info!("Starting workflow engine with {} workers", self.config.worker_count);
-        
+        info!(
+            "Starting workflow engine with {} workers",
+            self.config.worker_count
+        );
+
         // Start worker tasks
         for worker_id in 0..self.config.worker_count {
             let engine = self.clone();
@@ -100,42 +102,42 @@ impl WorkflowEngine {
                 engine.worker_loop(worker_id).await;
             });
         }
-        
+
         // Start checkpoint task
         let engine = self.clone();
         tokio::spawn(async move {
             engine.checkpoint_loop().await;
         });
-        
+
         Ok(())
     }
 
     /// Stop the workflow engine
     pub async fn stop(&self) -> Result<(), WorkflowError> {
         info!("Stopping workflow engine");
-        
+
         // Send shutdown signal
         let _ = self.shutdown_tx.send(()).await;
-        
+
         // Wait for all workflows to complete or timeout
         let timeout_duration = Duration::from_secs(30);
         let start = Instant::now();
-        
+
         loop {
             let executors = self.executors.read().await;
             if executors.is_empty() {
                 break;
             }
-            
+
             if start.elapsed() > timeout_duration {
                 warn!("Timeout waiting for workflows to complete");
                 break;
             }
-            
+
             drop(executors);
             sleep(Duration::from_millis(100)).await;
         }
-        
+
         Ok(())
     }
 
@@ -148,7 +150,10 @@ impl WorkflowEngine {
         input: HashMap<String, Vec<u8>>,
     ) -> Result<WorkflowHandle, WorkflowError> {
         // Get workflow definition
-        let definition = self.registry.get(workflow_id, version).await
+        let definition = self
+            .registry
+            .get(workflow_id, version)
+            .await
             .ok_or_else(|| WorkflowError {
                 code: "WORKFLOW_NOT_FOUND".to_string(),
                 message: format!("Workflow {} version {} not found", workflow_id, version),
@@ -156,7 +161,7 @@ impl WorkflowEngine {
                 trace: None,
                 recovery_hints: vec!["Check workflow ID and version".to_string()],
             })?;
-        
+
         // Check concurrent workflow limit
         let executors = self.executors.read().await;
         if executors.len() >= self.config.max_concurrent_workflows {
@@ -169,14 +174,14 @@ impl WorkflowEngine {
             });
         }
         drop(executors);
-        
+
         // Generate workflow instance ID
         let instance_id = WorkflowId::generate();
-        
+
         // Create workflow executor
         let (event_tx, event_rx) = mpsc::channel(100);
         let handle = WorkflowHandle::new(instance_id, event_tx);
-        
+
         let executor = WorkflowExecutor::new(
             instance_id,
             definition,
@@ -186,14 +191,17 @@ impl WorkflowEngine {
             self.state_store.clone(),
             self.config.clone(),
         );
-        
+
         // Register executor
         let mut executors = self.executors.write().await;
         executors.insert(instance_id, executor);
-        
+
         // Start workflow
-        self.event_queue.lock().await.push_back((instance_id, WorkflowEvent::Start));
-        
+        self.event_queue
+            .lock()
+            .await
+            .push_back((instance_id, WorkflowEvent::Start));
+
         info!("Started workflow {} instance {}", workflow_id, instance_id);
         Ok(handle)
     }
@@ -205,21 +213,27 @@ impl WorkflowEngine {
     ) -> Result<WorkflowHandle, WorkflowError> {
         // Load state from store
         let state = self.state_store.load(&instance_id).await?;
-        
+
         // Get workflow definition
-        let definition = self.registry.get(&state.workflow_id, &state.version).await
+        let definition = self
+            .registry
+            .get(&state.workflow_id, &state.version)
+            .await
             .ok_or_else(|| WorkflowError {
                 code: "WORKFLOW_NOT_FOUND".to_string(),
-                message: format!("Workflow {} version {} not found", state.workflow_id, state.version),
+                message: format!(
+                    "Workflow {} version {} not found",
+                    state.workflow_id, state.version
+                ),
                 stage: None,
                 trace: None,
                 recovery_hints: vec!["Check workflow ID and version".to_string()],
             })?;
-        
+
         // Create workflow executor
         let (event_tx, event_rx) = mpsc::channel(100);
         let handle = WorkflowHandle::new(instance_id, event_tx);
-        
+
         let mut executor = WorkflowExecutor::new(
             instance_id,
             definition,
@@ -229,14 +243,14 @@ impl WorkflowEngine {
             self.state_store.clone(),
             self.config.clone(),
         );
-        
+
         // Restore executor state
         executor.restore_state(state).await?;
-        
+
         // Register executor
         let mut executors = self.executors.write().await;
         executors.insert(instance_id, executor);
-        
+
         info!("Resumed workflow instance {}", instance_id);
         Ok(handle)
     }
@@ -245,26 +259,29 @@ impl WorkflowEngine {
     async fn worker_loop(&self, worker_id: usize) {
         let span = span!(Level::DEBUG, "workflow_worker", worker_id = worker_id);
         let _enter = span.enter();
-        
+
         debug!("Worker {} started", worker_id);
-        
+
         loop {
             // Check for shutdown
             if self.shutdown_rx.lock().await.try_recv().is_ok() {
                 debug!("Worker {} shutting down", worker_id);
                 break;
             }
-            
+
             // Get next event
             let event = {
                 let mut queue = self.event_queue.lock().await;
                 queue.pop_front()
             };
-            
+
             if let Some((workflow_id, event)) = event {
                 // Process event
                 if let Err(e) = self.process_event(workflow_id, event).await {
-                    error!("Error processing event for workflow {}: {:?}", workflow_id, e);
+                    error!(
+                        "Error processing event for workflow {}: {:?}",
+                        workflow_id, e
+                    );
                 }
             } else {
                 // No events, sleep briefly
@@ -280,40 +297,43 @@ impl WorkflowEngine {
         event: WorkflowEvent,
     ) -> Result<(), WorkflowError> {
         let mut executors = self.executors.write().await;
-        
+
         if let Some(executor) = executors.get_mut(&workflow_id) {
             // Process event in executor
             executor.process_event(event).await?;
-            
+
             // Check if workflow is complete
             let status = executor.handle.status().await;
             match status {
-                WorkflowStatus::Completed { .. } | 
-                WorkflowStatus::Failed { .. } | 
-                WorkflowStatus::Cancelled => {
+                WorkflowStatus::Completed { .. }
+                | WorkflowStatus::Failed { .. }
+                | WorkflowStatus::Cancelled => {
                     // Remove completed workflow
                     executors.remove(&workflow_id);
-                    info!("Workflow {} completed with status: {:?}", workflow_id, status);
+                    info!(
+                        "Workflow {} completed with status: {:?}",
+                        workflow_id, status
+                    );
                 }
                 _ => {}
             }
         }
-        
+
         Ok(())
     }
 
     /// Checkpoint loop for saving workflow state
     async fn checkpoint_loop(&self) {
         let mut interval = tokio::time::interval(self.config.checkpoint_interval);
-        
+
         loop {
             interval.tick().await;
-            
+
             // Check for shutdown
             if self.shutdown_rx.lock().await.try_recv().is_ok() {
                 break;
             }
-            
+
             // Checkpoint all active workflows
             let executors = self.executors.read().await;
             for (id, executor) in executors.iter() {
@@ -381,7 +401,7 @@ impl WorkflowExecutor {
             metrics: WorkflowMetrics::default(),
             stage_start: Instant::now(),
         };
-        
+
         Self {
             id,
             definition,
@@ -399,13 +419,16 @@ impl WorkflowExecutor {
     /// Process a workflow event
     async fn process_event(&mut self, event: WorkflowEvent) -> Result<(), WorkflowError> {
         debug!("Processing event {:?} for workflow {}", event, self.id);
-        
+
         match event {
             WorkflowEvent::Start => {
-                self.handle.update_status(WorkflowStatus::Running {
-                    current_stage: self.definition.initial_stage.clone(),
-                }).await;
-                self.execute_stage(self.definition.initial_stage.clone()).await?;
+                self.handle
+                    .update_status(WorkflowStatus::Running {
+                        current_stage: self.definition.initial_stage.clone(),
+                    })
+                    .await;
+                self.execute_stage(self.definition.initial_stage.clone())
+                    .await?;
             }
             WorkflowEvent::StageCompleted { stage_id } => {
                 self.handle_stage_completion(stage_id).await?;
@@ -421,16 +444,19 @@ impl WorkflowExecutor {
             }
             _ => {}
         }
-        
+
         Ok(())
     }
 
     /// Execute a workflow stage
     async fn execute_stage(&mut self, stage_id: StageId) -> Result<(), WorkflowError> {
         info!("Executing stage {} for workflow {}", stage_id, self.id);
-        
+
         // Find stage definition
-        let stage = self.definition.stages.iter()
+        let stage = self
+            .definition
+            .stages
+            .iter()
             .find(|s| s.id == stage_id)
             .ok_or_else(|| WorkflowError {
                 code: "STAGE_NOT_FOUND".to_string(),
@@ -440,11 +466,11 @@ impl WorkflowExecutor {
                 recovery_hints: vec![],
             })?
             .clone();
-        
+
         // Update context
         self.context.current_stage = stage_id.clone();
         self.context.stage_start = Instant::now();
-        
+
         // Check preconditions
         if !self.check_preconditions(&stage).await? {
             return Err(WorkflowError {
@@ -455,42 +481,51 @@ impl WorkflowExecutor {
                 recovery_hints: vec!["Check stage preconditions".to_string()],
             });
         }
-        
+
         // Get stage timeout
-        let stage_timeout = stage.max_duration
+        let stage_timeout = stage
+            .max_duration
             .or_else(|| self.definition.timeouts.get(&stage_id).cloned())
             .unwrap_or(self.config.default_timeout);
-        
+
         // Execute stage with timeout
         let result = timeout(stage_timeout, self.execute_stage_actions(&stage)).await;
-        
+
         match result {
             Ok(Ok(())) => {
                 // Check postconditions
                 if self.check_postconditions(&stage).await? {
-                    self.handle.send_event(WorkflowEvent::StageCompleted {
-                        stage_id: stage_id.clone(),
-                    }).await?;
+                    self.handle
+                        .send_event(WorkflowEvent::StageCompleted {
+                            stage_id: stage_id.clone(),
+                        })
+                        .await?;
                 } else {
-                    self.handle.send_event(WorkflowEvent::StageFailed {
-                        stage_id: stage_id.clone(),
-                        error: "Postconditions not met".to_string(),
-                    }).await?;
+                    self.handle
+                        .send_event(WorkflowEvent::StageFailed {
+                            stage_id: stage_id.clone(),
+                            error: "Postconditions not met".to_string(),
+                        })
+                        .await?;
                 }
             }
             Ok(Err(e)) => {
-                self.handle.send_event(WorkflowEvent::StageFailed {
-                    stage_id: stage_id.clone(),
-                    error: e.message.clone(),
-                }).await?;
+                self.handle
+                    .send_event(WorkflowEvent::StageFailed {
+                        stage_id: stage_id.clone(),
+                        error: e.message.clone(),
+                    })
+                    .await?;
             }
             Err(_) => {
-                self.handle.send_event(WorkflowEvent::Timeout {
-                    stage_id: stage_id.clone(),
-                }).await?;
+                self.handle
+                    .send_event(WorkflowEvent::Timeout {
+                        stage_id: stage_id.clone(),
+                    })
+                    .await?;
             }
         }
-        
+
         Ok(())
     }
 
@@ -499,18 +534,21 @@ impl WorkflowExecutor {
         // Execute each action in sequence
         for (i, action) in stage.actions.iter().enumerate() {
             debug!("Executing action {} for stage {}", i, stage.id);
-            
+
             // Execute action
             action.execute(&mut self.context).await?;
-            
+
             // Update metrics
             self.context.metrics.stages_executed += 1;
         }
-        
+
         // Record stage duration
         let duration = self.context.stage_start.elapsed();
-        self.context.metrics.stage_durations.insert(stage.id.clone(), duration);
-        
+        self.context
+            .metrics
+            .stage_durations
+            .insert(stage.id.clone(), duration);
+
         Ok(())
     }
 
@@ -518,7 +556,11 @@ impl WorkflowExecutor {
     async fn check_preconditions(&self, stage: &WorkflowStage) -> Result<bool, WorkflowError> {
         for condition in &stage.preconditions {
             if !condition.check(&self.context).await {
-                debug!("Precondition {} failed for stage {}", condition.description(), stage.id);
+                debug!(
+                    "Precondition {} failed for stage {}",
+                    condition.description(),
+                    stage.id
+                );
                 return Ok(false);
             }
         }
@@ -529,7 +571,11 @@ impl WorkflowExecutor {
     async fn check_postconditions(&self, stage: &WorkflowStage) -> Result<bool, WorkflowError> {
         for condition in &stage.postconditions {
             if !condition.check(&self.context).await {
-                debug!("Postcondition {} failed for stage {}", condition.description(), stage.id);
+                debug!(
+                    "Postcondition {} failed for stage {}",
+                    condition.description(),
+                    stage.id
+                );
                 return Ok(false);
             }
         }
@@ -539,58 +585,72 @@ impl WorkflowExecutor {
     /// Handle stage completion
     async fn handle_stage_completion(&mut self, stage_id: StageId) -> Result<(), WorkflowError> {
         info!("Stage {} completed for workflow {}", stage_id, self.id);
-        
+
         // Reset retry counter
         self.retry_attempts.remove(&stage_id);
-        
+
         // Check if this is a final stage
         if self.definition.final_stages.contains(&stage_id) {
             self.complete_workflow().await?;
             return Ok(());
         }
-        
+
         // Find next stage
-        let event = WorkflowEvent::StageCompleted { stage_id: stage_id.clone() };
+        let event = WorkflowEvent::StageCompleted {
+            stage_id: stage_id.clone(),
+        };
         if let Some(next_stage) = self.definition.transitions.get(&(stage_id, event)) {
             self.execute_stage(next_stage.clone()).await?;
         } else {
             // No transition defined, workflow complete
             self.complete_workflow().await?;
         }
-        
+
         Ok(())
     }
 
     /// Handle stage failure
-    async fn handle_stage_failure(&mut self, stage_id: StageId, error: String) -> Result<(), WorkflowError> {
-        warn!("Stage {} failed for workflow {}: {}", stage_id, self.id, error);
-        
+    async fn handle_stage_failure(
+        &mut self,
+        stage_id: StageId,
+        error: String,
+    ) -> Result<(), WorkflowError> {
+        warn!(
+            "Stage {} failed for workflow {}: {}",
+            stage_id, self.id, error
+        );
+
         // Update metrics
         self.context.metrics.error_count += 1;
-        
+
         // Get error handler
         if let Some(handler) = self.definition.error_handlers.get(&stage_id) {
             // Check retry count
             let attempts = self.retry_attempts.entry(stage_id.clone()).or_insert(0);
             *attempts += 1;
-            
+
             if *attempts <= handler.max_retries {
                 // Calculate backoff delay
                 let delay = handler.backoff.calculate_delay(*attempts - 1);
-                info!("Retrying stage {} after {:?} (attempt {}/{})", 
-                      stage_id, delay, attempts, handler.max_retries);
-                
+                info!(
+                    "Retrying stage {} after {:?} (attempt {}/{})",
+                    stage_id, delay, attempts, handler.max_retries
+                );
+
                 // Wait before retry
                 sleep(delay).await;
-                
+
                 // Update metrics
                 self.context.metrics.retry_count += 1;
-                
+
                 // Retry stage
                 self.execute_stage(stage_id).await?;
             } else if let Some(fallback) = &handler.fallback_stage {
                 // Max retries exceeded, go to fallback
-                info!("Max retries exceeded for stage {}, going to fallback {}", stage_id, fallback);
+                info!(
+                    "Max retries exceeded for stage {}, going to fallback {}",
+                    stage_id, fallback
+                );
                 self.execute_stage(fallback.clone()).await?;
             } else if handler.propagate {
                 // Propagate error
@@ -600,7 +660,8 @@ impl WorkflowExecutor {
                     stage: Some(stage_id),
                     trace: None,
                     recovery_hints: vec![],
-                }).await?;
+                })
+                .await?;
             } else {
                 // Handle rollback if defined
                 if let Some(stage) = self.definition.stages.iter().find(|s| s.id == stage_id) {
@@ -617,24 +678,33 @@ impl WorkflowExecutor {
                 stage: Some(stage_id),
                 trace: None,
                 recovery_hints: vec![],
-            }).await?;
+            })
+            .await?;
         }
-        
+
         Ok(())
     }
 
     /// Handle stage timeout
     async fn handle_stage_timeout(&mut self, stage_id: StageId) -> Result<(), WorkflowError> {
         warn!("Stage {} timed out for workflow {}", stage_id, self.id);
-        
+
         // Treat as failure
-        self.handle_stage_failure(stage_id, "Stage execution timed out".to_string()).await
+        self.handle_stage_failure(stage_id, "Stage execution timed out".to_string())
+            .await
     }
 
     /// Execute rollback strategy
-    async fn execute_rollback(&mut self, strategy: RollbackStrategy, failed_stage: StageId) -> Result<(), WorkflowError> {
-        info!("Executing rollback for stage {} in workflow {}", failed_stage, self.id);
-        
+    async fn execute_rollback(
+        &mut self,
+        strategy: RollbackStrategy,
+        failed_stage: StageId,
+    ) -> Result<(), WorkflowError> {
+        info!(
+            "Executing rollback for stage {} in workflow {}",
+            failed_stage, self.id
+        );
+
         match strategy {
             RollbackStrategy::None => Ok(()),
             RollbackStrategy::Compensate { actions } => {
@@ -661,59 +731,71 @@ impl WorkflowExecutor {
     /// Handle workflow cancellation
     async fn handle_cancellation(&mut self) -> Result<(), WorkflowError> {
         info!("Workflow {} cancelled", self.id);
-        
+
         self.handle.update_status(WorkflowStatus::Cancelled).await;
-        
+
         // Execute cleanup if needed
         // TODO: Add cleanup logic
-        
+
         Ok(())
     }
 
     /// Complete the workflow successfully
     async fn complete_workflow(&mut self) -> Result<(), WorkflowError> {
         let duration = self.start_time.elapsed();
-        
-        info!("Workflow {} completed successfully in {:?}", self.id, duration);
-        
+
+        info!(
+            "Workflow {} completed successfully in {:?}",
+            self.id, duration
+        );
+
         let result = WorkflowResult {
             output: self.context.state.clone(),
             duration,
             metrics: self.context.metrics.clone(),
         };
-        
-        self.handle.update_status(WorkflowStatus::Completed { result }).await;
-        
+
+        self.handle
+            .update_status(WorkflowStatus::Completed { result })
+            .await;
+
         // Save final state
         self.checkpoint().await?;
-        
+
         Ok(())
     }
 
     /// Fail the workflow
     async fn fail_workflow(&mut self, error: WorkflowError) -> Result<(), WorkflowError> {
         error!("Workflow {} failed: {:?}", self.id, error);
-        
-        self.handle.update_status(WorkflowStatus::Failed { error: error.clone() }).await;
-        
+
+        self.handle
+            .update_status(WorkflowStatus::Failed {
+                error: error.clone(),
+            })
+            .await;
+
         // Save final state
         self.checkpoint().await?;
-        
+
         Ok(())
     }
 
     /// Checkpoint workflow state
     async fn checkpoint(&self) -> Result<(), WorkflowError> {
         debug!("Checkpointing workflow {}", self.id);
-        
+
         // Save state to store
         // TODO: Implement state serialization
-        
+
         Ok(())
     }
 
     /// Restore workflow state
-    async fn restore_state(&mut self, _state: crate::workflow::WorkflowState) -> Result<(), WorkflowError> {
+    async fn restore_state(
+        &mut self,
+        _state: crate::workflow::WorkflowState,
+    ) -> Result<(), WorkflowError> {
         // TODO: Implement state restoration
         Ok(())
     }
@@ -728,24 +810,27 @@ mod tests {
     async fn test_workflow_engine_basic() {
         let registry = Arc::new(WorkflowRegistry::new());
         registry.load_defaults().await.unwrap();
-        
+
         let state_store = Arc::new(InMemoryStateStore::new());
-        let engine = WorkflowEngine::new(
-            WorkflowEngineConfig::default(),
-            registry,
-            state_store,
-        );
-        
+        let engine = WorkflowEngine::new(WorkflowEngineConfig::default(), registry, state_store);
+
         engine.start().await.unwrap();
-        
-        let handle = engine.start_workflow(
-            "nat_traversal_basic",
-            &Version { major: 1, minor: 0, patch: 0 },
-            HashMap::new(),
-        ).await.unwrap();
-        
+
+        let handle = engine
+            .start_workflow(
+                "nat_traversal_basic",
+                &Version {
+                    major: 1,
+                    minor: 0,
+                    patch: 0,
+                },
+                HashMap::new(),
+            )
+            .await
+            .unwrap();
+
         assert_eq!(handle.status().await, WorkflowStatus::Initializing);
-        
+
         engine.stop().await.unwrap();
     }
 }

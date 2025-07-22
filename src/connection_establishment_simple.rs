@@ -10,10 +10,10 @@ use std::{
     time::{Duration, Instant},
 };
 
-use tracing::{info, warn, debug};
+use tracing::{debug, info, warn};
 
 use crate::{
-    candidate_discovery::{CandidateDiscoveryManager, DiscoveryEvent, DiscoveryError},
+    candidate_discovery::{CandidateDiscoveryManager, DiscoveryError, DiscoveryEvent},
     nat_traversal_api::{BootstrapNode, CandidateAddress, PeerId},
 };
 
@@ -69,12 +69,27 @@ enum SimpleAttemptState {
 /// Simplified events
 #[derive(Debug, Clone)]
 pub enum SimpleConnectionEvent {
-    AttemptStarted { peer_id: PeerId },
-    DirectConnectionTried { peer_id: PeerId, address: SocketAddr },
-    CandidateDiscoveryStarted { peer_id: PeerId },
-    NatTraversalStarted { peer_id: PeerId },
-    ConnectionEstablished { peer_id: PeerId, address: SocketAddr },
-    ConnectionFailed { peer_id: PeerId, error: String },
+    AttemptStarted {
+        peer_id: PeerId,
+    },
+    DirectConnectionTried {
+        peer_id: PeerId,
+        address: SocketAddr,
+    },
+    CandidateDiscoveryStarted {
+        peer_id: PeerId,
+    },
+    NatTraversalStarted {
+        peer_id: PeerId,
+    },
+    ConnectionEstablished {
+        peer_id: PeerId,
+        address: SocketAddr,
+    },
+    ConnectionFailed {
+        peer_id: PeerId,
+        error: String,
+    },
 }
 
 impl Default for SimpleEstablishmentConfig {
@@ -196,7 +211,8 @@ impl SimpleConnectionEstablishmentManager {
             attempt.state = SimpleAttemptState::CandidateDiscovery;
 
             if let Ok(mut discovery) = self.discovery_manager.lock() {
-                discovery.start_discovery(peer_id, self.bootstrap_nodes.clone())
+                discovery
+                    .start_discovery(peer_id, self.bootstrap_nodes.clone())
                     .map_err(|e| format!("Discovery failed: {:?}", e))?;
             } else {
                 return Err("Failed to lock discovery manager".to_string());
@@ -230,16 +246,22 @@ impl SimpleConnectionEstablishmentManager {
             match attempt.state {
                 SimpleAttemptState::DirectConnection if self.config.enable_nat_traversal => {
                     // Fallback to NAT traversal
-                    info!("Direct connection timed out for peer {:?}, starting NAT traversal", peer_id);
+                    info!(
+                        "Direct connection timed out for peer {:?}, starting NAT traversal",
+                        peer_id
+                    );
                     attempt.state = SimpleAttemptState::CandidateDiscovery;
-                    
+
                     // Start discovery outside of the borrow
-                    let discovery_result = if let Ok(mut discovery) = self.discovery_manager.lock() {
+                    let discovery_result = if let Ok(mut discovery) = self.discovery_manager.lock()
+                    {
                         discovery.start_discovery(peer_id, self.bootstrap_nodes.clone())
                     } else {
-                        Err(DiscoveryError::InternalError("Failed to lock discovery manager".to_string()))
+                        Err(DiscoveryError::InternalError(
+                            "Failed to lock discovery manager".to_string(),
+                        ))
                     };
-                    
+
                     if let Err(e) = discovery_result {
                         attempt.state = SimpleAttemptState::Failed;
                         attempt.last_error = Some(format!("Discovery failed: {:?}", e));
@@ -249,7 +271,7 @@ impl SimpleConnectionEstablishmentManager {
                         });
                         return true;
                     }
-                    
+
                     events.push(SimpleConnectionEvent::CandidateDiscoveryStarted { peer_id });
                     return false;
                 }
@@ -293,9 +315,9 @@ impl SimpleConnectionEstablishmentManager {
         events: &mut Vec<SimpleConnectionEvent>,
     ) {
         match discovery_event {
-            DiscoveryEvent::LocalCandidateDiscovered { candidate } |
-            DiscoveryEvent::ServerReflexiveCandidateDiscovered { candidate, .. } |
-            DiscoveryEvent::PredictedCandidateGenerated { candidate, .. } => {
+            DiscoveryEvent::LocalCandidateDiscovered { candidate }
+            | DiscoveryEvent::ServerReflexiveCandidateDiscovered { candidate, .. }
+            | DiscoveryEvent::PredictedCandidateGenerated { candidate, .. } => {
                 // Add candidate to relevant attempts
                 for attempt in self.active_attempts.values_mut() {
                     if attempt.state == SimpleAttemptState::CandidateDiscovery {
@@ -305,7 +327,9 @@ impl SimpleConnectionEstablishmentManager {
             }
             DiscoveryEvent::DiscoveryCompleted { .. } => {
                 // Transition attempts to NAT traversal
-                let peer_ids: Vec<_> = self.active_attempts.iter()
+                let peer_ids: Vec<_> = self
+                    .active_attempts
+                    .iter()
                     .filter(|(_, a)| a.state == SimpleAttemptState::CandidateDiscovery)
                     .map(|(peer_id, _)| *peer_id)
                     .collect();
@@ -320,7 +344,9 @@ impl SimpleConnectionEstablishmentManager {
             DiscoveryEvent::DiscoveryFailed { error, .. } => {
                 warn!("Discovery failed: {:?}", error);
                 // Mark relevant attempts as failed
-                let peer_ids: Vec<_> = self.active_attempts.iter()
+                let peer_ids: Vec<_> = self
+                    .active_attempts
+                    .iter()
                     .filter(|(_, a)| a.state == SimpleAttemptState::CandidateDiscovery)
                     .map(|(peer_id, _)| *peer_id)
                     .collect();

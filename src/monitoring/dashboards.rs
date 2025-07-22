@@ -9,9 +9,9 @@ use std::{
     time::{Duration, SystemTime},
 };
 
-use tokio::sync::{RwLock, Mutex};
+use serde::{Deserialize, Serialize};
+use tokio::sync::{Mutex, RwLock};
 use tracing::{debug, info, warn};
-use serde::{Serialize, Deserialize};
 
 use crate::monitoring::MonitoringError;
 
@@ -115,17 +115,27 @@ impl DashboardManager {
     }
 
     /// Generate specific dashboard
-    pub async fn generate_dashboard(&self, dashboard_id: &str) -> Result<Dashboard, MonitoringError> {
-        let config = self.config.dashboards.iter()
+    pub async fn generate_dashboard(
+        &self,
+        dashboard_id: &str,
+    ) -> Result<Dashboard, MonitoringError> {
+        let config = self
+            .config
+            .dashboards
+            .iter()
             .find(|d| d.id == dashboard_id)
-            .ok_or_else(|| MonitoringError::ConfigError(format!("Dashboard {} not found", dashboard_id)))?;
+            .ok_or_else(|| {
+                MonitoringError::ConfigError(format!("Dashboard {} not found", dashboard_id))
+            })?;
 
         self.build_dashboard(config).await
     }
 
     /// Get all available dashboards
     pub async fn get_dashboards(&self) -> Vec<DashboardInfo> {
-        self.config.dashboards.iter()
+        self.config
+            .dashboards
+            .iter()
             .map(|d| DashboardInfo {
                 id: d.id.clone(),
                 title: d.title.clone(),
@@ -145,16 +155,36 @@ impl DashboardManager {
     /// Register default components
     async fn register_default_components(&self) -> Result<(), MonitoringError> {
         // Register default widgets
-        self.widget_registry.register_widget("time_series", WidgetBuilderImpl::TimeSeries(TimeSeriesWidget::new())).await;
-        self.widget_registry.register_widget("gauge", WidgetBuilderImpl::Gauge(GaugeWidget::new())).await;
-        self.widget_registry.register_widget("heatmap", WidgetBuilderImpl::Heatmap(HeatmapWidget::new())).await;
-        self.widget_registry.register_widget("table", WidgetBuilderImpl::Table(TableWidget::new())).await;
+        self.widget_registry
+            .register_widget(
+                "time_series",
+                WidgetBuilderImpl::TimeSeries(TimeSeriesWidget::new()),
+            )
+            .await;
+        self.widget_registry
+            .register_widget("gauge", WidgetBuilderImpl::Gauge(GaugeWidget::new()))
+            .await;
+        self.widget_registry
+            .register_widget("heatmap", WidgetBuilderImpl::Heatmap(HeatmapWidget::new()))
+            .await;
+        self.widget_registry
+            .register_widget("table", WidgetBuilderImpl::Table(TableWidget::new()))
+            .await;
 
         // Register default data providers
         let mut providers = self.data_providers.write().await;
-        providers.insert("nat_attempts".to_string(), DataProviderImpl::NatAttempts(NatAttemptsDataProvider::new()));
-        providers.insert("nat_results".to_string(), DataProviderImpl::NatResults(NatResultsDataProvider::new()));
-        providers.insert("health".to_string(), DataProviderImpl::Health(HealthDataProvider::new()));
+        providers.insert(
+            "nat_attempts".to_string(),
+            DataProviderImpl::NatAttempts(NatAttemptsDataProvider::new()),
+        );
+        providers.insert(
+            "nat_results".to_string(),
+            DataProviderImpl::NatResults(NatResultsDataProvider::new()),
+        );
+        providers.insert(
+            "health".to_string(),
+            DataProviderImpl::Health(HealthDataProvider::new()),
+        );
 
         info!("Registered default dashboard components");
         Ok(())
@@ -164,14 +194,20 @@ impl DashboardManager {
     async fn generate_all_dashboards(&self) -> Result<(), MonitoringError> {
         for dashboard_config in &self.config.dashboards {
             if let Err(e) = self.build_dashboard(dashboard_config).await {
-                warn!("Failed to generate dashboard {}: {}", dashboard_config.id, e);
+                warn!(
+                    "Failed to generate dashboard {}: {}",
+                    dashboard_config.id, e
+                );
             }
         }
         Ok(())
     }
 
     /// Build individual dashboard
-    async fn build_dashboard(&self, config: &DashboardDefinition) -> Result<Dashboard, MonitoringError> {
+    async fn build_dashboard(
+        &self,
+        config: &DashboardDefinition,
+    ) -> Result<Dashboard, MonitoringError> {
         let mut widgets = Vec::new();
 
         for widget_config in &config.widgets {
@@ -194,13 +230,19 @@ impl DashboardManager {
     /// Build individual widget
     async fn build_widget(&self, config: &WidgetDefinition) -> Result<Widget, MonitoringError> {
         // Get widget builder
-        let widget_builder = self.widget_registry.get_widget(&config.widget_type).await
-            .ok_or_else(|| MonitoringError::ConfigError(format!("Unknown widget type: {}", config.widget_type)))?;
+        let widget_builder = self
+            .widget_registry
+            .get_widget(&config.widget_type)
+            .await
+            .ok_or_else(|| {
+                MonitoringError::ConfigError(format!("Unknown widget type: {}", config.widget_type))
+            })?;
 
         // Get data provider
         let data_providers = self.data_providers.read().await;
-        let data_provider = data_providers.get(&config.data_source)
-            .ok_or_else(|| MonitoringError::ConfigError(format!("Unknown data source: {}", config.data_source)))?;
+        let data_provider = data_providers.get(&config.data_source).ok_or_else(|| {
+            MonitoringError::ConfigError(format!("Unknown data source: {}", config.data_source))
+        })?;
 
         // Fetch data
         let data = data_provider.fetch_data(&config.query).await?;
@@ -306,38 +348,45 @@ pub struct DashboardConfig {
 impl Default for DashboardConfig {
     fn default() -> Self {
         Self {
-            dashboards: vec![
-                DashboardDefinition {
-                    id: "nat-overview".to_string(),
-                    title: "NAT Traversal Overview".to_string(),
-                    description: "High-level overview of NAT traversal performance".to_string(),
-                    category: "Overview".to_string(),
-                    layout: LayoutType::Grid { columns: 2, rows: 3 },
-                    auto_refresh: true,
-                    widgets: vec![
-                        WidgetDefinition {
-                            id: "success-rate".to_string(),
-                            title: "Success Rate".to_string(),
-                            widget_type: "gauge".to_string(),
-                            data_source: "metrics".to_string(),
-                            query: "success_rate_last_hour".to_string(),
-                            position: Position { x: 0, y: 0 },
-                            size: Size { width: 1, height: 1 },
-                            options: HashMap::new(),
+            dashboards: vec![DashboardDefinition {
+                id: "nat-overview".to_string(),
+                title: "NAT Traversal Overview".to_string(),
+                description: "High-level overview of NAT traversal performance".to_string(),
+                category: "Overview".to_string(),
+                layout: LayoutType::Grid {
+                    columns: 2,
+                    rows: 3,
+                },
+                auto_refresh: true,
+                widgets: vec![
+                    WidgetDefinition {
+                        id: "success-rate".to_string(),
+                        title: "Success Rate".to_string(),
+                        widget_type: "gauge".to_string(),
+                        data_source: "metrics".to_string(),
+                        query: "success_rate_last_hour".to_string(),
+                        position: Position { x: 0, y: 0 },
+                        size: Size {
+                            width: 1,
+                            height: 1,
                         },
-                        WidgetDefinition {
-                            id: "attempts-timeline".to_string(),
-                            title: "Attempts Over Time".to_string(),
-                            widget_type: "time_series".to_string(),
-                            data_source: "metrics".to_string(),
-                            query: "attempts_timeline".to_string(),
-                            position: Position { x: 1, y: 0 },
-                            size: Size { width: 1, height: 2 },
-                            options: HashMap::new(),
+                        options: HashMap::new(),
+                    },
+                    WidgetDefinition {
+                        id: "attempts-timeline".to_string(),
+                        title: "Attempts Over Time".to_string(),
+                        widget_type: "time_series".to_string(),
+                        data_source: "metrics".to_string(),
+                        query: "attempts_timeline".to_string(),
+                        position: Position { x: 1, y: 0 },
+                        size: Size {
+                            width: 1,
+                            height: 2,
                         },
-                    ],
-                }
-            ],
+                        options: HashMap::new(),
+                    },
+                ],
+            }],
             update_interval: Duration::from_secs(30),
             data_refresh_interval: Duration::from_secs(60),
             realtime_enabled: true,
@@ -425,13 +474,11 @@ impl Default for DashboardAuthConfig {
         Self {
             enabled: true,
             provider: "oauth2".to_string(),
-            access_rules: vec![
-                AccessRule {
-                    role: "admin".to_string(),
-                    permissions: vec!["read".to_string(), "write".to_string()],
-                    dashboards: vec!["*".to_string()],
-                }
-            ],
+            access_rules: vec![AccessRule {
+                role: "admin".to_string(),
+                permissions: vec!["read".to_string(), "write".to_string()],
+                dashboards: vec!["*".to_string()],
+            }],
         }
     }
 }
@@ -609,7 +656,7 @@ impl DataProviderImpl {
             DataProviderImpl::Health(provider) => provider.fetch_data(query).await,
         }
     }
-    
+
     /// Refresh the data provider's internal state
     pub async fn refresh(&self) -> Result<(), MonitoringError> {
         match self {
@@ -631,7 +678,11 @@ pub enum WidgetBuilderImpl {
 
 impl WidgetBuilderImpl {
     /// Build widget visualization from data and options
-    pub async fn build(&self, data: &WidgetData, options: &HashMap<String, serde_json::Value>) -> Result<WidgetData, MonitoringError> {
+    pub async fn build(
+        &self,
+        data: &WidgetData,
+        options: &HashMap<String, serde_json::Value>,
+    ) -> Result<WidgetData, MonitoringError> {
         match self {
             WidgetBuilderImpl::TimeSeries(widget) => widget.build(data, options).await,
             WidgetBuilderImpl::Gauge(widget) => widget.build(data, options).await,
@@ -643,7 +694,11 @@ impl WidgetBuilderImpl {
 
 /// Widget builder trait
 trait WidgetBuilder {
-    async fn build(&self, data: &WidgetData, options: &HashMap<String, serde_json::Value>) -> Result<WidgetData, MonitoringError>;
+    async fn build(
+        &self,
+        data: &WidgetData,
+        options: &HashMap<String, serde_json::Value>,
+    ) -> Result<WidgetData, MonitoringError>;
 }
 
 /// Data provider trait
@@ -735,7 +790,11 @@ impl TimeSeriesWidget {
 }
 
 impl WidgetBuilder for TimeSeriesWidget {
-    async fn build(&self, data: &WidgetData, _options: &HashMap<String, serde_json::Value>) -> Result<WidgetData, MonitoringError> {
+    async fn build(
+        &self,
+        data: &WidgetData,
+        _options: &HashMap<String, serde_json::Value>,
+    ) -> Result<WidgetData, MonitoringError> {
         // Transform data for time series visualization
         Ok(data.clone())
     }
@@ -753,7 +812,11 @@ impl CounterWidget {
 }
 
 impl WidgetBuilder for CounterWidget {
-    async fn build(&self, data: &WidgetData, _options: &HashMap<String, serde_json::Value>) -> Result<WidgetData, MonitoringError> {
+    async fn build(
+        &self,
+        data: &WidgetData,
+        _options: &HashMap<String, serde_json::Value>,
+    ) -> Result<WidgetData, MonitoringError> {
         // Transform data for counter display
         Ok(data.clone())
     }
@@ -771,7 +834,11 @@ impl GaugeWidget {
 }
 
 impl WidgetBuilder for GaugeWidget {
-    async fn build(&self, data: &WidgetData, _options: &HashMap<String, serde_json::Value>) -> Result<WidgetData, MonitoringError> {
+    async fn build(
+        &self,
+        data: &WidgetData,
+        _options: &HashMap<String, serde_json::Value>,
+    ) -> Result<WidgetData, MonitoringError> {
         // Transform data for gauge visualization
         Ok(data.clone())
     }
@@ -789,7 +856,11 @@ impl HeatmapWidget {
 }
 
 impl WidgetBuilder for HeatmapWidget {
-    async fn build(&self, data: &WidgetData, _options: &HashMap<String, serde_json::Value>) -> Result<WidgetData, MonitoringError> {
+    async fn build(
+        &self,
+        data: &WidgetData,
+        _options: &HashMap<String, serde_json::Value>,
+    ) -> Result<WidgetData, MonitoringError> {
         // Transform data for heatmap visualization
         Ok(data.clone())
     }
@@ -807,7 +878,11 @@ impl TableWidget {
 }
 
 impl WidgetBuilder for TableWidget {
-    async fn build(&self, data: &WidgetData, _options: &HashMap<String, serde_json::Value>) -> Result<WidgetData, MonitoringError> {
+    async fn build(
+        &self,
+        data: &WidgetData,
+        _options: &HashMap<String, serde_json::Value>,
+    ) -> Result<WidgetData, MonitoringError> {
         // Transform data for table display
         Ok(data.clone())
     }
@@ -904,7 +979,7 @@ mod tests {
     async fn test_dashboard_manager_creation() {
         let config = DashboardConfig::default();
         let manager = DashboardManager::new(config).await.unwrap();
-        
+
         let status = manager.get_status().await;
         assert!(status.contains("Stopped"));
     }
@@ -913,7 +988,7 @@ mod tests {
     async fn test_dashboard_generation() {
         let config = DashboardConfig::default();
         let manager = DashboardManager::new(config).await.unwrap();
-        
+
         let dashboards = manager.get_dashboards().await;
         assert!(!dashboards.is_empty());
         assert_eq!(dashboards[0].id, "nat-overview");
@@ -922,13 +997,11 @@ mod tests {
     #[test]
     fn test_widget_data_serialization() {
         let widget_data = WidgetData {
-            data_points: vec![
-                DataPoint {
-                    timestamp: SystemTime::now(),
-                    value: serde_json::json!(42),
-                    labels: HashMap::new(),
-                }
-            ],
+            data_points: vec![DataPoint {
+                timestamp: SystemTime::now(),
+                value: serde_json::json!(42),
+                labels: HashMap::new(),
+            }],
             metadata: HashMap::new(),
             last_updated: SystemTime::now(),
         };

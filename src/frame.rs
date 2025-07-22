@@ -708,7 +708,9 @@ impl Iter {
             FrameType::IMMEDIATE_ACK => Frame::ImmediateAck,
             FrameType::ADD_ADDRESS => Frame::AddAddress(AddAddress::decode(&mut self.bytes)?),
             FrameType::PUNCH_ME_NOW => Frame::PunchMeNow(PunchMeNow::decode(&mut self.bytes)?),
-            FrameType::REMOVE_ADDRESS => Frame::RemoveAddress(RemoveAddress::decode(&mut self.bytes)?),
+            FrameType::REMOVE_ADDRESS => {
+                Frame::RemoveAddress(RemoveAddress::decode(&mut self.bytes)?)
+            }
             _ => {
                 if let Some(s) = ty.stream() {
                     Frame::Stream(Stream {
@@ -965,7 +967,7 @@ impl AddAddress {
         buf.write(FrameType::ADD_ADDRESS);
         buf.write(self.sequence);
         buf.write(self.priority);
-        
+
         match self.address {
             SocketAddr::V4(addr) => {
                 buf.put_u8(4); // IPv4 indicator
@@ -981,12 +983,12 @@ impl AddAddress {
             }
         }
     }
-    
+
     pub(crate) fn decode<R: Buf>(r: &mut R) -> Result<Self, UnexpectedEnd> {
         let sequence = r.get()?;
         let priority = r.get()?;
         let ip_version = r.get::<u8>()?;
-        
+
         let address = match ip_version {
             4 => {
                 let mut octets = [0u8; 4];
@@ -1012,7 +1014,7 @@ impl AddAddress {
             }
             _ => return Err(UnexpectedEnd),
         };
-        
+
         Ok(Self {
             sequence,
             address,
@@ -1044,7 +1046,7 @@ impl PunchMeNow {
         buf.write(FrameType::PUNCH_ME_NOW);
         buf.write(self.round);
         buf.write(self.target_sequence);
-        
+
         match self.local_address {
             SocketAddr::V4(addr) => {
                 buf.put_u8(4); // IPv4 indicator
@@ -1059,7 +1061,7 @@ impl PunchMeNow {
                 buf.put_u32(addr.scope_id());
             }
         }
-        
+
         // Encode target_peer_id if present
         match &self.target_peer_id {
             Some(peer_id) => {
@@ -1071,12 +1073,12 @@ impl PunchMeNow {
             }
         }
     }
-    
+
     pub(crate) fn decode<R: Buf>(r: &mut R) -> Result<Self, UnexpectedEnd> {
         let round = r.get()?;
         let target_sequence = r.get()?;
         let ip_version = r.get::<u8>()?;
-        
+
         let local_address = match ip_version {
             4 => {
                 let mut octets = [0u8; 4];
@@ -1102,7 +1104,7 @@ impl PunchMeNow {
             }
             _ => return Err(UnexpectedEnd),
         };
-        
+
         // Decode target_peer_id if present
         let target_peer_id = if r.remaining() > 0 {
             let has_peer_id = r.get::<u8>()?;
@@ -1116,7 +1118,7 @@ impl PunchMeNow {
         } else {
             None
         };
-        
+
         Ok(Self {
             round,
             target_sequence,
@@ -1142,7 +1144,7 @@ impl RemoveAddress {
         buf.write(FrameType::REMOVE_ADDRESS);
         buf.write(self.sequence);
     }
-    
+
     pub(crate) fn decode<R: Buf>(r: &mut R) -> Result<Self, UnexpectedEnd> {
         let sequence = r.get()?;
         Ok(Self { sequence })
@@ -1331,7 +1333,7 @@ mod test {
     fn nat_traversal_frame_size_bounds() {
         // Test that the SIZE_BOUND constants are correct
         let mut buf = Vec::new();
-        
+
         // AddAddress with IPv6 (worst case)
         let addr = AddAddress {
             sequence: VarInt::MAX,
@@ -1341,7 +1343,7 @@ mod test {
         addr.encode(&mut buf);
         assert!(buf.len() <= AddAddress::SIZE_BOUND);
         buf.clear();
-        
+
         // PunchMeNow with IPv6 (worst case)
         let punch = PunchMeNow {
             round: VarInt::MAX,
@@ -1352,7 +1354,7 @@ mod test {
         punch.encode(&mut buf);
         assert!(buf.len() <= PunchMeNow::SIZE_BOUND);
         buf.clear();
-        
+
         // RemoveAddress
         let remove = RemoveAddress {
             sequence: VarInt::MAX,
@@ -1390,7 +1392,7 @@ mod test {
     fn nat_traversal_frame_edge_cases() {
         // Test minimum values
         let mut buf = Vec::new();
-        
+
         // AddAddress with minimum values
         let min_addr = AddAddress {
             sequence: VarInt(0),
@@ -1401,7 +1403,7 @@ mod test {
         let frames1 = frames(buf.clone());
         assert_eq!(frames1.len(), 1);
         buf.clear();
-        
+
         // PunchMeNow with minimum values
         let min_punch = PunchMeNow {
             round: VarInt(0),
@@ -1413,7 +1415,7 @@ mod test {
         let frames2 = frames(buf.clone());
         assert_eq!(frames2.len(), 1);
         buf.clear();
-        
+
         // RemoveAddress with minimum values
         let min_remove = RemoveAddress {
             sequence: VarInt(0),
@@ -1427,18 +1429,18 @@ mod test {
     fn nat_traversal_frame_boundary_values() {
         // Test VarInt boundary values
         let mut buf = Vec::new();
-        
+
         // Test VarInt boundary values for AddAddress
         let boundary_values = [
             VarInt(0),
-            VarInt(63),          // Maximum 1-byte VarInt
-            VarInt(64),          // Minimum 2-byte VarInt
-            VarInt(16383),       // Maximum 2-byte VarInt
-            VarInt(16384),       // Minimum 4-byte VarInt
-            VarInt(1073741823),  // Maximum 4-byte VarInt
-            VarInt(1073741824),  // Minimum 8-byte VarInt
+            VarInt(63),         // Maximum 1-byte VarInt
+            VarInt(64),         // Minimum 2-byte VarInt
+            VarInt(16383),      // Maximum 2-byte VarInt
+            VarInt(16384),      // Minimum 4-byte VarInt
+            VarInt(1073741823), // Maximum 4-byte VarInt
+            VarInt(1073741824), // Minimum 8-byte VarInt
         ];
-        
+
         for &sequence in &boundary_values {
             for &priority in &boundary_values {
                 let addr = AddAddress {
@@ -1469,30 +1471,27 @@ mod test {
             vec![0x40], // Just frame type, no data
             vec![0x41], // Just frame type, no data
             vec![0x42], // Just frame type, no data
-            
             // Incomplete AddAddress frames
-            vec![0x40, 0x01], // Frame type + partial sequence
+            vec![0x40, 0x01],       // Frame type + partial sequence
             vec![0x40, 0x01, 0x04], // Frame type + sequence + incomplete address
-            
             // Incomplete PunchMeNow frames
-            vec![0x41, 0x01], // Frame type + partial round
+            vec![0x41, 0x01],       // Frame type + partial round
             vec![0x41, 0x01, 0x02], // Frame type + round + partial target_sequence
-            
             // Incomplete RemoveAddress frames
             // RemoveAddress is actually hard to make malformed since it only has sequence
-            
+
             // Invalid IP address types
             vec![0x40, 0x01, 0x99, 0x01, 0x02, 0x03, 0x04], // Invalid address type
         ];
-        
+
         for malformed in malformed_frames {
             let result = Iter::new(Bytes::from(malformed)).unwrap().next();
             if let Some(frame_result) = result {
                 // Should either parse successfully (for valid but incomplete data)
                 // or return an error (for truly malformed data)
                 match frame_result {
-                    Ok(_) => {}, // Valid frame parsed
-                    Err(_) => {}, // Expected error for malformed data
+                    Ok(_) => {}  // Valid frame parsed
+                    Err(_) => {} // Expected error for malformed data
                 }
             }
         }
@@ -1501,7 +1500,7 @@ mod test {
     #[test]
     fn nat_traversal_frame_roundtrip_consistency() {
         // Test that encoding and then decoding produces identical frames
-        
+
         // Test AddAddress frames
         let add_test_cases = vec![
             AddAddress {
@@ -1515,14 +1514,14 @@ mod test {
                 priority: VarInt(255),
             },
         ];
-        
+
         for original_add in add_test_cases {
             let mut buf = Vec::new();
             original_add.encode(&mut buf);
-            
+
             let decoded_frames = frames(buf);
             assert_eq!(decoded_frames.len(), 1);
-            
+
             match &decoded_frames[0] {
                 Frame::AddAddress(decoded) => {
                     assert_eq!(original_add.sequence, decoded.sequence);
@@ -1532,7 +1531,7 @@ mod test {
                 _ => panic!("Expected AddAddress frame"),
             }
         }
-        
+
         // Test PunchMeNow frames
         let punch_test_cases = vec![
             PunchMeNow {
@@ -1548,14 +1547,14 @@ mod test {
                 target_peer_id: Some([0xaa; 32]),
             },
         ];
-        
+
         for original_punch in punch_test_cases {
             let mut buf = Vec::new();
             original_punch.encode(&mut buf);
-            
+
             let decoded_frames = frames(buf);
             assert_eq!(decoded_frames.len(), 1);
-            
+
             match &decoded_frames[0] {
                 Frame::PunchMeNow(decoded) => {
                     assert_eq!(original_punch.round, decoded.round);
@@ -1566,20 +1565,24 @@ mod test {
                 _ => panic!("Expected PunchMeNow frame"),
             }
         }
-        
+
         // Test RemoveAddress frames
         let remove_test_cases = vec![
-            RemoveAddress { sequence: VarInt(123) },
-            RemoveAddress { sequence: VarInt(0) },
+            RemoveAddress {
+                sequence: VarInt(123),
+            },
+            RemoveAddress {
+                sequence: VarInt(0),
+            },
         ];
-        
+
         for original_remove in remove_test_cases {
             let mut buf = Vec::new();
             original_remove.encode(&mut buf);
-            
+
             let decoded_frames = frames(buf);
             assert_eq!(decoded_frames.len(), 1);
-            
+
             match &decoded_frames[0] {
                 Frame::RemoveAddress(decoded) => {
                     assert_eq!(original_remove.sequence, decoded.sequence);

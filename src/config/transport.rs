@@ -45,7 +45,7 @@ pub struct TransportConfig {
     pub(crate) congestion_controller_factory: Arc<dyn congestion::ControllerFactory + Send + Sync>,
 
     pub(crate) enable_segmentation_offload: bool,
-    
+
     /// NAT traversal configuration
     pub(crate) nat_traversal_config: Option<crate::transport_parameters::NatTraversalConfig>,
 }
@@ -309,7 +309,7 @@ impl TransportConfig {
     /// ```
     /// # use std::sync::Arc;
     /// use ant_quic::config::TransportConfig;
-    /// 
+    ///
     /// let mut config = TransportConfig::default();
     /// // The default uses CubicConfig, but custom implementations can be provided
     /// // by implementing the congestion::ControllerFactory trait
@@ -348,11 +348,14 @@ impl TransportConfig {
     /// This is required for P2P connections through NATs in Autonomi networks.
     /// Pass `None` to disable NAT traversal or use the high-level NAT traversal API
     /// to create appropriate configurations.
-    pub fn nat_traversal_config(&mut self, config: Option<crate::transport_parameters::NatTraversalConfig>) -> &mut Self {
+    pub fn nat_traversal_config(
+        &mut self,
+        config: Option<crate::transport_parameters::NatTraversalConfig>,
+    ) -> &mut Self {
         self.nat_traversal_config = config;
         self
     }
-    
+
     /// Enable NAT traversal with default client configuration
     ///
     /// This is a convenience method that enables NAT traversal with sensible defaults

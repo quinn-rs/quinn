@@ -9,10 +9,10 @@ use std::{
 
 use tokio::{
     io::ReadBuf,
-    time::{sleep_until, Sleep},
+    time::{Sleep, sleep_until},
 };
 
-use super::{AsyncTimer, AsyncUdpSocket, Runtime, UdpPoller, UdpPollHelper};
+use super::{AsyncTimer, AsyncUdpSocket, Runtime, UdpPollHelper, UdpPoller};
 use crate::Instant;
 
 /// Tokio runtime implementation
@@ -76,7 +76,8 @@ impl AsyncUdpSocket for UdpSocket {
     }
 
     fn try_send(&self, transmit: &quinn_udp::Transmit) -> io::Result<()> {
-        self.inner.try_send_to(&transmit.contents, transmit.destination)?;
+        self.inner
+            .try_send_to(&transmit.contents, transmit.destination)?;
         Ok(())
     }
 
@@ -88,7 +89,7 @@ impl AsyncUdpSocket for UdpSocket {
     ) -> Poll<io::Result<usize>> {
         // For now, use a simple single-packet receive
         // In production, should use quinn_udp::recv for GSO/GRO support
-        
+
         if bufs.is_empty() || meta.is_empty() {
             return Poll::Ready(Ok(0));
         }

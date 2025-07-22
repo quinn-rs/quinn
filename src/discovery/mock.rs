@@ -6,7 +6,7 @@
 
 use std::net::{IpAddr, SocketAddr};
 
-use super::{NetworkDiscovery, NetworkInterface, DiscoveryError};
+use super::{DiscoveryError, NetworkDiscovery, NetworkInterface};
 
 /// Mock network discovery implementation for testing
 pub struct MockDiscovery {
@@ -24,7 +24,7 @@ impl MockDiscovery {
             default_route,
         }
     }
-    
+
     /// Create a mock discovery instance with a simple network configuration
     pub fn with_simple_config() -> Self {
         // Create a simple network configuration with loopback and one external interface
@@ -50,12 +50,12 @@ impl MockDiscovery {
                 mtu: Some(1500),
             },
         ];
-        
+
         let default_route = Some(SocketAddr::new(
             IpAddr::V4("192.168.1.1".parse().unwrap()),
             0,
         ));
-        
+
         Self {
             interfaces,
             default_route,
@@ -68,7 +68,7 @@ impl NetworkDiscovery for MockDiscovery {
         // Return the mock interfaces
         Ok(self.interfaces.clone())
     }
-    
+
     fn get_default_route(&self) -> Result<Option<SocketAddr>, DiscoveryError> {
         // Return the mock default route
         Ok(self.default_route)

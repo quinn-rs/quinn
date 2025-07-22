@@ -497,9 +497,15 @@ async fn test_nat_traversal_direct_connection() {
 
     // Add some debug logging
     println!("Bootstrap address: {}", env.bootstrap_nodes[0].address);
-    println!("Peer 0 address: {}, ID: {:?}", env.peers[0].address, env.peers[0].id);
-    println!("Peer 1 address: {}, ID: {:?}", env.peers[1].address, env.peers[1].id);
-    
+    println!(
+        "Peer 0 address: {}, ID: {:?}",
+        env.peers[0].address, env.peers[0].id
+    );
+    println!(
+        "Peer 1 address: {}, ID: {:?}",
+        env.peers[1].address, env.peers[1].id
+    );
+
     // Give some time for local discovery to complete
     tokio::time::sleep(Duration::from_secs(2)).await;
 
@@ -513,8 +519,12 @@ async fn test_nat_traversal_direct_connection() {
 
     // Both should succeed
     let (result1, result2) = tokio::join!(connect1, connect2);
-    
-    println!("Connection results: peer0->peer1: {:?}, peer1->peer0: {:?}", result1.is_ok(), result2.is_ok());
+
+    println!(
+        "Connection results: peer0->peer1: {:?}, peer1->peer0: {:?}",
+        result1.is_ok(),
+        result2.is_ok()
+    );
     if let Err(e) = &result1 {
         println!("Peer 0 connection error: {:?}", e);
     }

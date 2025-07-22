@@ -15,11 +15,11 @@ use std::{
 
 use tracing::{debug, info};
 
-use crate::{HighLevelConnection as QuinnConnection, Endpoint as QuinnEndpoint};
+use crate::{Endpoint as QuinnEndpoint, HighLevelConnection as QuinnConnection};
 
 use crate::{
-    nat_traversal_api::{CandidateAddress, PeerId},
     VarInt,
+    nat_traversal_api::{CandidateAddress, PeerId},
 };
 
 /// Connection pool for reusing Quinn connections
@@ -310,7 +310,7 @@ impl Default for CandidateCacheConfig {
 impl Default for SessionCleanupConfig {
     fn default() -> Self {
         Self {
-            max_idle_time: Duration::from_secs(600), // 10 minutes
+            max_idle_time: Duration::from_secs(600),    // 10 minutes
             max_session_age: Duration::from_secs(3600), // 1 hour
             cleanup_interval: Duration::from_secs(120), // 2 minutes
             enable_aggressive_cleanup: true,
@@ -322,7 +322,7 @@ impl Default for SessionCleanupConfig {
 impl Default for FrameBatchingConfig {
     fn default() -> Self {
         Self {
-            max_batch_size: 1200, // Just under typical MTU
+            max_batch_size: 1200,                       // Just under typical MTU
             max_batch_delay: Duration::from_millis(10), // 10ms max delay
             max_frames_per_batch: 10,
             enable_adaptive_batching: true,
@@ -352,7 +352,7 @@ impl ConnectionPool {
 
         let cleanup_handle = tokio::spawn(async move {
             let mut interval = tokio::time::interval(config.cleanup_interval);
-            
+
             loop {
                 interval.tick().await;
                 Self::cleanup_expired_connections(&connections, &stats, &config).await;
@@ -360,7 +360,10 @@ impl ConnectionPool {
         });
 
         self.cleanup_handle = Some(cleanup_handle);
-        info!("Connection pool started with max_connections={}", self.config.max_connections);
+        info!(
+            "Connection pool started with max_connections={}",
+            self.config.max_connections
+        );
         Ok(())
     }
 
@@ -372,13 +375,18 @@ impl ConnectionPool {
         endpoint: &QuinnEndpoint,
     ) -> Result<Arc<QuinnConnection>, Box<dyn std::error::Error + Send + Sync>> {
         // Try to get existing connection
-        if let Some(connection) = self.try_get_existing_connection(peer_id, remote_address).await {
+        if let Some(connection) = self
+            .try_get_existing_connection(peer_id, remote_address)
+            .await
+        {
             self.update_stats_hit().await;
             return Ok(connection);
         }
 
         // Create new connection
-        let connection = self.create_new_connection(peer_id, remote_address, endpoint).await?;
+        let connection = self
+            .create_new_connection(peer_id, remote_address, endpoint)
+            .await?;
         self.update_stats_miss().await;
         Ok(connection)
     }
@@ -390,7 +398,7 @@ impl ConnectionPool {
         remote_address: SocketAddr,
     ) -> Option<Arc<QuinnConnection>> {
         let mut connections = self.active_connections.write().unwrap();
-        
+
         if let Some(pooled) = connections.get_mut(&peer_id) {
             if pooled.is_active && pooled.remote_address == remote_address {
                 // Check if connection is still valid
@@ -430,21 +438,23 @@ impl ConnectionPool {
         let rustls_config = rustls::ClientConfig::builder()
             .with_root_certificates(rustls::RootCertStore::empty())
             .with_no_client_auth();
-        
+
         let client_crypto = crate::crypto::rustls::QuicClientConfig::try_from(rustls_config)
             .map_err(|e| format!("Failed to create QUIC client config: {}", e))?;
-        
+
         let client_config = crate::ClientConfig::new(Arc::new(client_crypto));
-        
-        let connecting = endpoint.connect_with(client_config, remote_address, "ant-quic")
+
+        let connecting = endpoint
+            .connect_with(client_config, remote_address, "ant-quic")
             .map_err(|e| format!("Failed to initiate connection: {}", e))?;
-        
+
         // Wait for the connection to be established
-        let connection = connecting.await
+        let connection = connecting
+            .await
             .map_err(|e| format!("Connection failed: {}", e))?;
 
         let connection_arc = Arc::new(connection);
-        
+
         let pooled = PooledConnection {
             connection: Arc::clone(&connection_arc),
             peer_id,
@@ -475,7 +485,7 @@ impl ConnectionPool {
     /// Evict least recently used connection
     async fn evict_lru_connection(&self) {
         let mut connections = self.active_connections.write().unwrap();
-        
+
         if let Some((lru_peer_id, _)) = connections
             .iter()
             .min_by_key(|(_, pooled)| pooled.last_used)
@@ -483,7 +493,7 @@ impl ConnectionPool {
         {
             connections.remove(&lru_peer_id);
             debug!("Evicted LRU connection for peer {:?}", lru_peer_id);
-            
+
             // Update stats
             let mut stats = self.stats.lock().unwrap();
             stats.active_connections = stats.active_connections.saturating_sub(1);
@@ -503,7 +513,7 @@ impl ConnectionPool {
         let stats = self.stats.lock().unwrap();
         let total_requests = stats.connections_created + stats.connections_reused;
         drop(stats);
-        
+
         let mut stats = self.stats.lock().unwrap();
         stats.hit_rate = stats.connections_reused as f64 / total_requests as f64;
     }
@@ -595,7 +605,7 @@ impl CandidateCache {
 
         let cleanup_handle = tokio::spawn(async move {
             let mut interval = tokio::time::interval(config.cleanup_interval);
-            
+
             loop {
                 interval.tick().await;
                 Self::cleanup_expired_entries(&cache, &stats, &config).await;
@@ -603,7 +613,10 @@ impl CandidateCache {
         });
 
         self.cleanup_handle = Some(cleanup_handle);
-        info!("Candidate cache started with max_size={}", self.config.max_cache_size);
+        info!(
+            "Candidate cache started with max_size={}",
+            self.config.max_cache_size
+        );
         Ok(())
     }
 
@@ -611,10 +624,10 @@ impl CandidateCache {
     pub async fn get_candidates(&self, peer_id: PeerId) -> Option<Vec<CandidateAddress>> {
         let (is_valid, candidates) = {
             let cache = self.cache.read().unwrap();
-            
+
             if let Some(cached_set) = cache.get(&peer_id) {
                 let now = Instant::now();
-                
+
                 // Check if entry is still valid
                 if now.duration_since(cached_set.cached_at) <= cached_set.ttl {
                     (true, Some(cached_set.candidates.clone()))
@@ -625,13 +638,17 @@ impl CandidateCache {
                 (false, None)
             }
         };
-        
+
         if is_valid {
             // Update access statistics
             self.update_access_stats(peer_id, true).await;
-            
+
             if let Some(ref candidates) = candidates {
-                debug!("Cache hit for peer {:?}, {} candidates", peer_id, candidates.len());
+                debug!(
+                    "Cache hit for peer {:?}, {} candidates",
+                    peer_id,
+                    candidates.len()
+                );
             }
             return candidates;
         }
@@ -650,7 +667,7 @@ impl CandidateCache {
         ttl: Option<Duration>,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let ttl = ttl.unwrap_or(self.config.default_ttl);
-        
+
         // Check cache size limit
         {
             let cache = self.cache.read().unwrap();
@@ -682,8 +699,10 @@ impl CandidateCache {
             stats.current_size += 1;
         }
 
-        debug!("Cached {} candidates for peer {:?} with TTL {:?}", 
-               candidate_count, peer_id, ttl);
+        debug!(
+            "Cached {} candidates for peer {:?} with TTL {:?}",
+            candidate_count, peer_id, ttl
+        );
         Ok(())
     }
 
@@ -700,7 +719,7 @@ impl CandidateCache {
         }
 
         let mut cache = self.cache.write().unwrap();
-        
+
         if let Some(cached_set) = cache.get_mut(&peer_id) {
             let validation_entry = ValidationCacheEntry {
                 is_valid,
@@ -709,8 +728,13 @@ impl CandidateCache {
                 ttl: self.config.validation_ttl,
             };
 
-            cached_set.validation_results.insert(address, validation_entry);
-            debug!("Cached validation result for {}:{} -> {}", peer_id.0[0], address, is_valid);
+            cached_set
+                .validation_results
+                .insert(address, validation_entry);
+            debug!(
+                "Cached validation result for {}:{} -> {}",
+                peer_id.0[0], address, is_valid
+            );
         }
 
         Ok(())
@@ -727,11 +751,11 @@ impl CandidateCache {
         }
 
         let cache = self.cache.read().unwrap();
-        
+
         if let Some(cached_set) = cache.get(&peer_id) {
             if let Some(validation_entry) = cached_set.validation_results.get(&address) {
                 let now = Instant::now();
-                
+
                 // Check if validation result is still valid
                 if now.duration_since(validation_entry.cached_at) <= validation_entry.ttl {
                     return Some((validation_entry.is_valid, validation_entry.rtt));
@@ -752,7 +776,7 @@ impl CandidateCache {
             } else {
                 stats.cache_misses += 1;
             }
-            
+
             let total_accesses = stats.cache_hits + stats.cache_misses;
             stats.hit_rate = stats.cache_hits as f64 / total_accesses as f64;
         }
@@ -770,7 +794,7 @@ impl CandidateCache {
     /// Evict least recently used entry
     async fn evict_lru_entry(&self) {
         let mut cache = self.cache.write().unwrap();
-        
+
         if let Some((lru_peer_id, _)) = cache
             .iter()
             .min_by_key(|(_, cached_set)| cached_set.last_accessed)
@@ -778,7 +802,7 @@ impl CandidateCache {
         {
             cache.remove(&lru_peer_id);
             debug!("Evicted LRU cache entry for peer {:?}", lru_peer_id);
-            
+
             // Update stats
             let mut stats = self.stats.lock().unwrap();
             stats.current_size = stats.current_size.saturating_sub(1);
@@ -871,7 +895,7 @@ impl SessionCleanupCoordinator {
 
         let cleanup_handle = tokio::spawn(async move {
             let mut interval = tokio::time::interval(config.cleanup_interval);
-            
+
             loop {
                 interval.tick().await;
                 Self::cleanup_expired_sessions(&sessions, &stats, &config).await;
@@ -910,7 +934,10 @@ impl SessionCleanupCoordinator {
             stats.active_sessions += 1;
         }
 
-        debug!("Registered session for peer {:?} with {} bytes", peer_id, memory_usage);
+        debug!(
+            "Registered session for peer {:?} with {} bytes",
+            peer_id, memory_usage
+        );
         Ok(())
     }
 
@@ -975,11 +1002,17 @@ impl SessionCleanupCoordinator {
             stats_guard.active_sessions = sessions_write.len();
 
             if memory_pressure {
-                info!("Aggressive cleanup: removed {} sessions, freed {} bytes", 
-                      to_remove.len(), memory_freed);
+                info!(
+                    "Aggressive cleanup: removed {} sessions, freed {} bytes",
+                    to_remove.len(),
+                    memory_freed
+                );
             } else {
-                debug!("Regular cleanup: removed {} sessions, freed {} bytes", 
-                       to_remove.len(), memory_freed);
+                debug!(
+                    "Regular cleanup: removed {} sessions, freed {} bytes",
+                    to_remove.len(),
+                    memory_freed
+                );
             }
         }
     }
@@ -1034,7 +1067,7 @@ impl FrameBatchingCoordinator {
 
         let flush_handle = tokio::spawn(async move {
             let mut interval = tokio::time::interval(config.max_batch_delay / 4);
-            
+
             loop {
                 interval.tick().await;
                 Self::flush_expired_batches(&pending_frames, &stats, &config).await;
@@ -1063,22 +1096,22 @@ impl FrameBatchingCoordinator {
         };
 
         let mut pending = self.pending_frames.lock().unwrap();
-        
+
         // Check if we need to flush
         let (should_flush, frames_count, total_size) = {
-            let batch_set = pending.entry(destination).or_insert_with(|| {
-                BatchedFrameSet {
+            let batch_set = pending
+                .entry(destination)
+                .or_insert_with(|| BatchedFrameSet {
                     frames: Vec::new(),
                     total_size: 0,
                     created_at: Instant::now(),
                     destination,
                     priority: BatchPriority::Normal,
-                }
-            });
+                });
 
             batch_set.frames.push(frame);
             batch_set.total_size += batch_set.frames.last().unwrap().size;
-            
+
             // Update batch priority based on frame priority
             if priority == FramePriority::Urgent {
                 batch_set.priority = BatchPriority::High;
@@ -1088,23 +1121,26 @@ impl FrameBatchingCoordinator {
             let should_flush = self.should_flush_batch(batch_set);
             (should_flush, batch_set.frames.len(), batch_set.total_size)
         };
-        
+
         if should_flush {
             // Remove and serialize the batch
             if let Some(batch_set) = pending.remove(&destination) {
                 let batch_data = self.serialize_batch(&batch_set);
-                
+
                 // Update stats
                 {
                     let mut stats = self.stats.lock().unwrap();
                     stats.batches_sent += 1;
                     stats.frames_batched += frames_count as u64;
-                    stats.avg_batch_size = (stats.avg_batch_size * (stats.batches_sent - 1) as f64 + 
-                                           total_size as f64) / stats.batches_sent as f64;
+                    stats.avg_batch_size = (stats.avg_batch_size * (stats.batches_sent - 1) as f64
+                        + total_size as f64)
+                        / stats.batches_sent as f64;
                 }
 
-                debug!("Flushed batch to {} with {} frames ({} bytes)", 
-                       destination, frames_count, total_size);
+                debug!(
+                    "Flushed batch to {} with {} frames ({} bytes)",
+                    destination, frames_count, total_size
+                );
                 return Ok(Some(batch_data));
             }
         }
@@ -1118,16 +1154,16 @@ impl FrameBatchingCoordinator {
         let age = now.duration_since(batch_set.created_at);
 
         // Flush if batch is full, old, or high priority
-        batch_set.total_size >= self.config.max_batch_size ||
-        batch_set.frames.len() >= self.config.max_frames_per_batch ||
-        age >= self.config.max_batch_delay ||
-        batch_set.priority == BatchPriority::High
+        batch_set.total_size >= self.config.max_batch_size
+            || batch_set.frames.len() >= self.config.max_frames_per_batch
+            || age >= self.config.max_batch_delay
+            || batch_set.priority == BatchPriority::High
     }
 
     /// Serialize batch into packet data
     fn serialize_batch(&self, batch_set: &BatchedFrameSet) -> Vec<u8> {
         let mut data = Vec::with_capacity(batch_set.total_size + batch_set.frames.len() * 4);
-        
+
         for frame in &batch_set.frames {
             // Add frame type and length
             data.push(frame.frame_type);
@@ -1165,13 +1201,15 @@ impl FrameBatchingCoordinator {
             let flush_count = to_flush.len();
             for (destination, frame_count, total_size) in to_flush {
                 pending.remove(&destination);
-                
+
                 // Update stats
                 let mut stats_guard = stats.lock().unwrap();
                 stats_guard.batches_sent += 1;
                 stats_guard.frames_batched += frame_count as u64;
-                stats_guard.avg_batch_size = (stats_guard.avg_batch_size * (stats_guard.batches_sent - 1) as f64 + 
-                                             total_size as f64) / stats_guard.batches_sent as f64;
+                stats_guard.avg_batch_size = (stats_guard.avg_batch_size
+                    * (stats_guard.batches_sent - 1) as f64
+                    + total_size as f64)
+                    / stats_guard.batches_sent as f64;
             }
 
             debug!("Flushed {} expired batches", flush_count);

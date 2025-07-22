@@ -19,22 +19,22 @@ use super::{
     udp_transmit,
 };
 use crate::Instant;
+use crate::{
+    ClientConfig, ConnectError, ConnectionError, ConnectionHandle, DatagramEvent, EndpointEvent,
+    ServerConfig,
+};
 use bytes::{Bytes, BytesMut};
 use pin_project_lite::pin_project;
-use crate::{
-    ClientConfig, ConnectError, ConnectionError, ConnectionHandle, DatagramEvent,
-    EndpointEvent, ServerConfig,
-};
+use quinn_udp::{BATCH_SIZE, RecvMeta};
 use rustc_hash::FxHashMap;
 #[cfg(all(not(wasm_browser), any(feature = "aws-lc-rs", feature = "ring")))]
 use socket2::{Domain, Protocol, Socket, Type};
 use tokio::sync::{Notify, futures::Notified, mpsc};
 use tracing::{Instrument, Span};
-use quinn_udp::{BATCH_SIZE, RecvMeta};
 
 use super::{
-    ConnectionEvent, IO_LOOP_BOUND, RECV_TIME_BOUND,
-    connection::Connecting, work_limiter::WorkLimiter,
+    ConnectionEvent, IO_LOOP_BOUND, RECV_TIME_BOUND, connection::Connecting,
+    work_limiter::WorkLimiter,
 };
 use crate::{EndpointConfig, VarInt};
 
@@ -67,7 +67,7 @@ impl Endpoint {
     /// # use std::net::{Ipv6Addr, SocketAddr};
     /// # fn example() -> std::io::Result<()> {
     /// use ant_quic::quinn_high_level::Endpoint;
-    /// 
+    ///
     /// let addr: SocketAddr = (Ipv6Addr::UNSPECIFIED, 0).into();
     /// let endpoint = Endpoint::client(addr)?;
     /// # Ok(())
@@ -453,7 +453,10 @@ impl EndpointInner {
         respond(transmit, &response_buffer, &*state.socket);
     }
 
-    pub(crate) fn retry(&self, incoming: crate::Incoming) -> Result<(), crate::endpoint::RetryError> {
+    pub(crate) fn retry(
+        &self,
+        incoming: crate::Incoming,
+    ) -> Result<(), crate::endpoint::RetryError> {
         let mut state = self.state.lock().unwrap();
         let mut response_buffer = Vec::new();
         let transmit = state.inner.retry(incoming, &mut response_buffer)?;

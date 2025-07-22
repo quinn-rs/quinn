@@ -9,9 +9,9 @@ use std::{
     time::{Duration, SystemTime},
 };
 
-use tokio::sync::{RwLock, Mutex};
+use serde::{Deserialize, Serialize};
+use tokio::sync::{Mutex, RwLock};
 use tracing::{debug, info, warn};
-use serde::{Serialize, Deserialize};
 
 use crate::monitoring::MonitoringError;
 
@@ -28,7 +28,7 @@ pub struct ExportManager {
     /// Export state
     state: Arc<RwLock<ExportState>>,
     /// Background tasks
-    tasks: Arc<Mutex<Vec<tokio::task::JoinHandle<()>>>>
+    tasks: Arc<Mutex<Vec<tokio::task::JoinHandle<()>>>>,
 }
 
 impl ExportManager {
@@ -111,8 +111,14 @@ impl ExportManager {
     pub async fn export_metrics(&self, data: ExportData) -> Result<(), MonitoringError> {
         // Transform data for each configured destination
         for destination in &self.config.destinations {
-            if let Ok(transformed_data) = self.transformers.transform_for_destination(&data, destination).await {
-                self.delivery_manager.schedule_delivery(destination.clone(), transformed_data).await?;
+            if let Ok(transformed_data) = self
+                .transformers
+                .transform_for_destination(&data, destination)
+                .await
+            {
+                self.delivery_manager
+                    .schedule_delivery(destination.clone(), transformed_data)
+                    .await?;
             }
         }
 
@@ -122,9 +128,10 @@ impl ExportManager {
     /// Initialize export schedulers
     async fn initialize_schedulers(&self) -> Result<(), MonitoringError> {
         let mut schedulers = self.schedulers.write().await;
-        
+
         for destination in &self.config.destinations {
-            let scheduler = ExportScheduler::new(destination.clone(), self.config.scheduling.clone());
+            let scheduler =
+                ExportScheduler::new(destination.clone(), self.config.scheduling.clone());
             schedulers.insert(destination.id().to_string(), scheduler);
         }
 
@@ -165,7 +172,7 @@ impl ExportManager {
                 interval.tick().await;
 
                 let health = delivery_manager.get_health_status().await;
-                
+
                 let mut export_state = state.write().await;
                 export_state.last_health_check = Some(SystemTime::now());
                 export_state.exports_completed += health.successful_exports;
@@ -201,13 +208,11 @@ pub struct ExportConfig {
 impl Default for ExportConfig {
     fn default() -> Self {
         Self {
-            destinations: vec![
-                ExportDestination::File {
-                    id: "local-file".to_string(),
-                    path: "/tmp/ant-quic-metrics.json".to_string(),
-                    format: FileFormat::JSON,
-                }
-            ],
+            destinations: vec![ExportDestination::File {
+                id: "local-file".to_string(),
+                path: "/tmp/ant-quic-metrics.json".to_string(),
+                format: FileFormat::JSON,
+            }],
             scheduling: SchedulingConfig::default(),
             delivery: DeliveryConfig::default(),
             coordination_interval: Duration::from_secs(60),
@@ -439,18 +444,12 @@ impl DataTransformers {
             ExportDestination::File { format, .. } => {
                 self.transform_for_file_format(data, format).await
             }
-            ExportDestination::HTTP { .. } => {
-                self.transform_for_http(data).await
-            }
-            ExportDestination::S3 { .. } => {
-                self.transform_for_s3(data).await
-            }
+            ExportDestination::HTTP { .. } => self.transform_for_http(data).await,
+            ExportDestination::S3 { .. } => self.transform_for_s3(data).await,
             ExportDestination::Database { schema, .. } => {
                 self.transform_for_database(data, schema).await
             }
-            ExportDestination::Kafka { .. } => {
-                self.transform_for_kafka(data).await
-            }
+            ExportDestination::Kafka { .. } => self.transform_for_kafka(data).await,
         }
     }
 
@@ -460,16 +459,21 @@ impl DataTransformers {
         format: &FileFormat,
     ) -> Result<TransformedData, MonitoringError> {
         let content = match format {
-            FileFormat::JSON => serde_json::to_string(&data.payload)
-                .map_err(|e| MonitoringError::ExportError(format!("JSON serialization failed: {}", e)))?,
+            FileFormat::JSON => serde_json::to_string(&data.payload).map_err(|e| {
+                MonitoringError::ExportError(format!("JSON serialization failed: {}", e))
+            })?,
             FileFormat::CSV => {
                 // Convert JSON to CSV format
-                format!("timestamp,data_type,payload\n{:?},{},{}", 
-                    data.timestamp, data.data_type, data.payload)
+                format!(
+                    "timestamp,data_type,payload\n{:?},{},{}",
+                    data.timestamp, data.data_type, data.payload
+                )
             }
             FileFormat::Parquet | FileFormat::Avro => {
                 // Would implement binary format serialization
-                return Err(MonitoringError::ExportError("Binary formats not yet implemented".to_string()));
+                return Err(MonitoringError::ExportError(
+                    "Binary formats not yet implemented".to_string(),
+                ));
             }
         };
 
@@ -480,9 +484,13 @@ impl DataTransformers {
         })
     }
 
-    async fn transform_for_http(&self, data: &ExportData) -> Result<TransformedData, MonitoringError> {
-        let content = serde_json::to_string(&data.payload)
-            .map_err(|e| MonitoringError::ExportError(format!("HTTP JSON serialization failed: {}", e)))?;
+    async fn transform_for_http(
+        &self,
+        data: &ExportData,
+    ) -> Result<TransformedData, MonitoringError> {
+        let content = serde_json::to_string(&data.payload).map_err(|e| {
+            MonitoringError::ExportError(format!("HTTP JSON serialization failed: {}", e))
+        })?;
 
         Ok(TransformedData {
             content: content.into_bytes(),
@@ -491,7 +499,10 @@ impl DataTransformers {
         })
     }
 
-    async fn transform_for_s3(&self, data: &ExportData) -> Result<TransformedData, MonitoringError> {
+    async fn transform_for_s3(
+        &self,
+        data: &ExportData,
+    ) -> Result<TransformedData, MonitoringError> {
         // S3 typically uses JSON format
         self.transform_for_http(data).await
     }
@@ -513,7 +524,10 @@ impl DataTransformers {
         })
     }
 
-    async fn transform_for_kafka(&self, data: &ExportData) -> Result<TransformedData, MonitoringError> {
+    async fn transform_for_kafka(
+        &self,
+        data: &ExportData,
+    ) -> Result<TransformedData, MonitoringError> {
         // Kafka typically uses JSON or Avro
         self.transform_for_http(data).await
     }
@@ -589,9 +603,12 @@ impl DeliveryManager {
                     Err(e) => {
                         delivery.retry_count += 1;
                         delivery.last_attempt = Some(SystemTime::now());
-                        
+
                         if delivery.retry_count >= self.config.max_retries {
-                            warn!("Delivery {} failed after {} retries: {}", delivery.id, delivery.retry_count, e);
+                            warn!(
+                                "Delivery {} failed after {} retries: {}",
+                                delivery.id, delivery.retry_count, e
+                            );
                             completed.push(index);
                         }
                     }
@@ -620,15 +637,23 @@ impl DeliveryManager {
         }
     }
 
-    async fn attempt_delivery(&self, delivery: &PendingDelivery) -> Result<DeliveryReceipt, MonitoringError> {
-        debug!("Attempting delivery {} to {:?}", delivery.id, delivery.destination.id());
+    async fn attempt_delivery(
+        &self,
+        delivery: &PendingDelivery,
+    ) -> Result<DeliveryReceipt, MonitoringError> {
+        debug!(
+            "Attempting delivery {} to {:?}",
+            delivery.id,
+            delivery.destination.id()
+        );
 
         // Simulate delivery attempt
         // In real implementation, would handle each destination type
         match &delivery.destination {
             ExportDestination::File { path, .. } => {
-                std::fs::write(path, &delivery.data.content)
-                    .map_err(|e| MonitoringError::ExportError(format!("File write failed: {}", e)))?;
+                std::fs::write(path, &delivery.data.content).map_err(|e| {
+                    MonitoringError::ExportError(format!("File write failed: {}", e))
+                })?;
             }
             ExportDestination::HTTP { endpoint, .. } => {
                 // Would make HTTP request
@@ -652,16 +677,21 @@ impl DeliveryManager {
     fn calculate_retry_delay(&self, retry_count: u32) -> Duration {
         let base_delay = self.config.initial_retry_delay;
         let exponential_delay = base_delay * 2_u32.pow(retry_count);
-        std::cmp::min(Duration::from_millis(exponential_delay.as_millis() as u64), self.config.max_retry_delay)
+        std::cmp::min(
+            Duration::from_millis(exponential_delay.as_millis() as u64),
+            self.config.max_retry_delay,
+        )
     }
 
     async fn get_health_status(&self) -> DeliveryHealth {
         let receipts = self.delivery_receipts.lock().await;
-        let recent_receipts: Vec<_> = receipts.iter()
+        let recent_receipts: Vec<_> = receipts
+            .iter()
             .filter(|r| r.timestamp.elapsed().unwrap_or_default() < Duration::from_secs(3600))
             .collect();
 
-        let successful_exports = recent_receipts.iter()
+        let successful_exports = recent_receipts
+            .iter()
             .filter(|r| matches!(r.status, DeliveryStatus::Success))
             .count() as u64;
 
@@ -672,9 +702,11 @@ impl DeliveryManager {
             failed_exports,
             pending_deliveries: self.pending_deliveries.lock().await.len() as u64,
             avg_response_time: if !recent_receipts.is_empty() {
-                recent_receipts.iter()
+                recent_receipts
+                    .iter()
                     .map(|r| r.response_time.as_millis())
-                    .sum::<u128>() / recent_receipts.len() as u128
+                    .sum::<u128>()
+                    / recent_receipts.len() as u128
             } else {
                 0
             },
@@ -684,7 +716,7 @@ impl DeliveryManager {
     async fn flush_all(&self) -> Result<(), MonitoringError> {
         // Force delivery of all pending items
         self.coordinate_deliveries().await?;
-        
+
         // Wait for any remaining deliveries
         let pending_count = self.pending_deliveries.lock().await.len();
         if pending_count > 0 {
@@ -776,7 +808,7 @@ mod tests {
     async fn test_export_manager_creation() {
         let config = ExportConfig::default();
         let manager = ExportManager::new(config).await.unwrap();
-        
+
         let status = manager.get_status().await;
         assert!(status.contains("Stopped"));
     }
@@ -784,7 +816,7 @@ mod tests {
     #[tokio::test]
     async fn test_data_transformation() {
         let transformers = DataTransformers::new();
-        
+
         let data = ExportData {
             data_type: "test".to_string(),
             timestamp: SystemTime::now(),
@@ -798,7 +830,10 @@ mod tests {
             format: FileFormat::JSON,
         };
 
-        let transformed = transformers.transform_for_destination(&data, &destination).await.unwrap();
+        let transformed = transformers
+            .transform_for_destination(&data, &destination)
+            .await
+            .unwrap();
         assert_eq!(transformed.content_type, "application/json");
     }
 

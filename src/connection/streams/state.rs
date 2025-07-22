@@ -953,7 +953,7 @@ impl StreamsState {
     }
 
     /// Check if the connection is closed
-    /// 
+    ///
     /// Always returns false as connection state is tracked at a higher level
     pub(super) fn conn_closed(&self) -> bool {
         false

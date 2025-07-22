@@ -81,6 +81,7 @@ impl DiscoveryCandidate {
 
 /// Per-peer discovery session containing all state for a single peer's discovery
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct DiscoverySession {
     /// Peer ID for this discovery session
     peer_id: PeerId,
@@ -101,6 +102,7 @@ pub struct DiscoverySession {
 }
 
 /// Main candidate discovery manager coordinating all discovery phases
+#[allow(dead_code)]
 pub struct CandidateDiscoveryManager {
     /// Configuration for discovery behavior
     config: DiscoveryConfig,
@@ -153,9 +155,7 @@ pub enum DiscoveryPhase {
     /// Initial state, ready to begin discovery
     Idle,
     /// Scanning local network interfaces
-    LocalInterfaceScanning {
-        started_at: Instant,
-    },
+    LocalInterfaceScanning { started_at: Instant },
     /// Querying bootstrap nodes for server reflexive addresses
     ServerReflexiveQuerying {
         started_at: Instant,
@@ -197,18 +197,14 @@ pub enum DiscoveryEvent {
     /// Local interface scanning started
     LocalScanningStarted,
     /// Local candidate discovered
-    LocalCandidateDiscovered {
-        candidate: CandidateAddress,
-    },
+    LocalCandidateDiscovered { candidate: CandidateAddress },
     /// Local interface scanning completed
     LocalScanningCompleted {
         candidate_count: usize,
         duration: Duration,
     },
     /// Server reflexive discovery started
-    ServerReflexiveDiscoveryStarted {
-        bootstrap_count: usize,
-    },
+    ServerReflexiveDiscoveryStarted { bootstrap_count: usize },
     /// Server reflexive address discovered
     ServerReflexiveCandidateDiscovered {
         candidate: CandidateAddress,
@@ -220,9 +216,7 @@ pub enum DiscoveryEvent {
         error: String,
     },
     /// Symmetric NAT prediction started
-    SymmetricPredictionStarted {
-        base_address: SocketAddr,
-    },
+    SymmetricPredictionStarted { base_address: SocketAddr },
     /// Predicted candidate generated
     PredictedCandidateGenerated {
         candidate: CandidateAddress,
@@ -266,6 +260,7 @@ pub enum DiscoveryEvent {
 pub struct BootstrapNodeId(pub u64);
 
 /// Pending path validation state
+#[allow(dead_code)]
 struct PendingValidation {
     /// Address being validated
     candidate_address: SocketAddr,
@@ -281,10 +276,7 @@ struct PendingValidation {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum QueryState {
     /// Query is pending (in progress)
-    Pending {
-        sent_at: Instant,
-        attempts: u32,
-    },
+    Pending { sent_at: Instant, attempts: u32 },
     /// Query completed successfully
     Completed,
     /// Query failed after all retries
@@ -393,6 +385,7 @@ impl ValidatedCandidate {
 
 /// Discovery session state tracking
 #[derive(Debug)]
+#[allow(dead_code)]
 pub(crate) struct DiscoverySessionState {
     pub peer_id: PeerId,
     pub session_id: u64,
@@ -479,15 +472,14 @@ impl DiscoverySession {
     }
 }
 
+#[allow(dead_code)]
 impl CandidateDiscoveryManager {
     /// Create a new candidate discovery manager
     pub fn new(config: DiscoveryConfig) -> Self {
-        let interface_discovery = Arc::new(std::sync::Mutex::new(
-            create_platform_interface_discovery()
-        ));
-        let symmetric_predictor = Arc::new(std::sync::Mutex::new(
-            SymmetricNatPredictor::new(&config)
-        ));
+        let interface_discovery =
+            Arc::new(std::sync::Mutex::new(create_platform_interface_discovery()));
+        let symmetric_predictor =
+            Arc::new(std::sync::Mutex::new(SymmetricNatPredictor::new(&config)));
         let bootstrap_manager = Arc::new(BootstrapNodeManager::new(&config));
         let cache = DiscoveryCache::new(&config);
         let local_cache_duration = config.interface_cache_ttl;
@@ -504,7 +496,7 @@ impl CandidateDiscoveryManager {
             pending_validations: HashMap::new(),
         }
     }
-    
+
     /// Set the actual bound address of the local endpoint
     pub fn set_bound_address(&mut self, address: SocketAddr) {
         self.config.bound_address = Some(address);
@@ -515,23 +507,32 @@ impl CandidateDiscoveryManager {
     /// Discover local network interface candidates synchronously
     pub fn discover_local_candidates(&mut self) -> Result<Vec<ValidatedCandidate>, DiscoveryError> {
         // Start interface scan
-        self.interface_discovery.lock().unwrap().start_scan().map_err(|e| {
-            DiscoveryError::NetworkError(format!("Failed to start interface scan: {}", e))
-        })?;
-        
+        self.interface_discovery
+            .lock()
+            .unwrap()
+            .start_scan()
+            .map_err(|e| {
+                DiscoveryError::NetworkError(format!("Failed to start interface scan: {}", e))
+            })?;
+
         // Poll until scan completes (this should be quick for local interfaces)
         let start = Instant::now();
         let timeout = Duration::from_secs(2);
-        
+
         loop {
             if start.elapsed() > timeout {
                 return Err(DiscoveryError::DiscoveryTimeout);
             }
-            
-            if let Some(interfaces) = self.interface_discovery.lock().unwrap().check_scan_complete() {
+
+            if let Some(interfaces) = self
+                .interface_discovery
+                .lock()
+                .unwrap()
+                .check_scan_complete()
+            {
                 // Convert interfaces to candidates
                 let mut candidates = Vec::new();
-                
+
                 for interface in interfaces {
                     for addr in interface.addresses {
                         candidates.push(ValidatedCandidate {
@@ -544,33 +545,38 @@ impl CandidateDiscoveryManager {
                         });
                     }
                 }
-                
+
                 if candidates.is_empty() {
                     return Err(DiscoveryError::NoLocalInterfaces);
                 }
-                
+
                 return Ok(candidates);
             }
-            
+
             // Small sleep to avoid busy waiting
             std::thread::sleep(Duration::from_millis(10));
         }
     }
 
     /// Start candidate discovery for a specific peer
-    pub fn start_discovery(&mut self, peer_id: PeerId, _bootstrap_nodes: Vec<BootstrapNode>) -> Result<(), DiscoveryError> {
+    pub fn start_discovery(
+        &mut self,
+        peer_id: PeerId,
+        _bootstrap_nodes: Vec<BootstrapNode>,
+    ) -> Result<(), DiscoveryError> {
         // Check if session already exists for this peer
         if self.active_sessions.contains_key(&peer_id) {
-            return Err(DiscoveryError::InternalError(
-                format!("Discovery already in progress for peer {:?}", peer_id)
-            ));
+            return Err(DiscoveryError::InternalError(format!(
+                "Discovery already in progress for peer {:?}",
+                peer_id
+            )));
         }
 
         info!("Starting candidate discovery for peer {:?}", peer_id);
 
         // Create new session
         let mut session = DiscoverySession::new(peer_id, &self.config);
-        
+
         // Update bootstrap node manager (shared resource)
         // Note: BootstrapNodeManager is immutable through Arc, updates would need internal mutability
 
@@ -578,7 +584,7 @@ impl CandidateDiscoveryManager {
         session.current_phase = DiscoveryPhase::LocalInterfaceScanning {
             started_at: Instant::now(),
         };
-        
+
         // Add session to active sessions
         self.active_sessions.insert(peer_id, session);
 
@@ -589,7 +595,7 @@ impl CandidateDiscoveryManager {
     pub fn poll(&mut self, now: Instant) -> Vec<DiscoveryEvent> {
         let mut all_events = Vec::new();
         let mut completed_sessions = Vec::new();
-        
+
         // Since we need to poll sessions with self methods, we'll do it in phases
         // First, check for local interface scanning completions
         let mut local_scan_events = Vec::new();
@@ -598,23 +604,28 @@ impl CandidateDiscoveryManager {
                 DiscoveryPhase::LocalInterfaceScanning { started_at } => {
                     // Handle timeouts
                     if started_at.elapsed() > self.config.local_scan_timeout {
-                        local_scan_events.push((*peer_id, DiscoveryEvent::LocalScanningCompleted {
-                            candidate_count: 0,
-                            duration: started_at.elapsed(),
-                        }));
+                        local_scan_events.push((
+                            *peer_id,
+                            DiscoveryEvent::LocalScanningCompleted {
+                                candidate_count: 0,
+                                duration: started_at.elapsed(),
+                            },
+                        ));
                     }
                 }
                 _ => {}
             }
         }
-        
+
         // Process local scan events
         for (peer_id, event) in local_scan_events {
             all_events.push(event);
             if let Some(session) = self.active_sessions.get_mut(&peer_id) {
                 // Move to next phase
                 session.current_phase = DiscoveryPhase::Completed {
-                    final_candidates: session.discovered_candidates.iter()
+                    final_candidates: session
+                        .discovered_candidates
+                        .iter()
                         .map(|dc| ValidatedCandidate {
                             id: CandidateId(0),
                             address: dc.address,
@@ -626,26 +637,25 @@ impl CandidateDiscoveryManager {
                         .collect(),
                     completion_time: now,
                 };
-                
+
                 all_events.push(DiscoveryEvent::DiscoveryCompleted {
                     candidate_count: session.discovered_candidates.len(),
                     total_duration: now.duration_since(session.started_at),
                     success_rate: 1.0,
                 });
-                
+
                 completed_sessions.push(peer_id);
             }
         }
-        
+
         // Remove completed sessions
         for peer_id in completed_sessions {
             self.active_sessions.remove(&peer_id);
             debug!("Removed completed discovery session for peer {:?}", peer_id);
         }
-        
+
         all_events
     }
-    
 
     /// Get current discovery status
     pub fn get_status(&self) -> DiscoveryStatus {
@@ -662,7 +672,10 @@ impl CandidateDiscoveryManager {
     pub fn is_complete(&self) -> bool {
         // All sessions must be complete
         self.active_sessions.values().all(|session| {
-            matches!(session.current_phase, DiscoveryPhase::Completed { .. } | DiscoveryPhase::Failed { .. })
+            matches!(
+                session.current_phase,
+                DiscoveryPhase::Completed { .. } | DiscoveryPhase::Failed { .. }
+            )
         })
     }
 
@@ -672,29 +685,39 @@ impl CandidateDiscoveryManager {
         if self.active_sessions.is_empty() {
             return None;
         }
-        
+
         // Aggregate results from all sessions
         let mut all_candidates = Vec::new();
         let mut latest_completion = Instant::now();
         let mut combined_stats = DiscoveryStatistics::default();
-        
+
         for session in self.active_sessions.values() {
             match &session.current_phase {
-                DiscoveryPhase::Completed { final_candidates, completion_time } => {
+                DiscoveryPhase::Completed {
+                    final_candidates,
+                    completion_time,
+                } => {
                     // Add candidates from this session
                     all_candidates.extend(final_candidates.clone());
                     latest_completion = *completion_time;
                     // Combine statistics
-                    combined_stats.local_candidates_found += session.statistics.local_candidates_found;
-                    combined_stats.server_reflexive_candidates_found += session.statistics.server_reflexive_candidates_found;
-                    combined_stats.predicted_candidates_generated += session.statistics.predicted_candidates_generated;
-                    combined_stats.bootstrap_queries_sent += session.statistics.bootstrap_queries_sent;
-                    combined_stats.bootstrap_queries_successful += session.statistics.bootstrap_queries_successful;
-                },
+                    combined_stats.local_candidates_found +=
+                        session.statistics.local_candidates_found;
+                    combined_stats.server_reflexive_candidates_found +=
+                        session.statistics.server_reflexive_candidates_found;
+                    combined_stats.predicted_candidates_generated +=
+                        session.statistics.predicted_candidates_generated;
+                    combined_stats.bootstrap_queries_sent +=
+                        session.statistics.bootstrap_queries_sent;
+                    combined_stats.bootstrap_queries_successful +=
+                        session.statistics.bootstrap_queries_successful;
+                }
                 DiscoveryPhase::Failed { .. } => {
                     // Include any partial results from failed sessions
                     // Convert DiscoveryCandidate to ValidatedCandidate
-                    let validated: Vec<ValidatedCandidate> = session.discovered_candidates.iter()
+                    let validated: Vec<ValidatedCandidate> = session
+                        .discovered_candidates
+                        .iter()
                         .enumerate()
                         .map(|(idx, dc)| ValidatedCandidate {
                             id: CandidateId(idx as u64),
@@ -706,11 +729,11 @@ impl CandidateDiscoveryManager {
                         })
                         .collect();
                     all_candidates.extend(validated);
-                },
+                }
                 _ => {}
             }
         }
-        
+
         if all_candidates.is_empty() {
             None
         } else {
@@ -727,7 +750,9 @@ impl CandidateDiscoveryManager {
         // Look up the specific session for this peer
         if let Some(session) = self.active_sessions.get(&peer_id) {
             // Return all discovered candidates converted to CandidateAddress
-            session.discovered_candidates.iter()
+            session
+                .discovered_candidates
+                .iter()
                 .map(|c| c.to_candidate_address())
                 .collect()
         } else {
@@ -739,24 +764,41 @@ impl CandidateDiscoveryManager {
 
     // Private implementation methods
 
-    fn poll_session_local_scanning(&mut self, session: &mut DiscoverySession, started_at: Instant, now: Instant, events: &mut Vec<DiscoveryEvent>) {
+    fn poll_session_local_scanning(
+        &mut self,
+        session: &mut DiscoverySession,
+        started_at: Instant,
+        now: Instant,
+        events: &mut Vec<DiscoveryEvent>,
+    ) {
         // Check if we have cached local candidates
         if let Some((cache_time, ref cached_candidates)) = self.cached_local_candidates {
             if cache_time.elapsed() < self.local_cache_duration {
                 // Use cached candidates
-                debug!("Using cached local candidates for peer {:?}", session.peer_id);
-                self.process_cached_local_candidates(session, cached_candidates.clone(), events, now);
+                debug!(
+                    "Using cached local candidates for peer {:?}",
+                    session.peer_id
+                );
+                self.process_cached_local_candidates(
+                    session,
+                    cached_candidates.clone(),
+                    events,
+                    now,
+                );
                 return;
             }
         }
-        
+
         // Start the scan if not already started
         // We check if the scan is at the very beginning (within first 10ms) to avoid repeated start_scan calls
         if started_at.elapsed().as_millis() < 10 {
             let scan_result = self.interface_discovery.lock().unwrap().start_scan();
             match scan_result {
                 Ok(()) => {
-                    debug!("Started local interface scan for peer {:?}", session.peer_id);
+                    debug!(
+                        "Started local interface scan for peer {:?}",
+                        session.peer_id
+                    );
                     events.push(DiscoveryEvent::LocalScanningStarted);
                 }
                 Err(e) => {
@@ -769,23 +811,40 @@ impl CandidateDiscoveryManager {
 
         // Check for timeout
         if started_at.elapsed() > self.config.local_scan_timeout {
-            warn!("Local interface scanning timeout for peer {:?}", session.peer_id);
+            warn!(
+                "Local interface scanning timeout for peer {:?}",
+                session.peer_id
+            );
             self.handle_session_local_scan_timeout(session, events, now);
             return;
         }
 
         // Check if scanning is complete
-        let scan_complete_result = self.interface_discovery.lock().unwrap().check_scan_complete();
+        let scan_complete_result = self
+            .interface_discovery
+            .lock()
+            .unwrap()
+            .check_scan_complete();
         if let Some(interfaces) = scan_complete_result {
             self.process_session_local_interfaces(session, interfaces, events, now);
         }
     }
 
-    fn process_session_local_interfaces(&mut self, session: &mut DiscoverySession, interfaces: Vec<NetworkInterface>, events: &mut Vec<DiscoveryEvent>, now: Instant) {
-        debug!("Processing {} network interfaces for peer {:?}", interfaces.len(), session.peer_id);
-        
+    fn process_session_local_interfaces(
+        &mut self,
+        session: &mut DiscoverySession,
+        interfaces: Vec<NetworkInterface>,
+        events: &mut Vec<DiscoveryEvent>,
+        now: Instant,
+    ) {
+        debug!(
+            "Processing {} network interfaces for peer {:?}",
+            interfaces.len(),
+            session.peer_id
+        );
+
         let mut validated_candidates = Vec::new();
-        
+
         // First, add the bound address if available
         if let Some(bound_addr) = self.config.bound_address {
             if self.is_valid_local_address(&bound_addr) || bound_addr.ip().is_loopback() {
@@ -798,7 +857,7 @@ impl CandidateDiscoveryManager {
 
                 session.discovered_candidates.push(candidate.clone());
                 session.statistics.local_candidates_found += 1;
-                
+
                 // Create validated candidate for caching
                 validated_candidates.push(ValidatedCandidate {
                     id: CandidateId(rand::random()),
@@ -809,14 +868,17 @@ impl CandidateDiscoveryManager {
                     reliability_score: 1.0,
                 });
 
-                events.push(DiscoveryEvent::LocalCandidateDiscovered { 
-                    candidate: candidate.to_candidate_address() 
+                events.push(DiscoveryEvent::LocalCandidateDiscovered {
+                    candidate: candidate.to_candidate_address(),
                 });
-                
-                debug!("Added bound address {} as local candidate for peer {:?}", bound_addr, session.peer_id);
+
+                debug!(
+                    "Added bound address {} as local candidate for peer {:?}",
+                    bound_addr, session.peer_id
+                );
             }
         }
-        
+
         // Then process discovered interfaces
         for interface in &interfaces {
             for address in &interface.addresses {
@@ -824,7 +886,7 @@ impl CandidateDiscoveryManager {
                 if Some(*address) == self.config.bound_address {
                     continue;
                 }
-                
+
                 if self.is_valid_local_address(&address) {
                     let candidate = DiscoveryCandidate {
                         address: *address,
@@ -835,7 +897,7 @@ impl CandidateDiscoveryManager {
 
                     session.discovered_candidates.push(candidate.clone());
                     session.statistics.local_candidates_found += 1;
-                    
+
                     // Create validated candidate for caching
                     validated_candidates.push(ValidatedCandidate {
                         id: CandidateId(rand::random()),
@@ -846,13 +908,13 @@ impl CandidateDiscoveryManager {
                         reliability_score: 1.0,
                     });
 
-                    events.push(DiscoveryEvent::LocalCandidateDiscovered { 
-                        candidate: candidate.to_candidate_address() 
+                    events.push(DiscoveryEvent::LocalCandidateDiscovered {
+                        candidate: candidate.to_candidate_address(),
                     });
                 }
             }
         }
-        
+
         // Cache the local candidates for other sessions
         self.cached_local_candidates = Some((now, validated_candidates));
 
@@ -864,25 +926,40 @@ impl CandidateDiscoveryManager {
         // Transition to server reflexive discovery
         self.start_session_server_reflexive_discovery(session, events, now);
     }
-    
-    fn process_cached_local_candidates(&mut self, session: &mut DiscoverySession, mut cached_candidates: Vec<ValidatedCandidate>, events: &mut Vec<DiscoveryEvent>, now: Instant) {
+
+    fn process_cached_local_candidates(
+        &mut self,
+        session: &mut DiscoverySession,
+        mut cached_candidates: Vec<ValidatedCandidate>,
+        events: &mut Vec<DiscoveryEvent>,
+        now: Instant,
+    ) {
         // If we have a bound address, ensure it's included in the candidates
         if let Some(bound_addr) = self.config.bound_address {
             let has_bound_addr = cached_candidates.iter().any(|c| c.address == bound_addr);
-            if !has_bound_addr && (self.is_valid_local_address(&bound_addr) || bound_addr.ip().is_loopback()) {
-                cached_candidates.insert(0, ValidatedCandidate {
-                    id: CandidateId(rand::random()),
-                    address: bound_addr,
-                    source: DiscoverySourceType::Local,
-                    priority: 60000, // High priority for the actual bound address
-                    rtt: None,
-                    reliability_score: 1.0,
-                });
+            if !has_bound_addr
+                && (self.is_valid_local_address(&bound_addr) || bound_addr.ip().is_loopback())
+            {
+                cached_candidates.insert(
+                    0,
+                    ValidatedCandidate {
+                        id: CandidateId(rand::random()),
+                        address: bound_addr,
+                        source: DiscoverySourceType::Local,
+                        priority: 60000, // High priority for the actual bound address
+                        rtt: None,
+                        reliability_score: 1.0,
+                    },
+                );
             }
         }
-        
-        debug!("Using {} cached local candidates for peer {:?}", cached_candidates.len(), session.peer_id);
-        
+
+        debug!(
+            "Using {} cached local candidates for peer {:?}",
+            cached_candidates.len(),
+            session.peer_id
+        );
+
         for validated in cached_candidates {
             let candidate = DiscoveryCandidate {
                 address: validated.address,
@@ -890,29 +967,37 @@ impl CandidateDiscoveryManager {
                 source: validated.source.clone(),
                 state: CandidateState::New,
             };
-            
+
             session.discovered_candidates.push(candidate.clone());
             session.statistics.local_candidates_found += 1;
-            
-            events.push(DiscoveryEvent::LocalCandidateDiscovered { 
-                candidate: candidate.to_candidate_address() 
+
+            events.push(DiscoveryEvent::LocalCandidateDiscovered {
+                candidate: candidate.to_candidate_address(),
             });
         }
-        
+
         events.push(DiscoveryEvent::LocalScanningCompleted {
             candidate_count: session.statistics.local_candidates_found as usize,
             duration: now.duration_since(session.started_at),
         });
-        
+
         // Transition to server reflexive discovery
         self.start_session_server_reflexive_discovery(session, events, now);
     }
 
-    fn start_session_server_reflexive_discovery(&mut self, session: &mut DiscoverySession, events: &mut Vec<DiscoveryEvent>, now: Instant) {
+    fn start_session_server_reflexive_discovery(
+        &mut self,
+        session: &mut DiscoverySession,
+        events: &mut Vec<DiscoveryEvent>,
+        now: Instant,
+    ) {
         let bootstrap_node_ids = self.bootstrap_manager.get_active_bootstrap_nodes();
-        
+
         if bootstrap_node_ids.is_empty() {
-            info!("No bootstrap nodes available for server reflexive discovery for peer {:?}, completing with local candidates only", session.peer_id);
+            info!(
+                "No bootstrap nodes available for server reflexive discovery for peer {:?}, completing with local candidates only",
+                session.peer_id
+            );
             // For bootstrap nodes or nodes without bootstrap servers, complete discovery with local candidates
             self.complete_session_discovery_with_local_candidates(session, events, now);
             return;
@@ -922,7 +1007,8 @@ impl CandidateDiscoveryManager {
         let bootstrap_nodes_with_addresses: Vec<(BootstrapNodeId, SocketAddr)> = bootstrap_node_ids
             .iter()
             .filter_map(|&node_id| {
-                self.bootstrap_manager.get_bootstrap_address(node_id)
+                self.bootstrap_manager
+                    .get_bootstrap_address(node_id)
                     .map(|addr| (node_id, addr))
             })
             .collect();
@@ -935,7 +1021,9 @@ impl CandidateDiscoveryManager {
         }
 
         // Use the enhanced method that includes addresses for real QUIC communication
-        let active_queries = session.server_reflexive_discovery.start_queries_with_addresses(&bootstrap_nodes_with_addresses, now);
+        let active_queries = session
+            .server_reflexive_discovery
+            .start_queries_with_addresses(&bootstrap_nodes_with_addresses, now);
 
         events.push(DiscoveryEvent::ServerReflexiveDiscoveryStarted {
             bootstrap_count: bootstrap_nodes_with_addresses.len(),
@@ -948,9 +1036,12 @@ impl CandidateDiscoveryManager {
         };
     }
 
-
-    
-    fn process_server_reflexive_response_for_session(&mut self, session: &mut DiscoverySession, response: &ServerReflexiveResponse, events: &mut Vec<DiscoveryEvent>) {
+    fn process_server_reflexive_response_for_session(
+        &mut self,
+        session: &mut DiscoverySession,
+        response: &ServerReflexiveResponse,
+        events: &mut Vec<DiscoveryEvent>,
+    ) {
         debug!("Received server reflexive response: {:?}", response);
 
         // Record port allocation event for pattern analysis
@@ -964,8 +1055,10 @@ impl CandidateDiscoveryManager {
         if let DiscoveryPhase::ServerReflexiveQuerying { .. } = &mut session.current_phase {
             // We'll need to track allocation history in session state
             // For now, update session state to track this information
-            session.allocation_history.push_back(allocation_event.clone());
-            
+            session
+                .allocation_history
+                .push_back(allocation_event.clone());
+
             // Keep only recent allocations (last 20) to avoid unbounded growth
             if session.allocation_history.len() > 20 {
                 session.allocation_history.pop_front();
@@ -984,7 +1077,10 @@ impl CandidateDiscoveryManager {
 
         events.push(DiscoveryEvent::ServerReflexiveCandidateDiscovered {
             candidate: candidate.to_candidate_address(),
-            bootstrap_node: self.bootstrap_manager.get_bootstrap_address(response.bootstrap_node).unwrap_or_else(|| "unknown".parse().unwrap()),
+            bootstrap_node: self
+                .bootstrap_manager
+                .get_bootstrap_address(response.bootstrap_node)
+                .unwrap_or_else(|| "unknown".parse().unwrap()),
         });
 
         events.push(DiscoveryEvent::PortAllocationDetected {
@@ -995,8 +1091,13 @@ impl CandidateDiscoveryManager {
         });
     }
 
-
-    fn start_session_symmetric_prediction(&mut self, session: &mut DiscoverySession, responses: &[ServerReflexiveResponse], events: &mut Vec<DiscoveryEvent>, now: Instant) {
+    fn start_session_symmetric_prediction(
+        &mut self,
+        session: &mut DiscoverySession,
+        responses: &[ServerReflexiveResponse],
+        events: &mut Vec<DiscoveryEvent>,
+        now: Instant,
+    ) {
         if !self.config.enable_symmetric_prediction || responses.is_empty() {
             // Skip symmetric prediction and complete with discovered candidates
             self.complete_session_discovery_with_local_candidates(session, events, now);
@@ -1005,13 +1106,20 @@ impl CandidateDiscoveryManager {
 
         // Use consensus address as base for prediction
         let base_address = self.calculate_consensus_address(responses);
-        
+
         events.push(DiscoveryEvent::SymmetricPredictionStarted { base_address });
 
         // Analyze allocation patterns from collected history
-        let detected_pattern = self.symmetric_predictor.lock().unwrap().analyze_allocation_patterns(&session.allocation_history);
-        
-        let confidence_level = detected_pattern.as_ref().map(|p| p.confidence).unwrap_or(0.0);
+        let detected_pattern = self
+            .symmetric_predictor
+            .lock()
+            .unwrap()
+            .analyze_allocation_patterns(&session.allocation_history);
+
+        let confidence_level = detected_pattern
+            .as_ref()
+            .map(|p| p.confidence)
+            .unwrap_or(0.0);
 
         // Calculate prediction accuracy based on pattern consistency
         let prediction_accuracy = if let Some(ref pattern) = detected_pattern {
@@ -1020,8 +1128,10 @@ impl CandidateDiscoveryManager {
             0.3 // Default accuracy for heuristic predictions
         };
 
-        debug!("Symmetric NAT pattern analysis: detected_pattern={:?}, confidence={:.2}, accuracy={:.2}",
-               detected_pattern, confidence_level, prediction_accuracy);
+        debug!(
+            "Symmetric NAT pattern analysis: detected_pattern={:?}, confidence={:.2}, accuracy={:.2}",
+            detected_pattern, confidence_level, prediction_accuracy
+        );
 
         session.current_phase = DiscoveryPhase::SymmetricNatPrediction {
             started_at: now,
@@ -1035,10 +1145,16 @@ impl CandidateDiscoveryManager {
         };
     }
 
-
-    
-    fn start_session_candidate_validation(&mut self, session: &mut DiscoverySession, _events: &mut Vec<DiscoveryEvent>, now: Instant) {
-        debug!("Starting candidate validation for {} candidates", session.discovered_candidates.len());
+    fn start_session_candidate_validation(
+        &mut self,
+        session: &mut DiscoverySession,
+        _events: &mut Vec<DiscoveryEvent>,
+        now: Instant,
+    ) {
+        debug!(
+            "Starting candidate validation for {} candidates",
+            session.discovered_candidates.len()
+        );
 
         session.current_phase = DiscoveryPhase::CandidateValidation {
             started_at: now,
@@ -1046,61 +1162,85 @@ impl CandidateDiscoveryManager {
         };
     }
 
-
     /// Start real QUIC PATH_CHALLENGE/PATH_RESPONSE validation for a candidate
-    fn start_path_validation(&mut self, candidate_id: CandidateId, candidate_address: SocketAddr, now: Instant, events: &mut Vec<DiscoveryEvent>) {
-        debug!("Starting QUIC path validation for candidate {} at {}", candidate_id.0, candidate_address);
-        
+    fn start_path_validation(
+        &mut self,
+        candidate_id: CandidateId,
+        candidate_address: SocketAddr,
+        now: Instant,
+        events: &mut Vec<DiscoveryEvent>,
+    ) {
+        debug!(
+            "Starting QUIC path validation for candidate {} at {}",
+            candidate_id.0, candidate_address
+        );
+
         // Generate a random challenge token
         let challenge_token: u64 = rand::random();
-        
+
         // Store the validation state
-        self.pending_validations.insert(candidate_id, PendingValidation {
-            candidate_address,
-            challenge_token,
-            started_at: now,
-            attempts: 1,
-        });
-        
+        self.pending_validations.insert(
+            candidate_id,
+            PendingValidation {
+                candidate_address,
+                challenge_token,
+                started_at: now,
+                attempts: 1,
+            },
+        );
+
         // Add event to trigger PATH_CHALLENGE sending
         events.push(DiscoveryEvent::PathValidationRequested {
             candidate_id,
             candidate_address,
             challenge_token,
         });
-        
-        debug!("PATH_CHALLENGE {:08x} requested for candidate {} at {}", 
-               challenge_token, candidate_id.0, candidate_address);
+
+        debug!(
+            "PATH_CHALLENGE {:08x} requested for candidate {} at {}",
+            challenge_token, candidate_id.0, candidate_address
+        );
     }
-    
+
     /// Handle PATH_RESPONSE received for a candidate
-    pub fn handle_path_response(&mut self, candidate_address: SocketAddr, challenge_token: u64, now: Instant) -> Option<DiscoveryEvent> {
+    pub fn handle_path_response(
+        &mut self,
+        candidate_address: SocketAddr,
+        challenge_token: u64,
+        now: Instant,
+    ) -> Option<DiscoveryEvent> {
         // Find the matching pending validation
-        let candidate_id = self.pending_validations.iter()
+        let candidate_id = self
+            .pending_validations
+            .iter()
             .find(|(_, validation)| {
-                validation.candidate_address == candidate_address && 
-                validation.challenge_token == challenge_token
+                validation.candidate_address == candidate_address
+                    && validation.challenge_token == challenge_token
             })
             .map(|(id, _)| *id)?;
-            
+
         // Remove from pending and calculate RTT
         let validation = self.pending_validations.remove(&candidate_id)?;
         let rtt = now.duration_since(validation.started_at);
-        
-        debug!("PATH_RESPONSE received for candidate {} at {} with RTT {:?}", 
-               candidate_id.0, candidate_address, rtt);
-        
+
+        debug!(
+            "PATH_RESPONSE received for candidate {} at {} with RTT {:?}",
+            candidate_id.0, candidate_address, rtt
+        );
+
         // Update the candidate in the appropriate session
         for session in self.active_sessions.values_mut() {
-            if let Some(candidate) = session.discovered_candidates.iter_mut()
-                .find(|c| c.address == candidate_address) 
+            if let Some(candidate) = session
+                .discovered_candidates
+                .iter_mut()
+                .find(|c| c.address == candidate_address)
             {
                 candidate.state = CandidateState::Valid;
                 // Store RTT information if needed in the future
                 break;
             }
         }
-        
+
         Some(DiscoveryEvent::PathValidationResponse {
             candidate_id,
             candidate_address,
@@ -1110,53 +1250,67 @@ impl CandidateDiscoveryManager {
     }
 
     /// Simulate path validation for development/testing
-    fn simulate_path_validation(&mut self, candidate_id: CandidateId, candidate_address: SocketAddr, _now: Instant) {
+    fn simulate_path_validation(
+        &mut self,
+        candidate_id: CandidateId,
+        candidate_address: SocketAddr,
+        _now: Instant,
+    ) {
         // Simulate different validation outcomes based on address characteristics
-        let is_local = candidate_address.ip().is_loopback() || 
-                      (candidate_address.ip().is_ipv4() && candidate_address.ip().to_string().starts_with("192.168.")) ||
-                      (candidate_address.ip().is_ipv4() && candidate_address.ip().to_string().starts_with("10.")) ||
-                      (candidate_address.ip().is_ipv4() && candidate_address.ip().to_string().starts_with("172."));
-        
+        let is_local = candidate_address.ip().is_loopback()
+            || (candidate_address.ip().is_ipv4()
+                && candidate_address.ip().to_string().starts_with("192.168."))
+            || (candidate_address.ip().is_ipv4()
+                && candidate_address.ip().to_string().starts_with("10."))
+            || (candidate_address.ip().is_ipv4()
+                && candidate_address.ip().to_string().starts_with("172."));
+
         let is_server_reflexive = !is_local && !candidate_address.ip().is_unspecified();
-        
+
         // Store validation result for later retrieval
         // In a real implementation, this would be stored in a validation state tracker
-        debug!("Simulated path validation for candidate {} at {} - local: {}, server_reflexive: {}", 
-               candidate_id.0, candidate_address, is_local, is_server_reflexive);
+        debug!(
+            "Simulated path validation for candidate {} at {} - local: {}, server_reflexive: {}",
+            candidate_id.0, candidate_address, is_local, is_server_reflexive
+        );
     }
-
 
     /// Simulate validation result based on address characteristics
     fn simulate_validation_result(&self, address: &SocketAddr) -> ValidationResult {
-        let is_local = address.ip().is_loopback() || 
-                      (address.ip().is_ipv4() && address.ip().to_string().starts_with("192.168.")) ||
-                      (address.ip().is_ipv4() && address.ip().to_string().starts_with("10.")) ||
-                      (address.ip().is_ipv4() && address.ip().to_string().starts_with("172."));
-        
+        let is_local = address.ip().is_loopback()
+            || (address.ip().is_ipv4() && address.ip().to_string().starts_with("192.168."))
+            || (address.ip().is_ipv4() && address.ip().to_string().starts_with("10."))
+            || (address.ip().is_ipv4() && address.ip().to_string().starts_with("172."));
+
         if is_local {
             // Local addresses typically validate quickly
-            ValidationResult::Valid { rtt: Duration::from_millis(1) }
+            ValidationResult::Valid {
+                rtt: Duration::from_millis(1),
+            }
         } else if address.ip().is_unspecified() {
             // Unspecified addresses are invalid
-            ValidationResult::Invalid { reason: "Unspecified address".to_string() }
+            ValidationResult::Invalid {
+                reason: "Unspecified address".to_string(),
+            }
         } else {
             // Server reflexive addresses have higher RTT
-            ValidationResult::Valid { rtt: Duration::from_millis(50 + (address.port() % 100) as u64) }
+            ValidationResult::Valid {
+                rtt: Duration::from_millis(50 + (address.port() % 100) as u64),
+            }
         }
     }
-
 
     /// Calculate reliability score for a validated candidate
     fn calculate_reliability_score(&self, candidate: &DiscoveryCandidate, rtt: Duration) -> f64 {
         let mut score: f64 = 0.5; // Base score
-        
+
         // Adjust based on source type
         match candidate.source {
             DiscoverySourceType::Local => score += 0.3, // Local addresses are more reliable
             DiscoverySourceType::ServerReflexive => score += 0.2, // Server reflexive are good
             DiscoverySourceType::Predicted => score += 0.1, // Predicted are less certain
         }
-        
+
         // Adjust based on RTT (lower RTT = higher reliability)
         let rtt_ms = rtt.as_millis() as f64;
         if rtt_ms < 10.0 {
@@ -1166,28 +1320,36 @@ impl CandidateDiscoveryManager {
         } else if rtt_ms > 200.0 {
             score -= 0.1;
         }
-        
+
         // Adjust based on address type
         if candidate.address.ip().is_ipv6() {
             score += 0.05; // Slight preference for IPv6
         }
-        
+
         // Ensure score is in valid range [0.0, 1.0]
         score.max(0.0).min(1.0)
     }
 
-
     // Helper methods
 
-    
-    fn handle_session_timeout(&mut self, session: &mut DiscoverySession, events: &mut Vec<DiscoveryEvent>, now: Instant) {
+    fn handle_session_timeout(
+        &mut self,
+        session: &mut DiscoverySession,
+        events: &mut Vec<DiscoveryEvent>,
+        now: Instant,
+    ) {
         let error = DiscoveryError::DiscoveryTimeout;
-        let partial_results = session.discovered_candidates.iter()
+        let partial_results = session
+            .discovered_candidates
+            .iter()
             .map(|c| c.to_candidate_address())
             .collect();
 
-        warn!("Discovery failed for peer {:?}: discovery process timed out (found {} partial candidates)", 
-              session.peer_id, session.discovered_candidates.len());
+        warn!(
+            "Discovery failed for peer {:?}: discovery process timed out (found {} partial candidates)",
+            session.peer_id,
+            session.discovered_candidates.len()
+        );
         events.push(DiscoveryEvent::DiscoveryFailed {
             error: error.clone(),
             partial_results,
@@ -1199,43 +1361,77 @@ impl CandidateDiscoveryManager {
             fallback_options: vec![FallbackStrategy::UseCachedResults],
         };
     }
-    
-    fn handle_session_local_scan_timeout(&mut self, session: &mut DiscoverySession, events: &mut Vec<DiscoveryEvent>, now: Instant) {
-        warn!("Local interface scan timeout for peer {:?}, proceeding with available candidates", session.peer_id);
-        
+
+    fn handle_session_local_scan_timeout(
+        &mut self,
+        session: &mut DiscoverySession,
+        events: &mut Vec<DiscoveryEvent>,
+        now: Instant,
+    ) {
+        warn!(
+            "Local interface scan timeout for peer {:?}, proceeding with available candidates",
+            session.peer_id
+        );
+
         events.push(DiscoveryEvent::LocalScanningCompleted {
             candidate_count: session.statistics.local_candidates_found as usize,
             duration: now.duration_since(session.started_at),
         });
-        
+
         self.start_session_server_reflexive_discovery(session, events, now);
     }
-    
-    fn poll_session_server_reflexive(&mut self, session: &mut DiscoverySession, _started_at: Instant, _active_queries: &HashMap<BootstrapNodeId, QueryState>, _responses_received: &[(BootstrapNodeId, ServerReflexiveResponse)], now: Instant, events: &mut Vec<DiscoveryEvent>) {
+
+    fn poll_session_server_reflexive(
+        &mut self,
+        session: &mut DiscoverySession,
+        _started_at: Instant,
+        _active_queries: &HashMap<BootstrapNodeId, QueryState>,
+        _responses_received: &[(BootstrapNodeId, ServerReflexiveResponse)],
+        now: Instant,
+        events: &mut Vec<DiscoveryEvent>,
+    ) {
         // TODO: Implement server reflexive polling for session
         // For now, transition to completion
         self.complete_session_discovery_with_local_candidates(session, events, now);
     }
-    
-    fn poll_session_symmetric_prediction(&mut self, session: &mut DiscoverySession, _started_at: Instant, _prediction_attempts: u32, _pattern_analysis: &PatternAnalysisState, now: Instant, events: &mut Vec<DiscoveryEvent>) {
+
+    fn poll_session_symmetric_prediction(
+        &mut self,
+        session: &mut DiscoverySession,
+        _started_at: Instant,
+        _prediction_attempts: u32,
+        _pattern_analysis: &PatternAnalysisState,
+        now: Instant,
+        events: &mut Vec<DiscoveryEvent>,
+    ) {
         // TODO: Implement symmetric NAT prediction for session
         // For now, skip to completion
         self.complete_session_discovery_with_local_candidates(session, events, now);
     }
-    
-    fn poll_session_candidate_validation(&mut self, session: &mut DiscoverySession, _started_at: Instant, _validation_results: &HashMap<CandidateId, ValidationResult>, now: Instant, events: &mut Vec<DiscoveryEvent>) {
+
+    fn poll_session_candidate_validation(
+        &mut self,
+        session: &mut DiscoverySession,
+        _started_at: Instant,
+        _validation_results: &HashMap<CandidateId, ValidationResult>,
+        now: Instant,
+        events: &mut Vec<DiscoveryEvent>,
+    ) {
         // TODO: Implement candidate validation for session
         // For now, complete discovery
         self.complete_session_discovery_with_local_candidates(session, events, now);
     }
 
-
-
-    fn complete_session_discovery_with_local_candidates(&mut self, session: &mut DiscoverySession, events: &mut Vec<DiscoveryEvent>, now: Instant) {
+    fn complete_session_discovery_with_local_candidates(
+        &mut self,
+        session: &mut DiscoverySession,
+        events: &mut Vec<DiscoveryEvent>,
+        now: Instant,
+    ) {
         // Calculate statistics
         let duration = now.duration_since(session.started_at);
         session.statistics.total_discovery_time = Some(duration);
-        
+
         let success_rate = if session.statistics.local_candidates_found > 0 {
             1.0
         } else {
@@ -1243,7 +1439,8 @@ impl CandidateDiscoveryManager {
         };
 
         // Convert discovered candidates to ValidatedCandidate format
-        let validated_candidates: Vec<ValidatedCandidate> = session.discovered_candidates
+        let validated_candidates: Vec<ValidatedCandidate> = session
+            .discovered_candidates
             .iter()
             .map(|dc| ValidatedCandidate {
                 id: CandidateId(rand::random()),
@@ -1266,9 +1463,12 @@ impl CandidateDiscoveryManager {
             completion_time: now,
         };
 
-        info!("Discovery completed with {} local candidates for peer {:?}", session.discovered_candidates.len(), session.peer_id);
+        info!(
+            "Discovery completed with {} local candidates for peer {:?}",
+            session.discovered_candidates.len(),
+            session.peer_id
+        );
     }
-
 
     fn is_valid_local_address(&self, address: &SocketAddr) -> bool {
         match address.ip() {
@@ -1279,7 +1479,7 @@ impl CandidateDiscoveryManager {
                     return true;
                 }
                 !ipv4.is_loopback() && !ipv4.is_unspecified()
-            },
+            }
             IpAddr::V6(ipv6) => {
                 // For testing, allow loopback addresses
                 #[cfg(test)]
@@ -1287,7 +1487,7 @@ impl CandidateDiscoveryManager {
                     return true;
                 }
                 !ipv6.is_loopback() && !ipv6.is_unspecified()
-            },
+            }
         }
     }
 
@@ -1299,7 +1499,7 @@ impl CandidateDiscoveryManager {
                 if ipv4.is_private() {
                     priority += 50; // Prefer private addresses for local networks
                 }
-            },
+            }
             IpAddr::V6(ipv6) => {
                 // IPv6 priority based on address type
                 // Global unicast: 2000::/3 (not link-local, not unique local)
@@ -1319,10 +1519,10 @@ impl CandidateDiscoveryManager {
                         priority += 30;
                     }
                 }
-                
+
                 // Prefer IPv6 for better NAT traversal potential
                 priority += 10; // Small boost for IPv6 overall
-            },
+            }
         }
 
         if interface.is_wireless {
@@ -1343,20 +1543,28 @@ impl CandidateDiscoveryManager {
         }
 
         // Adjust based on response timestamp (more recent is better)
-        let age_bonus = if response.timestamp.elapsed().as_secs() < 60 { 20 } else { 0 };
+        let age_bonus = if response.timestamp.elapsed().as_secs() < 60 {
+            20
+        } else {
+            0
+        };
         priority += age_bonus;
 
         priority
     }
 
-    fn should_transition_to_prediction(&self, responses: &[ServerReflexiveResponse], _now: Instant) -> bool {
+    fn should_transition_to_prediction(
+        &self,
+        responses: &[ServerReflexiveResponse],
+        _now: Instant,
+    ) -> bool {
         responses.len() >= self.config.min_bootstrap_consensus.max(1)
     }
 
     fn calculate_consensus_address(&self, responses: &[ServerReflexiveResponse]) -> SocketAddr {
         // Simple majority consensus - in practice, would use more sophisticated algorithm
         let mut address_counts: HashMap<SocketAddr, usize> = HashMap::new();
-        
+
         for response in responses {
             *address_counts.entry(response.observed_address).or_insert(0) += 1;
         }
@@ -1369,13 +1577,18 @@ impl CandidateDiscoveryManager {
     }
 
     /// Calculate the accuracy of predictions based on pattern consistency
-    fn calculate_prediction_accuracy(&self, pattern: &PortAllocationPattern, history: &VecDeque<PortAllocationEvent>) -> f64 {
+    fn calculate_prediction_accuracy(
+        &self,
+        pattern: &PortAllocationPattern,
+        history: &VecDeque<PortAllocationEvent>,
+    ) -> f64 {
         if history.len() < 3 {
             return 0.3; // Low accuracy for insufficient data
         }
 
         // Calculate how well the pattern explains the observed allocations
-        let recent_ports: Vec<u16> = history.iter()
+        let recent_ports: Vec<u16> = history
+            .iter()
             .rev()
             .take(10)
             .map(|event| event.port)
@@ -1392,7 +1605,7 @@ impl CandidateDiscoveryManager {
             AllocationPatternType::Sequential => {
                 // Check how many consecutive pairs follow sequential pattern
                 for i in 1..recent_ports.len() {
-                    if recent_ports[i-1].wrapping_sub(recent_ports[i]) == 1 {
+                    if recent_ports[i - 1].wrapping_sub(recent_ports[i]) == 1 {
                         correct_predictions += 1;
                     }
                 }
@@ -1400,7 +1613,7 @@ impl CandidateDiscoveryManager {
             AllocationPatternType::FixedStride => {
                 // Check how many consecutive pairs follow the stride pattern
                 for i in 1..recent_ports.len() {
-                    if recent_ports[i-1].wrapping_sub(recent_ports[i]) == pattern.stride {
+                    if recent_ports[i - 1].wrapping_sub(recent_ports[i]) == pattern.stride {
                         correct_predictions += 1;
                     }
                 }
@@ -1418,11 +1631,14 @@ impl CandidateDiscoveryManager {
             AllocationPatternType::Random | AllocationPatternType::Unknown => {
                 // For random patterns, use statistical variance
                 if recent_ports.len() >= 3 {
-                    let mean = recent_ports.iter().map(|&p| p as f64).sum::<f64>() / recent_ports.len() as f64;
-                    let variance = recent_ports.iter()
+                    let mean = recent_ports.iter().map(|&p| p as f64).sum::<f64>()
+                        / recent_ports.len() as f64;
+                    let variance = recent_ports
+                        .iter()
                         .map(|&p| (p as f64 - mean).powi(2))
-                        .sum::<f64>() / recent_ports.len() as f64;
-                    
+                        .sum::<f64>()
+                        / recent_ports.len() as f64;
+
                     // Higher variance suggests more randomness, lower accuracy
                     let normalized_variance = (variance / 10000.0).min(1.0); // Normalize to [0, 1]
                     return 0.2 + (1.0 - normalized_variance) * 0.3; // Range [0.2, 0.5]
@@ -1431,18 +1647,22 @@ impl CandidateDiscoveryManager {
             AllocationPatternType::TimeBased => {
                 // For time-based patterns, check timing consistency
                 if history.len() >= 2 {
-                    let time_diffs: Vec<Duration> = history.iter()
+                    let time_diffs: Vec<Duration> = history
+                        .iter()
                         .collect::<Vec<_>>()
                         .windows(2)
                         .map(|w| w[1].timestamp.duration_since(w[0].timestamp))
                         .collect();
-                    
+
                     if !time_diffs.is_empty() {
-                        let avg_diff = time_diffs.iter().sum::<Duration>() / time_diffs.len() as u32;
-                        let variance = time_diffs.iter()
+                        let avg_diff =
+                            time_diffs.iter().sum::<Duration>() / time_diffs.len() as u32;
+                        let variance = time_diffs
+                            .iter()
                             .map(|d| d.as_millis().abs_diff(avg_diff.as_millis()) as f64)
-                            .sum::<f64>() / time_diffs.len() as f64;
-                        
+                            .sum::<f64>()
+                            / time_diffs.len() as f64;
+
                         // Lower timing variance suggests more consistent time-based allocation
                         let normalized_variance = (variance / 1000.0).min(1.0); // Normalize
                         return 0.3 + (1.0 - normalized_variance) * 0.4; // Range [0.3, 0.7]
@@ -1503,6 +1723,7 @@ pub struct NetworkInterface {
 
 /// Active connection state to a bootstrap node (production builds)
 #[derive(Debug)]
+#[allow(dead_code)]
 struct BootstrapConnection {
     /// Quinn connection to the bootstrap node
     connection: crate::Connection,
@@ -1516,6 +1737,7 @@ struct BootstrapConnection {
 
 /// Discovery request message sent to bootstrap nodes
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct AddressObservationRequest {
     /// Unique request ID for correlation
     request_id: u64,
@@ -1541,6 +1763,7 @@ pub(crate) struct ServerReflexiveDiscovery {
     runtime_handle: Option<tokio::runtime::Handle>,
 }
 
+#[allow(dead_code)]
 impl ServerReflexiveDiscovery {
     pub(crate) fn new(config: &DiscoveryConfig) -> Self {
         Self {
@@ -1553,91 +1776,123 @@ impl ServerReflexiveDiscovery {
         }
     }
 
-    pub(crate) fn start_queries(&mut self, bootstrap_nodes: &[BootstrapNodeId], now: Instant) -> HashMap<BootstrapNodeId, QueryState> {
-        debug!("Starting server reflexive queries to {} bootstrap nodes", bootstrap_nodes.len());
-        
+    pub(crate) fn start_queries(
+        &mut self,
+        bootstrap_nodes: &[BootstrapNodeId],
+        now: Instant,
+    ) -> HashMap<BootstrapNodeId, QueryState> {
+        debug!(
+            "Starting server reflexive queries to {} bootstrap nodes",
+            bootstrap_nodes.len()
+        );
+
         self.active_queries.clear();
         self.query_timeouts.clear();
-        
+
         self.active_connections.clear();
-        
+
         for &node_id in bootstrap_nodes {
             let query_state = QueryState::Pending {
                 sent_at: now,
                 attempts: 1,
             };
-            
+
             self.active_queries.insert(node_id, query_state);
-            self.query_timeouts.insert(node_id, now + self.config.bootstrap_query_timeout);
-            
-            debug!("Starting server reflexive query to bootstrap node {:?}", node_id);
-            
+            self.query_timeouts
+                .insert(node_id, now + self.config.bootstrap_query_timeout);
+
+            debug!(
+                "Starting server reflexive query to bootstrap node {:?}",
+                node_id
+            );
+
             // Try to establish real Quinn connection in production
             if let Some(runtime) = &self.runtime_handle {
                 self.start_quinn_query(node_id, runtime.clone(), now);
             } else {
-                warn!("No async runtime available, falling back to simulation for node {:?}", node_id);
+                warn!(
+                    "No async runtime available, falling back to simulation for node {:?}",
+                    node_id
+                );
                 self.simulate_bootstrap_response(node_id, now);
             }
         }
-        
+
         self.active_queries.clone()
     }
 
     /// Start queries with bootstrap node addresses (enhanced version)
     pub(crate) fn start_queries_with_addresses(
-        &mut self, 
-        bootstrap_nodes: &[(BootstrapNodeId, SocketAddr)], 
-        now: Instant
+        &mut self,
+        bootstrap_nodes: &[(BootstrapNodeId, SocketAddr)],
+        now: Instant,
     ) -> HashMap<BootstrapNodeId, QueryState> {
-        debug!("Starting server reflexive queries to {} bootstrap nodes with addresses", bootstrap_nodes.len());
-        
+        debug!(
+            "Starting server reflexive queries to {} bootstrap nodes with addresses",
+            bootstrap_nodes.len()
+        );
+
         self.active_queries.clear();
         self.query_timeouts.clear();
-        
+
         self.active_connections.clear();
-        
+
         for &(node_id, bootstrap_address) in bootstrap_nodes {
             let query_state = QueryState::Pending {
                 sent_at: now,
                 attempts: 1,
             };
-            
+
             self.active_queries.insert(node_id, query_state);
-            self.query_timeouts.insert(node_id, now + self.config.bootstrap_query_timeout);
-            
-            debug!("Starting server reflexive query to bootstrap node {:?} at {}", node_id, bootstrap_address);
-            
+            self.query_timeouts
+                .insert(node_id, now + self.config.bootstrap_query_timeout);
+
+            debug!(
+                "Starting server reflexive query to bootstrap node {:?} at {}",
+                node_id, bootstrap_address
+            );
+
             // Try to establish real Quinn connection in production
             if let Some(_runtime) = &self.runtime_handle {
                 self.start_quinn_query_with_address(node_id, bootstrap_address, now);
             } else {
-                warn!("No async runtime available, falling back to simulation for node {:?}", node_id);
+                warn!(
+                    "No async runtime available, falling back to simulation for node {:?}",
+                    node_id
+                );
                 self.simulate_bootstrap_response(node_id, now);
             }
         }
-        
+
         self.active_queries.clone()
     }
-    
+
     /// Start a real Quinn-based query to a bootstrap node (production builds)
-    fn start_quinn_query(&mut self, node_id: BootstrapNodeId, _runtime: tokio::runtime::Handle, now: Instant) {
-        // For now, we need the bootstrap node address. This will be provided by 
+    fn start_quinn_query(
+        &mut self,
+        node_id: BootstrapNodeId,
+        _runtime: tokio::runtime::Handle,
+        now: Instant,
+    ) {
+        // For now, we need the bootstrap node address. This will be provided by
         // the BootstrapNodeManager in the calling code. For this implementation,
         // we'll need to modify the interface to pass addresses.
-        
+
         // Generate a unique request ID
         let request_id = rand::random::<u64>();
-        
-        debug!("Starting Quinn connection to bootstrap node {:?} with request ID {}", node_id, request_id);
-        
+
+        debug!(
+            "Starting Quinn connection to bootstrap node {:?} with request ID {}",
+            node_id, request_id
+        );
+
         // In a complete implementation, this would:
         // 1. Create Quinn endpoint if not exists
         // 2. Connect to bootstrap node address
         // 3. Send AddressObservationRequest message
         // 4. Wait for ADD_ADDRESS frame response
         // 5. Parse response and create ServerReflexiveResponse
-        
+
         // For now, simulate success to maintain compatibility
         // TODO: Replace with real Quinn connection establishment
         self.simulate_bootstrap_response(node_id, now);
@@ -1645,27 +1900,29 @@ impl ServerReflexiveDiscovery {
 
     /// Start a real Quinn-based query with full bootstrap node information
     pub(crate) fn start_quinn_query_with_address(
-        &mut self, 
+        &mut self,
         node_id: BootstrapNodeId,
         bootstrap_address: SocketAddr,
-        now: Instant
+        now: Instant,
     ) {
-        
         let request_id = rand::random::<u64>();
-        
-        info!("Establishing Quinn connection to bootstrap node {:?} at {}", node_id, bootstrap_address);
-        
+
+        info!(
+            "Establishing Quinn connection to bootstrap node {:?} at {}",
+            node_id, bootstrap_address
+        );
+
         // We need to spawn this as a task since Quinn operations are async
         if let Some(runtime) = &self.runtime_handle {
             let timeout = self.config.bootstrap_query_timeout;
-            
+
             // Create a channel for receiving responses
             let (response_tx, _response_rx) = tokio::sync::mpsc::unbounded_channel();
-            
+
             // Store the receiver for polling
             // Note: In a complete implementation, we'd store this receiver and poll it
             // For now, we'll handle the response directly in the spawned task
-            
+
             runtime.spawn(async move {
                 match Self::perform_bootstrap_query(bootstrap_address, request_id, timeout).await {
                     Ok(observed_address) => {
@@ -1675,24 +1932,32 @@ impl ServerReflexiveDiscovery {
                             response_time: now.elapsed(),
                             timestamp: Instant::now(),
                         };
-                        
+
                         // Send response back to main thread
                         let _ = response_tx.send(response);
-                        
-                        info!("Successfully received observed address {} from bootstrap node {:?}", 
-                              observed_address, node_id);
+
+                        info!(
+                            "Successfully received observed address {} from bootstrap node {:?}",
+                            observed_address, node_id
+                        );
                     }
                     Err(e) => {
-                        warn!("Failed to query bootstrap node {:?} at {}: {}", node_id, bootstrap_address, e);
+                        warn!(
+                            "Failed to query bootstrap node {:?} at {}: {}",
+                            node_id, bootstrap_address, e
+                        );
                     }
                 }
             });
         } else {
-            warn!("No async runtime available for Quinn query to {:?}", node_id);
+            warn!(
+                "No async runtime available for Quinn query to {:?}",
+                node_id
+            );
             self.simulate_bootstrap_response(node_id, now);
         }
     }
-    
+
     /// Perform the actual Quinn-based bootstrap query (async)
     // NOTE: This function was written for Quinn's high-level API which we don't have
     // since ant-quic IS a fork of Quinn, not something that uses Quinn.
@@ -1706,32 +1971,32 @@ impl ServerReflexiveDiscovery {
         // In production, this would connect to the bootstrap node and get the observed address
         // Temporarily return an error until this is properly implemented
         Err("Bootstrap query not implemented for low-level API".into())
-        
+
         /* Original implementation that used high-level Quinn API:
         use tokio::time::timeout as tokio_timeout;
         use crate::frame::{AddAddress, Frame};
         use crate::VarInt;
-        
+
         // Create a Quinn client configuration with NAT traversal transport parameters
         let mut transport_config = crate::TransportConfig::default();
-        
+
         // Enable NAT traversal transport parameter
         // This signals to the bootstrap node that we support NAT traversal
         let mut transport_params = std::collections::HashMap::new();
         transport_params.insert(0x3d7e9f0bca12fea6u64, vec![0x01]); // nat_traversal = 1 (client)
-        
+
         let client_config = ClientConfig::with_platform_verifier();
-        
+
         // Create Quinn endpoint with a random local port
         let local_addr = if bootstrap_address.is_ipv6() {
             "[::]:0"
         } else {
             "0.0.0.0:0"
         };
-        
+
         let mut endpoint = Endpoint::client(local_addr.parse()?)?;
         endpoint.set_default_client_config(client_config);
-        
+
         // Establish connection with timeout
         let connection = tokio_timeout(timeout, async {
             let connecting = endpoint.connect(bootstrap_address, "nat-traversal")
@@ -1739,54 +2004,61 @@ impl ServerReflexiveDiscovery {
             connecting.await
                 .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
         }).await??;
-        
+
         info!("Established QUIC connection to bootstrap node at {}", bootstrap_address);
-        
+
         // Send address observation request using a unidirectional stream
         let discovery_request = Self::create_discovery_request(request_id);
         let mut send_stream = connection.open_uni().await?;
         send_stream.write_all(&discovery_request).await?;
         send_stream.finish().await?;
-        
+
         debug!("Sent address observation request to bootstrap node");
-        
+
         // Wait for ADD_ADDRESS frame response via QUIC extension frames
         let observed_address = tokio_timeout(timeout / 2, async {
             Self::wait_for_add_address_frame(&connection, request_id).await
         }).await??;
-        
+
         info!("Received observed address {} from bootstrap node {}", observed_address, bootstrap_address);
-        
+
         // Clean up connection gracefully
         connection.close(0u32.into(), b"discovery complete");
         endpoint.close(0u32.into(), b"discovery complete");
-        
+
         // Wait a bit for graceful shutdown
         tokio::time::sleep(Duration::from_millis(100)).await;
-        
+
         Ok(observed_address)
         */
     }
-    
+
     /// Create a discovery request message
     fn create_discovery_request(request_id: u64) -> Vec<u8> {
         let mut request = Vec::new();
-        
+
         // Simple message format:
         // 8 bytes: request_id
         // 8 bytes: timestamp
         // 4 bytes: capabilities
         request.extend_from_slice(&request_id.to_be_bytes());
-        request.extend_from_slice(&std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis().to_be_bytes()[8..16]); // Take lower 8 bytes
+        request.extend_from_slice(
+            &std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis()
+                .to_be_bytes()[8..16],
+        ); // Take lower 8 bytes
         request.extend_from_slice(&1u32.to_be_bytes()); // Capabilities = 1 (basic NAT traversal)
-        
-        debug!("Created discovery request: {} bytes, request_id: {}", request.len(), request_id);
+
+        debug!(
+            "Created discovery request: {} bytes, request_id: {}",
+            request.len(),
+            request_id
+        );
         request
     }
-    
+
     /// Wait for ADD_ADDRESS frame from bootstrap node
     async fn wait_for_add_address_frame(
         _connection: &Connection,
@@ -1795,28 +2067,28 @@ impl ServerReflexiveDiscovery {
         // TODO: This function needs to be rewritten to work with low-level Quinn API
         // The high-level accept_uni() and read_to_end() methods are not available
         Err("wait_for_add_address_frame not implemented for low-level API".into())
-        
+
         /* Original code that uses high-level API:
         use crate::frame::{Frame, AddAddress};
         use bytes::Bytes;
-        
+
         // Accept incoming unidirectional stream from bootstrap node
         let mut recv_stream = connection.accept_uni().await?;
-        
+
         // Read the frame data (with reasonable size limit)
         let frame_data = recv_stream.read_to_end(1024).await?;
-        
+
         if frame_data.is_empty() {
             return Err("Empty frame data received".into());
         }
-        
+
         debug!("Received {} bytes of frame data from bootstrap node", frame_data.len());
-        
+
         // Parse QUIC frames using our frame parser
         let frame_bytes = Bytes::from(frame_data);
         // Parse frame data directly without FrameIter
         // For now, simulate frame parsing
-        
+
         // Look for ADD_ADDRESS frame
         // For now, simulate successful frame parsing
         if !frame_data.is_empty() {
@@ -1827,14 +2099,16 @@ impl ServerReflexiveDiscovery {
             debug!("Simulated ADD_ADDRESS frame parsing: address={}", simulated_address);
             return Ok(simulated_address);
         }
-        
+
         // If we get here, no valid frame was found
         Err("No valid ADD_ADDRESS frame found".into())
         */
     }
-    
+
     /// Create a response channel for async communication (placeholder)
-    fn create_response_channel(&self) -> tokio::sync::mpsc::UnboundedSender<ServerReflexiveResponse> {
+    fn create_response_channel(
+        &self,
+    ) -> tokio::sync::mpsc::UnboundedSender<ServerReflexiveResponse> {
         // In a complete implementation, this would create a channel
         // that feeds responses back to the main discovery manager
         let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
@@ -1842,14 +2116,18 @@ impl ServerReflexiveDiscovery {
         tx
     }
 
-    pub(crate) fn poll_queries(&mut self, _active_queries: &HashMap<BootstrapNodeId, QueryState>, now: Instant) -> Vec<ServerReflexiveResponse> {
+    pub(crate) fn poll_queries(
+        &mut self,
+        _active_queries: &HashMap<BootstrapNodeId, QueryState>,
+        now: Instant,
+    ) -> Vec<ServerReflexiveResponse> {
         let mut responses = Vec::new();
-        
+
         // Drain any received responses
         while let Some(response) = self.responses.pop_front() {
             responses.push(response);
         }
-        
+
         // Check for timeouts
         let mut timed_out_nodes = Vec::new();
         for (&node_id, &timeout) in &self.query_timeouts {
@@ -1857,36 +2135,44 @@ impl ServerReflexiveDiscovery {
                 timed_out_nodes.push(node_id);
             }
         }
-        
+
         // Handle timeouts by retrying or marking as failed
         for node_id in timed_out_nodes {
             self.query_timeouts.remove(&node_id);
-            
+
             if let Some(query_state) = self.active_queries.get_mut(&node_id) {
                 match query_state {
-                    QueryState::Pending { attempts, .. } if *attempts < self.config.max_query_retries => {
+                    QueryState::Pending { attempts, .. }
+                        if *attempts < self.config.max_query_retries =>
+                    {
                         // Retry the query
                         *attempts += 1;
                         let new_timeout = now + self.config.bootstrap_query_timeout;
                         self.query_timeouts.insert(node_id, new_timeout);
-                        
-                        debug!("Retrying server reflexive query to bootstrap node {:?} (attempt {})", node_id, attempts);
-                        
+
+                        debug!(
+                            "Retrying server reflexive query to bootstrap node {:?} (attempt {})",
+                            node_id, attempts
+                        );
+
                         // Send retry (in real implementation)
                         self.simulate_bootstrap_response(node_id, now);
                     }
                     _ => {
                         // Mark as failed
                         self.active_queries.insert(node_id, QueryState::Failed);
-                        warn!("Server reflexive query to bootstrap node {:?} failed after retries", node_id);
+                        warn!(
+                            "Server reflexive query to bootstrap node {:?} failed after retries",
+                            node_id
+                        );
                     }
                 }
             }
         }
-        
+
         responses
     }
-    
+
     /// Simulate a bootstrap node response (temporary implementation)
     /// In production, this would be triggered by actual QUIC message reception
     fn simulate_bootstrap_response(&mut self, node_id: BootstrapNodeId, now: Instant) {
@@ -1896,23 +2182,25 @@ impl ServerReflexiveDiscovery {
             1 => "198.51.100.2:45679".parse().unwrap(),
             _ => "192.0.2.3:45680".parse().unwrap(),
         };
-        
+
         let response = ServerReflexiveResponse {
             bootstrap_node: node_id,
             observed_address: simulated_external_addr,
             response_time: Duration::from_millis(50 + node_id.0 * 10),
             timestamp: now,
         };
-        
+
         self.responses.push_back(response);
-        
+
         // Mark query as completed
         if let Some(query_state) = self.active_queries.get_mut(&node_id) {
             *query_state = QueryState::Completed;
         }
-        
-        debug!("Received simulated server reflexive response from bootstrap node {:?}: {}", 
-               node_id, simulated_external_addr);
+
+        debug!(
+            "Received simulated server reflexive response from bootstrap node {:?}: {}",
+            node_id, simulated_external_addr
+        );
     }
 }
 
@@ -1930,10 +2218,14 @@ impl SymmetricNatPredictor {
     }
 
     /// Generate predicted candidate addresses for symmetric NAT traversal
-    /// 
+    ///
     /// Uses observed port allocation patterns to predict likely external ports
     /// that symmetric NATs will assign for new connections
-    pub(crate) fn generate_predictions(&mut self, pattern_analysis: &PatternAnalysisState, max_count: usize) -> Vec<DiscoveryCandidate> {
+    pub(crate) fn generate_predictions(
+        &mut self,
+        pattern_analysis: &PatternAnalysisState,
+        max_count: usize,
+    ) -> Vec<DiscoveryCandidate> {
         let mut predictions = Vec::new();
 
         if pattern_analysis.allocation_history.is_empty() || max_count == 0 {
@@ -1941,10 +2233,11 @@ impl SymmetricNatPredictor {
         }
 
         // Use most recent allocations for base prediction
-        let recent_events: Vec<_> = pattern_analysis.allocation_history
+        let recent_events: Vec<_> = pattern_analysis
+            .allocation_history
             .iter()
             .rev()
-            .take(5)  // Analyze last 5 allocations for pattern detection
+            .take(5) // Analyze last 5 allocations for pattern detection
             .collect();
 
         if recent_events.len() < 2 {
@@ -1966,16 +2259,22 @@ impl SymmetricNatPredictor {
     }
 
     /// Generate predictions based on detected allocation pattern
-    fn generate_pattern_based_predictions(&self, pattern: &PortAllocationPattern, max_count: usize) -> Vec<DiscoveryCandidate> {
+    fn generate_pattern_based_predictions(
+        &self,
+        pattern: &PortAllocationPattern,
+        max_count: usize,
+    ) -> Vec<DiscoveryCandidate> {
         let mut predictions = Vec::new();
-        
+
         match pattern.pattern_type {
             AllocationPatternType::Sequential => {
                 // Predict next sequential ports
                 for i in 1..=max_count as u16 {
                     let predicted_port = pattern.base_port.wrapping_add(i);
                     if self.is_valid_port(predicted_port) {
-                        predictions.push(self.create_predicted_candidate(predicted_port, pattern.confidence));
+                        predictions.push(
+                            self.create_predicted_candidate(predicted_port, pattern.confidence),
+                        );
                     }
                 }
             }
@@ -1984,7 +2283,9 @@ impl SymmetricNatPredictor {
                 for i in 1..=max_count as u16 {
                     let predicted_port = pattern.base_port.wrapping_add(pattern.stride * i);
                     if self.is_valid_port(predicted_port) {
-                        predictions.push(self.create_predicted_candidate(predicted_port, pattern.confidence));
+                        predictions.push(
+                            self.create_predicted_candidate(predicted_port, pattern.confidence),
+                        );
                     }
                 }
             }
@@ -1993,11 +2294,14 @@ impl SymmetricNatPredictor {
                 if let Some((min_port, max_port)) = pattern.pool_boundaries {
                     let pool_size = max_port - min_port + 1;
                     let step = (pool_size / max_count as u16).max(1);
-                    
+
                     for i in 0..max_count as u16 {
                         let predicted_port = min_port + (i * step);
                         if predicted_port <= max_port && self.is_valid_port(predicted_port) {
-                            predictions.push(self.create_predicted_candidate(predicted_port, pattern.confidence * 0.8));
+                            predictions.push(self.create_predicted_candidate(
+                                predicted_port,
+                                pattern.confidence * 0.8,
+                            ));
                         }
                     }
                 }
@@ -2008,13 +2312,19 @@ impl SymmetricNatPredictor {
                 for i in 1..=max_count as u16 {
                     let predicted_port = pattern.base_port.wrapping_add(i);
                     if self.is_valid_port(predicted_port) {
-                        predictions.push(self.create_predicted_candidate(predicted_port, pattern.confidence * 0.6));
+                        predictions.push(
+                            self.create_predicted_candidate(
+                                predicted_port,
+                                pattern.confidence * 0.6,
+                            ),
+                        );
                     }
                 }
             }
             AllocationPatternType::Random | AllocationPatternType::Unknown => {
                 // For random/unknown patterns, use statistical approach
-                predictions.extend(self.generate_statistical_predictions(pattern.base_port, max_count));
+                predictions
+                    .extend(self.generate_statistical_predictions(pattern.base_port, max_count));
             }
         }
 
@@ -2022,14 +2332,18 @@ impl SymmetricNatPredictor {
     }
 
     /// Generate predictions using heuristics when no clear pattern is detected
-    fn generate_heuristic_predictions(&self, recent_events: &[&PortAllocationEvent], max_count: usize) -> Vec<DiscoveryCandidate> {
+    fn generate_heuristic_predictions(
+        &self,
+        recent_events: &[&PortAllocationEvent],
+        max_count: usize,
+    ) -> Vec<DiscoveryCandidate> {
         let mut predictions = Vec::new();
-        
+
         if let Some(latest_event) = recent_events.first() {
             let base_port = latest_event.port;
-            
+
             // Try multiple common NAT behaviors
-            
+
             // 1. Sequential allocation (most common for symmetric NATs)
             for i in 1..=(max_count / 3) as u16 {
                 let predicted_port = base_port.wrapping_add(i);
@@ -2037,7 +2351,7 @@ impl SymmetricNatPredictor {
                     predictions.push(self.create_predicted_candidate(predicted_port, 0.7));
                 }
             }
-            
+
             // 2. Even/odd port pairs (common in some NAT implementations)
             if base_port % 2 == 0 {
                 let predicted_port = base_port + 1;
@@ -2045,7 +2359,7 @@ impl SymmetricNatPredictor {
                     predictions.push(self.create_predicted_candidate(predicted_port, 0.6));
                 }
             }
-            
+
             // 3. Common stride patterns (2, 4, 8, 16)
             for stride in [2, 4, 8, 16] {
                 if predictions.len() >= max_count {
@@ -2056,11 +2370,12 @@ impl SymmetricNatPredictor {
                     predictions.push(self.create_predicted_candidate(predicted_port, 0.5));
                 }
             }
-            
+
             // 4. Try to detect stride from recent allocations
             if recent_events.len() >= 2 {
                 let stride = recent_events[0].port.wrapping_sub(recent_events[1].port);
-                if stride > 0 && stride <= 100 {  // Reasonable stride range
+                if stride > 0 && stride <= 100 {
+                    // Reasonable stride range
                     for i in 1..=3 {
                         if predictions.len() >= max_count {
                             break;
@@ -2079,9 +2394,13 @@ impl SymmetricNatPredictor {
     }
 
     /// Generate statistical predictions for random/unknown patterns
-    fn generate_statistical_predictions(&self, base_port: u16, max_count: usize) -> Vec<DiscoveryCandidate> {
+    fn generate_statistical_predictions(
+        &self,
+        base_port: u16,
+        max_count: usize,
+    ) -> Vec<DiscoveryCandidate> {
         let mut predictions = Vec::new();
-        
+
         // Common port ranges used by NATs
         let common_ranges = [
             (1024, 5000),   // User ports
@@ -2089,26 +2408,27 @@ impl SymmetricNatPredictor {
             (10000, 20000), // Extended range
             (32768, 65535), // Dynamic/private ports
         ];
-        
+
         // Find which range the base port is in
-        let current_range = common_ranges.iter()
+        let current_range = common_ranges
+            .iter()
             .find(|(min, max)| base_port >= *min && base_port <= *max)
             .copied()
             .unwrap_or((1024, 65535));
-        
+
         // Generate predictions within the detected range
         let range_size = current_range.1 - current_range.0;
         let step = (range_size / max_count as u16).max(1);
-        
+
         for i in 0..max_count {
             let offset = (i as u16 * step) % range_size;
             let predicted_port = current_range.0 + offset;
-            
+
             if self.is_valid_port(predicted_port) && predicted_port != base_port {
                 predictions.push(self.create_predicted_candidate(predicted_port, 0.3));
             }
         }
-        
+
         predictions
     }
 
@@ -2124,11 +2444,11 @@ impl SymmetricNatPredictor {
         // Higher confidence gets higher priority
         let base_priority = 50; // Base priority for predicted candidates
         let priority = (base_priority as f64 * confidence) as u32;
-        
+
         DiscoveryCandidate {
             address: SocketAddr::new(
                 "0.0.0.0".parse().unwrap(), // Placeholder IP, will be filled by caller
-                port
+                port,
             ),
             priority,
             source: DiscoverySourceType::Predicted,
@@ -2137,12 +2457,16 @@ impl SymmetricNatPredictor {
     }
 
     /// Analyze port allocation history to detect patterns
-    pub(crate) fn analyze_allocation_patterns(&self, history: &VecDeque<PortAllocationEvent>) -> Option<PortAllocationPattern> {
+    pub(crate) fn analyze_allocation_patterns(
+        &self,
+        history: &VecDeque<PortAllocationEvent>,
+    ) -> Option<PortAllocationPattern> {
         if history.len() < 3 {
             return None;
         }
 
-        let recent_ports: Vec<u16> = history.iter()
+        let recent_ports: Vec<u16> = history
+            .iter()
             .rev()
             .take(10)
             .map(|event| event.port)
@@ -2182,17 +2506,18 @@ impl SymmetricNatPredictor {
 
         for i in 1..ports.len() {
             total_comparisons += 1;
-            let diff = ports[i-1].wrapping_sub(ports[i]);
+            let diff = ports[i - 1].wrapping_sub(ports[i]);
             if diff == 1 {
                 sequential_count += 1;
             }
         }
 
         let sequential_ratio = sequential_count as f64 / total_comparisons as f64;
-        
-        if sequential_ratio >= 0.6 {  // At least 60% sequential
+
+        if sequential_ratio >= 0.6 {
+            // At least 60% sequential
             let confidence = (sequential_ratio * 0.9).min(0.9); // Cap at 90%
-            
+
             Some(PortAllocationPattern {
                 pattern_type: AllocationPatternType::Sequential,
                 base_port: ports[0],
@@ -2214,8 +2539,9 @@ impl SymmetricNatPredictor {
         // Calculate differences between consecutive ports
         let mut diffs = Vec::new();
         for i in 1..ports.len() {
-            let diff = ports[i-1].wrapping_sub(ports[i]);
-            if diff > 0 && diff <= 1000 {  // Reasonable stride range
+            let diff = ports[i - 1].wrapping_sub(ports[i]);
+            if diff > 0 && diff <= 1000 {
+                // Reasonable stride range
                 diffs.push(diff);
             }
         }
@@ -2230,15 +2556,17 @@ impl SymmetricNatPredictor {
             *diff_counts.entry(diff).or_insert(0) += 1;
         }
 
-        let (most_common_diff, count) = diff_counts.iter()
+        let (most_common_diff, count) = diff_counts
+            .iter()
             .max_by_key(|(_, &count)| count)
             .map(|(&diff, &count)| (diff, count))?;
 
         let consistency_ratio = count as f64 / diffs.len() as f64;
-        
-        if consistency_ratio >= 0.5 && most_common_diff > 1 {  // At least 50% consistent, not sequential
+
+        if consistency_ratio >= 0.5 && most_common_diff > 1 {
+            // At least 50% consistent, not sequential
             let confidence = (consistency_ratio * 0.8).min(0.8); // Cap at 80%
-            
+
             Some(PortAllocationPattern {
                 pattern_type: AllocationPatternType::FixedStride,
                 base_port: ports[0],
@@ -2262,26 +2590,28 @@ impl SymmetricNatPredictor {
         let range = max_port - min_port;
 
         // Check if ports are distributed within a reasonable range
-        if range > 0 && range <= 10000 {  // Reasonable pool size
+        if range > 0 && range <= 10000 {
+            // Reasonable pool size
             // Check distribution uniformity
             let expected_step = range / (ports.len() as u16 - 1);
             let mut uniform_score = 0.0;
-            
+
             let mut sorted_ports = ports.to_vec();
             sorted_ports.sort_unstable();
-            
+
             for i in 1..sorted_ports.len() {
-                let actual_step = sorted_ports[i] - sorted_ports[i-1];
+                let actual_step = sorted_ports[i] - sorted_ports[i - 1];
                 let step_diff = (actual_step as i32 - expected_step as i32).abs() as f64;
                 let normalized_diff = step_diff / expected_step as f64;
                 uniform_score += 1.0 - normalized_diff.min(1.0);
             }
-            
+
             uniform_score /= (sorted_ports.len() - 1) as f64;
-            
-            if uniform_score >= 0.4 {  // Reasonably uniform distribution
+
+            if uniform_score >= 0.4 {
+                // Reasonably uniform distribution
                 let confidence = (uniform_score * 0.7).min(0.7); // Cap at 70%
-                
+
                 Some(PortAllocationPattern {
                     pattern_type: AllocationPatternType::PoolBased,
                     base_port: min_port,
@@ -2298,7 +2628,10 @@ impl SymmetricNatPredictor {
     }
 
     /// Detect time-based allocation pattern
-    fn detect_time_based_pattern(&self, history: &VecDeque<PortAllocationEvent>) -> Option<PortAllocationPattern> {
+    fn detect_time_based_pattern(
+        &self,
+        history: &VecDeque<PortAllocationEvent>,
+    ) -> Option<PortAllocationPattern> {
         if history.len() < 4 {
             return None;
         }
@@ -2306,9 +2639,9 @@ impl SymmetricNatPredictor {
         // Calculate time intervals between allocations
         let mut time_intervals = Vec::new();
         let events: Vec<_> = history.iter().collect();
-        
+
         for i in 1..events.len() {
-            let interval = events[i-1].timestamp.duration_since(events[i].timestamp);
+            let interval = events[i - 1].timestamp.duration_since(events[i].timestamp);
             time_intervals.push(interval);
         }
 
@@ -2317,8 +2650,9 @@ impl SymmetricNatPredictor {
         }
 
         // Check for consistent timing patterns
-        let avg_interval = time_intervals.iter().sum::<std::time::Duration>() / time_intervals.len() as u32;
-        
+        let avg_interval =
+            time_intervals.iter().sum::<std::time::Duration>() / time_intervals.len() as u32;
+
         let mut consistency_score = 0.0;
         for interval in &time_intervals {
             let diff = if *interval > avg_interval {
@@ -2326,16 +2660,19 @@ impl SymmetricNatPredictor {
             } else {
                 avg_interval - *interval
             };
-            
+
             let normalized_diff = diff.as_millis() as f64 / avg_interval.as_millis() as f64;
             consistency_score += 1.0 - normalized_diff.min(1.0);
         }
-        
+
         consistency_score /= time_intervals.len() as f64;
-        
-        if consistency_score >= 0.6 && avg_interval.as_millis() > 100 && avg_interval.as_millis() < 10000 {
+
+        if consistency_score >= 0.6
+            && avg_interval.as_millis() > 100
+            && avg_interval.as_millis() < 10000
+        {
             let confidence = (consistency_score * 0.6).min(0.6); // Cap at 60%
-            
+
             Some(PortAllocationPattern {
                 pattern_type: AllocationPatternType::TimeBased,
                 base_port: events[0].port,
@@ -2350,49 +2687,51 @@ impl SymmetricNatPredictor {
 
     /// Generate confidence-scored predictions for a given base address
     pub(crate) fn generate_confidence_scored_predictions(
-        &mut self, 
-        base_address: SocketAddr, 
-        pattern_analysis: &PatternAnalysisState, 
-        max_count: usize
+        &mut self,
+        base_address: SocketAddr,
+        pattern_analysis: &PatternAnalysisState,
+        max_count: usize,
     ) -> Vec<(DiscoveryCandidate, f64)> {
         let mut scored_predictions = Vec::new();
-        
+
         // Generate base predictions
         let predictions = self.generate_predictions(pattern_analysis, max_count);
-        
+
         for mut prediction in predictions {
             // Update the IP address from the placeholder
             prediction.address = SocketAddr::new(base_address.ip(), prediction.address.port());
-            
+
             // Calculate confidence score based on multiple factors
-            let confidence = self.calculate_prediction_confidence(&prediction, pattern_analysis, base_address);
-            
+            let confidence =
+                self.calculate_prediction_confidence(&prediction, pattern_analysis, base_address);
+
             scored_predictions.push((prediction, confidence));
         }
-        
+
         // Sort by confidence (highest first)
-        scored_predictions.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-        
+        scored_predictions
+            .sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+
         scored_predictions
     }
 
     /// Calculate confidence score for a prediction
     fn calculate_prediction_confidence(
-        &self, 
-        prediction: &DiscoveryCandidate, 
-        pattern_analysis: &PatternAnalysisState, 
-        base_address: SocketAddr
+        &self,
+        prediction: &DiscoveryCandidate,
+        pattern_analysis: &PatternAnalysisState,
+        base_address: SocketAddr,
     ) -> f64 {
         let mut confidence = 0.5; // Base confidence
-        
+
         // Factor in pattern analysis confidence
         if let Some(ref pattern) = pattern_analysis.detected_pattern {
             confidence += pattern.confidence * 0.3;
         }
-        
+
         // Factor in prediction accuracy from pattern analysis
         confidence += pattern_analysis.prediction_accuracy * 0.2;
-        
+
         // Factor in port proximity to base address
         let port_distance = (prediction.address.port() as i32 - base_address.port() as i32).abs();
         let proximity_score = if port_distance <= 10 {
@@ -2403,17 +2742,17 @@ impl SymmetricNatPredictor {
             0.0
         };
         confidence += proximity_score;
-        
+
         // Factor in port range (prefer common NAT ranges)
         let port_range_score = match prediction.address.port() {
-            1024..=4999 => 0.1,   // User ports
-            5000..=9999 => 0.15, // Common NAT range
-            10000..=20000 => 0.1, // Extended range
+            1024..=4999 => 0.1,    // User ports
+            5000..=9999 => 0.15,   // Common NAT range
+            10000..=20000 => 0.1,  // Extended range
             32768..=65535 => 0.05, // Dynamic ports
             _ => 0.0,
         };
         confidence += port_range_score;
-        
+
         // Ensure confidence is within valid range [0.0, 1.0]
         confidence.max(0.0).min(1.0)
     }
@@ -2422,26 +2761,27 @@ impl SymmetricNatPredictor {
     pub(crate) fn update_pattern_analysis(
         &self,
         pattern_analysis: &mut PatternAnalysisState,
-        new_event: PortAllocationEvent
+        new_event: PortAllocationEvent,
     ) {
         // Add new event to history
         pattern_analysis.allocation_history.push_back(new_event);
-        
+
         // Keep history size manageable
         if pattern_analysis.allocation_history.len() > 20 {
             pattern_analysis.allocation_history.pop_front();
         }
-        
+
         // Re-analyze patterns with updated history
-        pattern_analysis.detected_pattern = self.analyze_allocation_patterns(&pattern_analysis.allocation_history);
-        
+        pattern_analysis.detected_pattern =
+            self.analyze_allocation_patterns(&pattern_analysis.allocation_history);
+
         // Update confidence level
         if let Some(ref pattern) = pattern_analysis.detected_pattern {
             pattern_analysis.confidence_level = pattern.confidence;
         } else {
             pattern_analysis.confidence_level *= 0.9; // Decay confidence if no pattern
         }
-        
+
         // Update prediction accuracy based on recent success
         // This would be updated based on actual validation results
         // For now, maintain current accuracy with slight decay
@@ -2592,11 +2932,11 @@ impl BootstrapNodeManager {
     /// Update bootstrap nodes with enhanced information
     pub(crate) fn update_bootstrap_nodes(&mut self, nodes: Vec<BootstrapNode>) {
         let now = Instant::now();
-        
+
         // Convert BootstrapNode to BootstrapNodeInfo
         for (i, node) in nodes.into_iter().enumerate() {
             let node_id = BootstrapNodeId(i as u64);
-            
+
             let node_info = BootstrapNodeInfo {
                 address: node.address,
                 last_seen: node.last_seen,
@@ -2612,29 +2952,34 @@ impl BootstrapNodeManager {
                 priority: self.calculate_initial_priority(&node),
                 discovery_source: BootstrapDiscoverySource::UserProvided,
             };
-            
+
             self.bootstrap_nodes.insert(node_id, node_info);
-            
+
             // Initialize health stats if not exists
             if !self.health_stats.contains_key(&node_id) {
-                self.health_stats.insert(node_id, BootstrapHealthStats::default());
+                self.health_stats
+                    .insert(node_id, BootstrapHealthStats::default());
             }
         }
-        
+
         info!("Updated {} bootstrap nodes", self.bootstrap_nodes.len());
         self.schedule_health_check(now);
     }
 
     /// Get active bootstrap nodes sorted by health and performance
     pub(crate) fn get_active_bootstrap_nodes(&self) -> Vec<BootstrapNodeId> {
-        let mut active_nodes: Vec<_> = self.bootstrap_nodes
+        let mut active_nodes: Vec<_> = self
+            .bootstrap_nodes
             .iter()
             .filter(|(_, node)| {
-                matches!(node.health_status, BootstrapHealthStatus::Healthy | BootstrapHealthStatus::Unknown)
+                matches!(
+                    node.health_status,
+                    BootstrapHealthStatus::Healthy | BootstrapHealthStatus::Unknown
+                )
             })
             .map(|(&id, node)| (id, node))
             .collect();
-        
+
         // Sort by priority and health
         active_nodes.sort_by(|a, b| {
             // First by health status
@@ -2642,11 +2987,11 @@ impl BootstrapNodeManager {
             if health_cmp != std::cmp::Ordering::Equal {
                 return health_cmp;
             }
-            
+
             // Then by priority
             b.1.priority.cmp(&a.1.priority)
         });
-        
+
         active_nodes.into_iter().map(|(id, _)| id).collect()
     }
 
@@ -2662,16 +3007,19 @@ impl BootstrapNodeManager {
                 return; // Too soon for another health check
             }
         }
-        
-        debug!("Performing health check on {} bootstrap nodes", self.bootstrap_nodes.len());
-        
+
+        debug!(
+            "Performing health check on {} bootstrap nodes",
+            self.bootstrap_nodes.len()
+        );
+
         // Collect node IDs to check to avoid borrowing issues
         let node_ids: Vec<BootstrapNodeId> = self.bootstrap_nodes.keys().copied().collect();
-        
+
         for node_id in node_ids {
             self.check_node_health(node_id, now);
         }
-        
+
         self.update_performance_metrics(now);
         self.last_health_check = Some(now);
     }
@@ -2685,24 +3033,24 @@ impl BootstrapNodeManager {
         }
         let node_info_for_priority = node_info_opt.unwrap();
         let current_health_status = node_info_for_priority.health_status;
-        
+
         // Calculate metrics from stats
         let (_success_rate, new_health_status, _average_rtt) = {
             let stats = self.health_stats.get_mut(&node_id).unwrap();
-            
+
             // Calculate success rate
             let success_rate = if stats.connection_attempts > 0 {
                 stats.successful_connections as f64 / stats.connection_attempts as f64
             } else {
                 1.0 // No attempts yet, assume healthy
             };
-            
+
             // Calculate average RTT
             if !stats.recent_rtts.is_empty() {
                 let total_rtt: Duration = stats.recent_rtts.iter().sum();
                 stats.average_rtt = Some(total_rtt / stats.recent_rtts.len() as u32);
             }
-            
+
             // Determine health status
             let new_health_status = if stats.consecutive_failures >= 3 {
                 BootstrapHealthStatus::Unhealthy
@@ -2713,37 +3061,44 @@ impl BootstrapNodeManager {
             } else {
                 current_health_status // Keep current status
             };
-            
+
             stats.last_health_check = Some(now);
-            
+
             (success_rate, new_health_status, stats.average_rtt)
         };
-        
+
         // Calculate new priority using stats snapshot
         let stats_snapshot = self.health_stats.get(&node_id).unwrap();
         let new_priority = self.calculate_dynamic_priority(&node_info_for_priority, stats_snapshot);
-        
+
         // Now update the node info
         if let Some(node_info) = self.bootstrap_nodes.get_mut(&node_id) {
             if new_health_status != node_info.health_status {
-                info!("Bootstrap node {:?} health status changed: {:?} -> {:?}", 
-                      node_id, node_info.health_status, new_health_status);
+                info!(
+                    "Bootstrap node {:?} health status changed: {:?} -> {:?}",
+                    node_id, node_info.health_status, new_health_status
+                );
                 node_info.health_status = new_health_status;
             }
-            
+
             node_info.priority = new_priority;
         }
     }
 
     /// Record connection attempt result
-    pub(crate) fn record_connection_attempt(&mut self, node_id: BootstrapNodeId, success: bool, rtt: Option<Duration>) {
+    pub(crate) fn record_connection_attempt(
+        &mut self,
+        node_id: BootstrapNodeId,
+        success: bool,
+        rtt: Option<Duration>,
+    ) {
         if let Some(stats) = self.health_stats.get_mut(&node_id) {
             stats.connection_attempts += 1;
-            
+
             if success {
                 stats.successful_connections += 1;
                 stats.consecutive_failures = 0;
-                
+
                 if let Some(rtt) = rtt {
                     stats.recent_rtts.push_back(rtt);
                     if stats.recent_rtts.len() > 10 {
@@ -2755,7 +3110,7 @@ impl BootstrapNodeManager {
                 stats.consecutive_failures += 1;
             }
         }
-        
+
         // Update node's last seen time if successful
         if success {
             if let Some(node_info) = self.bootstrap_nodes.get_mut(&node_id) {
@@ -2776,7 +3131,8 @@ impl BootstrapNodeManager {
 
     /// Get best performing bootstrap nodes
     pub(crate) fn get_best_performers(&self, count: usize) -> Vec<BootstrapNodeId> {
-        let mut nodes_with_scores: Vec<_> = self.bootstrap_nodes
+        let mut nodes_with_scores: Vec<_> = self
+            .bootstrap_nodes
             .iter()
             .filter_map(|(&id, node)| {
                 if matches!(node.health_status, BootstrapHealthStatus::Healthy) {
@@ -2787,9 +3143,10 @@ impl BootstrapNodeManager {
                 }
             })
             .collect();
-        
-        nodes_with_scores.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-        
+
+        nodes_with_scores
+            .sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+
         nodes_with_scores
             .into_iter()
             .take(count)
@@ -2800,28 +3157,29 @@ impl BootstrapNodeManager {
     /// Discover new bootstrap nodes dynamically
     pub(crate) fn discover_new_nodes(&mut self) -> Result<Vec<BootstrapNodeInfo>, String> {
         let mut discovered_nodes = Vec::new();
-        
+
         // Try DNS discovery
         if let Ok(dns_nodes) = self.discover_via_dns() {
             discovered_nodes.extend(dns_nodes);
         }
-        
+
         // Try multicast discovery (for local networks)
         if let Ok(multicast_nodes) = self.discover_via_multicast() {
             discovered_nodes.extend(multicast_nodes);
         }
-        
+
         // Add discovered nodes to our registry
         for node in &discovered_nodes {
             let node_id = BootstrapNodeId(rand::random());
             self.bootstrap_nodes.insert(node_id, node.clone());
-            self.health_stats.insert(node_id, BootstrapHealthStats::default());
+            self.health_stats
+                .insert(node_id, BootstrapHealthStats::default());
         }
-        
+
         if !discovered_nodes.is_empty() {
             info!("Discovered {} new bootstrap nodes", discovered_nodes.len());
         }
-        
+
         Ok(discovered_nodes)
     }
 
@@ -2844,11 +3202,11 @@ impl BootstrapNodeManager {
     /// Calculate initial priority for a bootstrap node
     fn calculate_initial_priority(&self, node: &BootstrapNode) -> u32 {
         let mut priority = 100; // Base priority
-        
+
         if node.can_coordinate {
             priority += 50;
         }
-        
+
         if let Some(rtt) = node.rtt {
             if rtt < Duration::from_millis(50) {
                 priority += 30;
@@ -2858,28 +3216,32 @@ impl BootstrapNodeManager {
                 priority += 10;
             }
         }
-        
+
         // Prefer IPv6 for better NAT traversal potential
         if node.address.is_ipv6() {
             priority += 10;
         }
-        
+
         priority
     }
 
     /// Calculate dynamic priority based on performance
-    fn calculate_dynamic_priority(&self, node_info: &BootstrapNodeInfo, stats: &BootstrapHealthStats) -> u32 {
+    fn calculate_dynamic_priority(
+        &self,
+        node_info: &BootstrapNodeInfo,
+        stats: &BootstrapHealthStats,
+    ) -> u32 {
         let mut priority = node_info.priority;
-        
+
         // Adjust based on success rate
         let success_rate = if stats.connection_attempts > 0 {
             stats.successful_connections as f64 / stats.connection_attempts as f64
         } else {
             1.0
         };
-        
+
         priority = (priority as f64 * success_rate) as u32;
-        
+
         // Adjust based on RTT
         if let Some(avg_rtt) = stats.average_rtt {
             if avg_rtt < Duration::from_millis(50) {
@@ -2888,19 +3250,23 @@ impl BootstrapNodeManager {
                 priority = priority.saturating_sub(20);
             }
         }
-        
+
         // Penalize consecutive failures
         priority = priority.saturating_sub(stats.consecutive_failures * 10);
-        
+
         priority.max(1) // Ensure minimum priority
     }
 
     /// Calculate performance score for ranking
-    fn calculate_performance_score(&self, node_id: BootstrapNodeId, _node_info: &BootstrapNodeInfo) -> f64 {
+    fn calculate_performance_score(
+        &self,
+        node_id: BootstrapNodeId,
+        _node_info: &BootstrapNodeInfo,
+    ) -> f64 {
         let stats = self.health_stats.get(&node_id).unwrap();
-        
+
         let mut score = 0.0;
-        
+
         // Success rate component (40% of score)
         let success_rate = if stats.connection_attempts > 0 {
             stats.successful_connections as f64 / stats.connection_attempts as f64
@@ -2908,7 +3274,7 @@ impl BootstrapNodeManager {
             1.0
         };
         score += success_rate * 0.4;
-        
+
         // RTT component (30% of score)
         if let Some(avg_rtt) = stats.average_rtt {
             let rtt_score = (1000.0 - avg_rtt.as_millis() as f64).max(0.0) / 1000.0;
@@ -2916,7 +3282,7 @@ impl BootstrapNodeManager {
         } else {
             score += 0.3; // No RTT data, assume good
         }
-        
+
         // Coordination success rate (20% of score)
         let coord_success_rate = if stats.coordination_requests > 0 {
             stats.successful_coordinations as f64 / stats.coordination_requests as f64
@@ -2924,7 +3290,7 @@ impl BootstrapNodeManager {
             1.0
         };
         score += coord_success_rate * 0.2;
-        
+
         // Stability component (10% of score)
         let stability_score = if stats.consecutive_failures == 0 {
             1.0
@@ -2932,14 +3298,18 @@ impl BootstrapNodeManager {
             1.0 / (stats.consecutive_failures as f64 + 1.0)
         };
         score += stability_score * 0.1;
-        
+
         score
     }
 
     /// Compare health status for sorting
-    fn compare_health_status(&self, a: BootstrapHealthStatus, b: BootstrapHealthStatus) -> std::cmp::Ordering {
+    fn compare_health_status(
+        &self,
+        a: BootstrapHealthStatus,
+        b: BootstrapHealthStatus,
+    ) -> std::cmp::Ordering {
         use std::cmp::Ordering;
-        
+
         match (a, b) {
             (BootstrapHealthStatus::Healthy, BootstrapHealthStatus::Healthy) => Ordering::Equal,
             (BootstrapHealthStatus::Healthy, _) => Ordering::Less, // Healthy comes first
@@ -2960,32 +3330,32 @@ impl BootstrapNodeManager {
         let mut total_successes = 0;
         let mut total_rtt = Duration::ZERO;
         let mut rtt_count = 0;
-        
+
         for stats in self.health_stats.values() {
             total_attempts += stats.connection_attempts;
             total_successes += stats.successful_connections;
-            
+
             if let Some(avg_rtt) = stats.average_rtt {
                 total_rtt += avg_rtt;
                 rtt_count += 1;
             }
         }
-        
+
         self.performance_tracker.overall_success_rate = if total_attempts > 0 {
             total_successes as f64 / total_attempts as f64
         } else {
             1.0
         };
-        
+
         self.performance_tracker.average_response_time = if rtt_count > 0 {
             total_rtt / rtt_count
         } else {
             Duration::from_millis(100) // Default
         };
-        
+
         // Update best performers
         self.performance_tracker.best_performers = self.get_best_performers(5);
-        
+
         // Record performance snapshot
         let snapshot = PerformanceSnapshot {
             timestamp: now,
@@ -2993,8 +3363,10 @@ impl BootstrapNodeManager {
             success_rate: self.performance_tracker.overall_success_rate,
             average_rtt: self.performance_tracker.average_response_time,
         };
-        
-        self.performance_tracker.performance_history.push_back(snapshot);
+
+        self.performance_tracker
+            .performance_history
+            .push_back(snapshot);
         if self.performance_tracker.performance_history.len() > 100 {
             self.performance_tracker.performance_history.pop_front();
         }
@@ -3012,7 +3384,10 @@ impl BootstrapNodeManager {
     }
 
     /// Get health statistics for a specific node
-    pub(crate) fn get_node_health_stats(&self, node_id: BootstrapNodeId) -> Option<&BootstrapHealthStats> {
+    pub(crate) fn get_node_health_stats(
+        &self,
+        node_id: BootstrapNodeId,
+    ) -> Option<&BootstrapHealthStats> {
         self.health_stats.get(&node_id)
     }
 }
@@ -3035,13 +3410,13 @@ impl DiscoveryCache {
 pub(crate) fn create_platform_interface_discovery() -> Box<dyn NetworkInterfaceDiscovery + Send> {
     #[cfg(target_os = "windows")]
     return Box::new(WindowsInterfaceDiscovery::new());
-    
+
     #[cfg(target_os = "linux")]
     return Box::new(LinuxInterfaceDiscovery::new());
-    
+
     #[cfg(target_os = "macos")]
     return Box::new(MacOSInterfaceDiscovery::new());
-    
+
     #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
     return Box::new(GenericInterfaceDiscovery::new());
 }
@@ -3061,7 +3436,9 @@ pub(crate) struct GenericInterfaceDiscovery {
 
 impl GenericInterfaceDiscovery {
     pub(crate) fn new() -> Self {
-        Self { scan_complete: false }
+        Self {
+            scan_complete: false,
+        }
     }
 }
 
@@ -3075,15 +3452,13 @@ impl NetworkInterfaceDiscovery for GenericInterfaceDiscovery {
     fn check_scan_complete(&mut self) -> Option<Vec<NetworkInterface>> {
         if self.scan_complete {
             self.scan_complete = false;
-            Some(vec![
-                NetworkInterface {
-                    name: "generic".to_string(),
-                    addresses: vec!["127.0.0.1:0".parse().unwrap()],
-                    is_up: true,
-                    is_wireless: false,
-                    mtu: Some(1500),
-                }
-            ])
+            Some(vec![NetworkInterface {
+                name: "generic".to_string(),
+                addresses: vec!["127.0.0.1:0".parse().unwrap()],
+                is_up: true,
+                is_wireless: false,
+                mtu: Some(1500),
+            }])
         } else {
             None
         }
@@ -3096,7 +3471,9 @@ impl std::fmt::Display for DiscoveryError {
             Self::NoLocalInterfaces => write!(f, "no local network interfaces found"),
             Self::AllBootstrapsFailed => write!(f, "all bootstrap node queries failed"),
             Self::DiscoveryTimeout => write!(f, "discovery process timed out"),
-            Self::InsufficientCandidates { found, required } => write!(f, "insufficient candidates found: {} < {}", found, required),
+            Self::InsufficientCandidates { found, required } => {
+                write!(f, "insufficient candidates found: {} < {}", found, required)
+            }
             Self::NetworkError(msg) => write!(f, "network error: {}", msg),
             Self::ConfigurationError(msg) => write!(f, "configuration error: {}", msg),
             Self::InternalError(msg) => write!(f, "internal error: {}", msg),
@@ -3109,7 +3486,7 @@ impl std::error::Error for DiscoveryError {}
 /// Public utility functions for testing IPv6 and dual-stack functionality
 pub mod test_utils {
     use super::*;
-    
+
     /// Test utility to calculate address priority for testing
     pub fn calculate_address_priority(address: &IpAddr) -> u32 {
         let mut priority = 100; // Base priority
@@ -3118,7 +3495,7 @@ pub mod test_utils {
                 if ipv4.is_private() {
                     priority += 50; // Prefer private addresses for local networks
                 }
-            },
+            }
             IpAddr::V6(ipv6) => {
                 // IPv6 priority based on address type
                 // Global unicast: 2000::/3 (not link-local, not unique local)
@@ -3138,14 +3515,14 @@ pub mod test_utils {
                         priority += 30;
                     }
                 }
-                
+
                 // Prefer IPv6 for better NAT traversal potential
                 priority += 10; // Small boost for IPv6 overall
-            },
+            }
         }
         priority
     }
-    
+
     /// Test utility to validate local addresses
     pub fn is_valid_address(address: &IpAddr) -> bool {
         match address {

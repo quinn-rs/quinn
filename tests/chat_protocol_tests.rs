@@ -5,8 +5,8 @@
 use ant_quic::{
     auth::AuthConfig,
     chat::{ChatError, ChatMessage, MAX_MESSAGE_SIZE, PeerInfo},
-    nat_traversal_api::PeerId,
     nat_traversal_api::EndpointRole,
+    nat_traversal_api::PeerId,
     quic_node::{QuicNodeConfig, QuicP2PNode},
 };
 use std::{

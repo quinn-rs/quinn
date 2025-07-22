@@ -13,8 +13,6 @@ use std::{
     fmt::{self, Debug},
 };
 
-
-
 /// Certificate type values as defined in RFC 7250 and IANA registry
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[repr(u8)]
@@ -76,7 +74,7 @@ impl CertificateTypeList {
         if types.len() > 255 {
             return Err(TlsExtensionError::CertificateTypeListTooLong(types.len()));
         }
-        
+
         // Check for duplicates
         let mut seen = std::collections::HashSet::new();
         for cert_type in &types {
@@ -84,7 +82,7 @@ impl CertificateTypeList {
                 return Err(TlsExtensionError::DuplicateCertificateType(*cert_type));
             }
         }
-        
+
         Ok(CertificateTypeList { types })
     }
 
@@ -148,7 +146,9 @@ impl CertificateTypeList {
     /// Parse from wire format
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, TlsExtensionError> {
         if bytes.is_empty() {
-            return Err(TlsExtensionError::InvalidExtensionData("Empty certificate type list".to_string()));
+            return Err(TlsExtensionError::InvalidExtensionData(
+                "Empty certificate type list".to_string(),
+            ));
         }
 
         let length = bytes[0] as usize;
@@ -159,9 +159,11 @@ impl CertificateTypeList {
             return Err(TlsExtensionError::CertificateTypeListTooLong(length));
         }
         if bytes.len() != 1 + length {
-            return Err(TlsExtensionError::InvalidExtensionData(
-                format!("Certificate type list length mismatch: expected {}, got {}", 1 + length, bytes.len())
-            ));
+            return Err(TlsExtensionError::InvalidExtensionData(format!(
+                "Certificate type list length mismatch: expected {}, got {}",
+                1 + length,
+                bytes.len()
+            )));
         }
 
         let mut types = Vec::with_capacity(length);
@@ -224,9 +226,15 @@ impl fmt::Display for TlsExtensionError {
             TlsExtensionError::InvalidExtensionData(msg) => {
                 write!(f, "Invalid extension data: {}", msg)
             }
-            TlsExtensionError::NegotiationFailed { client_types, server_types } => {
-                write!(f, "Certificate type negotiation failed: client={:?}, server={:?}", 
-                       client_types, server_types)
+            TlsExtensionError::NegotiationFailed {
+                client_types,
+                server_types,
+            } => {
+                write!(
+                    f,
+                    "Certificate type negotiation failed: client={:?}, server={:?}",
+                    client_types, server_types
+                )
             }
             TlsExtensionError::ExtensionAlreadyRegistered(id) => {
                 write!(f, "Extension already registered: {}", id)
@@ -329,11 +337,12 @@ impl CertificateTypePreferences {
         remote_server_types: Option<&CertificateTypeList>,
     ) -> Result<NegotiationResult, TlsExtensionError> {
         let client_cert_type = if let Some(remote_types) = remote_client_types {
-            self.client_types.negotiate(remote_types)
-                .ok_or_else(|| TlsExtensionError::NegotiationFailed {
+            self.client_types.negotiate(remote_types).ok_or_else(|| {
+                TlsExtensionError::NegotiationFailed {
                     client_types: self.client_types.clone(),
                     server_types: remote_types.clone(),
-                })?
+                }
+            })?
         } else if self.require_extensions {
             return Err(TlsExtensionError::NegotiationFailed {
                 client_types: self.client_types.clone(),
@@ -344,11 +353,12 @@ impl CertificateTypePreferences {
         };
 
         let server_cert_type = if let Some(remote_types) = remote_server_types {
-            self.server_types.negotiate(remote_types)
-                .ok_or_else(|| TlsExtensionError::NegotiationFailed {
+            self.server_types.negotiate(remote_types).ok_or_else(|| {
+                TlsExtensionError::NegotiationFailed {
                     client_types: self.server_types.clone(),
                     server_types: remote_types.clone(),
-                })?
+                }
+            })?
         } else if self.require_extensions {
             return Err(TlsExtensionError::NegotiationFailed {
                 client_types: self.server_types.clone(),
@@ -427,17 +437,22 @@ mod tests {
     fn test_certificate_type_conversion() {
         assert_eq!(CertificateType::X509.to_u8(), 0);
         assert_eq!(CertificateType::RawPublicKey.to_u8(), 2);
-        
+
         assert_eq!(CertificateType::from_u8(0).unwrap(), CertificateType::X509);
-        assert_eq!(CertificateType::from_u8(2).unwrap(), CertificateType::RawPublicKey);
-        
+        assert_eq!(
+            CertificateType::from_u8(2).unwrap(),
+            CertificateType::RawPublicKey
+        );
+
         assert!(CertificateType::from_u8(1).is_err());
         assert!(CertificateType::from_u8(255).is_err());
     }
 
     #[test]
     fn test_certificate_type_list_creation() {
-        let list = CertificateTypeList::new(vec![CertificateType::RawPublicKey, CertificateType::X509]).unwrap();
+        let list =
+            CertificateTypeList::new(vec![CertificateType::RawPublicKey, CertificateType::X509])
+                .unwrap();
         assert_eq!(list.types.len(), 2);
         assert_eq!(list.most_preferred(), CertificateType::RawPublicKey);
         assert!(list.supports_raw_public_key());
@@ -447,7 +462,9 @@ mod tests {
         assert!(CertificateTypeList::new(vec![]).is_err());
 
         // Test duplicate error
-        assert!(CertificateTypeList::new(vec![CertificateType::X509, CertificateType::X509]).is_err());
+        assert!(
+            CertificateTypeList::new(vec![CertificateType::X509, CertificateType::X509]).is_err()
+        );
     }
 
     #[test]
@@ -467,11 +484,17 @@ mod tests {
         let x509_only = CertificateTypeList::x509_only();
 
         // RPK only with prefer RPK should negotiate to RPK
-        assert_eq!(rpk_only.negotiate(&prefer_rpk).unwrap(), CertificateType::RawPublicKey);
-        
+        assert_eq!(
+            rpk_only.negotiate(&prefer_rpk).unwrap(),
+            CertificateType::RawPublicKey
+        );
+
         // Prefer RPK with X509 only should negotiate to X509
-        assert_eq!(prefer_rpk.negotiate(&x509_only).unwrap(), CertificateType::X509);
-        
+        assert_eq!(
+            prefer_rpk.negotiate(&x509_only).unwrap(),
+            CertificateType::X509
+        );
+
         // RPK only with X509 only should fail
         assert!(rpk_only.negotiate(&x509_only).is_none());
     }
@@ -481,10 +504,12 @@ mod tests {
         let rpk_prefs = CertificateTypePreferences::raw_public_key_only();
         let mixed_prefs = CertificateTypePreferences::prefer_raw_public_key();
 
-        let result = rpk_prefs.negotiate(
-            Some(&mixed_prefs.client_types),
-            Some(&mixed_prefs.server_types),
-        ).unwrap();
+        let result = rpk_prefs
+            .negotiate(
+                Some(&mixed_prefs.client_types),
+                Some(&mixed_prefs.server_types),
+            )
+            .unwrap();
 
         assert_eq!(result.client_cert_type, CertificateType::RawPublicKey);
         assert_eq!(result.server_cert_type, CertificateType::RawPublicKey);
@@ -497,17 +522,17 @@ mod tests {
         let result = NegotiationResult::new(CertificateType::RawPublicKey, CertificateType::X509);
 
         assert!(cache.get(123).is_none());
-        
+
         cache.insert(123, result.clone());
         assert_eq!(cache.get(123).unwrap(), &result);
 
         // Test that cache size is limited
         cache.insert(456, result.clone());
         assert_eq!(cache.cache.len(), 2); // Should have 2 entries
-        
+
         cache.insert(789, result.clone());
         assert_eq!(cache.cache.len(), 2); // Should still have 2 entries after eviction
-        
+
         // At least one of the new entries should be present
         assert!(cache.get(456).is_some() || cache.get(789).is_some());
     }

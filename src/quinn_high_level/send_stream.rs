@@ -5,8 +5,8 @@ use std::{
     task::{Context, Poll},
 };
 
-use bytes::Bytes;
 use crate::{ClosedStream, ConnectionError, FinishError, StreamId, Written};
+use bytes::Bytes;
 use thiserror::Error;
 
 use super::connection::{ConnectionRef, State};

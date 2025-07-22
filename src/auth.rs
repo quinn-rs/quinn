@@ -16,35 +16,34 @@ use ed25519_dalek::{
 
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
-use tracing::{debug, info, warn, error};
+use tracing::{debug, error, info, warn};
 
 use crate::{
-    nat_traversal_api::PeerId,
     crypto::raw_public_keys::key_utils::{
-        public_key_to_bytes, public_key_from_bytes,
-        derive_peer_id_from_public_key, verify_peer_id,
+        derive_peer_id_from_public_key, public_key_from_bytes, public_key_to_bytes, verify_peer_id,
     },
+    nat_traversal_api::PeerId,
 };
 
 /// Constant-time equality comparison for byte arrays
 fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     // For constant-time execution, we must not return early based on length
     let len_equal = a.len() == b.len();
-    
+
     // Process up to the shorter length to avoid bounds issues
     let min_len = a.len().min(b.len());
     let mut result = 0u8;
-    
+
     // Compare bytes up to min length
     for i in 0..min_len {
         result |= a[i] ^ b[i];
     }
-    
+
     // If lengths differ, ensure result is non-zero
     if !len_equal {
         result |= 1;
     }
-    
+
     // Constant-time conversion to bool
     result == 0
 }
@@ -120,9 +119,7 @@ pub enum AuthMessage {
         timestamp: SystemTime,
     },
     /// Authentication failed
-    AuthFailure {
-        reason: String,
-    },
+    AuthFailure { reason: String },
 }
 
 /// Authenticated peer information
@@ -167,9 +164,9 @@ impl AuthManager {
     pub fn new(secret_key: Ed25519SecretKey, config: AuthConfig) -> Self {
         let public_key = secret_key.verifying_key();
         let peer_id = derive_peer_id_from_public_key(&public_key);
-        
+
         info!("Initialized AuthManager with peer ID: {:?}", peer_id);
-        
+
         Self {
             secret_key,
             public_key,
@@ -189,7 +186,7 @@ impl AuthManager {
     pub fn public_key_bytes(&self) -> [u8; 32] {
         public_key_to_bytes(&self.public_key)
     }
-    
+
     /// Get authentication configuration
     pub fn config(&self) -> &AuthConfig {
         &self.config
@@ -213,7 +210,7 @@ impl AuthManager {
         // Verify that the peer ID matches the public key
         let public_key = public_key_from_bytes(&public_key_bytes)
             .map_err(|e| AuthError::KeyError(e.to_string()))?;
-        
+
         if !verify_peer_id(&peer_id, &public_key) {
             return Err(AuthError::InvalidPeerId);
         }
@@ -228,11 +225,14 @@ impl AuthManager {
 
         // Store the pending challenge
         let mut challenges = self.pending_challenges.write().await;
-        challenges.insert(peer_id, PendingChallenge {
-            nonce,
-            created_at: Instant::now(),
-            attempts: 0,
-        });
+        challenges.insert(
+            peer_id,
+            PendingChallenge {
+                nonce,
+                created_at: Instant::now(),
+                attempts: 0,
+            },
+        );
 
         debug!("Created challenge for peer {:?}", peer_id);
 
@@ -246,7 +246,7 @@ impl AuthManager {
     pub fn create_challenge_response(&self, nonce: [u8; 32]) -> Result<AuthMessage, AuthError> {
         // Sign the nonce with our private key
         let signature = self.secret_key.sign(&nonce);
-        
+
         Ok(AuthMessage::ChallengeResponse {
             nonce,
             signature: signature.to_vec(),
@@ -263,32 +263,41 @@ impl AuthManager {
         signature_bytes: &[u8],
     ) -> Result<AuthMessage, AuthError> {
         // Perform all operations to ensure constant timing
-        
+
         // Step 1: Gather all data and perform checks without early returns
         let mut challenges = self.pending_challenges.write().await;
         let challenge_exists = challenges.contains_key(&peer_id);
-        let stored_nonce = challenges.get(&peer_id).map(|c| c.nonce).unwrap_or([0u8; 32]);
-        let created_at = challenges.get(&peer_id).map(|c| c.created_at).unwrap_or(Instant::now());
-        let attempts = challenges.get_mut(&peer_id).map(|c| {
-            c.attempts += 1;
-            c.attempts
-        }).unwrap_or(0);
-        
+        let stored_nonce = challenges
+            .get(&peer_id)
+            .map(|c| c.nonce)
+            .unwrap_or([0u8; 32]);
+        let created_at = challenges
+            .get(&peer_id)
+            .map(|c| c.created_at)
+            .unwrap_or(Instant::now());
+        let attempts = challenges
+            .get_mut(&peer_id)
+            .map(|c| {
+                c.attempts += 1;
+                c.attempts
+            })
+            .unwrap_or(0);
+
         // Check conditions (but don't return early)
         let nonce_matches = constant_time_eq(&stored_nonce, &nonce);
         let not_expired = created_at.elapsed() <= self.config.challenge_validity;
         let attempts_ok = attempts < self.config.max_auth_attempts;
-        
+
         // Step 2: Parse keys and signature (always do this)
         let public_key_result = public_key_from_bytes(&public_key_bytes);
         let signature_result = Signature::from_slice(signature_bytes);
-        
+
         // Step 3: Verify signature (always attempt this)
         let verification_result = match (public_key_result, signature_result) {
             (Ok(pk), Ok(sig)) => pk.verify(&nonce, &sig).is_ok(),
             _ => false,
         };
-        
+
         // Step 4: Generate session data (always do this to maintain constant timing)
         let session_id = {
             use rand::Rng;
@@ -296,33 +305,38 @@ impl AuthManager {
             rand::thread_rng().fill(&mut id);
             id
         };
-        
+
         // Step 5: Determine final result based on all checks
-        let all_valid = challenge_exists && nonce_matches && not_expired && 
-                       attempts_ok && verification_result;
-        
-        debug!("Verification results - exists: {}, nonce_matches: {}, not_expired: {}, attempts_ok: {}, verification: {}", 
-               challenge_exists, nonce_matches, not_expired, attempts_ok, verification_result);
-        
+        let all_valid =
+            challenge_exists && nonce_matches && not_expired && attempts_ok && verification_result;
+
+        debug!(
+            "Verification results - exists: {}, nonce_matches: {}, not_expired: {}, attempts_ok: {}, verification: {}",
+            challenge_exists, nonce_matches, not_expired, attempts_ok, verification_result
+        );
+
         // Step 6: Clean up and store results based on validity
         if all_valid {
             // Remove the challenge
             challenges.remove(&peer_id);
             drop(challenges); // Release lock before acquiring peers lock
-            
+
             // Store authenticated peer
             if let Ok(public_key) = public_key_from_bytes(&public_key_bytes) {
                 let mut peers = self.authenticated_peers.write().await;
-                peers.insert(peer_id, AuthenticatedPeer {
+                peers.insert(
                     peer_id,
-                    public_key,
-                    authenticated_at: Instant::now(),
-                    session_id,
-                });
-                
+                    AuthenticatedPeer {
+                        peer_id,
+                        public_key,
+                        authenticated_at: Instant::now(),
+                        session_id,
+                    },
+                );
+
                 info!("Successfully authenticated peer {:?}", peer_id);
             }
-            
+
             Ok(AuthMessage::AuthSuccess {
                 session_id,
                 timestamp: SystemTime::now(),
@@ -342,7 +356,7 @@ impl AuthManager {
             } else {
                 AuthError::InvalidSignature
             };
-            
+
             Err(error)
         }
     }
@@ -369,17 +383,23 @@ impl AuthManager {
         // Parse the public key
         let public_key = public_key_from_bytes(&public_key_bytes)
             .map_err(|e| AuthError::KeyError(e.to_string()))?;
-        
+
         // Store the authenticated peer
         let mut peers = self.authenticated_peers.write().await;
-        peers.insert(peer_id, AuthenticatedPeer {
+        peers.insert(
             peer_id,
-            public_key,
-            authenticated_at: Instant::now(),
-            session_id,
-        });
-        
-        info!("Marked peer {:?} as authenticated after receiving AuthSuccess", peer_id);
+            AuthenticatedPeer {
+                peer_id,
+                public_key,
+                authenticated_at: Instant::now(),
+                session_id,
+            },
+        );
+
+        info!(
+            "Marked peer {:?} as authenticated after receiving AuthSuccess",
+            peer_id
+        );
         Ok(())
     }
 
@@ -395,9 +415,10 @@ impl AuthManager {
     pub async fn cleanup_expired_challenges(&self) {
         let mut challenges = self.pending_challenges.write().await;
         let now = Instant::now();
-        
+
         challenges.retain(|peer_id, challenge| {
-            let expired = now.duration_since(challenge.created_at) <= self.config.challenge_validity;
+            let expired =
+                now.duration_since(challenge.created_at) <= self.config.challenge_validity;
             if !expired {
                 debug!("Removing expired challenge for peer {:?}", peer_id);
             }
@@ -413,14 +434,12 @@ impl AuthManager {
 
     /// Serialize an auth message
     pub fn serialize_message(msg: &AuthMessage) -> Result<Vec<u8>, AuthError> {
-        serde_json::to_vec(msg)
-            .map_err(|e| AuthError::SerializationError(e.to_string()))
+        serde_json::to_vec(msg).map_err(|e| AuthError::SerializationError(e.to_string()))
     }
 
     /// Deserialize an auth message
     pub fn deserialize_message(data: &[u8]) -> Result<AuthMessage, AuthError> {
-        serde_json::from_slice(data)
-            .map_err(|e| AuthError::SerializationError(e.to_string()))
+        serde_json::from_slice(data).map_err(|e| AuthError::SerializationError(e.to_string()))
     }
 }
 
@@ -434,7 +453,7 @@ pub struct AuthProtocol {
 impl AuthProtocol {
     /// Create a new authentication protocol handler
     pub fn new(auth_manager: Arc<AuthManager>) -> Self {
-        Self { 
+        Self {
             auth_manager,
             pending_auth: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
         }
@@ -447,43 +466,53 @@ impl AuthProtocol {
         message: AuthMessage,
     ) -> Result<Option<AuthMessage>, AuthError> {
         match message {
-            AuthMessage::AuthRequest { peer_id: req_peer_id, public_key, .. } => {
+            AuthMessage::AuthRequest {
+                peer_id: req_peer_id,
+                public_key,
+                ..
+            } => {
                 if req_peer_id != peer_id {
                     return Err(AuthError::InvalidPeerId);
                 }
                 // Store the public key for later verification
                 self.pending_auth.write().await.insert(peer_id, public_key);
-                let response = self.auth_manager.handle_auth_request(peer_id, public_key).await?;
+                let response = self
+                    .auth_manager
+                    .handle_auth_request(peer_id, public_key)
+                    .await?;
                 Ok(Some(response))
             }
             AuthMessage::Challenge { nonce, .. } => {
                 let response = self.auth_manager.create_challenge_response(nonce)?;
                 Ok(Some(response))
             }
-            AuthMessage::ChallengeResponse { nonce, signature, .. } => {
+            AuthMessage::ChallengeResponse {
+                nonce, signature, ..
+            } => {
                 // Get the public key from the initial auth request
                 let public_key_bytes = match self.pending_auth.read().await.get(&peer_id) {
                     Some(key) => *key,
                     None => return Err(AuthError::PeerNotFound),
                 };
-                
-                let response = self.auth_manager.verify_challenge_response(
-                    peer_id,
-                    public_key_bytes,
-                    nonce,
-                    &signature,
-                ).await?;
-                
+
+                let response = self
+                    .auth_manager
+                    .verify_challenge_response(peer_id, public_key_bytes, nonce, &signature)
+                    .await?;
+
                 // Remove the pending auth entry on success
                 if matches!(response, AuthMessage::AuthSuccess { .. }) {
                     self.pending_auth.write().await.remove(&peer_id);
                 }
-                
+
                 Ok(Some(response))
             }
             AuthMessage::AuthSuccess { session_id, .. } => {
-                info!("Authentication successful with peer {:?}, session: {:?}", 
-                      peer_id, hex::encode(&session_id));
+                info!(
+                    "Authentication successful with peer {:?}, session: {:?}",
+                    peer_id,
+                    hex::encode(&session_id)
+                );
                 Ok(None)
             }
             AuthMessage::AuthFailure { reason } => {
@@ -509,7 +538,7 @@ mod tests {
         let (secret_key, _) = generate_ed25519_keypair();
         let config = AuthConfig::default();
         let auth_manager = AuthManager::new(secret_key, config);
-        
+
         // Verify peer ID is derived correctly
         let peer_id = auth_manager.peer_id();
         assert_eq!(peer_id.0.len(), 32);
@@ -520,21 +549,26 @@ mod tests {
         // Create two auth managers (simulating two peers)
         let (secret_key1, public_key1) = generate_ed25519_keypair();
         let (secret_key2, _) = generate_ed25519_keypair();
-        
+
         let auth1 = AuthManager::new(secret_key1, AuthConfig::default());
         let auth2 = AuthManager::new(secret_key2, AuthConfig::default());
-        
+
         // Peer 1 creates auth request
         let auth_request = auth1.create_auth_request();
-        
+
         // Peer 2 handles the request and creates a challenge
         let challenge = match &auth_request {
-            AuthMessage::AuthRequest { peer_id, public_key, .. } => {
-                auth2.handle_auth_request(*peer_id, *public_key).await.unwrap()
-            }
+            AuthMessage::AuthRequest {
+                peer_id,
+                public_key,
+                ..
+            } => auth2
+                .handle_auth_request(*peer_id, *public_key)
+                .await
+                .unwrap(),
             _ => panic!("Expected AuthRequest"),
         };
-        
+
         // Peer 1 responds to the challenge
         let response = match &challenge {
             AuthMessage::Challenge { nonce, .. } => {
@@ -542,23 +576,27 @@ mod tests {
             }
             _ => panic!("Expected Challenge"),
         };
-        
+
         // Peer 2 verifies the response
         let result = match &response {
-            AuthMessage::ChallengeResponse { nonce, signature, .. } => {
-                auth2.verify_challenge_response(
-                    auth1.peer_id(),
-                    public_key_to_bytes(&public_key1),
-                    *nonce,
-                    signature,
-                ).await
+            AuthMessage::ChallengeResponse {
+                nonce, signature, ..
+            } => {
+                auth2
+                    .verify_challenge_response(
+                        auth1.peer_id(),
+                        public_key_to_bytes(&public_key1),
+                        *nonce,
+                        signature,
+                    )
+                    .await
             }
             _ => panic!("Expected ChallengeResponse"),
         };
-        
+
         // Should be successful
         assert!(matches!(result, Ok(AuthMessage::AuthSuccess { .. })));
-        
+
         // Peer 1 should now be authenticated by peer 2
         assert!(auth2.is_authenticated(&auth1.peer_id()).await);
     }
@@ -567,30 +605,34 @@ mod tests {
     async fn test_invalid_signature() {
         let (secret_key1, _) = generate_ed25519_keypair();
         let (secret_key2, public_key2) = generate_ed25519_keypair();
-        
+
         let auth1 = AuthManager::new(secret_key1, AuthConfig::default());
         let _auth2 = AuthManager::new(secret_key2, AuthConfig::default());
-        
+
         // Create a challenge
         let peer_id2 = derive_peer_id_from_public_key(&public_key2);
-        let challenge = auth1.handle_auth_request(peer_id2, public_key_to_bytes(&public_key2))
-            .await.unwrap();
-        
+        let challenge = auth1
+            .handle_auth_request(peer_id2, public_key_to_bytes(&public_key2))
+            .await
+            .unwrap();
+
         // Create an invalid response (wrong signature)
         let invalid_signature = vec![0u8; 64];
         let nonce = match &challenge {
             AuthMessage::Challenge { nonce, .. } => *nonce,
             _ => panic!("Expected Challenge"),
         };
-        
+
         // Verification should fail
-        let result = auth1.verify_challenge_response(
-            peer_id2,
-            public_key_to_bytes(&public_key2),
-            nonce,
-            &invalid_signature,
-        ).await;
-        
+        let result = auth1
+            .verify_challenge_response(
+                peer_id2,
+                public_key_to_bytes(&public_key2),
+                nonce,
+                &invalid_signature,
+            )
+            .await;
+
         assert!(matches!(result, Err(AuthError::InvalidSignature)));
     }
 
@@ -599,25 +641,29 @@ mod tests {
         let (secret_key, public_key) = generate_ed25519_keypair();
         let mut config = AuthConfig::default();
         config.challenge_validity = Duration::from_millis(100); // Very short for testing
-        
+
         let auth = AuthManager::new(secret_key, config);
         let peer_id = derive_peer_id_from_public_key(&public_key);
-        
+
         // Create a challenge
-        let _challenge = auth.handle_auth_request(peer_id, public_key_to_bytes(&public_key))
-            .await.unwrap();
-        
+        let _challenge = auth
+            .handle_auth_request(peer_id, public_key_to_bytes(&public_key))
+            .await
+            .unwrap();
+
         // Wait for it to expire
         tokio::time::sleep(Duration::from_millis(200)).await;
-        
+
         // Try to verify - should fail due to expiry
-        let result = auth.verify_challenge_response(
-            peer_id,
-            public_key_to_bytes(&public_key),
-            [0u8; 32], // dummy nonce
-            &[0u8; 64], // dummy signature
-        ).await;
-        
+        let result = auth
+            .verify_challenge_response(
+                peer_id,
+                public_key_to_bytes(&public_key),
+                [0u8; 32],  // dummy nonce
+                &[0u8; 64], // dummy signature
+            )
+            .await;
+
         assert!(matches!(result, Err(AuthError::ChallengeExpired)));
     }
 
@@ -625,21 +671,29 @@ mod tests {
     async fn test_message_serialization() {
         let (_, public_key) = generate_ed25519_keypair();
         let peer_id = derive_peer_id_from_public_key(&public_key);
-        
+
         let msg = AuthMessage::AuthRequest {
             peer_id,
             public_key: public_key_to_bytes(&public_key),
             timestamp: SystemTime::now(),
         };
-        
+
         // Serialize and deserialize
         let serialized = AuthManager::serialize_message(&msg).unwrap();
         let deserialized = AuthManager::deserialize_message(&serialized).unwrap();
-        
+
         match (msg, deserialized) {
             (
-                AuthMessage::AuthRequest { peer_id: p1, public_key: k1, .. },
-                AuthMessage::AuthRequest { peer_id: p2, public_key: k2, .. }
+                AuthMessage::AuthRequest {
+                    peer_id: p1,
+                    public_key: k1,
+                    ..
+                },
+                AuthMessage::AuthRequest {
+                    peer_id: p2,
+                    public_key: k2,
+                    ..
+                },
             ) => {
                 assert_eq!(p1, p2);
                 assert_eq!(k1, k2);

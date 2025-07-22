@@ -10,16 +10,16 @@ use std::{
     time::{Duration, Instant},
 };
 
-use tracing::{debug, info, error};
+use tracing::{debug, error, info};
 
 use crate::{
-    nat_traversal_api::{
-        NatTraversalEndpoint, NatTraversalConfig, NatTraversalEvent,
-        EndpointRole, PeerId, NatTraversalError, NatTraversalStatistics,
-    },
-    auth::{AuthManager, AuthConfig, AuthMessage, AuthProtocol},
+    auth::{AuthConfig, AuthManager, AuthMessage, AuthProtocol},
     crypto::raw_public_keys::key_utils::{
-        generate_ed25519_keypair, derive_peer_id_from_public_key,
+        derive_peer_id_from_public_key, generate_ed25519_keypair,
+    },
+    nat_traversal_api::{
+        EndpointRole, NatTraversalConfig, NatTraversalEndpoint, NatTraversalError,
+        NatTraversalEvent, NatTraversalStatistics, PeerId,
     },
 };
 
@@ -121,16 +121,18 @@ impl Default for NodeStats {
 
 impl QuicP2PNode {
     /// Create a new QUIC P2P node
-    pub async fn new(config: QuicNodeConfig) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+    pub async fn new(
+        config: QuicNodeConfig,
+    ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         // Generate Ed25519 keypair for authentication
         let (secret_key, public_key) = generate_ed25519_keypair();
         let peer_id = derive_peer_id_from_public_key(&public_key);
-        
+
         info!("Creating QUIC P2P node with peer ID: {:?}", peer_id);
-        
+
         // Create authentication manager
         let auth_manager = Arc::new(AuthManager::new(secret_key, config.auth_config.clone()));
-        
+
         // Create NAT traversal configuration
         let nat_config = NatTraversalConfig {
             role: config.role,
@@ -150,7 +152,7 @@ impl QuicP2PNode {
             ..Default::default()
         }));
         let stats_for_callback = Arc::clone(&stats_clone);
-        
+
         let event_callback = Box::new(move |event: NatTraversalEvent| {
             let stats = stats_for_callback.clone();
             tokio::spawn(async move {
@@ -168,9 +170,8 @@ impl QuicP2PNode {
         });
 
         // Create NAT traversal endpoint
-        let nat_endpoint = Arc::new(
-            NatTraversalEndpoint::new(nat_config, Some(event_callback)).await?
-        );
+        let nat_endpoint =
+            Arc::new(NatTraversalEndpoint::new(nat_config, Some(event_callback)).await?);
 
         Ok(Self {
             nat_endpoint,
@@ -193,31 +194,35 @@ impl QuicP2PNode {
         bootstrap_addr: SocketAddr,
     ) -> Result<PeerId, NatTraversalError> {
         info!("Connecting to bootstrap node at {}", bootstrap_addr);
-        
+
         // Get the quinn endpoint from NAT traversal endpoint
-        let endpoint = self.nat_endpoint.get_quinn_endpoint()
-            .ok_or_else(|| NatTraversalError::ConfigError("Quinn endpoint not available".to_string()))?;
-        
+        let endpoint = self.nat_endpoint.get_quinn_endpoint().ok_or_else(|| {
+            NatTraversalError::ConfigError("Quinn endpoint not available".to_string())
+        })?;
+
         // Connect using the QUIC endpoint directly
         match endpoint.connect(bootstrap_addr, "bootstrap-node") {
             Ok(connecting) => {
                 match connecting.await {
-                    Ok(connection) => {
+                    Ok(_connection) => {
                         // Extract peer ID from the connection
                         // For now, we'll generate a temporary peer ID based on the address
                         // In a real implementation, we'd exchange peer IDs during the handshake
                         let peer_id = self.derive_peer_id_from_address(bootstrap_addr);
-                        
+
                         // Store the connection
-                        self.connected_peers.write().await.insert(peer_id, bootstrap_addr);
-                        
+                        self.connected_peers
+                            .write()
+                            .await
+                            .insert(peer_id, bootstrap_addr);
+
                         // Update stats
                         {
                             let mut stats = self.stats.lock().await;
                             stats.active_connections += 1;
                             stats.successful_connections += 1;
                         }
-                        
+
                         // Fire connection established event
                         if let Some(ref callback) = self.nat_endpoint.get_event_callback() {
                             callback(NatTraversalEvent::ConnectionEstablished {
@@ -225,45 +230,60 @@ impl QuicP2PNode {
                                 remote_address: bootstrap_addr,
                             });
                         }
-                        
-                        info!("Successfully connected to bootstrap node {} with peer ID {:?}", bootstrap_addr, peer_id);
+
+                        info!(
+                            "Successfully connected to bootstrap node {} with peer ID {:?}",
+                            bootstrap_addr, peer_id
+                        );
                         Ok(peer_id)
                     }
                     Err(e) => {
-                        error!("Failed to establish connection to bootstrap node {}: {}", bootstrap_addr, e);
+                        error!(
+                            "Failed to establish connection to bootstrap node {}: {}",
+                            bootstrap_addr, e
+                        );
                         {
                             let mut stats = self.stats.lock().await;
                             stats.failed_connections += 1;
                         }
-                        Err(NatTraversalError::NetworkError(format!("Connection failed: {}", e)))
+                        Err(NatTraversalError::NetworkError(format!(
+                            "Connection failed: {}",
+                            e
+                        )))
                     }
                 }
             }
             Err(e) => {
-                error!("Failed to initiate connection to bootstrap node {}: {}", bootstrap_addr, e);
+                error!(
+                    "Failed to initiate connection to bootstrap node {}: {}",
+                    bootstrap_addr, e
+                );
                 {
                     let mut stats = self.stats.lock().await;
                     stats.failed_connections += 1;
                 }
-                Err(NatTraversalError::NetworkError(format!("Connect error: {}", e)))
+                Err(NatTraversalError::NetworkError(format!(
+                    "Connect error: {}",
+                    e
+                )))
             }
         }
     }
-    
+
     /// Derive a peer ID from a socket address (temporary solution)
     fn derive_peer_id_from_address(&self, addr: SocketAddr) -> PeerId {
-        use std::hash::{Hash, Hasher};
         use std::collections::hash_map::DefaultHasher;
-        
+        use std::hash::{Hash, Hasher};
+
         let mut hasher = DefaultHasher::new();
         addr.hash(&mut hasher);
         let hash = hasher.finish();
-        
+
         let mut peer_id_bytes = [0u8; 32];
         peer_id_bytes[..8].copy_from_slice(&hash.to_le_bytes());
         let port_bytes = addr.port().to_le_bytes();
         peer_id_bytes[8..10].copy_from_slice(&port_bytes);
-        
+
         PeerId(peer_id_bytes)
     }
 
@@ -273,8 +293,11 @@ impl QuicP2PNode {
         peer_id: PeerId,
         coordinator: SocketAddr,
     ) -> Result<SocketAddr, NatTraversalError> {
-        info!("Initiating connection to peer {:?} via coordinator {}", peer_id, coordinator);
-        
+        info!(
+            "Initiating connection to peer {:?} via coordinator {}",
+            peer_id, coordinator
+        );
+
         // Update stats
         {
             let mut stats = self.stats.lock().await;
@@ -282,25 +305,29 @@ impl QuicP2PNode {
         }
 
         // Initiate NAT traversal
-        self.nat_endpoint.initiate_nat_traversal(peer_id, coordinator)?;
+        self.nat_endpoint
+            .initiate_nat_traversal(peer_id, coordinator)?;
 
         // Poll for completion (in production, this would be event-driven)
         let start = Instant::now();
         let timeout = self.config.connection_timeout;
-        
+
         while start.elapsed() < timeout {
             let events = self.nat_endpoint.poll(Instant::now())?;
-            
+
             for event in events {
                 match event {
-                    NatTraversalEvent::ConnectionEstablished { peer_id: evt_peer, remote_address } => {
+                    NatTraversalEvent::ConnectionEstablished {
+                        peer_id: evt_peer,
+                        remote_address,
+                    } => {
                         if evt_peer == peer_id {
                             // Store peer connection
                             {
                                 let mut peers = self.connected_peers.write().await;
                                 peers.insert(peer_id, remote_address);
                             }
-                            
+
                             // Update stats
                             {
                                 let mut stats = self.stats.lock().await;
@@ -308,9 +335,12 @@ impl QuicP2PNode {
                                 stats.active_connections += 1;
                                 stats.nat_traversal_successes += 1;
                             }
-                            
-                            info!("Successfully connected to peer {:?} at {}", peer_id, remote_address);
-                            
+
+                            info!(
+                                "Successfully connected to peer {:?} at {}",
+                                peer_id, remote_address
+                            );
+
                             // Perform authentication if required
                             if self.config.auth_config.require_authentication {
                                 match self.authenticate_as_initiator(&peer_id).await {
@@ -318,29 +348,40 @@ impl QuicP2PNode {
                                         info!("Authentication successful with peer {:?}", peer_id);
                                     }
                                     Err(e) => {
-                                        error!("Authentication failed with peer {:?}: {}", peer_id, e);
+                                        error!(
+                                            "Authentication failed with peer {:?}: {}",
+                                            peer_id, e
+                                        );
                                         // Remove from connected peers
                                         self.connected_peers.write().await.remove(&peer_id);
                                         // Update stats
                                         let mut stats = self.stats.lock().await;
-                                        stats.active_connections = stats.active_connections.saturating_sub(1);
+                                        stats.active_connections =
+                                            stats.active_connections.saturating_sub(1);
                                         stats.failed_connections += 1;
-                                        return Err(NatTraversalError::ConfigError(format!("Authentication failed: {}", e)));
+                                        return Err(NatTraversalError::ConfigError(format!(
+                                            "Authentication failed: {}",
+                                            e
+                                        )));
                                     }
                                 }
                             }
-                            
+
                             return Ok(remote_address);
                         }
                     }
-                    NatTraversalEvent::TraversalFailed { peer_id: evt_peer, error, fallback_available: _ } => {
+                    NatTraversalEvent::TraversalFailed {
+                        peer_id: evt_peer,
+                        error,
+                        fallback_available: _,
+                    } => {
                         if evt_peer == peer_id {
                             // Update stats
                             {
                                 let mut stats = self.stats.lock().await;
                                 stats.failed_connections += 1;
                             }
-                            
+
                             error!("NAT traversal failed for peer {:?}: {}", peer_id, error);
                             return Err(error);
                         }
@@ -350,44 +391,49 @@ impl QuicP2PNode {
                     }
                 }
             }
-            
+
             // Brief sleep to avoid busy waiting
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
-        
+
         // Timeout
         {
             let mut stats = self.stats.lock().await;
             stats.failed_connections += 1;
         }
-        
+
         Err(NatTraversalError::Timeout)
     }
 
     /// Accept incoming connections
-    pub async fn accept(&self) -> Result<(SocketAddr, PeerId), Box<dyn std::error::Error + Send + Sync>> {
+    pub async fn accept(
+        &self,
+    ) -> Result<(SocketAddr, PeerId), Box<dyn std::error::Error + Send + Sync>> {
         info!("Waiting for incoming connection...");
-        
+
         // Accept connection through the NAT traversal endpoint
         match self.nat_endpoint.accept_connection().await {
             Ok((peer_id, connection)) => {
                 let remote_addr = connection.remote_address();
-                
+
                 // Store the connection
                 {
                     let mut peers = self.connected_peers.write().await;
                     peers.insert(peer_id, remote_addr);
                 }
-                
+
                 // Update stats
                 {
                     let mut stats = self.stats.lock().await;
                     stats.successful_connections += 1;
                     stats.active_connections += 1;
                 }
-                
-                info!("Accepted connection from peer {:?} at {}", peer_id, remote_addr);
-                
+
+                info!(
+                    "Accepted connection from peer {:?} at {}",
+                    peer_id, remote_addr
+                );
+
                 // Handle authentication if required
                 if self.config.auth_config.require_authentication {
                     // Start a task to handle incoming authentication
@@ -395,15 +441,22 @@ impl QuicP2PNode {
                     let auth_peer_id = peer_id;
                     tokio::spawn(async move {
                         if let Err(e) = self_clone.handle_incoming_auth(auth_peer_id).await {
-                            error!("Failed to handle authentication for peer {:?}: {}", auth_peer_id, e);
+                            error!(
+                                "Failed to handle authentication for peer {:?}: {}",
+                                auth_peer_id, e
+                            );
                             // Remove the peer if auth fails
-                            self_clone.connected_peers.write().await.remove(&auth_peer_id);
+                            self_clone
+                                .connected_peers
+                                .write()
+                                .await
+                                .remove(&auth_peer_id);
                             let mut stats = self_clone.stats.lock().await;
                             stats.active_connections = stats.active_connections.saturating_sub(1);
                         }
                     });
                 }
-                
+
                 Ok((remote_addr, peer_id))
             }
             Err(e) => {
@@ -412,7 +465,7 @@ impl QuicP2PNode {
                     let mut stats = self.stats.lock().await;
                     stats.failed_connections += 1;
                 }
-                
+
                 error!("Failed to accept connection: {}", e);
                 Err(Box::new(e))
             }
@@ -426,25 +479,40 @@ impl QuicP2PNode {
         data: &[u8],
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let peers = self.connected_peers.read().await;
-        
+
         if let Some(remote_addr) = peers.get(peer_id) {
-            debug!("Sending {} bytes to peer {:?} at {}", data.len(), peer_id, remote_addr);
-            
+            debug!(
+                "Sending {} bytes to peer {:?} at {}",
+                data.len(),
+                peer_id,
+                remote_addr
+            );
+
             // Get the Quinn connection for this peer from the NAT traversal endpoint
             match self.nat_endpoint.get_connection(peer_id) {
                 Ok(Some(connection)) => {
                     // Open a unidirectional stream for data transmission
-                    let mut send_stream = connection.open_uni().await
+                    let mut send_stream = connection
+                        .open_uni()
+                        .await
                         .map_err(|e| format!("Failed to open unidirectional stream: {}", e))?;
-                    
+
                     // Send the data
-                    send_stream.write_all(data).await
+                    send_stream
+                        .write_all(data)
+                        .await
                         .map_err(|e| format!("Failed to write data: {}", e))?;
-                    
+
                     // Finish the stream
-                    send_stream.finish().map_err(|e| format!("Failed to finish stream: {}", e))?;
-                    
-                    debug!("Successfully sent {} bytes to peer {:?}", data.len(), peer_id);
+                    send_stream
+                        .finish()
+                        .map_err(|e| format!("Failed to finish stream: {}", e))?;
+
+                    debug!(
+                        "Successfully sent {} bytes to peer {:?}",
+                        data.len(),
+                        peer_id
+                    );
                     Ok(())
                 }
                 Ok(None) => {
@@ -463,19 +531,21 @@ impl QuicP2PNode {
     }
 
     /// Receive data from peers
-    pub async fn receive(&self) -> Result<(PeerId, Vec<u8>), Box<dyn std::error::Error + Send + Sync>> {
+    pub async fn receive(
+        &self,
+    ) -> Result<(PeerId, Vec<u8>), Box<dyn std::error::Error + Send + Sync>> {
         debug!("Waiting to receive data from any connected peer...");
-        
+
         // Get all connected peers
         let peers = {
             let peers_guard = self.connected_peers.read().await;
             peers_guard.clone()
         };
-        
+
         if peers.is_empty() {
             return Err("No connected peers".into());
         }
-        
+
         // Try to receive data from any connected peer
         // In a real implementation, this would use a more sophisticated approach
         // like select! over multiple connection streams
@@ -483,20 +553,33 @@ impl QuicP2PNode {
             match self.nat_endpoint.get_connection(peer_id) {
                 Ok(Some(connection)) => {
                     // Try to accept incoming unidirectional streams
-                    match tokio::time::timeout(Duration::from_millis(100), connection.accept_uni()).await {
+                    match tokio::time::timeout(Duration::from_millis(100), connection.accept_uni())
+                        .await
+                    {
                         Ok(Ok(mut recv_stream)) => {
-                            debug!("Receiving data from unidirectional stream from peer {:?}", peer_id);
-                            
+                            debug!(
+                                "Receiving data from unidirectional stream from peer {:?}",
+                                peer_id
+                            );
+
                             // Read all data from the stream
-                            match recv_stream.read_to_end(1024 * 1024).await { // 1MB limit
+                            match recv_stream.read_to_end(1024 * 1024).await {
+                                // 1MB limit
                                 Ok(buffer) => {
                                     if !buffer.is_empty() {
-                                        debug!("Received {} bytes from peer {:?}", buffer.len(), peer_id);
+                                        debug!(
+                                            "Received {} bytes from peer {:?}",
+                                            buffer.len(),
+                                            peer_id
+                                        );
                                         return Ok((*peer_id, buffer));
                                     }
                                 }
                                 Err(e) => {
-                                    debug!("Failed to read from stream for peer {:?}: {}", peer_id, e);
+                                    debug!(
+                                        "Failed to read from stream for peer {:?}: {}",
+                                        peer_id, e
+                                    );
                                 }
                             }
                         }
@@ -507,27 +590,43 @@ impl QuicP2PNode {
                             // Timeout - try bidirectional streams
                         }
                     }
-                    
+
                     // Also try to accept bidirectional streams
-                    match tokio::time::timeout(Duration::from_millis(100), connection.accept_bi()).await {
+                    match tokio::time::timeout(Duration::from_millis(100), connection.accept_bi())
+                        .await
+                    {
                         Ok(Ok((_send_stream, mut recv_stream))) => {
-                            debug!("Receiving data from bidirectional stream from peer {:?}", peer_id);
-                            
+                            debug!(
+                                "Receiving data from bidirectional stream from peer {:?}",
+                                peer_id
+                            );
+
                             // Read all data from the receive side
-                            match recv_stream.read_to_end(1024 * 1024).await { // 1MB limit
+                            match recv_stream.read_to_end(1024 * 1024).await {
+                                // 1MB limit
                                 Ok(buffer) => {
                                     if !buffer.is_empty() {
-                                        debug!("Received {} bytes from peer {:?} via bidirectional stream", buffer.len(), peer_id);
+                                        debug!(
+                                            "Received {} bytes from peer {:?} via bidirectional stream",
+                                            buffer.len(),
+                                            peer_id
+                                        );
                                         return Ok((*peer_id, buffer));
                                     }
                                 }
                                 Err(e) => {
-                                    debug!("Failed to read from bidirectional stream for peer {:?}: {}", peer_id, e);
+                                    debug!(
+                                        "Failed to read from bidirectional stream for peer {:?}: {}",
+                                        peer_id, e
+                                    );
                                 }
                             }
                         }
                         Ok(Err(e)) => {
-                            debug!("Failed to accept bidirectional stream from peer {:?}: {}", peer_id, e);
+                            debug!(
+                                "Failed to accept bidirectional stream from peer {:?}: {}",
+                                peer_id, e
+                            );
                         }
                         Err(_) => {
                             // Timeout - continue to next peer
@@ -542,7 +641,7 @@ impl QuicP2PNode {
                 }
             }
         }
-        
+
         // If we get here, no data was received from any peer
         Err("No data available from any connected peer".into())
     }
@@ -551,9 +650,11 @@ impl QuicP2PNode {
     pub async fn get_stats(&self) -> NodeStats {
         self.stats.lock().await.clone()
     }
-    
+
     /// Get access to the NAT traversal endpoint
-    pub fn get_nat_endpoint(&self) -> Result<&NatTraversalEndpoint, Box<dyn std::error::Error + Send + Sync>> {
+    pub fn get_nat_endpoint(
+        &self,
+    ) -> Result<&NatTraversalEndpoint, Box<dyn std::error::Error + Send + Sync>> {
         Ok(&*self.nat_endpoint)
     }
 
@@ -561,15 +662,15 @@ impl QuicP2PNode {
     pub fn start_stats_task(&self) -> tokio::task::JoinHandle<()> {
         let stats = Arc::clone(&self.stats);
         let interval_duration = self.config.stats_interval;
-        
+
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(interval_duration);
-            
+
             loop {
                 interval.tick().await;
-                
+
                 let stats_snapshot = stats.lock().await.clone();
-                
+
                 info!(
                     "Node statistics - Connections: {}/{}, NAT traversal: {}/{}",
                     stats_snapshot.active_connections,
@@ -581,44 +682,49 @@ impl QuicP2PNode {
         })
     }
 
-
     /// Get NAT traversal statistics
-    pub async fn get_nat_stats(&self) -> Result<NatTraversalStatistics, Box<dyn std::error::Error + Send + Sync>> {
+    pub async fn get_nat_stats(
+        &self,
+    ) -> Result<NatTraversalStatistics, Box<dyn std::error::Error + Send + Sync>> {
         self.nat_endpoint.get_nat_stats()
     }
 
     /// Get connection metrics for a specific peer
-    pub async fn get_connection_metrics(&self, peer_id: &PeerId) -> Result<ConnectionMetrics, Box<dyn std::error::Error + Send + Sync>> {
+    pub async fn get_connection_metrics(
+        &self,
+        peer_id: &PeerId,
+    ) -> Result<ConnectionMetrics, Box<dyn std::error::Error + Send + Sync>> {
         match self.nat_endpoint.get_connection(peer_id) {
             Ok(Some(connection)) => {
                 // Get basic RTT from the connection
                 let rtt = connection.rtt();
-                
+
                 // Get congestion window and other stats
                 let stats = connection.stats();
-                
+
                 Ok(ConnectionMetrics {
                     bytes_sent: stats.udp_tx.bytes,
                     bytes_received: stats.udp_rx.bytes,
                     rtt: Some(rtt),
-                    packet_loss: stats.path.lost_packets as f64 / (stats.path.sent_packets + stats.path.lost_packets).max(1) as f64,
+                    packet_loss: stats.path.lost_packets as f64
+                        / (stats.path.sent_packets + stats.path.lost_packets).max(1) as f64,
                 })
             }
             Ok(None) => Err("Connection not found".into()),
             Err(e) => Err(format!("Failed to get connection: {}", e).into()),
         }
     }
-    
+
     /// Get this node's peer ID
     pub fn peer_id(&self) -> PeerId {
         self.peer_id
     }
-    
+
     /// Get this node's public key bytes
     pub fn public_key_bytes(&self) -> [u8; 32] {
         self.auth_manager.public_key_bytes()
     }
-    
+
     /// Send an authentication message to a peer
     async fn send_auth_message(
         &self,
@@ -628,22 +734,22 @@ impl QuicP2PNode {
         let data = AuthManager::serialize_message(&message)?;
         self.send_to_peer(peer_id, &data).await
     }
-    
+
     /// Perform authentication handshake as initiator
     async fn authenticate_as_initiator(
         &self,
         peer_id: &PeerId,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         info!("Starting authentication with peer {:?}", peer_id);
-        
+
         // Send authentication request
         let auth_request = self.auth_manager.create_auth_request();
         self.send_auth_message(peer_id, auth_request).await?;
-        
+
         // Wait for challenge
         let timeout_duration = self.config.auth_config.auth_timeout;
         let start = Instant::now();
-        
+
         while start.elapsed() < timeout_duration {
             match tokio::time::timeout(Duration::from_secs(1), self.receive()).await {
                 Ok(Ok((recv_peer_id, data))) => {
@@ -651,7 +757,8 @@ impl QuicP2PNode {
                         match AuthManager::deserialize_message(&data) {
                             Ok(AuthMessage::Challenge { nonce, .. }) => {
                                 // Create and send challenge response
-                                let response = self.auth_manager.create_challenge_response(nonce)?;
+                                let response =
+                                    self.auth_manager.create_challenge_response(nonce)?;
                                 self.send_auth_message(peer_id, response).await?;
                             }
                             Ok(AuthMessage::AuthSuccess { .. }) => {
@@ -668,10 +775,10 @@ impl QuicP2PNode {
                 _ => continue,
             }
         }
-        
+
         Err("Authentication timeout".into())
     }
-    
+
     /// Handle incoming authentication messages
     async fn handle_auth_message(
         &self,
@@ -679,7 +786,7 @@ impl QuicP2PNode {
         message: AuthMessage,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let auth_protocol = AuthProtocol::new(Arc::clone(&self.auth_manager));
-        
+
         match auth_protocol.handle_message(peer_id, message).await {
             Ok(Some(response)) => {
                 self.send_auth_message(&peer_id, response).await?;
@@ -696,30 +803,30 @@ impl QuicP2PNode {
                 return Err(Box::new(e));
             }
         }
-        
+
         Ok(())
     }
-    
+
     /// Check if a peer is authenticated
     pub async fn is_peer_authenticated(&self, peer_id: &PeerId) -> bool {
         self.auth_manager.is_authenticated(peer_id).await
     }
-    
+
     /// Get list of authenticated peers
     pub async fn list_authenticated_peers(&self) -> Vec<PeerId> {
         self.auth_manager.list_authenticated_peers().await
     }
-    
+
     /// Handle incoming authentication from a peer
     async fn handle_incoming_auth(
         &self,
         peer_id: PeerId,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         info!("Handling incoming authentication from peer {:?}", peer_id);
-        
+
         let timeout_duration = self.config.auth_config.auth_timeout;
         let start = Instant::now();
-        
+
         while start.elapsed() < timeout_duration {
             match tokio::time::timeout(Duration::from_secs(1), self.receive()).await {
                 Ok(Ok((recv_peer_id, data))) => {
@@ -727,7 +834,7 @@ impl QuicP2PNode {
                         match AuthManager::deserialize_message(&data) {
                             Ok(auth_msg) => {
                                 self.handle_auth_message(peer_id, auth_msg).await?;
-                                
+
                                 // Check if authentication is complete
                                 if self.auth_manager.is_authenticated(&peer_id).await {
                                     info!("Peer {:?} successfully authenticated", peer_id);
@@ -744,8 +851,7 @@ impl QuicP2PNode {
                 _ => continue,
             }
         }
-        
+
         Err("Authentication timeout waiting for peer".into())
     }
 }
-

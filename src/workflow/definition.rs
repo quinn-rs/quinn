@@ -4,15 +4,15 @@
 //! complex NAT traversal workflows to be defined, composed, and versioned.
 
 use std::collections::HashMap;
-use std::sync::Arc;
 use std::fmt;
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use tracing::info;
 
 use crate::workflow::{
-    BackoffStrategy, Condition, ErrorHandler, RollbackStrategy, StageId, Version,
-    WorkflowAction, WorkflowError, WorkflowEvent,
+    BackoffStrategy, Condition, ErrorHandler, RollbackStrategy, StageId, Version, WorkflowAction,
+    WorkflowError, WorkflowEvent,
 };
 
 /// Complete workflow definition
@@ -86,7 +86,10 @@ impl fmt::Debug for WorkflowStage {
             .field("description", &self.description)
             .field("action_names", &self.action_names)
             .field("precondition_descriptions", &self.precondition_descriptions)
-            .field("postcondition_descriptions", &self.postcondition_descriptions)
+            .field(
+                "postcondition_descriptions",
+                &self.postcondition_descriptions,
+            )
             .field("rollback", &self.rollback)
             .field("skippable", &self.skippable)
             .field("max_duration", &self.max_duration)
@@ -139,7 +142,9 @@ impl WorkflowDefinitionBuilder {
         event: WorkflowEvent,
         to_stage: StageId,
     ) -> Self {
-        self.definition.transitions.insert((from_stage, event), to_stage);
+        self.definition
+            .transitions
+            .insert((from_stage, event), to_stage);
         self
     }
 
@@ -194,15 +199,25 @@ impl WorkflowTemplates {
         WorkflowDefinitionBuilder::new(
             "nat_traversal_basic".to_string(),
             "Basic NAT Traversal".to_string(),
-            Version { major: 1, minor: 0, patch: 0 },
+            Version {
+                major: 1,
+                minor: 0,
+                patch: 0,
+            },
         )
-        .description("Standard NAT traversal workflow with candidate discovery and hole punching".to_string())
+        .description(
+            "Standard NAT traversal workflow with candidate discovery and hole punching"
+                .to_string(),
+        )
         .add_stage(WorkflowStage {
             id: StageId("discover_candidates".to_string()),
             name: "Discover Candidates".to_string(),
             description: "Discover local and server-reflexive candidates".to_string(),
             actions: vec![],
-            action_names: vec!["discover_local_candidates".to_string(), "query_stun_servers".to_string()],
+            action_names: vec![
+                "discover_local_candidates".to_string(),
+                "query_stun_servers".to_string(),
+            ],
             preconditions: vec![],
             precondition_descriptions: vec!["network_available".to_string()],
             postconditions: vec![],
@@ -216,13 +231,16 @@ impl WorkflowTemplates {
             name: "Coordinate with Peer".to_string(),
             description: "Exchange candidates and coordinate hole punching".to_string(),
             actions: vec![],
-            action_names: vec!["exchange_candidates".to_string(), "synchronize_timing".to_string()],
+            action_names: vec![
+                "exchange_candidates".to_string(),
+                "synchronize_timing".to_string(),
+            ],
             preconditions: vec![],
             precondition_descriptions: vec!["candidates_available".to_string()],
             postconditions: vec![],
             postcondition_descriptions: vec!["coordination_complete".to_string()],
-            rollback: Some(RollbackStrategy::JumpToStage { 
-                stage_id: StageId("discover_candidates".to_string()) 
+            rollback: Some(RollbackStrategy::JumpToStage {
+                stage_id: StageId("discover_candidates".to_string()),
             }),
             skippable: false,
             max_duration: Some(Duration::from_secs(10)),
@@ -232,13 +250,16 @@ impl WorkflowTemplates {
             name: "Hole Punching".to_string(),
             description: "Execute synchronized hole punching".to_string(),
             actions: vec![],
-            action_names: vec!["execute_hole_punch".to_string(), "verify_connectivity".to_string()],
+            action_names: vec![
+                "execute_hole_punch".to_string(),
+                "verify_connectivity".to_string(),
+            ],
             preconditions: vec![],
             precondition_descriptions: vec!["coordination_complete".to_string()],
             postconditions: vec![],
             postcondition_descriptions: vec!["connection_established".to_string()],
-            rollback: Some(RollbackStrategy::Compensate { 
-                actions: vec!["cleanup_failed_attempts".to_string()] 
+            rollback: Some(RollbackStrategy::Compensate {
+                actions: vec!["cleanup_failed_attempts".to_string()],
             }),
             skippable: false,
             max_duration: Some(Duration::from_secs(15)),
@@ -261,22 +282,37 @@ impl WorkflowTemplates {
         .add_final_stage(StageId("connection_established".to_string()))
         .add_transition(
             StageId("discover_candidates".to_string()),
-            WorkflowEvent::StageCompleted { stage_id: StageId("discover_candidates".to_string()) },
+            WorkflowEvent::StageCompleted {
+                stage_id: StageId("discover_candidates".to_string()),
+            },
             StageId("coordinate_with_peer".to_string()),
         )
         .add_transition(
             StageId("coordinate_with_peer".to_string()),
-            WorkflowEvent::StageCompleted { stage_id: StageId("coordinate_with_peer".to_string()) },
+            WorkflowEvent::StageCompleted {
+                stage_id: StageId("coordinate_with_peer".to_string()),
+            },
             StageId("hole_punching".to_string()),
         )
         .add_transition(
             StageId("hole_punching".to_string()),
-            WorkflowEvent::StageCompleted { stage_id: StageId("hole_punching".to_string()) },
+            WorkflowEvent::StageCompleted {
+                stage_id: StageId("hole_punching".to_string()),
+            },
             StageId("connection_established".to_string()),
         )
-        .set_stage_timeout(StageId("discover_candidates".to_string()), Duration::from_secs(10))
-        .set_stage_timeout(StageId("coordinate_with_peer".to_string()), Duration::from_secs(20))
-        .set_stage_timeout(StageId("hole_punching".to_string()), Duration::from_secs(30))
+        .set_stage_timeout(
+            StageId("discover_candidates".to_string()),
+            Duration::from_secs(10),
+        )
+        .set_stage_timeout(
+            StageId("coordinate_with_peer".to_string()),
+            Duration::from_secs(20),
+        )
+        .set_stage_timeout(
+            StageId("hole_punching".to_string()),
+            Duration::from_secs(30),
+        )
         .set_error_handler(
             StageId("hole_punching".to_string()),
             ErrorHandler {
@@ -299,15 +335,22 @@ impl WorkflowTemplates {
         let mut basic = Self::basic_nat_traversal();
         basic.id = "nat_traversal_advanced".to_string();
         basic.name = "Advanced NAT Traversal with Relay".to_string();
-        basic.version = Version { major: 1, minor: 0, patch: 0 };
-        
+        basic.version = Version {
+            major: 1,
+            minor: 0,
+            patch: 0,
+        };
+
         // Add relay fallback stage
         basic.stages.push(WorkflowStage {
             id: StageId("relay_fallback".to_string()),
             name: "Relay Fallback".to_string(),
             description: "Establish connection through relay server".to_string(),
             actions: vec![],
-            action_names: vec!["connect_to_relay".to_string(), "establish_relay_path".to_string()],
+            action_names: vec![
+                "connect_to_relay".to_string(),
+                "establish_relay_path".to_string(),
+            ],
             preconditions: vec![],
             precondition_descriptions: vec!["relay_available".to_string()],
             postconditions: vec![],
@@ -316,28 +359,30 @@ impl WorkflowTemplates {
             skippable: false,
             max_duration: Some(Duration::from_secs(10)),
         });
-        
+
         // Add transition from hole punching failure to relay
         basic.transitions.insert(
             (
                 StageId("hole_punching".to_string()),
-                WorkflowEvent::StageFailed { 
+                WorkflowEvent::StageFailed {
                     stage_id: StageId("hole_punching".to_string()),
                     error: "max_retries_exceeded".to_string(),
                 },
             ),
             StageId("relay_fallback".to_string()),
         );
-        
+
         // Add transition from relay to completion
         basic.transitions.insert(
             (
                 StageId("relay_fallback".to_string()),
-                WorkflowEvent::StageCompleted { stage_id: StageId("relay_fallback".to_string()) },
+                WorkflowEvent::StageCompleted {
+                    stage_id: StageId("relay_fallback".to_string()),
+                },
             ),
             StageId("connection_established".to_string()),
         );
-        
+
         basic
     }
 
@@ -346,7 +391,11 @@ impl WorkflowTemplates {
         WorkflowDefinitionBuilder::new(
             "multi_peer_coordination".to_string(),
             "Multi-Peer Coordination".to_string(),
-            Version { major: 1, minor: 0, patch: 0 },
+            Version {
+                major: 1,
+                minor: 0,
+                patch: 0,
+            },
         )
         .description("Coordinate NAT traversal among multiple peers".to_string())
         .add_stage(WorkflowStage {
@@ -354,7 +403,10 @@ impl WorkflowTemplates {
             name: "Peer Discovery".to_string(),
             description: "Discover available peers".to_string(),
             actions: vec![],
-            action_names: vec!["query_bootstrap_nodes".to_string(), "exchange_peer_lists".to_string()],
+            action_names: vec![
+                "query_bootstrap_nodes".to_string(),
+                "exchange_peer_lists".to_string(),
+            ],
             preconditions: vec![],
             precondition_descriptions: vec!["bootstrap_available".to_string()],
             postconditions: vec![],
@@ -368,7 +420,10 @@ impl WorkflowTemplates {
             name: "Establish Coordinator".to_string(),
             description: "Select and establish connection to coordination node".to_string(),
             actions: vec![],
-            action_names: vec!["select_coordinator".to_string(), "connect_to_coordinator".to_string()],
+            action_names: vec![
+                "select_coordinator".to_string(),
+                "connect_to_coordinator".to_string(),
+            ],
             preconditions: vec![],
             precondition_descriptions: vec!["peers_available".to_string()],
             postconditions: vec![],
@@ -382,7 +437,10 @@ impl WorkflowTemplates {
             name: "Coordinate Connections".to_string(),
             description: "Coordinate NAT traversal for all peer connections".to_string(),
             actions: vec![],
-            action_names: vec!["plan_connection_order".to_string(), "execute_coordinated_traversal".to_string()],
+            action_names: vec![
+                "plan_connection_order".to_string(),
+                "execute_coordinated_traversal".to_string(),
+            ],
             preconditions: vec![],
             precondition_descriptions: vec!["coordinator_ready".to_string()],
             postconditions: vec![],
@@ -398,7 +456,10 @@ impl WorkflowTemplates {
             name: "Mesh Established".to_string(),
             description: "Peer mesh successfully established".to_string(),
             actions: vec![],
-            action_names: vec!["verify_mesh_connectivity".to_string(), "optimize_routing".to_string()],
+            action_names: vec![
+                "verify_mesh_connectivity".to_string(),
+                "optimize_routing".to_string(),
+            ],
             preconditions: vec![],
             precondition_descriptions: vec!["minimum_peers_connected".to_string()],
             postconditions: vec![],
@@ -432,19 +493,25 @@ impl WorkflowRegistry {
     /// Register a workflow definition
     pub async fn register(&self, definition: WorkflowDefinition) -> Result<(), WorkflowError> {
         let mut definitions = self.definitions.write().await;
-        
+
         let key = format!("{}:{}", definition.id, definition.version);
         if definitions.contains_key(&key) {
             return Err(WorkflowError {
                 code: "ALREADY_EXISTS".to_string(),
-                message: format!("Workflow {} version {} already registered", definition.id, definition.version),
+                message: format!(
+                    "Workflow {} version {} already registered",
+                    definition.id, definition.version
+                ),
                 stage: None,
                 trace: None,
                 recovery_hints: vec!["Use a different version number".to_string()],
             });
         }
-        
-        info!("Registered workflow: {} v{}", definition.id, definition.version);
+
+        info!(
+            "Registered workflow: {} v{}",
+            definition.id, definition.version
+        );
         definitions.insert(key, definition);
         Ok(())
     }
@@ -459,8 +526,9 @@ impl WorkflowRegistry {
     /// Get the latest version of a workflow
     pub async fn get_latest(&self, id: &str) -> Option<WorkflowDefinition> {
         let definitions = self.definitions.read().await;
-        
-        definitions.iter()
+
+        definitions
+            .iter()
             .filter(|(k, _)| k.starts_with(&format!("{}:", id)))
             .max_by_key(|(_, def)| &def.version)
             .map(|(_, def)| def.clone())
@@ -469,18 +537,22 @@ impl WorkflowRegistry {
     /// List all registered workflows
     pub async fn list(&self) -> Vec<(String, Version)> {
         let definitions = self.definitions.read().await;
-        
-        definitions.values()
+
+        definitions
+            .values()
             .map(|def| (def.id.clone(), def.version.clone()))
             .collect()
     }
 
     /// Load default workflow templates
     pub async fn load_defaults(&self) -> Result<(), WorkflowError> {
-        self.register(WorkflowTemplates::basic_nat_traversal()).await?;
-        self.register(WorkflowTemplates::advanced_nat_traversal()).await?;
-        self.register(WorkflowTemplates::multi_peer_coordination()).await?;
-        
+        self.register(WorkflowTemplates::basic_nat_traversal())
+            .await?;
+        self.register(WorkflowTemplates::advanced_nat_traversal())
+            .await?;
+        self.register(WorkflowTemplates::multi_peer_coordination())
+            .await?;
+
         info!("Loaded {} default workflow templates", 3);
         Ok(())
     }
@@ -501,7 +573,11 @@ mod tests {
         let workflow = WorkflowDefinitionBuilder::new(
             "test_workflow".to_string(),
             "Test Workflow".to_string(),
-            Version { major: 1, minor: 0, patch: 0 },
+            Version {
+                major: 1,
+                minor: 0,
+                patch: 0,
+            },
         )
         .description("Test workflow description".to_string())
         .add_stage(WorkflowStage {
@@ -529,16 +605,16 @@ mod tests {
     #[tokio::test]
     async fn test_workflow_registry() {
         let registry = WorkflowRegistry::new();
-        
+
         let workflow = WorkflowTemplates::basic_nat_traversal();
         registry.register(workflow.clone()).await.unwrap();
-        
+
         let retrieved = registry.get(&workflow.id, &workflow.version).await;
         assert!(retrieved.is_some());
-        
+
         let latest = registry.get_latest(&workflow.id).await;
         assert!(latest.is_some());
-        
+
         let list = registry.list().await;
         assert_eq!(list.len(), 1);
     }
@@ -548,7 +624,7 @@ mod tests {
         let basic = WorkflowTemplates::basic_nat_traversal();
         assert_eq!(basic.id, "nat_traversal_basic");
         assert!(!basic.stages.is_empty());
-        
+
         let advanced = WorkflowTemplates::advanced_nat_traversal();
         assert_eq!(advanced.id, "nat_traversal_advanced");
         assert!(advanced.stages.len() > basic.stages.len());

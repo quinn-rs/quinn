@@ -3,9 +3,9 @@
 //! Provides colored output, formatting, and visual elements for better UX
 
 use std::net::{IpAddr, SocketAddr};
-use unicode_width::UnicodeWidthStr;
 use tracing::Level;
-use tracing_subscriber::fmt::{format::Writer, FormatFields};
+use tracing_subscriber::fmt::{FormatFields, format::Writer};
+use unicode_width::UnicodeWidthStr;
 // use four_word_networking::FourWordAdaptiveEncoder; // TODO: Add this dependency or implement locally
 
 /// ANSI color codes for terminal output
@@ -13,7 +13,7 @@ pub mod colors {
     pub const RESET: &str = "\x1b[0m";
     pub const BOLD: &str = "\x1b[1m";
     pub const DIM: &str = "\x1b[2m";
-    
+
     // Regular colors
     pub const BLACK: &str = "\x1b[30m";
     pub const RED: &str = "\x1b[31m";
@@ -23,7 +23,7 @@ pub mod colors {
     pub const MAGENTA: &str = "\x1b[35m";
     pub const CYAN: &str = "\x1b[36m";
     pub const WHITE: &str = "\x1b[37m";
-    
+
     // Bright colors
     pub const BRIGHT_BLACK: &str = "\x1b[90m";
     pub const BRIGHT_RED: &str = "\x1b[91m";
@@ -113,7 +113,7 @@ pub fn format_address(addr: &SocketAddr) -> String {
             }
         }
     };
-    
+
     format!("{}{}{}", color, addr, colors::RESET)
 }
 
@@ -161,7 +161,7 @@ pub fn draw_box(title: &str, width: usize) -> (String, String, String) {
     let padding = width.saturating_sub(title.width() + 4);
     let left_pad = padding / 2;
     let right_pad = padding - left_pad;
-    
+
     let top = format!(
         "{}{} {} {}{}{}",
         box_chars::TOP_LEFT,
@@ -171,20 +171,16 @@ pub fn draw_box(title: &str, width: usize) -> (String, String, String) {
         box_chars::HORIZONTAL,
         box_chars::TOP_RIGHT
     );
-    
-    let middle = format!(
-        "{} {{}} {}",
-        box_chars::VERTICAL,
-        box_chars::VERTICAL
-    );
-    
+
+    let middle = format!("{} {{}} {}", box_chars::VERTICAL, box_chars::VERTICAL);
+
     let bottom = format!(
         "{}{}{}",
         box_chars::BOTTOM_LEFT,
         box_chars::HORIZONTAL.repeat(width - 2),
         box_chars::BOTTOM_RIGHT
     );
-    
+
     (top, middle, bottom)
 }
 
@@ -192,9 +188,15 @@ pub fn draw_box(title: &str, width: usize) -> (String, String, String) {
 pub fn print_banner(version: &str) {
     let title = format!("ant-quic v{}", version);
     let (top, middle, bottom) = draw_box(&title, 60);
-    
+
     println!("{}", top);
-    println!("{}", middle.replace("{}", "Starting QUIC P2P with NAT Traversal                 "));
+    println!(
+        "{}",
+        middle.replace(
+            "{}",
+            "Starting QUIC P2P with NAT Traversal                 "
+        )
+    );
     println!("{}", bottom);
     println!();
 }
@@ -220,12 +222,12 @@ pub fn format_bytes(bytes: u64) -> String {
     const UNITS: &[&str] = &["B", "KB", "MB", "GB", "TB"];
     let mut size = bytes as f64;
     let mut unit_index = 0;
-    
+
     while size >= 1024.0 && unit_index < UNITS.len() - 1 {
         size /= 1024.0;
         unit_index += 1;
     }
-    
+
     if unit_index == 0 {
         format!("{} {}", size as u64, UNITS[unit_index])
     } else {
@@ -239,24 +241,25 @@ pub fn format_duration(duration: std::time::Duration) -> String {
     let hours = total_seconds / 3600;
     let minutes = (total_seconds % 3600) / 60;
     let seconds = total_seconds % 60;
-    
+
     format!("{:02}:{:02}:{:02}", hours, minutes, seconds)
 }
 
 /// Format timestamp into HH:MM:SS format
 pub fn format_timestamp(_timestamp: std::time::Instant) -> String {
     use std::time::SystemTime;
-    
+
     // This is a simplified timestamp - in a real app you'd want proper time handling
     let now = SystemTime::now();
-    let duration_since_epoch = now.duration_since(SystemTime::UNIX_EPOCH)
+    let duration_since_epoch = now
+        .duration_since(SystemTime::UNIX_EPOCH)
         .unwrap_or_else(|_| std::time::Duration::ZERO);
-    
+
     let total_seconds = duration_since_epoch.as_secs();
     let hours = (total_seconds % 86400) / 3600;
     let minutes = (total_seconds % 3600) / 60;
     let seconds = total_seconds % 60;
-    
+
     format!("{:02}:{:02}:{:02}", hours, minutes, seconds)
 }
 
@@ -276,7 +279,7 @@ where
     ) -> std::fmt::Result {
         let metadata = event.metadata();
         let level = metadata.level();
-        
+
         // Choose color and symbol based on level
         let (color, symbol) = match *level {
             Level::ERROR => (colors::RED, symbols::CROSS),
@@ -285,15 +288,15 @@ where
             Level::DEBUG => (colors::BLUE, symbols::INFO),
             Level::TRACE => (colors::DIM, symbols::DOT),
         };
-        
+
         // Write colored output
         write!(&mut writer, "{}{} ", color, symbol)?;
-        
+
         // Write the message
         ctx.field_format().format_fields(writer.by_ref(), event)?;
-        
+
         write!(&mut writer, "{}", colors::RESET)?;
-        
+
         writeln!(writer)
     }
 }
@@ -313,31 +316,34 @@ impl ProgressIndicator {
             current_frame: 0,
         }
     }
-    
+
     pub fn tick(&mut self) {
-        print!("\r{} {} {} ", 
-            self.frames[self.current_frame], 
-            colors::BLUE, 
+        print!(
+            "\r{} {} {} ",
+            self.frames[self.current_frame],
+            colors::BLUE,
             self.message
         );
         self.current_frame = (self.current_frame + 1) % self.frames.len();
         use std::io::{self, Write};
         io::stdout().flush().unwrap();
     }
-    
+
     pub fn finish_success(&self, message: &str) {
-        println!("\r{} {}{}{} {}", 
-            symbols::CHECK, 
+        println!(
+            "\r{} {}{}{} {}",
+            symbols::CHECK,
             colors::GREEN,
             self.message,
             colors::RESET,
             message
         );
     }
-    
+
     pub fn finish_error(&self, message: &str) {
-        println!("\r{} {}{}{} {}", 
-            symbols::CROSS, 
+        println!(
+            "\r{} {}{}{} {}",
+            symbols::CROSS,
             colors::RED,
             self.message,
             colors::RESET,

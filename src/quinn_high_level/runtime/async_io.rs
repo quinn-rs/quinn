@@ -7,7 +7,7 @@ use std::{
     task::{Context, Poll},
 };
 
-use super::{AsyncTimer, AsyncUdpSocket, Runtime, UdpPoller, UdpPollHelper};
+use super::{AsyncTimer, AsyncUdpSocket, Runtime, UdpPollHelper, UdpPoller};
 use crate::Instant;
 
 /// Runtime implementation for async-io based runtimes (async-std, smol)
@@ -98,7 +98,11 @@ impl AsyncUdpSocket for UdpSocket {
     }
 
     fn try_send(&self, transmit: &quinn_udp::Transmit) -> io::Result<()> {
-        match self.inner.get_ref().send_to(&transmit.contents, transmit.destination) {
+        match self
+            .inner
+            .get_ref()
+            .send_to(&transmit.contents, transmit.destination)
+        {
             Ok(_) => Ok(()),
             Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
                 Err(io::Error::from(io::ErrorKind::WouldBlock))

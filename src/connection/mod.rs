@@ -42,8 +42,8 @@ mod ack_frequency;
 use ack_frequency::AckFrequencyState;
 
 pub(crate) mod nat_traversal;
-pub(crate) use nat_traversal::{NatTraversalRole, NatTraversalError, CoordinationPhase};
 use nat_traversal::NatTraversalState;
+pub(crate) use nat_traversal::{CoordinationPhase, NatTraversalError, NatTraversalRole};
 
 mod assembler;
 pub use assembler::Chunk;
@@ -66,7 +66,7 @@ use packet_crypto::{PrevCrypto, ZeroRttCrypto};
 
 mod paths;
 pub use paths::RttEstimator;
-use paths::{PathData, PathResponses, NatTraversalChallenges};
+use paths::{NatTraversalChallenges, PathData, PathResponses};
 
 mod send_buffer;
 
@@ -244,7 +244,7 @@ pub struct Connection {
 
     /// NAT traversal state for establishing direct P2P connections
     nat_traversal: Option<NatTraversalState>,
-    
+
     /// Qlog writer
     #[cfg(feature = "__qlog")]
     qlog_streamer: Option<Box<dyn std::io::Write + Send + Sync>>,
@@ -411,7 +411,7 @@ impl Connection {
     #[must_use]
     pub fn poll_timeout(&mut self) -> Option<Instant> {
         let mut next_timeout = self.timers.next_timeout();
-        
+
         // Check NAT traversal timeouts
         if let Some(nat_state) = &self.nat_traversal {
             if let Some(nat_timeout) = nat_state.get_next_timeout(Instant::now()) {
@@ -420,7 +420,7 @@ impl Connection {
                 next_timeout = Some(next_timeout.map_or(nat_timeout, |t| t.min(nat_timeout)));
             }
         }
-        
+
         next_timeout
     }
 
@@ -523,7 +523,7 @@ impl Connection {
         if let Some(challenge) = self.send_nat_traversal_challenge(now, buf) {
             return Some(challenge);
         }
-        
+
         if let Some(challenge) = self.send_path_challenge(now, buf) {
             return Some(challenge);
         }
@@ -1069,27 +1069,27 @@ impl Connection {
         if !should_send {
             return None;
         }
-        
+
         let (round, target_addrs, coordinator_addr) = {
             let nat_traversal = self.nat_traversal.as_ref()?;
             let coord = nat_traversal.coordination.as_ref()?;
             let addrs: Vec<_> = coord.punch_targets.iter().map(|t| t.remote_addr).collect();
             (coord.round, addrs, self.path.remote) // Placeholder - should be bootstrap node
         };
-        
+
         if target_addrs.is_empty() {
             return None;
         }
-        
+
         debug_assert_eq!(
             self.highest_space,
             SpaceId::Data,
             "PUNCH_ME_NOW queued without 1-RTT keys"
         );
-        
+
         buf.reserve(MIN_INITIAL_SIZE as usize);
         let buf_capacity = buf.capacity();
-        
+
         let mut builder = PacketBuilder::new(
             now,
             SpaceId::Data,
@@ -1100,9 +1100,13 @@ impl Connection {
             false,
             self,
         )?;
-        
-        trace!("sending PUNCH_ME_NOW round {} with {} targets", round, target_addrs.len());
-        
+
+        trace!(
+            "sending PUNCH_ME_NOW round {} with {} targets",
+            round,
+            target_addrs.len()
+        );
+
         // Write PUNCH_ME_NOW frame
         buf.write(frame::FrameType::PUNCH_ME_NOW);
         buf.write(round);
@@ -1121,17 +1125,17 @@ impl Connection {
                 }
             }
         }
-        
+
         self.stats.frame_tx.ping += 1; // Use ping counter for now
-        
+
         builder.pad_to(MIN_INITIAL_SIZE);
         builder.finish_and_track(now, self, None, buf);
-        
+
         // Mark request sent after packet is built
         if let Some(nat_traversal) = &mut self.nat_traversal {
             nat_traversal.mark_punch_request_sent();
         }
-        
+
         Some(Transmit {
             destination: coordinator_addr,
             size: buf.len(),
@@ -1146,14 +1150,18 @@ impl Connection {
     }
 
     /// Send coordinated PATH_CHALLENGE for hole punching
-    fn send_coordinated_path_challenge(&mut self, now: Instant, buf: &mut Vec<u8>) -> Option<Transmit> {
+    fn send_coordinated_path_challenge(
+        &mut self,
+        now: Instant,
+        buf: &mut Vec<u8>,
+    ) -> Option<Transmit> {
         // Check if it's time to start synchronized hole punching
         if let Some(nat_traversal) = &mut self.nat_traversal {
             if nat_traversal.should_start_punching(now) {
                 nat_traversal.start_punching_phase(now);
             }
         }
-        
+
         // Get punch targets if we're in punching phase
         let (target_addr, challenge) = {
             let nat_traversal = self.nat_traversal.as_ref()?;
@@ -1170,16 +1178,16 @@ impl Connection {
                 _ => return None,
             }
         };
-        
+
         debug_assert_eq!(
             self.highest_space,
             SpaceId::Data,
             "PATH_CHALLENGE queued without 1-RTT keys"
         );
-        
+
         buf.reserve(MIN_INITIAL_SIZE as usize);
         let buf_capacity = buf.capacity();
-        
+
         let mut builder = PacketBuilder::new(
             now,
             SpaceId::Data,
@@ -1190,20 +1198,23 @@ impl Connection {
             false,
             self,
         )?;
-        
-        trace!("sending coordinated PATH_CHALLENGE {:08x} to {}", challenge, target_addr);
+
+        trace!(
+            "sending coordinated PATH_CHALLENGE {:08x} to {}",
+            challenge, target_addr
+        );
         buf.write(frame::FrameType::PATH_CHALLENGE);
         buf.write(challenge);
         self.stats.frame_tx.path_challenge += 1;
 
         builder.pad_to(MIN_INITIAL_SIZE);
         builder.finish_and_track(now, self, None, buf);
-        
+
         // Mark coordination as validating after packet is built
         if let Some(nat_traversal) = &mut self.nat_traversal {
             nat_traversal.mark_coordination_validating();
         }
-        
+
         Some(Transmit {
             destination: target_addr,
             size: buf.len(),
@@ -1218,17 +1229,21 @@ impl Connection {
     }
 
     /// Send PATH_CHALLENGE for NAT traversal candidates if necessary
-    fn send_nat_traversal_challenge(&mut self, now: Instant, buf: &mut Vec<u8>) -> Option<Transmit> {
+    fn send_nat_traversal_challenge(
+        &mut self,
+        now: Instant,
+        buf: &mut Vec<u8>,
+    ) -> Option<Transmit> {
         // Priority 1: Coordination protocol requests
         if let Some(request) = self.send_coordination_request(now, buf) {
             return Some(request);
         }
-        
+
         // Priority 2: Coordinated hole punching
         if let Some(punch) = self.send_coordinated_path_challenge(now, buf) {
             return Some(punch);
         }
-        
+
         // Priority 3: Regular candidate validation (fallback)
         let (remote_addr, remote_sequence) = {
             let nat_traversal = self.nat_traversal.as_ref()?;
@@ -1240,24 +1255,28 @@ impl Connection {
             let (sequence, candidate) = candidates[0];
             (candidate.address, sequence)
         };
-        
+
         let challenge = self.rng.gen::<u64>();
-        
+
         // Start validation for this candidate
-        if let Err(e) = self.nat_traversal.as_mut()?.start_validation(remote_sequence, challenge, now) {
+        if let Err(e) =
+            self.nat_traversal
+                .as_mut()?
+                .start_validation(remote_sequence, challenge, now)
+        {
             warn!("Failed to start NAT traversal validation: {}", e);
             return None;
         }
-        
+
         debug_assert_eq!(
             self.highest_space,
             SpaceId::Data,
             "PATH_CHALLENGE queued without 1-RTT keys"
         );
-        
+
         buf.reserve(MIN_INITIAL_SIZE as usize);
         let buf_capacity = buf.capacity();
-        
+
         // Use current connection ID for NAT traversal PATH_CHALLENGE
         let mut builder = PacketBuilder::new(
             now,
@@ -1269,17 +1288,20 @@ impl Connection {
             false,
             self,
         )?;
-        
-        trace!("sending PATH_CHALLENGE {:08x} to NAT candidate {}", challenge, remote_addr);
+
+        trace!(
+            "sending PATH_CHALLENGE {:08x} to NAT candidate {}",
+            challenge, remote_addr
+        );
         buf.write(frame::FrameType::PATH_CHALLENGE);
         buf.write(challenge);
         self.stats.frame_tx.path_challenge += 1;
 
         // PATH_CHALLENGE frames must be padded to at least 1200 bytes
         builder.pad_to(MIN_INITIAL_SIZE);
-        
+
         builder.finish_and_track(now, self, None, buf);
-        
+
         Some(Transmit {
             destination: remote_addr,
             size: buf.len(),
@@ -3073,27 +3095,41 @@ impl Connection {
                         // Check if this is a response to NAT traversal PATH_CHALLENGE
                         match nat_traversal.handle_validation_success(remote, token, now) {
                             Ok(sequence) => {
-                                trace!("NAT traversal candidate {} validated for sequence {}", remote, sequence);
-                                
+                                trace!(
+                                    "NAT traversal candidate {} validated for sequence {}",
+                                    remote, sequence
+                                );
+
                                 // Check if this was part of a coordination round
                                 if nat_traversal.handle_coordination_success(remote, now) {
                                     trace!("Coordination succeeded via {}", remote);
-                                    
+
                                     // Check if we should migrate to this better path
                                     let can_migrate = match &self.side {
                                         ConnectionSide::Client { .. } => true, // Clients can always migrate
-                                        ConnectionSide::Server { server_config } => server_config.migration,
+                                        ConnectionSide::Server { server_config } => {
+                                            server_config.migration
+                                        }
                                     };
-                                    
+
                                     if can_migrate {
                                         // Get the best paths to see if this new one is better
                                         let best_pairs = nat_traversal.get_best_succeeded_pairs();
                                         if let Some(best) = best_pairs.first() {
-                                            if best.remote_addr == remote && best.remote_addr != self.path.remote {
-                                                debug!("NAT traversal found better path, initiating migration");
+                                            if best.remote_addr == remote
+                                                && best.remote_addr != self.path.remote
+                                            {
+                                                debug!(
+                                                    "NAT traversal found better path, initiating migration"
+                                                );
                                                 // Trigger migration to the better NAT-traversed path
-                                                if let Err(e) = self.migrate_to_nat_traversal_path(now) {
-                                                    warn!("Failed to migrate to NAT traversal path: {:?}", e);
+                                                if let Err(e) =
+                                                    self.migrate_to_nat_traversal_path(now)
+                                                {
+                                                    warn!(
+                                                        "Failed to migrate to NAT traversal path: {:?}",
+                                                        e
+                                                    );
                                                 }
                                             }
                                         }
@@ -3106,7 +3142,10 @@ impl Connection {
                                 }
                             }
                             Err(NatTraversalError::ChallengeMismatch) => {
-                                debug!("PATH_RESPONSE challenge mismatch for NAT candidate {}", remote);
+                                debug!(
+                                    "PATH_RESPONSE challenge mismatch for NAT candidate {}",
+                                    remote
+                                );
                             }
                             Err(e) => {
                                 debug!("NAT traversal validation error: {}", e);
@@ -3401,45 +3440,53 @@ impl Connection {
         self.update_rem_cid();
         self.ping();
     }
-    
+
     /// Migrate to a better path discovered through NAT traversal
     pub fn migrate_to_nat_traversal_path(&mut self, now: Instant) -> Result<(), TransportError> {
         // Extract necessary data before mutable operations
         let (remote_addr, local_addr) = {
-            let nat_state = self.nat_traversal.as_ref()
+            let nat_state = self
+                .nat_traversal
+                .as_ref()
                 .ok_or_else(|| TransportError::PROTOCOL_VIOLATION("NAT traversal not enabled"))?;
-            
+
             // Get the best validated NAT traversal path
             let best_pairs = nat_state.get_best_succeeded_pairs();
             if best_pairs.is_empty() {
-                return Err(TransportError::PROTOCOL_VIOLATION("No validated NAT traversal paths"));
+                return Err(TransportError::PROTOCOL_VIOLATION(
+                    "No validated NAT traversal paths",
+                ));
             }
-            
+
             // Select the best path (highest priority that's different from current)
-            let best_path = best_pairs.iter()
+            let best_path = best_pairs
+                .iter()
                 .find(|pair| pair.remote_addr != self.path.remote)
                 .or_else(|| best_pairs.first());
-            
-            let best_path = best_path
-                .ok_or_else(|| TransportError::PROTOCOL_VIOLATION("No suitable NAT traversal path"))?;
-            
-            debug!("Migrating to NAT traversal path: {} -> {} (priority: {})",
-                   self.path.remote, best_path.remote_addr, best_path.priority);
-            
+
+            let best_path = best_path.ok_or_else(|| {
+                TransportError::PROTOCOL_VIOLATION("No suitable NAT traversal path")
+            })?;
+
+            debug!(
+                "Migrating to NAT traversal path: {} -> {} (priority: {})",
+                self.path.remote, best_path.remote_addr, best_path.priority
+            );
+
             (best_path.remote_addr, best_path.local_addr)
         };
-        
+
         // Perform the migration
         self.migrate(now, remote_addr);
-        
+
         // Update local address if needed
         if local_addr != SocketAddr::new(std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED), 0) {
             self.local_ip = Some(local_addr.ip());
         }
-        
+
         // Queue a PATH_CHALLENGE to confirm the new path
         self.path.challenge_pending = true;
-        
+
         Ok(())
     }
 
@@ -3578,7 +3625,7 @@ impl Connection {
                 buf.write(token);
                 self.stats.frame_tx.path_challenge += 1;
             }
-            
+
             // TODO: Send NAT traversal PATH_CHALLENGE frames
             // Currently, the packet sending infrastructure only supports sending to the
             // primary path (self.path.remote). To properly support NAT traversal, we need
@@ -3756,7 +3803,10 @@ impl Connection {
                 "ADD_ADDRESS"
             );
             add_address.encode(buf);
-            sent.retransmits.get_or_create().add_addresses.push(add_address);
+            sent.retransmits
+                .get_or_create()
+                .add_addresses
+                .push(add_address);
             self.stats.frame_tx.add_address += 1;
         }
 
@@ -3772,7 +3822,10 @@ impl Connection {
                 "PUNCH_ME_NOW"
             );
             punch_me_now.encode(buf);
-            sent.retransmits.get_or_create().punch_me_now.push(punch_me_now);
+            sent.retransmits
+                .get_or_create()
+                .punch_me_now
+                .push(punch_me_now);
             self.stats.frame_tx.punch_me_now += 1;
         }
 
@@ -3787,7 +3840,10 @@ impl Connection {
                 "REMOVE_ADDRESS"
             );
             remove_address.encode(buf);
-            sent.retransmits.get_or_create().remove_addresses.push(remove_address);
+            sent.retransmits
+                .get_or_create()
+                .remove_addresses
+                .push(remove_address);
             self.stats.frame_tx.remove_address += 1;
         }
 
@@ -3884,10 +3940,10 @@ impl Connection {
             }).expect("preferred address CID is the first received, and hence is guaranteed to be legal");
         }
         self.ack_frequency.peer_max_ack_delay = get_max_ack_delay(&params);
-        
+
         // Handle NAT traversal capability negotiation
         self.negotiate_nat_traversal_capability(&params);
-        
+
         self.peer_params = params;
         self.path.mtud.on_peer_max_udp_payload_size_received(
             u16::try_from(self.peer_params.max_udp_payload_size.into_inner()).unwrap_or(u16::MAX),
@@ -3902,9 +3958,11 @@ impl Connection {
             None => {
                 // Peer doesn't support NAT traversal - handle backward compatibility
                 if self.config.nat_traversal_config.is_some() {
-                    debug!("Peer does not support NAT traversal, maintaining backward compatibility");
+                    debug!(
+                        "Peer does not support NAT traversal, maintaining backward compatibility"
+                    );
                     self.emit_nat_traversal_capability_event(false);
-                    
+
                     // Set connection state to indicate NAT traversal is not available
                     self.set_nat_traversal_compatibility_mode(false);
                 }
@@ -3925,21 +3983,24 @@ impl Connection {
 
         // Both peers support NAT traversal - proceed with capability negotiation
         info!("Both peers support NAT traversal, negotiating capabilities");
-        
+
         // Validate role compatibility and negotiate parameters
         match self.negotiate_nat_traversal_parameters(local_nat_config, peer_nat_config) {
             Ok(negotiated_config) => {
                 info!("NAT traversal capability negotiated successfully");
                 self.emit_nat_traversal_capability_event(true);
-                
+
                 // Initialize NAT traversal with negotiated parameters
                 self.init_nat_traversal_with_negotiated_config(&negotiated_config);
-                
+
                 // Set connection state to indicate NAT traversal is available
                 self.set_nat_traversal_compatibility_mode(true);
-                
+
                 // Start NAT traversal process if we're in a client role
-                if matches!(negotiated_config.role, crate::transport_parameters::NatTraversalRole::Client) {
+                if matches!(
+                    negotiated_config.role,
+                    crate::transport_parameters::NatTraversalRole::Client
+                ) {
                     self.initiate_nat_traversal_process();
                 }
             }
@@ -3957,28 +4018,43 @@ impl Connection {
         local_config: &crate::transport_parameters::NatTraversalConfig,
         peer_config: &crate::transport_parameters::NatTraversalConfig,
     ) -> Result<(), String> {
-
         // Check for invalid role combinations
         match (&local_config.role, &peer_config.role) {
             // Both bootstrap nodes - this is unusual but allowed
-            (crate::transport_parameters::NatTraversalRole::Bootstrap, crate::transport_parameters::NatTraversalRole::Bootstrap) => {
+            (
+                crate::transport_parameters::NatTraversalRole::Bootstrap,
+                crate::transport_parameters::NatTraversalRole::Bootstrap,
+            ) => {
                 debug!("Both endpoints are bootstrap nodes - unusual but allowed");
             }
             // Client-Server combinations are ideal
-            (crate::transport_parameters::NatTraversalRole::Client, crate::transport_parameters::NatTraversalRole::Server { .. }) | 
-            (crate::transport_parameters::NatTraversalRole::Server { .. }, crate::transport_parameters::NatTraversalRole::Client) => {
+            (
+                crate::transport_parameters::NatTraversalRole::Client,
+                crate::transport_parameters::NatTraversalRole::Server { .. },
+            )
+            | (
+                crate::transport_parameters::NatTraversalRole::Server { .. },
+                crate::transport_parameters::NatTraversalRole::Client,
+            ) => {
                 debug!("Client-Server NAT traversal role combination");
             }
             // Bootstrap can coordinate with anyone
-            (crate::transport_parameters::NatTraversalRole::Bootstrap, _) | (_, crate::transport_parameters::NatTraversalRole::Bootstrap) => {
+            (crate::transport_parameters::NatTraversalRole::Bootstrap, _)
+            | (_, crate::transport_parameters::NatTraversalRole::Bootstrap) => {
                 debug!("Bootstrap node coordination");
             }
             // Client-Client requires bootstrap coordination
-            (crate::transport_parameters::NatTraversalRole::Client, crate::transport_parameters::NatTraversalRole::Client) => {
+            (
+                crate::transport_parameters::NatTraversalRole::Client,
+                crate::transport_parameters::NatTraversalRole::Client,
+            ) => {
                 debug!("Client-Client connection requires bootstrap coordination");
             }
             // Server-Server is allowed but may need coordination
-            (crate::transport_parameters::NatTraversalRole::Server { .. }, crate::transport_parameters::NatTraversalRole::Server { .. }) => {
+            (
+                crate::transport_parameters::NatTraversalRole::Server { .. },
+                crate::transport_parameters::NatTraversalRole::Server { .. },
+            ) => {
                 debug!("Server-Server connection");
             }
         }
@@ -3995,7 +4071,7 @@ impl Connection {
         } else {
             info!("NAT traversal capability not available (peer or local support missing)");
         }
-        
+
         // Could add to events queue if needed:
         // self.events.push_back(Event::NatTraversalCapability { negotiated });
     }
@@ -4021,7 +4097,6 @@ impl Connection {
         local_config: &crate::transport_parameters::NatTraversalConfig,
         peer_config: &crate::transport_parameters::NatTraversalConfig,
     ) -> Result<crate::transport_parameters::NatTraversalConfig, String> {
-
         // Validate role compatibility first
         self.validate_nat_traversal_roles(local_config, peer_config)?;
 
@@ -4029,15 +4104,21 @@ impl Connection {
         let negotiated_role = local_config.role;
 
         // Negotiate parameters using the more restrictive values
-        let max_candidates = local_config.max_candidates.into_inner()
+        let max_candidates = local_config
+            .max_candidates
+            .into_inner()
             .min(peer_config.max_candidates.into_inner())
             .min(50); // Cap at reasonable limit
 
-        let coordination_timeout = local_config.coordination_timeout.into_inner()
+        let coordination_timeout = local_config
+            .coordination_timeout
+            .into_inner()
             .min(peer_config.coordination_timeout.into_inner())
             .min(30000); // Cap at 30 seconds
 
-        let max_concurrent_attempts = local_config.max_concurrent_attempts.into_inner()
+        let max_concurrent_attempts = local_config
+            .max_concurrent_attempts
+            .into_inner()
             .min(peer_config.max_concurrent_attempts.into_inner())
             .min(10); // Cap at reasonable limit
 
@@ -4053,7 +4134,8 @@ impl Connection {
         };
 
         // Validate the negotiated configuration
-        negotiated_config.validate()
+        negotiated_config
+            .validate()
             .map_err(|e| format!("Negotiated configuration validation failed: {:?}", e))?;
 
         debug!(
@@ -4065,19 +4147,22 @@ impl Connection {
     }
 
     /// Initialize NAT traversal with negotiated configuration
-    fn init_nat_traversal_with_negotiated_config(&mut self, config: &crate::transport_parameters::NatTraversalConfig) {
-        
+    fn init_nat_traversal_with_negotiated_config(
+        &mut self,
+        config: &crate::transport_parameters::NatTraversalConfig,
+    ) {
         // Convert transport parameter role to internal role
         let role = match config.role {
             crate::transport_parameters::NatTraversalRole::Client => NatTraversalRole::Client,
-            crate::transport_parameters::NatTraversalRole::Server { can_relay } => NatTraversalRole::Server { can_relay },
+            crate::transport_parameters::NatTraversalRole::Server { can_relay } => {
+                NatTraversalRole::Server { can_relay }
+            }
             crate::transport_parameters::NatTraversalRole::Bootstrap => NatTraversalRole::Bootstrap,
         };
 
         let max_candidates = config.max_candidates.into_inner().min(50) as u32;
-        let coordination_timeout = Duration::from_millis(
-            config.coordination_timeout.into_inner().min(30000)
-        );
+        let coordination_timeout =
+            Duration::from_millis(config.coordination_timeout.into_inner().min(30000));
 
         // Initialize NAT traversal state
         self.nat_traversal = Some(NatTraversalState::new(
@@ -4086,8 +4171,11 @@ impl Connection {
             coordination_timeout,
         ));
 
-        trace!("NAT traversal initialized with negotiated config: role={:?}", role);
-        
+        trace!(
+            "NAT traversal initialized with negotiated config: role={:?}",
+            role
+        );
+
         // Perform role-specific initialization
         match role {
             NatTraversalRole::Bootstrap => {
@@ -4112,7 +4200,10 @@ impl Connection {
                 Ok(()) => {
                     debug!("NAT traversal process initiated - candidate discovery started");
                     // Schedule the first coordination attempt
-                    self.timers.set(Timer::NatTraversal, Instant::now() + Duration::from_millis(100));
+                    self.timers.set(
+                        Timer::NatTraversal,
+                        Instant::now() + Duration::from_millis(100),
+                    );
                 }
                 Err(e) => {
                     warn!("Failed to initiate NAT traversal process: {}", e);
@@ -4132,7 +4223,10 @@ impl Connection {
     fn schedule_candidate_discovery(&mut self) {
         debug!("Scheduling candidate discovery for client endpoint");
         // Set a timer to start candidate discovery after connection establishment
-        self.timers.set(Timer::NatTraversal, Instant::now() + Duration::from_millis(50));
+        self.timers.set(
+            Timer::NatTraversal,
+            Instant::now() + Duration::from_millis(50),
+        );
     }
 
     /// Prepare to handle coordination requests (server nodes)
@@ -4167,7 +4261,8 @@ impl Connection {
                         nat_traversal::TimeoutAction::RetryCoordination => {
                             debug!("NAT traversal timeout: retrying coordination");
                             // Schedule next coordination attempt
-                            self.timers.set(Timer::NatTraversal, now + Duration::from_secs(2));
+                            self.timers
+                                .set(Timer::NatTraversal, now + Duration::from_secs(2));
                         }
                         nat_traversal::TimeoutAction::StartValidation => {
                             debug!("NAT traversal timeout: starting path validation");
@@ -4198,43 +4293,47 @@ impl Connection {
         if let Some(nat_state) = &mut self.nat_traversal {
             // Get candidate pairs that need validation
             let pairs = nat_state.get_next_validation_pairs(3);
-            
+
             for pair in pairs {
                 // Send PATH_CHALLENGE to validate the path
                 let challenge = self.rng.gen();
                 self.path.challenge = Some(challenge);
                 self.path.challenge_pending = true;
-                
-                debug!("Starting path validation for NAT traversal candidate: {}", pair.remote_addr);
+
+                debug!(
+                    "Starting path validation for NAT traversal candidate: {}",
+                    pair.remote_addr
+                );
             }
-            
+
             // Set validation timeout
-            self.timers.set(Timer::PathValidation, now + Duration::from_secs(3));
+            self.timers
+                .set(Timer::PathValidation, now + Duration::from_secs(3));
         }
     }
 
     /// Handle NAT traversal failure
     fn handle_nat_traversal_failure(&mut self) {
         warn!("NAT traversal failed, considering fallback options");
-        
+
         // Clear NAT traversal state
         self.nat_traversal = None;
         self.timers.stop(Timer::NatTraversal);
-        
+
         // In a full implementation, this could:
         // 1. Try relay connections
         // 2. Emit failure events to the application
         // 3. Attempt direct connection as fallback
-        
+
         // For now, we'll just log the failure
         debug!("NAT traversal disabled for this connection due to failure");
     }
 
     /// Check if NAT traversal is supported and enabled for this connection
     pub fn nat_traversal_supported(&self) -> bool {
-        self.nat_traversal.is_some() && 
-        self.config.nat_traversal_config.is_some() &&
-        self.peer_params.nat_traversal.is_some()
+        self.nat_traversal.is_some()
+            && self.config.nat_traversal_config.is_some()
+            && self.peer_params.nat_traversal.is_some()
     }
 
     /// Get the negotiated NAT traversal configuration
@@ -4244,12 +4343,11 @@ impl Connection {
 
     /// Check if the connection is ready for NAT traversal operations
     pub fn nat_traversal_ready(&self) -> bool {
-        self.nat_traversal_supported() && 
-        matches!(self.state, State::Established)
+        self.nat_traversal_supported() && matches!(self.state, State::Established)
     }
 
     /// Get NAT traversal statistics for this connection
-    /// 
+    ///
     /// This method is preserved for debugging and monitoring purposes.
     /// It may be used in future telemetry or diagnostic features.
     #[allow(dead_code)]
@@ -4261,13 +4359,13 @@ impl Connection {
     #[cfg(test)]
     pub(crate) fn force_enable_nat_traversal(&mut self, role: NatTraversalRole) {
         use crate::transport_parameters::{NatTraversalConfig, NatTraversalRole as TPRole};
-        
+
         let tp_role = match role {
             NatTraversalRole::Client => TPRole::Client,
             NatTraversalRole::Server { can_relay } => TPRole::Server { can_relay },
             NatTraversalRole::Bootstrap => TPRole::Bootstrap,
         };
-        
+
         let config = NatTraversalConfig {
             role: tp_role,
             max_candidates: VarInt::from_u32(8),
@@ -4275,24 +4373,16 @@ impl Connection {
             max_concurrent_attempts: VarInt::from_u32(3),
             peer_id: None,
         };
-        
+
         self.peer_params.nat_traversal = Some(config.clone());
         self.config = Arc::new({
             let mut transport_config = (*self.config).clone();
             transport_config.nat_traversal_config = Some(config);
             transport_config
         });
-        
-        self.nat_traversal = Some(NatTraversalState::new(
-            role,
-            8,
-            Duration::from_secs(10),
-        ));
+
+        self.nat_traversal = Some(NatTraversalState::new(role, 8, Duration::from_secs(10)));
     }
-
-
-
-
 
     /// Queue an ADD_ADDRESS frame to be sent to the peer
     /// Derive peer ID from connection context
@@ -4309,7 +4399,7 @@ impl Connection {
         // Fill remaining bytes with connection ID data
         let cid_bytes = self.rem_handshake_cid.as_ref();
         let copy_len = (cid_bytes.len()).min(24);
-        peer_id[8..8+copy_len].copy_from_slice(&cid_bytes[..copy_len]);
+        peer_id[8..8 + copy_len].copy_from_slice(&cid_bytes[..copy_len]);
         peer_id
     }
 
@@ -4319,8 +4409,9 @@ impl Connection {
         add_address: &crate::frame::AddAddress,
         now: Instant,
     ) -> Result<(), TransportError> {
-        let nat_state = self.nat_traversal.as_mut()
-            .ok_or_else(|| TransportError::PROTOCOL_VIOLATION("AddAddress frame without NAT traversal negotiation"))?;
+        let nat_state = self.nat_traversal.as_mut().ok_or_else(|| {
+            TransportError::PROTOCOL_VIOLATION("AddAddress frame without NAT traversal negotiation")
+        })?;
 
         match nat_state.add_remote_candidate(
             add_address.sequence,
@@ -4329,16 +4420,18 @@ impl Connection {
             now,
         ) {
             Ok(()) => {
-                trace!("Added remote candidate: {} (seq={}, priority={})", 
-                       add_address.address, add_address.sequence, add_address.priority);
-                
+                trace!(
+                    "Added remote candidate: {} (seq={}, priority={})",
+                    add_address.address, add_address.sequence, add_address.priority
+                );
+
                 // Trigger validation of this new candidate
                 self.trigger_candidate_validation(add_address.address, now)?;
                 Ok(())
             }
-            Err(NatTraversalError::TooManyCandidates) => {
-                Err(TransportError::PROTOCOL_VIOLATION("too many NAT traversal candidates"))
-            }
+            Err(NatTraversalError::TooManyCandidates) => Err(TransportError::PROTOCOL_VIOLATION(
+                "too many NAT traversal candidates",
+            )),
             Err(NatTraversalError::DuplicateAddress) => {
                 // Silently ignore duplicates (peer may resend)
                 Ok(())
@@ -4356,30 +4449,44 @@ impl Connection {
         punch_me_now: &crate::frame::PunchMeNow,
         now: Instant,
     ) -> Result<(), TransportError> {
-        trace!("Received PunchMeNow: round={}, target_seq={}, local_addr={}", 
-               punch_me_now.round, punch_me_now.target_sequence, punch_me_now.local_address);
+        trace!(
+            "Received PunchMeNow: round={}, target_seq={}, local_addr={}",
+            punch_me_now.round, punch_me_now.target_sequence, punch_me_now.local_address
+        );
 
         // Check if we're a bootstrap node that should coordinate this
         if let Some(nat_state) = &self.nat_traversal {
             if matches!(nat_state.role, NatTraversalRole::Bootstrap) {
                 // We're a bootstrap node - process coordination request
                 let from_peer_id = self.derive_peer_id_from_connection();
-                
+
                 // Clone the frame to avoid borrow checker issues
                 let punch_me_now_clone = punch_me_now.clone();
                 drop(nat_state); // Release the borrow
-                
-                match self.nat_traversal.as_mut().unwrap().handle_punch_me_now_frame(from_peer_id, self.path.remote, &punch_me_now_clone, now) {
+
+                match self
+                    .nat_traversal
+                    .as_mut()
+                    .unwrap()
+                    .handle_punch_me_now_frame(
+                        from_peer_id,
+                        self.path.remote,
+                        &punch_me_now_clone,
+                        now,
+                    ) {
                     Ok(Some(coordination_frame)) => {
                         trace!("Bootstrap node coordinating PUNCH_ME_NOW between peers");
-                        
+
                         // Send coordination frame to target peer via endpoint
                         if let Some(target_peer_id) = punch_me_now.target_peer_id {
                             self.endpoint_events.push_back(
-                                crate::shared::EndpointEventInner::RelayPunchMeNow(target_peer_id, coordination_frame)
+                                crate::shared::EndpointEventInner::RelayPunchMeNow(
+                                    target_peer_id,
+                                    coordination_frame,
+                                ),
                             );
                         }
-                        
+
                         return Ok(());
                     }
                     Ok(None) => {
@@ -4395,33 +4502,43 @@ impl Connection {
         }
 
         // We're a regular peer receiving coordination from bootstrap
-        let nat_state = self.nat_traversal.as_mut()
-            .ok_or_else(|| TransportError::PROTOCOL_VIOLATION("PunchMeNow frame without NAT traversal negotiation"))?;
-        
+        let nat_state = self.nat_traversal.as_mut().ok_or_else(|| {
+            TransportError::PROTOCOL_VIOLATION("PunchMeNow frame without NAT traversal negotiation")
+        })?;
+
         // Handle peer's coordination request
-        if nat_state.handle_peer_punch_request(punch_me_now.round, now)
-            .map_err(|_e| TransportError::PROTOCOL_VIOLATION("Failed to handle peer punch request"))? {
+        if nat_state
+            .handle_peer_punch_request(punch_me_now.round, now)
+            .map_err(|_e| {
+                TransportError::PROTOCOL_VIOLATION("Failed to handle peer punch request")
+            })?
+        {
             trace!("Coordination synchronized for round {}", punch_me_now.round);
-            
+
             // Create punch targets based on the received information
             // The peer's local_address tells us where they'll be listening
-            let _local_addr = self.local_ip
+            let _local_addr = self
+                .local_ip
                 .map(|ip| SocketAddr::new(ip, 0))
-                .unwrap_or_else(|| SocketAddr::new(std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED), 0));
-            
+                .unwrap_or_else(|| {
+                    SocketAddr::new(std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED), 0)
+                });
+
             let target = nat_traversal::PunchTarget {
                 remote_addr: punch_me_now.local_address,
                 remote_sequence: punch_me_now.target_sequence,
                 challenge: self.rng.gen(),
             };
-            
+
             // Start coordination with this target
             nat_state.start_coordination_round(vec![target], now);
-            
         } else {
-            debug!("Failed to synchronize coordination for round {}", punch_me_now.round);
+            debug!(
+                "Failed to synchronize coordination for round {}",
+                punch_me_now.round
+            );
         }
-        
+
         Ok(())
     }
 
@@ -4430,13 +4547,22 @@ impl Connection {
         &mut self,
         remove_address: &crate::frame::RemoveAddress,
     ) -> Result<(), TransportError> {
-        let nat_state = self.nat_traversal.as_mut()
-            .ok_or_else(|| TransportError::PROTOCOL_VIOLATION("RemoveAddress frame without NAT traversal negotiation"))?;
+        let nat_state = self.nat_traversal.as_mut().ok_or_else(|| {
+            TransportError::PROTOCOL_VIOLATION(
+                "RemoveAddress frame without NAT traversal negotiation",
+            )
+        })?;
 
         if nat_state.remove_candidate(remove_address.sequence) {
-            trace!("Removed candidate with sequence {}", remove_address.sequence);
+            trace!(
+                "Removed candidate with sequence {}",
+                remove_address.sequence
+            );
         } else {
-            trace!("Attempted to remove unknown candidate sequence {}", remove_address.sequence);
+            trace!(
+                "Attempted to remove unknown candidate sequence {}",
+                remove_address.sequence
+            );
         }
 
         Ok(())
@@ -4450,29 +4576,49 @@ impl Connection {
             address,
             priority,
         };
-        
-        self.spaces[SpaceId::Data].pending.add_addresses.push(add_address);
-        trace!("Queued AddAddress frame: seq={}, addr={}, priority={}", sequence, address, priority);
+
+        self.spaces[SpaceId::Data]
+            .pending
+            .add_addresses
+            .push(add_address);
+        trace!(
+            "Queued AddAddress frame: seq={}, addr={}, priority={}",
+            sequence, address, priority
+        );
     }
 
     /// Queue a PunchMeNow frame to coordinate NAT traversal
-    pub fn queue_punch_me_now(&mut self, round: VarInt, target_sequence: VarInt, local_address: SocketAddr) {
+    pub fn queue_punch_me_now(
+        &mut self,
+        round: VarInt,
+        target_sequence: VarInt,
+        local_address: SocketAddr,
+    ) {
         let punch_me_now = frame::PunchMeNow {
             round,
             target_sequence,
             local_address,
             target_peer_id: None, // Direct peer-to-peer communication
         };
-        
-        self.spaces[SpaceId::Data].pending.punch_me_now.push(punch_me_now);
-        trace!("Queued PunchMeNow frame: round={}, target={}", round, target_sequence);
+
+        self.spaces[SpaceId::Data]
+            .pending
+            .punch_me_now
+            .push(punch_me_now);
+        trace!(
+            "Queued PunchMeNow frame: round={}, target={}",
+            round, target_sequence
+        );
     }
 
     /// Queue a RemoveAddress frame to remove a candidate
     pub fn queue_remove_address(&mut self, sequence: VarInt) {
         let remove_address = frame::RemoveAddress { sequence };
-        
-        self.spaces[SpaceId::Data].pending.remove_addresses.push(remove_address);
+
+        self.spaces[SpaceId::Data]
+            .pending
+            .remove_addresses
+            .push(remove_address);
         trace!("Queued RemoveAddress frame: seq={}", sequence);
     }
 
@@ -4482,18 +4628,23 @@ impl Connection {
         candidate_address: SocketAddr,
         now: Instant,
     ) -> Result<(), TransportError> {
-        let nat_state = self.nat_traversal.as_mut()
+        let nat_state = self
+            .nat_traversal
+            .as_mut()
             .ok_or_else(|| TransportError::PROTOCOL_VIOLATION("NAT traversal not enabled"))?;
-        
+
         // Check if we already have an active validation for this address
-        if nat_state.active_validations.contains_key(&candidate_address) {
+        if nat_state
+            .active_validations
+            .contains_key(&candidate_address)
+        {
             trace!("Validation already in progress for {}", candidate_address);
             return Ok(());
         }
-        
+
         // Generate a random challenge value
         let challenge = self.rng.gen::<u64>();
-        
+
         // Create path validation state
         let validation_state = nat_traversal::PathValidationState {
             challenge,
@@ -4504,24 +4655,26 @@ impl Connection {
             timeout_state: nat_traversal::AdaptiveTimeoutState::new(),
             last_retry_at: None,
         };
-        
+
         // Store the validation attempt
-        nat_state.active_validations.insert(candidate_address, validation_state);
-        
+        nat_state
+            .active_validations
+            .insert(candidate_address, validation_state);
+
         // Queue PATH_CHALLENGE frame to be sent to the candidate address
-        self.nat_traversal_challenges.push(candidate_address, challenge);
-        
+        self.nat_traversal_challenges
+            .push(candidate_address, challenge);
+
         // Update statistics
         nat_state.stats.validations_succeeded += 1; // Will be decremented if validation fails
-        
-        trace!("Triggered PATH_CHALLENGE validation for {} with challenge {:016x}", 
-               candidate_address, challenge);
-        
+
+        trace!(
+            "Triggered PATH_CHALLENGE validation for {} with challenge {:016x}",
+            candidate_address, challenge
+        );
+
         Ok(())
     }
-    
-
-
 
     /// Get current NAT traversal state information
     pub fn nat_traversal_state(&self) -> Option<(NatTraversalRole, usize, usize)> {
@@ -4533,55 +4686,72 @@ impl Connection {
             )
         })
     }
-    
+
     /// Initiate NAT traversal coordination through a bootstrap node
-    pub fn initiate_nat_traversal_coordination(&mut self, now: Instant) -> Result<(), TransportError> {
-        let nat_state = self.nat_traversal.as_mut()
+    pub fn initiate_nat_traversal_coordination(
+        &mut self,
+        now: Instant,
+    ) -> Result<(), TransportError> {
+        let nat_state = self
+            .nat_traversal
+            .as_mut()
             .ok_or_else(|| TransportError::PROTOCOL_VIOLATION("NAT traversal not enabled"))?;
-        
+
         // Check if we should send PUNCH_ME_NOW to coordinator
         if nat_state.should_send_punch_request() {
             // Generate candidate pairs for coordination
             nat_state.generate_candidate_pairs(now);
-            
+
             // Get the best candidate pairs to try
             let pairs = nat_state.get_next_validation_pairs(3);
             if pairs.is_empty() {
-                return Err(TransportError::PROTOCOL_VIOLATION("No candidate pairs for coordination"));
+                return Err(TransportError::PROTOCOL_VIOLATION(
+                    "No candidate pairs for coordination",
+                ));
             }
-            
+
             // Create punch targets from the pairs
-            let targets: Vec<_> = pairs.into_iter()
+            let targets: Vec<_> = pairs
+                .into_iter()
                 .map(|pair| nat_traversal::PunchTarget {
                     remote_addr: pair.remote_addr,
                     remote_sequence: pair.remote_sequence,
                     challenge: self.rng.gen(),
                 })
                 .collect();
-            
+
             // Start coordination round
-            let round = nat_state.start_coordination_round(targets, now)
-                .map_err(|_e| TransportError::PROTOCOL_VIOLATION("Failed to start coordination round"))?;
-            
+            let round = nat_state
+                .start_coordination_round(targets, now)
+                .map_err(|_e| {
+                    TransportError::PROTOCOL_VIOLATION("Failed to start coordination round")
+                })?;
+
             // Queue PUNCH_ME_NOW frame to be sent to bootstrap node
             // Include our best local address for the peer to target
-            let local_addr = self.local_ip
+            let local_addr = self
+                .local_ip
                 .map(|ip| SocketAddr::new(ip, self.local_ip.map(|_| 0).unwrap_or(0)))
-                .unwrap_or_else(|| SocketAddr::new(std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED), 0));
-            
+                .unwrap_or_else(|| {
+                    SocketAddr::new(std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED), 0)
+                });
+
             let punch_me_now = frame::PunchMeNow {
                 round,
                 target_sequence: VarInt::from_u32(0), // Will be filled by bootstrap
                 local_address: local_addr,
                 target_peer_id: None, // Direct peer-to-peer communication
             };
-            
-            self.spaces[SpaceId::Data].pending.punch_me_now.push(punch_me_now);
+
+            self.spaces[SpaceId::Data]
+                .pending
+                .punch_me_now
+                .push(punch_me_now);
             nat_state.mark_punch_request_sent();
-            
+
             trace!("Initiated NAT traversal coordination round {}", round);
         }
-        
+
         Ok(())
     }
 
@@ -4593,7 +4763,7 @@ impl Connection {
     // === PUBLIC NAT TRAVERSAL FRAME TRANSMISSION API ===
 
     /// Send an ADD_ADDRESS frame to advertise a candidate address to the peer
-    /// 
+    ///
     /// This is the primary method for sending NAT traversal address advertisements.
     /// The frame will be transmitted in the next outgoing QUIC packet.
     ///
@@ -4605,17 +4775,21 @@ impl Connection {
     /// * `Ok(sequence)` - The sequence number assigned to this candidate
     /// * `Err(ConnectionError)` - If NAT traversal is not enabled or other error
     pub fn send_nat_address_advertisement(
-        &mut self, 
-        address: SocketAddr, 
-        priority: u32
+        &mut self,
+        address: SocketAddr,
+        priority: u32,
     ) -> Result<u64, ConnectionError> {
         // Verify NAT traversal is enabled
-        let nat_state = self.nat_traversal.as_mut()
-            .ok_or_else(|| ConnectionError::TransportError(TransportError::PROTOCOL_VIOLATION("NAT traversal not enabled on this connection")))?;
+        let nat_state = self.nat_traversal.as_mut().ok_or_else(|| {
+            ConnectionError::TransportError(TransportError::PROTOCOL_VIOLATION(
+                "NAT traversal not enabled on this connection",
+            ))
+        })?;
 
         // Generate sequence number and add to local candidates
         let sequence = nat_state.next_sequence;
-        nat_state.next_sequence = VarInt::from_u64(nat_state.next_sequence.into_inner() + 1).unwrap();
+        nat_state.next_sequence =
+            VarInt::from_u64(nat_state.next_sequence.into_inner() + 1).unwrap();
 
         // Add to local candidates
         let now = Instant::now();
@@ -4629,7 +4803,7 @@ impl Connection {
                 state: nat_traversal::CandidateState::New,
                 attempt_count: 0,
                 last_attempt: None,
-            }
+            },
         );
 
         // Update statistics
@@ -4638,7 +4812,10 @@ impl Connection {
         // Queue the frame for transmission (must be done after releasing nat_state borrow)
         self.queue_add_address(sequence, address, VarInt::from_u32(priority));
 
-        debug!("Queued ADD_ADDRESS frame: addr={}, priority={}, seq={}", address, priority, sequence);
+        debug!(
+            "Queued ADD_ADDRESS frame: addr={}, priority={}, seq={}",
+            address, priority, sequence
+        );
         Ok(sequence.into_inner())
     }
 
@@ -4661,20 +4838,27 @@ impl Connection {
         round: u32,
     ) -> Result<(), ConnectionError> {
         // Verify NAT traversal is enabled
-        let _nat_state = self.nat_traversal.as_ref()
-            .ok_or_else(|| ConnectionError::TransportError(TransportError::PROTOCOL_VIOLATION("NAT traversal not enabled on this connection")))?;
+        let _nat_state = self.nat_traversal.as_ref().ok_or_else(|| {
+            ConnectionError::TransportError(TransportError::PROTOCOL_VIOLATION(
+                "NAT traversal not enabled on this connection",
+            ))
+        })?;
 
         // Queue the frame for transmission
         self.queue_punch_me_now(
             VarInt::from_u32(round),
             VarInt::from_u64(target_sequence).map_err(|_| {
-                ConnectionError::TransportError(TransportError::PROTOCOL_VIOLATION("Invalid target sequence number"))
+                ConnectionError::TransportError(TransportError::PROTOCOL_VIOLATION(
+                    "Invalid target sequence number",
+                ))
             })?,
             local_address,
         );
 
-        debug!("Queued PUNCH_ME_NOW frame: target_seq={}, local_addr={}, round={}", 
-               target_sequence, local_address, round);
+        debug!(
+            "Queued PUNCH_ME_NOW frame: target_seq={}, local_addr={}, round={}",
+            target_sequence, local_address, round
+        );
         Ok(())
     }
 
@@ -4688,16 +4872,18 @@ impl Connection {
     /// # Returns
     /// * `Ok(())` - Frame queued for transmission
     /// * `Err(ConnectionError)` - If NAT traversal is not enabled
-    pub fn send_nat_address_removal(
-        &mut self,
-        sequence: u64,
-    ) -> Result<(), ConnectionError> {
+    pub fn send_nat_address_removal(&mut self, sequence: u64) -> Result<(), ConnectionError> {
         // Verify NAT traversal is enabled
-        let nat_state = self.nat_traversal.as_mut()
-            .ok_or_else(|| ConnectionError::TransportError(TransportError::PROTOCOL_VIOLATION("NAT traversal not enabled on this connection")))?;
+        let nat_state = self.nat_traversal.as_mut().ok_or_else(|| {
+            ConnectionError::TransportError(TransportError::PROTOCOL_VIOLATION(
+                "NAT traversal not enabled on this connection",
+            ))
+        })?;
 
         let sequence_varint = VarInt::from_u64(sequence).map_err(|_| {
-            ConnectionError::TransportError(TransportError::PROTOCOL_VIOLATION("Invalid sequence number"))
+            ConnectionError::TransportError(TransportError::PROTOCOL_VIOLATION(
+                "Invalid sequence number",
+            ))
         })?;
 
         // Remove from local candidates
@@ -4715,7 +4901,7 @@ impl Connection {
     /// # Returns
     /// * `Some(stats)` - Current NAT traversal statistics
     /// * `None` - If NAT traversal is not enabled
-    /// 
+    ///
     /// This method is preserved for debugging and monitoring purposes.
     /// It may be used in future telemetry or diagnostic features.
     #[allow(dead_code)]
@@ -4732,7 +4918,6 @@ impl Connection {
     pub fn get_nat_traversal_role(&self) -> Option<NatTraversalRole> {
         self.nat_traversal.as_ref().map(|state| state.role)
     }
-
 
     fn decrypt_packet(
         &mut self,
@@ -4958,12 +5143,13 @@ impl Connection {
         self.state = State::Drained;
         self.endpoint_events.push_back(EndpointEventInner::Drained);
     }
-    
+
     /// Generate PATH_CHALLENGE frames for NAT traversal candidate validation
     fn generate_nat_traversal_challenges(&mut self, now: Instant) {
         // Get candidates ready for validation first
         let candidates: Vec<(VarInt, SocketAddr)> = if let Some(nat_state) = &self.nat_traversal {
-            nat_state.get_validation_candidates()
+            nat_state
+                .get_validation_candidates()
                 .into_iter()
                 .take(3) // Validate up to 3 candidates in parallel
                 .map(|(seq, candidate)| (seq, candidate.address))
@@ -4971,27 +5157,29 @@ impl Connection {
         } else {
             return;
         };
-        
+
         if candidates.is_empty() {
             return;
         }
-        
+
         // Now process candidates with mutable access
         if let Some(nat_state) = &mut self.nat_traversal {
             for (seq, address) in candidates {
                 // Generate a random challenge token
                 let challenge: u64 = self.rng.gen();
-                
+
                 // Start validation for this candidate
                 if let Err(e) = nat_state.start_validation(seq, challenge, now) {
                     debug!("Failed to start validation for candidate {}: {}", seq, e);
                     continue;
                 }
-                
+
                 // Queue the challenge
                 self.nat_traversal_challenges.push(address, challenge);
-                trace!("Queuing NAT validation PATH_CHALLENGE for {} with token {:08x}", 
-                       address, challenge);
+                trace!(
+                    "Queuing NAT validation PATH_CHALLENGE for {} with token {:08x}",
+                    address, challenge
+                );
             }
         }
     }

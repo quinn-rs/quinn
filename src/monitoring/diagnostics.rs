@@ -9,12 +9,10 @@ use std::{
     time::{Duration, Instant, SystemTime},
 };
 
-use tokio::sync::{RwLock, Mutex};
+use tokio::sync::{Mutex, RwLock};
 use tracing::{debug, info, warn};
 
-use crate::monitoring::{
-    MonitoringError, NatTraversalResult, ErrorCategory, PerformanceMetrics,
-};
+use crate::monitoring::{ErrorCategory, MonitoringError, NatTraversalResult, PerformanceMetrics};
 
 /// Diagnostic engine for automated failure analysis
 pub struct DiagnosticEngine {
@@ -46,7 +44,7 @@ impl DiagnosticEngine {
         let performance_profiler = Arc::new(PerformanceProfiler::new());
         let network_analyzer = Arc::new(NetworkAnalyzer::new());
         let tasks = Arc::new(Mutex::new(Vec::new()));
-        
+
         Ok(Self {
             config,
             pattern_analyzer,
@@ -58,16 +56,16 @@ impl DiagnosticEngine {
             tasks,
         })
     }
-    
+
     /// Start diagnostic engine
     pub async fn start(&self) -> Result<(), MonitoringError> {
         info!("Starting diagnostic engine");
-        
+
         // Initialize analyzers
         self.pattern_analyzer.initialize().await?;
         self.root_cause_analyzer.initialize().await?;
         self.remediation_advisor.load_remediation_database().await?;
-        
+
         // Start background monitoring tasks
         let diagnostic_history = Arc::clone(&self.diagnostic_history);
         let config = self.config.clone();
@@ -82,130 +80,161 @@ impl DiagnosticEngine {
                 // For now, we just track the total count
             }
         });
-        
+
         self.tasks.lock().await.push(cleanup_task);
-        
+
         info!("Diagnostic engine started");
         Ok(())
     }
-    
+
     /// Stop diagnostic engine
     pub async fn stop(&self) -> Result<(), MonitoringError> {
         info!("Stopping diagnostic engine");
-        
+
         // Stop all background tasks
         let mut tasks = self.tasks.lock().await;
         while let Some(task) = tasks.pop() {
             task.abort();
         }
-        
+
         // Save diagnostic data
         let history = self.diagnostic_history.read().await;
         if let Err(e) = self.save_diagnostic_history(&history).await {
             warn!("Failed to save diagnostic history: {}", e);
         }
-        
+
         info!("Diagnostic engine stopped");
         Ok(())
     }
 
-    
     /// Analyze NAT traversal failure
-    pub async fn analyze_failure(&self, result: &NatTraversalResult) -> Result<crate::monitoring::DiagnosticReport, MonitoringError> {
+    pub async fn analyze_failure(
+        &self,
+        result: &NatTraversalResult,
+    ) -> Result<crate::monitoring::DiagnosticReport, MonitoringError> {
         if result.success {
             return Err(MonitoringError::DiagnosticsError(
-                "Cannot analyze successful result".to_string()
+                "Cannot analyze successful result".to_string(),
             ));
         }
-        
-        info!("Analyzing NAT traversal failure for attempt: {}", result.attempt_id);
-        
+
+        info!(
+            "Analyzing NAT traversal failure for attempt: {}",
+            result.attempt_id
+        );
+
         let _start_time = Instant::now();
-        
+
         // Collect diagnostic context
         let context = self.collect_diagnostic_context(result).await?;
-        
+
         // Analyze failure patterns
         let patterns = self.pattern_analyzer.analyze_patterns(&context).await?;
-        
+
         // Perform root cause analysis
-        let root_causes = self.root_cause_analyzer.analyze_root_causes(&context, &patterns).await?;
-        
+        let root_causes = self
+            .root_cause_analyzer
+            .analyze_root_causes(&context, &patterns)
+            .await?;
+
         // Generate remediation suggestions
-        let _remediation = self.remediation_advisor.generate_remediation(&root_causes).await?;
-        
+        let _remediation = self
+            .remediation_advisor
+            .generate_remediation(&root_causes)
+            .await?;
+
         // Profile performance impact
-        let _performance_impact = self.performance_profiler.analyze_performance_impact(&context).await?;
-        
+        let _performance_impact = self
+            .performance_profiler
+            .analyze_performance_impact(&context)
+            .await?;
+
         // Analyze network conditions
-        let _network_analysis = self.network_analyzer.analyze_network_conditions(&context).await?;
-        
+        let _network_analysis = self
+            .network_analyzer
+            .analyze_network_conditions(&context)
+            .await?;
+
         // Convert detailed analysis to simple diagnostic report
         let diagnostic_report = crate::monitoring::DiagnosticReport {
             id: result.attempt_id.clone(),
             diagnostic_type: crate::monitoring::DiagnosticType::NatTraversalFailure,
             timestamp: SystemTime::now(),
             severity: crate::monitoring::DiagnosticSeverity::Error,
-            findings: vec![
-                crate::monitoring::DiagnosticFinding {
-                    id: "failure-analysis".to_string(),
-                    title: "NAT Traversal Failure".to_string(),
-                    description: format!("Analysis of failure for attempt {}", result.attempt_id),
-                    severity: crate::monitoring::DiagnosticSeverity::Error,
-                    evidence: vec!["Detailed failure analysis performed".to_string()],
-                    confidence: (self.calculate_confidence_score(&context).await * 100.0) as u8,
-                }
-            ],
-            recommendations: vec![
-                crate::monitoring::DiagnosticRecommendation {
-                    id: "remediation-1".to_string(),
-                    title: "Check Network Configuration".to_string(),
-                    description: "Review NAT traversal configuration and network settings".to_string(),
-                    priority: crate::monitoring::RecommendationPriority::High,
-                    steps: vec!["Verify bootstrap node connectivity".to_string()],
-                    impact: "Improved connection success rate".to_string(),
-                }
-            ],
+            findings: vec![crate::monitoring::DiagnosticFinding {
+                id: "failure-analysis".to_string(),
+                title: "NAT Traversal Failure".to_string(),
+                description: format!("Analysis of failure for attempt {}", result.attempt_id),
+                severity: crate::monitoring::DiagnosticSeverity::Error,
+                evidence: vec!["Detailed failure analysis performed".to_string()],
+                confidence: (self.calculate_confidence_score(&context).await * 100.0) as u8,
+            }],
+            recommendations: vec![crate::monitoring::DiagnosticRecommendation {
+                id: "remediation-1".to_string(),
+                title: "Check Network Configuration".to_string(),
+                description: "Review NAT traversal configuration and network settings".to_string(),
+                priority: crate::monitoring::RecommendationPriority::High,
+                steps: vec!["Verify bootstrap node connectivity".to_string()],
+                impact: "Improved connection success rate".to_string(),
+            }],
             metadata: HashMap::new(),
         };
-        
+
         // Store diagnostic result would go here
         // Note: DiagnosticHistory needs to be updated to work with the new DiagnosticReport structure
         // For now, we'll skip storing the detailed diagnostic history
-        
-        info!("Completed failure analysis for attempt: {}", 
-            result.attempt_id);
-        
+
+        info!(
+            "Completed failure analysis for attempt: {}",
+            result.attempt_id
+        );
+
         Ok(diagnostic_report)
     }
-    
+
     /// Run specific diagnostic
-    pub async fn run_diagnostic(&self, diagnostic_type: crate::monitoring::DiagnosticType) -> Result<crate::monitoring::DiagnosticReport, MonitoringError> {
+    pub async fn run_diagnostic(
+        &self,
+        diagnostic_type: crate::monitoring::DiagnosticType,
+    ) -> Result<crate::monitoring::DiagnosticReport, MonitoringError> {
         info!("Running diagnostic: {:?}", diagnostic_type);
-        
+
         match diagnostic_type {
-            crate::monitoring::DiagnosticType::NetworkConnectivity => self.run_connectivity_diagnostic().await,
-            crate::monitoring::DiagnosticType::ConnectionPerformance => self.run_performance_diagnostic().await,
-            crate::monitoring::DiagnosticType::NatTraversalFailure => self.run_network_topology_diagnostic().await,
-            crate::monitoring::DiagnosticType::SystemHealth => self.run_system_health_diagnostic().await,
-            crate::monitoring::DiagnosticType::SecurityAudit => self.run_config_validation_diagnostic().await,
+            crate::monitoring::DiagnosticType::NetworkConnectivity => {
+                self.run_connectivity_diagnostic().await
+            }
+            crate::monitoring::DiagnosticType::ConnectionPerformance => {
+                self.run_performance_diagnostic().await
+            }
+            crate::monitoring::DiagnosticType::NatTraversalFailure => {
+                self.run_network_topology_diagnostic().await
+            }
+            crate::monitoring::DiagnosticType::SystemHealth => {
+                self.run_system_health_diagnostic().await
+            }
+            crate::monitoring::DiagnosticType::SecurityAudit => {
+                self.run_config_validation_diagnostic().await
+            }
         }
     }
-    
+
     /// Get diagnostic status
     pub async fn get_status(&self) -> String {
         let history = self.diagnostic_history.read().await;
         format!("Diagnostics run: {}", history.total_diagnostics)
     }
-    
+
     /// Get diagnostic statistics
     pub async fn get_diagnostic_statistics(&self, period: Duration) -> DiagnosticStatistics {
         let history = self.diagnostic_history.read().await;
         history.get_statistics(period)
     }
-    
+
     /// Collect diagnostic context from failure result
-    async fn collect_diagnostic_context(&self, result: &NatTraversalResult) -> Result<DiagnosticContext, MonitoringError> {
+    async fn collect_diagnostic_context(
+        &self,
+        result: &NatTraversalResult,
+    ) -> Result<DiagnosticContext, MonitoringError> {
         Ok(DiagnosticContext {
             attempt_id: result.attempt_id.clone(),
             failure_timestamp: SystemTime::now(),
@@ -218,7 +247,7 @@ impl DiagnosticEngine {
             configuration_state: self.collect_configuration_state().await,
         })
     }
-    
+
     /// Collect current system state
     async fn collect_system_state(&self) -> SystemState {
         // In real implementation, would collect actual system metrics
@@ -232,7 +261,7 @@ impl DiagnosticEngine {
             uptime: Duration::from_secs(86400), // 1 day
         }
     }
-    
+
     /// Collect current network state
     async fn collect_network_state(&self) -> NetworkState {
         // In real implementation, would collect actual network metrics
@@ -241,20 +270,18 @@ impl DiagnosticEngine {
                 ("eth0".to_string(), "up".to_string()),
                 ("wlan0".to_string(), "up".to_string()),
             ]),
-            routing_table: vec![
-                RouteEntry {
-                    destination: "0.0.0.0/0".to_string(),
-                    gateway: "192.168.1.1".to_string(),
-                    interface: "eth0".to_string(),
-                },
-            ],
+            routing_table: vec![RouteEntry {
+                destination: "0.0.0.0/0".to_string(),
+                gateway: "192.168.1.1".to_string(),
+                interface: "eth0".to_string(),
+            }],
             dns_servers: vec!["8.8.8.8".to_string(), "8.8.4.4".to_string()],
             bandwidth_utilization: 15.0,
             packet_loss_rate: 0.001,
             average_latency_ms: 25,
         }
     }
-    
+
     /// Collect current configuration state
     async fn collect_configuration_state(&self) -> ConfigurationState {
         // In real implementation, would collect actual configuration
@@ -273,15 +300,17 @@ impl DiagnosticEngine {
             ],
         }
     }
-    
+
     /// Generate failure summary
     async fn generate_failure_summary(&self, context: &DiagnosticContext) -> FailureSummary {
         let error_info = context.error_info.as_ref();
-        
+
         FailureSummary {
-            primary_error: error_info.map(|e| e.error_message.clone())
+            primary_error: error_info
+                .map(|e| e.error_message.clone())
                 .unwrap_or_else(|| "Unknown error".to_string()),
-            error_category: error_info.map(|e| e.error_category.clone())
+            error_category: error_info
+                .map(|e| e.error_category.clone())
                 .unwrap_or(ErrorCategory::Unknown),
             duration_before_failure: context.performance_metrics.connection_time_ms,
             candidates_attempted: context.performance_metrics.candidates_tried,
@@ -289,12 +318,12 @@ impl DiagnosticEngine {
             impact_assessment: self.assess_failure_impact(context).await,
         }
     }
-    
+
     /// Determine at which stage the failure occurred
     async fn determine_failure_stage(&self, context: &DiagnosticContext) -> FailureStage {
         // Analyze performance metrics to determine failure stage
         let perf = &context.performance_metrics;
-        
+
         if perf.first_candidate_time_ms == 0 {
             FailureStage::CandidateDiscovery
         } else if perf.candidates_tried == 0 {
@@ -305,7 +334,7 @@ impl DiagnosticEngine {
             FailureStage::ConnectionEstablishment
         }
     }
-    
+
     /// Assess the impact of the failure
     async fn assess_failure_impact(&self, _context: &DiagnosticContext) -> ImpactAssessment {
         ImpactAssessment {
@@ -316,93 +345,102 @@ impl DiagnosticEngine {
             recovery_time_estimate: Duration::from_secs(300), // 5 minutes
         }
     }
-    
+
     /// Calculate confidence score for diagnosis
     async fn calculate_confidence_score(&self, context: &DiagnosticContext) -> f64 {
         let mut score: f64 = 1.0;
-        
+
         // Reduce confidence based on missing information
         if context.error_info.is_none() {
             score *= 0.7;
         }
-        
+
         if context.candidates_used.is_empty() {
             score *= 0.8;
         }
-        
+
         // Increase confidence with more detailed error information
         if let Some(error_info) = &context.error_info {
             if !error_info.error_context.is_empty() {
                 score *= 1.1;
             }
         }
-        
+
         score.min(1.0)
     }
-    
+
     /// Find similar failures in history
-    async fn find_similar_failures(&self, context: &DiagnosticContext) -> Result<Vec<SimilarFailure>, MonitoringError> {
+    async fn find_similar_failures(
+        &self,
+        context: &DiagnosticContext,
+    ) -> Result<Vec<SimilarFailure>, MonitoringError> {
         let history = self.diagnostic_history.read().await;
         let similar = history.find_similar_failures(context);
         Ok(similar)
     }
-    
+
     /// Save diagnostic history
-    async fn save_diagnostic_history(&self, history: &DiagnosticHistory) -> Result<(), MonitoringError> {
-        debug!("Saving diagnostic history with {} entries", history.total_diagnostics);
+    async fn save_diagnostic_history(
+        &self,
+        history: &DiagnosticHistory,
+    ) -> Result<(), MonitoringError> {
+        debug!(
+            "Saving diagnostic history with {} entries",
+            history.total_diagnostics
+        );
         // In real implementation, would save to persistent storage
         Ok(())
     }
-    
+
     /// Run connectivity diagnostic
-    async fn run_connectivity_diagnostic(&self) -> Result<crate::monitoring::DiagnosticReport, MonitoringError> {
+    async fn run_connectivity_diagnostic(
+        &self,
+    ) -> Result<crate::monitoring::DiagnosticReport, MonitoringError> {
         info!("Running connectivity diagnostic");
-        
+
         // Test connectivity to bootstrap nodes
         let _connectivity_results = self.test_bootstrap_connectivity().await?;
-        
+
         // Test NAT detection
         let _nat_detection_results = self.test_nat_detection().await?;
-        
+
         // Generate report
         Ok(crate::monitoring::DiagnosticReport {
             id: "connectivity_test".to_string(),
             diagnostic_type: crate::monitoring::DiagnosticType::NetworkConnectivity,
             timestamp: SystemTime::now(),
             severity: crate::monitoring::DiagnosticSeverity::Info,
-            findings: vec![
-                crate::monitoring::DiagnosticFinding {
-                    id: "connectivity-check".to_string(),
-                    title: "Connectivity Test".to_string(),
-                    description: "Network connectivity test completed".to_string(),
-                    severity: crate::monitoring::DiagnosticSeverity::Info,
-                    evidence: vec!["Bootstrap node connectivity verified".to_string()],
-                    confidence: 90,
-                }
-            ],
-            recommendations: vec![
-                crate::monitoring::DiagnosticRecommendation {
-                    id: "connectivity-rec".to_string(),
-                    title: "Maintain Connectivity".to_string(),
-                    description: "Continue monitoring network connectivity".to_string(),
-                    priority: crate::monitoring::RecommendationPriority::Low,
-                    steps: vec!["Monitor bootstrap nodes".to_string()],
-                    impact: "Ongoing connectivity".to_string(),
-                }
-            ],
+            findings: vec![crate::monitoring::DiagnosticFinding {
+                id: "connectivity-check".to_string(),
+                title: "Connectivity Test".to_string(),
+                description: "Network connectivity test completed".to_string(),
+                severity: crate::monitoring::DiagnosticSeverity::Info,
+                evidence: vec!["Bootstrap node connectivity verified".to_string()],
+                confidence: 90,
+            }],
+            recommendations: vec![crate::monitoring::DiagnosticRecommendation {
+                id: "connectivity-rec".to_string(),
+                title: "Maintain Connectivity".to_string(),
+                description: "Continue monitoring network connectivity".to_string(),
+                priority: crate::monitoring::RecommendationPriority::Low,
+                steps: vec!["Monitor bootstrap nodes".to_string()],
+                impact: "Ongoing connectivity".to_string(),
+            }],
             metadata: HashMap::new(),
         })
     }
-    
+
     /// Test connectivity to bootstrap nodes
-    async fn test_bootstrap_connectivity(&self) -> Result<Vec<ConnectivityTestResult>, MonitoringError> {
+    async fn test_bootstrap_connectivity(
+        &self,
+    ) -> Result<Vec<ConnectivityTestResult>, MonitoringError> {
         let bootstrap_nodes = vec![
             "bootstrap1.example.com:9000".to_string(),
             "bootstrap2.example.com:9000".to_string(),
         ];
-        
+
         let mut results = Vec::new();
-        
+
         for node in bootstrap_nodes {
             let result = ConnectivityTestResult {
                 target: node.clone(),
@@ -412,10 +450,10 @@ impl DiagnosticEngine {
             };
             results.push(result);
         }
-        
+
         Ok(results)
     }
-    
+
     /// Test NAT detection
     async fn test_nat_detection(&self) -> Result<NatDetectionResult, MonitoringError> {
         Ok(NatDetectionResult {
@@ -426,62 +464,69 @@ impl DiagnosticEngine {
             detection_time_ms: 1000,
         })
     }
-    
+
     /// Run performance diagnostic
-    async fn run_performance_diagnostic(&self) -> Result<crate::monitoring::DiagnosticReport, MonitoringError> {
+    async fn run_performance_diagnostic(
+        &self,
+    ) -> Result<crate::monitoring::DiagnosticReport, MonitoringError> {
         info!("Running performance diagnostic");
         // Implementation would analyze current performance metrics
         self.create_mock_diagnostic_report("performance_test").await
     }
-    
+
     /// Run network topology diagnostic
-    async fn run_network_topology_diagnostic(&self) -> Result<crate::monitoring::DiagnosticReport, MonitoringError> {
+    async fn run_network_topology_diagnostic(
+        &self,
+    ) -> Result<crate::monitoring::DiagnosticReport, MonitoringError> {
         info!("Running network topology diagnostic");
         // Implementation would analyze network topology
         self.create_mock_diagnostic_report("topology_test").await
     }
-    
+
     /// Run system health diagnostic
-    async fn run_system_health_diagnostic(&self) -> Result<crate::monitoring::DiagnosticReport, MonitoringError> {
+    async fn run_system_health_diagnostic(
+        &self,
+    ) -> Result<crate::monitoring::DiagnosticReport, MonitoringError> {
         info!("Running system health diagnostic");
         // Implementation would analyze system health
         self.create_mock_diagnostic_report("health_test").await
     }
-    
+
     /// Run configuration validation diagnostic
-    async fn run_config_validation_diagnostic(&self) -> Result<crate::monitoring::DiagnosticReport, MonitoringError> {
+    async fn run_config_validation_diagnostic(
+        &self,
+    ) -> Result<crate::monitoring::DiagnosticReport, MonitoringError> {
         info!("Running configuration validation diagnostic");
         // Implementation would validate configuration
         self.create_mock_diagnostic_report("config_test").await
     }
-    
+
     /// Create mock diagnostic report for testing
-    async fn create_mock_diagnostic_report(&self, test_type: &str) -> Result<crate::monitoring::DiagnosticReport, MonitoringError> {
+    async fn create_mock_diagnostic_report(
+        &self,
+        test_type: &str,
+    ) -> Result<crate::monitoring::DiagnosticReport, MonitoringError> {
         Ok(crate::monitoring::DiagnosticReport {
             id: test_type.to_string(),
             diagnostic_type: crate::monitoring::DiagnosticType::SystemHealth,
             timestamp: SystemTime::now(),
             severity: crate::monitoring::DiagnosticSeverity::Info,
-            findings: vec![
-                crate::monitoring::DiagnosticFinding {
-                    id: format!("{}-finding", test_type),
-                    title: format!("{} Test", test_type),
-                    description: format!("{} completed successfully", test_type),
-                    severity: crate::monitoring::DiagnosticSeverity::Info,
-                    evidence: vec!["Test executed without errors".to_string()],
-                    confidence: 95,
-                }
-            ],
-            recommendations: vec![
-                crate::monitoring::DiagnosticRecommendation {
-                    id: format!("{}-rec", test_type),
-                    title: "Continue Monitoring".to_string(),
-                    description: "Maintain current monitoring practices".to_string(),
-                    priority: crate::monitoring::RecommendationPriority::Low,
-                    steps: vec!["Regular health checks".to_string()],
-                    impact: "Ongoing system health".to_string(),
-                }
-            ],
+            findings: vec![crate::monitoring::DiagnosticFinding {
+                id: format!("{}-finding", test_type),
+                title: format!("{} Test", test_type),
+                description: format!("{} completed successfully", test_type),
+                severity: crate::monitoring::DiagnosticSeverity::Info,
+                evidence: vec!["Test executed without errors".to_string()],
+                confidence: 95,
+            }],
+            recommendations: vec![crate::monitoring::DiagnosticRecommendation {
+                id: format!("{}-rec", test_type),
+                title: "Continue Monitoring".to_string(),
+                description: "Maintain current monitoring practices".to_string(),
+                priority: crate::monitoring::RecommendationPriority::Low,
+                steps: vec!["Regular health checks".to_string()],
+                impact: "Ongoing system health".to_string(),
+            }],
             metadata: HashMap::new(),
         })
     }
@@ -535,7 +580,6 @@ impl Default for PatternDetectionConfig {
     }
 }
 
-
 /// Diagnostic context for analysis
 #[derive(Debug, Clone)]
 struct DiagnosticContext {
@@ -588,7 +632,6 @@ struct ConfigurationState {
     bootstrap_nodes: Vec<String>,
     firewall_rules: Vec<String>,
 }
-
 
 /// Failure summary
 #[derive(Debug, Clone)]
@@ -680,16 +723,19 @@ impl FailurePatternAnalyzer {
     fn new() -> Self {
         Self
     }
-    
+
     async fn initialize(&self) -> Result<(), MonitoringError> {
         debug!("Initializing failure pattern analyzer");
         Ok(())
     }
-    
-    async fn analyze_patterns(&self, context: &DiagnosticContext) -> Result<Vec<FailurePattern>, MonitoringError> {
+
+    async fn analyze_patterns(
+        &self,
+        context: &DiagnosticContext,
+    ) -> Result<Vec<FailurePattern>, MonitoringError> {
         // Analyze patterns in the failure
         let mut patterns = Vec::new();
-        
+
         // Check for common patterns
         if let Some(error_info) = &context.error_info {
             match error_info.error_category {
@@ -714,7 +760,7 @@ impl FailurePatternAnalyzer {
                 _ => {}
             }
         }
-        
+
         Ok(patterns)
     }
 }
@@ -750,19 +796,19 @@ impl RootCauseAnalyzer {
     fn new() -> Self {
         Self
     }
-    
+
     async fn initialize(&self) -> Result<(), MonitoringError> {
         debug!("Initializing root cause analyzer");
         Ok(())
     }
-    
+
     async fn analyze_root_causes(
         &self,
         context: &DiagnosticContext,
         _patterns: &[FailurePattern],
     ) -> Result<Vec<RootCause>, MonitoringError> {
         let mut root_causes = Vec::new();
-        
+
         // Analyze based on error information
         if let Some(error_info) = &context.error_info {
             match error_info.error_category {
@@ -781,7 +827,9 @@ impl RootCauseAnalyzer {
                 ErrorCategory::Timeout => {
                     root_causes.push(RootCause {
                         cause_id: "timeout_configuration".to_string(),
-                        description: "Timeout values may be too aggressive for current network conditions".to_string(),
+                        description:
+                            "Timeout values may be too aggressive for current network conditions"
+                                .to_string(),
                         confidence: 0.7,
                         contributing_factors: vec![
                             "High network latency".to_string(),
@@ -793,20 +841,21 @@ impl RootCauseAnalyzer {
                 _ => {}
             }
         }
-        
+
         // Analyze system state
         if context.system_state.cpu_usage > 90.0 {
             root_causes.push(RootCause {
                 cause_id: "resource_exhaustion".to_string(),
                 description: "High CPU usage may be affecting connection establishment".to_string(),
                 confidence: 0.6,
-                contributing_factors: vec![
-                    format!("CPU usage: {:.1}%", context.system_state.cpu_usage),
-                ],
+                contributing_factors: vec![format!(
+                    "CPU usage: {:.1}%",
+                    context.system_state.cpu_usage
+                )],
                 root_cause_type: RootCauseType::ResourceExhaustion,
             });
         }
-        
+
         Ok(root_causes)
     }
 }
@@ -844,39 +893,47 @@ impl RemediationAdvisor {
     fn new() -> Self {
         Self
     }
-    
+
     async fn load_remediation_database(&self) -> Result<(), MonitoringError> {
         debug!("Loading remediation database");
         Ok(())
     }
-    
-    async fn generate_remediation(&self, root_causes: &[RootCause]) -> Result<RemediationPlan, MonitoringError> {
+
+    async fn generate_remediation(
+        &self,
+        root_causes: &[RootCause],
+    ) -> Result<RemediationPlan, MonitoringError> {
         let mut immediate_actions = Vec::new();
         let mut short_term_actions = Vec::new();
         let mut long_term_actions = Vec::new();
         let mut monitoring_recommendations = Vec::new();
         let mut configuration_changes = Vec::new();
-        
+
         for root_cause in root_causes {
             match root_cause.root_cause_type {
                 RootCauseType::Configuration => {
-                    immediate_actions.push("Review and validate NAT traversal configuration".to_string());
-                    configuration_changes.push("Increase timeout values for better reliability".to_string());
+                    immediate_actions
+                        .push("Review and validate NAT traversal configuration".to_string());
+                    configuration_changes
+                        .push("Increase timeout values for better reliability".to_string());
                 }
                 RootCauseType::Infrastructure => {
                     immediate_actions.push("Verify bootstrap node connectivity".to_string());
                     short_term_actions.push("Add redundant bootstrap nodes".to_string());
-                    monitoring_recommendations.push("Monitor bootstrap node health continuously".to_string());
+                    monitoring_recommendations
+                        .push("Monitor bootstrap node health continuously".to_string());
                 }
                 RootCauseType::ResourceExhaustion => {
                     immediate_actions.push("Check system resource utilization".to_string());
-                    short_term_actions.push("Optimize resource usage or scale up resources".to_string());
-                    long_term_actions.push("Implement resource usage monitoring and alerting".to_string());
+                    short_term_actions
+                        .push("Optimize resource usage or scale up resources".to_string());
+                    long_term_actions
+                        .push("Implement resource usage monitoring and alerting".to_string());
                 }
                 _ => {}
             }
         }
-        
+
         Ok(RemediationPlan {
             immediate_actions,
             short_term_actions,
@@ -909,8 +966,11 @@ impl PerformanceProfiler {
     fn new() -> Self {
         Self
     }
-    
-    async fn analyze_performance_impact(&self, _context: &DiagnosticContext) -> Result<PerformanceImpactAnalysis, MonitoringError> {
+
+    async fn analyze_performance_impact(
+        &self,
+        _context: &DiagnosticContext,
+    ) -> Result<PerformanceImpactAnalysis, MonitoringError> {
         Ok(PerformanceImpactAnalysis {
             latency_increase: 0.0,
             throughput_decrease: 0.0,
@@ -949,8 +1009,11 @@ impl NetworkAnalyzer {
     fn new() -> Self {
         Self
     }
-    
-    async fn analyze_network_conditions(&self, _context: &DiagnosticContext) -> Result<NetworkAnalysis, MonitoringError> {
+
+    async fn analyze_network_conditions(
+        &self,
+        _context: &DiagnosticContext,
+    ) -> Result<NetworkAnalysis, MonitoringError> {
         Ok(NetworkAnalysis {
             topology_issues: vec![],
             bandwidth_constraints: vec![],
@@ -990,19 +1053,19 @@ impl DiagnosticHistory {
             max_history_size: 1000,
         }
     }
-    
+
     fn add_diagnostic(&mut self, _diagnostic: crate::monitoring::DiagnosticReport) {
         self.total_diagnostics += 1;
         // In production, would store the diagnostic report
     }
-    
+
     fn find_similar_failures(&self, _context: &DiagnosticContext) -> Vec<SimilarFailure> {
         // For now, return empty - in production would search historical data
         Vec::new()
     }
-    
+
     // Removed calculate_similarity method as it's not used in the simplified version
-    
+
     fn get_statistics(&self, _period: Duration) -> DiagnosticStatistics {
         DiagnosticStatistics {
             total_diagnostics: self.total_diagnostics,
@@ -1066,17 +1129,17 @@ mod tests {
     async fn test_diagnostic_engine_creation() {
         let config = DiagnosticsConfig::default();
         let engine = DiagnosticEngine::new(config).await.unwrap();
-        
+
         let status = engine.get_status().await;
         assert!(status.contains("Diagnostics run: 0"));
     }
-    
+
     #[tokio::test]
     async fn test_failure_analysis() {
         let config = DiagnosticsConfig::default();
         let engine = DiagnosticEngine::new(config).await.unwrap();
         engine.start().await.unwrap();
-        
+
         // Create a failed NAT traversal result
         let result = NatTraversalResult {
             attempt_id: "test_failure".to_string(),
@@ -1100,9 +1163,9 @@ mod tests {
             },
             candidates_used: vec![],
         };
-        
+
         let diagnostic_report = engine.analyze_failure(&result).await.unwrap();
-        
+
         assert_eq!(diagnostic_report.id, "test_failure");
         assert!(!diagnostic_report.findings.is_empty());
         assert!(diagnostic_report.severity != crate::monitoring::DiagnosticSeverity::Info);

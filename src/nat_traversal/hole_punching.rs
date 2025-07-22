@@ -11,7 +11,7 @@
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
-use crate::nat_traversal_api::{PeerId, CandidateAddress};
+use crate::nat_traversal_api::{CandidateAddress, PeerId};
 
 /// Manages hole punching attempts for NAT traversal
 pub struct HolePunchingCoordinator {

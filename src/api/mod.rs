@@ -3,22 +3,17 @@
 //! This module provides a clean, intuitive API for developers to use the
 //! ant-quic library for NAT traversal and P2P networking.
 
-use std::time::Duration;
 use std::collections::HashMap;
+use std::time::Duration;
 use thiserror::Error;
 
-use crate::nat_traversal::{
-    NatTraversalEndpoint,
-    PeerId,
-    NatTraversalError,
-};
-
+use crate::nat_traversal::{NatTraversalEndpoint, NatTraversalError, PeerId};
 
 // Re-export configuration module
 pub mod config;
+pub use config::ConfigError;
 pub use config::P2PConfig;
 pub use config::P2PConfigBuilder;
-pub use config::ConfigError;
 
 /// High-level P2P node implementation
 pub struct P2PNode {
@@ -67,19 +62,14 @@ pub struct ConnectionStats {
 /// High-level P2P events
 pub enum P2PEvent {
     /// Connected to a peer
-    Connected {
-        peer_id: PeerId,
-    },
+    Connected { peer_id: PeerId },
     /// Disconnected from a peer
     Disconnected {
         peer_id: PeerId,
         reason: Option<String>,
     },
     /// Received data from a peer
-    Data {
-        peer_id: PeerId,
-        data: Vec<u8>,
-    },
+    Data { peer_id: PeerId, data: Vec<u8> },
     /// Error occurred
     Error {
         peer_id: Option<PeerId>,
@@ -92,16 +82,16 @@ pub enum P2PEvent {
 pub enum P2PError {
     #[error("Connection error: {0}")]
     Connection(String),
-    
+
     #[error("Authentication error: {0}")]
     Authentication(String),
-    
+
     #[error("NAT traversal error: {0}")]
     NatTraversal(#[from] NatTraversalError),
-    
+
     #[error("Configuration error: {0}")]
     Configuration(String),
-    
+
     #[error("Timeout: {0}")]
     Timeout(String),
 }

@@ -19,7 +19,9 @@ use crate::{
     ConnectError, ConnectionId, Side, TransportError, TransportErrorCode,
     crypto::{
         self, CryptoError, ExportKeyingMaterialError, HeaderKey, KeyPair, Keys, UnsupportedVersion,
-        tls_extension_simulation::{ExtensionAwareTlsSession, SimulatedExtensionContext, TlsExtensionHooks},
+        tls_extension_simulation::{
+            ExtensionAwareTlsSession, SimulatedExtensionContext, TlsExtensionHooks,
+        },
     },
     transport_parameters::TransportParameters,
 };
@@ -328,7 +330,11 @@ impl QuicClientConfig {
         initial: Suite,
     ) -> Result<Self, NoInitialCipherSuite> {
         match initial.suite.common.suite {
-            CipherSuite::TLS13_AES_128_GCM_SHA256 => Ok(Self { inner, initial, extension_context: None }),
+            CipherSuite::TLS13_AES_128_GCM_SHA256 => Ok(Self {
+                inner,
+                initial,
+                extension_context: None,
+            }),
             _ => Err(NoInitialCipherSuite { specific: true }),
         }
     }
@@ -381,11 +387,14 @@ impl crypto::ClientConfig for QuicClientConfig {
 
         // Wrap with extension awareness if RFC 7250 support is enabled
         if let Some(extension_context) = &self.extension_context {
-            let conn_id = format!("client-{}-{}", server_name, 
+            let conn_id = format!(
+                "client-{}-{}",
+                server_name,
                 std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap()
-                    .as_nanos());
+                    .as_nanos()
+            );
             Ok(Box::new(ExtensionAwareTlsSession::new(
                 inner_session,
                 extension_context.clone() as Arc<dyn TlsExtensionHooks>,
@@ -491,7 +500,11 @@ impl QuicServerConfig {
         initial: Suite,
     ) -> Result<Self, NoInitialCipherSuite> {
         match initial.suite.common.suite {
-            CipherSuite::TLS13_AES_128_GCM_SHA256 => Ok(Self { inner, initial, extension_context: None }),
+            CipherSuite::TLS13_AES_128_GCM_SHA256 => Ok(Self {
+                inner,
+                initial,
+                extension_context: None,
+            }),
             _ => Err(NoInitialCipherSuite { specific: true }),
         }
     }
@@ -558,11 +571,13 @@ impl crypto::ServerConfig for QuicServerConfig {
 
         // Wrap with extension awareness if RFC 7250 support is enabled
         if let Some(extension_context) = &self.extension_context {
-            let conn_id = format!("server-{}", 
+            let conn_id = format!(
+                "server-{}",
                 std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap()
-                    .as_nanos());
+                    .as_nanos()
+            );
             Box::new(ExtensionAwareTlsSession::new(
                 inner_session,
                 extension_context.clone() as Arc<dyn TlsExtensionHooks>,

@@ -115,7 +115,7 @@ impl RecvStream<'_> {
         if self.state.conn_closed() {
             return Err(ReadableError::ConnectionClosed);
         }
-        
+
         Chunks::new(self.id, ordered, self.state, self.pending)
     }
 
@@ -126,7 +126,7 @@ impl RecvStream<'_> {
         if self.state.conn_closed() {
             return Err(ClosedStream { _private: () });
         }
-        
+
         let mut entry = match self.state.recv.entry(self.id) {
             hash_map::Entry::Occupied(s) => s,
             hash_map::Entry::Vacant(_) => return Err(ClosedStream { _private: () }),
@@ -162,19 +162,19 @@ impl RecvStream<'_> {
         if self.state.conn_closed() {
             return Err(ClosedStream { _private: () });
         }
-        
+
         let hash_map::Entry::Occupied(entry) = self.state.recv.entry(self.id) else {
             return Err(ClosedStream { _private: () });
         };
-        
+
         let Some(s) = entry.get().as_ref().and_then(|s| s.as_open_recv()) else {
             return Ok(None);
         };
-        
+
         if s.stopped {
             return Err(ClosedStream { _private: () });
         }
-        
+
         let Some(code) = s.reset_code() else {
             return Ok(None);
         };

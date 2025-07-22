@@ -7,8 +7,8 @@
 //! - Certificate rotation and renewal mechanisms
 //! - CA certificate management for bootstrap node verification
 
-use std::{sync::Arc, time::Duration};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
+use std::{sync::Arc, time::Duration};
 use thiserror::Error;
 
 /// Certificate management errors
@@ -16,25 +16,25 @@ use thiserror::Error;
 pub enum CertificateError {
     #[error("Certificate generation failed: {0}")]
     GenerationFailed(String),
-    
+
     #[error("Certificate validation failed: {0}")]
     ValidationFailed(String),
-    
+
     #[error("Certificate loading failed: {0}")]
     LoadingFailed(String),
-    
+
     #[error("Certificate parsing failed: {0}")]
     ParsingFailed(String),
-    
+
     #[error("Private key error: {0}")]
     PrivateKeyError(String),
-    
+
     #[error("Certificate chain error: {0}")]
     ChainError(String),
-    
+
     #[error("Certificate expired or not yet valid")]
     ValidityError,
-    
+
     #[error("Unsupported certificate format")]
     UnsupportedFormat,
 }
@@ -44,22 +44,22 @@ pub enum CertificateError {
 pub struct CertificateConfig {
     /// Common name for the certificate (typically the hostname or peer ID)
     pub common_name: String,
-    
+
     /// Subject alternative names (SANs) for the certificate
     pub subject_alt_names: Vec<String>,
-    
+
     /// Certificate validity duration
     pub validity_duration: Duration,
-    
+
     /// Key algorithm and size
     pub key_algorithm: KeyAlgorithm,
-    
+
     /// Whether to generate self-signed certificates
     pub self_signed: bool,
-    
+
     /// CA certificate path (for validation)
     pub ca_cert_path: Option<String>,
-    
+
     /// Certificate chain validation requirements
     pub require_chain_validation: bool,
 }
@@ -82,13 +82,13 @@ pub enum KeyAlgorithm {
 pub struct CertificateBundle {
     /// X.509 certificate chain
     pub cert_chain: Vec<CertificateDer<'static>>,
-    
+
     /// Private key corresponding to the certificate
     pub private_key: PrivateKeyDer<'static>,
-    
+
     /// Certificate creation timestamp
     pub created_at: std::time::SystemTime,
-    
+
     /// Certificate expiration timestamp
     pub expires_at: std::time::SystemTime,
 }
@@ -122,33 +122,31 @@ impl CertificateManager {
             Vec::new()
         };
 
-        Ok(Self {
-            config,
-            ca_certs,
-        })
+        Ok(Self { config, ca_certs })
     }
 
     /// Generate a new certificate bundle using rcgen
     pub fn generate_certificate(&self) -> Result<CertificateBundle, CertificateError> {
         use rcgen::generate_simple_self_signed;
-        
+
         // For now, use a simplified approach with the rcgen API
         // This generates a basic self-signed certificate
         let subject_alt_names = vec![self.config.common_name.clone()];
         let cert = generate_simple_self_signed(subject_alt_names)
             .map_err(|e| CertificateError::GenerationFailed(e.to_string()))?;
-        
+
         // Serialize certificate and key
         let cert_der = cert.cert.der();
         let private_key_der = cert.signing_key.serialize_der();
-        
+
         let created_at = std::time::SystemTime::now();
         let expires_at = created_at + self.config.validity_duration;
-        
+
         Ok(CertificateBundle {
             cert_chain: vec![CertificateDer::from(cert_der.clone())],
-            private_key: PrivateKeyDer::try_from(private_key_der)
-                .map_err(|e| CertificateError::PrivateKeyError(format!("Key conversion failed: {:?}", e)))?,
+            private_key: PrivateKeyDer::try_from(private_key_der).map_err(|e| {
+                CertificateError::PrivateKeyError(format!("Key conversion failed: {:?}", e))
+            })?,
             created_at,
             expires_at,
         })
@@ -160,32 +158,42 @@ impl CertificateManager {
         key_path: &str,
     ) -> Result<CertificateBundle, CertificateError> {
         use rustls_pemfile::{certs, private_key};
-        
+
         // Load certificate file
-        let cert_file = std::fs::File::open(cert_path)
-            .map_err(|e| CertificateError::LoadingFailed(format!("Failed to open cert file: {}", e)))?;
-        
+        let cert_file = std::fs::File::open(cert_path).map_err(|e| {
+            CertificateError::LoadingFailed(format!("Failed to open cert file: {}", e))
+        })?;
+
         let mut cert_reader = std::io::BufReader::new(cert_file);
         let cert_chain: Vec<CertificateDer<'static>> = certs(&mut cert_reader)
             .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| CertificateError::ParsingFailed(format!("Failed to parse certificates: {}", e)))?;
-        
+            .map_err(|e| {
+                CertificateError::ParsingFailed(format!("Failed to parse certificates: {}", e))
+            })?;
+
         if cert_chain.is_empty() {
-            return Err(CertificateError::LoadingFailed("No certificates found in file".to_string()));
+            return Err(CertificateError::LoadingFailed(
+                "No certificates found in file".to_string(),
+            ));
         }
-        
+
         // Load private key file
-        let key_file = std::fs::File::open(key_path)
-            .map_err(|e| CertificateError::LoadingFailed(format!("Failed to open key file: {}", e)))?;
-        
+        let key_file = std::fs::File::open(key_path).map_err(|e| {
+            CertificateError::LoadingFailed(format!("Failed to open key file: {}", e))
+        })?;
+
         let mut key_reader = std::io::BufReader::new(key_file);
         let private_key = private_key(&mut key_reader)
-            .map_err(|e| CertificateError::ParsingFailed(format!("Failed to parse private key: {}", e)))?
-            .ok_or_else(|| CertificateError::LoadingFailed("No private key found in file".to_string()))?;
-        
+            .map_err(|e| {
+                CertificateError::ParsingFailed(format!("Failed to parse private key: {}", e))
+            })?
+            .ok_or_else(|| {
+                CertificateError::LoadingFailed("No private key found in file".to_string())
+            })?;
+
         // Extract validity information from the first certificate
         let (created_at, expires_at) = Self::extract_validity_from_cert(&cert_chain[0])?;
-        
+
         Ok(CertificateBundle {
             cert_chain,
             private_key,
@@ -201,12 +209,12 @@ impl CertificateManager {
         if now > bundle.expires_at {
             return Err(CertificateError::ValidityError);
         }
-        
+
         // If chain validation is required, perform it
         if self.config.require_chain_validation && !self.ca_certs.is_empty() {
             self.validate_certificate_chain(&bundle.cert_chain)?;
         }
-        
+
         Ok(())
     }
 
@@ -217,22 +225,22 @@ impl CertificateManager {
         bundle: &CertificateBundle,
     ) -> Result<Arc<rustls::ServerConfig>, CertificateError> {
         use rustls::ServerConfig;
-        
+
         self.validate_certificate(bundle)?;
-        
+
         let server_config = ServerConfig::builder()
             .with_no_client_auth()
             .with_single_cert(bundle.cert_chain.clone(), bundle.private_key.clone_key())
             .map_err(|e| CertificateError::ValidationFailed(e.to_string()))?;
-        
+
         Ok(Arc::new(server_config))
     }
 
     /// Create a client configuration with optional certificate verification
-    #[cfg(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring"))]  
+    #[cfg(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring"))]
     pub fn create_client_config(&self) -> Result<Arc<rustls::ClientConfig>, CertificateError> {
         use rustls::ClientConfig;
-        
+
         let config = if self.ca_certs.is_empty() {
             // For development/testing - accept any certificate
             ClientConfig::builder()
@@ -243,34 +251,42 @@ impl CertificateManager {
             // Production - use provided CA certificates
             let mut root_store = rustls::RootCertStore::empty();
             for ca_cert in &self.ca_certs {
-                root_store.add(ca_cert.clone())
-                    .map_err(|e| CertificateError::ValidationFailed(format!("Failed to add CA cert: {}", e)))?;
+                root_store.add(ca_cert.clone()).map_err(|e| {
+                    CertificateError::ValidationFailed(format!("Failed to add CA cert: {}", e))
+                })?;
             }
-            
+
             ClientConfig::builder()
                 .with_root_certificates(root_store)
                 .with_no_client_auth()
         };
-        
+
         Ok(Arc::new(config))
     }
 
     /// Load CA certificates from a file
-    fn load_ca_certificates(ca_path: &str) -> Result<Vec<CertificateDer<'static>>, CertificateError> {
+    fn load_ca_certificates(
+        ca_path: &str,
+    ) -> Result<Vec<CertificateDer<'static>>, CertificateError> {
         use rustls_pemfile::certs;
-        
-        let ca_file = std::fs::File::open(ca_path)
-            .map_err(|e| CertificateError::LoadingFailed(format!("Failed to open CA file: {}", e)))?;
-        
+
+        let ca_file = std::fs::File::open(ca_path).map_err(|e| {
+            CertificateError::LoadingFailed(format!("Failed to open CA file: {}", e))
+        })?;
+
         let mut ca_reader = std::io::BufReader::new(ca_file);
         let ca_certs: Vec<CertificateDer<'static>> = certs(&mut ca_reader)
             .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| CertificateError::ParsingFailed(format!("Failed to parse CA certificates: {}", e)))?;
-        
+            .map_err(|e| {
+                CertificateError::ParsingFailed(format!("Failed to parse CA certificates: {}", e))
+            })?;
+
         if ca_certs.is_empty() {
-            return Err(CertificateError::LoadingFailed("No CA certificates found".to_string()));
+            return Err(CertificateError::LoadingFailed(
+                "No CA certificates found".to_string(),
+            ));
         }
-        
+
         Ok(ca_certs)
     }
 
@@ -282,7 +298,7 @@ impl CertificateManager {
         // In a full implementation, you'd parse the certificate to extract actual validity
         let created_at = std::time::SystemTime::now();
         let expires_at = created_at + Duration::from_secs(365 * 24 * 60 * 60); // 1 year
-        
+
         Ok((created_at, expires_at))
     }
 
@@ -292,12 +308,14 @@ impl CertificateManager {
         cert_chain: &[CertificateDer<'static>],
     ) -> Result<(), CertificateError> {
         if cert_chain.is_empty() {
-            return Err(CertificateError::ChainError("Empty certificate chain".to_string()));
+            return Err(CertificateError::ChainError(
+                "Empty certificate chain".to_string(),
+            ));
         }
-        
+
         // For now, basic validation - in production you'd use a proper chain validator
         // This would involve checking signatures, validity periods, extensions, etc.
-        
+
         Ok(())
     }
 }
@@ -399,10 +417,10 @@ mod tests {
     fn test_certificate_generation() {
         let config = CertificateConfig::default();
         let manager = CertificateManager::new(config).unwrap();
-        
+
         let bundle = manager.generate_certificate();
         assert!(bundle.is_ok());
-        
+
         let bundle = bundle.unwrap();
         assert!(!bundle.cert_chain.is_empty());
         assert!(bundle.expires_at > bundle.created_at);
@@ -420,19 +438,18 @@ mod tests {
             0x04, 0x22, // OCTET STRING (34 bytes) - PrivateKey
             0x04, 0x20, // OCTET STRING (32 bytes) - actual key
             // 32 bytes of dummy key data
-            0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
-            0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f,
-            0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17,
-            0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f,
+            0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d,
+            0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b,
+            0x1c, 0x1d, 0x1e, 0x1f,
         ];
-        
+
         let bundle = CertificateBundle {
             cert_chain: vec![],
             private_key: PrivateKeyDer::try_from(dummy_key).unwrap(),
             created_at: std::time::SystemTime::now(),
             expires_at: std::time::SystemTime::now() + Duration::from_secs(3600), // 1 hour
         };
-        
+
         assert!(!bundle.expires_within(Duration::from_secs(1800))); // 30 minutes
         assert!(bundle.expires_within(Duration::from_secs(7200))); // 2 hours
     }

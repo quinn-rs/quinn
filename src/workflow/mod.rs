@@ -11,19 +11,19 @@ use std::{
 };
 
 use serde::{Deserialize, Serialize};
-use tokio::sync::{mpsc, RwLock};
+use tokio::sync::{RwLock, mpsc};
 
+pub mod coordinator;
 pub mod definition;
 pub mod engine;
-pub mod state_store;
-pub mod coordinator;
 pub mod monitor;
+pub mod state_store;
 
+pub use coordinator::*;
 pub use definition::*;
 pub use engine::*;
-pub use state_store::*;
-pub use coordinator::*;
 pub use monitor::*;
+pub use state_store::*;
 
 /// Unique identifier for a workflow
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -245,7 +245,7 @@ impl WorkflowContext {
 pub trait WorkflowAction: Send + Sync {
     /// Execute the action
     async fn execute(&self, context: &mut WorkflowContext) -> Result<(), WorkflowError>;
-    
+
     /// Get the action name for logging
     fn name(&self) -> &str;
 }
@@ -255,7 +255,7 @@ pub trait WorkflowAction: Send + Sync {
 pub trait Condition: Send + Sync {
     /// Check if the condition is satisfied
     async fn check(&self, context: &WorkflowContext) -> bool;
-    
+
     /// Get the condition description
     fn description(&self) -> &str;
 }
@@ -279,9 +279,16 @@ pub enum BackoffStrategy {
     /// Fixed delay between retries
     Fixed { delay: Duration },
     /// Exponential backoff
-    Exponential { initial: Duration, max: Duration, factor: f64 },
+    Exponential {
+        initial: Duration,
+        max: Duration,
+        factor: f64,
+    },
     /// Linear increase
-    Linear { initial: Duration, increment: Duration },
+    Linear {
+        initial: Duration,
+        increment: Duration,
+    },
 }
 
 impl BackoffStrategy {
@@ -289,7 +296,11 @@ impl BackoffStrategy {
     pub fn calculate_delay(&self, attempt: u32) -> Duration {
         match self {
             BackoffStrategy::Fixed { delay } => *delay,
-            BackoffStrategy::Exponential { initial, max, factor } => {
+            BackoffStrategy::Exponential {
+                initial,
+                max,
+                factor,
+            } => {
                 let delay = initial.as_millis() as f64 * factor.powi(attempt as i32);
                 let delay_ms = delay.min(max.as_millis() as f64) as u64;
                 Duration::from_millis(delay_ms)
@@ -327,7 +338,9 @@ mod tests {
 
     #[test]
     fn test_backoff_strategy() {
-        let fixed = BackoffStrategy::Fixed { delay: Duration::from_secs(1) };
+        let fixed = BackoffStrategy::Fixed {
+            delay: Duration::from_secs(1),
+        };
         assert_eq!(fixed.calculate_delay(0), Duration::from_secs(1));
         assert_eq!(fixed.calculate_delay(5), Duration::from_secs(1));
 
@@ -343,7 +356,11 @@ mod tests {
 
     #[test]
     fn test_version_display() {
-        let version = Version { major: 1, minor: 2, patch: 3 };
+        let version = Version {
+            major: 1,
+            minor: 2,
+            patch: 3,
+        };
         assert_eq!(version.to_string(), "1.2.3");
     }
 }

@@ -5,20 +5,12 @@
 
 // Re-export essential types from the core QUIC implementation
 pub use crate::connection::{
-    Connection as QuicConnection,
-    ConnectionError,
-    ConnectionStats,
-    Event as ConnectionEvent,
-    PathStats,
-    ShouldTransmit,
+    Connection as QuicConnection, ConnectionError, ConnectionStats, Event as ConnectionEvent,
+    PathStats, ShouldTransmit,
 };
 
 pub use crate::endpoint::{
-    Endpoint as QuicEndpoint,
-    ConnectionHandle,
-    Incoming,
-    AcceptError,
-    ConnectError,
+    AcceptError, ConnectError, ConnectionHandle, Endpoint as QuicEndpoint, Incoming,
 };
 
 pub use crate::shared::{ConnectionId, EcnCodepoint};
@@ -27,13 +19,7 @@ pub use crate::transport_parameters;
 
 // Stream-related types
 pub use crate::connection::{
-    SendStream,
-    RecvStream,
-    Streams,
-    StreamEvent,
-    ReadError,
-    WriteError,
-    FinishError,
+    FinishError, ReadError, RecvStream, SendStream, StreamEvent, Streams, WriteError,
 };
 
 // Module-private imports

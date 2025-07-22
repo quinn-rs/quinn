@@ -10,14 +10,12 @@ use std::{
 };
 
 use tokio::{
-    sync::{RwLock, Mutex},
+    sync::{Mutex, RwLock},
     time::interval,
 };
 use tracing::{debug, info, warn};
 
-use crate::monitoring::{
-    MonitoringError, NatTraversalResult,
-};
+use crate::monitoring::{MonitoringError, NatTraversalResult};
 
 /// Health monitor for NAT traversal system
 pub struct HealthMonitor {
@@ -42,7 +40,7 @@ impl HealthMonitor {
         let check_registry = Arc::new(HealthCheckRegistry::new());
         let metrics_collector = Arc::new(HealthMetricsCollector::new());
         let trend_analyzer = Arc::new(HealthTrendAnalyzer::new());
-        
+
         // Register default health checks
         let mut monitor = Self {
             config,
@@ -52,91 +50,100 @@ impl HealthMonitor {
             trend_analyzer,
             tasks: Arc::new(Mutex::new(Vec::new())),
         };
-        
+
         monitor.register_default_health_checks().await?;
-        
+
         Ok(monitor)
     }
-    
+
     /// Start health monitoring
     pub async fn start(&self) -> Result<(), MonitoringError> {
         info!("Starting health monitor");
-        
+
         // Start background tasks
         self.start_health_check_task().await?;
         self.start_metrics_collection_task().await?;
         self.start_trend_analysis_task().await?;
         self.start_system_resource_monitoring_task().await?;
-        
+
         // Update state
         {
             let mut state = self.health_state.write().await;
             state.monitor_status = HealthMonitorStatus::Running;
             state.start_time = Some(SystemTime::now());
         }
-        
+
         info!("Health monitor started");
         Ok(())
     }
-    
+
     /// Stop health monitoring
     pub async fn stop(&self) -> Result<(), MonitoringError> {
         info!("Stopping health monitor");
-        
+
         // Stop background tasks
         let mut tasks = self.tasks.lock().await;
         for task in tasks.drain(..) {
             task.abort();
         }
-        
+
         // Update state
         {
             let mut state = self.health_state.write().await;
             state.monitor_status = HealthMonitorStatus::Stopped;
         }
-        
+
         info!("Health monitor stopped");
         Ok(())
     }
-    
+
     /// Update NAT health based on result
-    pub async fn update_nat_health(&self, result: &NatTraversalResult) -> Result<(), MonitoringError> {
+    pub async fn update_nat_health(
+        &self,
+        result: &NatTraversalResult,
+    ) -> Result<(), MonitoringError> {
         // Update health metrics
         self.metrics_collector.record_nat_result(result).await;
-        
+
         // Check if result indicates health issues
         if !result.success {
             self.handle_nat_failure(result).await?;
         }
-        
+
         // Update overall health score
         self.update_health_score().await?;
-        
+
         Ok(())
     }
-    
+
     /// Perform comprehensive health check
     pub async fn comprehensive_health_check(&self) -> crate::monitoring::HealthCheckResult {
-        use crate::monitoring::{HealthCheckResult, HealthStatus, ComponentHealth};
+        use crate::monitoring::{ComponentHealth, HealthCheckResult, HealthStatus};
         use std::collections::HashMap;
 
         let mut components = HashMap::new();
-        
+
         // Check system resources
-        components.insert("system_resources".to_string(), ComponentHealth {
-            status: HealthStatus::Healthy,
-            message: "System resources within normal limits".to_string(),
-            response_time_ms: 5,
-            error_count: 0,
-        });
+        components.insert(
+            "system_resources".to_string(),
+            ComponentHealth {
+                status: HealthStatus::Healthy,
+                message: "System resources within normal limits".to_string(),
+                response_time_ms: 5,
+                error_count: 0,
+            },
+        );
 
         // Check network connectivity
-        components.insert("network_connectivity".to_string(), ComponentHealth {
-            status: HealthStatus::Healthy,
-            message: "Network connectivity operational".to_string(),
-            response_time_ms: 10,
-            error_count: 0,
-        });
+        components.insert(
+            "network_connectivity".to_string(),
+            ComponentHealth {
+                status: HealthStatus::Healthy,
+                message: "Network connectivity operational".to_string(),
+                response_time_ms: 10,
+                error_count: 0,
+            },
+        );
 
         HealthCheckResult {
             status: HealthStatus::Healthy,
@@ -145,70 +152,77 @@ impl HealthMonitor {
             score: 95,
         }
     }
-    
+
     /// Get current health status
     pub async fn get_status(&self) -> String {
         let state = self.health_state.read().await;
         format!("{:?}", state.overall_health_status)
     }
-    
+
     /// Get health metrics summary
     pub async fn get_health_metrics(&self) -> HealthMetricsSummary {
         self.metrics_collector.get_summary().await
     }
-    
+
     /// Get health trends
     pub async fn get_health_trends(&self, period: Duration) -> HealthTrends {
         self.trend_analyzer.get_trends(period).await
     }
-    
+
     /// Handle NAT traversal failure
-    async fn handle_nat_failure(&self, _result: &NatTraversalResult) -> Result<(), MonitoringError> {
+    async fn handle_nat_failure(
+        &self,
+        _result: &NatTraversalResult,
+    ) -> Result<(), MonitoringError> {
         let mut state = self.health_state.write().await;
-        
+
         // Increment failure count
         state.failure_counts.nat_failures += 1;
-        
+
         // Update failure rate
         let total_attempts = state.success_counts.nat_successes + state.failure_counts.nat_failures;
         if total_attempts > 0 {
-            state.health_metrics.nat_failure_rate = state.failure_counts.nat_failures as f64 / total_attempts as f64;
+            state.health_metrics.nat_failure_rate =
+                state.failure_counts.nat_failures as f64 / total_attempts as f64;
         }
-        
+
         // Check if failure rate exceeds threshold
         if state.health_metrics.nat_failure_rate > self.config.thresholds.max_failure_rate {
             state.overall_health_status = HealthStatus::Degraded;
-            warn!("NAT failure rate ({:.2}%) exceeds threshold ({:.2}%)", 
+            warn!(
+                "NAT failure rate ({:.2}%) exceeds threshold ({:.2}%)",
                 state.health_metrics.nat_failure_rate * 100.0,
-                self.config.thresholds.max_failure_rate * 100.0);
+                self.config.thresholds.max_failure_rate * 100.0
+            );
         }
-        
+
         Ok(())
     }
-    
+
     /// Update overall health score
     async fn update_health_score(&self) -> Result<(), MonitoringError> {
         let mut state = self.health_state.write().await;
-        
+
         // Calculate health score based on multiple factors
         let mut score = 100.0;
-        
+
         // Factor in NAT success rate
         let nat_success_rate = 1.0 - state.health_metrics.nat_failure_rate;
         score *= nat_success_rate;
-        
+
         // Factor in system resource utilization
         score *= (1.0 - state.health_metrics.cpu_utilization / 100.0).max(0.5);
         score *= (1.0 - state.health_metrics.memory_utilization / 100.0).max(0.5);
-        
+
         // Factor in network latency
         if state.health_metrics.average_latency_ms > 0.0 {
-            let latency_factor = (1000.0 / (state.health_metrics.average_latency_ms + 1000.0)).max(0.1);
+            let latency_factor =
+                (1000.0 / (state.health_metrics.average_latency_ms + 1000.0)).max(0.1);
             score *= latency_factor;
         }
-        
+
         state.health_metrics.overall_health_score = score;
-        
+
         // Update health status based on score
         state.overall_health_status = if score >= 90.0 {
             HealthStatus::Healthy
@@ -217,93 +231,109 @@ impl HealthMonitor {
         } else {
             HealthStatus::Unhealthy
         };
-        
+
         Ok(())
     }
-    
+
     /// Register default health checks
     async fn register_default_health_checks(&mut self) -> Result<(), MonitoringError> {
         // NAT traversal health check
-        self.check_registry.register_check(HealthCheck {
-            id: "nat_traversal_success_rate".to_string(),
-            name: "NAT Traversal Success Rate".to_string(),
-            description: "Monitors NAT traversal success rate".to_string(),
-            check_type: HealthCheckType::SuccessRate {
-                metric: "nat_success_rate".to_string(),
-                threshold: self.config.thresholds.min_success_rate,
-                window: Duration::from_secs(300),
-            },
-            interval: Duration::from_secs(60),
-            timeout: Duration::from_secs(10),
-            critical: true,
-        }).await;
-        
+        self.check_registry
+            .register_check(HealthCheck {
+                id: "nat_traversal_success_rate".to_string(),
+                name: "NAT Traversal Success Rate".to_string(),
+                description: "Monitors NAT traversal success rate".to_string(),
+                check_type: HealthCheckType::SuccessRate {
+                    metric: "nat_success_rate".to_string(),
+                    threshold: self.config.thresholds.min_success_rate,
+                    window: Duration::from_secs(300),
+                },
+                interval: Duration::from_secs(60),
+                timeout: Duration::from_secs(10),
+                critical: true,
+            })
+            .await;
+
         // System resource health check
-        self.check_registry.register_check(HealthCheck {
-            id: "system_resources".to_string(),
-            name: "System Resources".to_string(),
-            description: "Monitors system CPU and memory usage".to_string(),
-            check_type: HealthCheckType::SystemResources {
-                max_cpu_percent: self.config.thresholds.max_cpu_utilization,
-                max_memory_percent: self.config.thresholds.max_memory_utilization,
-            },
-            interval: Duration::from_secs(30),
-            timeout: Duration::from_secs(5),
-            critical: true,
-        }).await;
-        
+        self.check_registry
+            .register_check(HealthCheck {
+                id: "system_resources".to_string(),
+                name: "System Resources".to_string(),
+                description: "Monitors system CPU and memory usage".to_string(),
+                check_type: HealthCheckType::SystemResources {
+                    max_cpu_percent: self.config.thresholds.max_cpu_utilization,
+                    max_memory_percent: self.config.thresholds.max_memory_utilization,
+                },
+                interval: Duration::from_secs(30),
+                timeout: Duration::from_secs(5),
+                critical: true,
+            })
+            .await;
+
         // Network connectivity health check
-        self.check_registry.register_check(HealthCheck {
-            id: "network_connectivity".to_string(),
-            name: "Network Connectivity".to_string(),
-            description: "Monitors network connectivity to bootstrap nodes".to_string(),
-            check_type: HealthCheckType::NetworkConnectivity {
-                targets: vec![
-                    "bootstrap1.example.com:9000".to_string(),
-                    "bootstrap2.example.com:9000".to_string(),
-                ],
-                max_latency_ms: self.config.thresholds.max_latency_ms,
-            },
-            interval: Duration::from_secs(60),
-            timeout: Duration::from_secs(30),
-            critical: false,
-        }).await;
-        
+        self.check_registry
+            .register_check(HealthCheck {
+                id: "network_connectivity".to_string(),
+                name: "Network Connectivity".to_string(),
+                description: "Monitors network connectivity to bootstrap nodes".to_string(),
+                check_type: HealthCheckType::NetworkConnectivity {
+                    targets: vec![
+                        "bootstrap1.example.com:9000".to_string(),
+                        "bootstrap2.example.com:9000".to_string(),
+                    ],
+                    max_latency_ms: self.config.thresholds.max_latency_ms,
+                },
+                interval: Duration::from_secs(60),
+                timeout: Duration::from_secs(30),
+                critical: false,
+            })
+            .await;
+
         // Service dependency health check
-        self.check_registry.register_check(HealthCheck {
-            id: "service_dependencies".to_string(),
-            name: "Service Dependencies".to_string(),
-            description: "Monitors health of dependent services".to_string(),
-            check_type: HealthCheckType::ServiceDependencies {
-                services: vec![
-                    ServiceDependency {
+        self.check_registry
+            .register_check(HealthCheck {
+                id: "service_dependencies".to_string(),
+                name: "Service Dependencies".to_string(),
+                description: "Monitors health of dependent services".to_string(),
+                check_type: HealthCheckType::ServiceDependencies {
+                    services: vec![ServiceDependency {
                         name: "metrics_backend".to_string(),
                         endpoint: "http://localhost:9090/api/v1/query".to_string(),
                         timeout: Duration::from_secs(5),
-                    },
-                ],
-            },
-            interval: Duration::from_secs(120),
-            timeout: Duration::from_secs(10),
-            critical: false,
-        }).await;
-        
+                    }],
+                },
+                interval: Duration::from_secs(120),
+                timeout: Duration::from_secs(10),
+                critical: false,
+            })
+            .await;
+
         Ok(())
     }
-    
+
     /// Run single health check
     async fn run_single_health_check(&self, check: &HealthCheck) -> HealthCheckResult {
         let start_time = Instant::now();
-        
+
         let (status, message, details) = match &check.check_type {
-            HealthCheckType::SuccessRate { metric, threshold, window } => {
-                self.check_success_rate(metric, *threshold, *window).await
+            HealthCheckType::SuccessRate {
+                metric,
+                threshold,
+                window,
+            } => self.check_success_rate(metric, *threshold, *window).await,
+            HealthCheckType::SystemResources {
+                max_cpu_percent,
+                max_memory_percent,
+            } => {
+                self.check_system_resources(*max_cpu_percent, *max_memory_percent)
+                    .await
             }
-            HealthCheckType::SystemResources { max_cpu_percent, max_memory_percent } => {
-                self.check_system_resources(*max_cpu_percent, *max_memory_percent).await
-            }
-            HealthCheckType::NetworkConnectivity { targets, max_latency_ms } => {
-                self.check_network_connectivity(targets, *max_latency_ms).await
+            HealthCheckType::NetworkConnectivity {
+                targets,
+                max_latency_ms,
+            } => {
+                self.check_network_connectivity(targets, *max_latency_ms)
+                    .await
             }
             HealthCheckType::ServiceDependencies { services } => {
                 self.check_service_dependencies(services).await
@@ -312,9 +342,9 @@ impl HealthMonitor {
                 self.run_custom_check(check_function).await
             }
         };
-        
+
         let duration = start_time.elapsed();
-        
+
         HealthCheckResult {
             check_id: check.id.clone(),
             check_name: check.name.clone(),
@@ -326,17 +356,29 @@ impl HealthMonitor {
             critical: check.critical,
         }
     }
-    
+
     /// Check success rate metric
-    async fn check_success_rate(&self, metric: &str, threshold: f64, window: Duration) -> (HealthStatus, String, HashMap<String, String>) {
-        let metrics = self.metrics_collector.get_metrics_for_window(metric, window).await;
-        
+    async fn check_success_rate(
+        &self,
+        metric: &str,
+        threshold: f64,
+        window: Duration,
+    ) -> (HealthStatus, String, HashMap<String, String>) {
+        let metrics = self
+            .metrics_collector
+            .get_metrics_for_window(metric, window)
+            .await;
+
         if metrics.is_empty() {
-            return (HealthStatus::Unknown, "No metrics available".to_string(), HashMap::new());
+            return (
+                HealthStatus::Unknown,
+                "No metrics available".to_string(),
+                HashMap::new(),
+            );
         }
-        
+
         let success_rate = metrics.iter().sum::<f64>() / metrics.len() as f64;
-        
+
         let status = if success_rate >= threshold {
             HealthStatus::Healthy
         } else if success_rate >= threshold * 0.8 {
@@ -344,22 +386,29 @@ impl HealthMonitor {
         } else {
             HealthStatus::Unhealthy
         };
-        
-        let message = format!("Success rate: {:.2}% (threshold: {:.2}%)", 
-            success_rate * 100.0, threshold * 100.0);
-        
+
+        let message = format!(
+            "Success rate: {:.2}% (threshold: {:.2}%)",
+            success_rate * 100.0,
+            threshold * 100.0
+        );
+
         let mut details = HashMap::new();
         details.insert("current_rate".to_string(), format!("{:.4}", success_rate));
         details.insert("threshold".to_string(), format!("{:.4}", threshold));
         details.insert("sample_count".to_string(), metrics.len().to_string());
-        
+
         (status, message, details)
     }
-    
+
     /// Check system resources
-    async fn check_system_resources(&self, max_cpu: f64, max_memory: f64) -> (HealthStatus, String, HashMap<String, String>) {
+    async fn check_system_resources(
+        &self,
+        max_cpu: f64,
+        max_memory: f64,
+    ) -> (HealthStatus, String, HashMap<String, String>) {
         let (cpu_usage, memory_usage) = self.get_system_resource_usage().await;
-        
+
         let status = if cpu_usage <= max_cpu && memory_usage <= max_memory {
             HealthStatus::Healthy
         } else if cpu_usage <= max_cpu * 1.2 && memory_usage <= max_memory * 1.2 {
@@ -367,24 +416,28 @@ impl HealthMonitor {
         } else {
             HealthStatus::Unhealthy
         };
-        
+
         let message = format!("CPU: {:.1}%, Memory: {:.1}%", cpu_usage, memory_usage);
-        
+
         let mut details = HashMap::new();
         details.insert("cpu_usage".to_string(), format!("{:.2}", cpu_usage));
         details.insert("memory_usage".to_string(), format!("{:.2}", memory_usage));
         details.insert("cpu_threshold".to_string(), format!("{:.2}", max_cpu));
         details.insert("memory_threshold".to_string(), format!("{:.2}", max_memory));
-        
+
         (status, message, details)
     }
-    
+
     /// Check network connectivity
-    async fn check_network_connectivity(&self, targets: &[String], max_latency: u32) -> (HealthStatus, String, HashMap<String, String>) {
+    async fn check_network_connectivity(
+        &self,
+        targets: &[String],
+        max_latency: u32,
+    ) -> (HealthStatus, String, HashMap<String, String>) {
         let mut successful_checks = 0;
         let mut total_latency = 0u32;
         let mut details = HashMap::new();
-        
+
         for target in targets {
             match self.ping_target(target).await {
                 Ok(latency) => {
@@ -397,14 +450,14 @@ impl HealthMonitor {
                 }
             }
         }
-        
+
         let success_rate = successful_checks as f64 / targets.len() as f64;
         let average_latency = if successful_checks > 0 {
             total_latency / successful_checks as u32
         } else {
             u32::MAX
         };
-        
+
         let status = if success_rate >= 0.8 && average_latency <= max_latency {
             HealthStatus::Healthy
         } else if success_rate >= 0.5 && average_latency <= max_latency * 2 {
@@ -412,21 +465,31 @@ impl HealthMonitor {
         } else {
             HealthStatus::Unhealthy
         };
-        
-        let message = format!("Connectivity: {}/{} targets, Avg latency: {}ms", 
-            successful_checks, targets.len(), average_latency);
-        
+
+        let message = format!(
+            "Connectivity: {}/{} targets, Avg latency: {}ms",
+            successful_checks,
+            targets.len(),
+            average_latency
+        );
+
         details.insert("success_rate".to_string(), format!("{:.2}", success_rate));
-        details.insert("average_latency".to_string(), format!("{}ms", average_latency));
-        
+        details.insert(
+            "average_latency".to_string(),
+            format!("{}ms", average_latency),
+        );
+
         (status, message, details)
     }
-    
+
     /// Check service dependencies
-    async fn check_service_dependencies(&self, services: &[ServiceDependency]) -> (HealthStatus, String, HashMap<String, String>) {
+    async fn check_service_dependencies(
+        &self,
+        services: &[ServiceDependency],
+    ) -> (HealthStatus, String, HashMap<String, String>) {
         let mut healthy_services = 0;
         let mut details = HashMap::new();
-        
+
         for service in services {
             match self.check_service_health(service).await {
                 Ok(()) => {
@@ -438,9 +501,9 @@ impl HealthMonitor {
                 }
             }
         }
-        
+
         let health_rate = healthy_services as f64 / services.len() as f64;
-        
+
         let status = if health_rate >= 1.0 {
             HealthStatus::Healthy
         } else if health_rate >= 0.5 {
@@ -448,25 +511,36 @@ impl HealthMonitor {
         } else {
             HealthStatus::Unhealthy
         };
-        
-        let message = format!("Dependencies: {}/{} healthy", healthy_services, services.len());
-        
+
+        let message = format!(
+            "Dependencies: {}/{} healthy",
+            healthy_services,
+            services.len()
+        );
+
         (status, message, details)
     }
-    
+
     /// Run custom health check
-    async fn run_custom_check(&self, _check_function: &str) -> (HealthStatus, String, HashMap<String, String>) {
+    async fn run_custom_check(
+        &self,
+        _check_function: &str,
+    ) -> (HealthStatus, String, HashMap<String, String>) {
         // Placeholder for custom check execution
-        (HealthStatus::Healthy, "Custom check passed".to_string(), HashMap::new())
+        (
+            HealthStatus::Healthy,
+            "Custom check passed".to_string(),
+            HashMap::new(),
+        )
     }
-    
+
     /// Get system resource usage
     async fn get_system_resource_usage(&self) -> (f64, f64) {
         // In real implementation, would query system metrics
         // For now, return mock values
         (45.0, 60.0) // 45% CPU, 60% memory
     }
-    
+
     /// Ping target to check connectivity
     async fn ping_target(&self, target: &str) -> Result<u32, MonitoringError> {
         // In real implementation, would perform actual network ping
@@ -474,23 +548,29 @@ impl HealthMonitor {
         debug!("Pinging target: {}", target);
         Ok(50) // 50ms latency
     }
-    
+
     /// Check service health
-    async fn check_service_health(&self, service: &ServiceDependency) -> Result<(), MonitoringError> {
+    async fn check_service_health(
+        &self,
+        service: &ServiceDependency,
+    ) -> Result<(), MonitoringError> {
         // In real implementation, would make HTTP request to service health endpoint
-        debug!("Checking health of service: {} at {}", service.name, service.endpoint);
+        debug!(
+            "Checking health of service: {} at {}",
+            service.name, service.endpoint
+        );
         Ok(())
     }
-    
+
     /// Calculate overall health score from check results
     async fn calculate_health_score(&self, results: &[HealthCheckResult]) -> f64 {
         if results.is_empty() {
             return 0.0;
         }
-        
+
         let mut score = 0.0;
         let mut total_weight = 0.0;
-        
+
         for result in results {
             let weight = if result.critical { 2.0 } else { 1.0 };
             let check_score = match result.status {
@@ -499,29 +579,29 @@ impl HealthMonitor {
                 HealthStatus::Unhealthy => 0.0,
                 HealthStatus::Unknown => 50.0,
             };
-            
+
             score += check_score * weight;
             total_weight += weight;
         }
-        
+
         if total_weight > 0.0 {
             score / total_weight
         } else {
             0.0
         }
     }
-    
+
     /// Start health check background task
     async fn start_health_check_task(&self) -> Result<(), MonitoringError> {
         let check_registry = self.check_registry.clone();
         let _health_state = self.health_state.clone();
-        
+
         let task = tokio::spawn(async move {
             let mut interval = interval(Duration::from_secs(30)); // Run checks every 30s
-            
+
             loop {
                 interval.tick().await;
-                
+
                 let checks = check_registry.get_all_checks().await;
                 for check in checks {
                     if check_registry.should_run_check(&check).await {
@@ -531,66 +611,68 @@ impl HealthMonitor {
                 }
             }
         });
-        
+
         self.tasks.lock().await.push(task);
         Ok(())
     }
-    
+
     /// Start metrics collection background task
     async fn start_metrics_collection_task(&self) -> Result<(), MonitoringError> {
         let metrics_collector = self.metrics_collector.clone();
-        
+
         let task = tokio::spawn(async move {
             let mut interval = interval(Duration::from_secs(10)); // Collect metrics every 10s
-            
+
             loop {
                 interval.tick().await;
-                
+
                 if let Err(e) = metrics_collector.collect_system_metrics().await {
                     warn!("Failed to collect system metrics: {}", e);
                 }
             }
         });
-        
+
         self.tasks.lock().await.push(task);
         Ok(())
     }
-    
+
     /// Start trend analysis background task
     async fn start_trend_analysis_task(&self) -> Result<(), MonitoringError> {
         let trend_analyzer = self.trend_analyzer.clone();
         let metrics_collector = self.metrics_collector.clone();
-        
+
         let task = tokio::spawn(async move {
             let mut interval = interval(Duration::from_secs(60)); // Analyze trends every minute
-            
+
             loop {
                 interval.tick().await;
-                
-                let recent_metrics = metrics_collector.get_recent_metrics(Duration::from_secs(300)).await;
+
+                let recent_metrics = metrics_collector
+                    .get_recent_metrics(Duration::from_secs(300))
+                    .await;
                 if let Err(e) = trend_analyzer.analyze_trends(recent_metrics).await {
                     warn!("Failed to analyze health trends: {}", e);
                 }
             }
         });
-        
+
         self.tasks.lock().await.push(task);
         Ok(())
     }
-    
+
     /// Start system resource monitoring background task
     async fn start_system_resource_monitoring_task(&self) -> Result<(), MonitoringError> {
         let health_state = self.health_state.clone();
-        
+
         let task = tokio::spawn(async move {
             let mut interval = interval(Duration::from_secs(15)); // Monitor resources every 15s
-            
+
             loop {
                 interval.tick().await;
-                
+
                 // Would collect actual system metrics
                 let mut state = health_state.write().await;
-                
+
                 // Mock system metrics - in real implementation would use sysinfo or similar
                 state.health_metrics.cpu_utilization = 45.0;
                 state.health_metrics.memory_utilization = 60.0;
@@ -598,7 +680,7 @@ impl HealthMonitor {
                 state.health_metrics.network_utilization = 25.0;
             }
         });
-        
+
         self.tasks.lock().await.push(task);
         Ok(())
     }
@@ -645,12 +727,12 @@ pub struct HealthThresholds {
 impl Default for HealthThresholds {
     fn default() -> Self {
         Self {
-            min_success_rate: 0.95,    // 95% minimum success rate
-            max_failure_rate: 0.05,    // 5% maximum failure rate
-            max_cpu_utilization: 80.0, // 80% maximum CPU usage
+            min_success_rate: 0.95,       // 95% minimum success rate
+            max_failure_rate: 0.05,       // 5% maximum failure rate
+            max_cpu_utilization: 80.0,    // 80% maximum CPU usage
             max_memory_utilization: 85.0, // 85% maximum memory usage
-            max_latency_ms: 1000,      // 1 second maximum latency
-            min_health_score: 70.0,    // 70% minimum health score
+            max_latency_ms: 1000,         // 1 second maximum latency
+            min_health_score: 70.0,       // 70% minimum health score
         }
     }
 }
@@ -843,7 +925,7 @@ impl HealthCheckResult {
     pub fn overall_status(&self) -> HealthStatus {
         self.status.clone()
     }
-    
+
     /// Get health score (0-100)
     pub fn health_score(&self) -> f64 {
         match self.status {
@@ -878,20 +960,20 @@ impl HealthCheckRegistry {
             last_run_times: Arc::new(RwLock::new(HashMap::new())),
         }
     }
-    
+
     async fn register_check(&self, check: HealthCheck) {
         let mut checks = self.checks.write().await;
         checks.insert(check.id.clone(), check);
     }
-    
+
     async fn get_all_checks(&self) -> Vec<HealthCheck> {
         let checks = self.checks.read().await;
         checks.values().cloned().collect()
     }
-    
+
     async fn should_run_check(&self, check: &HealthCheck) -> bool {
         let last_run_times = self.last_run_times.read().await;
-        
+
         if let Some(&last_run) = last_run_times.get(&check.id) {
             last_run.elapsed() >= check.interval
         } else {
@@ -911,71 +993,75 @@ impl HealthMetricsCollector {
             metrics: Arc::new(RwLock::new(Vec::new())),
         }
     }
-    
+
     async fn record_nat_result(&self, result: &NatTraversalResult) {
         let mut metrics = self.metrics.write().await;
-        
+
         let metric = TimestampedMetric {
             timestamp: SystemTime::now(),
             metric_name: "nat_success".to_string(),
             value: if result.success { 1.0 } else { 0.0 },
         };
-        
+
         metrics.push(metric);
-        
+
         // Keep only recent metrics
         let cutoff = SystemTime::now() - Duration::from_secs(3600); // 1 hour
         metrics.retain(|m| m.timestamp >= cutoff);
     }
-    
+
     async fn collect_system_metrics(&self) -> Result<(), MonitoringError> {
         // Would collect actual system metrics
         debug!("Collecting system metrics");
         Ok(())
     }
-    
+
     async fn get_summary(&self) -> HealthMetricsSummary {
         let metrics = self.metrics.read().await;
-        
-        let success_count = metrics.iter()
+
+        let success_count = metrics
+            .iter()
             .filter(|m| m.metric_name == "nat_success" && m.value > 0.0)
             .count();
-        
-        let total_count = metrics.iter()
+
+        let total_count = metrics
+            .iter()
             .filter(|m| m.metric_name == "nat_success")
             .count();
-        
+
         let success_rate = if total_count > 0 {
             success_count as f64 / total_count as f64
         } else {
             0.0
         };
-        
+
         HealthMetricsSummary {
             success_rate,
             total_attempts: total_count as u64,
             successful_attempts: success_count as u64,
-            average_latency_ms: 50.0, // Mock value
-            system_cpu_usage: 45.0,   // Mock value
+            average_latency_ms: 50.0,  // Mock value
+            system_cpu_usage: 45.0,    // Mock value
             system_memory_usage: 60.0, // Mock value
         }
     }
-    
+
     async fn get_metrics_for_window(&self, metric_name: &str, window: Duration) -> Vec<f64> {
         let metrics = self.metrics.read().await;
         let cutoff = SystemTime::now() - window;
-        
-        metrics.iter()
+
+        metrics
+            .iter()
             .filter(|m| m.metric_name == metric_name && m.timestamp >= cutoff)
             .map(|m| m.value)
             .collect()
     }
-    
+
     async fn get_recent_metrics(&self, period: Duration) -> Vec<TimestampedMetric> {
         let metrics = self.metrics.read().await;
         let cutoff = SystemTime::now() - period;
-        
-        metrics.iter()
+
+        metrics
+            .iter()
             .filter(|m| m.timestamp >= cutoff)
             .cloned()
             .collect()
@@ -1012,16 +1098,16 @@ impl HealthTrendAnalyzer {
             trends: Arc::new(RwLock::new(HealthTrends::default())),
         }
     }
-    
+
     async fn analyze_trends(&self, metrics: Vec<TimestampedMetric>) -> Result<(), MonitoringError> {
         // Analyze trends in the metrics
         debug!("Analyzing health trends for {} metrics", metrics.len());
-        
+
         // Would implement actual trend analysis here
-        
+
         Ok(())
     }
-    
+
     async fn get_trends(&self, _period: Duration) -> HealthTrends {
         let trends = self.trends.read().await;
         trends.clone()
@@ -1055,11 +1141,11 @@ mod tests {
     async fn test_health_monitor_creation() {
         let config = HealthConfig::default();
         let monitor = HealthMonitor::new(config).await.unwrap();
-        
+
         let status = monitor.get_status().await;
         assert!(status.contains("Unknown"));
     }
-    
+
     #[tokio::test]
     async fn test_health_check_result() {
         let result = HealthCheckResult {
@@ -1072,15 +1158,15 @@ mod tests {
             timestamp: SystemTime::now(),
             critical: true,
         };
-        
+
         assert_eq!(result.health_score(), 100.0);
         assert!(matches!(result.overall_status(), HealthStatus::Healthy));
     }
-    
+
     #[tokio::test]
     async fn test_health_metrics_collector() {
         let collector = HealthMetricsCollector::new();
-        
+
         // Record a successful NAT result
         let result = NatTraversalResult {
             attempt_id: "test".to_string(),
@@ -1098,9 +1184,9 @@ mod tests {
             },
             candidates_used: vec![],
         };
-        
+
         collector.record_nat_result(&result).await;
-        
+
         let summary = collector.get_summary().await;
         assert_eq!(summary.success_rate, 1.0);
         assert_eq!(summary.successful_attempts, 1);

@@ -22,10 +22,7 @@ use std::{
     },
     time::{Duration, Instant, SystemTime},
 };
-use tokio::{
-    sync::Semaphore,
-    time::timeout,
-};
+use tokio::{sync::Semaphore, time::timeout};
 use tracing::info;
 
 // ===== DoS Attack Tests =====
@@ -697,7 +694,10 @@ async fn test_memory_pressure_during_auth() {
         auth_managers.push(auth);
 
         if auth_managers.len() % 10 == 1 {
-            info!("Created {} auth managers with pending challenges", auth_managers.len());
+            info!(
+                "Created {} auth managers with pending challenges",
+                auth_managers.len()
+            );
         }
     }
 

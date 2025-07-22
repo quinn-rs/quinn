@@ -8,17 +8,14 @@ use std::net::SocketAddr;
 
 // Re-export public discovery API
 pub use crate::candidate_discovery::{
-    NetworkInterface,
-    DiscoveryError,
-    DiscoveryEvent,
-    ValidatedCandidate,
+    DiscoveryError, DiscoveryEvent, NetworkInterface, ValidatedCandidate,
 };
 
 /// Common trait for platform-specific network discovery implementations
 pub trait NetworkDiscovery {
     /// Discover network interfaces on the system
     fn discover_interfaces(&self) -> Result<Vec<NetworkInterface>, DiscoveryError>;
-    
+
     /// Get the default route for outgoing connections
     fn get_default_route(&self) -> Result<Option<SocketAddr>, DiscoveryError>;
 }

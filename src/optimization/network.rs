@@ -20,9 +20,9 @@ use tracing::{debug, info, warn};
 use tokio::time::sleep;
 
 use crate::{
-    nat_traversal_api::{CandidateAddress, PeerId},
     candidate_discovery::NetworkInterface,
     connection::nat_traversal::{CandidateSource, CandidateState},
+    nat_traversal_api::{CandidateAddress, PeerId},
 };
 
 /// Parallel candidate discovery coordinator
@@ -415,8 +415,11 @@ impl ParallelDiscoveryCoordinator {
         interfaces: Vec<NetworkInterface>,
         peer_id: PeerId,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        info!("Starting parallel discovery across {} interfaces for peer {:?}", 
-              interfaces.len(), peer_id);
+        info!(
+            "Starting parallel discovery across {} interfaces for peer {:?}",
+            interfaces.len(),
+            peer_id
+        );
 
         // Prioritize interfaces if enabled
         let prioritized_interfaces = if self.config.enable_prioritization {
@@ -432,7 +435,8 @@ impl ParallelDiscoveryCoordinator {
             self.config.max_concurrent_tasks
         };
 
-        let tasks_to_start = prioritized_interfaces.into_iter()
+        let tasks_to_start = prioritized_interfaces
+            .into_iter()
             .take(max_tasks)
             .collect::<Vec<_>>();
 
@@ -448,14 +452,19 @@ impl ParallelDiscoveryCoordinator {
     }
 
     /// Prioritize interfaces based on type and characteristics
-    fn prioritize_interfaces(&self, mut interfaces: Vec<NetworkInterface>) -> Vec<NetworkInterface> {
+    fn prioritize_interfaces(
+        &self,
+        mut interfaces: Vec<NetworkInterface>,
+    ) -> Vec<NetworkInterface> {
         interfaces.sort_by_key(|interface| {
             let interface_type = self.classify_interface_type(&interface.name);
-            let type_priority = self.config.preferred_interface_types
+            let type_priority = self
+                .config
+                .preferred_interface_types
                 .iter()
                 .position(|&t| t == interface_type)
                 .unwrap_or(999);
-            
+
             // Lower number = higher priority
             (type_priority, interface.addresses.len())
         });
@@ -466,16 +475,25 @@ impl ParallelDiscoveryCoordinator {
     /// Classify interface type from name
     fn classify_interface_type(&self, name: &str) -> InterfaceType {
         let name_lower = name.to_lowercase();
-        
+
         if name_lower.contains("eth") || name_lower.contains("en") {
             InterfaceType::Ethernet
-        } else if name_lower.contains("wlan") || name_lower.contains("wifi") || name_lower.contains("wl") {
+        } else if name_lower.contains("wlan")
+            || name_lower.contains("wifi")
+            || name_lower.contains("wl")
+        {
             InterfaceType::WiFi
-        } else if name_lower.contains("cell") || name_lower.contains("wwan") || name_lower.contains("ppp") {
+        } else if name_lower.contains("cell")
+            || name_lower.contains("wwan")
+            || name_lower.contains("ppp")
+        {
             InterfaceType::Cellular
         } else if name_lower.contains("lo") || name_lower.contains("loopback") {
             InterfaceType::Loopback
-        } else if name_lower.contains("vpn") || name_lower.contains("tun") || name_lower.contains("tap") {
+        } else if name_lower.contains("vpn")
+            || name_lower.contains("tun")
+            || name_lower.contains("tap")
+        {
             InterfaceType::VPN
         } else {
             InterfaceType::Unknown
@@ -490,10 +508,10 @@ impl ParallelDiscoveryCoordinator {
         // - Memory availability
         // - Network bandwidth
         // - Current system load
-        
+
         let base_parallelism = self.config.max_concurrent_tasks;
         let system_load_factor = 0.8; // Assume 80% system capacity
-        
+
         ((base_parallelism as f64) * system_load_factor) as usize
     }
 
@@ -551,7 +569,7 @@ impl ParallelDiscoveryCoordinator {
         interface: NetworkInterface,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let interface_name = interface.name.clone();
-        
+
         // Update task status to running
         {
             let mut discoveries = self.active_discoveries.write().unwrap();
@@ -564,7 +582,8 @@ impl ParallelDiscoveryCoordinator {
         let discovery_result = timeout(
             self.config.interface_timeout,
             self.discover_candidates_for_interface(interface),
-        ).await;
+        )
+        .await;
 
         match discovery_result {
             Ok(Ok(candidates)) => {
@@ -657,14 +676,16 @@ impl ParallelDiscoveryCoordinator {
             IpAddr::V4(ipv4) => {
                 !ipv4.is_loopback() && !ipv4.is_link_local() && !ipv4.is_broadcast()
             }
-            IpAddr::V6(ipv6) => {
-                !ipv6.is_loopback() && !ipv6.is_unspecified()
-            }
+            IpAddr::V6(ipv6) => !ipv6.is_loopback() && !ipv6.is_unspecified(),
         }
     }
 
     /// Calculate priority for a candidate address
-    fn calculate_candidate_priority(&self, address: &SocketAddr, interface: &NetworkInterface) -> u32 {
+    fn calculate_candidate_priority(
+        &self,
+        address: &SocketAddr,
+        interface: &NetworkInterface,
+    ) -> u32 {
         let mut priority = 1000u32;
 
         // Prefer IPv4 over IPv6 for simplicity
@@ -697,23 +718,28 @@ impl ParallelDiscoveryCoordinator {
     }
 
     /// Start coordination task for managing parallel discoveries
-    async fn start_coordination_task(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    async fn start_coordination_task(
+        &mut self,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let discoveries = Arc::clone(&self.active_discoveries);
         let stats = Arc::clone(&self.stats);
         let config = self.config.clone();
 
         let coordination_handle = tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_millis(500));
-            
+
             loop {
                 interval.tick().await;
                 Self::coordinate_discoveries(&discoveries, &stats, &config).await;
-                
+
                 // Check if all discoveries are complete
                 let all_complete = {
                     let discoveries_read = discoveries.read().unwrap();
                     discoveries_read.values().all(|task| {
-                        matches!(task.status, TaskStatus::Completed | TaskStatus::Failed | TaskStatus::Timeout)
+                        matches!(
+                            task.status,
+                            TaskStatus::Completed | TaskStatus::Failed | TaskStatus::Timeout
+                        )
                     })
                 };
 
@@ -753,10 +779,11 @@ impl ParallelDiscoveryCoordinator {
             let mut stats_guard = stats.lock().unwrap();
             stats_guard.total_candidates = total_candidates;
             stats_guard.tasks_completed = completed_tasks;
-            
+
             if completed_tasks > 0 {
                 stats_guard.avg_discovery_time = total_discovery_time / completed_tasks as u32;
-                stats_guard.parallelism_efficiency = completed_tasks as f64 / stats_guard.tasks_started as f64;
+                stats_guard.parallelism_efficiency =
+                    completed_tasks as f64 / stats_guard.tasks_started as f64;
             }
         }
     }
@@ -803,60 +830,75 @@ impl AdaptiveTimeoutManager {
     /// Create a new adaptive timeout manager
     pub fn new() -> Self {
         let mut timeout_configs = HashMap::new();
-        
+
         // Initialize default timeout configurations for each operation type
-        timeout_configs.insert(OperationType::CandidateDiscovery, AdaptiveTimeoutConfig {
-            base_timeout: Duration::from_secs(5),
-            min_timeout: Duration::from_millis(500),
-            max_timeout: Duration::from_secs(30),
-            rtt_multiplier: 4.0,
-            quality_factor: 0.5,
-            congestion_factor: 0.3,
-        });
+        timeout_configs.insert(
+            OperationType::CandidateDiscovery,
+            AdaptiveTimeoutConfig {
+                base_timeout: Duration::from_secs(5),
+                min_timeout: Duration::from_millis(500),
+                max_timeout: Duration::from_secs(30),
+                rtt_multiplier: 4.0,
+                quality_factor: 0.5,
+                congestion_factor: 0.3,
+            },
+        );
 
-        timeout_configs.insert(OperationType::PathValidation, AdaptiveTimeoutConfig {
-            base_timeout: Duration::from_secs(3),
-            min_timeout: Duration::from_millis(200),
-            max_timeout: Duration::from_secs(15),
-            rtt_multiplier: 3.0,
-            quality_factor: 0.4,
-            congestion_factor: 0.4,
-        });
+        timeout_configs.insert(
+            OperationType::PathValidation,
+            AdaptiveTimeoutConfig {
+                base_timeout: Duration::from_secs(3),
+                min_timeout: Duration::from_millis(200),
+                max_timeout: Duration::from_secs(15),
+                rtt_multiplier: 3.0,
+                quality_factor: 0.4,
+                congestion_factor: 0.4,
+            },
+        );
 
-        timeout_configs.insert(OperationType::CoordinationRequest, AdaptiveTimeoutConfig {
-            base_timeout: Duration::from_secs(10),
-            min_timeout: Duration::from_secs(1),
-            max_timeout: Duration::from_secs(60),
-            rtt_multiplier: 5.0,
-            quality_factor: 0.6,
-            congestion_factor: 0.2,
-        });
+        timeout_configs.insert(
+            OperationType::CoordinationRequest,
+            AdaptiveTimeoutConfig {
+                base_timeout: Duration::from_secs(10),
+                min_timeout: Duration::from_secs(1),
+                max_timeout: Duration::from_secs(60),
+                rtt_multiplier: 5.0,
+                quality_factor: 0.6,
+                congestion_factor: 0.2,
+            },
+        );
 
-        timeout_configs.insert(OperationType::HolePunching, AdaptiveTimeoutConfig {
-            base_timeout: Duration::from_secs(2),
-            min_timeout: Duration::from_millis(100),
-            max_timeout: Duration::from_secs(10),
-            rtt_multiplier: 2.0,
-            quality_factor: 0.3,
-            congestion_factor: 0.5,
-        });
+        timeout_configs.insert(
+            OperationType::HolePunching,
+            AdaptiveTimeoutConfig {
+                base_timeout: Duration::from_secs(2),
+                min_timeout: Duration::from_millis(100),
+                max_timeout: Duration::from_secs(10),
+                rtt_multiplier: 2.0,
+                quality_factor: 0.3,
+                congestion_factor: 0.5,
+            },
+        );
 
-        timeout_configs.insert(OperationType::ConnectionEstablishment, AdaptiveTimeoutConfig {
-            base_timeout: Duration::from_secs(15),
-            min_timeout: Duration::from_secs(2),
-            max_timeout: Duration::from_secs(120),
-            rtt_multiplier: 6.0,
-            quality_factor: 0.7,
-            congestion_factor: 0.1,
-        });
+        timeout_configs.insert(
+            OperationType::ConnectionEstablishment,
+            AdaptiveTimeoutConfig {
+                base_timeout: Duration::from_secs(15),
+                min_timeout: Duration::from_secs(2),
+                max_timeout: Duration::from_secs(120),
+                rtt_multiplier: 6.0,
+                quality_factor: 0.7,
+                congestion_factor: 0.1,
+            },
+        );
 
         Self {
             network_conditions: Arc::new(RwLock::new(NetworkConditions {
                 rtt_samples: VecDeque::new(),
                 packet_loss_rate: 0.0,
                 bandwidth_estimate: 1_000_000, // 1 MB/s default
-                quality_score: 0.8, // Good quality default
-                congestion_level: 0.2, // Low congestion default
+                quality_score: 0.8,            // Good quality default
+                congestion_level: 0.2,         // Low congestion default
                 last_measurement: Instant::now(),
             })),
             timeout_configs,
@@ -872,7 +914,7 @@ impl AdaptiveTimeoutManager {
 
         let monitoring_handle = tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(1));
-            
+
             loop {
                 interval.tick().await;
                 Self::update_network_conditions(&network_conditions, &stats).await;
@@ -886,7 +928,9 @@ impl AdaptiveTimeoutManager {
 
     /// Calculate adaptive timeout for an operation
     pub async fn calculate_timeout(&self, operation: OperationType) -> Duration {
-        let config = self.timeout_configs.get(&operation)
+        let config = self
+            .timeout_configs
+            .get(&operation)
             .cloned()
             .unwrap_or_else(|| AdaptiveTimeoutConfig {
                 base_timeout: Duration::from_secs(5),
@@ -898,23 +942,25 @@ impl AdaptiveTimeoutManager {
             });
 
         let conditions = self.network_conditions.read().unwrap();
-        
+
         // Calculate base timeout from RTT if available
-        let rtt_based_timeout = if let Some(avg_rtt) = self.calculate_average_rtt(&conditions.rtt_samples) {
-            Duration::from_millis((avg_rtt.as_millis() as f64 * config.rtt_multiplier) as u64)
-        } else {
-            config.base_timeout
-        };
+        let rtt_based_timeout =
+            if let Some(avg_rtt) = self.calculate_average_rtt(&conditions.rtt_samples) {
+                Duration::from_millis((avg_rtt.as_millis() as f64 * config.rtt_multiplier) as u64)
+            } else {
+                config.base_timeout
+            };
 
         // Adjust for network quality
         let quality_adjustment = 1.0 + (1.0 - conditions.quality_score) * config.quality_factor;
-        
+
         // Adjust for congestion
         let congestion_adjustment = 1.0 + conditions.congestion_level * config.congestion_factor;
 
         // Calculate final timeout
         let adjusted_timeout = Duration::from_millis(
-            (rtt_based_timeout.as_millis() as f64 * quality_adjustment * congestion_adjustment) as u64
+            (rtt_based_timeout.as_millis() as f64 * quality_adjustment * congestion_adjustment)
+                as u64,
         );
 
         // Clamp to min/max bounds
@@ -929,8 +975,10 @@ impl AdaptiveTimeoutManager {
             stats.avg_timeouts.insert(operation, final_timeout);
         }
 
-        debug!("Calculated adaptive timeout for {:?}: {:?} (quality: {:.2}, congestion: {:.2})",
-               operation, final_timeout, conditions.quality_score, conditions.congestion_level);
+        debug!(
+            "Calculated adaptive timeout for {:?}: {:?} (quality: {:.2}, congestion: {:.2})",
+            operation, final_timeout, conditions.quality_score, conditions.congestion_level
+        );
 
         final_timeout
     }
@@ -943,7 +991,7 @@ impl AdaptiveTimeoutManager {
         bandwidth: Option<u64>,
     ) {
         let mut conditions = self.network_conditions.write().unwrap();
-        
+
         // Add RTT sample
         conditions.rtt_samples.push_back(rtt);
         if conditions.rtt_samples.len() > 50 {
@@ -956,7 +1004,8 @@ impl AdaptiveTimeoutManager {
 
         // Update bandwidth estimate if provided
         if let Some(bw) = bandwidth {
-            conditions.bandwidth_estimate = (conditions.bandwidth_estimate as f64 * 0.8 + bw as f64 * 0.2) as u64;
+            conditions.bandwidth_estimate =
+                (conditions.bandwidth_estimate as f64 * 0.8 + bw as f64 * 0.2) as u64;
         }
 
         // Update quality score based on RTT and packet loss
@@ -988,12 +1037,14 @@ impl AdaptiveTimeoutManager {
         }
 
         let avg = self.calculate_average_rtt(samples).unwrap().as_millis() as f64;
-        let variance: f64 = samples.iter()
+        let variance: f64 = samples
+            .iter()
             .map(|d| {
                 let diff = d.as_millis() as f64 - avg;
                 diff * diff
             })
-            .sum::<f64>() / samples.len() as f64;
+            .sum::<f64>()
+            / samples.len() as f64;
 
         (variance.sqrt() / avg).min(1.0)
     }
@@ -1011,7 +1062,7 @@ impl AdaptiveTimeoutManager {
         // - Adjust quality scores
 
         let mut conditions = network_conditions.write().unwrap();
-        
+
         // Age out old RTT samples (keep last 100 samples)
         while conditions.rtt_samples.len() > 100 {
             conditions.rtt_samples.pop_front();
@@ -1019,7 +1070,7 @@ impl AdaptiveTimeoutManager {
 
         // Decay packet loss rate over time
         conditions.packet_loss_rate *= 0.99;
-        
+
         // Update quality score based on recent measurements
         if conditions.last_measurement.elapsed() > Duration::from_secs(10) {
             // No recent measurements, assume degraded quality
@@ -1113,14 +1164,16 @@ impl BandwidthAwareValidator {
 
         // Check bandwidth utilization if adaptive validation is enabled
         if self.config.enable_adaptive_validation {
-            let current_usage: u64 = validations.values()
+            let current_usage: u64 = validations
+                .values()
                 .map(|session| session.bandwidth_usage)
                 .sum();
 
             let available_bandwidth = bandwidth_monitor.current_bandwidth;
             let utilization = current_usage as f64 / available_bandwidth as f64;
 
-            if utilization > 0.8 { // 80% utilization threshold
+            if utilization > 0.8 {
+                // 80% utilization threshold
                 return false;
             }
         }
@@ -1135,7 +1188,7 @@ impl BandwidthAwareValidator {
         packet_size: usize,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let mut validations = self.active_validations.write().unwrap();
-        
+
         if let Some(session) = validations.get_mut(&target_address) {
             session.packets_sent += 1;
             session.total_bytes += packet_size as u64;
@@ -1155,7 +1208,7 @@ impl BandwidthAwareValidator {
         rtt: Duration,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let mut validations = self.active_validations.write().unwrap();
-        
+
         if let Some(session) = validations.get_mut(&target_address) {
             session.packets_received += 1;
             session.rtt_samples.push(rtt);
@@ -1167,7 +1220,7 @@ impl BandwidthAwareValidator {
     /// Update bandwidth usage monitoring
     async fn update_bandwidth_usage(&self, bytes_used: u64) {
         let mut monitor = self.bandwidth_monitor.lock().unwrap();
-        
+
         let now = Instant::now();
         let sample = BandwidthSample {
             timestamp: now,
@@ -1187,13 +1240,13 @@ impl BandwidthAwareValidator {
 
         // Update current bandwidth estimate
         if !monitor.bandwidth_samples.is_empty() {
-            let total_bytes: u64 = monitor.bandwidth_samples.iter()
+            let total_bytes: u64 = monitor
+                .bandwidth_samples
+                .iter()
                 .map(|s| s.bytes_transferred)
                 .sum();
-            let total_time: Duration = monitor.bandwidth_samples.iter()
-                .map(|s| s.duration)
-                .sum();
-            
+            let total_time: Duration = monitor.bandwidth_samples.iter().map(|s| s.duration).sum();
+
             if total_time.as_secs() > 0 {
                 monitor.current_bandwidth = total_bytes / total_time.as_secs();
             }
@@ -1215,7 +1268,7 @@ impl BandwidthAwareValidator {
 
         if let Some(session) = session {
             let duration = session.started_at.elapsed();
-            
+
             // Update stats
             {
                 let mut stats = self.stats.lock().unwrap();
@@ -1225,21 +1278,26 @@ impl BandwidthAwareValidator {
                 stats.total_bandwidth_used += session.bandwidth_usage;
                 stats.avg_validation_time = if stats.validations_completed > 0 {
                     Duration::from_millis(
-                        (stats.avg_validation_time.as_millis() as u64 * (stats.validations_completed - 1) + 
-                         duration.as_millis() as u64) / stats.validations_completed
+                        (stats.avg_validation_time.as_millis() as u64
+                            * (stats.validations_completed - 1)
+                            + duration.as_millis() as u64)
+                            / stats.validations_completed,
                     )
                 } else {
                     duration
                 };
-                
+
                 if stats.total_bandwidth_used > 0 {
-                    stats.bandwidth_efficiency = stats.validations_completed as f64 / 
-                                                stats.total_bandwidth_used as f64 * 1000.0; // per KB
+                    stats.bandwidth_efficiency = stats.validations_completed as f64
+                        / stats.total_bandwidth_used as f64
+                        * 1000.0; // per KB
                 }
             }
 
-            debug!("Completed validation for {} in {:?} (success: {})", 
-                   target_address, duration, success);
+            debug!(
+                "Completed validation for {} in {:?} (success: {})",
+                target_address, duration, success
+            );
         }
 
         Ok(())
@@ -1294,7 +1352,7 @@ impl CongestionControlIntegrator {
                 (state.congestion_window as f64 * self.config.cwnd_scaling_factor) as u32
             },
             rtt_estimate: Duration::from_millis(100), // Default RTT
-            bandwidth_estimate: 1_000_000, // 1 MB/s default
+            bandwidth_estimate: 1_000_000,            // 1 MB/s default
         };
 
         // Add to active migrations
@@ -1309,8 +1367,10 @@ impl CongestionControlIntegrator {
             stats.migrations_attempted += 1;
         }
 
-        info!("Started congestion-aware migration for peer {:?}: {} -> {}", 
-              peer_id, old_path, new_path);
+        info!(
+            "Started congestion-aware migration for peer {:?}: {} -> {}",
+            peer_id, old_path, new_path
+        );
         Ok(())
     }
 
@@ -1323,13 +1383,13 @@ impl CongestionControlIntegrator {
         bandwidth: Option<u64>,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let mut migrations = self.active_migrations.write().unwrap();
-        
+
         if let Some(session) = migrations.get_mut(&peer_id) {
             session.migration_state = new_state;
-            
+
             if let Some(rtt) = rtt {
                 session.rtt_estimate = rtt;
-                
+
                 // Update global congestion state
                 let mut congestion_state = self.congestion_state.lock().unwrap();
                 congestion_state.rtt_measurements.push_back(rtt);
@@ -1337,7 +1397,7 @@ impl CongestionControlIntegrator {
                     congestion_state.rtt_measurements.pop_front();
                 }
             }
-            
+
             if let Some(bw) = bandwidth {
                 session.bandwidth_estimate = bw;
             }
@@ -1345,20 +1405,25 @@ impl CongestionControlIntegrator {
             // Check if migration completed
             if matches!(new_state, MigrationState::Completed) {
                 let duration = session.started_at.elapsed();
-                
+
                 // Update stats
                 let mut stats = self.stats.lock().unwrap();
                 stats.migrations_successful += 1;
                 stats.avg_migration_time = if stats.migrations_successful > 0 {
                     Duration::from_millis(
-                        (stats.avg_migration_time.as_millis() as u64 * (stats.migrations_successful - 1) + 
-                         duration.as_millis() as u64) / stats.migrations_successful
+                        (stats.avg_migration_time.as_millis() as u64
+                            * (stats.migrations_successful - 1)
+                            + duration.as_millis() as u64)
+                            / stats.migrations_successful,
                     )
                 } else {
                     duration
                 };
 
-                debug!("Migration completed for peer {:?} in {:?}", peer_id, duration);
+                debug!(
+                    "Migration completed for peer {:?} in {:?}",
+                    peer_id, duration
+                );
             }
         }
 
@@ -1366,11 +1431,7 @@ impl CongestionControlIntegrator {
     }
 
     /// Record congestion event
-    pub async fn record_congestion_event(
-        &self,
-        event_type: CongestionEventType,
-        severity: f64,
-    ) {
+    pub async fn record_congestion_event(&self, event_type: CongestionEventType, severity: f64) {
         let event = CongestionEvent {
             timestamp: Instant::now(),
             event_type,
@@ -1379,22 +1440,23 @@ impl CongestionControlIntegrator {
 
         let mut congestion_state = self.congestion_state.lock().unwrap();
         congestion_state.congestion_events.push_back(event);
-        
+
         // Keep only recent events
         if congestion_state.congestion_events.len() > 100 {
             congestion_state.congestion_events.pop_front();
         }
 
         // Update congestion level based on recent events
-        let recent_events: Vec<_> = congestion_state.congestion_events.iter()
+        let recent_events: Vec<_> = congestion_state
+            .congestion_events
+            .iter()
             .filter(|e| e.timestamp.elapsed() < Duration::from_secs(10))
             .collect();
 
         if !recent_events.is_empty() {
-            let avg_severity: f64 = recent_events.iter()
-                .map(|e| e.severity)
-                .sum::<f64>() / recent_events.len() as f64;
-            
+            let avg_severity: f64 =
+                recent_events.iter().map(|e| e.severity).sum::<f64>() / recent_events.len() as f64;
+
             congestion_state.congestion_level = avg_severity;
         }
 
@@ -1405,18 +1467,20 @@ impl CongestionControlIntegrator {
                 congestion_state.congestion_window = congestion_state.ssthresh;
             }
             CongestionEventType::ECNMark => {
-                congestion_state.congestion_window = 
+                congestion_state.congestion_window =
                     (congestion_state.congestion_window as f64 * 0.8) as u32;
             }
             CongestionEventType::RTTIncrease => {
                 // Gradual reduction for RTT increase
-                congestion_state.congestion_window = 
+                congestion_state.congestion_window =
                     (congestion_state.congestion_window as f64 * 0.95) as u32;
             }
         }
 
-        debug!("Recorded congestion event: {:?} (severity: {:.2}, new cwnd: {})", 
-               event_type, severity, congestion_state.congestion_window);
+        debug!(
+            "Recorded congestion event: {:?} (severity: {:.2}, new cwnd: {})",
+            event_type, severity, congestion_state.congestion_window
+        );
     }
 
     /// Get congestion control integration statistics
@@ -1439,10 +1503,14 @@ impl NetworkEfficiencyManager {
     /// Create a new network efficiency manager with default configurations
     pub fn new() -> Self {
         Self {
-            parallel_discovery: ParallelDiscoveryCoordinator::new(ParallelDiscoveryConfig::default()),
+            parallel_discovery: ParallelDiscoveryCoordinator::new(
+                ParallelDiscoveryConfig::default(),
+            ),
             adaptive_timeout: AdaptiveTimeoutManager::new(),
             bandwidth_validator: BandwidthAwareValidator::new(BandwidthValidationConfig::default()),
-            congestion_integrator: CongestionControlIntegrator::new(CongestionIntegrationConfig::default()),
+            congestion_integrator: CongestionControlIntegrator::new(
+                CongestionIntegrationConfig::default(),
+            ),
             is_running: false,
         }
     }

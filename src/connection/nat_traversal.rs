@@ -1,18 +1,16 @@
 use std::{
     collections::{HashMap, VecDeque},
-    net::{IpAddr, SocketAddr, Ipv4Addr, Ipv6Addr},
+    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
     time::Duration,
 };
 
-use tracing::{trace, debug, warn, info};
 use crate::shared::ConnectionId;
+use tracing::{debug, info, trace, warn};
 
-use crate::{
-    Instant, VarInt,
-};
+use crate::{Instant, VarInt};
 
 /// NAT traversal state for a QUIC connection
-/// 
+///
 /// This manages address candidate discovery, validation, and coordination
 /// for establishing direct P2P connections through NATs.
 #[derive(Debug)]
@@ -22,7 +20,7 @@ pub(super) struct NatTraversalState {
     /// Candidate addresses we've advertised to the peer
     pub(super) local_candidates: HashMap<VarInt, AddressCandidate>,
     /// Candidate addresses received from the peer
-    pub(super) remote_candidates: HashMap<VarInt, AddressCandidate>, 
+    pub(super) remote_candidates: HashMap<VarInt, AddressCandidate>,
     /// Generated candidate pairs for connectivity testing
     pub(super) candidate_pairs: Vec<CandidatePair>,
     /// Index for fast pair lookup by remote address (maintained during generation)
@@ -188,6 +186,7 @@ pub(super) struct PunchTarget {
     /// Remote address to punch to
     pub(super) remote_addr: SocketAddr,
     /// Sequence number of the remote candidate
+    #[allow(dead_code)]
     pub(super) remote_sequence: VarInt,
     /// Challenge value for validation
     pub(super) challenge: u64,
@@ -253,7 +252,7 @@ pub(super) enum PairState {
     Waiting,
     /// Validation succeeded - this pair works
     Succeeded,
-    /// Validation failed 
+    /// Validation failed
     #[allow(dead_code)] // Will be used when implementing pair retry logic
     Failed,
     /// Temporarily frozen (waiting for other pairs)
@@ -298,11 +297,9 @@ fn calculate_candidate_priority(
         CandidateType::PeerReflexive => 110,
         CandidateType::ServerReflexive => 100,
     };
-    
+
     // ICE priority formula: (2^24 * type_pref) + (2^8 * local_pref) + component_id
-    (1u32 << 24) * type_preference 
-        + (1u32 << 8) * local_preference as u32 
-        + component_id as u32
+    (1u32 << 24) * type_preference + (1u32 << 8) * local_preference as u32 + component_id as u32
 }
 
 /// Calculate combined priority for a candidate pair
@@ -310,7 +307,7 @@ fn calculate_candidate_priority(
 fn calculate_pair_priority(local_priority: u32, remote_priority: u32) -> u64 {
     let g = local_priority as u64;
     let d = remote_priority as u64;
-    
+
     // ICE pair priority formula: 2^32 * MIN(G,D) + 2 * MAX(G,D) + (G>D ? 1 : 0)
     (1u64 << 32) * g.min(d) + 2 * g.max(d) + if g > d { 1 } else { 0 }
 }
@@ -331,8 +328,12 @@ fn classify_pair_type(local_type: CandidateType, remote_type: CandidateType) -> 
         (CandidateType::Host, CandidateType::Host) => PairType::HostToHost,
         (CandidateType::Host, CandidateType::ServerReflexive) => PairType::HostToServerReflexive,
         (CandidateType::ServerReflexive, CandidateType::Host) => PairType::ServerReflexiveToHost,
-        (CandidateType::ServerReflexive, CandidateType::ServerReflexive) => PairType::ServerReflexiveToServerReflexive,
-        (CandidateType::PeerReflexive, _) | (_, CandidateType::PeerReflexive) => PairType::PeerReflexive,
+        (CandidateType::ServerReflexive, CandidateType::ServerReflexive) => {
+            PairType::ServerReflexiveToServerReflexive
+        }
+        (CandidateType::PeerReflexive, _) | (_, CandidateType::PeerReflexive) => {
+            PairType::PeerReflexive
+        }
     }
 }
 
@@ -409,7 +410,6 @@ struct CoordinationRequest {
     /// When the request was made
     timestamp: Instant,
 }
-
 
 /// Result of address validation
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -521,7 +521,7 @@ impl SecurityValidationState {
     }
 
     /// Enhanced rate limiting with adaptive thresholds
-    /// 
+    ///
     /// This implements adaptive rate limiting that adjusts based on network conditions
     /// and detected attack patterns to prevent flooding while maintaining usability.
     fn is_adaptive_rate_limited(&mut self, peer_id: [u8; 32], now: Instant) -> bool {
@@ -530,24 +530,36 @@ impl SecurityValidationState {
         self.cleanup_coordination_tracker(now);
 
         // Calculate current request rate
-        let _current_candidate_rate = self.candidate_rate_tracker.len() as f64 / self.rate_window.as_secs_f64();
-        let _current_coordination_rate = self.coordination_requests.len() as f64 / self.rate_window.as_secs_f64();
+        let _current_candidate_rate =
+            self.candidate_rate_tracker.len() as f64 / self.rate_window.as_secs_f64();
+        let _current_coordination_rate =
+            self.coordination_requests.len() as f64 / self.rate_window.as_secs_f64();
 
         // Adaptive threshold based on peer behavior
         let peer_reputation = self.calculate_peer_reputation(peer_id);
-        let adaptive_candidate_limit = (self.max_candidates_per_window as f64 * peer_reputation) as u32;
-        let adaptive_coordination_limit = (self.max_coordination_per_window as f64 * peer_reputation) as u32;
+        let adaptive_candidate_limit =
+            (self.max_candidates_per_window as f64 * peer_reputation) as u32;
+        let adaptive_coordination_limit =
+            (self.max_coordination_per_window as f64 * peer_reputation) as u32;
 
         // Check if either limit is exceeded
         if self.candidate_rate_tracker.len() >= adaptive_candidate_limit as usize {
-            debug!("Adaptive candidate rate limit exceeded for peer {:?}: {} >= {}", 
-                   hex::encode(&peer_id[..8]), self.candidate_rate_tracker.len(), adaptive_candidate_limit);
+            debug!(
+                "Adaptive candidate rate limit exceeded for peer {:?}: {} >= {}",
+                hex::encode(&peer_id[..8]),
+                self.candidate_rate_tracker.len(),
+                adaptive_candidate_limit
+            );
             return true;
         }
 
         if self.coordination_requests.len() >= adaptive_coordination_limit as usize {
-            debug!("Adaptive coordination rate limit exceeded for peer {:?}: {} >= {}", 
-                   hex::encode(&peer_id[..8]), self.coordination_requests.len(), adaptive_coordination_limit);
+            debug!(
+                "Adaptive coordination rate limit exceeded for peer {:?}: {} >= {}",
+                hex::encode(&peer_id[..8]),
+                self.coordination_requests.len(),
+                adaptive_coordination_limit
+            );
             return true;
         }
 
@@ -555,7 +567,7 @@ impl SecurityValidationState {
     }
 
     /// Calculate peer reputation score (0.0 = bad, 1.0 = good)
-    /// 
+    ///
     /// This implements a simple reputation system to adjust rate limits
     /// based on peer behavior patterns.
     fn calculate_peer_reputation(&self, _peer_id: [u8; 32]) -> f64 {
@@ -565,14 +577,14 @@ impl SecurityValidationState {
         // - Suspicious behavior patterns
         // - Coordination completion rates
         // - Address validation failures
-        
+
         // For now, return a default good reputation
         // This can be enhanced with persistent peer reputation storage
         1.0
     }
 
     /// Implement amplification attack mitigation
-    /// 
+    ///
     /// This prevents the bootstrap node from being used as an amplifier
     /// in DDoS attacks by limiting server-initiated validation packets.
     fn validate_amplification_limits(
@@ -583,17 +595,20 @@ impl SecurityValidationState {
     ) -> Result<(), NatTraversalError> {
         // Check if we're being asked to send too many packets to the same target
         let amplification_key = (source_addr, target_addr);
-        
+
         // Simple amplification protection: limit packets per source-target pair
         // In production, this would be more sophisticated with:
         // - Bandwidth tracking
         // - Packet size ratios
         // - Geographic analysis
         // - Temporal pattern analysis
-        
+
         // For now, implement basic per-pair rate limiting
         if self.is_amplification_suspicious(amplification_key, now) {
-            warn!("Potential amplification attack detected: {} -> {}", source_addr, target_addr);
+            warn!(
+                "Potential amplification attack detected: {} -> {}",
+                source_addr, target_addr
+            );
             return Err(NatTraversalError::SuspiciousCoordination);
         }
 
@@ -601,36 +616,40 @@ impl SecurityValidationState {
     }
 
     /// Check for suspicious amplification patterns
-    fn is_amplification_suspicious(&self, _amplification_key: (SocketAddr, SocketAddr), _now: Instant) -> bool {
+    fn is_amplification_suspicious(
+        &self,
+        _amplification_key: (SocketAddr, SocketAddr),
+        _now: Instant,
+    ) -> bool {
         // Simplified amplification detection
         // In production, this would track:
         // - Request/response ratios
         // - Bandwidth amplification factors
         // - Temporal clustering of requests
         // - Geographic distribution analysis
-        
+
         // For now, return false (no amplification detected)
         // This can be enhanced with persistent amplification tracking
         false
     }
 
     /// Generate cryptographically secure random values for coordination rounds
-    /// 
+    ///
     /// This ensures that coordination rounds use secure random values to prevent
     /// prediction attacks and ensure proper synchronization security.
     #[allow(dead_code)] // Used by BootstrapCoordinator
     fn generate_secure_coordination_round(&self) -> VarInt {
         // Use cryptographically secure random number generation
         let secure_random: u64 = rand::random();
-        
+
         // Ensure the value is within reasonable bounds for VarInt
         let bounded_random = secure_random % 1000000; // Limit to reasonable range
-        
+
         VarInt::from_u64(bounded_random).unwrap_or(VarInt::from_u32(1))
     }
 
     /// Enhanced address validation with security checks
-    /// 
+    ///
     /// This performs comprehensive address validation including:
     /// - Basic format validation
     /// - Security threat detection
@@ -644,7 +663,7 @@ impl SecurityValidationState {
     ) -> Result<AddressValidationResult, NatTraversalError> {
         // First, perform basic address validation
         let basic_result = self.validate_address(addr, now);
-        
+
         match basic_result {
             AddressValidationResult::Invalid => {
                 return Err(NatTraversalError::InvalidAddress);
@@ -667,7 +686,10 @@ impl SecurityValidationState {
         }
 
         if self.is_coordination_pattern_suspicious(source_addr, addr, now) {
-            warn!("Suspicious coordination pattern detected: {} -> {}", source_addr, addr);
+            warn!(
+                "Suspicious coordination pattern detected: {} -> {}",
+                source_addr, addr
+            );
             return Err(NatTraversalError::SuspiciousCoordination);
         }
 
@@ -680,12 +702,12 @@ impl SecurityValidationState {
             IpAddr::V4(ipv4) => {
                 // Check for addresses commonly used in attacks
                 let octets = ipv4.octets();
-                
+
                 // Reject certain reserved ranges that shouldn't be used for P2P
                 if octets[0] == 0 || octets[0] == 127 {
                     return true;
                 }
-                
+
                 // Check for test networks (RFC 5737)
                 if octets[0] == 192 && octets[1] == 0 && octets[2] == 2 {
                     return true;
@@ -696,7 +718,7 @@ impl SecurityValidationState {
                 if octets[0] == 203 && octets[1] == 0 && octets[2] == 113 {
                     return true;
                 }
-                
+
                 false
             }
             IpAddr::V6(ipv6) => {
@@ -704,13 +726,13 @@ impl SecurityValidationState {
                 if ipv6.is_loopback() || ipv6.is_unspecified() {
                     return true;
                 }
-                
+
                 // Check for documentation ranges (RFC 3849)
                 let segments = ipv6.segments();
                 if segments[0] == 0x2001 && segments[1] == 0x0db8 {
                     return true;
                 }
-                
+
                 false
             }
         }
@@ -729,7 +751,7 @@ impl SecurityValidationState {
         // - Geographic patterns (unusual source/target combinations)
         // - Behavioral patterns (consistent with known attack signatures)
         // - Network topology patterns (suspicious routing)
-        
+
         // For now, return false (no suspicious patterns detected)
         // This can be enhanced with machine learning-based pattern detection
         false
@@ -739,12 +761,12 @@ impl SecurityValidationState {
     fn is_candidate_rate_limited(&mut self, now: Instant) -> bool {
         // Clean up old entries
         self.cleanup_rate_tracker(now);
-        
+
         // Check if we've exceeded the rate limit
         if self.candidate_rate_tracker.len() >= self.max_candidates_per_window as usize {
             return true;
         }
-        
+
         // Record this attempt
         self.candidate_rate_tracker.push_back(now);
         false
@@ -754,16 +776,14 @@ impl SecurityValidationState {
     fn is_coordination_rate_limited(&mut self, now: Instant) -> bool {
         // Clean up old entries
         self.cleanup_coordination_tracker(now);
-        
+
         // Check if we've exceeded the rate limit
         if self.coordination_requests.len() >= self.max_coordination_per_window as usize {
             return true;
         }
-        
+
         // Record this attempt
-        let request = CoordinationRequest {
-            timestamp: now,
-        };
+        let request = CoordinationRequest { timestamp: now };
         self.coordination_requests.push_back(request);
         false
     }
@@ -798,17 +818,17 @@ impl SecurityValidationState {
         if let Some(&cached_result) = self.address_validation_cache.get(&addr) {
             return cached_result;
         }
-        
+
         let result = self.perform_address_validation(addr);
-        
+
         // Cache the result
         self.address_validation_cache.insert(addr, result);
-        
+
         // Clean up old cache entries periodically
         if self.address_validation_cache.len() > 1000 {
             self.cleanup_address_cache(now);
         }
-        
+
         result
     }
 
@@ -820,17 +840,17 @@ impl SecurityValidationState {
                 if ipv4.is_unspecified() || ipv4.is_broadcast() {
                     return AddressValidationResult::Invalid;
                 }
-                
+
                 // Check for suspicious addresses
                 if ipv4.is_multicast() || ipv4.is_documentation() {
                     return AddressValidationResult::Suspicious;
                 }
-                
+
                 // Check for reserved ranges that shouldn't be used for P2P
                 if ipv4.octets()[0] == 0 || ipv4.octets()[0] == 127 {
                     return AddressValidationResult::Invalid;
                 }
-                
+
                 // Check for common attack patterns
                 if self.is_suspicious_ipv4(ipv4) {
                     return AddressValidationResult::Suspicious;
@@ -841,32 +861,32 @@ impl SecurityValidationState {
                 if ipv6.is_unspecified() || ipv6.is_multicast() {
                     return AddressValidationResult::Invalid;
                 }
-                
+
                 // Check for suspicious IPv6 addresses
                 if self.is_suspicious_ipv6(ipv6) {
                     return AddressValidationResult::Suspicious;
                 }
             }
         }
-        
+
         // Check port range
         if addr.port() == 0 || addr.port() < 1024 {
             return AddressValidationResult::Suspicious;
         }
-        
+
         AddressValidationResult::Valid
     }
 
     /// Check for suspicious IPv4 patterns
     fn is_suspicious_ipv4(&self, ipv4: Ipv4Addr) -> bool {
         let octets = ipv4.octets();
-        
+
         // Check for patterns that might indicate scanning or attacks
         // Sequential or patterned addresses
         if octets[0] == octets[1] && octets[1] == octets[2] && octets[2] == octets[3] {
             return true;
         }
-        
+
         // Check for addresses in ranges commonly used for attacks
         // This is a simplified check - production would have more sophisticated patterns
         false
@@ -875,12 +895,12 @@ impl SecurityValidationState {
     /// Check for suspicious IPv6 patterns
     fn is_suspicious_ipv6(&self, ipv6: Ipv6Addr) -> bool {
         let segments = ipv6.segments();
-        
+
         // Check for obvious patterns
         if segments.iter().all(|&s| s == segments[0]) {
             return true;
         }
-        
+
         false
     }
 
@@ -889,12 +909,13 @@ impl SecurityValidationState {
         // Simple cleanup - remove random entries to keep size bounded
         // In production, this would use LRU or timestamp-based cleanup
         if self.address_validation_cache.len() > 500 {
-            let keys_to_remove: Vec<_> = self.address_validation_cache
+            let keys_to_remove: Vec<_> = self
+                .address_validation_cache
                 .keys()
                 .take(self.address_validation_cache.len() / 2)
                 .copied()
                 .collect();
-            
+
             for key in keys_to_remove {
                 self.address_validation_cache.remove(&key);
             }
@@ -902,22 +923,25 @@ impl SecurityValidationState {
     }
 
     /// Comprehensive path validation for PUNCH_ME_NOW frames
-    /// 
+    ///
     /// This performs security-critical validation to prevent various attacks:
     /// - Address spoofing prevention
     /// - Reflection attack mitigation
     /// - Coordination request validation
     /// - Rate limiting enforcement
     fn validate_punch_me_now_frame(
-        &mut self, 
+        &mut self,
         frame: &crate::frame::PunchMeNow,
         source_addr: SocketAddr,
         peer_id: [u8; 32],
-        now: Instant
+        now: Instant,
     ) -> Result<(), NatTraversalError> {
         // 1. Rate limiting validation
         if self.is_coordination_rate_limited(now) {
-            debug!("PUNCH_ME_NOW frame rejected: coordination rate limit exceeded for peer {:?}", hex::encode(&peer_id[..8]));
+            debug!(
+                "PUNCH_ME_NOW frame rejected: coordination rate limit exceeded for peer {:?}",
+                hex::encode(&peer_id[..8])
+            );
             return Err(NatTraversalError::RateLimitExceeded);
         }
 
@@ -925,13 +949,19 @@ impl SecurityValidationState {
         let addr_validation = self.validate_address(frame.local_address, now);
         match addr_validation {
             AddressValidationResult::Invalid => {
-                debug!("PUNCH_ME_NOW frame rejected: invalid local_address {:?} from peer {:?}", 
-                       frame.local_address, hex::encode(&peer_id[..8]));
+                debug!(
+                    "PUNCH_ME_NOW frame rejected: invalid local_address {:?} from peer {:?}",
+                    frame.local_address,
+                    hex::encode(&peer_id[..8])
+                );
                 return Err(NatTraversalError::InvalidAddress);
             }
             AddressValidationResult::Suspicious => {
-                debug!("PUNCH_ME_NOW frame rejected: suspicious local_address {:?} from peer {:?}", 
-                       frame.local_address, hex::encode(&peer_id[..8]));
+                debug!(
+                    "PUNCH_ME_NOW frame rejected: suspicious local_address {:?} from peer {:?}",
+                    frame.local_address,
+                    hex::encode(&peer_id[..8])
+                );
                 return Err(NatTraversalError::SuspiciousCoordination);
             }
             AddressValidationResult::Valid => {
@@ -942,46 +972,62 @@ impl SecurityValidationState {
         // 3. Source address consistency validation
         // The frame's local_address should reasonably relate to the actual source
         if !self.validate_address_consistency(frame.local_address, source_addr) {
-            debug!("PUNCH_ME_NOW frame rejected: address consistency check failed. Frame claims {:?}, but received from {:?}", 
-                   frame.local_address, source_addr);
+            debug!(
+                "PUNCH_ME_NOW frame rejected: address consistency check failed. Frame claims {:?}, but received from {:?}",
+                frame.local_address, source_addr
+            );
             return Err(NatTraversalError::SuspiciousCoordination);
         }
 
         // 4. Coordination parameters validation
         if !self.validate_coordination_parameters(frame) {
-            debug!("PUNCH_ME_NOW frame rejected: invalid coordination parameters from peer {:?}", 
-                   hex::encode(&peer_id[..8]));
+            debug!(
+                "PUNCH_ME_NOW frame rejected: invalid coordination parameters from peer {:?}",
+                hex::encode(&peer_id[..8])
+            );
             return Err(NatTraversalError::SuspiciousCoordination);
         }
 
         // 5. Target peer validation (if present)
         if let Some(target_peer_id) = frame.target_peer_id {
             if !self.validate_target_peer_request(peer_id, target_peer_id, frame) {
-                debug!("PUNCH_ME_NOW frame rejected: invalid target peer request from {:?} to {:?}", 
-                       hex::encode(&peer_id[..8]), hex::encode(&target_peer_id[..8]));
+                debug!(
+                    "PUNCH_ME_NOW frame rejected: invalid target peer request from {:?} to {:?}",
+                    hex::encode(&peer_id[..8]),
+                    hex::encode(&target_peer_id[..8])
+                );
                 return Err(NatTraversalError::SuspiciousCoordination);
             }
         }
 
         // 6. Resource limits validation
         if !self.validate_resource_limits(frame) {
-            debug!("PUNCH_ME_NOW frame rejected: resource limits exceeded from peer {:?}", 
-                   hex::encode(&peer_id[..8]));
+            debug!(
+                "PUNCH_ME_NOW frame rejected: resource limits exceeded from peer {:?}",
+                hex::encode(&peer_id[..8])
+            );
             return Err(NatTraversalError::ResourceLimitExceeded);
         }
 
-        debug!("PUNCH_ME_NOW frame validation passed for peer {:?}", hex::encode(&peer_id[..8]));
+        debug!(
+            "PUNCH_ME_NOW frame validation passed for peer {:?}",
+            hex::encode(&peer_id[..8])
+        );
         Ok(())
     }
 
     /// Validate address consistency between claimed and observed addresses
-    /// 
+    ///
     /// This prevents address spoofing by ensuring the claimed local address
     /// is reasonably consistent with the observed source address.
-    fn validate_address_consistency(&self, claimed_addr: SocketAddr, observed_addr: SocketAddr) -> bool {
+    fn validate_address_consistency(
+        &self,
+        claimed_addr: SocketAddr,
+        observed_addr: SocketAddr,
+    ) -> bool {
         // For P2P NAT traversal, the port will typically be different due to NAT,
         // but the IP should be consistent unless there's multi-homing or proxying
-        
+
         // Check if IPs are in the same family
         match (claimed_addr.ip(), observed_addr.ip()) {
             (IpAddr::V4(claimed_ip), IpAddr::V4(observed_ip)) => {
@@ -989,20 +1035,19 @@ impl SecurityValidationState {
                 if claimed_ip == observed_ip {
                     return true;
                 }
-                
+
                 // Allow within same private network (simplified check)
                 if self.are_in_same_private_network_v4(claimed_ip, observed_ip) {
                     return true;
                 }
-                
+
                 // Allow certain NAT scenarios where external IP differs
                 // This is a simplified check - production would be more sophisticated
                 !claimed_ip.is_private() && !observed_ip.is_private()
             }
             (IpAddr::V6(claimed_ip), IpAddr::V6(observed_ip)) => {
                 // For IPv6, be more lenient due to complex addressing
-                claimed_ip == observed_ip || 
-                self.are_in_same_prefix_v6(claimed_ip, observed_ip)
+                claimed_ip == observed_ip || self.are_in_same_prefix_v6(claimed_ip, observed_ip)
             }
             _ => {
                 // Mismatched IP families - suspicious
@@ -1016,24 +1061,30 @@ impl SecurityValidationState {
         // Check common private ranges
         let ip1_octets = ip1.octets();
         let ip2_octets = ip2.octets();
-        
+
         // 10.0.0.0/8
         if ip1_octets[0] == 10 && ip2_octets[0] == 10 {
             return true;
         }
-        
+
         // 172.16.0.0/12
-        if ip1_octets[0] == 172 && ip2_octets[0] == 172 &&
-           (16..=31).contains(&ip1_octets[1]) && (16..=31).contains(&ip2_octets[1]) {
+        if ip1_octets[0] == 172
+            && ip2_octets[0] == 172
+            && (16..=31).contains(&ip1_octets[1])
+            && (16..=31).contains(&ip2_octets[1])
+        {
             return true;
         }
-        
+
         // 192.168.0.0/16
-        if ip1_octets[0] == 192 && ip1_octets[1] == 168 &&
-           ip2_octets[0] == 192 && ip2_octets[1] == 168 {
+        if ip1_octets[0] == 192
+            && ip1_octets[1] == 168
+            && ip2_octets[0] == 192
+            && ip2_octets[1] == 168
+        {
             return true;
         }
-        
+
         false
     }
 
@@ -1042,11 +1093,11 @@ impl SecurityValidationState {
         // Simplified IPv6 prefix check - compare first 64 bits
         let segments1 = ip1.segments();
         let segments2 = ip2.segments();
-        
-        segments1[0] == segments2[0] && 
-        segments1[1] == segments2[1] && 
-        segments1[2] == segments2[2] && 
-        segments1[3] == segments2[3]
+
+        segments1[0] == segments2[0]
+            && segments1[1] == segments2[1]
+            && segments1[2] == segments2[2]
+            && segments1[3] == segments2[3]
     }
 
     /// Validate coordination parameters for security
@@ -1055,12 +1106,12 @@ impl SecurityValidationState {
         if frame.round.into_inner() > 1000000 {
             return false;
         }
-        
+
         // Check target sequence is reasonable
         if frame.target_sequence.into_inner() > 10000 {
             return false;
         }
-        
+
         // Validate address is not obviously invalid
         match frame.local_address.ip() {
             IpAddr::V4(ipv4) => {
@@ -1068,7 +1119,7 @@ impl SecurityValidationState {
                 !ipv4.is_unspecified() && !ipv4.is_broadcast() && !ipv4.is_multicast()
             }
             IpAddr::V6(ipv6) => {
-                // Reject obviously invalid addresses  
+                // Reject obviously invalid addresses
                 !ipv6.is_unspecified() && !ipv6.is_multicast()
             }
         }
@@ -1076,21 +1127,21 @@ impl SecurityValidationState {
 
     /// Validate target peer request for potential abuse
     fn validate_target_peer_request(
-        &self, 
-        requesting_peer: [u8; 32], 
-        target_peer: [u8; 32], 
-        _frame: &crate::frame::PunchMeNow
+        &self,
+        requesting_peer: [u8; 32],
+        target_peer: [u8; 32],
+        _frame: &crate::frame::PunchMeNow,
     ) -> bool {
         // Prevent self-coordination (peer requesting coordination with itself)
         if requesting_peer == target_peer {
             return false;
         }
-        
+
         // Additional validation could include:
         // - Check if target peer is known/registered
         // - Validate target peer hasn't opted out of coordination
         // - Check for suspicious patterns in target peer selection
-        
+
         true
     }
 
@@ -1102,7 +1153,7 @@ impl SecurityValidationState {
         // - Memory usage
         // - Network bandwidth
         // - CPU utilization
-        
+
         // For now, just check if we have too many active coordination requests
         self.coordination_requests.len() < self.max_coordination_per_window as usize
     }
@@ -1133,7 +1184,7 @@ impl AdaptiveTimeoutState {
         self.last_rtt = Some(rtt);
         self.successful_responses += 1;
         self.consecutive_timeouts = 0;
-        
+
         // Update smoothed RTT using TCP algorithm
         match self.srtt {
             None => {
@@ -1143,15 +1194,15 @@ impl AdaptiveTimeoutState {
             Some(srtt) => {
                 let rttvar = self.rttvar.unwrap_or(rtt / 2);
                 let abs_diff = if rtt > srtt { rtt - srtt } else { srtt - rtt };
-                
+
                 self.rttvar = Some(rttvar * 3 / 4 + abs_diff / 4);
                 self.srtt = Some(srtt * 7 / 8 + rtt / 8);
             }
         }
-        
+
         // Reduce backoff multiplier on success
         self.backoff_multiplier = (self.backoff_multiplier * 0.8).max(1.0);
-        
+
         // Update current timeout
         self.calculate_current_timeout();
     }
@@ -1159,10 +1210,10 @@ impl AdaptiveTimeoutState {
     /// Update timeout based on timeout event
     fn update_timeout(&mut self) {
         self.consecutive_timeouts += 1;
-        
+
         // Exponential backoff with bounds
         self.backoff_multiplier = (self.backoff_multiplier * 2.0).min(self.max_backoff_multiplier);
-        
+
         // Update current timeout
         self.calculate_current_timeout();
     }
@@ -1175,14 +1226,14 @@ impl AdaptiveTimeoutState {
         } else {
             self.base_timeout
         };
-        
+
         // Apply backoff multiplier
         let timeout = base_timeout.mul_f64(self.backoff_multiplier);
-        
+
         // Apply jitter to prevent thundering herd
         let jitter = 1.0 + (rand::random::<f64>() - 0.5) * 2.0 * self.jitter_factor;
         let timeout = timeout.mul_f64(jitter);
-        
+
         // Bound the timeout
         self.current_timeout = timeout.clamp(self.min_timeout, self.max_timeout);
     }
@@ -1290,7 +1341,7 @@ impl ResourceManagementConfig {
             aggressive_cleanup_threshold: 0.90,
         }
     }
-    
+
     /// Create configuration optimized for low-memory environments
     #[allow(dead_code)] // Used when system is under memory pressure
     fn low_memory() -> Self {
@@ -1321,7 +1372,7 @@ impl ResourceCleanupCoordinator {
             shutdown_requested: false,
         }
     }
-    
+
     /// Create coordinator optimized for low-memory environments
     #[allow(dead_code)] // Used in memory-constrained environments
     fn low_memory() -> Self {
@@ -1333,39 +1384,44 @@ impl ResourceCleanupCoordinator {
             shutdown_requested: false,
         }
     }
-    
+
     /// Check if resource limits are exceeded
     fn check_resource_limits(&self, state: &NatTraversalState) -> bool {
-        state.active_validations.len() > self.config.max_active_validations ||
-        state.local_candidates.len() > self.config.max_local_candidates ||
-        state.remote_candidates.len() > self.config.max_remote_candidates ||
-        state.candidate_pairs.len() > self.config.max_candidate_pairs
+        state.active_validations.len() > self.config.max_active_validations
+            || state.local_candidates.len() > self.config.max_local_candidates
+            || state.remote_candidates.len() > self.config.max_remote_candidates
+            || state.candidate_pairs.len() > self.config.max_candidate_pairs
     }
-    
+
     /// Calculate current memory pressure level
-    fn calculate_memory_pressure(&mut self, active_validations_len: usize, local_candidates_len: usize, 
-                                remote_candidates_len: usize, candidate_pairs_len: usize) -> f64 {
-        let total_limit = self.config.max_active_validations + 
-                         self.config.max_local_candidates + 
-                         self.config.max_remote_candidates + 
-                         self.config.max_candidate_pairs;
-        
-        let current_usage = active_validations_len + 
-                           local_candidates_len + 
-                           remote_candidates_len + 
-                           candidate_pairs_len;
-        
+    fn calculate_memory_pressure(
+        &mut self,
+        active_validations_len: usize,
+        local_candidates_len: usize,
+        remote_candidates_len: usize,
+        candidate_pairs_len: usize,
+    ) -> f64 {
+        let total_limit = self.config.max_active_validations
+            + self.config.max_local_candidates
+            + self.config.max_remote_candidates
+            + self.config.max_candidate_pairs;
+
+        let current_usage = active_validations_len
+            + local_candidates_len
+            + remote_candidates_len
+            + candidate_pairs_len;
+
         let pressure = current_usage as f64 / total_limit as f64;
         self.stats.memory_pressure = pressure;
         pressure
     }
-    
+
     /// Determine if cleanup is needed
     fn should_cleanup(&self, now: Instant) -> bool {
         if self.shutdown_requested {
             return true;
         }
-        
+
         // Check if it's time for regular cleanup
         if let Some(last_cleanup) = self.last_cleanup {
             if now.duration_since(last_cleanup) >= self.config.cleanup_interval {
@@ -1374,54 +1430,60 @@ impl ResourceCleanupCoordinator {
         } else {
             return true; // First cleanup
         }
-        
+
         // Check memory pressure
         if self.stats.memory_pressure > self.config.memory_pressure_threshold {
             return true;
         }
-        
+
         false
     }
-    
+
     /// Perform cleanup of expired resources
     #[allow(dead_code)] // Will be used when implementing automatic resource cleanup
-    fn cleanup_expired_resources(&mut self, 
-                                active_validations: &mut HashMap<SocketAddr, PathValidationState>,
-                                local_candidates: &mut HashMap<VarInt, AddressCandidate>,
-                                remote_candidates: &mut HashMap<VarInt, AddressCandidate>,
-                                candidate_pairs: &mut Vec<CandidatePair>,
-                                coordination: &mut Option<CoordinationState>,
-                                now: Instant) -> u64 {
+    fn cleanup_expired_resources(
+        &mut self,
+        active_validations: &mut HashMap<SocketAddr, PathValidationState>,
+        local_candidates: &mut HashMap<VarInt, AddressCandidate>,
+        remote_candidates: &mut HashMap<VarInt, AddressCandidate>,
+        candidate_pairs: &mut Vec<CandidatePair>,
+        coordination: &mut Option<CoordinationState>,
+        now: Instant,
+    ) -> u64 {
         let mut cleaned = 0;
-        
+
         // Clean up expired path validations
         cleaned += self.cleanup_expired_validations(active_validations, now);
-        
+
         // Clean up stale candidates
         cleaned += self.cleanup_stale_candidates(local_candidates, remote_candidates, now);
-        
+
         // Clean up failed candidate pairs
         cleaned += self.cleanup_failed_pairs(candidate_pairs, now);
-        
+
         // Clean up old coordination state
         cleaned += self.cleanup_old_coordination(coordination, now);
-        
+
         // Update statistics
         self.stats.cleanup_operations += 1;
         self.stats.resources_cleaned += cleaned;
         self.last_cleanup = Some(now);
         self.cleanup_counter += 1;
-        
+
         debug!("Cleaned up {} expired resources", cleaned);
         cleaned
     }
-    
+
     /// Clean up expired path validations
     #[allow(dead_code)] // Called from cleanup_expired_resources
-    fn cleanup_expired_validations(&mut self, active_validations: &mut HashMap<SocketAddr, PathValidationState>, now: Instant) -> u64 {
+    fn cleanup_expired_validations(
+        &mut self,
+        active_validations: &mut HashMap<SocketAddr, PathValidationState>,
+        now: Instant,
+    ) -> u64 {
         let mut cleaned = 0;
         let validation_timeout = self.config.validation_timeout;
-        
+
         active_validations.retain(|_addr, validation| {
             let is_expired = now.duration_since(validation.sent_at) > validation_timeout;
             if is_expired {
@@ -1430,71 +1492,88 @@ impl ResourceCleanupCoordinator {
             }
             !is_expired
         });
-        
+
         cleaned
     }
-    
+
     /// Clean up stale candidates
     #[allow(dead_code)] // Called from cleanup_expired_resources
-    fn cleanup_stale_candidates(&mut self, local_candidates: &mut HashMap<VarInt, AddressCandidate>, remote_candidates: &mut HashMap<VarInt, AddressCandidate>, now: Instant) -> u64 {
+    fn cleanup_stale_candidates(
+        &mut self,
+        local_candidates: &mut HashMap<VarInt, AddressCandidate>,
+        remote_candidates: &mut HashMap<VarInt, AddressCandidate>,
+        now: Instant,
+    ) -> u64 {
         let mut cleaned = 0;
         let candidate_timeout = self.config.candidate_timeout;
-        
+
         // Clean up local candidates
         local_candidates.retain(|_seq, candidate| {
-            let is_stale = now.duration_since(candidate.discovered_at) > candidate_timeout ||
-                          candidate.state == CandidateState::Failed ||
-                          candidate.state == CandidateState::Removed;
+            let is_stale = now.duration_since(candidate.discovered_at) > candidate_timeout
+                || candidate.state == CandidateState::Failed
+                || candidate.state == CandidateState::Removed;
             if is_stale {
                 cleaned += 1;
                 trace!("Cleaned up stale local candidate {:?}", candidate.address);
             }
             !is_stale
         });
-        
+
         // Clean up remote candidates
         remote_candidates.retain(|_seq, candidate| {
-            let is_stale = now.duration_since(candidate.discovered_at) > candidate_timeout ||
-                          candidate.state == CandidateState::Failed ||
-                          candidate.state == CandidateState::Removed;
+            let is_stale = now.duration_since(candidate.discovered_at) > candidate_timeout
+                || candidate.state == CandidateState::Failed
+                || candidate.state == CandidateState::Removed;
             if is_stale {
                 cleaned += 1;
                 trace!("Cleaned up stale remote candidate {:?}", candidate.address);
             }
             !is_stale
         });
-        
+
         cleaned
     }
-    
+
     /// Clean up failed candidate pairs
     #[allow(dead_code)] // Called from cleanup_expired_resources
-    fn cleanup_failed_pairs(&mut self, candidate_pairs: &mut Vec<CandidatePair>, now: Instant) -> u64 {
+    fn cleanup_failed_pairs(
+        &mut self,
+        candidate_pairs: &mut Vec<CandidatePair>,
+        now: Instant,
+    ) -> u64 {
         let mut cleaned = 0;
         let pair_timeout = self.config.candidate_timeout;
-        
+
         candidate_pairs.retain(|pair| {
-            let is_stale = now.duration_since(pair.created_at) > pair_timeout ||
-                          pair.state == PairState::Failed;
+            let is_stale = now.duration_since(pair.created_at) > pair_timeout
+                || pair.state == PairState::Failed;
             if is_stale {
                 cleaned += 1;
-                trace!("Cleaned up failed candidate pair {:?} -> {:?}", pair.local_addr, pair.remote_addr);
+                trace!(
+                    "Cleaned up failed candidate pair {:?} -> {:?}",
+                    pair.local_addr, pair.remote_addr
+                );
             }
             !is_stale
         });
-        
+
         cleaned
     }
-    
+
     /// Clean up old coordination state
     #[allow(dead_code)] // Called from cleanup_expired_resources
-    fn cleanup_old_coordination(&mut self, coordination: &mut Option<CoordinationState>, now: Instant) -> u64 {
+    fn cleanup_old_coordination(
+        &mut self,
+        coordination: &mut Option<CoordinationState>,
+        now: Instant,
+    ) -> u64 {
         let mut cleaned = 0;
-        
+
         if let Some(coord) = coordination {
-            let is_expired = now.duration_since(coord.round_start) > self.config.coordination_timeout;
+            let is_expired =
+                now.duration_since(coord.round_start) > self.config.coordination_timeout;
             let is_failed = coord.state == CoordinationPhase::Failed;
-            
+
             if is_expired || is_failed {
                 let round = coord.round;
                 *coordination = None;
@@ -1502,52 +1581,54 @@ impl ResourceCleanupCoordinator {
                 trace!("Cleaned up old coordination state for round {}", round);
             }
         }
-        
+
         cleaned
     }
-    
+
     /// Perform aggressive cleanup when under memory pressure
     #[allow(dead_code)] // Will be used when implementing memory pressure response
-    fn aggressive_cleanup(&mut self, 
-                         active_validations: &mut HashMap<SocketAddr, PathValidationState>,
-                         local_candidates: &mut HashMap<VarInt, AddressCandidate>,
-                         remote_candidates: &mut HashMap<VarInt, AddressCandidate>,
-                         candidate_pairs: &mut Vec<CandidatePair>,
-                         now: Instant) -> u64 {
+    fn aggressive_cleanup(
+        &mut self,
+        active_validations: &mut HashMap<SocketAddr, PathValidationState>,
+        local_candidates: &mut HashMap<VarInt, AddressCandidate>,
+        remote_candidates: &mut HashMap<VarInt, AddressCandidate>,
+        candidate_pairs: &mut Vec<CandidatePair>,
+        now: Instant,
+    ) -> u64 {
         let mut cleaned = 0;
-        
+
         // More aggressive timeout for candidates
         let aggressive_timeout = self.config.candidate_timeout / 2;
-        
+
         // Clean up older candidates first
         local_candidates.retain(|_seq, candidate| {
-            let keep = now.duration_since(candidate.discovered_at) <= aggressive_timeout &&
-                      candidate.state != CandidateState::Failed;
+            let keep = now.duration_since(candidate.discovered_at) <= aggressive_timeout
+                && candidate.state != CandidateState::Failed;
             if !keep {
                 cleaned += 1;
             }
             keep
         });
-        
+
         remote_candidates.retain(|_seq, candidate| {
-            let keep = now.duration_since(candidate.discovered_at) <= aggressive_timeout &&
-                      candidate.state != CandidateState::Failed;
+            let keep = now.duration_since(candidate.discovered_at) <= aggressive_timeout
+                && candidate.state != CandidateState::Failed;
             if !keep {
                 cleaned += 1;
             }
             keep
         });
-        
+
         // Clean up waiting candidate pairs
         candidate_pairs.retain(|pair| {
-            let keep = pair.state != PairState::Waiting ||
-                      now.duration_since(pair.created_at) <= aggressive_timeout;
+            let keep = pair.state != PairState::Waiting
+                || now.duration_since(pair.created_at) <= aggressive_timeout;
             if !keep {
                 cleaned += 1;
             }
             keep
         });
-        
+
         // Clean up old validations more aggressively
         active_validations.retain(|_addr, validation| {
             let keep = now.duration_since(validation.sent_at) <= self.config.validation_timeout / 2;
@@ -1556,70 +1637,80 @@ impl ResourceCleanupCoordinator {
             }
             keep
         });
-        
-        warn!("Aggressive cleanup removed {} resources due to memory pressure", cleaned);
+
+        warn!(
+            "Aggressive cleanup removed {} resources due to memory pressure",
+            cleaned
+        );
         cleaned
     }
-    
+
     /// Request graceful shutdown and cleanup
     #[allow(dead_code)] // Used for clean shutdown procedures
     fn request_shutdown(&mut self) {
         self.shutdown_requested = true;
         debug!("Resource cleanup coordinator shutdown requested");
     }
-    
+
     /// Perform final cleanup during shutdown
     #[allow(dead_code)] // Called during graceful shutdown
-    fn shutdown_cleanup(&mut self, 
-                       active_validations: &mut HashMap<SocketAddr, PathValidationState>,
-                       local_candidates: &mut HashMap<VarInt, AddressCandidate>,
-                       remote_candidates: &mut HashMap<VarInt, AddressCandidate>,
-                       candidate_pairs: &mut Vec<CandidatePair>,
-                       coordination: &mut Option<CoordinationState>) -> u64 {
+    fn shutdown_cleanup(
+        &mut self,
+        active_validations: &mut HashMap<SocketAddr, PathValidationState>,
+        local_candidates: &mut HashMap<VarInt, AddressCandidate>,
+        remote_candidates: &mut HashMap<VarInt, AddressCandidate>,
+        candidate_pairs: &mut Vec<CandidatePair>,
+        coordination: &mut Option<CoordinationState>,
+    ) -> u64 {
         let mut cleaned = 0;
-        
+
         // Clear all resources
         cleaned += active_validations.len() as u64;
         active_validations.clear();
-        
+
         cleaned += local_candidates.len() as u64;
         local_candidates.clear();
-        
+
         cleaned += remote_candidates.len() as u64;
         remote_candidates.clear();
-        
+
         cleaned += candidate_pairs.len() as u64;
         candidate_pairs.clear();
-        
+
         if coordination.is_some() {
             *coordination = None;
             cleaned += 1;
         }
-        
+
         info!("Shutdown cleanup removed {} resources", cleaned);
         cleaned
     }
-    
+
     /// Get current resource usage statistics
     #[allow(dead_code)] // Used for monitoring and debugging
     fn get_resource_stats(&self) -> &ResourceStats {
         &self.stats
     }
-    
+
     /// Update resource usage statistics
-    fn update_stats(&mut self, active_validations_len: usize, local_candidates_len: usize, 
-                   remote_candidates_len: usize, candidate_pairs_len: usize) {
+    fn update_stats(
+        &mut self,
+        active_validations_len: usize,
+        local_candidates_len: usize,
+        remote_candidates_len: usize,
+        candidate_pairs_len: usize,
+    ) {
         self.stats.active_validations = active_validations_len;
         self.stats.local_candidates = local_candidates_len;
         self.stats.remote_candidates = remote_candidates_len;
         self.stats.candidate_pairs = candidate_pairs_len;
-        
+
         // Update peak memory usage
-        let current_usage = self.stats.active_validations + 
-                           self.stats.local_candidates + 
-                           self.stats.remote_candidates + 
-                           self.stats.candidate_pairs;
-        
+        let current_usage = self.stats.active_validations
+            + self.stats.local_candidates
+            + self.stats.remote_candidates
+            + self.stats.candidate_pairs;
+
         if current_usage > self.stats.peak_memory_usage {
             self.stats.peak_memory_usage = current_usage;
         }
@@ -1629,10 +1720,10 @@ impl ResourceCleanupCoordinator {
     pub(super) fn perform_cleanup(&mut self, now: Instant) {
         self.last_cleanup = Some(now);
         self.cleanup_counter += 1;
-        
+
         // Update cleanup statistics
         self.stats.cleanup_operations += 1;
-        
+
         debug!("Performed resource cleanup #{}", self.cleanup_counter);
     }
 }
@@ -1659,11 +1750,11 @@ impl NetworkConditionMonitor {
         if self.rtt_samples.len() > self.max_samples {
             self.rtt_samples.pop_front();
         }
-        
+
         // Update timeout statistics
         self.timeout_stats.total_responses += 1;
         self.update_timeout_stats(now);
-        
+
         // Update quality score
         self.update_quality_score(now);
     }
@@ -1672,7 +1763,7 @@ impl NetworkConditionMonitor {
     fn record_timeout(&mut self, now: Instant) {
         self.timeout_stats.total_timeouts += 1;
         self.update_timeout_stats(now);
-        
+
         // Update quality score
         self.update_quality_score(now);
     }
@@ -1680,17 +1771,18 @@ impl NetworkConditionMonitor {
     /// Update timeout statistics
     fn update_timeout_stats(&mut self, now: Instant) {
         let total_attempts = self.timeout_stats.total_responses + self.timeout_stats.total_timeouts;
-        
+
         if total_attempts > 0 {
-            self.timeout_stats.timeout_rate = self.timeout_stats.total_timeouts as f64 / total_attempts as f64;
+            self.timeout_stats.timeout_rate =
+                self.timeout_stats.total_timeouts as f64 / total_attempts as f64;
         }
-        
+
         // Calculate average response time
         if !self.rtt_samples.is_empty() {
             let total_rtt: Duration = self.rtt_samples.iter().sum();
             self.timeout_stats.avg_response_time = total_rtt / self.rtt_samples.len() as u32;
         }
-        
+
         self.timeout_stats.last_update = Some(now);
     }
 
@@ -1699,15 +1791,15 @@ impl NetworkConditionMonitor {
         if now.duration_since(self.last_quality_update) < self.quality_update_interval {
             return;
         }
-        
+
         // Quality factors
         let timeout_factor = 1.0 - self.timeout_stats.timeout_rate;
         let rtt_factor = self.calculate_rtt_factor();
         let consistency_factor = self.calculate_consistency_factor();
-        
+
         // Weighted quality score
         let new_quality = (timeout_factor * 0.4) + (rtt_factor * 0.3) + (consistency_factor * 0.3);
-        
+
         // Smooth the quality score
         self.quality_score = self.quality_score * 0.7 + new_quality * 0.3;
         self.last_quality_update = now;
@@ -1718,9 +1810,9 @@ impl NetworkConditionMonitor {
         if self.rtt_samples.is_empty() {
             return 0.5; // Neutral score
         }
-        
+
         let avg_rtt = self.timeout_stats.avg_response_time;
-        
+
         // Good RTT: < 50ms = 1.0, Poor RTT: > 1000ms = 0.0
         let rtt_ms = avg_rtt.as_millis() as f64;
         let factor = 1.0 - (rtt_ms - 50.0) / 950.0;
@@ -1732,20 +1824,26 @@ impl NetworkConditionMonitor {
         if self.rtt_samples.len() < 3 {
             return 0.5; // Neutral score
         }
-        
+
         // Calculate RTT variance
         let mean_rtt = self.timeout_stats.avg_response_time;
-        let variance: f64 = self.rtt_samples
+        let variance: f64 = self
+            .rtt_samples
             .iter()
             .map(|rtt| {
-                let diff = if *rtt > mean_rtt { *rtt - mean_rtt } else { mean_rtt - *rtt };
+                let diff = if *rtt > mean_rtt {
+                    *rtt - mean_rtt
+                } else {
+                    mean_rtt - *rtt
+                };
                 diff.as_millis() as f64
             })
             .map(|diff| diff * diff)
-            .sum::<f64>() / self.rtt_samples.len() as f64;
-        
+            .sum::<f64>()
+            / self.rtt_samples.len() as f64;
+
         let std_dev = variance.sqrt();
-        
+
         // Low variance = high consistency
         let consistency = 1.0 - (std_dev / 1000.0).min(1.0);
         consistency.clamp(0.0, 1.0)
@@ -1781,7 +1879,7 @@ impl NetworkConditionMonitor {
     #[allow(dead_code)] // Will be used for dynamic timeout adjustments
     fn get_timeout_multiplier(&self) -> f64 {
         let base_multiplier = 1.0;
-        
+
         // Adjust based on quality score
         let quality_multiplier = if self.quality_score < 0.3 {
             2.0 // Poor quality, increase timeouts
@@ -1790,10 +1888,10 @@ impl NetworkConditionMonitor {
         } else {
             1.0 // Neutral
         };
-        
+
         // Adjust based on packet loss
         let loss_multiplier = 1.0 + (self.packet_loss_rate * 2.0);
-        
+
         base_multiplier * quality_multiplier * loss_multiplier
     }
 
@@ -1802,7 +1900,7 @@ impl NetworkConditionMonitor {
     fn cleanup(&mut self, now: Instant) {
         // Remove old RTT samples (keep only recent ones)
         let _cutoff_time = now - Duration::from_secs(60);
-        
+
         // Reset statistics if they're too old
         if let Some(last_update) = self.timeout_stats.last_update {
             if now.duration_since(last_update) > Duration::from_secs(300) {
@@ -1824,7 +1922,7 @@ impl NatTraversalState {
         } else {
             None
         };
-        
+
         Self {
             role,
             local_candidates: HashMap::new(),
@@ -1855,7 +1953,10 @@ impl NatTraversalState {
     ) -> Result<(), NatTraversalError> {
         // Resource management: Check if we should reject new resources
         if self.should_reject_new_resources(now) {
-            debug!("Rejecting new candidate due to resource limits: {}", address);
+            debug!(
+                "Rejecting new candidate due to resource limits: {}",
+                address
+            );
             return Err(NatTraversalError::ResourceLimitExceeded);
         }
 
@@ -1890,8 +1991,10 @@ impl NatTraversalState {
         }
 
         // Check for duplicate addresses (different sequence, same address)
-        if self.remote_candidates.values()
-            .any(|c| c.address == address && c.state != CandidateState::Removed) 
+        if self
+            .remote_candidates
+            .values()
+            .any(|c| c.address == address && c.state != CandidateState::Removed)
         {
             return Err(NatTraversalError::DuplicateAddress);
         }
@@ -1908,8 +2011,11 @@ impl NatTraversalState {
 
         self.remote_candidates.insert(sequence, candidate);
         self.stats.remote_candidates_received += 1;
-        
-        trace!("Added remote candidate: {} with priority {}", address, priority);
+
+        trace!(
+            "Added remote candidate: {} with priority {}",
+            address, priority
+        );
         Ok(())
     }
 
@@ -1917,7 +2023,7 @@ impl NatTraversalState {
     pub(super) fn remove_candidate(&mut self, sequence: VarInt) -> bool {
         if let Some(candidate) = self.remote_candidates.get_mut(&sequence) {
             candidate.state = CandidateState::Removed;
-            
+
             // Cancel any active validation for this address
             self.active_validations.remove(&candidate.address);
             true
@@ -1958,7 +2064,7 @@ impl NatTraversalState {
 
         // Regenerate pairs when we add a new local candidate
         self.generate_candidate_pairs(now);
-        
+
         sequence
     }
 
@@ -1991,15 +2097,15 @@ impl NatTraversalState {
     pub(super) fn generate_candidate_pairs(&mut self, now: Instant) {
         self.candidate_pairs.clear();
         self.pair_index.clear();
-        
+
         // Pre-allocate capacity to avoid reallocations
         let estimated_capacity = self.local_candidates.len() * self.remote_candidates.len();
         self.candidate_pairs.reserve(estimated_capacity);
         self.pair_index.reserve(estimated_capacity);
-        
+
         // Cache compatibility checks to avoid repeated work
         let mut compatibility_cache: HashMap<(SocketAddr, SocketAddr), bool> = HashMap::new();
-        
+
         for (_local_seq, local_candidate) in &self.local_candidates {
             // Skip removed candidates early
             if local_candidate.state == CandidateState::Removed {
@@ -2008,7 +2114,7 @@ impl NatTraversalState {
 
             // Pre-classify local candidate type once
             let local_type = classify_candidate_type(local_candidate.source);
-            
+
             for (remote_seq, remote_candidate) in &self.remote_candidates {
                 // Skip removed candidates
                 if remote_candidate.state == CandidateState::Removed {
@@ -2020,16 +2126,14 @@ impl NatTraversalState {
                 let compatible = *compatibility_cache.entry(cache_key).or_insert_with(|| {
                     are_candidates_compatible(local_candidate, remote_candidate)
                 });
-                
+
                 if !compatible {
                     continue;
                 }
 
                 // Calculate combined priority
-                let pair_priority = calculate_pair_priority(
-                    local_candidate.priority, 
-                    remote_candidate.priority
-                );
+                let pair_priority =
+                    calculate_pair_priority(local_candidate.priority, remote_candidate.priority);
 
                 // Classify pair type (local already classified)
                 let remote_type = classify_candidate_type(remote_candidate.source);
@@ -2054,8 +2158,9 @@ impl NatTraversalState {
         }
 
         // Sort pairs by priority (highest first) - use unstable sort for better performance
-        self.candidate_pairs.sort_unstable_by(|a, b| b.priority.cmp(&a.priority));
-        
+        self.candidate_pairs
+            .sort_unstable_by(|a, b| b.priority.cmp(&a.priority));
+
         // Rebuild index after sorting since indices changed
         self.pair_index.clear();
         for (idx, pair) in self.candidate_pairs.iter().enumerate() {
@@ -2066,11 +2171,14 @@ impl NatTraversalState {
     }
 
     /// Get the highest priority pairs ready for validation
-    pub(super) fn get_next_validation_pairs(&mut self, max_concurrent: usize) -> Vec<&mut CandidatePair> {
+    pub(super) fn get_next_validation_pairs(
+        &mut self,
+        max_concurrent: usize,
+    ) -> Vec<&mut CandidatePair> {
         // Since pairs are sorted by priority (highest first), we can stop early
         // once we find enough waiting pairs or reach lower priority pairs
         let mut result = Vec::with_capacity(max_concurrent);
-        
+
         for pair in self.candidate_pairs.iter_mut() {
             if pair.state == PairState::Waiting {
                 result.push(pair);
@@ -2079,12 +2187,15 @@ impl NatTraversalState {
                 }
             }
         }
-        
+
         result
     }
 
     /// Find a candidate pair by remote address
-    pub(super) fn find_pair_by_remote_addr(&mut self, addr: SocketAddr) -> Option<&mut CandidatePair> {
+    pub(super) fn find_pair_by_remote_addr(
+        &mut self,
+        addr: SocketAddr,
+    ) -> Option<&mut CandidatePair> {
         // Use index for O(1) lookup instead of O(n) linear search
         if let Some(&index) = self.pair_index.get(&addr) {
             self.candidate_pairs.get_mut(index)
@@ -2104,30 +2215,30 @@ impl NatTraversalState {
                 return false;
             }
         };
-        
+
         // Freeze lower priority pairs of the same type to avoid unnecessary testing
         for other_pair in &mut self.candidate_pairs {
-            if other_pair.pair_type == succeeded_type 
-                && other_pair.priority < succeeded_priority 
-                && other_pair.state == PairState::Waiting {
+            if other_pair.pair_type == succeeded_type
+                && other_pair.priority < succeeded_priority
+                && other_pair.state == PairState::Waiting
+            {
                 other_pair.state = PairState::Frozen;
             }
         }
-        
+
         true
     }
-
 
     /// Get the best succeeded pair for each address family
     pub(super) fn get_best_succeeded_pairs(&self) -> Vec<&CandidatePair> {
         let mut best_ipv4: Option<&CandidatePair> = None;
         let mut best_ipv6: Option<&CandidatePair> = None;
-        
+
         for pair in &self.candidate_pairs {
             if pair.state != PairState::Succeeded {
                 continue;
             }
-            
+
             match pair.remote_addr {
                 SocketAddr::V4(_) => {
                     if best_ipv4.map_or(true, |best| pair.priority > best.priority) {
@@ -2141,7 +2252,7 @@ impl NatTraversalState {
                 }
             }
         }
-        
+
         let mut result = Vec::new();
         if let Some(pair) = best_ipv4 {
             result.push(pair);
@@ -2154,12 +2265,13 @@ impl NatTraversalState {
 
     /// Get candidates ready for validation, sorted by priority
     pub(super) fn get_validation_candidates(&self) -> Vec<(VarInt, &AddressCandidate)> {
-        let mut candidates: Vec<_> = self.remote_candidates
+        let mut candidates: Vec<_> = self
+            .remote_candidates
             .iter()
             .filter(|(_, c)| c.state == CandidateState::New)
             .map(|(k, v)| (*k, v))
             .collect();
-        
+
         // Sort by priority (higher priority first)
         candidates.sort_by(|a, b| b.1.priority.cmp(&a.1.priority));
         candidates
@@ -2172,9 +2284,11 @@ impl NatTraversalState {
         challenge: u64,
         now: Instant,
     ) -> Result<(), NatTraversalError> {
-        let candidate = self.remote_candidates.get_mut(&sequence)
+        let candidate = self
+            .remote_candidates
+            .get_mut(&sequence)
             .ok_or(NatTraversalError::UnknownCandidate)?;
-        
+
         if candidate.state != CandidateState::New {
             return Err(NatTraversalError::InvalidCandidateState);
         }
@@ -2182,13 +2296,19 @@ impl NatTraversalState {
         // Security validation: Check for validation abuse patterns
         if Self::is_validation_suspicious(candidate, now) {
             self.stats.security_rejections += 1;
-            debug!("Suspicious validation attempt rejected for address {}", candidate.address);
+            debug!(
+                "Suspicious validation attempt rejected for address {}",
+                candidate.address
+            );
             return Err(NatTraversalError::SecurityValidationFailed);
         }
 
         // Security validation: Limit concurrent validations
         if self.active_validations.len() >= 10 {
-            debug!("Too many concurrent validations, rejecting new validation for {}", candidate.address);
+            debug!(
+                "Too many concurrent validations, rejecting new validation for {}",
+                candidate.address
+            );
             return Err(NatTraversalError::SecurityValidationFailed);
         }
 
@@ -2208,8 +2328,12 @@ impl NatTraversalState {
             last_retry_at: None,
         };
 
-        self.active_validations.insert(candidate.address, validation);
-        trace!("Started validation for candidate {} with challenge {}", candidate.address, challenge);
+        self.active_validations
+            .insert(candidate.address, validation);
+        trace!(
+            "Started validation for candidate {} with challenge {}",
+            candidate.address, challenge
+        );
         Ok(())
     }
 
@@ -2247,16 +2371,19 @@ impl NatTraversalState {
         now: Instant,
     ) -> Result<VarInt, NatTraversalError> {
         // Find the candidate with this address
-        let sequence = self.remote_candidates
+        let sequence = self
+            .remote_candidates
             .iter()
             .find(|(_, c)| c.address == remote_addr)
             .map(|(seq, _)| *seq)
             .ok_or(NatTraversalError::UnknownCandidate)?;
 
         // Verify challenge matches and update timeout state
-        let validation = self.active_validations.get_mut(&remote_addr)
+        let validation = self
+            .active_validations
+            .get_mut(&remote_addr)
             .ok_or(NatTraversalError::NoActiveValidation)?;
-        
+
         if validation.challenge != challenge {
             return Err(NatTraversalError::ChallengeMismatch);
         }
@@ -2264,22 +2391,26 @@ impl NatTraversalState {
         // Calculate RTT and update adaptive timeout
         let rtt = now.duration_since(validation.sent_at);
         validation.timeout_state.update_success(rtt);
-        
+
         // Update network monitor
         self.network_monitor.record_success(rtt, now);
 
         // Update candidate state
-        let candidate = self.remote_candidates.get_mut(&sequence)
+        let candidate = self
+            .remote_candidates
+            .get_mut(&sequence)
             .ok_or(NatTraversalError::UnknownCandidate)?;
-        
+
         candidate.state = CandidateState::Valid;
         self.active_validations.remove(&remote_addr);
         self.stats.validations_succeeded += 1;
 
-        trace!("Validation successful for {} with RTT {:?}", remote_addr, rtt);
+        trace!(
+            "Validation successful for {} with RTT {:?}",
+            remote_addr, rtt
+        );
         Ok(sequence)
     }
-
 
     /// Start a new coordination round for simultaneous hole punching with security validation
     pub(super) fn start_coordination_round(
@@ -2290,7 +2421,10 @@ impl NatTraversalState {
         // Security validation: Check rate limiting for coordination requests
         if self.security_state.is_coordination_rate_limited(now) {
             self.stats.rate_limit_violations += 1;
-            debug!("Rate limit exceeded for coordination request with {} targets", targets.len());
+            debug!(
+                "Rate limit exceeded for coordination request with {} targets",
+                targets.len()
+            );
             return Err(NatTraversalError::RateLimitExceeded);
         }
 
@@ -2298,22 +2432,34 @@ impl NatTraversalState {
         if self.is_coordination_suspicious(&targets, now) {
             self.stats.suspicious_coordination_attempts += 1;
             self.stats.security_rejections += 1;
-            debug!("Suspicious coordination request rejected with {} targets", targets.len());
+            debug!(
+                "Suspicious coordination request rejected with {} targets",
+                targets.len()
+            );
             return Err(NatTraversalError::SuspiciousCoordination);
         }
 
         // Security validation: Validate all target addresses
         for target in &targets {
-            match self.security_state.validate_address(target.remote_addr, now) {
+            match self
+                .security_state
+                .validate_address(target.remote_addr, now)
+            {
                 AddressValidationResult::Invalid => {
                     self.stats.invalid_address_rejections += 1;
                     self.stats.security_rejections += 1;
-                    debug!("Invalid target address in coordination: {}", target.remote_addr);
+                    debug!(
+                        "Invalid target address in coordination: {}",
+                        target.remote_addr
+                    );
                     return Err(NatTraversalError::InvalidAddress);
                 }
                 AddressValidationResult::Suspicious => {
                     self.stats.security_rejections += 1;
-                    debug!("Suspicious target address in coordination: {}", target.remote_addr);
+                    debug!(
+                        "Suspicious target address in coordination: {}",
+                        target.remote_addr
+                    );
                     return Err(NatTraversalError::SecurityValidationFailed);
                 }
                 AddressValidationResult::Valid => {
@@ -2346,7 +2492,11 @@ impl NatTraversalState {
         });
 
         self.stats.coordination_rounds += 1;
-        trace!("Started coordination round {} with {} targets", round, self.coordination.as_ref().unwrap().punch_targets.len());
+        trace!(
+            "Started coordination round {} with {} targets",
+            round,
+            self.coordination.as_ref().unwrap().punch_targets.len()
+        );
         Ok(round)
     }
 
@@ -2375,12 +2525,12 @@ impl NatTraversalState {
                     _ => None,
                 })
                 .collect();
-            
+
             if ipv4_addresses.len() >= 3 {
                 ipv4_addresses.sort();
                 let mut sequential_count = 1;
                 for i in 1..ipv4_addresses.len() {
-                    if ipv4_addresses[i] == ipv4_addresses[i-1] + 1 {
+                    if ipv4_addresses[i] == ipv4_addresses[i - 1] + 1 {
                         sequential_count += 1;
                         if sequential_count >= 3 {
                             return true; // Sequential IPs detected
@@ -2419,12 +2569,19 @@ impl NatTraversalState {
     }
 
     /// Handle receiving peer's PUNCH_ME_NOW (via coordinator) with security validation
-    pub(super) fn handle_peer_punch_request(&mut self, peer_round: VarInt, now: Instant) -> Result<bool, NatTraversalError> {
+    pub(super) fn handle_peer_punch_request(
+        &mut self,
+        peer_round: VarInt,
+        now: Instant,
+    ) -> Result<bool, NatTraversalError> {
         // Security validation: Check if this is a valid coordination request
         if self.is_peer_coordination_suspicious(peer_round, now) {
             self.stats.suspicious_coordination_attempts += 1;
             self.stats.security_rejections += 1;
-            debug!("Suspicious peer coordination request rejected for round {}", peer_round);
+            debug!(
+                "Suspicious peer coordination request rejected for round {}",
+                peer_round
+            );
             return Err(NatTraversalError::SuspiciousCoordination);
         }
 
@@ -2434,25 +2591,29 @@ impl NatTraversalState {
                     CoordinationPhase::Coordinating | CoordinationPhase::Requesting => {
                         coord.peer_punch_received = true;
                         coord.state = CoordinationPhase::Preparing;
-                        
+
                         // Calculate adaptive grace period based on network conditions
-                        let network_rtt = self.network_monitor.get_estimated_rtt()
+                        let network_rtt = self
+                            .network_monitor
+                            .get_estimated_rtt()
                             .unwrap_or(Duration::from_millis(100));
                         let quality_score = self.network_monitor.get_quality_score();
-                        
+
                         // Scale grace period: good networks get shorter delays
                         let base_grace = Duration::from_millis(150);
                         let rtt_factor = (network_rtt.as_millis() as f64 / 100.0).clamp(0.5, 3.0);
                         let quality_factor = (2.0 - quality_score).clamp(1.0, 2.0);
-                        
+
                         let adaptive_grace = Duration::from_millis(
-                            (base_grace.as_millis() as f64 * rtt_factor * quality_factor) as u64
+                            (base_grace.as_millis() as f64 * rtt_factor * quality_factor) as u64,
                         );
-                        
+
                         coord.punch_start = now + adaptive_grace;
-                        
-                        trace!("Peer coordination received, punch starts in {:?} (RTT: {:?}, quality: {:.2})", 
-                               adaptive_grace, network_rtt, quality_score);
+
+                        trace!(
+                            "Peer coordination received, punch starts in {:?} (RTT: {:?}, quality: {:.2})",
+                            adaptive_grace, network_rtt, quality_score
+                        );
                         Ok(true)
                     }
                     CoordinationPhase::Preparing => {
@@ -2461,12 +2622,18 @@ impl NatTraversalState {
                         Ok(true)
                     }
                     _ => {
-                        debug!("Received coordination in unexpected phase: {:?}", coord.state);
+                        debug!(
+                            "Received coordination in unexpected phase: {:?}",
+                            coord.state
+                        );
                         Ok(false)
                     }
                 }
             } else {
-                debug!("Received coordination for wrong round: {} vs {}", peer_round, coord.round);
+                debug!(
+                    "Received coordination for wrong round: {} vs {}",
+                    peer_round, coord.round
+                );
                 Ok(false)
             }
         } else {
@@ -2486,7 +2653,7 @@ impl NatTraversalState {
         if let Some(coord) = &self.coordination {
             let our_round = coord.round.into_inner();
             let peer_round_num = peer_round.into_inner();
-            
+
             // Allow some variance but reject extreme differences
             if peer_round_num > our_round + 100 || peer_round_num + 100 < our_round {
                 return true;
@@ -2516,29 +2683,34 @@ impl NatTraversalState {
     pub(super) fn start_punching_phase(&mut self, now: Instant) {
         if let Some(coord) = &mut self.coordination {
             coord.state = CoordinationPhase::Punching;
-            
+
             // Calculate precise timing for coordinated transmission
-            let network_rtt = self.network_monitor.get_estimated_rtt()
+            let network_rtt = self
+                .network_monitor
+                .get_estimated_rtt()
                 .unwrap_or(Duration::from_millis(100));
-            
+
             // Add small random jitter to avoid thundering herd
             let jitter_ms: u64 = rand::random::<u64>() % 11;
             let jitter = Duration::from_millis(jitter_ms);
             let transmission_time = coord.punch_start + network_rtt / 2 + jitter;
-            
+
             // Update punch start time with precise calculation
             coord.punch_start = transmission_time.max(now);
-            
-            trace!("Starting synchronized hole punching at {:?} (RTT: {:?}, jitter: {:?})", 
-                   coord.punch_start, network_rtt, jitter);
+
+            trace!(
+                "Starting synchronized hole punching at {:?} (RTT: {:?}, jitter: {:?})",
+                coord.punch_start, network_rtt, jitter
+            );
         }
     }
 
     /// Get punch targets for the current round
     pub(super) fn get_punch_targets_from_coordination(&self) -> Option<&[PunchTarget]> {
-        self.coordination.as_ref().map(|c| c.punch_targets.as_slice())
+        self.coordination
+            .as_ref()
+            .map(|c| c.punch_targets.as_slice())
     }
-
 
     /// Mark coordination as validating (PATH_CHALLENGE sent)
     pub(super) fn mark_coordination_validating(&mut self) {
@@ -2551,20 +2723,30 @@ impl NatTraversalState {
     }
 
     /// Handle successful path validation during coordination
-    pub(super) fn handle_coordination_success(&mut self, remote_addr: SocketAddr, now: Instant) -> bool {
+    pub(super) fn handle_coordination_success(
+        &mut self,
+        remote_addr: SocketAddr,
+        now: Instant,
+    ) -> bool {
         if let Some(coord) = &mut self.coordination {
             // Check if this address was one of our punch targets
-            let was_target = coord.punch_targets.iter().any(|target| target.remote_addr == remote_addr);
-            
+            let was_target = coord
+                .punch_targets
+                .iter()
+                .any(|target| target.remote_addr == remote_addr);
+
             if was_target && coord.state == CoordinationPhase::Validating {
                 // Calculate RTT and update adaptive timeout
                 let rtt = now.duration_since(coord.round_start);
                 coord.timeout_state.update_success(rtt);
                 self.network_monitor.record_success(rtt, now);
-                
+
                 coord.state = CoordinationPhase::Succeeded;
                 self.stats.direct_connections += 1;
-                trace!("Coordination succeeded via {} with RTT {:?}", remote_addr, rtt);
+                trace!(
+                    "Coordination succeeded via {} with RTT {:?}",
+                    remote_addr, rtt
+                );
                 true
             } else {
                 false
@@ -2580,39 +2762,46 @@ impl NatTraversalState {
             coord.retry_count += 1;
             coord.timeout_state.update_timeout();
             self.network_monitor.record_timeout(now);
-            
+
             // Check network conditions before retrying
-            if coord.timeout_state.should_retry(coord.max_retries) 
-                && self.network_monitor.is_suitable_for_coordination() {
-                
+            if coord.timeout_state.should_retry(coord.max_retries)
+                && self.network_monitor.is_suitable_for_coordination()
+            {
                 // Retry with adaptive timeout
                 coord.state = CoordinationPhase::Requesting;
                 coord.punch_request_sent = false;
                 coord.peer_punch_received = false;
                 coord.round_start = now;
                 coord.last_retry_at = Some(now);
-                
+
                 // Use adaptive timeout for retry delay
                 let retry_delay = coord.timeout_state.get_retry_delay();
-                
+
                 // Factor in network quality for retry timing
                 let quality_multiplier = 2.0 - self.network_monitor.get_quality_score();
                 let adjusted_delay = Duration::from_millis(
-                    (retry_delay.as_millis() as f64 * quality_multiplier) as u64
+                    (retry_delay.as_millis() as f64 * quality_multiplier) as u64,
                 );
-                
+
                 coord.punch_start = now + adjusted_delay;
-                
-                trace!("Coordination failed, retrying round {} (attempt {}) with delay {:?} (quality: {:.2})", 
-                       coord.round, coord.retry_count + 1, adjusted_delay, self.network_monitor.get_quality_score());
+
+                trace!(
+                    "Coordination failed, retrying round {} (attempt {}) with delay {:?} (quality: {:.2})",
+                    coord.round,
+                    coord.retry_count + 1,
+                    adjusted_delay,
+                    self.network_monitor.get_quality_score()
+                );
                 true
             } else {
                 coord.state = CoordinationPhase::Failed;
                 self.stats.coordination_failures += 1;
-                
+
                 if !self.network_monitor.is_suitable_for_coordination() {
-                    trace!("Coordination failed due to poor network conditions (quality: {:.2})", 
-                           self.network_monitor.get_quality_score());
+                    trace!(
+                        "Coordination failed due to poor network conditions (quality: {:.2})",
+                        self.network_monitor.get_quality_score()
+                    );
                 } else {
                     trace!("Coordination failed after {} attempts", coord.retry_count);
                 }
@@ -2623,16 +2812,17 @@ impl NatTraversalState {
         }
     }
 
-
     /// Check if the current coordination round has timed out
     pub(super) fn check_coordination_timeout(&mut self, now: Instant) -> bool {
         if let Some(coord) = &mut self.coordination {
             let timeout = coord.timeout_state.get_timeout();
             let elapsed = now.duration_since(coord.round_start);
-            
+
             if elapsed > timeout {
-                trace!("Coordination round {} timed out after {:?} (adaptive timeout: {:?})", 
-                       coord.round, elapsed, timeout);
+                trace!(
+                    "Coordination round {} timed out after {:?} (adaptive timeout: {:?})",
+                    coord.round, elapsed, timeout
+                );
                 self.handle_coordination_failure(now);
                 true
             } else {
@@ -2643,19 +2833,21 @@ impl NatTraversalState {
         }
     }
 
-
     /// Check for validation timeouts and handle retries
     #[allow(dead_code)] // Reserved for validation timeout handling
     pub(super) fn check_validation_timeouts(&mut self, now: Instant) -> Vec<SocketAddr> {
         let mut expired_validations = Vec::new();
         let mut retry_validations = Vec::new();
-        
+
         for (addr, validation) in &mut self.active_validations {
             let timeout = validation.timeout_state.get_timeout();
             let elapsed = now.duration_since(validation.sent_at);
-            
+
             if elapsed >= timeout {
-                if validation.timeout_state.should_retry(validation.max_retries) {
+                if validation
+                    .timeout_state
+                    .should_retry(validation.max_retries)
+                {
                     // Schedule retry
                     retry_validations.push(*addr);
                 } else {
@@ -2664,7 +2856,7 @@ impl NatTraversalState {
                 }
             }
         }
-        
+
         // Handle retries
         for addr in retry_validations {
             if let Some(validation) = self.active_validations.get_mut(&addr) {
@@ -2672,69 +2864,79 @@ impl NatTraversalState {
                 validation.sent_at = now;
                 validation.last_retry_at = Some(now);
                 validation.timeout_state.update_timeout();
-                
-                trace!("Retrying validation for {} (attempt {})", addr, validation.retry_count + 1);
+
+                trace!(
+                    "Retrying validation for {} (attempt {})",
+                    addr,
+                    validation.retry_count + 1
+                );
             }
         }
-        
+
         // Remove expired validations
         for addr in &expired_validations {
             self.active_validations.remove(addr);
             self.network_monitor.record_timeout(now);
             trace!("Validation expired for {}", addr);
         }
-        
+
         expired_validations
     }
-    
+
     /// Schedule validation retries for active validations that need retry
     #[allow(dead_code)] // Reserved for retry scheduling logic
     pub(super) fn schedule_validation_retries(&mut self, now: Instant) -> Vec<SocketAddr> {
         let mut retry_addresses = Vec::new();
-        
+
         // Get all active validations that need retry
         for (addr, validation) in &mut self.active_validations {
             let elapsed = now.duration_since(validation.sent_at);
             let timeout = validation.timeout_state.get_timeout();
-            
-            if elapsed > timeout && validation.timeout_state.should_retry(validation.max_retries) {
+
+            if elapsed > timeout
+                && validation
+                    .timeout_state
+                    .should_retry(validation.max_retries)
+            {
                 // Update retry state
                 validation.retry_count += 1;
                 validation.last_retry_at = Some(now);
                 validation.sent_at = now; // Reset sent time for new attempt
                 validation.timeout_state.update_timeout();
-                
+
                 retry_addresses.push(*addr);
-                trace!("Scheduled retry {} for validation to {}", validation.retry_count, addr);
+                trace!(
+                    "Scheduled retry {} for validation to {}",
+                    validation.retry_count, addr
+                );
             }
         }
-        
+
         retry_addresses
     }
-
 
     /// Update network conditions and cleanup
     #[allow(dead_code)] // Reserved for network condition monitoring
     pub(super) fn update_network_conditions(&mut self, now: Instant) {
         self.network_monitor.cleanup(now);
-        
+
         // Update timeout multiplier based on network conditions
         let multiplier = self.network_monitor.get_timeout_multiplier();
-        
+
         // Apply network-aware timeout adjustments to active validations
         for validation in self.active_validations.values_mut() {
             if multiplier > 1.5 {
                 // Poor network conditions - be more patient
-                validation.timeout_state.backoff_multiplier = 
-                    (validation.timeout_state.backoff_multiplier * 1.2).min(validation.timeout_state.max_backoff_multiplier);
+                validation.timeout_state.backoff_multiplier =
+                    (validation.timeout_state.backoff_multiplier * 1.2)
+                        .min(validation.timeout_state.max_backoff_multiplier);
             } else if multiplier < 0.8 {
                 // Good network conditions - be more aggressive
-                validation.timeout_state.backoff_multiplier = 
+                validation.timeout_state.backoff_multiplier =
                     (validation.timeout_state.backoff_multiplier * 0.9).max(1.0);
             }
         }
     }
-
 
     /// Check if coordination should be retried now
     #[allow(dead_code)] // Reserved for coordination retry logic
@@ -2750,7 +2952,6 @@ impl NatTraversalState {
         false
     }
 
-
     /// Perform resource management and cleanup
     #[allow(dead_code)] // Reserved for resource management optimization
     pub(super) fn perform_resource_management(&mut self, now: Instant) -> u64 {
@@ -2759,20 +2960,20 @@ impl NatTraversalState {
             self.active_validations.len(),
             self.local_candidates.len(),
             self.remote_candidates.len(),
-            self.candidate_pairs.len()
+            self.candidate_pairs.len(),
         );
-        
+
         // Calculate current memory pressure
         let memory_pressure = self.resource_manager.calculate_memory_pressure(
             self.active_validations.len(),
             self.local_candidates.len(),
             self.remote_candidates.len(),
-            self.candidate_pairs.len()
+            self.candidate_pairs.len(),
         );
-        
+
         // Perform cleanup if needed
         let mut cleaned = 0;
-        
+
         if self.resource_manager.should_cleanup(now) {
             cleaned += self.resource_manager.cleanup_expired_resources(
                 &mut self.active_validations,
@@ -2780,9 +2981,9 @@ impl NatTraversalState {
                 &mut self.remote_candidates,
                 &mut self.candidate_pairs,
                 &mut self.coordination,
-                now
+                now,
             );
-            
+
             // If memory pressure is high, perform aggressive cleanup
             if memory_pressure > self.resource_manager.config.aggressive_cleanup_threshold {
                 cleaned += self.resource_manager.aggressive_cleanup(
@@ -2790,15 +2991,14 @@ impl NatTraversalState {
                     &mut self.local_candidates,
                     &mut self.remote_candidates,
                     &mut self.candidate_pairs,
-                    now
+                    now,
                 );
             }
         }
-        
+
         cleaned
     }
-    
-    
+
     /// Check if we should reject new resources due to limits
     pub(super) fn should_reject_new_resources(&mut self, _now: Instant) -> bool {
         // Update stats and check limits
@@ -2806,75 +3006,82 @@ impl NatTraversalState {
             self.active_validations.len(),
             self.local_candidates.len(),
             self.remote_candidates.len(),
-            self.candidate_pairs.len()
+            self.candidate_pairs.len(),
         );
         let memory_pressure = self.resource_manager.calculate_memory_pressure(
             self.active_validations.len(),
             self.local_candidates.len(),
             self.remote_candidates.len(),
-            self.candidate_pairs.len()
+            self.candidate_pairs.len(),
         );
-        
+
         // Reject if memory pressure is too high
         if memory_pressure > self.resource_manager.config.memory_pressure_threshold {
             self.resource_manager.stats.allocation_failures += 1;
             return true;
         }
-        
+
         // Reject if hard limits are exceeded
         if self.resource_manager.check_resource_limits(self) {
             self.resource_manager.stats.allocation_failures += 1;
             return true;
         }
-        
+
         false
     }
-    
-    
+
     /// Get the next timeout instant for NAT traversal operations
     pub(super) fn get_next_timeout(&self, now: Instant) -> Option<Instant> {
         let mut next_timeout = None;
-        
+
         // Check coordination timeout
         if let Some(coord) = &self.coordination {
             match coord.state {
                 CoordinationPhase::Requesting | CoordinationPhase::Coordinating => {
                     let timeout_at = coord.round_start + self.coordination_timeout;
-                    next_timeout = Some(next_timeout.map_or(timeout_at, |t: Instant| t.min(timeout_at)));
+                    next_timeout =
+                        Some(next_timeout.map_or(timeout_at, |t: Instant| t.min(timeout_at)));
                 }
                 CoordinationPhase::Preparing => {
                     // Punch start time is when we should start punching
-                    next_timeout = Some(next_timeout.map_or(coord.punch_start, |t: Instant| t.min(coord.punch_start)));
+                    next_timeout = Some(
+                        next_timeout
+                            .map_or(coord.punch_start, |t: Instant| t.min(coord.punch_start)),
+                    );
                 }
                 CoordinationPhase::Punching | CoordinationPhase::Validating => {
                     // Check for coordination round timeout
                     let timeout_at = coord.round_start + coord.timeout_state.get_timeout();
-                    next_timeout = Some(next_timeout.map_or(timeout_at, |t: Instant| t.min(timeout_at)));
+                    next_timeout =
+                        Some(next_timeout.map_or(timeout_at, |t: Instant| t.min(timeout_at)));
                 }
                 _ => {}
             }
         }
-        
+
         // Check validation timeouts
         for (_, validation) in &self.active_validations {
             let timeout_at = validation.sent_at + validation.timeout_state.get_timeout();
             next_timeout = Some(next_timeout.map_or(timeout_at, |t: Instant| t.min(timeout_at)));
         }
-        
+
         // Check resource cleanup interval
         if self.resource_manager.should_cleanup(now) {
             // Schedule cleanup soon
             let cleanup_at = now + Duration::from_secs(1);
             next_timeout = Some(next_timeout.map_or(cleanup_at, |t: Instant| t.min(cleanup_at)));
         }
-        
+
         next_timeout
     }
 
     /// Handle timeout events and return actions to take
-    pub(super) fn handle_timeout(&mut self, now: Instant) -> Result<Vec<TimeoutAction>, NatTraversalError> {
+    pub(super) fn handle_timeout(
+        &mut self,
+        now: Instant,
+    ) -> Result<Vec<TimeoutAction>, NatTraversalError> {
         let mut actions = Vec::new();
-        
+
         // Handle coordination timeouts
         if let Some(coord) = &mut self.coordination {
             match coord.state {
@@ -2887,7 +3094,10 @@ impl NatTraversalState {
                             coord.state = CoordinationPhase::Failed;
                             actions.push(TimeoutAction::Failed);
                         } else {
-                            debug!("Coordination timeout, retrying ({}/{})", coord.retry_count, coord.max_retries);
+                            debug!(
+                                "Coordination timeout, retrying ({}/{})",
+                                coord.retry_count, coord.max_retries
+                            );
                             coord.state = CoordinationPhase::Requesting;
                             coord.round_start = now;
                             actions.push(TimeoutAction::RetryCoordination);
@@ -2911,7 +3121,10 @@ impl NatTraversalState {
                             coord.state = CoordinationPhase::Failed;
                             actions.push(TimeoutAction::Failed);
                         } else {
-                            debug!("Validation timeout, retrying ({}/{})", coord.retry_count, coord.max_retries);
+                            debug!(
+                                "Validation timeout, retrying ({}/{})",
+                                coord.retry_count, coord.max_retries
+                            );
                             coord.state = CoordinationPhase::Punching;
                             actions.push(TimeoutAction::StartValidation);
                         }
@@ -2926,7 +3139,7 @@ impl NatTraversalState {
                 _ => {}
             }
         }
-        
+
         // Handle validation timeouts
         let mut expired_validations = Vec::new();
         for (addr, validation) in &mut self.active_validations {
@@ -2937,38 +3150,43 @@ impl NatTraversalState {
                     debug!("Path validation failed for {}: max retries exceeded", addr);
                     expired_validations.push(*addr);
                 } else {
-                    debug!("Path validation timeout for {}, retrying ({}/{})", 
-                           addr, validation.retry_count, validation.max_retries);
+                    debug!(
+                        "Path validation timeout for {}, retrying ({}/{})",
+                        addr, validation.retry_count, validation.max_retries
+                    );
                     validation.sent_at = now;
                     validation.last_retry_at = Some(now);
                     actions.push(TimeoutAction::StartValidation);
                 }
             }
         }
-        
+
         // Remove expired validations
         for addr in expired_validations {
             self.active_validations.remove(&addr);
         }
-        
+
         // Handle resource cleanup
         if self.resource_manager.should_cleanup(now) {
             self.resource_manager.perform_cleanup(now);
         }
-        
+
         // Update network condition monitoring
         self.network_monitor.update_quality_score(now);
-        
+
         // If no coordination is active and we have candidates, try to start discovery
-        if self.coordination.is_none() && !self.local_candidates.is_empty() && !self.remote_candidates.is_empty() {
+        if self.coordination.is_none()
+            && !self.local_candidates.is_empty()
+            && !self.remote_candidates.is_empty()
+        {
             actions.push(TimeoutAction::RetryDiscovery);
         }
-        
+
         Ok(actions)
     }
-    
+
     /// Handle address observation for bootstrap nodes
-    /// 
+    ///
     /// This method is called when a peer connects to this bootstrap node,
     /// allowing the bootstrap to observe the peer's public address.
     #[allow(dead_code)] // Reserved for address observation handling
@@ -2987,7 +3205,7 @@ impl NatTraversalState {
                 peer_role,
                 transport_params: None,
             };
-            
+
             // Observe the peer's address
             bootstrap_coordinator.observe_peer_address(
                 peer_id,
@@ -2995,27 +3213,25 @@ impl NatTraversalState {
                 connection_context,
                 now,
             )?;
-            
+
             // Generate ADD_ADDRESS frame to inform peer of their observed address
             let sequence = self.next_sequence;
-            self.next_sequence = VarInt::from_u32((self.next_sequence.into_inner() + 1).try_into().unwrap());
-            
+            self.next_sequence =
+                VarInt::from_u32((self.next_sequence.into_inner() + 1).try_into().unwrap());
+
             let priority = VarInt::from_u32(100); // Server-reflexive priority
-            let add_address_frame = bootstrap_coordinator.generate_add_address_frame(
-                peer_id,
-                sequence,
-                priority,
-            );
-            
+            let add_address_frame =
+                bootstrap_coordinator.generate_add_address_frame(peer_id, sequence, priority);
+
             Ok(add_address_frame)
         } else {
             // Not a bootstrap node
             Ok(None)
         }
     }
-    
+
     /// Handle PUNCH_ME_NOW frame for bootstrap coordination
-    /// 
+    ///
     /// This processes coordination requests from peers and facilitates
     /// hole punching between them.
     pub(super) fn handle_punch_me_now_frame(
@@ -3032,9 +3248,9 @@ impl NatTraversalState {
             Ok(None)
         }
     }
-    
+
     /// Perform bootstrap cleanup operations
-    /// 
+    ///
     /// Get observed address for a peer
     #[allow(dead_code)] // Used for address reflexive candidate discovery
     pub(super) fn get_observed_address(&self, peer_id: [u8; 32]) -> Option<SocketAddr> {
@@ -3047,14 +3263,14 @@ impl NatTraversalState {
     /// Start candidate discovery process
     pub(super) fn start_candidate_discovery(&mut self) -> Result<(), NatTraversalError> {
         debug!("Starting candidate discovery for NAT traversal");
-        
+
         // Initialize discovery state if needed
         if self.local_candidates.is_empty() {
             // Add local interface candidates
             // This would be populated by the candidate discovery manager
             debug!("Local candidates will be populated by discovery manager");
         }
-        
+
         Ok(())
     }
 
@@ -3066,9 +3282,11 @@ impl NatTraversalState {
         address: SocketAddr,
         priority: u32,
     ) -> Result<(), NatTraversalError> {
-        debug!("Queuing ADD_ADDRESS frame: seq={}, addr={}, priority={}", 
-               sequence, address, priority);
-        
+        debug!(
+            "Queuing ADD_ADDRESS frame: seq={}, addr={}, priority={}",
+            sequence, address, priority
+        );
+
         // Add to local candidates if not already present
         let candidate = AddressCandidate {
             address,
@@ -3079,12 +3297,12 @@ impl NatTraversalState {
             attempt_count: 0,
             last_attempt: None,
         };
-        
+
         // Check if candidate already exists
         if !self.local_candidates.values().any(|c| c.address == address) {
             self.local_candidates.insert(sequence, candidate);
         }
-        
+
         Ok(())
     }
 }
@@ -3163,7 +3381,7 @@ pub(crate) struct SecurityStats {
 }
 
 /// Bootstrap coordinator state machine for NAT traversal coordination
-/// 
+///
 /// This manages the bootstrap node's role in observing client addresses,
 /// coordinating hole punching, and relaying coordination messages.
 #[derive(Debug)]
@@ -3366,9 +3584,7 @@ pub(crate) enum CoordinationSessionEvent {
         target_addresses: Vec<(SocketAddr, VarInt)>,
     },
     /// Session ready for cleanup
-    ReadyForCleanup {
-        session_id: CoordinationSessionId,
-    },
+    ReadyForCleanup { session_id: CoordinationSessionId },
 }
 
 /// Events that trigger session state advancement
@@ -3419,9 +3635,9 @@ impl BootstrapCoordinator {
             _last_cleanup: None,
         }
     }
-    
+
     /// Observe a peer's address from an incoming connection
-    /// 
+    ///
     /// This is called when a peer connects to this bootstrap node,
     /// allowing us to observe their public address.
     #[allow(dead_code)] // Reserved for peer address observation
@@ -3433,8 +3649,11 @@ impl BootstrapCoordinator {
         now: Instant,
     ) -> Result<(), NatTraversalError> {
         // Security validation
-        match self.security_validator.validate_address(observed_address, now) {
-            AddressValidationResult::Valid => {},
+        match self
+            .security_validator
+            .validate_address(observed_address, now)
+        {
+            AddressValidationResult::Valid => {}
             AddressValidationResult::Invalid => {
                 self.stats.security_rejections += 1;
                 return Err(NatTraversalError::InvalidAddress);
@@ -3444,15 +3663,17 @@ impl BootstrapCoordinator {
                 return Err(NatTraversalError::SecurityValidationFailed);
             }
         }
-        
+
         // Rate limiting check
         if self.security_validator.is_candidate_rate_limited(now) {
             self.stats.security_rejections += 1;
             return Err(NatTraversalError::RateLimitExceeded);
         }
-        
+
         // Update address observation
-        let observation = self.address_observations.entry(observed_address)
+        let observation = self
+            .address_observations
+            .entry(observed_address)
             .or_insert_with(|| AddressObservation {
                 address: observed_address,
                 first_observed: now,
@@ -3460,12 +3681,12 @@ impl BootstrapCoordinator {
                 validation_state: AddressValidationResult::Valid,
                 associated_peers: Vec::new(),
             });
-        
+
         observation.observation_count += 1;
         if !observation.associated_peers.contains(&peer_id) {
             observation.associated_peers.push(peer_id);
         }
-        
+
         // Update or create peer record
         let peer_record = PeerObservationRecord {
             peer_id,
@@ -3476,19 +3697,21 @@ impl BootstrapCoordinator {
             coordination_count: 0,
             success_rate: 1.0,
         };
-        
+
         self.peer_registry.insert(peer_id, peer_record);
         self.stats.total_observations += 1;
         self.stats.active_peers = self.peer_registry.len();
-        
-        debug!("Observed peer {:?} at address {} (total observations: {})", 
-               peer_id, observed_address, self.stats.total_observations);
-        
+
+        debug!(
+            "Observed peer {:?} at address {} (total observations: {})",
+            peer_id, observed_address, self.stats.total_observations
+        );
+
         Ok(())
     }
-    
+
     /// Generate ADD_ADDRESS frame for a peer based on observation
-    /// 
+    ///
     /// This creates an ADD_ADDRESS frame to inform a peer of their
     /// observed public address.
     #[allow(dead_code)] // Reserved for ADD_ADDRESS frame generation
@@ -3508,9 +3731,9 @@ impl BootstrapCoordinator {
             None
         }
     }
-    
+
     /// Process a PUNCH_ME_NOW frame from a peer
-    /// 
+    ///
     /// This handles coordination requests from peers wanting to establish
     /// direct connections through NAT traversal.
     pub(crate) fn process_punch_me_now_frame(
@@ -3521,43 +3744,57 @@ impl BootstrapCoordinator {
         now: Instant,
     ) -> Result<Option<crate::frame::PunchMeNow>, NatTraversalError> {
         // Enhanced security validation with adaptive rate limiting
-        if self.security_validator.is_adaptive_rate_limited(from_peer, now) {
+        if self
+            .security_validator
+            .is_adaptive_rate_limited(from_peer, now)
+        {
             self.stats.security_rejections += 1;
-            debug!("PUNCH_ME_NOW frame rejected: adaptive rate limit exceeded for peer {:?}", 
-                   hex::encode(&from_peer[..8]));
+            debug!(
+                "PUNCH_ME_NOW frame rejected: adaptive rate limit exceeded for peer {:?}",
+                hex::encode(&from_peer[..8])
+            );
             return Err(NatTraversalError::RateLimitExceeded);
         }
 
         // Enhanced address validation with amplification protection
-        self.security_validator.enhanced_address_validation(frame.local_address, source_addr, now)
+        self.security_validator
+            .enhanced_address_validation(frame.local_address, source_addr, now)
             .map_err(|e| {
                 self.stats.security_rejections += 1;
-                debug!("PUNCH_ME_NOW frame address validation failed from peer {:?}: {:?}", 
-                       hex::encode(&from_peer[..8]), e);
+                debug!(
+                    "PUNCH_ME_NOW frame address validation failed from peer {:?}: {:?}",
+                    hex::encode(&from_peer[..8]),
+                    e
+                );
                 e
             })?;
 
         // Comprehensive security validation
-        self.security_validator.validate_punch_me_now_frame(frame, source_addr, from_peer, now)
+        self.security_validator
+            .validate_punch_me_now_frame(frame, source_addr, from_peer, now)
             .map_err(|e| {
                 self.stats.security_rejections += 1;
-                debug!("PUNCH_ME_NOW frame validation failed from peer {:?}: {:?}", 
-                       hex::encode(&from_peer[..8]), e);
+                debug!(
+                    "PUNCH_ME_NOW frame validation failed from peer {:?}: {:?}",
+                    hex::encode(&from_peer[..8]),
+                    e
+                );
                 e
             })?;
-        
+
         // Check if we have a target peer for this coordination
         if let Some(target_peer_id) = frame.target_peer_id {
             // This is a coordination request that should be relayed
             if let Some(target_peer) = self.peer_registry.get(&target_peer_id) {
                 // Create coordination session if it doesn't exist
                 let session_id = self.generate_session_id();
-                
+
                 if !self.coordination_sessions.contains_key(&session_id) {
                     // Calculate optimal coordination timing based on network conditions
-                    let _network_rtt = self.estimate_peer_rtt(&from_peer)
+                    let _network_rtt = self
+                        .estimate_peer_rtt(&from_peer)
                         .unwrap_or(Duration::from_millis(100));
-                    
+
                     let session = CoordinationSession {
                         session_id,
                         peer_a: from_peer,
@@ -3572,12 +3809,12 @@ impl BootstrapCoordinator {
                         },
                         stats: CoordinationSessionStats::default(),
                     };
-                    
+
                     self.coordination_sessions.insert(session_id, session);
                     self.stats.total_coordinations += 1;
                     self.stats.active_sessions = self.coordination_sessions.len();
                 }
-                
+
                 // Generate coordination frame to send to target peer
                 let coordination_frame = crate::frame::PunchMeNow {
                     round: frame.round,
@@ -3585,22 +3822,28 @@ impl BootstrapCoordinator {
                     local_address: target_peer.observed_address,
                     target_peer_id: Some(from_peer),
                 };
-                
-                info!("Coordinating hole punch between {:?} and {:?} (round: {})", 
-                      from_peer, target_peer_id, frame.round);
-                
+
+                info!(
+                    "Coordinating hole punch between {:?} and {:?} (round: {})",
+                    from_peer, target_peer_id, frame.round
+                );
+
                 Ok(Some(coordination_frame))
             } else {
                 // Target peer not found
-                warn!("Target peer {:?} not found for coordination from {:?}", 
-                      target_peer_id, from_peer);
+                warn!(
+                    "Target peer {:?} not found for coordination from {:?}",
+                    target_peer_id, from_peer
+                );
                 Ok(None)
             }
         } else {
             // This is a response to coordination - update session state
-            let session_id = if let Some(session) = self.find_coordination_session_by_peer(from_peer, frame.round) {
+            let session_id = if let Some(session) =
+                self.find_coordination_session_by_peer(from_peer, frame.round)
+            {
                 session.sync_state.peer_b_ready = true;
-                
+
                 // If both peers are ready, coordination is complete
                 if session.sync_state.peer_a_ready && session.sync_state.peer_b_ready {
                     session.phase = CoordinationPhase::Punching;
@@ -3612,18 +3855,20 @@ impl BootstrapCoordinator {
             } else {
                 None
             };
-            
+
             // Update stats after releasing the mutable borrow
             if let Some(session_id) = session_id {
                 self.stats.successful_coordinations += 1;
-                info!("Coordination complete for session {} (round: {})", 
-                      session_id, frame.round);
+                info!(
+                    "Coordination complete for session {} (round: {})",
+                    session_id, frame.round
+                );
             }
-            
+
             Ok(None)
         }
     }
-    
+
     /// Find coordination session by peer and round
     fn find_coordination_session_by_peer(
         &mut self,
@@ -3631,11 +3876,11 @@ impl BootstrapCoordinator {
         round: VarInt,
     ) -> Option<&mut CoordinationSession> {
         self.coordination_sessions.values_mut().find(|session| {
-            (session.peer_a == peer_id || session.peer_b == peer_id) &&
-            session.current_round == round
+            (session.peer_a == peer_id || session.peer_b == peer_id)
+                && session.current_round == round
         })
     }
-    
+
     /// Generate unique session ID
     fn generate_session_id(&self) -> CoordinationSessionId {
         rand::random()
@@ -3657,16 +3902,21 @@ impl BootstrapCoordinator {
         now: Instant,
     ) -> Result<(), NatTraversalError> {
         // Check adaptive rate limiting
-        if self.security_validator.is_adaptive_rate_limited(peer_id, now) {
+        if self
+            .security_validator
+            .is_adaptive_rate_limited(peer_id, now)
+        {
             self.stats.security_rejections += 1;
             return Err(NatTraversalError::RateLimitExceeded);
         }
 
         // Perform enhanced address validation
-        self.security_validator.enhanced_address_validation(target_addr, source_addr, now)?;
+        self.security_validator
+            .enhanced_address_validation(target_addr, source_addr, now)?;
 
         // Check amplification limits
-        self.security_validator.validate_amplification_limits(source_addr, target_addr, now)?;
+        self.security_validator
+            .validate_amplification_limits(source_addr, target_addr, now)?;
 
         Ok(())
     }
@@ -3675,21 +3925,24 @@ impl BootstrapCoordinator {
     #[allow(dead_code)] // Reserved for session cleanup
     pub(crate) fn cleanup_expired_sessions(&mut self, now: Instant) {
         let session_timeout = Duration::from_secs(300); // 5 minutes
-        
+
         // Collect expired session IDs
-        let expired_sessions: Vec<CoordinationSessionId> = self.coordination_sessions
+        let expired_sessions: Vec<CoordinationSessionId> = self
+            .coordination_sessions
             .iter()
-            .filter(|(_, session)| {
-                now.duration_since(session.started_at) > session_timeout
-            })
+            .filter(|(_, session)| now.duration_since(session.started_at) > session_timeout)
             .map(|(&session_id, _)| session_id)
             .collect();
 
         // Remove expired sessions
         for session_id in expired_sessions {
             if let Some(session) = self.coordination_sessions.remove(&session_id) {
-                debug!("Cleaned up expired coordination session {} between {:?} and {:?}",
-                       session_id, hex::encode(&session.peer_a[..8]), hex::encode(&session.peer_b[..8]));
+                debug!(
+                    "Cleaned up expired coordination session {} between {:?} and {:?}",
+                    session_id,
+                    hex::encode(&session.peer_a[..8]),
+                    hex::encode(&session.peer_b[..8])
+                );
             }
         }
 
@@ -3698,9 +3951,8 @@ impl BootstrapCoordinator {
 
         // Clean up old peer observations
         let observation_timeout = Duration::from_secs(3600); // 1 hour
-        self.peer_registry.retain(|_, record| {
-            now.duration_since(record.observed_at) <= observation_timeout
-        });
+        self.peer_registry
+            .retain(|_, record| now.duration_since(record.observed_at) <= observation_timeout);
 
         // Update active peer count
         self.stats.active_peers = self.peer_registry.len();
@@ -3719,14 +3971,10 @@ impl BootstrapCoordinator {
 
     /// Update peer coordination statistics
     #[allow(dead_code)] // Reserved for stats updates
-    pub(crate) fn update_peer_coordination_stats(
-        &mut self,
-        peer_id: PeerId,
-        success: bool,
-    ) {
+    pub(crate) fn update_peer_coordination_stats(&mut self, peer_id: PeerId, success: bool) {
         if let Some(peer_record) = self.peer_registry.get_mut(&peer_id) {
             peer_record.coordination_count += 1;
-            
+
             if success {
                 // Update success rate using exponential moving average
                 let alpha = 0.1; // Learning rate
@@ -3740,18 +3988,24 @@ impl BootstrapCoordinator {
             // Disable coordination for peers with very low success rates
             if peer_record.success_rate < 0.1 && peer_record.coordination_count > 10 {
                 peer_record.can_coordinate = false;
-                warn!("Disabled coordination for peer {:?} due to low success rate: {:.2}",
-                      hex::encode(&peer_id[..8]), peer_record.success_rate);
+                warn!(
+                    "Disabled coordination for peer {:?} due to low success rate: {:.2}",
+                    hex::encode(&peer_id[..8]),
+                    peer_record.success_rate
+                );
             }
         }
     }
 
     /// Poll session state machine and advance coordination sessions
-    /// 
+    ///
     /// This method implements the core session state machine polling logic
     /// with timeout handling, retry mechanisms, and error recovery.
     #[allow(dead_code)] // Reserved for state machine polling
-    pub(crate) fn poll_session_state_machine(&mut self, now: Instant) -> Vec<CoordinationSessionEvent> {
+    pub(crate) fn poll_session_state_machine(
+        &mut self,
+        now: Instant,
+    ) -> Vec<CoordinationSessionEvent> {
         let mut events = Vec::new();
         let mut sessions_to_update = Vec::new();
 
@@ -3764,28 +4018,29 @@ impl BootstrapCoordinator {
 
         // Process session updates
         for (session_id, event) in sessions_to_update {
-            let session_events = if let Some(session) = self.coordination_sessions.get_mut(&session_id) {
-                let peer_a = session.peer_a;
-                let peer_b = session.peer_b;
-                
-                match Self::advance_session_state_static(session, event, now) {
-                    Ok(session_events) => session_events,
-                    Err(e) => {
-                        warn!("Failed to advance session {} state: {:?}", session_id, e);
-                        // Mark session as failed
-                        session.phase = CoordinationPhase::Failed;
-                        vec![CoordinationSessionEvent::SessionFailed {
-                            session_id,
-                            peer_a,
-                            peer_b,
-                            reason: format!("State advancement error: {:?}", e),
-                        }]
+            let session_events =
+                if let Some(session) = self.coordination_sessions.get_mut(&session_id) {
+                    let peer_a = session.peer_a;
+                    let peer_b = session.peer_b;
+
+                    match Self::advance_session_state_static(session, event, now) {
+                        Ok(session_events) => session_events,
+                        Err(e) => {
+                            warn!("Failed to advance session {} state: {:?}", session_id, e);
+                            // Mark session as failed
+                            session.phase = CoordinationPhase::Failed;
+                            vec![CoordinationSessionEvent::SessionFailed {
+                                session_id,
+                                peer_a,
+                                peer_b,
+                                reason: format!("State advancement error: {:?}", e),
+                            }]
+                        }
                     }
-                }
-            } else {
-                Vec::new()
-            };
-            
+                } else {
+                    Vec::new()
+                };
+
             events.extend(session_events);
         }
 
@@ -3797,9 +4052,13 @@ impl BootstrapCoordinator {
 
     /// Check if a session should advance its state
     #[allow(dead_code)] // Reserved for session advancement logic
-    fn should_advance_session(&self, session: &CoordinationSession, now: Instant) -> Option<SessionAdvancementEvent> {
+    fn should_advance_session(
+        &self,
+        session: &CoordinationSession,
+        now: Instant,
+    ) -> Option<SessionAdvancementEvent> {
         let session_age = now.duration_since(session.started_at);
-        
+
         match session.phase {
             CoordinationPhase::Requesting => {
                 // Check if we've been waiting too long for peer responses
@@ -3871,7 +4130,10 @@ impl BootstrapCoordinator {
         match (session.phase, event) {
             (CoordinationPhase::Requesting, SessionAdvancementEvent::BothPeersReady) => {
                 session.phase = CoordinationPhase::Coordinating;
-                debug!("Session {} advanced from Requesting to Coordinating", session.session_id);
+                debug!(
+                    "Session {} advanced from Requesting to Coordinating",
+                    session.session_id
+                );
                 events.push(CoordinationSessionEvent::PhaseChanged {
                     session_id: session.session_id,
                     old_phase: previous_phase,
@@ -3880,7 +4142,10 @@ impl BootstrapCoordinator {
             }
             (CoordinationPhase::Requesting, SessionAdvancementEvent::Timeout) => {
                 session.phase = CoordinationPhase::Failed;
-                warn!("Session {} timed out in Requesting phase", session.session_id);
+                warn!(
+                    "Session {} timed out in Requesting phase",
+                    session.session_id
+                );
                 events.push(CoordinationSessionEvent::SessionFailed {
                     session_id: session.session_id,
                     peer_a: session.peer_a,
@@ -3890,7 +4155,10 @@ impl BootstrapCoordinator {
             }
             (CoordinationPhase::Coordinating, SessionAdvancementEvent::CoordinationComplete) => {
                 session.phase = CoordinationPhase::Preparing;
-                debug!("Session {} advanced from Coordinating to Preparing", session.session_id);
+                debug!(
+                    "Session {} advanced from Coordinating to Preparing",
+                    session.session_id
+                );
                 events.push(CoordinationSessionEvent::PhaseChanged {
                     session_id: session.session_id,
                     old_phase: previous_phase,
@@ -3899,7 +4167,10 @@ impl BootstrapCoordinator {
             }
             (CoordinationPhase::Preparing, SessionAdvancementEvent::PreparationComplete) => {
                 session.phase = CoordinationPhase::Punching;
-                debug!("Session {} advanced from Preparing to Punching", session.session_id);
+                debug!(
+                    "Session {} advanced from Preparing to Punching",
+                    session.session_id
+                );
                 events.push(CoordinationSessionEvent::PhaseChanged {
                     session_id: session.session_id,
                     old_phase: previous_phase,
@@ -3914,7 +4185,10 @@ impl BootstrapCoordinator {
             }
             (CoordinationPhase::Punching, SessionAdvancementEvent::PunchingComplete) => {
                 session.phase = CoordinationPhase::Validating;
-                debug!("Session {} advanced from Punching to Validating", session.session_id);
+                debug!(
+                    "Session {} advanced from Punching to Validating",
+                    session.session_id
+                );
                 events.push(CoordinationSessionEvent::PhaseChanged {
                     session_id: session.session_id,
                     old_phase: previous_phase,
@@ -3932,15 +4206,20 @@ impl BootstrapCoordinator {
                 });
             }
             (phase, SessionAdvancementEvent::ReadyForCleanup) => {
-                debug!("Session {} ready for cleanup in phase {:?}", session.session_id, phase);
+                debug!(
+                    "Session {} ready for cleanup in phase {:?}",
+                    session.session_id, phase
+                );
                 events.push(CoordinationSessionEvent::ReadyForCleanup {
                     session_id: session.session_id,
                 });
             }
             _ => {
                 // Invalid state transition - log warning but don't fail
-                warn!("Invalid state transition for session {}: {:?} -> {:?}", 
-                      session.session_id, session.phase, event);
+                warn!(
+                    "Invalid state transition for session {}: {:?} -> {:?}",
+                    session.session_id, session.phase, event
+                );
             }
         }
 
@@ -3951,20 +4230,25 @@ impl BootstrapCoordinator {
     #[allow(dead_code)] // Reserved for completed session cleanup
     fn cleanup_completed_sessions(&mut self, now: Instant) {
         let cleanup_timeout = Duration::from_secs(300); // 5 minutes
-        
-        let sessions_to_remove: Vec<CoordinationSessionId> = self.coordination_sessions
+
+        let sessions_to_remove: Vec<CoordinationSessionId> = self
+            .coordination_sessions
             .iter()
             .filter(|(_, session)| {
-                matches!(session.phase, CoordinationPhase::Succeeded | CoordinationPhase::Failed) &&
-                now.duration_since(session.started_at) > cleanup_timeout
+                matches!(
+                    session.phase,
+                    CoordinationPhase::Succeeded | CoordinationPhase::Failed
+                ) && now.duration_since(session.started_at) > cleanup_timeout
             })
             .map(|(&session_id, _)| session_id)
             .collect();
 
         for session_id in sessions_to_remove {
             if let Some(session) = self.coordination_sessions.remove(&session_id) {
-                debug!("Cleaned up completed session {} in phase {:?}", 
-                       session_id, session.phase);
+                debug!(
+                    "Cleaned up completed session {} in phase {:?}",
+                    session_id, session.phase
+                );
             }
         }
 
@@ -3972,7 +4256,7 @@ impl BootstrapCoordinator {
     }
 
     /// Implement retry mechanism with exponential backoff
-    /// 
+    ///
     /// This method handles retry logic for failed coordination attempts
     /// with exponential backoff to avoid overwhelming the network.
     #[allow(dead_code)] // Reserved for retry handling
@@ -3981,7 +4265,9 @@ impl BootstrapCoordinator {
         session_id: CoordinationSessionId,
         now: Instant,
     ) -> Result<bool, NatTraversalError> {
-        let session = self.coordination_sessions.get_mut(&session_id)
+        let session = self
+            .coordination_sessions
+            .get_mut(&session_id)
             .ok_or(NatTraversalError::NoActiveCoordination)?;
 
         // Check if session is in a retryable state
@@ -3993,15 +4279,16 @@ impl BootstrapCoordinator {
         let base_delay = Duration::from_secs(1);
         let max_delay = Duration::from_secs(60);
         let retry_count = session.stats.successful_coordinations; // Reuse this field for retry count
-        
+
         let delay = std::cmp::min(
             base_delay * 2_u32.pow(retry_count.min(10)), // Cap at 2^10 to prevent overflow
-            max_delay
+            max_delay,
         );
 
         // Add jitter to prevent thundering herd
         let _jitter_factor = 0.1;
-        let jitter = Duration::from_millis((rand::random::<u64>() % 100) * delay.as_millis() as u64 / 1000);
+        let jitter =
+            Duration::from_millis((rand::random::<u64>() % 100) * delay.as_millis() as u64 / 1000);
         let total_delay = delay + jitter;
 
         // Check if enough time has passed for retry
@@ -4012,7 +4299,10 @@ impl BootstrapCoordinator {
         // Check retry limits
         const MAX_RETRIES: u32 = 5;
         if retry_count >= MAX_RETRIES {
-            warn!("Session {} exceeded maximum retry attempts ({})", session_id, MAX_RETRIES);
+            warn!(
+                "Session {} exceeded maximum retry attempts ({})",
+                session_id, MAX_RETRIES
+            );
             return Ok(false);
         }
 
@@ -4023,7 +4313,11 @@ impl BootstrapCoordinator {
         session.sync_state.peer_b_ready = false;
         session.stats.successful_coordinations += 1; // Increment retry count
 
-        info!("Retrying coordination session {} (attempt {})", session_id, retry_count + 1);
+        info!(
+            "Retrying coordination session {} (attempt {})",
+            session_id,
+            retry_count + 1
+        );
         Ok(true)
     }
 
@@ -4046,10 +4340,14 @@ impl BootstrapCoordinator {
                 warn!("Rate limit exceeded for session {}, will retry", session_id);
                 CoordinationRecoveryAction::RetryWithBackoff
             }
-            NatTraversalError::SecurityValidationFailed | NatTraversalError::SuspiciousCoordination => {
+            NatTraversalError::SecurityValidationFailed
+            | NatTraversalError::SuspiciousCoordination => {
                 // Security error - mark session as failed and don't retry
                 session.phase = CoordinationPhase::Failed;
-                warn!("Security validation failed for session {}, marking as failed", session_id);
+                warn!(
+                    "Security validation failed for session {}, marking as failed",
+                    session_id
+                );
                 CoordinationRecoveryAction::MarkAsFailed
             }
             NatTraversalError::InvalidAddress => {
@@ -4059,12 +4357,18 @@ impl BootstrapCoordinator {
             }
             NatTraversalError::NoActiveCoordination => {
                 // Session state error - clean up
-                warn!("No active coordination for session {}, cleaning up", session_id);
+                warn!(
+                    "No active coordination for session {}, cleaning up",
+                    session_id
+                );
                 CoordinationRecoveryAction::Cleanup
             }
             _ => {
                 // Other errors - generic retry with backoff
-                warn!("Coordination error for session {}: {:?}, will retry", session_id, error);
+                warn!(
+                    "Coordination error for session {}: {:?}, will retry",
+                    session_id, error
+                );
                 CoordinationRecoveryAction::RetryWithBackoff
             }
         }
@@ -4081,10 +4385,9 @@ impl BootstrapCoordinator {
             None
         }
     }
-    
-    
+
     /// Coordinate hole punching between two peers
-    /// 
+    ///
     /// This method implements the core coordination logic for establishing
     /// direct P2P connections through NAT traversal.
     #[allow(dead_code)] // Reserved for hole punching coordination
@@ -4096,9 +4399,13 @@ impl BootstrapCoordinator {
         now: Instant,
     ) -> Result<CoordinationSessionId, NatTraversalError> {
         // Validate that both peers are known and can coordinate
-        let peer_a_record = self.peer_registry.get(&peer_a)
+        let peer_a_record = self
+            .peer_registry
+            .get(&peer_a)
             .ok_or(NatTraversalError::UnknownCandidate)?;
-        let peer_b_record = self.peer_registry.get(&peer_b)
+        let peer_b_record = self
+            .peer_registry
+            .get(&peer_b)
             .ok_or(NatTraversalError::UnknownCandidate)?;
 
         if !peer_a_record.can_coordinate || !peer_b_record.can_coordinate {
@@ -4131,14 +4438,19 @@ impl BootstrapCoordinator {
         self.stats.total_coordinations += 1;
         self.stats.active_sessions = self.coordination_sessions.len();
 
-        info!("Started coordination session {} between peers {:?} and {:?} (round: {})",
-              session_id, hex::encode(&peer_a[..8]), hex::encode(&peer_b[..8]), round);
+        info!(
+            "Started coordination session {} between peers {:?} and {:?} (round: {})",
+            session_id,
+            hex::encode(&peer_a[..8]),
+            hex::encode(&peer_b[..8]),
+            round
+        );
 
         Ok(session_id)
     }
 
     /// Relay coordination frame between peers
-    /// 
+    ///
     /// This method handles the relay of coordination messages between peers
     /// to facilitate synchronized hole punching.
     #[allow(dead_code)] // Reserved for frame relaying
@@ -4149,7 +4461,9 @@ impl BootstrapCoordinator {
         frame: &crate::frame::PunchMeNow,
         _now: Instant,
     ) -> Result<Option<(PeerId, crate::frame::PunchMeNow)>, NatTraversalError> {
-        let session = self.coordination_sessions.get_mut(&session_id)
+        let session = self
+            .coordination_sessions
+            .get_mut(&session_id)
             .ok_or(NatTraversalError::NoActiveCoordination)?;
 
         // Validate that the sender is part of this session
@@ -4165,7 +4479,9 @@ impl BootstrapCoordinator {
         };
 
         // Get target peer's observed address
-        let target_record = self.peer_registry.get(&target_peer)
+        let target_record = self
+            .peer_registry
+            .get(&target_peer)
             .ok_or(NatTraversalError::UnknownCandidate)?;
 
         // Update session state based on frame
@@ -4186,17 +4502,24 @@ impl BootstrapCoordinator {
         // Check if coordination is complete
         if session.sync_state.peer_a_ready && session.sync_state.peer_b_ready {
             session.phase = CoordinationPhase::Coordinating;
-            info!("Coordination phase complete for session {} - both peers ready", session_id);
+            info!(
+                "Coordination phase complete for session {} - both peers ready",
+                session_id
+            );
         }
 
-        debug!("Relaying coordination frame from {:?} to {:?} in session {}",
-               hex::encode(&from_peer[..8]), hex::encode(&target_peer[..8]), session_id);
+        debug!(
+            "Relaying coordination frame from {:?} to {:?} in session {}",
+            hex::encode(&from_peer[..8]),
+            hex::encode(&target_peer[..8]),
+            session_id
+        );
 
         Ok(Some((target_peer, relay_frame)))
     }
 
     /// Implement round-based synchronization protocol
-    /// 
+    ///
     /// This method manages the timing and synchronization of hole punching rounds
     /// to maximize the chances of successful NAT traversal.
     #[allow(dead_code)] // Reserved for round advancement
@@ -4205,7 +4528,9 @@ impl BootstrapCoordinator {
         session_id: CoordinationSessionId,
         now: Instant,
     ) -> Result<CoordinationPhase, NatTraversalError> {
-        let session = self.coordination_sessions.get_mut(&session_id)
+        let session = self
+            .coordination_sessions
+            .get_mut(&session_id)
             .ok_or(NatTraversalError::NoActiveCoordination)?;
 
         let previous_phase = session.phase;
@@ -4223,10 +4548,12 @@ impl BootstrapCoordinator {
                 // Calculate synchronized punch time
                 let coordination_delay = Duration::from_millis(200); // Grace period
                 let punch_time = now + coordination_delay;
-                
+
                 session.phase = CoordinationPhase::Preparing;
-                debug!("Session {} advanced to Preparing phase, punch time: {:?}", 
-                       session_id, punch_time);
+                debug!(
+                    "Session {} advanced to Preparing phase, punch time: {:?}",
+                    session_id, punch_time
+                );
             }
             CoordinationPhase::Preparing => {
                 // Transition to active hole punching
@@ -4274,13 +4601,19 @@ impl BootstrapCoordinator {
 
     /// Get coordination session by ID
     #[allow(dead_code)] // Reserved for session retrieval
-    pub(crate) fn get_coordination_session(&self, session_id: CoordinationSessionId) -> Option<&CoordinationSession> {
+    pub(crate) fn get_coordination_session(
+        &self,
+        session_id: CoordinationSessionId,
+    ) -> Option<&CoordinationSession> {
         self.coordination_sessions.get(&session_id)
     }
 
     /// Get mutable coordination session by ID
     #[allow(dead_code)] // Reserved for mutable session access
-    pub(crate) fn get_coordination_session_mut(&mut self, session_id: CoordinationSessionId) -> Option<&mut CoordinationSession> {
+    pub(crate) fn get_coordination_session_mut(
+        &mut self,
+        session_id: CoordinationSessionId,
+    ) -> Option<&mut CoordinationSession> {
         self.coordination_sessions.get_mut(&session_id)
     }
 
@@ -4291,7 +4624,9 @@ impl BootstrapCoordinator {
         session_id: CoordinationSessionId,
         _now: Instant,
     ) -> Result<(), NatTraversalError> {
-        let session = self.coordination_sessions.get_mut(&session_id)
+        let session = self
+            .coordination_sessions
+            .get_mut(&session_id)
             .ok_or(NatTraversalError::NoActiveCoordination)?;
 
         session.phase = CoordinationPhase::Succeeded;
@@ -4301,12 +4636,16 @@ impl BootstrapCoordinator {
         // Update peer success rates
         if let Some(peer_a_record) = self.peer_registry.get_mut(&session.peer_a) {
             peer_a_record.coordination_count += 1;
-            peer_a_record.success_rate = (peer_a_record.success_rate * (peer_a_record.coordination_count - 1) as f64 + 1.0) / peer_a_record.coordination_count as f64;
+            peer_a_record.success_rate =
+                (peer_a_record.success_rate * (peer_a_record.coordination_count - 1) as f64 + 1.0)
+                    / peer_a_record.coordination_count as f64;
         }
 
         if let Some(peer_b_record) = self.peer_registry.get_mut(&session.peer_b) {
             peer_b_record.coordination_count += 1;
-            peer_b_record.success_rate = (peer_b_record.success_rate * (peer_b_record.coordination_count - 1) as f64 + 1.0) / peer_b_record.coordination_count as f64;
+            peer_b_record.success_rate =
+                (peer_b_record.success_rate * (peer_b_record.coordination_count - 1) as f64 + 1.0)
+                    / peer_b_record.coordination_count as f64;
         }
 
         info!("Coordination session {} marked as successful", session_id);
@@ -4321,7 +4660,9 @@ impl BootstrapCoordinator {
         reason: &str,
         _now: Instant,
     ) -> Result<(), NatTraversalError> {
-        let session = self.coordination_sessions.get_mut(&session_id)
+        let session = self
+            .coordination_sessions
+            .get_mut(&session_id)
             .ok_or(NatTraversalError::NoActiveCoordination)?;
 
         session.phase = CoordinationPhase::Failed;
@@ -4329,12 +4670,16 @@ impl BootstrapCoordinator {
         // Update peer success rates
         if let Some(peer_a_record) = self.peer_registry.get_mut(&session.peer_a) {
             peer_a_record.coordination_count += 1;
-            peer_a_record.success_rate = (peer_a_record.success_rate * (peer_a_record.coordination_count - 1) as f64) / peer_a_record.coordination_count as f64;
+            peer_a_record.success_rate = (peer_a_record.success_rate
+                * (peer_a_record.coordination_count - 1) as f64)
+                / peer_a_record.coordination_count as f64;
         }
 
         if let Some(peer_b_record) = self.peer_registry.get_mut(&session.peer_b) {
             peer_b_record.coordination_count += 1;
-            peer_b_record.success_rate = (peer_b_record.success_rate * (peer_b_record.coordination_count - 1) as f64) / peer_b_record.coordination_count as f64;
+            peer_b_record.success_rate = (peer_b_record.success_rate
+                * (peer_b_record.coordination_count - 1) as f64)
+                / peer_b_record.coordination_count as f64;
         }
 
         warn!("Coordination session {} failed: {}", session_id, reason);
@@ -4345,19 +4690,16 @@ impl BootstrapCoordinator {
     pub(crate) fn get_peer_record(&self, peer_id: PeerId) -> Option<&PeerObservationRecord> {
         self.peer_registry.get(&peer_id)
     }
-    
 }
 
 impl Default for BootstrapConfig {
     fn default() -> Self {
-        Self {
-            _unused: (),
-        }
+        Self { _unused: () }
     }
 }
 
 /// Multi-destination packet transmission manager for NAT traversal
-/// 
+///
 /// This component handles simultaneous packet transmission to multiple candidate
 /// addresses during hole punching attempts, maximizing the chances of successful
 /// NAT traversal by sending packets to all viable destinations concurrently.
@@ -4378,7 +4720,6 @@ pub(super) struct MultiDestinationTransmitter {
     performance_monitor: TransmissionPerformanceMonitor,
 }
 
-
 /// Statistics for multi-destination transmission (stub implementation)
 #[derive(Debug, Default, Clone)]
 pub(super) struct MultiDestTransmissionStats {
@@ -4391,13 +4732,11 @@ struct TransmissionRateLimiter {
     _unused: (),
 }
 
-
 /// Adaptive target selection based on network conditions (stub implementation)
 #[derive(Debug)]
 struct AdaptiveTargetSelector {
     _unused: (),
 }
-
 
 /// Performance monitoring for transmission efficiency (stub implementation)
 #[derive(Debug)]
@@ -4417,45 +4756,24 @@ impl MultiDestinationTransmitter {
             performance_monitor: TransmissionPerformanceMonitor::new(),
         }
     }
-
-
-
-
-
-
-
-
 }
-
-
 
 impl TransmissionRateLimiter {
     fn new(_max_pps: u64, _burst_size: u64) -> Self {
-        Self {
-            _unused: (),
-        }
+        Self { _unused: () }
     }
-
 }
-
 
 impl AdaptiveTargetSelector {
     fn new() -> Self {
-        Self {
-            _unused: (),
-        }
+        Self { _unused: () }
     }
-
-
 }
 
 impl TransmissionPerformanceMonitor {
     fn new() -> Self {
-        Self {
-            _unused: (),
-        }
+        Self { _unused: () }
     }
-
 }
 
 // TODO: Fix nat_traversal_tests module imports

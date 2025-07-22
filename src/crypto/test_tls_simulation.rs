@@ -7,8 +7,8 @@
 mod tests {
     use super::super::{
         raw_public_keys::{RawPublicKeyConfigBuilder, key_utils::*},
-        tls_extensions::{CertificateTypePreferences, CertificateType},
         tls_extension_simulation::create_connection_id,
+        tls_extensions::{CertificateType, CertificateTypePreferences},
     };
 
     #[test]
@@ -69,12 +69,20 @@ mod tests {
         assert_eq!(client_extensions[1].0, 48); // server_certificate_type
 
         // Server processes and responds
-        let server_response = server_config.process_client_hello_extensions(&conn_id, &client_extensions).unwrap();
+        let server_response = server_config
+            .process_client_hello_extensions(&conn_id, &client_extensions)
+            .unwrap();
         assert_eq!(server_response.len(), 2);
 
         // Both should negotiate to Raw Public Key
-        assert_eq!(server_response[0].1[1], CertificateType::RawPublicKey.to_u8());
-        assert_eq!(server_response[1].1[1], CertificateType::RawPublicKey.to_u8());
+        assert_eq!(
+            server_response[0].1[1],
+            CertificateType::RawPublicKey.to_u8()
+        );
+        assert_eq!(
+            server_response[1].1[1],
+            CertificateType::RawPublicKey.to_u8()
+        );
     }
 
     #[test]
@@ -102,11 +110,19 @@ mod tests {
 
         // Test negotiation
         let client_extensions = client_config.get_client_hello_extensions(&conn_id);
-        let server_response = server_config.process_client_hello_extensions(&conn_id, &client_extensions).unwrap();
+        let server_response = server_config
+            .process_client_hello_extensions(&conn_id, &client_extensions)
+            .unwrap();
 
         // Should negotiate to RPK since both support it
-        assert_eq!(server_response[0].1[1], CertificateType::RawPublicKey.to_u8());
-        assert_eq!(server_response[1].1[1], CertificateType::RawPublicKey.to_u8());
+        assert_eq!(
+            server_response[0].1[1],
+            CertificateType::RawPublicKey.to_u8()
+        );
+        assert_eq!(
+            server_response[1].1[1],
+            CertificateType::RawPublicKey.to_u8()
+        );
     }
 
     #[test]
@@ -126,7 +142,9 @@ mod tests {
         client_config.get_client_hello_extensions(&conn_id);
 
         // Cleanup should remove the state
-        client_config.extension_context().cleanup_connection(&conn_id);
+        client_config
+            .extension_context()
+            .cleanup_connection(&conn_id);
 
         // New negotiation should work fine
         let extensions = client_config.get_client_hello_extensions(&conn_id);

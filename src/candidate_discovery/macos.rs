@@ -197,7 +197,10 @@ pub(crate) enum MacOSNetworkError {
     /// Interface not found
     InterfaceNotFound { interface_name: String },
     /// Invalid interface configuration
-    InvalidInterfaceConfig { interface_name: String, reason: String },
+    InvalidInterfaceConfig {
+        interface_name: String,
+        reason: String,
+    },
     /// Network service enumeration failed
     ServiceEnumerationFailed { reason: String },
     /// Address parsing failed
@@ -207,7 +210,10 @@ pub(crate) enum MacOSNetworkError {
     /// Run loop source creation failed
     RunLoopSourceCreationFailed { reason: String },
     /// Dynamic store configuration failed
-    DynamicStoreConfigurationFailed { operation: &'static str, reason: String },
+    DynamicStoreConfigurationFailed {
+        operation: &'static str,
+        reason: String,
+    },
 }
 
 // System Configuration Framework types and constants
@@ -241,7 +247,7 @@ struct SCDynamicStoreContext {
 extern "C" {
     #[link_name = "kCFRunLoopDefaultMode"]
     static kCFRunLoopDefaultMode: CFStringRef;
-    
+
     #[link_name = "kCFAllocatorDefault"]
     static kCFAllocatorDefault: CFAllocatorRef;
 }
@@ -285,31 +291,25 @@ extern "C" {
         patterns: CFArrayRef,
     ) -> bool;
 
-    fn SCDynamicStoreCopyKeyList(
-        store: SCDynamicStoreRef,
-        pattern: CFStringRef,
-    ) -> CFArrayRef;
+    fn SCDynamicStoreCopyKeyList(store: SCDynamicStoreRef, pattern: CFStringRef) -> CFArrayRef;
 
     #[allow(dead_code)]
-    fn SCDynamicStoreCopyValue(
-        store: SCDynamicStoreRef,
-        key: CFStringRef,
-    ) -> *mut std::ffi::c_void;
-    
+    fn SCDynamicStoreCopyValue(store: SCDynamicStoreRef, key: CFStringRef)
+    -> *mut std::ffi::c_void;
+
     fn SCPreferencesCreate(
         allocator: CFAllocatorRef,
         name: CFStringRef,
         prefs_id: CFStringRef,
     ) -> *mut std::ffi::c_void; // SCPreferencesRef
-    
-    fn SCNetworkServiceCopyAll(
-        prefs: *mut std::ffi::c_void, // SCPreferencesRef
+
+    fn SCNetworkServiceCopyAll(prefs: *mut std::ffi::c_void, // SCPreferencesRef
     ) -> CFArrayRef;
-    
+
     fn SCNetworkServiceGetInterface(
         service: *mut std::ffi::c_void, // SCNetworkServiceRef
     ) -> *mut std::ffi::c_void; // SCNetworkInterfaceRef
-    
+
     fn SCNetworkInterfaceGetBSDName(
         interface: *mut std::ffi::c_void, // SCNetworkInterfaceRef
     ) -> CFStringRef;
@@ -321,16 +321,8 @@ extern "C" {
     fn CFRelease(cf: *mut std::ffi::c_void);
     fn CFRetain(cf: *mut std::ffi::c_void) -> *mut std::ffi::c_void;
     fn CFRunLoopGetCurrent() -> CFRunLoopRef;
-    fn CFRunLoopAddSource(
-        rl: CFRunLoopRef,
-        source: CFRunLoopSourceRef,
-        mode: CFStringRef,
-    );
-    fn CFRunLoopRemoveSource(
-        rl: CFRunLoopRef,
-        source: CFRunLoopSourceRef,
-        mode: CFStringRef,
-    );
+    fn CFRunLoopAddSource(rl: CFRunLoopRef, source: CFRunLoopSourceRef, mode: CFStringRef);
+    fn CFRunLoopRemoveSource(rl: CFRunLoopRef, source: CFRunLoopSourceRef, mode: CFStringRef);
     fn CFStringCreateWithCString(
         allocator: CFAllocatorRef,
         cstr: *const std::ffi::c_char,
@@ -391,11 +383,7 @@ unsafe fn cf_string_to_rust_string(cf_str: CFStringRef) -> Option<String> {
 
 unsafe fn rust_string_to_cf_string(s: &str) -> CFStringRef {
     let c_str = CString::new(s).unwrap();
-    CFStringCreateWithCString(
-        kCFAllocatorDefault,
-        c_str.as_ptr(),
-        kCFStringEncodingUTF8,
-    )
+    CFStringCreateWithCString(kCFAllocatorDefault, c_str.as_ptr(), kCFStringEncodingUTF8)
 }
 
 impl MacOSInterfaceDiscovery {
@@ -464,16 +452,16 @@ impl MacOSInterfaceDiscovery {
             // Set up notification keys for network changes
             let keys = Vec::<CFStringRef>::new();
             let mut patterns = Vec::new();
-            
+
             // Monitor all IPv4 and IPv6 configuration changes
             let ipv4_pattern = rust_string_to_cf_string("State:/Network/Interface/.*/IPv4");
             let ipv6_pattern = rust_string_to_cf_string("State:/Network/Interface/.*/IPv6");
             let link_pattern = rust_string_to_cf_string("State:/Network/Interface/.*/Link");
-            
+
             patterns.push(ipv4_pattern);
             patterns.push(ipv6_pattern);
             patterns.push(link_pattern);
-            
+
             // Create arrays for the notification keys
             let keys_array = CFArrayCreate(
                 kCFAllocatorDefault,
@@ -481,21 +469,17 @@ impl MacOSInterfaceDiscovery {
                 keys.len() as i64,
                 kCFTypeArrayCallBacks,
             );
-            
+
             let patterns_array = CFArrayCreate(
                 kCFAllocatorDefault,
                 patterns.as_ptr() as *const *const std::ffi::c_void,
                 patterns.len() as i64,
                 kCFTypeArrayCallBacks,
             );
-            
+
             // Set notification keys
-            let success = SCDynamicStoreSetNotificationKeys(
-                *sc_store,
-                keys_array,
-                patterns_array,
-            );
-            
+            let success = SCDynamicStoreSetNotificationKeys(*sc_store, keys_array, patterns_array);
+
             // Clean up
             for pattern in patterns {
                 CFRelease(pattern);
@@ -506,7 +490,7 @@ impl MacOSInterfaceDiscovery {
             if !patterns_array.is_null() {
                 CFRelease(patterns_array);
             }
-            
+
             if !success {
                 return Err(MacOSNetworkError::DynamicStoreConfigurationFailed {
                     operation: "SCDynamicStoreSetNotificationKeys",
@@ -516,9 +500,7 @@ impl MacOSInterfaceDiscovery {
         }
 
         // Create run loop source for network change notifications
-        let run_loop_source = unsafe {
-            self.create_run_loop_source(sc_store)
-        };
+        let run_loop_source = unsafe { self.create_run_loop_source(sc_store) };
 
         if run_loop_source.0.is_null() {
             return Err(MacOSNetworkError::RunLoopSourceCreationFailed {
@@ -548,7 +530,7 @@ impl MacOSInterfaceDiscovery {
 
         // Get all network services
         let services = self.get_network_services()?;
-        
+
         for service in services {
             match self.process_network_service(&service) {
                 Ok(interface) => {
@@ -574,7 +556,7 @@ impl MacOSInterfaceDiscovery {
     /// Get all network services from System Configuration
     fn get_network_services(&self) -> Result<Vec<String>, MacOSNetworkError> {
         let mut services = Vec::new();
-        
+
         unsafe {
             // Create preferences reference
             let prefs_name = rust_string_to_cf_string("ant-quic-network-discovery");
@@ -584,11 +566,11 @@ impl MacOSInterfaceDiscovery {
                 std::ptr::null_mut(), // Use default preferences
             );
             CFRelease(prefs_name);
-            
+
             if prefs.is_null() {
                 // Fall back to common interface names if we can't get preferences
                 let common_interfaces = [
-                    "en0", "en1", "en2", "en3", // Ethernet/Wi-Fi
+                    "en0", "en1", "en2", "en3",   // Ethernet/Wi-Fi
                     "awdl0", // Apple Wireless Direct Link
                     "utun0", "utun1", "utun2", // VPN tunnels
                     "bridge0", "bridge1", // Bridge interfaces
@@ -600,15 +582,15 @@ impl MacOSInterfaceDiscovery {
                         services.push(interface.to_string());
                     }
                 }
-                
+
                 return Ok(services);
             }
-            
+
             // Get all network services
             let services_array = SCNetworkServiceCopyAll(prefs);
             if !services_array.is_null() {
                 let count = CFArrayGetCount(services_array);
-                
+
                 for i in 0..count {
                     let service = CFArrayGetValueAtIndex(services_array, i);
                     if !service.is_null() {
@@ -625,10 +607,10 @@ impl MacOSInterfaceDiscovery {
                         }
                     }
                 }
-                
+
                 CFRelease(services_array);
             }
-            
+
             CFRelease(prefs);
         }
 
@@ -642,19 +624,22 @@ impl MacOSInterfaceDiscovery {
             Ok(name) => name,
             Err(_) => return false,
         };
-        
+
         let index = unsafe { libc::if_nametoindex(c_name.as_ptr()) };
         index != 0
     }
 
     /// Process a network service to extract interface information
-    fn process_network_service(&self, service_name: &str) -> Result<MacOSInterface, MacOSNetworkError> {
+    fn process_network_service(
+        &self,
+        service_name: &str,
+    ) -> Result<MacOSInterface, MacOSNetworkError> {
         // Get interface hardware type
         let hardware_type = self.get_interface_hardware_type(service_name);
-        
+
         // Get interface state
         let state = self.get_interface_state(service_name);
-        
+
         // Get IP addresses
         let ipv4_addresses = self.get_ipv4_addresses(service_name)?;
         let ipv6_addresses = if self.interface_config.include_ipv6 {
@@ -720,7 +705,7 @@ impl MacOSInterfaceDiscovery {
         // - en0: Primary Wi-Fi interface on most Macs
         // - en1, en2, etc.: Additional Wi-Fi interfaces
         // - awdl0: Apple Wireless Direct Link (peer-to-peer Wi-Fi)
-        
+
         // Check for common Wi-Fi interface patterns
         if interface_name.starts_with("en") {
             // Most Wi-Fi interfaces are en0, en1, etc.
@@ -731,7 +716,7 @@ impl MacOSInterfaceDiscovery {
                 return num <= 2;
             }
         }
-        
+
         // Apple Wireless Direct Link
         interface_name == "awdl0"
     }
@@ -748,7 +733,7 @@ impl MacOSInterfaceDiscovery {
         let mut ifreq: libc::ifreq = unsafe { std::mem::zeroed() };
         let name_bytes = interface_name.as_bytes();
         let copy_len = std::cmp::min(name_bytes.len(), libc::IFNAMSIZ - 1);
-        
+
         unsafe {
             std::ptr::copy_nonoverlapping(
                 name_bytes.as_ptr(),
@@ -763,7 +748,7 @@ impl MacOSInterfaceDiscovery {
             let flags = unsafe { ifreq.ifr_ifru.ifru_flags };
             let is_up = (flags & libc::IFF_UP as i16) != 0;
             let is_running = (flags & libc::IFF_RUNNING as i16) != 0;
-            
+
             if is_up && is_running {
                 InterfaceState::Active
             } else if is_up {
@@ -775,14 +760,16 @@ impl MacOSInterfaceDiscovery {
             InterfaceState::Unknown
         };
 
-        unsafe { libc::close(socket_fd); }
+        unsafe {
+            libc::close(socket_fd);
+        }
         state
     }
 
     /// Get IPv4 addresses for an interface
     fn get_ipv4_addresses(&self, interface_name: &str) -> Result<Vec<Ipv4Addr>, MacOSNetworkError> {
         let mut addresses = Vec::new();
-        
+
         // Create socket for interface queries
         let socket_fd = unsafe { libc::socket(libc::AF_INET, libc::SOCK_DGRAM, 0) };
         if socket_fd < 0 {
@@ -796,7 +783,7 @@ impl MacOSInterfaceDiscovery {
         let mut ifreq: libc::ifreq = unsafe { std::mem::zeroed() };
         let name_bytes = interface_name.as_bytes();
         let copy_len = std::cmp::min(name_bytes.len(), libc::IFNAMSIZ - 1);
-        
+
         unsafe {
             std::ptr::copy_nonoverlapping(
                 name_bytes.as_ptr(),
@@ -808,10 +795,10 @@ impl MacOSInterfaceDiscovery {
         // Get interface address
         let result = unsafe { libc::ioctl(socket_fd, SIOCGIFADDR, &mut ifreq) };
         if result >= 0 {
-            let sockaddr_in = unsafe { 
+            let sockaddr_in = unsafe {
                 &*(&ifreq.ifr_ifru.ifru_addr as *const libc::sockaddr as *const libc::sockaddr_in)
             };
-            
+
             if sockaddr_in.sin_family == libc::AF_INET as u8 {
                 let ip_bytes = sockaddr_in.sin_addr.s_addr.to_ne_bytes();
                 let ipv4_addr = Ipv4Addr::from(ip_bytes);
@@ -821,18 +808,20 @@ impl MacOSInterfaceDiscovery {
             }
         }
 
-        unsafe { libc::close(socket_fd); }
+        unsafe {
+            libc::close(socket_fd);
+        }
         Ok(addresses)
     }
 
     /// Get IPv6 addresses for an interface
     fn get_ipv6_addresses(&self, interface_name: &str) -> Result<Vec<Ipv6Addr>, MacOSNetworkError> {
         let mut addresses = Vec::new();
-        
+
         // Use getifaddrs to enumerate all interface addresses
         let mut ifaddrs_ptr: *mut libc::ifaddrs = std::ptr::null_mut();
         let result = unsafe { libc::getifaddrs(&mut ifaddrs_ptr) };
-        
+
         if result != 0 {
             return Err(MacOSNetworkError::SystemConfigurationError {
                 function: "getifaddrs",
@@ -843,36 +832,36 @@ impl MacOSInterfaceDiscovery {
         let mut current = ifaddrs_ptr;
         while !current.is_null() {
             let ifaddr = unsafe { &*current };
-            
+
             // Check if this is the interface we're looking for
             let if_name = unsafe {
                 let name_ptr = ifaddr.ifa_name;
                 let name_cstr = std::ffi::CStr::from_ptr(name_ptr);
                 name_cstr.to_string_lossy().to_string()
             };
-            
+
             if if_name == interface_name && !ifaddr.ifa_addr.is_null() {
                 let sockaddr = unsafe { &*ifaddr.ifa_addr };
-                
+
                 // Check if this is an IPv6 address
                 if sockaddr.sa_family == libc::AF_INET6 as u8 {
-                    let sockaddr_in6 = unsafe { 
-                        &*(ifaddr.ifa_addr as *const libc::sockaddr_in6)
-                    };
-                    
+                    let sockaddr_in6 = unsafe { &*(ifaddr.ifa_addr as *const libc::sockaddr_in6) };
+
                     let ipv6_bytes = sockaddr_in6.sin6_addr.s6_addr;
-                    
+
                     let ipv6_addr = Ipv6Addr::from(ipv6_bytes);
                     if !ipv6_addr.is_unspecified() {
                         addresses.push(ipv6_addr);
                     }
                 }
             }
-            
+
             current = ifaddr.ifa_next;
         }
 
-        unsafe { libc::freeifaddrs(ifaddrs_ptr); }
+        unsafe {
+            libc::freeifaddrs(ifaddrs_ptr);
+        }
         Ok(addresses)
     }
 
@@ -900,7 +889,7 @@ impl MacOSInterfaceDiscovery {
         let mut ifreq: libc::ifreq = unsafe { std::mem::zeroed() };
         let name_bytes = interface_name.as_bytes();
         let copy_len = std::cmp::min(name_bytes.len(), libc::IFNAMSIZ - 1);
-        
+
         unsafe {
             std::ptr::copy_nonoverlapping(
                 name_bytes.as_ptr(),
@@ -921,7 +910,9 @@ impl MacOSInterfaceDiscovery {
             }
         };
 
-        unsafe { libc::close(socket_fd); }
+        unsafe {
+            libc::close(socket_fd);
+        }
         mtu
     }
 
@@ -930,48 +921,46 @@ impl MacOSInterfaceDiscovery {
         // Use getifaddrs to get hardware address
         let mut ifaddrs_ptr: *mut libc::ifaddrs = std::ptr::null_mut();
         let result = unsafe { libc::getifaddrs(&mut ifaddrs_ptr) };
-        
+
         if result != 0 {
             return None;
         }
 
         let mut hardware_address = None;
         let mut current = ifaddrs_ptr;
-        
+
         while !current.is_null() {
             let ifaddr = unsafe { &*current };
-            
+
             // Check if this is the interface we're looking for
             let if_name = unsafe {
                 let name_ptr = ifaddr.ifa_name;
                 let name_cstr = std::ffi::CStr::from_ptr(name_ptr);
                 name_cstr.to_string_lossy().to_string()
             };
-            
+
             if if_name == interface_name && !ifaddr.ifa_addr.is_null() {
                 let sockaddr = unsafe { &*ifaddr.ifa_addr };
-                
+
                 // Check if this is a link-layer address (AF_LINK on macOS)
                 if sockaddr.sa_family == libc::AF_LINK as u8 {
                     // On macOS, AF_LINK sockaddr contains the hardware address
                     // Parse the sockaddr_dl structure properly
-                    let sockaddr_dl = unsafe { 
-                        &*(ifaddr.ifa_addr as *const libc::sockaddr_dl)
-                    };
-                    
+                    let sockaddr_dl = unsafe { &*(ifaddr.ifa_addr as *const libc::sockaddr_dl) };
+
                     // Check if this is a 6-byte MAC address
                     if sockaddr_dl.sdl_alen == 6 && sockaddr_dl.sdl_type == IFT_ETHER {
                         // Calculate offset to hardware address data
                         // sockaddr_dl layout: len, family, index, type, nlen, alen, slen, data[12], name[], addr[]
                         let name_len = sockaddr_dl.sdl_nlen as usize;
                         let addr_offset = 8 + name_len; // 8 bytes for fixed header + name length
-                        
+
                         if addr_offset + 6 <= sockaddr_dl.sdl_len as usize {
                             let addr_data = unsafe {
                                 let base_ptr = ifaddr.ifa_addr as *const u8;
                                 std::slice::from_raw_parts(base_ptr.add(addr_offset), 6)
                             };
-                            
+
                             let mut mac = [0u8; 6];
                             mac.copy_from_slice(addr_data);
                             hardware_address = Some(mac);
@@ -980,11 +969,13 @@ impl MacOSInterfaceDiscovery {
                     }
                 }
             }
-            
+
             current = ifaddr.ifa_next;
         }
 
-        unsafe { libc::freeifaddrs(ifaddrs_ptr); }
+        unsafe {
+            libc::freeifaddrs(ifaddrs_ptr);
+        }
         hardware_address
     }
 
@@ -1078,7 +1069,8 @@ impl MacOSInterfaceDiscovery {
     fn update_cache(&mut self, interfaces: Vec<MacOSInterface>) {
         self.cached_interfaces.clear();
         for interface in interfaces {
-            self.cached_interfaces.insert(interface.name.clone(), interface);
+            self.cached_interfaces
+                .insert(interface.name.clone(), interface);
         }
         self.last_scan_time = Some(Instant::now());
     }
@@ -1097,12 +1089,8 @@ impl MacOSInterfaceDiscovery {
 
     unsafe fn create_dynamic_store(&mut self, name: *const std::ffi::c_char) -> SCDynamicStoreRef {
         // Create CF string from C string
-        let cf_name = CFStringCreateWithCString(
-            kCFAllocatorDefault,
-            name,
-            kCFStringEncodingUTF8,
-        );
-        
+        let cf_name = CFStringCreateWithCString(kCFAllocatorDefault, name, kCFStringEncodingUTF8);
+
         if cf_name.is_null() {
             error!("Failed to create CFString for dynamic store name");
             return SCDynamicStoreRef(std::ptr::null_mut());
@@ -1142,11 +1130,7 @@ impl MacOSInterfaceDiscovery {
         if !source.0.is_null() {
             // Add the source to the current run loop
             let current_run_loop = CFRunLoopGetCurrent();
-            CFRunLoopAddSource(
-                current_run_loop,
-                source,
-                kCFRunLoopDefaultMode,
-            );
+            CFRunLoopAddSource(current_run_loop, source, kCFRunLoopDefaultMode);
         }
 
         source
@@ -1156,15 +1140,16 @@ impl MacOSInterfaceDiscovery {
 impl NetworkInterfaceDiscovery for MacOSInterfaceDiscovery {
     fn start_scan(&mut self) -> Result<(), String> {
         debug!("Starting macOS network interface scan");
-        
+
         // Check if we need to scan or can use cache
         if self.is_cache_valid() && !self.check_network_changes() {
             debug!("Using cached interface data");
-            let interfaces: Vec<NetworkInterface> = self.cached_interfaces
+            let interfaces: Vec<NetworkInterface> = self
+                .cached_interfaces
                 .values()
                 .map(|mi| self.convert_to_network_interface(mi))
                 .collect();
-            
+
             self.scan_state = ScanState::Completed {
                 scan_results: interfaces,
             };
@@ -1179,7 +1164,7 @@ impl NetworkInterfaceDiscovery for MacOSInterfaceDiscovery {
         match self.enumerate_interfaces() {
             Ok(interfaces) => {
                 debug!("Successfully enumerated {} interfaces", interfaces.len());
-                
+
                 // Convert to generic NetworkInterface format
                 let network_interfaces: Vec<NetworkInterface> = interfaces
                     .iter()
@@ -1188,11 +1173,11 @@ impl NetworkInterfaceDiscovery for MacOSInterfaceDiscovery {
 
                 // Update cache
                 self.update_cache(interfaces);
-                
+
                 self.scan_state = ScanState::Completed {
                     scan_results: network_interfaces,
                 };
-                
+
                 info!("Network interface scan completed successfully");
                 Ok(())
             }
@@ -1231,15 +1216,11 @@ impl Drop for MacOSInterfaceDiscovery {
             if let Some(run_loop_source) = self.run_loop_source.take() {
                 // Remove from run loop first
                 let current_run_loop = CFRunLoopGetCurrent();
-                CFRunLoopRemoveSource(
-                    current_run_loop,
-                    run_loop_source,
-                    kCFRunLoopDefaultMode,
-                );
+                CFRunLoopRemoveSource(current_run_loop, run_loop_source, kCFRunLoopDefaultMode);
                 // Then release the source
                 CFRelease(run_loop_source.0);
             }
-            
+
             if let Some(sc_store) = self.sc_store.take() {
                 CFRelease(sc_store.0);
             }
@@ -1256,8 +1237,15 @@ impl std::fmt::Display for MacOSNetworkError {
             Self::InterfaceNotFound { interface_name } => {
                 write!(f, "Interface not found: {}", interface_name)
             }
-            Self::InvalidInterfaceConfig { interface_name, reason } => {
-                write!(f, "Invalid interface config for {}: {}", interface_name, reason)
+            Self::InvalidInterfaceConfig {
+                interface_name,
+                reason,
+            } => {
+                write!(
+                    f,
+                    "Invalid interface config for {}: {}",
+                    interface_name, reason
+                )
             }
             Self::ServiceEnumerationFailed { reason } => {
                 write!(f, "Service enumeration failed: {}", reason)
@@ -1272,7 +1260,11 @@ impl std::fmt::Display for MacOSNetworkError {
                 write!(f, "Run loop source creation failed: {}", reason)
             }
             Self::DynamicStoreConfigurationFailed { operation, reason } => {
-                write!(f, "Dynamic store configuration failed in {}: {}", operation, reason)
+                write!(
+                    f,
+                    "Dynamic store configuration failed in {}: {}",
+                    operation, reason
+                )
             }
         }
     }
@@ -1302,7 +1294,7 @@ mod tests {
             min_mtu: 1000,
             max_interfaces: 16,
         };
-        
+
         discovery.set_interface_config(config.clone());
         assert_eq!(discovery.interface_config.include_loopback, true);
         assert_eq!(discovery.interface_config.min_mtu, 1000);
@@ -1311,31 +1303,61 @@ mod tests {
     #[test]
     fn test_hardware_type_detection() {
         let discovery = MacOSInterfaceDiscovery::new();
-        
+
         // Test well-known interface patterns
-        assert_eq!(discovery.get_interface_hardware_type("en0"), HardwareType::WiFi);
-        assert_eq!(discovery.get_interface_hardware_type("en1"), HardwareType::WiFi); // en1 is also WiFi based on the logic
-        assert_eq!(discovery.get_interface_hardware_type("en5"), HardwareType::Ethernet); // Higher numbered en interfaces are Ethernet
-        assert_eq!(discovery.get_interface_hardware_type("lo0"), HardwareType::Loopback);
-        assert_eq!(discovery.get_interface_hardware_type("utun0"), HardwareType::VPN);
-        assert_eq!(discovery.get_interface_hardware_type("awdl0"), HardwareType::WiFi);
-        assert_eq!(discovery.get_interface_hardware_type("bridge0"), HardwareType::Bridge);
-        assert_eq!(discovery.get_interface_hardware_type("p2p0"), HardwareType::WiFi);
-        assert_eq!(discovery.get_interface_hardware_type("ppp0"), HardwareType::PPP);
-        assert_eq!(discovery.get_interface_hardware_type("unknown0"), HardwareType::Unknown);
+        assert_eq!(
+            discovery.get_interface_hardware_type("en0"),
+            HardwareType::WiFi
+        );
+        assert_eq!(
+            discovery.get_interface_hardware_type("en1"),
+            HardwareType::WiFi
+        ); // en1 is also WiFi based on the logic
+        assert_eq!(
+            discovery.get_interface_hardware_type("en5"),
+            HardwareType::Ethernet
+        ); // Higher numbered en interfaces are Ethernet
+        assert_eq!(
+            discovery.get_interface_hardware_type("lo0"),
+            HardwareType::Loopback
+        );
+        assert_eq!(
+            discovery.get_interface_hardware_type("utun0"),
+            HardwareType::VPN
+        );
+        assert_eq!(
+            discovery.get_interface_hardware_type("awdl0"),
+            HardwareType::WiFi
+        );
+        assert_eq!(
+            discovery.get_interface_hardware_type("bridge0"),
+            HardwareType::Bridge
+        );
+        assert_eq!(
+            discovery.get_interface_hardware_type("p2p0"),
+            HardwareType::WiFi
+        );
+        assert_eq!(
+            discovery.get_interface_hardware_type("ppp0"),
+            HardwareType::PPP
+        );
+        assert_eq!(
+            discovery.get_interface_hardware_type("unknown0"),
+            HardwareType::Unknown
+        );
     }
 
     #[test]
     fn test_cache_validation() {
         let mut discovery = MacOSInterfaceDiscovery::new();
-        
+
         // No cache initially
         assert!(!discovery.is_cache_valid());
-        
+
         // Set cache time
         discovery.last_scan_time = Some(Instant::now());
         assert!(discovery.is_cache_valid());
-        
+
         // Expired cache
         discovery.last_scan_time = Some(Instant::now() - std::time::Duration::from_secs(60));
         assert!(!discovery.is_cache_valid());
@@ -1345,7 +1367,7 @@ mod tests {
     fn test_loopback_interface_creation() {
         let discovery = MacOSInterfaceDiscovery::new();
         let loopback = discovery.create_loopback_interface();
-        
+
         assert_eq!(loopback.name, "lo0");
         assert_eq!(loopback.hardware_type, HardwareType::Loopback);
         assert!(loopback.flags.is_loopback);
@@ -1356,7 +1378,7 @@ mod tests {
     #[test]
     fn test_interface_filtering() {
         let mut discovery = MacOSInterfaceDiscovery::new();
-        
+
         // Create test interface
         let interface = MacOSInterface {
             name: "en0".to_string(),
@@ -1378,10 +1400,10 @@ mod tests {
             hardware_address: None,
             last_updated: Instant::now(),
         };
-        
+
         // Should include by default
         assert!(discovery.should_include_interface(&interface));
-        
+
         // Should exclude if MTU too small
         discovery.interface_config.min_mtu = 2000;
         assert!(!discovery.should_include_interface(&interface));

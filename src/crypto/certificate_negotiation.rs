@@ -6,16 +6,15 @@
 
 use std::{
     collections::HashMap,
+    hash::{Hash, Hasher},
     sync::{Arc, Mutex, RwLock},
     time::{Duration, Instant},
-    hash::{Hash, Hasher},
 };
 
-use tracing::{debug, info, warn, span, Level};
+use tracing::{Level, debug, info, span, warn};
 
 use super::tls_extensions::{
-    CertificateTypeList, CertificateTypePreferences,
-    NegotiationResult, TlsExtensionError,
+    CertificateTypeList, CertificateTypePreferences, NegotiationResult, TlsExtensionError,
 };
 
 /// Negotiation state for a single TLS connection
@@ -34,23 +33,19 @@ pub enum NegotiationState {
         completed_at: Instant,
     },
     /// Negotiation failed
-    Failed {
-        error: String,
-        failed_at: Instant,
-    },
+    Failed { error: String, failed_at: Instant },
     /// Timed out waiting for response
-    TimedOut {
-        timeout_at: Instant,
-    },
+    TimedOut { timeout_at: Instant },
 }
 
 impl NegotiationState {
     /// Check if negotiation is complete (either succeeded or failed)
     pub fn is_complete(&self) -> bool {
-        matches!(self, 
-            NegotiationState::Completed { .. } | 
-            NegotiationState::Failed { .. } | 
-            NegotiationState::TimedOut { .. }
+        matches!(
+            self,
+            NegotiationState::Completed { .. }
+                | NegotiationState::Failed { .. }
+                | NegotiationState::TimedOut { .. }
         )
     }
 
@@ -138,7 +133,7 @@ impl CacheKey {
         remote_server: Option<&CertificateTypeList>,
     ) -> Self {
         use std::collections::hash_map::DefaultHasher;
-        
+
         let mut hasher = DefaultHasher::new();
         local.hash(&mut hasher);
         let local_hash = hasher.finish();
@@ -220,10 +215,7 @@ impl CertificateNegotiationManager {
     }
 
     /// Start a new certificate type negotiation
-    pub fn start_negotiation(
-        &self,
-        preferences: CertificateTypePreferences,
-    ) -> NegotiationId {
+    pub fn start_negotiation(&self, preferences: CertificateTypePreferences) -> NegotiationId {
         let id = NegotiationId::new();
         let state = NegotiationState::Waiting {
             sent_at: Instant::now(),
@@ -255,10 +247,12 @@ impl CertificateNegotiationManager {
         })?;
 
         let our_preferences = match state {
-            NegotiationState::Waiting { our_preferences, .. } => our_preferences.clone(),
+            NegotiationState::Waiting {
+                our_preferences, ..
+            } => our_preferences.clone(),
             _ => {
                 return Err(TlsExtensionError::InvalidExtensionData(
-                    "Negotiation not in waiting state".to_string()
+                    "Negotiation not in waiting state".to_string(),
                 ));
             }
         };
@@ -274,15 +268,19 @@ impl CertificateNegotiationManager {
             let mut cache = self.cache.lock().unwrap();
             if let Some((cached_result, cached_at)) = cache.get(&cache_key) {
                 // Check if cache entry is still valid (not expired)
-                if cached_at.elapsed() < Duration::from_secs(300) { // 5 minute cache
+                if cached_at.elapsed() < Duration::from_secs(300) {
+                    // 5 minute cache
                     let mut stats = self.stats.lock().unwrap();
                     stats.cache_hits += 1;
-                    
+
                     // Update session state
-                    sessions.insert(id, NegotiationState::Completed {
-                        result: cached_result.clone(),
-                        completed_at: Instant::now(),
-                    });
+                    sessions.insert(
+                        id,
+                        NegotiationState::Completed {
+                            result: cached_result.clone(),
+                            completed_at: Instant::now(),
+                        },
+                    );
 
                     debug!("Cache hit for negotiation: {:?}", id);
                     return Ok(cached_result.clone());
@@ -298,10 +296,8 @@ impl CertificateNegotiationManager {
 
         // Perform actual negotiation
         let negotiation_start = Instant::now();
-        let result = our_preferences.negotiate(
-            remote_client_types.as_ref(),
-            remote_server_types.as_ref(),
-        );
+        let result =
+            our_preferences.negotiate(remote_client_types.as_ref(), remote_server_types.as_ref());
 
         match result {
             Ok(negotiation_result) => {
@@ -309,23 +305,27 @@ impl CertificateNegotiationManager {
                 let negotiation_time = negotiation_start.elapsed();
 
                 // Update session state
-                sessions.insert(id, NegotiationState::Completed {
-                    result: negotiation_result.clone(),
-                    completed_at,
-                });
+                sessions.insert(
+                    id,
+                    NegotiationState::Completed {
+                        result: negotiation_result.clone(),
+                        completed_at,
+                    },
+                );
 
                 // Update statistics
                 let mut stats = self.stats.lock().unwrap();
                 stats.successful += 1;
-                
+
                 // Update average negotiation time (simple moving average)
                 let total_completed = stats.successful + stats.failed;
                 stats.avg_negotiation_time = if total_completed == 1 {
                     negotiation_time
                 } else {
                     Duration::from_nanos(
-                        (stats.avg_negotiation_time.as_nanos() as u64 * (total_completed - 1) + 
-                         negotiation_time.as_nanos() as u64) / total_completed
+                        (stats.avg_negotiation_time.as_nanos() as u64 * (total_completed - 1)
+                            + negotiation_time.as_nanos() as u64)
+                            / total_completed,
                     )
                 };
 
@@ -338,21 +338,23 @@ impl CertificateNegotiationManager {
                     );
 
                     let mut cache = self.cache.lock().unwrap();
-                    
+
                     // Evict old entries if cache is full
                     if cache.len() >= self.config.max_cache_size {
                         // Simple eviction: remove oldest entries
-                        let mut entries: Vec<_> = cache.iter()
+                        let mut entries: Vec<_> = cache
+                            .iter()
                             .map(|(k, (_, t))| (k.clone(), t.clone()))
                             .collect();
                         entries.sort_by_key(|(_, timestamp)| *timestamp);
-                        
+
                         let to_remove = cache.len() - self.config.max_cache_size + 1;
-                        let keys_to_remove: Vec<_> = entries.iter()
+                        let keys_to_remove: Vec<_> = entries
+                            .iter()
                             .take(to_remove)
                             .map(|(key, _)| key.clone())
                             .collect();
-                        
+
                         for key in keys_to_remove {
                             cache.remove(&key);
                         }
@@ -361,17 +363,22 @@ impl CertificateNegotiationManager {
                     cache.insert(cache_key, (negotiation_result.clone(), completed_at));
                 }
 
-                info!("Certificate type negotiation completed successfully: {:?} -> client={}, server={}", 
-                      id, negotiation_result.client_cert_type, negotiation_result.server_cert_type);
+                info!(
+                    "Certificate type negotiation completed successfully: {:?} -> client={}, server={}",
+                    id, negotiation_result.client_cert_type, negotiation_result.server_cert_type
+                );
 
                 Ok(negotiation_result)
             }
             Err(error) => {
                 // Update session state
-                sessions.insert(id, NegotiationState::Failed {
-                    error: error.to_string(),
-                    failed_at: Instant::now(),
-                });
+                sessions.insert(
+                    id,
+                    NegotiationState::Failed {
+                        error: error.to_string(),
+                        failed_at: Instant::now(),
+                    },
+                );
 
                 // Update statistics
                 let mut stats = self.stats.lock().unwrap();
@@ -386,10 +393,13 @@ impl CertificateNegotiationManager {
     /// Fail a negotiation with an error
     pub fn fail_negotiation(&self, id: NegotiationId, error: String) {
         let mut sessions = self.sessions.write().unwrap();
-        sessions.insert(id, NegotiationState::Failed {
-            error,
-            failed_at: Instant::now(),
-        });
+        sessions.insert(
+            id,
+            NegotiationState::Failed {
+                error,
+                failed_at: Instant::now(),
+            },
+        );
 
         let mut stats = self.stats.lock().unwrap();
         stats.failed += 1;
@@ -417,9 +427,12 @@ impl CertificateNegotiationManager {
         }
 
         for id in timed_out_ids {
-            sessions.insert(id, NegotiationState::TimedOut {
-                timeout_at: Instant::now(),
-            });
+            sessions.insert(
+                id,
+                NegotiationState::TimedOut {
+                    timeout_at: Instant::now(),
+                },
+            );
 
             let mut stats = self.stats.lock().unwrap();
             stats.timed_out += 1;
@@ -476,14 +489,14 @@ impl Default for CertificateNegotiationManager {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::tls_extensions::CertificateType;
+    use super::*;
 
     #[test]
     fn test_negotiation_id_generation() {
         let id1 = NegotiationId::new();
         let id2 = NegotiationId::new();
-        
+
         assert_ne!(id1, id2);
         assert!(id1.as_u64() > 0);
         assert!(id2.as_u64() > 0);
@@ -519,17 +532,15 @@ mod tests {
 
         // Start negotiation
         let id = manager.start_negotiation(preferences);
-        
+
         let state = manager.get_negotiation_state(id).unwrap();
         assert!(matches!(state, NegotiationState::Waiting { .. }));
 
         // Complete negotiation
         let remote_types = CertificateTypeList::raw_public_key_only();
-        let result = manager.complete_negotiation(
-            id,
-            Some(remote_types.clone()),
-            Some(remote_types),
-        ).unwrap();
+        let result = manager
+            .complete_negotiation(id, Some(remote_types.clone()), Some(remote_types))
+            .unwrap();
 
         assert_eq!(result.client_cert_type, CertificateType::RawPublicKey);
         assert_eq!(result.server_cert_type, CertificateType::RawPublicKey);
@@ -550,19 +561,15 @@ mod tests {
         // First negotiation
         let id1 = manager.start_negotiation(preferences.clone());
         let remote_types = CertificateTypeList::raw_public_key_only();
-        let result1 = manager.complete_negotiation(
-            id1,
-            Some(remote_types.clone()),
-            Some(remote_types.clone()),
-        ).unwrap();
+        let result1 = manager
+            .complete_negotiation(id1, Some(remote_types.clone()), Some(remote_types.clone()))
+            .unwrap();
 
         // Second negotiation with same preferences should hit cache
         let id2 = manager.start_negotiation(preferences);
-        let result2 = manager.complete_negotiation(
-            id2,
-            Some(remote_types.clone()),
-            Some(remote_types),
-        ).unwrap();
+        let result2 = manager
+            .complete_negotiation(id2, Some(remote_types.clone()), Some(remote_types))
+            .unwrap();
 
         assert_eq!(result1, result2);
 
@@ -581,7 +588,7 @@ mod tests {
         let preferences = CertificateTypePreferences::prefer_raw_public_key();
 
         let id = manager.start_negotiation(preferences);
-        
+
         // Wait for timeout
         std::thread::sleep(Duration::from_millis(10));
         manager.handle_timeouts();

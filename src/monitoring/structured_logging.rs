@@ -3,19 +3,15 @@
 //! This module provides comprehensive structured logging for all NAT traversal
 //! phases, frame transmission/reception, and diagnostic information.
 
-use std::{
-    collections::HashMap,
-    net::SocketAddr,
-    time::Duration,
-};
+use std::{collections::HashMap, net::SocketAddr, time::Duration};
 
 use serde::{Deserialize, Serialize};
-use tracing::{debug, error, info, warn, Span};
+use tracing::{Span, debug, error, info, warn};
 
 use crate::{
+    VarInt,
     monitoring::{ErrorCategory, NatType},
     nat_traversal_api::PeerId,
-    VarInt,
 };
 
 /// Structured logger for NAT traversal operations
@@ -138,7 +134,12 @@ impl NatTraversalLogger {
     }
 
     /// Log phase transition
-    pub fn log_phase_transition(&self, from_phase: NatTraversalPhase, to_phase: NatTraversalPhase, duration: Option<Duration>) {
+    pub fn log_phase_transition(
+        &self,
+        from_phase: NatTraversalPhase,
+        to_phase: NatTraversalPhase,
+        duration: Option<Duration>,
+    ) {
         let span = tracing::info_span!(
             "nat_traversal_phase_transition",
             session_id = %self.context.session_id,
@@ -156,7 +157,11 @@ impl NatTraversalLogger {
     }
 
     /// Log candidate discovery start
-    pub fn log_candidate_discovery_start(&self, bootstrap_nodes: &[SocketAddr], nat_type: Option<NatType>) {
+    pub fn log_candidate_discovery_start(
+        &self,
+        bootstrap_nodes: &[SocketAddr],
+        nat_type: Option<NatType>,
+    ) {
         let span = tracing::info_span!(
             "candidate_discovery_start",
             session_id = %self.context.session_id,
@@ -168,7 +173,8 @@ impl NatTraversalLogger {
         let _enter = span.enter();
         info!(
             "Starting candidate discovery with {} bootstrap nodes (NAT type: {:?})",
-            bootstrap_nodes.len(), nat_type
+            bootstrap_nodes.len(),
+            nat_type
         );
 
         for (i, node) in bootstrap_nodes.iter().enumerate() {
@@ -198,7 +204,12 @@ impl NatTraversalLogger {
     }
 
     /// Log bootstrap coordination request
-    pub fn log_coordination_request(&self, coordinator: SocketAddr, round_id: VarInt, candidates: &[CandidateInfo]) {
+    pub fn log_coordination_request(
+        &self,
+        coordinator: SocketAddr,
+        round_id: VarInt,
+        candidates: &[CandidateInfo],
+    ) {
         let span = tracing::info_span!(
             "coordination_request",
             session_id = %self.context.session_id,
@@ -211,21 +222,29 @@ impl NatTraversalLogger {
         let _enter = span.enter();
         info!(
             "Sending coordination request to {} (round: {}, candidates: {})",
-            self.sanitize_address(coordinator), round_id, candidates.len()
+            self.sanitize_address(coordinator),
+            round_id,
+            candidates.len()
         );
 
         if self.config.enable_frame_debug {
             for candidate in candidates {
                 debug!(
                     "Candidate in request: {} (priority: {})",
-                    self.sanitize_address(candidate.address), candidate.priority
+                    self.sanitize_address(candidate.address),
+                    candidate.priority
                 );
             }
         }
     }
 
     /// Log coordination response
-    pub fn log_coordination_response(&self, coordinator: SocketAddr, success: bool, peer_candidates: Option<&[CandidateInfo]>) {
+    pub fn log_coordination_response(
+        &self,
+        coordinator: SocketAddr,
+        success: bool,
+        peer_candidates: Option<&[CandidateInfo]>,
+    ) {
         let span = tracing::info_span!(
             "coordination_response",
             session_id = %self.context.session_id,
@@ -248,7 +267,8 @@ impl NatTraversalLogger {
                     for candidate in candidates {
                         debug!(
                             "Peer candidate: {} (priority: {})",
-                            self.sanitize_address(candidate.address), candidate.priority
+                            self.sanitize_address(candidate.address),
+                            candidate.priority
                         );
                     }
                 }
@@ -274,16 +294,26 @@ impl NatTraversalLogger {
         let _enter = span.enter();
         info!(
             "Starting hole punching to {} targets (strategy: {})",
-            target_addresses.len(), strategy
+            target_addresses.len(),
+            strategy
         );
 
         for (i, addr) in target_addresses.iter().enumerate() {
-            debug!("Hole punch target {}: {}", i + 1, self.sanitize_address(*addr));
+            debug!(
+                "Hole punch target {}: {}",
+                i + 1,
+                self.sanitize_address(*addr)
+            );
         }
     }
 
     /// Log hole punching attempt
-    pub fn log_hole_punch_attempt(&self, target: SocketAddr, attempt_number: u32, packet_size: usize) {
+    pub fn log_hole_punch_attempt(
+        &self,
+        target: SocketAddr,
+        attempt_number: u32,
+        packet_size: usize,
+    ) {
         if self.config.enable_frame_debug {
             let span = tracing::debug_span!(
                 "hole_punch_attempt",
@@ -297,13 +327,20 @@ impl NatTraversalLogger {
             let _enter = span.enter();
             debug!(
                 "Hole punch attempt {} to {} (packet size: {} bytes)",
-                attempt_number, self.sanitize_address(target), packet_size
+                attempt_number,
+                self.sanitize_address(target),
+                packet_size
             );
         }
     }
 
     /// Log hole punching result
-    pub fn log_hole_punch_result(&self, target: SocketAddr, success: bool, response_time: Option<Duration>) {
+    pub fn log_hole_punch_result(
+        &self,
+        target: SocketAddr,
+        success: bool,
+        response_time: Option<Duration>,
+    ) {
         let span = tracing::info_span!(
             "hole_punch_result",
             session_id = %self.context.session_id,
@@ -317,13 +354,11 @@ impl NatTraversalLogger {
         if success {
             info!(
                 "Hole punch to {} succeeded (response time: {:?})",
-                self.sanitize_address(target), response_time
+                self.sanitize_address(target),
+                response_time
             );
         } else {
-            warn!(
-                "Hole punch to {} failed",
-                self.sanitize_address(target)
-            );
+            warn!("Hole punch to {} failed", self.sanitize_address(target));
         }
     }
 
@@ -340,12 +375,22 @@ impl NatTraversalLogger {
         info!("Starting path validation for {} paths", paths.len());
 
         for (i, path) in paths.iter().enumerate() {
-            debug!("Validating path {}: {}", i + 1, self.sanitize_address(*path));
+            debug!(
+                "Validating path {}: {}",
+                i + 1,
+                self.sanitize_address(*path)
+            );
         }
     }
 
     /// Log path validation result
-    pub fn log_path_validation_result(&self, path: SocketAddr, success: bool, rtt: Option<Duration>, error: Option<&str>) {
+    pub fn log_path_validation_result(
+        &self,
+        path: SocketAddr,
+        success: bool,
+        rtt: Option<Duration>,
+        error: Option<&str>,
+    ) {
         let span = tracing::info_span!(
             "path_validation_result",
             session_id = %self.context.session_id,
@@ -360,7 +405,8 @@ impl NatTraversalLogger {
         if success {
             info!(
                 "Path validation to {} succeeded (RTT: {:?})",
-                self.sanitize_address(path), rtt
+                self.sanitize_address(path),
+                rtt
             );
         } else {
             warn!(
@@ -372,7 +418,12 @@ impl NatTraversalLogger {
     }
 
     /// Log connection establishment
-    pub fn log_connection_established(&self, remote_address: SocketAddr, total_time: Duration, method: &str) {
+    pub fn log_connection_established(
+        &self,
+        remote_address: SocketAddr,
+        total_time: Duration,
+        method: &str,
+    ) {
         let span = tracing::info_span!(
             "connection_established",
             session_id = %self.context.session_id,
@@ -385,12 +436,20 @@ impl NatTraversalLogger {
         let _enter = span.enter();
         info!(
             "Connection established to {} via {} (total time: {:?})",
-            self.sanitize_address(remote_address), method, total_time
+            self.sanitize_address(remote_address),
+            method,
+            total_time
         );
     }
 
     /// Log NAT traversal failure
-    pub fn log_traversal_failure(&self, error_category: ErrorCategory, error_message: &str, total_time: Duration, attempts: u32) {
+    pub fn log_traversal_failure(
+        &self,
+        error_category: ErrorCategory,
+        error_message: &str,
+        total_time: Duration,
+        attempts: u32,
+    ) {
         let span = tracing::error_span!(
             "nat_traversal_failure",
             session_id = %self.context.session_id,
@@ -408,7 +467,13 @@ impl NatTraversalLogger {
     }
 
     /// Log frame transmission
-    pub fn log_frame_transmission(&self, frame_type: &str, destination: SocketAddr, frame_size: usize, sequence: Option<u64>) {
+    pub fn log_frame_transmission(
+        &self,
+        frame_type: &str,
+        destination: SocketAddr,
+        frame_size: usize,
+        sequence: Option<u64>,
+    ) {
         if self.config.enable_frame_debug {
             let span = tracing::debug_span!(
                 "frame_transmission",
@@ -423,13 +488,22 @@ impl NatTraversalLogger {
             let _enter = span.enter();
             debug!(
                 "Transmitting {} frame to {} (size: {} bytes, seq: {:?})",
-                frame_type, self.sanitize_address(destination), frame_size, sequence
+                frame_type,
+                self.sanitize_address(destination),
+                frame_size,
+                sequence
             );
         }
     }
 
     /// Log frame reception
-    pub fn log_frame_reception(&self, frame_type: &str, source: SocketAddr, frame_size: usize, sequence: Option<u64>) {
+    pub fn log_frame_reception(
+        &self,
+        frame_type: &str,
+        source: SocketAddr,
+        frame_size: usize,
+        sequence: Option<u64>,
+    ) {
         if self.config.enable_frame_debug {
             let span = tracing::debug_span!(
                 "frame_reception",
@@ -444,7 +518,10 @@ impl NatTraversalLogger {
             let _enter = span.enter();
             debug!(
                 "Received {} frame from {} (size: {} bytes, seq: {:?})",
-                frame_type, self.sanitize_address(source), frame_size, sequence
+                frame_type,
+                self.sanitize_address(source),
+                frame_size,
+                sequence
             );
         }
     }
@@ -571,11 +648,18 @@ pub struct TroubleshootingGuide;
 
 impl TroubleshootingGuide {
     /// Generate troubleshooting guide based on failure patterns
-    pub fn generate_guide(error_category: ErrorCategory, failure_stage: &str, context: &HashMap<String, String>) -> String {
+    pub fn generate_guide(
+        error_category: ErrorCategory,
+        failure_stage: &str,
+        context: &HashMap<String, String>,
+    ) -> String {
         let mut guide = String::new();
-        
-        guide.push_str(&format!("# Troubleshooting Guide: {:?} at {}\n\n", error_category, failure_stage));
-        
+
+        guide.push_str(&format!(
+            "# Troubleshooting Guide: {:?} at {}\n\n",
+            error_category, failure_stage
+        ));
+
         match error_category {
             ErrorCategory::NetworkConnectivity => {
                 guide.push_str("## Network Connectivity Issues\n\n");
@@ -584,20 +668,22 @@ impl TroubleshootingGuide {
                 guide.push_str("- Firewall blocking UDP traffic\n");
                 guide.push_str("- Network interface down\n");
                 guide.push_str("- DNS resolution failures\n\n");
-                
+
                 guide.push_str("### Diagnostic Steps:\n");
                 guide.push_str("1. Check network interface status: `ip addr show`\n");
-                guide.push_str("2. Test bootstrap node connectivity: `nc -u <bootstrap_ip> <port>`\n");
+                guide.push_str(
+                    "2. Test bootstrap node connectivity: `nc -u <bootstrap_ip> <port>`\n",
+                );
                 guide.push_str("3. Check firewall rules: `iptables -L` or `ufw status`\n");
                 guide.push_str("4. Verify DNS resolution: `nslookup <bootstrap_hostname>`\n\n");
-                
+
                 guide.push_str("### Recovery Actions:\n");
                 guide.push_str("- Restart network interface\n");
                 guide.push_str("- Update firewall rules to allow UDP traffic\n");
                 guide.push_str("- Try alternative bootstrap nodes\n");
                 guide.push_str("- Check network configuration\n");
             }
-            
+
             ErrorCategory::NatTraversal => {
                 guide.push_str("## NAT Traversal Issues\n\n");
                 guide.push_str("### Common Causes:\n");
@@ -605,20 +691,20 @@ impl TroubleshootingGuide {
                 guide.push_str("- Aggressive NAT timeout settings\n");
                 guide.push_str("- Carrier-grade NAT (CGNAT)\n");
                 guide.push_str("- Coordination timing issues\n\n");
-                
+
                 guide.push_str("### Diagnostic Steps:\n");
                 guide.push_str("1. Detect NAT type using STUN\n");
                 guide.push_str("2. Check NAT timeout behavior\n");
                 guide.push_str("3. Verify bootstrap node coordination\n");
                 guide.push_str("4. Test with different candidate pairs\n\n");
-                
+
                 guide.push_str("### Recovery Actions:\n");
                 guide.push_str("- Enable relay fallback\n");
                 guide.push_str("- Adjust coordination timing\n");
                 guide.push_str("- Try different bootstrap nodes\n");
                 guide.push_str("- Consider TURN relay servers\n");
             }
-            
+
             ErrorCategory::Timeout => {
                 guide.push_str("## Timeout Issues\n\n");
                 guide.push_str("### Common Causes:\n");
@@ -626,20 +712,20 @@ impl TroubleshootingGuide {
                 guide.push_str("- Aggressive timeout configuration\n");
                 guide.push_str("- Bootstrap node overload\n");
                 guide.push_str("- Packet loss causing retransmissions\n\n");
-                
+
                 guide.push_str("### Diagnostic Steps:\n");
                 guide.push_str("1. Measure network latency: `ping <bootstrap_node>`\n");
                 guide.push_str("2. Check packet loss: `mtr <bootstrap_node>`\n");
                 guide.push_str("3. Monitor bootstrap node response times\n");
                 guide.push_str("4. Review timeout configuration\n\n");
-                
+
                 guide.push_str("### Recovery Actions:\n");
                 guide.push_str("- Increase timeout values\n");
                 guide.push_str("- Implement adaptive timeouts\n");
                 guide.push_str("- Use multiple bootstrap nodes\n");
                 guide.push_str("- Optimize network path\n");
             }
-            
+
             _ => {
                 guide.push_str("## General Troubleshooting\n\n");
                 guide.push_str("### Basic Diagnostic Steps:\n");
@@ -649,7 +735,7 @@ impl TroubleshootingGuide {
                 guide.push_str("4. Enable debug logging\n\n");
             }
         }
-        
+
         // Add context-specific information
         if !context.is_empty() {
             guide.push_str("## Context Information:\n");
@@ -658,12 +744,12 @@ impl TroubleshootingGuide {
             }
             guide.push('\n');
         }
-        
+
         guide.push_str("## Additional Resources:\n");
         guide.push_str("- NAT Traversal RFC: https://tools.ietf.org/html/rfc5389\n");
         guide.push_str("- QUIC NAT Traversal Draft: https://datatracker.ietf.org/doc/draft-seemann-quic-nat-traversal/\n");
         guide.push_str("- Project Documentation: https://github.com/your-org/ant-quic\n");
-        
+
         guide
     }
 }
@@ -674,7 +760,10 @@ mod tests {
 
     #[test]
     fn test_phase_display() {
-        assert_eq!(NatTraversalPhase::CandidateDiscovery.to_string(), "candidate_discovery");
+        assert_eq!(
+            NatTraversalPhase::CandidateDiscovery.to_string(),
+            "candidate_discovery"
+        );
         assert_eq!(NatTraversalPhase::HolePunching.to_string(), "hole_punching");
     }
 
@@ -684,13 +773,13 @@ mod tests {
             ("nat_type".to_string(), "Symmetric".to_string()),
             ("bootstrap_nodes".to_string(), "2".to_string()),
         ]);
-        
+
         let guide = TroubleshootingGuide::generate_guide(
             ErrorCategory::NatTraversal,
             "hole_punching",
-            &context
+            &context,
         );
-        
+
         assert!(guide.contains("NAT Traversal Issues"));
         assert!(guide.contains("Symmetric NAT"));
         assert!(guide.contains("nat_type: Symmetric"));
@@ -702,11 +791,11 @@ mod tests {
             include_sensitive_info: false,
             ..LoggingConfig::default()
         };
-        
+
         let logger = NatTraversalLogger::new(config);
         let addr: SocketAddr = "192.168.1.100:9000".parse().unwrap();
         let sanitized = logger.sanitize_address(addr);
-        
+
         // Should not contain the original IP
         assert!(!sanitized.contains("192.168.1.100"));
         // Should contain the port

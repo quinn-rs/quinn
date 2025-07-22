@@ -379,7 +379,8 @@ impl ::std::ops::BitOrAssign for Retransmits {
         self.new_tokens.extend_from_slice(&rhs.new_tokens);
         self.add_addresses.extend_from_slice(&rhs.add_addresses);
         self.punch_me_now.extend_from_slice(&rhs.punch_me_now);
-        self.remove_addresses.extend_from_slice(&rhs.remove_addresses);
+        self.remove_addresses
+            .extend_from_slice(&rhs.remove_addresses);
     }
 }
 
@@ -871,8 +872,8 @@ impl PacketNumberFilter {
         // Skip this packet number, and choose the next one to skip
         self.prev_skipped_packet_number = Some(self.next_skipped_packet_number);
         let next_exponent = self.exponent.saturating_add(1);
-        self.next_skipped_packet_number = rng
-            .gen_range(2u64.saturating_pow(self.exponent)..2u64.saturating_pow(next_exponent));
+        self.next_skipped_packet_number =
+            rng.gen_range(2u64.saturating_pow(self.exponent)..2u64.saturating_pow(next_exponent));
         self.exponent = next_exponent;
 
         space.get_tx_number()

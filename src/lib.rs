@@ -37,94 +37,90 @@ pub use varint::{VarInt, VarIntBoundsExceeded};
 // Removed optional bloom module
 
 // Core implementation modules
-pub mod connection;
 pub mod config;
-pub mod frame;
+pub mod connection;
 pub mod endpoint;
+pub mod frame;
 pub mod packet;
 pub mod shared;
 pub mod transport_error;
 // Simplified congestion control
-mod congestion;
-pub mod cid_generator;
-mod token;
-mod token_memory_cache;
 pub mod candidate_discovery;
+pub mod cid_generator;
+mod congestion;
 mod connection_establishment_simple;
 pub mod nat_traversal_api;
+mod token;
+mod token_memory_cache;
 
 // Public modules with new structure
-pub mod transport;
-pub mod nat_traversal;
-pub mod discovery;
-pub mod crypto;
 pub mod api;
+pub mod crypto;
+pub mod discovery;
+pub mod nat_traversal;
+pub mod transport;
 
 // Additional modules
-pub mod quic_node;
-pub mod terminal_ui;
-pub mod workflow;
+pub mod auth;
+pub mod chat;
 pub mod monitoring;
 pub mod optimization;
-pub mod chat;
+pub mod quic_node;
 pub mod stats_dashboard;
-pub mod auth;
+pub mod terminal_ui;
+pub mod workflow;
 
 // High-level async API modules (ported from quinn crate)
 pub mod quinn_high_level;
 
 // Re-export high-level API types for easier usage
 pub use quinn_high_level::{
-    Endpoint,
-    Connection as HighLevelConnection,
-    Connecting,
-    Accept,
-    RecvStream as HighLevelRecvStream,
-    SendStream as HighLevelSendStream,
+    Accept, Connecting, Connection as HighLevelConnection, Endpoint,
+    RecvStream as HighLevelRecvStream, SendStream as HighLevelSendStream,
 };
 
 // Re-export crypto utilities for peer ID management
 pub use crypto::raw_public_keys::key_utils::{
-    generate_ed25519_keypair, derive_peer_id_from_public_key,
-    derive_peer_id_from_key_bytes, verify_peer_id,
-    public_key_to_bytes, public_key_from_bytes,
+    derive_peer_id_from_key_bytes, derive_peer_id_from_public_key, generate_ed25519_keypair,
+    public_key_from_bytes, public_key_to_bytes, verify_peer_id,
 };
 
 // Re-export key types for backward compatibility
-pub use connection::{
-    Connection, ConnectionError, ConnectionStats, Event, 
-    RecvStream, SendStream, Streams, StreamEvent, SendDatagramError,
-    Chunk, Chunks, ClosedStream, FinishError, ReadError, ReadableError,
-    WriteError, Written, Datagrams,
-};
-pub use endpoint::{Endpoint as LowLevelEndpoint, ConnectionHandle, Incoming, AcceptError, ConnectError, DatagramEvent};
-pub use shared::{ConnectionId, EcnCodepoint, EndpointEvent};
-pub use transport_error::{Code as TransportErrorCode, Error as TransportError};
 pub use candidate_discovery::{
-    CandidateDiscoveryManager, DiscoveryConfig, DiscoveryEvent, DiscoveryError,
-    NetworkInterface, ValidatedCandidate,
-};
-pub use connection_establishment_simple::{
-    SimpleConnectionEstablishmentManager, SimpleEstablishmentConfig,
-    SimpleConnectionEvent,
-};
-pub use nat_traversal_api::{
-    NatTraversalEndpoint, NatTraversalConfig, EndpointRole, PeerId, BootstrapNode,
-    CandidateAddress, NatTraversalEvent, NatTraversalError, NatTraversalStatistics,
+    CandidateDiscoveryManager, DiscoveryConfig, DiscoveryError, DiscoveryEvent, NetworkInterface,
+    ValidatedCandidate,
 };
 pub use connection::nat_traversal::{CandidateSource, CandidateState, NatTraversalRole};
-pub use quic_node::{QuicP2PNode, QuicNodeConfig, NodeStats as QuicNodeStats};
+pub use connection::{
+    Chunk, Chunks, ClosedStream, Connection, ConnectionError, ConnectionStats, Datagrams, Event,
+    FinishError, ReadError, ReadableError, RecvStream, SendDatagramError, SendStream, StreamEvent,
+    Streams, WriteError, Written,
+};
+pub use connection_establishment_simple::{
+    SimpleConnectionEstablishmentManager, SimpleConnectionEvent, SimpleEstablishmentConfig,
+};
+pub use endpoint::{
+    AcceptError, ConnectError, ConnectionHandle, DatagramEvent, Endpoint as LowLevelEndpoint,
+    Incoming,
+};
+pub use nat_traversal_api::{
+    BootstrapNode, CandidateAddress, EndpointRole, NatTraversalConfig, NatTraversalEndpoint,
+    NatTraversalError, NatTraversalEvent, NatTraversalStatistics, PeerId,
+};
+pub use quic_node::{NodeStats as QuicNodeStats, QuicNodeConfig, QuicP2PNode};
+pub use shared::{ConnectionId, EcnCodepoint, EndpointEvent};
+pub use transport_error::{Code as TransportErrorCode, Error as TransportError};
 
-#[cfg(fuzzing)]
-pub mod fuzzing;
+// #[cfg(fuzzing)]
+// pub mod fuzzing; // Module not implemented yet
 
 /// The QUIC protocol version implemented.
-/// 
+///
 /// Simplified to include only the essential versions:
 /// - 0x00000001: QUIC v1 (RFC 9000)
 /// - 0xff00_001d: Draft 29
 pub const DEFAULT_SUPPORTED_VERSIONS: &[u32] = &[
-    0x00000001, // QUIC v1 (RFC 9000)
+    0x00000001,  // QUIC v1 (RFC 9000)
     0xff00_001d, // Draft 29
 ];
 
@@ -303,8 +299,11 @@ pub(crate) const TIMER_GRANULARITY: Duration = Duration::from_millis(1);
 pub(crate) const MAX_STREAM_COUNT: u64 = 1 << 60;
 
 // Internal type re-exports for crate modules
-pub(crate) use token::{ResetToken, TokenStore, TokenLog, NoneTokenLog};
-pub(crate) use token_memory_cache::TokenMemoryCache;
-pub(crate) use frame::Frame;
-pub use config::{EndpointConfig, TransportConfig, ServerConfig, AckFrequencyConfig, MtuDiscoveryConfig, ClientConfig};
 pub use cid_generator::RandomConnectionIdGenerator;
+pub use config::{
+    AckFrequencyConfig, ClientConfig, EndpointConfig, MtuDiscoveryConfig, ServerConfig,
+    TransportConfig,
+};
+pub(crate) use frame::Frame;
+pub(crate) use token::{NoneTokenLog, ResetToken, TokenLog, TokenStore};
+pub(crate) use token_memory_cache::TokenMemoryCache;
