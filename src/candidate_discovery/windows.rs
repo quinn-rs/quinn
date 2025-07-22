@@ -475,7 +475,7 @@ impl WindowsInterfaceDiscovery {
         while !current_adapter.is_null() {
             let adapter = unsafe { &*current_adapter };
 
-            if adapter.Anonymous1.Anonymous.IfIndex == adapter_index {
+            if unsafe { adapter.Anonymous1.Anonymous.IfIndex } == adapter_index {
                 let mut current_addr = adapter.FirstUnicastAddress;
 
                 while !current_addr.is_null() {
