@@ -143,6 +143,32 @@ ant-quic extends the proven Quinn QUIC implementation with sophisticated NAT tra
 - **Symmetric NAT**: Advanced prediction and multi-path establishment
 - **Carrier Grade NAT (CGNAT)**: Relay-assisted connection fallback
 
+## Specifications
+
+ant-quic implements and extends the following IETF specifications and drafts:
+
+### 1. QUIC Core Specification
+- **RFC 9000** – "QUIC: A UDP-Based Multiplexed and Secure Transport"  
+  https://datatracker.ietf.org/doc/rfc9000/  
+  (Companion RFCs: RFC 9001 for TLS integration and RFC 9002 for loss detection)
+
+### 2. Raw Key Encoding / Key Schedule Used by QUIC
+- **RFC 9001** – "Using TLS to Secure QUIC" (see §5 Key Derivation)  
+  https://datatracker.ietf.org/doc/rfc9001/  
+- **RFC 7250** – "Using Raw Public Keys in TLS/DTLS"  
+  https://www.rfc-editor.org/rfc/rfc7250  
+  Used for raw public key support instead of X.509 certificates
+
+### 3. QUIC Address Discovery Extension
+- **draft-ietf-quic-address-discovery-00** – "QUIC Address Discovery"  
+  https://datatracker.ietf.org/doc/draft-ietf-quic-address-discovery-00/  
+  Enables endpoints to learn the public IP:port a peer sees for any QUIC path
+
+### 4. Native NAT Traversal for QUIC
+- **draft-seemann-quic-nat-traversal-02** – "Using QUIC to traverse NATs"  
+  https://datatracker.ietf.org/doc/draft-seemann-quic-nat-traversal/  
+  Describes hole-punching and ICE-style techniques directly over QUIC, including new frames such as ADD_ADDRESS and PUNCH_ME_NOW
+
 ## Future Work & Roadmap
 
 ### Current Implementation Status

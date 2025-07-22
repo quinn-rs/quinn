@@ -35,6 +35,9 @@ use tracing::{debug, error, info, warn};
 
 use crate::candidate_discovery::{NetworkInterface, NetworkInterfaceDiscovery};
 
+// Constants extracted for pattern matching
+const ERROR_BUFFER_OVERFLOW_VALUE: u32 = 111; // ERROR_BUFFER_OVERFLOW value
+
 /// Windows-specific network interface discovery using IP Helper API
 pub struct WindowsInterfaceDiscovery {
     /// Cached interface data to detect changes
@@ -278,7 +281,7 @@ impl WindowsInterfaceDiscovery {
 
             match result {
                 0 => break, // Success
-                windows::Win32::Foundation::ERROR_BUFFER_OVERFLOW.0 => {
+                ERROR_BUFFER_OVERFLOW_VALUE => {
                     // Buffer too small, resize and retry
                     buffer.resize(buffer_size as usize, 0);
                     continue;
@@ -435,7 +438,7 @@ impl WindowsInterfaceDiscovery {
 
             match result {
                 0 => break, // Success
-                windows::Win32::Foundation::ERROR_BUFFER_OVERFLOW.0 => {
+                ERROR_BUFFER_OVERFLOW_VALUE => {
                     buffer.resize(buffer_size as usize, 0);
                     continue;
                 }

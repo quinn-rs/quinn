@@ -12,3 +12,6 @@ tarpaulin-report.html
 
 # Log files
 *.log
+
+# Claude sub-project management
+.claude/
