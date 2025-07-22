@@ -112,6 +112,70 @@ async fn close_endpoint() {
     }
 }
 
+#[tokio::test]
+async fn endpoint_wait_idle() {
+    let _guard = subscribe();
+
+    let factory = EndpointFactory::new();
+
+    // create endpoints that we will successfully connect to each other
+    tracing::info!("create endpoints for successful connection");
+    let endpoint_a = factory.endpoint();
+    let endpoint_b = factory.endpoint();
+
+    let addr_b = endpoint_b.local_addr().unwrap();
+
+    // create accept loop
+    let accept_task = tokio::spawn(async move {
+        if let Some(accept) = endpoint_b.accept().await {
+            let conn = accept.await.unwrap();
+            _ = conn.closed().await;
+        } else {
+            panic!("Endpoint B never received connection attempt");
+        }
+    });
+
+    // connect successfully to endpoint b
+    let connecting = endpoint_a.connect(addr_b, "localhost").unwrap();
+    let _conn = connecting.await.unwrap();
+
+    // close the endpoint
+    endpoint_a.close(0u8.into(), b"");
+    let duration = Duration::from_millis(200);
+    let res = tokio::time::timeout(duration, endpoint_a.wait_idle()).await;
+
+    // endpoint a should close quickly
+    assert!(res.is_ok());
+    // cleanup
+    accept_task.await.unwrap();
+    tracing::info!("endpoints connected and closed successfully");
+
+    tracing::info!("create endpoint for unsuccessful connection");
+    // Create an endpoint that will not make a successful connection
+    let endpoint = factory.endpoint();
+    // Connect to un-dialable addr
+    let connecting = endpoint
+        .connect(
+            SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 1234),
+            "localhost",
+        )
+        .unwrap();
+    // decide you don't want to keep connecting or something goes wrong
+    // while connecting:
+    drop(connecting);
+
+    // close the endpoint
+    endpoint.close(0u8.into(), b"");
+    let duration = Duration::from_millis(2900);
+    let res = tokio::time::timeout(duration, endpoint.wait_idle()).await;
+
+    // this fails, `wait_idle` takes around 3s
+    assert!(
+        res.is_ok(),
+        "Endpoint took longer than {duration:?} to close"
+    );
+}
+
 #[test]
 fn local_addr() {
     let socket = UdpSocket::bind((Ipv6Addr::LOCALHOST, 0)).unwrap();
