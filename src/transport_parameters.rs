@@ -91,8 +91,15 @@ macro_rules! make_struct {
 
             /// NAT traversal configuration for this connection
             ///
+            /// NAT traversal configuration for this connection
+            ///
             /// When present, indicates support for QUIC NAT traversal extension
             pub(crate) nat_traversal: Option<NatTraversalConfig>,
+
+            /// Address discovery configuration for this connection
+            ///
+            /// When present, indicates support for QUIC Address Discovery extension
+            pub(crate) address_discovery: Option<AddressDiscoveryConfig>,
 
             // Server-only
             /// The value of the Destination Connection ID field from the first Initial packet sent
@@ -132,6 +139,7 @@ macro_rules! make_struct {
                     grease_quic_bit: false,
                     min_ack_delay: None,
                     nat_traversal: None,
+                    address_discovery: None,
 
                     original_dst_cid: None,
                     retry_src_cid: None,
@@ -187,6 +195,7 @@ impl TransportParameters {
                 order
             }),
             nat_traversal: config.nat_traversal_config.clone(),
+            address_discovery: None, // TODO: Wire up to config when needed
             ..Self::default()
         }
     }
@@ -324,6 +333,39 @@ impl Default for NatTraversalConfig {
             coordination_timeout: VarInt::from_u32(10000), // 10 seconds
             max_concurrent_attempts: VarInt::from_u32(3),
             peer_id: None,
+        }
+    }
+}
+
+/// Configuration for QUIC Address Discovery extension
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AddressDiscoveryConfig {
+    /// Whether address discovery is enabled
+    pub(crate) enabled: bool,
+    /// Maximum rate of OBSERVED_ADDRESS frames per path (per second)
+    /// Value is limited to 6 bits (0-63)
+    pub(crate) max_observation_rate: u8,
+    /// Whether to observe addresses for all paths or just primary
+    pub(crate) observe_all_paths: bool,
+}
+
+impl AddressDiscoveryConfig {
+    /// Create a new address discovery configuration
+    pub fn new(enabled: bool, max_observation_rate: u8, observe_all_paths: bool) -> Self {
+        Self {
+            enabled,
+            max_observation_rate: max_observation_rate.min(63), // Limit to 6 bits
+            observe_all_paths,
+        }
+    }
+}
+
+impl Default for AddressDiscoveryConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            max_observation_rate: 10,
+            observe_all_paths: false,
         }
     }
 }
@@ -538,6 +580,19 @@ impl TransportParameters {
                         }
                     }
                 }
+                TransportParameterId::AddressDiscovery => {
+                    if let Some(ref config) = self.address_discovery {
+                        if config.enabled {
+                            w.write_var(id as u64);
+                            w.write_var(1); // 1 byte for config
+                            // Encode as: enabled(1 bit) | observe_all_paths(1 bit) | max_rate(6 bits)
+                            let config_byte = 0x80 | // enabled bit always set when writing
+                                              (if config.observe_all_paths { 0x40 } else { 0 }) |
+                                              (config.max_observation_rate & 0x3F);
+                            w.put_u8(config_byte);
+                        }
+                    }
+                }
                 id => {
                     macro_rules! write_params {
                         {$($(#[$doc:meta])* $name:ident ($id:ident) = $default:expr,)*} => {
@@ -672,6 +727,22 @@ impl TransportParameters {
                             return Err(Error::Malformed);
                         }
                     }
+                }
+                TransportParameterId::AddressDiscovery => {
+                    if params.address_discovery.is_some() {
+                        return Err(Error::Malformed);
+                    }
+                    // Address discovery sends 1 byte config
+                    if len != 1 {
+                        return Err(Error::Malformed);
+                    }
+                    let config_byte = r.get::<u8>()?;
+                    // Decode: enabled(1 bit) | observe_all_paths(1 bit) | max_rate(6 bits)
+                    params.address_discovery = Some(AddressDiscoveryConfig {
+                        enabled: (config_byte & 0x80) != 0,
+                        max_observation_rate: config_byte & 0x3F,
+                        observe_all_paths: (config_byte & 0x40) != 0,
+                    });
                 }
                 _ => {
                     macro_rules! parse {
@@ -863,11 +934,15 @@ pub(crate) enum TransportParameterId {
     // NAT Traversal Extension - draft-seemann-quic-nat-traversal-01
     // Transport parameter ID from the IETF draft specification
     NatTraversal = 0x3d7e9f0bca12fea6,
+
+    // Address Discovery Extension - draft-ietf-quic-address-discovery-00
+    // Transport parameter ID in experimental range
+    AddressDiscovery = 0x1f00,
 }
 
 impl TransportParameterId {
     /// Array with all supported transport parameter IDs
-    const SUPPORTED: [Self; 22] = [
+    const SUPPORTED: [Self; 23] = [
         Self::MaxIdleTimeout,
         Self::MaxUdpPayloadSize,
         Self::InitialMaxData,
@@ -890,6 +965,7 @@ impl TransportParameterId {
         Self::GreaseQuicBit,
         Self::MinAckDelayDraft07,
         Self::NatTraversal,
+        Self::AddressDiscovery,
     ];
 }
 
@@ -930,6 +1006,7 @@ impl TryFrom<u64> for TransportParameterId {
             id if Self::GreaseQuicBit == id => Self::GreaseQuicBit,
             id if Self::MinAckDelayDraft07 == id => Self::MinAckDelayDraft07,
             id if Self::NatTraversal == id => Self::NatTraversal,
+            id if Self::AddressDiscovery == id => Self::AddressDiscovery,
             _ => return Err(()),
         };
         Ok(param)
@@ -1540,5 +1617,298 @@ mod test {
         };
         high_limit.validate_resumption_from(&low_limit).unwrap();
         low_limit.validate_resumption_from(&high_limit).unwrap_err();
+    }
+
+    #[test]
+    fn test_address_discovery_parameter_id() {
+        // Test that ADDRESS_DISCOVERY parameter ID is defined correctly
+        assert_eq!(TransportParameterId::AddressDiscovery as u64, 0x1f00);
+    }
+
+    #[test]
+    fn test_address_discovery_config_struct() {
+        // Test AddressDiscoveryConfig struct creation and fields
+        let config = AddressDiscoveryConfig {
+            enabled: true,
+            max_observation_rate: 10,
+            observe_all_paths: false,
+        };
+        
+        assert!(config.enabled);
+        assert_eq!(config.max_observation_rate, 10);
+        assert!(!config.observe_all_paths);
+    }
+
+    #[test]
+    fn test_address_discovery_config_new() {
+        // Test constructor with rate limiting
+        let config = AddressDiscoveryConfig::new(true, 100, true);
+        assert!(config.enabled);
+        assert_eq!(config.max_observation_rate, 63); // Should be clamped to 63
+        assert!(config.observe_all_paths);
+    }
+
+    #[test]
+    fn test_transport_parameters_with_address_discovery() {
+        // Test that TransportParameters can hold address_discovery field
+        let mut params = TransportParameters::default();
+        assert!(params.address_discovery.is_none());
+        
+        let config = AddressDiscoveryConfig {
+            enabled: true,
+            max_observation_rate: 5,
+            observe_all_paths: true,
+        };
+        
+        params.address_discovery = Some(config);
+        assert!(params.address_discovery.is_some());
+        
+        let stored_config = params.address_discovery.as_ref().unwrap();
+        assert!(stored_config.enabled);
+        assert_eq!(stored_config.max_observation_rate, 5);
+        assert!(stored_config.observe_all_paths);
+    }
+
+    #[test]
+    fn test_address_discovery_parameter_encoding() {
+        // Test encoding of address discovery transport parameter
+        let config = AddressDiscoveryConfig {
+            enabled: true,
+            max_observation_rate: 10,
+            observe_all_paths: false,
+        };
+        
+        let mut params = TransportParameters::default();
+        params.address_discovery = Some(config);
+        
+        let mut encoded = Vec::new();
+        params.write(&mut encoded);
+        
+        // The encoded data should contain our parameter
+        assert!(!encoded.is_empty());
+    }
+
+    #[test]
+    fn test_address_discovery_parameter_roundtrip() {
+        // Test encoding and decoding of address discovery parameter
+        let config = AddressDiscoveryConfig {
+            enabled: true,
+            max_observation_rate: 15,
+            observe_all_paths: true,
+        };
+        
+        let mut params = TransportParameters::default();
+        params.address_discovery = Some(config);
+        
+        let mut encoded = Vec::new();
+        params.write(&mut encoded);
+        
+        // Decode as peer
+        let decoded = TransportParameters::read(Side::Client, &mut encoded.as_slice())
+            .expect("Failed to decode transport parameters");
+        
+        assert!(decoded.address_discovery.is_some());
+        let decoded_config = decoded.address_discovery.as_ref().unwrap();
+        assert!(decoded_config.enabled);
+        assert_eq!(decoded_config.max_observation_rate, 15);
+        assert!(decoded_config.observe_all_paths);
+    }
+
+    #[test]
+    fn test_address_discovery_disabled_by_default() {
+        // Test that address discovery is disabled by default
+        let params = TransportParameters::default();
+        assert!(params.address_discovery.is_none());
+    }
+
+    #[test]
+    fn test_address_discovery_max_rate_limits() {
+        // Test that max_observation_rate is limited to valid range (0-63)
+        let config = AddressDiscoveryConfig {
+            enabled: true,
+            max_observation_rate: 63, // Maximum 6-bit value
+            observe_all_paths: false,
+        };
+        
+        let mut params = TransportParameters::default();
+        params.address_discovery = Some(config);
+        
+        let mut encoded = Vec::new();
+        params.write(&mut encoded);
+        
+        let decoded = TransportParameters::read(Side::Server, &mut encoded.as_slice())
+            .expect("Failed to decode");
+        
+        let decoded_config = decoded.address_discovery.as_ref().unwrap();
+        assert_eq!(decoded_config.max_observation_rate, 63);
+    }
+
+    #[test]
+    fn test_address_discovery_disabled_not_encoded() {
+        // Test that disabled address discovery is not encoded
+        let config = AddressDiscoveryConfig {
+            enabled: false,
+            max_observation_rate: 10,
+            observe_all_paths: false,
+        };
+        
+        let mut params = TransportParameters::default();
+        params.address_discovery = Some(config);
+        
+        let mut encoded = Vec::new();
+        params.write(&mut encoded);
+        
+        // Should decode with no address discovery since enabled=false
+        let decoded = TransportParameters::read(Side::Client, &mut encoded.as_slice())
+            .expect("Failed to decode");
+        
+        // Since we don't encode when disabled, it should be None after decoding
+        assert!(decoded.address_discovery.is_none());
+    }
+
+    #[test]
+    fn test_address_discovery_serialization_roundtrip() {
+        let config = AddressDiscoveryConfig {
+            enabled: true,
+            max_observation_rate: 42,
+            observe_all_paths: true,
+        };
+        
+        let mut params = TransportParameters::default();
+        params.address_discovery = Some(config);
+        
+        let mut encoded = Vec::new();
+        params.write(&mut encoded);
+        
+        let decoded = TransportParameters::read(Side::Client, &mut encoded.as_slice())
+            .expect("Failed to decode");
+        
+        assert!(decoded.address_discovery.is_some());
+        let decoded_config = decoded.address_discovery.unwrap();
+        assert_eq!(decoded_config.enabled, config.enabled);
+        assert_eq!(decoded_config.max_observation_rate, config.max_observation_rate);
+        assert_eq!(decoded_config.observe_all_paths, config.observe_all_paths);
+    }
+
+    #[test]
+    fn test_address_discovery_rate_truncation() {
+        // Test that values > 63 are truncated to 6 bits
+        let config = AddressDiscoveryConfig {
+            enabled: true,
+            max_observation_rate: 255, // Will be truncated to 63 (0x3F)
+            observe_all_paths: true,
+        };
+        
+        let mut params = TransportParameters::default();
+        params.address_discovery = Some(config);
+        
+        let mut encoded = Vec::new();
+        params.write(&mut encoded);
+        
+        let decoded = TransportParameters::read(Side::Client, &mut encoded.as_slice())
+            .expect("Failed to decode");
+        
+        let decoded_config = decoded.address_discovery.unwrap();
+        assert_eq!(decoded_config.max_observation_rate, 63); // 255 & 0x3F = 63
+    }
+
+    #[test]
+    fn test_address_discovery_bit_encoding() {
+        // Test all combinations of flags
+        let test_cases = vec![
+            (true, false, 0),    // enabled only
+            (true, true, 0),     // enabled + observe_all_paths
+            (true, false, 25),   // enabled + rate
+            (true, true, 50),    // all flags + rate
+        ];
+        
+        for (enabled, observe_all, rate) in test_cases {
+            let config = AddressDiscoveryConfig {
+                enabled,
+                max_observation_rate: rate,
+                observe_all_paths: observe_all,
+            };
+            
+            let mut params = TransportParameters::default();
+            params.address_discovery = Some(config);
+            
+            let mut encoded = Vec::new();
+            params.write(&mut encoded);
+            
+            let decoded = TransportParameters::read(Side::Client, &mut encoded.as_slice())
+                .expect("Failed to decode");
+            
+            let decoded_config = decoded.address_discovery.unwrap();
+            assert_eq!(decoded_config.enabled, enabled);
+            assert_eq!(decoded_config.observe_all_paths, observe_all);
+            assert_eq!(decoded_config.max_observation_rate, rate);
+        }
+    }
+
+    #[test]
+    fn test_address_discovery_malformed_length() {
+        use bytes::BufMut;
+        
+        // Create a malformed parameter with wrong length
+        let mut encoded = Vec::new();
+        encoded.write_var(TransportParameterId::AddressDiscovery as u64);
+        encoded.write_var(2); // Wrong length - should be 1
+        encoded.put_u8(0x80); // Some data
+        encoded.put_u8(0x00); // Extra byte
+        
+        let result = TransportParameters::read(Side::Client, &mut encoded.as_slice());
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), Error::Malformed));
+    }
+
+    #[test]
+    fn test_address_discovery_duplicate_parameter() {
+        use bytes::BufMut;
+        
+        // Create parameters with duplicate address discovery
+        let mut encoded = Vec::new();
+        
+        // First occurrence
+        encoded.write_var(TransportParameterId::AddressDiscovery as u64);
+        encoded.write_var(1);
+        encoded.put_u8(0x80); // enabled=true
+        
+        // Duplicate occurrence
+        encoded.write_var(TransportParameterId::AddressDiscovery as u64);
+        encoded.write_var(1);
+        encoded.put_u8(0xC0); // Different config
+        
+        let result = TransportParameters::read(Side::Client, &mut encoded.as_slice());
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), Error::Malformed));
+    }
+
+    #[test]
+    fn test_address_discovery_with_other_parameters() {
+        // Test that address discovery works alongside other transport parameters
+        let mut params = TransportParameters::default();
+        params.max_idle_timeout = VarInt::from_u32(30000);
+        params.initial_max_data = VarInt::from_u32(1_000_000);
+        params.address_discovery = Some(AddressDiscoveryConfig {
+            enabled: true,
+            max_observation_rate: 15,
+            observe_all_paths: true,
+        });
+        
+        let mut encoded = Vec::new();
+        params.write(&mut encoded);
+        
+        let decoded = TransportParameters::read(Side::Client, &mut encoded.as_slice())
+            .expect("Failed to decode");
+        
+        // Check all parameters are preserved
+        assert_eq!(decoded.max_idle_timeout, params.max_idle_timeout);
+        assert_eq!(decoded.initial_max_data, params.initial_max_data);
+        assert!(decoded.address_discovery.is_some());
+        
+        let decoded_config = decoded.address_discovery.unwrap();
+        assert_eq!(decoded_config.enabled, true);
+        assert_eq!(decoded_config.max_observation_rate, 15);
+        assert_eq!(decoded_config.observe_all_paths, true);
     }
 }

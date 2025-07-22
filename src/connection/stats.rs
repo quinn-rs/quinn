@@ -99,6 +99,9 @@ impl FrameStats {
             Frame::AddAddress(_) => self.add_address += 1,
             Frame::PunchMeNow(_) => self.punch_me_now += 1,
             Frame::RemoveAddress(_) => self.remove_address += 1,
+            Frame::ObservedAddress(_) => {
+                // TODO: Add counter for observed address frames when needed
+            }
         }
     }
 }

@@ -3351,6 +3351,11 @@ impl Connection {
                 Frame::RemoveAddress(remove_address) => {
                     self.handle_remove_address(&remove_address)?;
                 }
+                Frame::ObservedAddress(observed_address) => {
+                    // TODO: Handle observed address frame
+                    // This will be implemented in Phase 2 when integrating with connection state
+                    trace!("Received ObservedAddress frame: {:?}", observed_address);
+                }
             }
         }
 

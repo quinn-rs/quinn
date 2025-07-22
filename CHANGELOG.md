@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- OBSERVED_ADDRESS frame (0x43) implementation for QUIC Address Discovery extension (draft-ietf-quic-address-discovery-00)
+  - Full encoding/decoding support for both IPv4 and IPv6 addresses
+  - Comprehensive test coverage including edge cases and error handling
+  - Integration with existing frame processing pipeline
+- Address Discovery transport parameter (0x1f00) with configuration support
+  - Configurable observation rate limiting (0-63 per second)
+  - Per-path or all-paths observation mode
+  - Full serialization/deserialization with bit-packed encoding
 - ARM build testing to CI workflow
   - Cross-compilation support for aarch64-unknown-linux-gnu
   - Ensures ARM compatibility is tested on every commit
