@@ -261,7 +261,8 @@ impl QuicP2PNode {
         
         let mut peer_id_bytes = [0u8; 32];
         peer_id_bytes[..8].copy_from_slice(&hash.to_le_bytes());
-        peer_id_bytes[8..16].copy_from_slice(&addr.port().to_le_bytes());
+        let port_bytes = addr.port().to_le_bytes();
+        peer_id_bytes[8..10].copy_from_slice(&port_bytes);
         
         PeerId(peer_id_bytes)
     }
