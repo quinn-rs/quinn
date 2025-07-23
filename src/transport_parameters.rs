@@ -358,6 +358,16 @@ impl AddressDiscoveryConfig {
             observe_all_paths,
         }
     }
+    
+    /// Apply bootstrap settings for more aggressive observation
+    pub fn apply_bootstrap_settings(&mut self) {
+        // Enable address discovery if not already enabled
+        self.enabled = true;
+        // Set maximum allowed observation rate
+        self.max_observation_rate = 63; // Maximum 6-bit value
+        // Observe all paths for bootstrap nodes
+        self.observe_all_paths = true;
+    }
 }
 
 impl Default for AddressDiscoveryConfig {

@@ -991,6 +991,20 @@ impl CandidateDiscoveryManager {
         events: &mut Vec<DiscoveryEvent>,
         now: Instant,
     ) {
+        // Check if we already have QUIC-discovered addresses (server reflexive)
+        let has_quic_discovered = session.discovered_candidates.iter()
+            .any(|c| c.source == DiscoverySourceType::ServerReflexive);
+        
+        if has_quic_discovered {
+            info!(
+                "Skipping server reflexive discovery for peer {:?}, using QUIC-discovered addresses",
+                session.peer_id
+            );
+            // Complete discovery with existing candidates
+            self.complete_session_discovery_with_local_candidates(session, events, now);
+            return;
+        }
+        
         let bootstrap_node_ids = self.bootstrap_manager.get_active_bootstrap_nodes();
 
         if bootstrap_node_ids.is_empty() {
@@ -1390,6 +1404,16 @@ impl CandidateDiscoveryManager {
         now: Instant,
         events: &mut Vec<DiscoveryEvent>,
     ) {
+        // Check if we already have QUIC-discovered addresses
+        let has_quic_discovered = session.discovered_candidates.iter()
+            .any(|c| c.source == DiscoverySourceType::ServerReflexive);
+        
+        if has_quic_discovered {
+            // Complete discovery immediately with QUIC-discovered addresses
+            self.complete_session_discovery_with_local_candidates(session, events, now);
+            return;
+        }
+        
         // TODO: Implement server reflexive polling for session
         // For now, transition to completion
         self.complete_session_discovery_with_local_candidates(session, events, now);
@@ -1683,6 +1707,133 @@ impl CandidateDiscoveryManager {
 
         // Ensure accuracy is within reasonable bounds [0.2, 0.9]
         confidence_adjusted_accuracy.max(0.2).min(0.9)
+    }
+
+    /// Accept a QUIC-discovered address (from OBSERVED_ADDRESS frames)
+    /// This replaces the need for STUN-based server reflexive discovery
+    pub fn accept_quic_discovered_address(
+        &mut self,
+        peer_id: PeerId,
+        discovered_address: SocketAddr,
+    ) -> Result<(), DiscoveryError> {
+        // Calculate priority for the discovered address first to avoid borrow issues
+        let priority = self.calculate_quic_discovered_priority(&discovered_address);
+
+        // Get the active session for this peer
+        let session = self.active_sessions.get_mut(&peer_id)
+            .ok_or_else(|| DiscoveryError::InternalError(
+                format!("No active discovery session for peer {:?}", peer_id)
+            ))?;
+
+        // Check if address already exists
+        let already_exists = session.discovered_candidates.iter()
+            .any(|c| c.address == discovered_address);
+
+        if already_exists {
+            debug!("QUIC-discovered address {} already in candidates", discovered_address);
+            return Ok(());
+        }
+
+        info!("Accepting QUIC-discovered address: {}", discovered_address);
+
+        // Create candidate from QUIC-discovered address
+        let candidate = DiscoveryCandidate {
+            address: discovered_address,
+            priority,
+            source: DiscoverySourceType::ServerReflexive,
+            state: CandidateState::New,
+        };
+
+        // Add to discovered candidates
+        session.discovered_candidates.push(candidate);
+        session.statistics.server_reflexive_candidates_found += 1;
+
+        Ok(())
+    }
+
+    /// Calculate priority for QUIC-discovered addresses
+    fn calculate_quic_discovered_priority(&self, address: &SocketAddr) -> u32 {
+        // QUIC-discovered addresses get higher priority than STUN-discovered ones
+        // because they come from actual QUIC connections and are more reliable
+        let mut priority = 255; // Base priority for QUIC-discovered addresses
+
+        match address.ip() {
+            IpAddr::V4(ipv4) => {
+                if ipv4.is_private() {
+                    priority -= 10; // Slight penalty for private addresses
+                } else if ipv4.is_loopback() {
+                    priority -= 20; // More penalty for loopback
+                }
+                // Public IPv4 keeps base priority of 255
+            }
+            IpAddr::V6(ipv6) => {
+                // Prefer IPv6 for better NAT traversal potential
+                priority += 10; // Boost for IPv6 (265 base)
+                
+                if ipv6.is_loopback() {
+                    priority -= 30; // Significant penalty for loopback
+                } else if ipv6.is_multicast() {
+                    priority -= 40; // Even more penalty for multicast
+                } else if ipv6.is_unspecified() {
+                    priority -= 50; // Unspecified should not be used
+                } else {
+                    // Check for specific IPv6 types
+                    let segments = ipv6.segments();
+                    if segments[0] & 0xFFC0 == 0xFE80 {
+                        // Link-local IPv6 (fe80::/10)
+                        priority -= 30; // Significant penalty
+                    } else if segments[0] & 0xFE00 == 0xFC00 {
+                        // Unique local IPv6 (fc00::/7)
+                        priority -= 10; // Slight penalty, similar to private IPv4
+                    }
+                    // Global unicast IPv6 (2000::/3) keeps the boost
+                }
+            }
+        }
+
+        priority
+    }
+
+    /// Poll discovery progress and get pending events
+    pub fn poll_discovery_progress(&mut self, peer_id: PeerId) -> Vec<DiscoveryEvent> {
+        let mut events = Vec::new();
+
+        if let Some(session) = self.active_sessions.get_mut(&peer_id) {
+            // Check if we have new candidates to report
+            for candidate in &session.discovered_candidates {
+                if matches!(candidate.state, CandidateState::New) {
+                    events.push(DiscoveryEvent::ServerReflexiveCandidateDiscovered {
+                        candidate: candidate.to_candidate_address(),
+                        bootstrap_node: "0.0.0.0:0".parse().unwrap(), // Placeholder for QUIC-discovered
+                    });
+                }
+            }
+
+            // Mark all new candidates as reported
+            for candidate in &mut session.discovered_candidates {
+                if matches!(candidate.state, CandidateState::New) {
+                    candidate.state = CandidateState::Validating;
+                }
+            }
+        }
+
+        events
+    }
+
+    /// Get the current discovery status for a peer
+    pub fn get_discovery_status(&self, peer_id: PeerId) -> Option<DiscoveryStatus> {
+        self.active_sessions.get(&peer_id).map(|session| {
+            let discovered_candidates = session.discovered_candidates.iter()
+                .map(|c| c.to_candidate_address())
+                .collect();
+            
+            DiscoveryStatus {
+                phase: session.current_phase.clone(),
+                discovered_candidates,
+                statistics: session.statistics.clone(),
+                elapsed_time: session.started_at.elapsed(),
+            }
+        })
     }
 }
 
@@ -3529,5 +3680,474 @@ pub mod test_utils {
             IpAddr::V4(ipv4) => !ipv4.is_loopback() && !ipv4.is_unspecified(),
             IpAddr::V6(ipv6) => !ipv6.is_loopback() && !ipv6.is_unspecified(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashSet;
+
+    fn create_test_manager() -> CandidateDiscoveryManager {
+        let config = DiscoveryConfig {
+            total_timeout: Duration::from_secs(30),
+            local_scan_timeout: Duration::from_secs(5),
+            bootstrap_query_timeout: Duration::from_secs(10),
+            max_query_retries: 3,
+            max_candidates: 50,
+            enable_symmetric_prediction: true,
+            min_bootstrap_consensus: 2,
+            interface_cache_ttl: Duration::from_secs(300),
+            server_reflexive_cache_ttl: Duration::from_secs(600),
+            bound_address: None,
+        };
+        CandidateDiscoveryManager::new(config)
+    }
+
+    #[test]
+    fn test_accept_quic_discovered_addresses() {
+        let mut manager = create_test_manager();
+        let peer_id = PeerId([1; 32]);
+        
+        // Create a discovery session
+        manager.start_discovery(peer_id, vec![]).unwrap();
+        
+        // Test accepting QUIC-discovered addresses
+        let discovered_addr = "192.168.1.100:5000".parse().unwrap();
+        let result = manager.accept_quic_discovered_address(peer_id, discovered_addr);
+        
+        assert!(result.is_ok());
+        
+        // Verify the address was added to the session
+        if let Some(session) = manager.active_sessions.get(&peer_id) {
+            let found = session.discovered_candidates.iter()
+                .any(|c| c.address == discovered_addr && matches!(c.source, DiscoverySourceType::ServerReflexive));
+            assert!(found, "QUIC-discovered address should be in candidates");
+        }
+    }
+
+    #[test]
+    fn test_accept_quic_discovered_addresses_no_session() {
+        let mut manager = create_test_manager();
+        let peer_id = PeerId([1; 32]);
+        let discovered_addr = "192.168.1.100:5000".parse().unwrap();
+        
+        // Try to add address without an active session
+        let result = manager.accept_quic_discovered_address(peer_id, discovered_addr);
+        
+        assert!(result.is_err());
+        match result {
+            Err(DiscoveryError::InternalError(msg)) => {
+                assert!(msg.contains("No active discovery session"));
+            }
+            _ => panic!("Expected InternalError for missing session"),
+        }
+    }
+
+    #[test]
+    fn test_accept_quic_discovered_addresses_deduplication() {
+        let mut manager = create_test_manager();
+        let peer_id = PeerId([1; 32]);
+        
+        // Create a discovery session
+        manager.start_discovery(peer_id, vec![]).unwrap();
+        
+        // Add the same address twice
+        let discovered_addr = "192.168.1.100:5000".parse().unwrap();
+        let result1 = manager.accept_quic_discovered_address(peer_id, discovered_addr);
+        let result2 = manager.accept_quic_discovered_address(peer_id, discovered_addr);
+        
+        assert!(result1.is_ok());
+        assert!(result2.is_ok()); // Should succeed but not duplicate
+        
+        // Verify no duplicates
+        if let Some(session) = manager.active_sessions.get(&peer_id) {
+            let count = session.discovered_candidates.iter()
+                .filter(|c| c.address == discovered_addr)
+                .count();
+            assert_eq!(count, 1, "Should not have duplicate addresses");
+        }
+    }
+
+    #[test]
+    fn test_accept_quic_discovered_addresses_priority() {
+        let mut manager = create_test_manager();
+        let peer_id = PeerId([1; 32]);
+        
+        // Create a discovery session
+        manager.start_discovery(peer_id, vec![]).unwrap();
+        
+        // Add different types of addresses
+        let public_addr = "8.8.8.8:5000".parse().unwrap();
+        let private_addr = "192.168.1.100:5000".parse().unwrap();
+        let ipv6_addr = "[2001:db8::1]:5000".parse().unwrap();
+        
+        manager.accept_quic_discovered_address(peer_id, public_addr).unwrap();
+        manager.accept_quic_discovered_address(peer_id, private_addr).unwrap();
+        manager.accept_quic_discovered_address(peer_id, ipv6_addr).unwrap();
+        
+        // Verify priorities are assigned correctly
+        if let Some(session) = manager.active_sessions.get(&peer_id) {
+            for candidate in &session.discovered_candidates {
+                assert!(candidate.priority > 0, "All candidates should have non-zero priority");
+                
+                // Verify IPv6 gets a boost
+                if candidate.address == ipv6_addr {
+                    let ipv4_priority = session.discovered_candidates.iter()
+                        .find(|c| c.address == public_addr)
+                        .map(|c| c.priority)
+                        .unwrap();
+                    
+                    // IPv6 should have higher or equal priority (due to boost)
+                    assert!(candidate.priority >= ipv4_priority);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_accept_quic_discovered_addresses_event_generation() {
+        let mut manager = create_test_manager();
+        let peer_id = PeerId([1; 32]);
+        
+        // Create a discovery session
+        manager.start_discovery(peer_id, vec![]).unwrap();
+        
+        // Add address and check for events
+        let discovered_addr = "192.168.1.100:5000".parse().unwrap();
+        manager.accept_quic_discovered_address(peer_id, discovered_addr).unwrap();
+        
+        // Poll for events
+        let events = manager.poll_discovery_progress(peer_id);
+        
+        // Should have a ServerReflexiveCandidateDiscovered event
+        let has_event = events.iter().any(|e| matches!(e, 
+            DiscoveryEvent::ServerReflexiveCandidateDiscovered { candidate, .. } 
+            if candidate.address == discovered_addr
+        ));
+        
+        assert!(has_event, "Should generate discovery event for QUIC-discovered address");
+    }
+
+    #[test]
+    fn test_discovery_completes_without_server_reflexive_phase() {
+        let mut manager = create_test_manager();
+        let peer_id = PeerId([1; 32]);
+        
+        // Start discovery
+        manager.start_discovery(peer_id, vec![]).unwrap();
+        
+        // Add a QUIC-discovered address
+        let discovered_addr = "192.168.1.100:5000".parse().unwrap();
+        manager.accept_quic_discovered_address(peer_id, discovered_addr).unwrap();
+        
+        // Poll discovery to advance state
+        let status = manager.get_discovery_status(peer_id).unwrap();
+        
+        // Should not be in ServerReflexiveQuerying phase
+        match &status.phase {
+            DiscoveryPhase::ServerReflexiveQuerying { .. } => {
+                panic!("Should not be in ServerReflexiveQuerying phase when using QUIC discovery");
+            }
+            _ => {} // Any other phase is fine
+        }
+    }
+
+    #[test]
+    fn test_no_bootstrap_queries_when_using_quic_discovery() {
+        let mut manager = create_test_manager();
+        let peer_id = PeerId([1; 32]);
+        
+        // Start discovery
+        manager.start_discovery(peer_id, vec![]).unwrap();
+        
+        // Immediately add QUIC-discovered addresses
+        let addr1 = "192.168.1.100:5000".parse().unwrap();
+        let addr2 = "8.8.8.8:5000".parse().unwrap();
+        manager.accept_quic_discovered_address(peer_id, addr1).unwrap();
+        manager.accept_quic_discovered_address(peer_id, addr2).unwrap();
+        
+        // Get status to check phase
+        let status = manager.get_discovery_status(peer_id).unwrap();
+        
+        // Verify we have candidates from QUIC discovery
+        assert!(status.discovered_candidates.len() >= 2);
+        
+        // Verify no bootstrap queries were made
+        if let Some(session) = manager.active_sessions.get(&peer_id) {
+            // Check that we didn't record any bootstrap query statistics
+            assert_eq!(session.statistics.bootstrap_queries_sent, 0,
+                      "Should not query bootstrap nodes when using QUIC discovery");
+        }
+    }
+
+    #[test]
+    fn test_priority_differences_quic_vs_placeholder() {
+        let mut manager = create_test_manager();
+        let peer_id = PeerId([1; 32]);
+        
+        // Start discovery
+        manager.start_discovery(peer_id, vec![]).unwrap();
+        
+        // Add QUIC-discovered address
+        let discovered_addr = "8.8.8.8:5000".parse().unwrap();
+        manager.accept_quic_discovered_address(peer_id, discovered_addr).unwrap();
+        
+        // Check the priority assigned
+        if let Some(session) = manager.active_sessions.get(&peer_id) {
+            let candidate = session.discovered_candidates.iter()
+                .find(|c| c.address == discovered_addr)
+                .expect("Should find the discovered address");
+            
+            // QUIC-discovered addresses should have reasonable priority
+            assert!(candidate.priority > 100, "QUIC-discovered address should have good priority");
+            assert!(candidate.priority < 300, "Priority should be reasonable");
+            
+            // Verify it's marked as ServerReflexive type (for compatibility)
+            assert!(matches!(candidate.source, DiscoverySourceType::ServerReflexive));
+        }
+    }
+    
+    #[test]
+    fn test_quic_discovered_address_priority_calculation() {
+        // Test that QUIC-discovered addresses get appropriate priorities based on characteristics
+        let mut manager = create_test_manager();
+        let peer_id = PeerId([1; 32]);
+        
+        // Start discovery
+        manager.start_discovery(peer_id, vec![]).unwrap();
+        
+        // Test different types of addresses
+        let test_cases = vec![
+            // (address, expected_priority_range, description)
+            ("1.2.3.4:5678", (250, 260), "Public IPv4"),
+            ("192.168.1.100:9000", (240, 250), "Private IPv4"),
+            ("[2001:db8::1]:5678", (260, 280), "Global IPv6"),
+            ("[fe80::1]:5678", (220, 240), "Link-local IPv6"),
+            ("[fc00::1]:5678", (240, 260), "Unique local IPv6"),
+            ("10.0.0.1:9000", (240, 250), "Private IPv4 (10.x)"),
+            ("172.16.0.1:9000", (240, 250), "Private IPv4 (172.16.x)"),
+        ];
+        
+        for (addr_str, (min_priority, max_priority), description) in test_cases {
+            let addr: SocketAddr = addr_str.parse().unwrap();
+            manager.accept_quic_discovered_address(peer_id, addr).unwrap();
+            
+            let session = manager.active_sessions.get(&peer_id).unwrap();
+            let candidate = session.discovered_candidates.iter()
+                .find(|c| c.address == addr)
+                .unwrap_or_else(|| panic!("No candidate found for {}", description));
+            
+            assert!(
+                candidate.priority >= min_priority && candidate.priority <= max_priority,
+                "{} priority {} not in range [{}, {}]",
+                description, candidate.priority, min_priority, max_priority
+            );
+        }
+    }
+    
+    #[test]
+    fn test_quic_discovered_priority_factors() {
+        // Test that various factors affect priority calculation
+        let manager = create_test_manager();
+        
+        // Test base priority calculation
+        let base_priority = manager.calculate_quic_discovered_priority(
+            &"1.2.3.4:5678".parse().unwrap()
+        );
+        assert_eq!(base_priority, 255, "Base priority should be 255 for public IPv4");
+        
+        // Test IPv6 gets higher priority
+        let ipv6_priority = manager.calculate_quic_discovered_priority(
+            &"[2001:db8::1]:5678".parse().unwrap()
+        );
+        assert!(ipv6_priority > base_priority, "IPv6 should have higher priority than IPv4");
+        
+        // Test private addresses get lower priority
+        let private_priority = manager.calculate_quic_discovered_priority(
+            &"192.168.1.1:5678".parse().unwrap()
+        );
+        assert!(private_priority < base_priority, "Private addresses should have lower priority");
+        
+        // Test link-local gets even lower priority
+        let link_local_priority = manager.calculate_quic_discovered_priority(
+            &"[fe80::1]:5678".parse().unwrap()
+        );
+        assert!(link_local_priority < private_priority, "Link-local should have lower priority than private");
+    }
+    
+    #[test]
+    fn test_quic_discovered_addresses_override_stale_server_reflexive() {
+        // Test that QUIC-discovered addresses can replace stale server reflexive candidates
+        let mut manager = create_test_manager();
+        let peer_id = PeerId([1; 32]);
+        
+        // Start discovery
+        manager.start_discovery(peer_id, vec![]).unwrap();
+        
+        // Simulate adding an old server reflexive candidate (from placeholder STUN)
+        let session = manager.active_sessions.get_mut(&peer_id).unwrap();
+        let old_candidate = DiscoveryCandidate {
+            address: "1.2.3.4:1234".parse().unwrap(),
+            priority: 200,
+            source: DiscoverySourceType::ServerReflexive,
+            state: CandidateState::Validating,
+        };
+        session.discovered_candidates.push(old_candidate);
+        
+        // Add a QUIC-discovered address for the same IP but different port
+        let new_addr = "1.2.3.4:5678".parse().unwrap();
+        manager.accept_quic_discovered_address(peer_id, new_addr).unwrap();
+        
+        // Check that we have both candidates
+        let session = manager.active_sessions.get(&peer_id).unwrap();
+        let candidates: Vec<_> = session.discovered_candidates.iter()
+            .filter(|c| c.source == DiscoverySourceType::ServerReflexive)
+            .collect();
+        
+        assert_eq!(candidates.len(), 2, "Should have both old and new candidates");
+        
+        // The new candidate should have a different priority
+        let new_candidate = candidates.iter()
+            .find(|c| c.address == new_addr)
+            .unwrap();
+        assert_ne!(new_candidate.priority, 200, "New candidate should have recalculated priority");
+    }
+    
+    #[test]
+    fn test_quic_discovered_address_generates_events() {
+        // Test that adding a QUIC-discovered address generates appropriate events
+        let mut manager = create_test_manager();
+        let peer_id = PeerId([1; 32]);
+        
+        // Start discovery
+        manager.start_discovery(peer_id, vec![]).unwrap();
+        
+        // Clear any startup events
+        manager.poll_discovery_progress(peer_id);
+        
+        // Add a QUIC-discovered address
+        let discovered_addr = "8.8.8.8:5000".parse().unwrap();
+        manager.accept_quic_discovered_address(peer_id, discovered_addr).unwrap();
+        
+        // Poll for events
+        let events = manager.poll_discovery_progress(peer_id);
+        
+        // Should have at least one event about the new candidate
+        assert!(!events.is_empty(), "Should generate events for new QUIC-discovered address");
+        
+        // Check for ServerReflexiveCandidateDiscovered event
+        let has_new_candidate = events.iter().any(|e| matches!(e, 
+            DiscoveryEvent::ServerReflexiveCandidateDiscovered { candidate, .. }
+            if candidate.address == discovered_addr
+        ));
+        assert!(has_new_candidate, "Should generate ServerReflexiveCandidateDiscovered event for the discovered address");
+    }
+    
+    #[test]
+    fn test_multiple_quic_discovered_addresses_generate_events() {
+        // Test that multiple QUIC-discovered addresses each generate events
+        let mut manager = create_test_manager();
+        let peer_id = PeerId([1; 32]);
+        
+        // Start discovery
+        manager.start_discovery(peer_id, vec![]).unwrap();
+        
+        // Clear startup events
+        manager.poll_discovery_progress(peer_id);
+        
+        // Add multiple QUIC-discovered addresses
+        let addresses = vec![
+            "8.8.8.8:5000".parse().unwrap(),
+            "1.1.1.1:6000".parse().unwrap(),
+            "[2001:db8::1]:7000".parse().unwrap(),
+        ];
+        
+        for addr in &addresses {
+            manager.accept_quic_discovered_address(peer_id, *addr).unwrap();
+        }
+        
+        // Poll for events
+        let events = manager.poll_discovery_progress(peer_id);
+        
+        // Should have events for all addresses
+        for addr in &addresses {
+            let has_event = events.iter().any(|e| matches!(e,
+                DiscoveryEvent::ServerReflexiveCandidateDiscovered { candidate, .. }
+                if candidate.address == *addr
+            ));
+            assert!(has_event, "Should have event for address {}", addr);
+        }
+    }
+    
+    #[test]
+    fn test_duplicate_quic_discovered_address_no_event() {
+        // Test that duplicate addresses don't generate duplicate events
+        let mut manager = create_test_manager();
+        let peer_id = PeerId([1; 32]);
+        
+        // Start discovery
+        manager.start_discovery(peer_id, vec![]).unwrap();
+        
+        // Add a QUIC-discovered address
+        let discovered_addr = "8.8.8.8:5000".parse().unwrap();
+        manager.accept_quic_discovered_address(peer_id, discovered_addr).unwrap();
+        
+        // Poll and clear events
+        manager.poll_discovery_progress(peer_id);
+        
+        // Try to add the same address again
+        manager.accept_quic_discovered_address(peer_id, discovered_addr).unwrap();
+        
+        // Poll for events
+        let events = manager.poll_discovery_progress(peer_id);
+        
+        // Should not generate any new events for duplicate
+        let has_duplicate_event = events.iter().any(|e| matches!(e,
+            DiscoveryEvent::ServerReflexiveCandidateDiscovered { candidate, .. }
+            if candidate.address == discovered_addr
+        ));
+        
+        assert!(!has_duplicate_event, "Should not generate event for duplicate address");
+    }
+    
+    #[test]
+    fn test_quic_discovered_address_event_timing() {
+        // Test that events are queued and delivered on poll
+        let mut manager = create_test_manager();
+        let peer_id = PeerId([1; 32]);
+        
+        // Start discovery
+        manager.start_discovery(peer_id, vec![]).unwrap();
+        
+        // Clear startup events
+        manager.poll_discovery_progress(peer_id);
+        
+        // Add addresses without polling
+        let addr1 = "8.8.8.8:5000".parse().unwrap();
+        let addr2 = "1.1.1.1:6000".parse().unwrap();
+        
+        manager.accept_quic_discovered_address(peer_id, addr1).unwrap();
+        manager.accept_quic_discovered_address(peer_id, addr2).unwrap();
+        
+        // Events should be queued
+        // Now poll for events
+        let events = manager.poll_discovery_progress(peer_id);
+        
+        // Should get all queued events  
+        let server_reflexive_count = events.iter()
+            .filter(|e| matches!(e, DiscoveryEvent::ServerReflexiveCandidateDiscovered { .. }))
+            .count();
+        
+        assert!(server_reflexive_count >= 2, 
+                "Should deliver all queued events on poll, got {} events", server_reflexive_count);
+        
+        // Subsequent poll should return no new server reflexive events
+        let events2 = manager.poll_discovery_progress(peer_id);
+        let server_reflexive_count2 = events2.iter()
+            .filter(|e| matches!(e, DiscoveryEvent::ServerReflexiveCandidateDiscovered { .. }))
+            .count();
+        assert_eq!(server_reflexive_count2, 0,
+                "Server reflexive events should not be duplicated on subsequent polls");
     }
 }

@@ -76,6 +76,19 @@ struct RelayQueue {
     rate_limit_window: Duration,
 }
 
+/// Address discovery statistics
+#[derive(Debug, Default, Clone)]
+pub struct AddressDiscoveryStats {
+    /// Number of OBSERVED_ADDRESS frames sent
+    pub frames_sent: u64,
+    /// Number of OBSERVED_ADDRESS frames received
+    pub frames_received: u64,
+    /// Number of unique addresses discovered
+    pub addresses_discovered: u64,
+    /// Number of address changes detected
+    pub address_changes_detected: u64,
+}
+
 /// Relay statistics for monitoring and debugging
 #[derive(Debug, Default)]
 pub struct RelayStats {
@@ -310,6 +323,10 @@ pub struct Endpoint {
     relay_queue: RelayQueue,
     /// Relay statistics
     relay_stats: RelayStats,
+    /// Whether address discovery is enabled (default: true)
+    address_discovery_enabled: bool,
+    /// Address change callback
+    address_change_callback: Option<Box<dyn Fn(Option<SocketAddr>, SocketAddr) + Send + Sync>>,
 }
 
 impl Endpoint {
@@ -344,6 +361,8 @@ impl Endpoint {
             peer_connections: HashMap::new(),
             relay_queue: RelayQueue::new(),
             relay_stats: RelayStats::default(),
+            address_discovery_enabled: true, // Default to enabled
+            address_change_callback: None,
         }
     }
 
@@ -1382,6 +1401,60 @@ impl Endpoint {
     /// Access the configuration used by this endpoint
     pub fn config(&self) -> &EndpointConfig {
         &self.config
+    }
+    
+    /// Enable or disable address discovery for this endpoint
+    /// 
+    /// Address discovery is enabled by default. When enabled, the endpoint will:
+    /// - Send OBSERVED_ADDRESS frames to peers to inform them of their reflexive addresses
+    /// - Process received OBSERVED_ADDRESS frames to learn about its own reflexive addresses
+    /// - Integrate discovered addresses with NAT traversal for improved connectivity
+    pub fn enable_address_discovery(&mut self, enabled: bool) {
+        self.address_discovery_enabled = enabled;
+        // Note: Existing connections will continue with their current setting.
+        // New connections will use the updated setting.
+    }
+    
+    /// Check if address discovery is enabled
+    pub fn address_discovery_enabled(&self) -> bool {
+        self.address_discovery_enabled
+    }
+    
+    /// Get all discovered addresses across all connections
+    /// 
+    /// Returns a list of unique socket addresses that have been observed
+    /// by remote peers and reported via OBSERVED_ADDRESS frames.
+    /// 
+    /// Note: This returns an empty vector in the current implementation.
+    /// Applications should track discovered addresses at the connection level.
+    pub fn discovered_addresses(&self) -> Vec<SocketAddr> {
+        // TODO: Implement address tracking at the endpoint level
+        Vec::new()
+    }
+    
+    /// Set a callback to be invoked when an address change is detected
+    /// 
+    /// The callback receives the old address (if any) and the new address.
+    /// Only one callback can be set at a time; setting a new callback replaces the previous one.
+    pub fn set_address_change_callback<F>(&mut self, callback: F)
+    where
+        F: Fn(Option<SocketAddr>, SocketAddr) + Send + Sync + 'static,
+    {
+        self.address_change_callback = Some(Box::new(callback));
+    }
+    
+    /// Clear the address change callback
+    pub fn clear_address_change_callback(&mut self) {
+        self.address_change_callback = None;
+    }
+    
+    /// Get address discovery statistics
+    /// 
+    /// Note: This returns default statistics in the current implementation.
+    /// Applications should track statistics at the connection level.
+    pub fn address_discovery_stats(&self) -> AddressDiscoveryStats {
+        // TODO: Implement statistics tracking at the endpoint level
+        AddressDiscoveryStats::default()
     }
 
     /// Number of connections that are currently open

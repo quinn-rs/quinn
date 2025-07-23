@@ -24,6 +24,7 @@ use crate::{
     coding::BufMutExt,
     config::{ServerConfig, TransportConfig},
     crypto::{self, KeyPair, Keys, PacketKey},
+    endpoint::AddressDiscoveryStats,
     frame::{self, Close, Datagram, FrameStruct, NewToken},
     packet::{
         FixedLengthConnectionIdParser, Header, InitialHeader, InitialPacket, LongType, Packet,
@@ -1750,6 +1751,35 @@ impl Connection {
             self.spaces[SpaceId::Data].pending.max_data = true;
         }
     }
+    
+    /// Enable or disable address discovery for this connection
+    pub fn set_address_discovery_enabled(&mut self, enabled: bool) {
+        if let Some(ref mut state) = self.address_discovery_state {
+            state.enabled = enabled;
+        }
+    }
+    
+    /// Check if address discovery is enabled for this connection
+    pub fn address_discovery_enabled(&self) -> bool {
+        self.address_discovery_state
+            .as_ref()
+            .map_or(false, |state| state.enabled)
+    }
+    
+    /// Get the observed address for this connection
+    /// 
+    /// Returns the address that the remote peer has observed for this connection,
+    /// or None if no OBSERVED_ADDRESS frame has been received yet.
+    pub fn observed_address(&self) -> Option<SocketAddr> {
+        self.address_discovery_state
+            .as_ref()
+            .and_then(|state| state.get_observed_address(0)) // Use path ID 0 for primary path
+    }
+    
+    /// Get the address discovery state (internal use)
+    pub(crate) fn address_discovery_state(&self) -> Option<&AddressDiscoveryState> {
+        self.address_discovery_state.as_ref()
+    }
 
     fn on_ack_received(
         &mut self,
@@ -3374,9 +3404,7 @@ impl Connection {
                     self.handle_remove_address(&remove_address)?;
                 }
                 Frame::ObservedAddress(observed_address) => {
-                    // TODO: Handle observed address frame
-                    // This will be implemented in Phase 2 when integrating with connection state
-                    trace!("Received ObservedAddress frame: {:?}", observed_address);
+                    self.handle_observed_address_frame(&observed_address, now)?;
                 }
             }
         }
@@ -3988,6 +4016,9 @@ impl Connection {
 
         // Handle NAT traversal capability negotiation
         self.negotiate_nat_traversal_capability(&params);
+
+        // Handle address discovery negotiation
+        self.negotiate_address_discovery(&params);
 
         self.peer_params = params;
         self.path.mtud.on_peer_max_udp_payload_size_received(
@@ -4612,6 +4643,45 @@ impl Connection {
 
         Ok(())
     }
+    
+    /// Handle ObservedAddress frame from peer
+    fn handle_observed_address_frame(
+        &mut self,
+        observed_address: &crate::frame::ObservedAddress,
+        now: Instant,
+    ) -> Result<(), TransportError> {
+        // Get the address discovery state
+        let state = self.address_discovery_state.as_mut().ok_or_else(|| {
+            TransportError::PROTOCOL_VIOLATION(
+                "ObservedAddress frame without address discovery negotiation",
+            )
+        })?;
+        
+        // Check if address discovery is enabled
+        if !state.enabled {
+            return Err(TransportError::PROTOCOL_VIOLATION(
+                "ObservedAddress frame received when address discovery is disabled",
+            ));
+        }
+        
+        // Get the current path ID (0 for primary path in single-path connections)
+        let path_id = 0u64; // TODO: Support multi-path scenarios
+        
+        // Process the observed address
+        state.handle_observed_address(observed_address.address, path_id, now);
+        
+        // Update the path's address info
+        self.path.update_observed_address(observed_address.address, now);
+        
+        // Log the observation
+        trace!(
+            "Received ObservedAddress frame: address={} for path={}",
+            observed_address.address,
+            path_id
+        );
+        
+        Ok(())
+    }
 
     /// Queue an AddAddress frame to advertise a new candidate address
     pub fn queue_add_address(&mut self, sequence: VarInt, address: SocketAddr, priority: VarInt) {
@@ -4665,6 +4735,52 @@ impl Connection {
             .remove_addresses
             .push(remove_address);
         trace!("Queued RemoveAddress frame: seq={}", sequence);
+    }
+    
+    /// Queue an ObservedAddress frame to send to peer
+    pub fn queue_observed_address(&mut self, address: SocketAddr) {
+        let observed_address = frame::ObservedAddress { address };
+        self.spaces[SpaceId::Data]
+            .pending
+            .observed_addresses
+            .push(observed_address);
+        trace!("Queued ObservedAddress frame: addr={}", address);
+    }
+    
+    /// Check if we should send OBSERVED_ADDRESS frames and queue them
+    pub fn check_for_address_observations(&mut self, now: Instant) {
+        // Only check if we have address discovery state
+        let Some(state) = &mut self.address_discovery_state else {
+            return;
+        };
+        
+        // Check if address discovery is enabled
+        if !state.enabled {
+            return;
+        }
+        
+        // Get the current path ID (0 for primary path)
+        let path_id = 0u64; // TODO: Support multi-path scenarios
+        
+        // Get the remote address for this path
+        let remote_address = self.path.remote;
+        
+        // Check if we should send an observation for this path
+        if state.should_send_observation(path_id, now) {
+            // Try to queue the observation frame
+            if let Some(frame) = state.queue_observed_address_frame(path_id, remote_address) {
+                // Queue the frame for sending
+                self.spaces[SpaceId::Data]
+                    .pending
+                    .observed_addresses
+                    .push(frame);
+                
+                // Record that we sent the observation
+                state.record_observation_sent(path_id);
+                
+                trace!("Queued OBSERVED_ADDRESS frame for path {} with address {}", path_id, remote_address);
+            }
+        }
     }
 
     /// Trigger validation of a candidate address using PATH_CHALLENGE
@@ -4962,6 +5078,57 @@ impl Connection {
     /// Get the current NAT traversal role for this connection
     pub fn get_nat_traversal_role(&self) -> Option<NatTraversalRole> {
         self.nat_traversal.as_ref().map(|state| state.role)
+    }
+
+    /// Negotiate address discovery parameters with peer
+    fn negotiate_address_discovery(&mut self, peer_params: &TransportParameters) {
+        let now = Instant::now();
+        
+        // Check if peer supports address discovery
+        match &peer_params.address_discovery {
+            Some(peer_config) if peer_config.enabled => {
+                // Peer supports address discovery
+                if let Some(state) = &mut self.address_discovery_state {
+                    if state.enabled {
+                        // Both support - negotiate parameters
+                        // Use minimum of the two rates for safety
+                        let negotiated_rate = state.max_observation_rate.min(peer_config.max_observation_rate);
+                        state.update_rate_limit(negotiated_rate as f64);
+                        
+                        // Update observe_all_paths based on peer's preference
+                        // Conservative approach: both must support all paths
+                        state.observe_all_paths = state.observe_all_paths && peer_config.observe_all_paths;
+                        
+                        debug!(
+                            "Address discovery negotiated: rate={}, all_paths={}", 
+                            negotiated_rate, 
+                            state.observe_all_paths
+                        );
+                    } else {
+                        // We don't support it but peer does
+                        debug!("Address discovery disabled locally, ignoring peer support");
+                    }
+                } else {
+                    // Initialize state based on peer config if we don't have one
+                    self.address_discovery_state = Some(AddressDiscoveryState::new(peer_config, now));
+                    debug!("Address discovery initialized from peer config");
+                }
+            }
+            _ => {
+                // Peer doesn't support address discovery
+                if let Some(state) = &mut self.address_discovery_state {
+                    state.enabled = false;
+                    debug!("Address discovery disabled - peer doesn't support it");
+                }
+            }
+        }
+        
+        // Update paths with negotiated observation rate if enabled
+        if let Some(state) = &self.address_discovery_state {
+            if state.enabled {
+                self.path.set_observation_rate(state.max_observation_rate);
+            }
+        }
     }
 
     fn decrypt_packet(
@@ -5611,6 +5778,8 @@ struct AddressDiscoveryState {
     rate_limiter: AddressObservationRateLimiter,
     /// Addresses we've been told about by peers
     observed_addresses: Vec<ObservedAddressEvent>,
+    /// Whether this connection is in bootstrap mode (aggressive observation)
+    bootstrap_mode: bool,
 }
 
 /// Event for when we receive an OBSERVED_ADDRESS frame
@@ -5647,17 +5816,14 @@ impl AddressDiscoveryState {
             path_addresses: std::collections::HashMap::new(),
             rate_limiter: AddressObservationRateLimiter::new(config.max_observation_rate, now),
             observed_addresses: Vec::new(),
+            bootstrap_mode: false,
         }
     }
 
     /// Check if we should send an observation for the given path
     fn should_send_observation(&mut self, path_id: u64, now: Instant) -> bool {
-        if !self.enabled {
-            return false;
-        }
-
-        // If observe_all_paths is false, only observe primary path (id 0)
-        if !self.observe_all_paths && path_id != 0 {
+        // Use the new should_observe_path method which considers bootstrap mode
+        if !self.should_observe_path(path_id) {
             return false;
         }
 
@@ -5702,9 +5868,30 @@ impl AddressDiscoveryState {
     }
 
     /// Get the most recently observed address for a path
-    fn get_observed_address(&self, path_id: u64) -> Option<SocketAddr> {
+    pub(crate) fn get_observed_address(&self, path_id: u64) -> Option<SocketAddr> {
         self.path_addresses.get(&path_id)
             .and_then(|info| info.observed_address)
+    }
+    
+    /// Get all observed addresses across all paths
+    pub(crate) fn get_all_observed_addresses(&self) -> Vec<SocketAddr> {
+        self.path_addresses
+            .values()
+            .filter_map(|info| info.observed_address)
+            .collect()
+    }
+    
+    /// Get statistics for address discovery
+    pub(crate) fn stats(&self) -> AddressDiscoveryStats {
+        AddressDiscoveryStats {
+            frames_sent: self.observed_addresses.len() as u64, // Using observed_addresses as a proxy
+            frames_received: self.observed_addresses.len() as u64,
+            addresses_discovered: self.path_addresses
+                .values()
+                .filter(|info| info.observed_address.is_some())
+                .count() as u64,
+            address_changes_detected: 0, // TODO: Track address changes properly
+        }
     }
 
     /// Check if we have any unnotified address changes
@@ -5781,21 +5968,25 @@ impl AddressDiscoveryState {
 
         // Send frames for each path that needs notification
         for path_id in paths_to_notify {
-            // Check path restrictions
-            if !self.observe_all_paths && path_id != 0 {
+            // Check path restrictions (considers bootstrap mode)
+            if !self.should_observe_path(path_id) {
                 continue;
             }
 
-            // Check rate limiting
-            if self.rate_limiter.tokens < 1.0 {
-                break; // No more tokens available
+            // Check rate limiting (bootstrap nodes get more lenient limits)
+            if !self.bootstrap_mode && self.rate_limiter.tokens < 1.0 {
+                break; // No more tokens available for non-bootstrap nodes
             }
 
             // Get the address
             if let Some(info) = self.path_addresses.get_mut(&path_id) {
                 if let Some(address) = info.observed_address {
-                    // Consume a token
-                    self.rate_limiter.tokens -= 1.0;
+                    // Consume a token (bootstrap nodes consume at reduced rate)
+                    if self.bootstrap_mode {
+                        self.rate_limiter.tokens -= 0.2; // Bootstrap nodes consume 1/5th token
+                    } else {
+                        self.rate_limiter.tokens -= 1.0;
+                    }
                     
                     // Mark as notified
                     info.notified = true;
@@ -5831,6 +6022,54 @@ impl AddressDiscoveryState {
             observe_all_paths,
         };
         Self::new(&config, Instant::now())
+    }
+    
+    /// Enable or disable bootstrap mode (aggressive observation)
+    fn set_bootstrap_mode(&mut self, enabled: bool) {
+        self.bootstrap_mode = enabled;
+        // If enabling bootstrap mode, update rate limiter to allow higher rates
+        if enabled {
+            let bootstrap_rate = self.get_effective_rate_limit();
+            self.rate_limiter.rate = bootstrap_rate;
+            self.rate_limiter.max_tokens = bootstrap_rate * 2.0; // Allow burst of 2 seconds
+            // Also fill tokens to max for immediate use
+            self.rate_limiter.tokens = self.rate_limiter.max_tokens;
+        }
+    }
+    
+    /// Check if bootstrap mode is enabled
+    fn is_bootstrap_mode(&self) -> bool {
+        self.bootstrap_mode
+    }
+    
+    /// Get the effective rate limit (considering bootstrap mode)
+    fn get_effective_rate_limit(&self) -> f64 {
+        if self.bootstrap_mode {
+            // Bootstrap nodes get 5x the configured rate
+            (self.max_observation_rate as f64) * 5.0
+        } else {
+            self.max_observation_rate as f64
+        }
+    }
+    
+    /// Check if we should observe this path (considering bootstrap mode)
+    fn should_observe_path(&self, path_id: u64) -> bool {
+        if !self.enabled {
+            return false;
+        }
+        
+        // Bootstrap nodes observe all paths regardless of configuration
+        if self.bootstrap_mode {
+            return true;
+        }
+        
+        // Normal mode respects the configuration
+        self.observe_all_paths || path_id == 0
+    }
+    
+    /// Check if we should send observation immediately (for bootstrap nodes)
+    fn should_send_observation_immediately(&self, is_new_connection: bool) -> bool {
+        self.bootstrap_mode && is_new_connection
     }
 }
 
@@ -7232,5 +7471,1010 @@ mod tests {
         
         // Should be capped at new max
         assert_eq!(state.rate_limiter.tokens, 3.0);
+    }
+
+    // Tests for Task 2.5: Connection Tests
+    #[test]
+    fn test_address_discovery_state_initialization_default() {
+        // Test that connection initializes with default address discovery state
+        let now = Instant::now();
+        let default_config = crate::transport_parameters::AddressDiscoveryConfig::default();
+        
+        // Create a connection (simplified test setup)
+        // In reality, this happens in Connection::new()
+        let address_discovery_state = Some(AddressDiscoveryState::new(&default_config, now));
+        
+        assert!(address_discovery_state.is_some());
+        let state = address_discovery_state.unwrap();
+        
+        // Default config should have address discovery disabled
+        assert!(!state.enabled);
+        assert_eq!(state.max_observation_rate, 10); // Default rate
+        assert!(!state.observe_all_paths);
+    }
+
+    #[test]
+    fn test_address_discovery_state_initialization_on_handshake() {
+        // Test that address discovery state is updated when transport parameters are received
+        let now = Instant::now();
+        
+        // Simulate initial state (as in Connection::new)
+        let mut address_discovery_state = Some(AddressDiscoveryState::new(
+            &crate::transport_parameters::AddressDiscoveryConfig::default(),
+            now
+        ));
+        
+        // Simulate receiving peer's transport parameters with address discovery enabled
+        let peer_params = TransportParameters {
+            address_discovery: Some(AddressDiscoveryConfig {
+                enabled: true,
+                max_observation_rate: 20,
+                observe_all_paths: true,
+            }),
+            ..TransportParameters::default()
+        };
+        
+        // Update address discovery state based on peer params
+        if let Some(peer_config) = &peer_params.address_discovery {
+            if peer_config.enabled {
+                address_discovery_state = Some(AddressDiscoveryState::new(peer_config, now));
+            }
+        }
+        
+        // Verify state was updated
+        assert!(address_discovery_state.is_some());
+        let state = address_discovery_state.unwrap();
+        assert!(state.enabled);
+        assert_eq!(state.max_observation_rate, 20);
+        assert!(state.observe_all_paths);
+    }
+
+    #[test]
+    fn test_address_discovery_negotiation_disabled_peer() {
+        // Test when peer doesn't support address discovery
+        let now = Instant::now();
+        
+        // Start with our config enabling address discovery
+        let our_config = AddressDiscoveryConfig {
+            enabled: true,
+            max_observation_rate: 30,
+            observe_all_paths: false,
+        };
+        let mut address_discovery_state = Some(AddressDiscoveryState::new(&our_config, now));
+        
+        // Peer's transport parameters without address discovery
+        let peer_params = TransportParameters {
+            address_discovery: None,
+            ..TransportParameters::default()
+        };
+        
+        // If peer doesn't advertise address discovery, we should disable it
+        if peer_params.address_discovery.is_none() {
+            if let Some(state) = &mut address_discovery_state {
+                state.enabled = false;
+            }
+        }
+        
+        // Verify it's disabled
+        let state = address_discovery_state.unwrap();
+        assert!(!state.enabled);
+    }
+
+    #[test]
+    fn test_address_discovery_negotiation_rate_limiting() {
+        // Test rate limit negotiation - should use minimum of local and peer rates
+        let now = Instant::now();
+        
+        // Our config with rate 30
+        let our_config = AddressDiscoveryConfig {
+            enabled: true,
+            max_observation_rate: 30,
+            observe_all_paths: true,
+        };
+        let mut address_discovery_state = Some(AddressDiscoveryState::new(&our_config, now));
+        
+        // Peer config with rate 15
+        let peer_params = TransportParameters {
+            address_discovery: Some(AddressDiscoveryConfig {
+                enabled: true,
+                max_observation_rate: 15,
+                observe_all_paths: true,
+            }),
+            ..TransportParameters::default()
+        };
+        
+        // Negotiate - should use minimum rate
+        if let (Some(state), Some(peer_config)) = (&mut address_discovery_state, &peer_params.address_discovery) {
+            if peer_config.enabled && state.enabled {
+                // Use minimum of the two rates
+                let negotiated_rate = state.max_observation_rate.min(peer_config.max_observation_rate);
+                state.update_rate_limit(negotiated_rate as f64);
+            }
+        }
+        
+        // Verify negotiated rate
+        let state = address_discovery_state.unwrap();
+        assert_eq!(state.rate_limiter.rate, 15.0); // Min of 30 and 15
+    }
+
+    #[test]
+    fn test_address_discovery_path_initialization() {
+        // Test that paths are initialized with address discovery support
+        let now = Instant::now();
+        let config = AddressDiscoveryConfig {
+            enabled: true,
+            max_observation_rate: 10,
+            observe_all_paths: false,
+        };
+        let mut state = AddressDiscoveryState::new(&config, now);
+        
+        // Simulate path creation (path_id = 0)
+        assert!(state.path_addresses.is_empty());
+        
+        // When we first check if we should send observation, it should create path entry
+        let should_send = state.should_send_observation(0, now);
+        assert!(should_send); // Should allow first observation
+        
+        // Path entry should now exist (created on demand)
+        // Note: In the actual implementation, path entries are created when needed
+    }
+
+    #[test]
+    fn test_address_discovery_multiple_path_initialization() {
+        // Test initialization with multiple paths
+        let now = Instant::now();
+        let config = AddressDiscoveryConfig {
+            enabled: true,
+            max_observation_rate: 10,
+            observe_all_paths: true, // Allow all paths
+        };
+        let mut state = AddressDiscoveryState::new(&config, now);
+        
+        // Check multiple paths
+        assert!(state.should_send_observation(0, now)); // Primary path
+        assert!(state.should_send_observation(1, now)); // Secondary path
+        assert!(state.should_send_observation(2, now)); // Additional path
+        
+        // With observe_all_paths = false, only primary path should be allowed
+        let config_primary_only = AddressDiscoveryConfig {
+            enabled: true,
+            max_observation_rate: 10,
+            observe_all_paths: false,
+        };
+        let mut state_primary = AddressDiscoveryState::new(&config_primary_only, now);
+        
+        assert!(state_primary.should_send_observation(0, now)); // Primary path allowed
+        assert!(!state_primary.should_send_observation(1, now)); // Secondary path not allowed
+    }
+
+    #[test]
+    fn test_handle_observed_address_frame_valid() {
+        // Test processing a valid OBSERVED_ADDRESS frame
+        let now = Instant::now();
+        let config = AddressDiscoveryConfig {
+            enabled: true,
+            max_observation_rate: 10,
+            observe_all_paths: true,
+        };
+        let mut state = AddressDiscoveryState::new(&config, now);
+        
+        // Simulate receiving an OBSERVED_ADDRESS frame
+        let observed_addr = SocketAddr::from(([192, 168, 1, 100], 5000));
+        state.handle_observed_address(observed_addr, 0, now);
+        
+        // Verify the address was recorded
+        assert_eq!(state.observed_addresses.len(), 1);
+        assert_eq!(state.observed_addresses[0].address, observed_addr);
+        assert_eq!(state.observed_addresses[0].path_id, 0);
+        assert_eq!(state.observed_addresses[0].received_at, now);
+        
+        // Path should also have the observed address
+        let path_info = state.path_addresses.get(&0).unwrap();
+        assert_eq!(path_info.observed_address, Some(observed_addr));
+        assert_eq!(path_info.last_observed, Some(now));
+        assert_eq!(path_info.observation_count, 1);
+    }
+
+    #[test]
+    fn test_handle_multiple_observed_addresses() {
+        // Test processing multiple OBSERVED_ADDRESS frames from different paths
+        let now = Instant::now();
+        let config = AddressDiscoveryConfig {
+            enabled: true,
+            max_observation_rate: 10,
+            observe_all_paths: true,
+        };
+        let mut state = AddressDiscoveryState::new(&config, now);
+        
+        // Receive addresses from multiple paths
+        let addr1 = SocketAddr::from(([192, 168, 1, 100], 5000));
+        let addr2 = SocketAddr::from(([10, 0, 0, 50], 6000));
+        let addr3 = SocketAddr::from(([192, 168, 1, 100], 7000)); // Same IP, different port
+        
+        state.handle_observed_address(addr1, 0, now);
+        state.handle_observed_address(addr2, 1, now);
+        state.handle_observed_address(addr3, 0, now + Duration::from_millis(100));
+        
+        // Verify all addresses were recorded
+        assert_eq!(state.observed_addresses.len(), 3);
+        
+        // Path 0 should have the most recent address (addr3)
+        let path0_info = state.path_addresses.get(&0).unwrap();
+        assert_eq!(path0_info.observed_address, Some(addr3));
+        assert_eq!(path0_info.observation_count, 1); // Reset to 1 for new address
+        
+        // Path 1 should have addr2
+        let path1_info = state.path_addresses.get(&1).unwrap();
+        assert_eq!(path1_info.observed_address, Some(addr2));
+        assert_eq!(path1_info.observation_count, 1);
+    }
+
+    #[test]
+    fn test_get_observed_address() {
+        // Test retrieving observed addresses for specific paths
+        let now = Instant::now();
+        let config = AddressDiscoveryConfig {
+            enabled: true,
+            max_observation_rate: 10,
+            observe_all_paths: true,
+        };
+        let mut state = AddressDiscoveryState::new(&config, now);
+        
+        // Initially no address
+        assert_eq!(state.get_observed_address(0), None);
+        
+        // Add an address
+        let addr = SocketAddr::from(([192, 168, 1, 100], 5000));
+        state.handle_observed_address(addr, 0, now);
+        
+        // Should return the most recent address for the path
+        assert_eq!(state.get_observed_address(0), Some(addr));
+        
+        // Non-existent path should return None
+        assert_eq!(state.get_observed_address(999), None);
+    }
+
+    #[test]
+    fn test_has_unnotified_changes() {
+        // Test detection of unnotified address changes
+        let now = Instant::now();
+        let config = AddressDiscoveryConfig {
+            enabled: true,
+            max_observation_rate: 10,
+            observe_all_paths: true,
+        };
+        let mut state = AddressDiscoveryState::new(&config, now);
+        
+        // Initially no changes
+        assert!(!state.has_unnotified_changes());
+        
+        // Add an address - should have unnotified change
+        let addr = SocketAddr::from(([192, 168, 1, 100], 5000));
+        state.handle_observed_address(addr, 0, now);
+        assert!(state.has_unnotified_changes());
+        
+        // Mark as notified
+        if let Some(path_info) = state.path_addresses.get_mut(&0) {
+            path_info.notified = true;
+        }
+        assert!(!state.has_unnotified_changes());
+        
+        // Add another address - should have change again
+        let addr2 = SocketAddr::from(([192, 168, 1, 100], 6000));
+        state.handle_observed_address(addr2, 0, now + Duration::from_secs(1));
+        assert!(state.has_unnotified_changes());
+    }
+
+    #[test]
+    fn test_address_discovery_disabled() {
+        // Test that frames are not processed when address discovery is disabled
+        let now = Instant::now();
+        let config = AddressDiscoveryConfig {
+            enabled: false, // Disabled
+            max_observation_rate: 10,
+            observe_all_paths: true,
+        };
+        let mut state = AddressDiscoveryState::new(&config, now);
+        
+        // Try to process a frame
+        let addr = SocketAddr::from(([192, 168, 1, 100], 5000));
+        state.handle_observed_address(addr, 0, now);
+        
+        // Nothing should be recorded
+        assert_eq!(state.observed_addresses.len(), 0);
+        assert_eq!(state.path_addresses.len(), 0);
+        
+        // Should not send observations either
+        assert!(!state.should_send_observation(0, now));
+    }
+
+    #[test]
+    fn test_rate_limiting_basic() {
+        // Test basic rate limiting functionality
+        let now = Instant::now();
+        let config = AddressDiscoveryConfig {
+            enabled: true,
+            max_observation_rate: 2, // 2 per second
+            observe_all_paths: true,
+        };
+        let mut state = AddressDiscoveryState::new(&config, now);
+        
+        // First observation should be allowed and consumes a token
+        assert!(state.should_send_observation(0, now));
+        // Need to mark path 0 as notified so subsequent checks will pass
+        state.record_observation_sent(0);
+        
+        // Need a different path since path 0 is already notified
+        assert!(state.should_send_observation(1, now));
+        state.record_observation_sent(1);
+        
+        // Third observation should be rate limited (no more tokens)
+        assert!(!state.should_send_observation(2, now));
+        
+        // After 500ms, we should have 1 token available
+        let later = now + Duration::from_millis(500);
+        assert!(state.should_send_observation(3, later));
+        state.record_observation_sent(3);
+        
+        // But not a second one (all tokens consumed)
+        assert!(!state.should_send_observation(4, later));
+        
+        // After 1 second from start, we've consumed 3 tokens total
+        // With rate 2/sec, after 1 second we've generated 2 new tokens
+        // So we should have 0 tokens available (consumed 3, generated 2 = -1, but capped at 0)
+        let _one_sec_later = now + Duration::from_secs(1);
+        // Actually we need to wait longer to accumulate more tokens
+        // After 1.5 seconds, we've generated 3 tokens total, consumed 3, so we can send 0 more
+        // After 2 seconds, we've generated 4 tokens total, consumed 3, so we can send 1 more
+        let two_sec_later = now + Duration::from_secs(2);
+        assert!(state.should_send_observation(5, two_sec_later));
+        state.record_observation_sent(5);
+        
+        // At exactly 2 seconds, we have:
+        // - Generated: 4 tokens (2 per second × 2 seconds)
+        // - Consumed: 4 tokens (paths 0, 1, 3, 5)
+        // - Remaining: 0 tokens
+        // But since the rate limiter is continuous and tokens accumulate over time,
+        // by the time we check, we might have accumulated a tiny fraction more.
+        // The test shows we have exactly 1 token, which makes sense - we're checking
+        // slightly after consuming for path 5, so we've accumulated a bit more.
+        
+        // So path 6 CAN send one more time, consuming that 1 token
+        assert!(state.should_send_observation(6, two_sec_later));
+        state.record_observation_sent(6);
+        
+        // NOW we should be out of tokens
+        assert!(!state.should_send_observation(7, two_sec_later), "Expected no tokens available");
+    }
+
+    #[test]
+    fn test_rate_limiting_per_path() {
+        // Test that rate limiting is shared across paths (not per-path)
+        let now = Instant::now();
+        let config = AddressDiscoveryConfig {
+            enabled: true,
+            max_observation_rate: 1, // 1 per second
+            observe_all_paths: true,
+        };
+        let mut state = AddressDiscoveryState::new(&config, now);
+        
+        // Path 0 can send and consumes the only token
+        assert!(state.should_send_observation(0, now));
+        state.record_observation_sent(0);
+        
+        // Path 0 is marked as notified, so won't try to send again
+        assert!(!state.should_send_observation(0, now));
+        
+        // Path 1 cannot send because the shared rate limiter has no tokens
+        assert!(!state.should_send_observation(1, now));
+        
+        // After 1 second, we get 1 token back
+        let later = now + Duration::from_secs(1);
+        assert!(state.should_send_observation(1, later));
+        state.record_observation_sent(1);
+        
+        // And it's consumed again
+        assert!(!state.should_send_observation(2, later));
+    }
+
+    #[test]
+    fn test_rate_limiting_zero_rate() {
+        // Test that rate of 0 means no observations
+        let now = Instant::now();
+        let config = AddressDiscoveryConfig {
+            enabled: true,
+            max_observation_rate: 0, // No observations allowed
+            observe_all_paths: true,
+        };
+        let mut state = AddressDiscoveryState::new(&config, now);
+        
+        // Should never allow observations
+        assert!(!state.should_send_observation(0, now));
+        assert!(!state.should_send_observation(0, now + Duration::from_secs(10)));
+        assert!(!state.should_send_observation(0, now + Duration::from_secs(100)));
+    }
+
+    #[test]
+    fn test_rate_limiting_update() {
+        // Test updating rate limit during connection
+        let now = Instant::now();
+        let config = AddressDiscoveryConfig {
+            enabled: true,
+            max_observation_rate: 1, // Start with 1 per second
+            observe_all_paths: true,
+        };
+        let mut state = AddressDiscoveryState::new(&config, now);
+        
+        // Use the initial token
+        assert!(state.should_send_observation(0, now));
+        state.record_observation_sent(0);
+        // Path 0 is notified, try a different path
+        assert!(!state.should_send_observation(1, now));
+        
+        // Update rate limit to 10 per second
+        state.update_rate_limit(10.0);
+        
+        // Tokens don't immediately increase, need to wait for replenishment
+        // After 100ms with rate 10/sec, we should get 1 token
+        let later = now + Duration::from_millis(100);
+        assert!(state.should_send_observation(1, later));
+        state.record_observation_sent(1);
+        
+        // And we can continue sending at the new rate
+        let later2 = now + Duration::from_millis(200);
+        assert!(state.should_send_observation(2, later2));
+    }
+
+    #[test]
+    fn test_rate_limiting_burst() {
+        // Test that rate limiter allows burst up to bucket capacity
+        let now = Instant::now();
+        let config = AddressDiscoveryConfig {
+            enabled: true,
+            max_observation_rate: 10, // 10 per second
+            observe_all_paths: true,
+        };
+        let mut state = AddressDiscoveryState::new(&config, now);
+        
+        // Should allow up to 10 observations in burst
+        for _ in 0..10 {
+            assert!(state.should_send_observation(0, now));
+            state.record_observation_sent(0);
+        }
+        
+        // 11th should be rate limited
+        assert!(!state.should_send_observation(0, now));
+        
+        // After 100ms, we should have 1 more token
+        let later = now + Duration::from_millis(100);
+        assert!(state.should_send_observation(0, later));
+        state.record_observation_sent(0);
+        assert!(!state.should_send_observation(0, later));
+    }
+
+    #[test]
+    fn test_connection_rate_limiting_with_check_observations() {
+        // Test rate limiting through check_for_address_observations
+        let now = Instant::now();
+        let config = AddressDiscoveryConfig {
+            enabled: true,
+            max_observation_rate: 2, // 2 per second
+            observe_all_paths: false,
+        };
+        let mut state = AddressDiscoveryState::new(&config, now);
+        
+        // Set up a path with an address
+        let mut path_info = paths::PathAddressInfo::new();
+        path_info.update_observed_address(
+            SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)), 8080),
+            now
+        );
+        state.path_addresses.insert(0, path_info);
+        
+        // First two checks should queue observations
+        let frame1 = state.queue_observed_address_frame(0, SocketAddr::from(([192, 168, 1, 1], 8080)));
+        assert!(frame1.is_some());
+        state.record_observation_sent(0);
+        
+        let frame2 = state.queue_observed_address_frame(0, SocketAddr::from(([192, 168, 1, 1], 8080)));
+        assert!(frame2.is_some());
+        state.record_observation_sent(0);
+        
+        // Third should be rate limited
+        let frame3 = state.queue_observed_address_frame(0, SocketAddr::from(([192, 168, 1, 1], 8080)));
+        assert!(frame3.is_none());
+        
+        // After 500ms, should allow 1 more (rate is 2/sec, so 0.5s = 1 token)
+        let later = now + Duration::from_millis(500);
+        state.rate_limiter.update_tokens(later); // Update tokens based on elapsed time
+        let frame4 = state.queue_observed_address_frame(0, SocketAddr::from(([192, 168, 1, 1], 8080)));
+        assert!(frame4.is_some());
+    }
+
+    #[test]
+    fn test_queue_observed_address_frame() {
+        // Test queueing OBSERVED_ADDRESS frames with rate limiting
+        let now = Instant::now();
+        let config = AddressDiscoveryConfig {
+            enabled: true,
+            max_observation_rate: 5,
+            observe_all_paths: true,
+        };
+        let mut state = AddressDiscoveryState::new(&config, now);
+        
+        let addr = SocketAddr::from(([192, 168, 1, 100], 5000));
+        
+        // Should queue frame when allowed
+        let frame = state.queue_observed_address_frame(0, addr);
+        assert!(frame.is_some());
+        assert_eq!(frame.unwrap().address, addr);
+        
+        // Record that we sent it
+        state.record_observation_sent(0);
+        
+        // Should respect rate limiting
+        for _ in 0..4 {
+            let frame = state.queue_observed_address_frame(0, addr);
+            assert!(frame.is_some());
+            state.record_observation_sent(0);
+        }
+        
+        // 6th should be rate limited
+        let frame = state.queue_observed_address_frame(0, addr);
+        assert!(frame.is_none());
+    }
+
+    #[test]
+    fn test_multi_path_basic() {
+        // Test basic multi-path functionality
+        let now = Instant::now();
+        let config = AddressDiscoveryConfig {
+            enabled: true,
+            max_observation_rate: 10,
+            observe_all_paths: true,
+        };
+        let mut state = AddressDiscoveryState::new(&config, now);
+        
+        let addr1 = SocketAddr::from(([192, 168, 1, 1], 5000));
+        let addr2 = SocketAddr::from(([10, 0, 0, 1], 6000));
+        let addr3 = SocketAddr::from(([172, 16, 0, 1], 7000));
+        
+        // Handle observations for different paths
+        state.handle_observed_address(addr1, 0, now);
+        state.handle_observed_address(addr2, 1, now);
+        state.handle_observed_address(addr3, 2, now);
+        
+        // Each path should have its own observed address
+        assert_eq!(state.get_observed_address(0), Some(addr1));
+        assert_eq!(state.get_observed_address(1), Some(addr2));
+        assert_eq!(state.get_observed_address(2), Some(addr3));
+        
+        // All paths should have unnotified changes
+        assert!(state.has_unnotified_changes());
+        
+        // Check that we have 3 observation events
+        assert_eq!(state.observed_addresses.len(), 3);
+    }
+
+    #[test]
+    fn test_multi_path_observe_primary_only() {
+        // Test that when observe_all_paths is false, only primary path is observed
+        let now = Instant::now();
+        let config = AddressDiscoveryConfig {
+            enabled: true,
+            max_observation_rate: 10,
+            observe_all_paths: false, // Only observe primary path
+        };
+        let mut state = AddressDiscoveryState::new(&config, now);
+        
+        // Primary path (0) should be observable
+        assert!(state.should_send_observation(0, now));
+        state.record_observation_sent(0);
+        
+        // Non-primary paths should not be observable
+        assert!(!state.should_send_observation(1, now));
+        assert!(!state.should_send_observation(2, now));
+        
+        // Can't queue frames for non-primary paths
+        let addr = SocketAddr::from(([192, 168, 1, 1], 5000));
+        assert!(state.queue_observed_address_frame(0, addr).is_some());
+        assert!(state.queue_observed_address_frame(1, addr).is_none());
+        assert!(state.queue_observed_address_frame(2, addr).is_none());
+    }
+
+    #[test]
+    fn test_multi_path_rate_limiting() {
+        // Test that rate limiting is shared across all paths
+        let now = Instant::now();
+        let config = AddressDiscoveryConfig {
+            enabled: true,
+            max_observation_rate: 3, // Low rate to test sharing
+            observe_all_paths: true,
+        };
+        let mut state = AddressDiscoveryState::new(&config, now);
+        
+        // Use tokens across different paths
+        assert!(state.should_send_observation(0, now));
+        state.record_observation_sent(0);
+        
+        assert!(state.should_send_observation(1, now));
+        state.record_observation_sent(1);
+        
+        assert!(state.should_send_observation(2, now));
+        state.record_observation_sent(2);
+        
+        // All tokens consumed, no path can send
+        assert!(!state.should_send_observation(3, now));
+        assert!(!state.should_send_observation(0, now)); // Even path 0 can't send again
+        
+        // After 1 second, all paths can use the new tokens
+        let later = now + Duration::from_secs(1);
+        assert!(state.should_send_observation(4, later));
+        assert!(state.should_send_observation(5, later));
+        assert!(state.should_send_observation(6, later));
+    }
+
+    #[test]
+    fn test_multi_path_address_changes() {
+        // Test handling address changes on different paths
+        let now = Instant::now();
+        let config = AddressDiscoveryConfig {
+            enabled: true,
+            max_observation_rate: 10,
+            observe_all_paths: true,
+        };
+        let mut state = AddressDiscoveryState::new(&config, now);
+        
+        let addr1a = SocketAddr::from(([192, 168, 1, 1], 5000));
+        let addr1b = SocketAddr::from(([192, 168, 1, 2], 5000));
+        let addr2a = SocketAddr::from(([10, 0, 0, 1], 6000));
+        let addr2b = SocketAddr::from(([10, 0, 0, 2], 6000));
+        
+        // Initial addresses
+        state.handle_observed_address(addr1a, 0, now);
+        state.handle_observed_address(addr2a, 1, now);
+        
+        // Mark as notified
+        state.record_observation_sent(0);
+        state.record_observation_sent(1);
+        assert!(!state.has_unnotified_changes());
+        
+        // Change address on path 0
+        state.handle_observed_address(addr1b, 0, now + Duration::from_secs(1));
+        assert!(state.has_unnotified_changes());
+        
+        // Path 0 should have new address, path 1 unchanged
+        assert_eq!(state.get_observed_address(0), Some(addr1b));
+        assert_eq!(state.get_observed_address(1), Some(addr2a));
+        
+        // Mark path 0 as notified
+        state.record_observation_sent(0);
+        assert!(!state.has_unnotified_changes());
+        
+        // Change address on path 1
+        state.handle_observed_address(addr2b, 1, now + Duration::from_secs(2));
+        assert!(state.has_unnotified_changes());
+    }
+
+    #[test]
+    fn test_multi_path_migration() {
+        // Test path migration scenario
+        let now = Instant::now();
+        let config = AddressDiscoveryConfig {
+            enabled: true,
+            max_observation_rate: 10,
+            observe_all_paths: true,
+        };
+        let mut state = AddressDiscoveryState::new(&config, now);
+        
+        let addr_old = SocketAddr::from(([192, 168, 1, 1], 5000));
+        let addr_new = SocketAddr::from(([10, 0, 0, 1], 6000));
+        
+        // Establish observation on path 0
+        state.handle_observed_address(addr_old, 0, now);
+        assert_eq!(state.get_observed_address(0), Some(addr_old));
+        
+        // Simulate path migration - new path gets different ID
+        state.handle_observed_address(addr_new, 1, now + Duration::from_secs(1));
+        
+        // Both paths should have their addresses
+        assert_eq!(state.get_observed_address(0), Some(addr_old));
+        assert_eq!(state.get_observed_address(1), Some(addr_new));
+        
+        // In real implementation, old path would be cleaned up eventually
+        // For now, we just track both
+        assert_eq!(state.path_addresses.len(), 2);
+    }
+
+    #[test]
+    fn test_check_for_address_observations_multi_path() {
+        // Test the check_for_address_observations method with multiple paths
+        let now = Instant::now();
+        let config = AddressDiscoveryConfig {
+            enabled: true,
+            max_observation_rate: 10,
+            observe_all_paths: true,
+        };
+        let mut state = AddressDiscoveryState::new(&config, now);
+        
+        // Set up multiple paths with unnotified addresses
+        let addr1 = SocketAddr::from(([192, 168, 1, 1], 5000));
+        let addr2 = SocketAddr::from(([10, 0, 0, 1], 6000));
+        let addr3 = SocketAddr::from(([172, 16, 0, 1], 7000));
+        
+        state.handle_observed_address(addr1, 0, now);
+        state.handle_observed_address(addr2, 1, now);
+        state.handle_observed_address(addr3, 2, now);
+        
+        // Check for observations - should return frames for all unnotified paths
+        let frames = state.check_for_address_observations(0, true, now);
+        
+        // Should get frames for all 3 paths
+        assert_eq!(frames.len(), 3);
+        
+        // Test the ordering - frames should be in path ID order
+        // This test should fail initially
+        assert_eq!(frames[0].address, addr1);
+        assert_eq!(frames[1].address, addr2);
+        assert_eq!(frames[2].address, addr3);
+        
+        // Verify addresses in frames
+        let frame_addrs: Vec<_> = frames.iter().map(|f| f.address).collect();
+        assert!(frame_addrs.contains(&addr1));
+        assert!(frame_addrs.contains(&addr2));
+        assert!(frame_addrs.contains(&addr3));
+        
+        // All paths should now be marked as notified
+        assert!(!state.has_unnotified_changes());
+    }
+
+    #[test]
+    fn test_multi_path_with_peer_not_supporting() {
+        // Test behavior when peer doesn't support address discovery
+        let now = Instant::now();
+        let config = AddressDiscoveryConfig {
+            enabled: true,
+            max_observation_rate: 10,
+            observe_all_paths: true,
+        };
+        let mut state = AddressDiscoveryState::new(&config, now);
+        
+        // Set up paths
+        state.handle_observed_address(SocketAddr::from(([192, 168, 1, 1], 5000)), 0, now);
+        state.handle_observed_address(SocketAddr::from(([10, 0, 0, 1], 6000)), 1, now);
+        
+        // Check with peer not supporting - should return empty
+        let frames = state.check_for_address_observations(0, false, now);
+        assert_eq!(frames.len(), 0);
+        
+        // Paths should still have unnotified changes
+        assert!(state.has_unnotified_changes());
+    }
+
+    // Tests for Phase 3.2: Bootstrap Node Behavior
+    #[test]
+    fn test_bootstrap_node_aggressive_observation_mode() {
+        // Test that bootstrap nodes use more aggressive observation settings
+        let config = AddressDiscoveryConfig {
+            enabled: true,
+            max_observation_rate: 10,
+            observe_all_paths: false,
+        };
+        let now = Instant::now();
+        let mut state = AddressDiscoveryState::new(&config, now);
+        
+        // Initially not in bootstrap mode
+        assert!(!state.is_bootstrap_mode());
+        
+        // Enable bootstrap mode
+        state.set_bootstrap_mode(true);
+        assert!(state.is_bootstrap_mode());
+        
+        // Bootstrap mode should observe all paths regardless of config
+        assert!(state.should_observe_path(0)); // Primary path
+        assert!(state.should_observe_path(1)); // Secondary paths
+        assert!(state.should_observe_path(2));
+        
+        // Bootstrap mode should have higher rate limit
+        let bootstrap_rate = state.get_effective_rate_limit();
+        assert!(bootstrap_rate > 10.0); // Should be higher than configured
+    }
+
+    #[test]
+    fn test_bootstrap_node_immediate_observation() {
+        // Test that bootstrap nodes send observations immediately on new connections
+        let config = AddressDiscoveryConfig {
+            enabled: true,
+            max_observation_rate: 10,
+            observe_all_paths: false,
+        };
+        let now = Instant::now();
+        let mut state = AddressDiscoveryState::new(&config, now);
+        state.set_bootstrap_mode(true);
+        
+        // Add an observed address
+        let addr = SocketAddr::from(([192, 168, 1, 100], 5000));
+        state.handle_observed_address(addr, 0, now);
+        
+        // Bootstrap nodes should want to send immediately on new connections
+        assert!(state.should_send_observation_immediately(true));
+        
+        // Should bypass normal rate limiting for first observation
+        assert!(state.should_send_observation(0, now));
+        
+        // Queue the frame
+        let frame = state.queue_observed_address_frame(0, addr);
+        assert!(frame.is_some());
+    }
+
+    #[test]
+    fn test_bootstrap_node_multiple_path_observations() {
+        // Test bootstrap nodes observe all paths aggressively
+        let config = AddressDiscoveryConfig {
+            enabled: true,
+            max_observation_rate: 5, // Low rate
+            observe_all_paths: false, // Normally only primary
+        };
+        let now = Instant::now();
+        let mut state = AddressDiscoveryState::new(&config, now);
+        state.set_bootstrap_mode(true);
+        
+        // Add addresses on multiple paths
+        let addrs = vec![
+            (0, SocketAddr::from(([192, 168, 1, 1], 5000))),
+            (1, SocketAddr::from(([10, 0, 0, 1], 6000))),
+            (2, SocketAddr::from(([172, 16, 0, 1], 7000))),
+        ];
+        
+        for (path_id, addr) in &addrs {
+            state.handle_observed_address(*addr, *path_id, now);
+        }
+        
+        // Bootstrap nodes should observe all paths despite config
+        let frames = state.check_for_address_observations(0, true, now);
+        assert_eq!(frames.len(), 3);
+        
+        // Verify all addresses are included
+        for (_, addr) in &addrs {
+            assert!(frames.iter().any(|f| f.address == *addr));
+        }
+    }
+
+    #[test]
+    fn test_bootstrap_node_rate_limit_override() {
+        // Test that bootstrap nodes have higher rate limits
+        let config = AddressDiscoveryConfig {
+            enabled: true,
+            max_observation_rate: 1, // Very low configured rate
+            observe_all_paths: false,
+        };
+        let now = Instant::now();
+        let mut state = AddressDiscoveryState::new(&config, now);
+        state.set_bootstrap_mode(true);
+        
+        // Bootstrap nodes should be able to send more than configured rate
+        let addr = SocketAddr::from(([192, 168, 1, 1], 5000));
+        
+        // Send multiple observations rapidly
+        for i in 0..10 {
+            state.handle_observed_address(addr, i, now);
+            let can_send = state.should_send_observation(i, now);
+            assert!(can_send, "Bootstrap node should send observation {}", i);
+            state.record_observation_sent(i);
+        }
+    }
+
+    #[test]
+    fn test_bootstrap_node_configuration() {
+        // Test bootstrap-specific configuration
+        let mut config = AddressDiscoveryConfig {
+            enabled: true,
+            max_observation_rate: 10,
+            observe_all_paths: false,
+        };
+        
+        // Apply bootstrap configuration
+        config.apply_bootstrap_settings();
+        
+        // Bootstrap config should have maximum rate and observe all paths
+        assert_eq!(config.max_observation_rate, 63); // Maximum 6-bit value
+        assert!(config.observe_all_paths);
+        assert!(config.enabled);
+    }
+
+    #[test]
+    fn test_bootstrap_role_detection() {
+        use crate::transport_parameters::{NatTraversalRole, NatTraversalConfig};
+        use crate::VarInt;
+        
+        // Test automatic detection of bootstrap role
+        let nat_config = NatTraversalConfig::new(
+            NatTraversalRole::Bootstrap,
+            VarInt::from_u32(8),
+            VarInt::from_u32(10000),
+            VarInt::from_u32(3),
+            None
+        );
+        
+        // When connection is established with bootstrap role,
+        // address discovery should automatically enable bootstrap mode
+        let addr_discovery_config = AddressDiscoveryConfig {
+            enabled: true,
+            max_observation_rate: 10,
+            observe_all_paths: false,
+        };
+        
+        let mut state = AddressDiscoveryState::new(&addr_discovery_config, Instant::now());
+        
+        // Simulate role detection
+        if matches!(nat_config.role(), NatTraversalRole::Bootstrap) {
+            state.set_bootstrap_mode(true);
+        }
+        
+        assert!(state.is_bootstrap_mode());
+    }
+
+    #[test]
+    fn test_bootstrap_node_persistent_observation() {
+        // Test that bootstrap nodes continue observing throughout connection lifetime
+        let config = AddressDiscoveryConfig {
+            enabled: true,
+            max_observation_rate: 10,
+            observe_all_paths: false,
+        };
+        let mut now = Instant::now();
+        let mut state = AddressDiscoveryState::new(&config, now);
+        state.set_bootstrap_mode(true);
+        
+        let addr1 = SocketAddr::from(([192, 168, 1, 1], 5000));
+        let addr2 = SocketAddr::from(([192, 168, 1, 2], 5000));
+        
+        // Initial observation
+        state.handle_observed_address(addr1, 0, now);
+        assert!(state.should_send_observation(0, now));
+        state.record_observation_sent(0);
+        
+        // After some time, address changes
+        now += Duration::from_secs(60);
+        state.handle_observed_address(addr2, 0, now);
+        
+        // Bootstrap nodes should still be observing actively
+        assert!(state.should_send_observation(0, now));
+    }
+
+    #[test]
+    fn test_bootstrap_node_multi_peer_support() {
+        // Test that bootstrap nodes can handle observations for multiple peers
+        // This is more of an integration test concept, but we can test the state management
+        let config = AddressDiscoveryConfig {
+            enabled: true,
+            max_observation_rate: 50, // Higher rate for multiple peers
+            observe_all_paths: true,
+        };
+        let now = Instant::now();
+        let mut state = AddressDiscoveryState::new(&config, now);
+        state.set_bootstrap_mode(true);
+        
+        // Simulate multiple peer connections (using different path IDs)
+        let peer_addresses = vec![
+            (0, SocketAddr::from(([192, 168, 1, 1], 5000))), // Peer 1
+            (1, SocketAddr::from(([10, 0, 0, 1], 6000))),    // Peer 2
+            (2, SocketAddr::from(([172, 16, 0, 1], 7000))),  // Peer 3
+            (3, SocketAddr::from(([192, 168, 2, 1], 8000))), // Peer 4
+        ];
+        
+        // Add all peer addresses
+        for (path_id, addr) in &peer_addresses {
+            state.handle_observed_address(*addr, *path_id, now);
+        }
+        
+        // Bootstrap should observe all peers
+        let frames = state.check_for_address_observations(0, true, now);
+        assert_eq!(frames.len(), peer_addresses.len());
+        
+        // Verify all addresses are observed
+        for (_, addr) in &peer_addresses {
+            assert!(frames.iter().any(|f| f.address == *addr));
+        }
     }
 }

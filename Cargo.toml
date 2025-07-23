@@ -148,6 +148,10 @@ name = "nat_traversal"
 harness = false
 
 [[bench]]
+name = "address_discovery_bench"
+harness = false
+
+[[bench]]
 name = "connection_management"
 harness = false
 

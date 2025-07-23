@@ -63,12 +63,10 @@ pub mod transport;
 // Additional modules
 pub mod auth;
 pub mod chat;
-pub mod monitoring;
 pub mod optimization;
 pub mod quic_node;
 pub mod stats_dashboard;
 pub mod terminal_ui;
-pub mod workflow;
 
 // High-level async API modules (ported from quinn crate)
 pub mod quinn_high_level;
