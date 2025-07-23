@@ -48,6 +48,9 @@ pub mod transport_error;
 pub mod candidate_discovery;
 pub mod cid_generator;
 mod congestion;
+
+// Zero-cost tracing system
+pub mod tracing;
 mod connection_establishment_simple;
 pub mod nat_traversal_api;
 mod token;

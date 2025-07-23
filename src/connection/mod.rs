@@ -248,6 +248,14 @@ pub struct Connection {
 
     /// Address discovery state for tracking observed addresses
     address_discovery_state: Option<AddressDiscoveryState>,
+    
+    /// Trace context for this connection
+    #[cfg(feature = "trace")]
+    trace_context: crate::tracing::TraceContext,
+    
+    /// Event log for tracing
+    #[cfg(feature = "trace")]
+    event_log: Arc<crate::tracing::EventLog>,
 
     /// Qlog writer
     #[cfg(feature = "__qlog")]
@@ -379,10 +387,47 @@ impl Connection {
                     now
                 ))
             },
+            
+            #[cfg(feature = "trace")]
+            trace_context: crate::tracing::TraceContext::new(crate::tracing::TraceId::new()),
+            
+            #[cfg(feature = "trace")]
+            event_log: crate::tracing::global_log(),
 
             #[cfg(feature = "__qlog")]
             qlog_streamer: None,
         };
+        
+        // Trace connection creation
+        #[cfg(feature = "trace")]
+        {
+            use crate::tracing::*;
+            use crate::trace_event;
+            let _peer_id = {
+                let mut id = [0u8; 32];
+                let addr_bytes = match remote {
+                    SocketAddr::V4(addr) => addr.ip().octets().to_vec(),
+                    SocketAddr::V6(addr) => addr.ip().octets().to_vec(),
+                };
+                id[..addr_bytes.len().min(32)].copy_from_slice(&addr_bytes[..addr_bytes.len().min(32)]);
+                id
+            };
+            
+            let (addr_bytes, addr_type) = socket_addr_to_bytes(remote);
+            trace_event!(&this.event_log, Event {
+                timestamp: timestamp_now(),
+                trace_id: this.trace_context.trace_id(),
+                sequence: 0,
+                _padding: 0,
+                node_id: [0u8; 32], // Will be set by endpoint
+                event_data: EventData::ConnInit {
+                    endpoint_bytes: addr_bytes,
+                    addr_type,
+                    _padding: [0u8; 45],
+                },
+            });
+        }
+        
         if path_validated {
             this.on_path_validated();
         }
@@ -471,6 +516,18 @@ impl Connection {
             state: &mut self.streams,
             conn_state: &self.state,
         }
+    }
+    
+    /// Get the trace context for logging
+    #[cfg(feature = "trace")]
+    pub(crate) fn trace_context(&self) -> &crate::tracing::TraceContext {
+        &self.trace_context
+    }
+    
+    /// Get the event log for logging
+    #[cfg(feature = "trace")]
+    pub(crate) fn event_log(&self) -> &Arc<crate::tracing::EventLog> {
+        &self.event_log
     }
 
     /// Provide control over streams
@@ -936,6 +993,20 @@ impl Connection {
                         buf,
                     );
                     self.stats.udp_tx.on_sent(1, buf.len());
+                    
+                    // Trace packet sent
+                    #[cfg(feature = "trace")]
+                    {
+                        use crate::tracing::*;
+                        use crate::trace_packet_sent;
+                        trace_packet_sent!(
+                            &self.event_log,
+                            self.trace_context.trace_id(),
+                            buf.len() as u32,
+                            0 // Close packet doesn't have a packet number
+                        );
+                    }
+                    
                     return Some(Transmit {
                         destination: remote,
                         size: buf.len(),
@@ -1068,6 +1139,21 @@ impl Connection {
         self.path.total_sent = self.path.total_sent.saturating_add(buf.len() as u64);
 
         self.stats.udp_tx.on_sent(num_datagrams as u64, buf.len());
+        
+        // Trace packets sent
+        #[cfg(feature = "trace")]
+        {
+            use crate::tracing::*;
+            use crate::trace_packet_sent;
+            // Log packet transmission (use highest packet number in transmission)
+            let packet_num = self.spaces[SpaceId::Data].next_packet_number.saturating_sub(1);
+            trace_packet_sent!(
+                &self.event_log,
+                self.trace_context.trace_id(),
+                buf.len() as u32,
+                packet_num
+            );
+        }
 
         Some(Transmit {
             destination: self.path.remote,
@@ -2592,6 +2678,20 @@ impl Connection {
                 remote,
                 packet.header.dst_cid(),
             );
+            
+            // Trace packet received
+            #[cfg(feature = "trace")]
+            {
+                use crate::tracing::*;
+                use crate::trace_packet_received;
+                let packet_size = packet.payload.len() + packet.header_data.len();
+                trace_packet_received!(
+                    &self.event_log,
+                    self.trace_context.trace_id(),
+                    packet_size as u32,
+                    0 // Will be updated when packet number is decoded
+                );
+            }
         }
 
         if self.is_handshaking() && remote != self.path.remote {
@@ -4664,6 +4764,19 @@ impl Connection {
             ));
         }
         
+        // Trace observed address received
+        #[cfg(feature = "trace")]
+        {
+            use crate::tracing::*;
+            use crate::trace_observed_address_received;
+            trace_observed_address_received!(
+                &self.event_log,
+                self.trace_context.trace_id(),
+                observed_address.address,
+                0u64  // path_id not part of the frame yet
+            );
+        }
+        
         // Get the current path ID (0 for primary path in single-path connections)
         let path_id = 0u64; // TODO: Support multi-path scenarios
         
@@ -4777,6 +4890,19 @@ impl Connection {
                 
                 // Record that we sent the observation
                 state.record_observation_sent(path_id);
+                
+                // Trace observed address sent
+                #[cfg(feature = "trace")]
+                {
+                    use crate::tracing::*;
+                    use crate::trace_observed_address_sent;
+                    trace_observed_address_sent!(
+                        &self.event_log,
+                        self.trace_context.trace_id(),
+                        remote_address,
+                        path_id
+                    );
+                }
                 
                 trace!("Queued OBSERVED_ADDRESS frame for path {} with address {}", path_id, remote_address);
             }
