@@ -1921,4 +1921,9 @@ mod test {
         assert_eq!(decoded_config.max_observation_rate, 15);
         assert_eq!(decoded_config.observe_all_paths, true);
     }
+    
+    // Include comprehensive tests module
+    mod comprehensive_tests {
+        include!("transport_parameters/tests.rs");
+    }
 }

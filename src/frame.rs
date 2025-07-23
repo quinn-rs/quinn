@@ -2020,4 +2020,9 @@ mod test {
         assert_eq!(buf[0], 64); // First byte of varint encoding
         assert_eq!(buf[1], 67); // Second byte contains the actual value
     }
+    
+    // Include comprehensive tests module
+    mod comprehensive_tests {
+        include!("frame/tests.rs");
+    }
 }

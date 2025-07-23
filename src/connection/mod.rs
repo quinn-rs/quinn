@@ -8603,4 +8603,9 @@ mod tests {
             assert!(frames.iter().any(|f| f.address == *addr));
         }
     }
+    
+    // Include comprehensive address discovery tests
+    mod address_discovery_tests {
+        include!("address_discovery_tests.rs");
+    }
 }
