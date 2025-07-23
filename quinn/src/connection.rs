@@ -359,10 +359,33 @@ impl Connection {
         }
     }
 
-    /// Open a (Multi)Path
+    /// Opens a new path if no path exists yet for the remote address
+    pub fn open_path_ensure(&self, addr: SocketAddr, initial_status: PathStatus) -> OpenPath {
+        let mut state = self.0.state.lock("open_path");
+        let now = state.runtime.now();
+        let open_res = state.inner.open_path_ensure(addr, initial_status, now);
+        state.wake();
+        match open_res {
+            Ok((path_id, existed)) if existed => {
+                match state.open_path.get(&path_id).map(|tx| tx.subscribe()) {
+                    Some(recv) => OpenPath::new(path_id, recv, self.0.clone()),
+                    None => OpenPath::ready(path_id, self.0.clone()),
+                }
+            }
+            Ok((path_id, _)) => {
+                let (tx, rx) = watch::channel(None);
+                state.open_path.insert(path_id, tx);
+                drop(state);
+                OpenPath::new(path_id, rx, self.0.clone())
+            }
+            Err(err) => OpenPath::rejected(err),
+        }
+    }
+
+    /// Opens a (Multi)Path
     pub fn open_path(&self, addr: SocketAddr, initial_status: PathStatus) -> OpenPath {
         let mut state = self.0.state.lock("open_path");
-        let (on_open_path_send, on_open_path_recv) = oneshot::channel();
+        let (on_open_path_send, on_open_path_recv) = watch::channel(None);
         let now = state.runtime.now();
         let open_res = state.inner.open_path(addr, initial_status, now);
         state.wake();
@@ -1065,7 +1088,7 @@ pub(crate) struct State {
     /// Always set to Some before the connection becomes drained
     pub(crate) error: Option<ConnectionError>,
     /// Tracks paths being opened
-    open_path: FxHashMap<PathId, oneshot::Sender<Result<(), PathError>>>,
+    open_path: FxHashMap<PathId, watch::Sender<Option<Result<(), PathError>>>>,
     /// Tracks paths being closed
     pub(crate) close_path: FxHashMap<PathId, oneshot::Sender<VarInt>>,
     path_events: tokio::sync::broadcast::Sender<PathEvent>,
@@ -1233,7 +1256,7 @@ impl State {
                 Path(ref evt @ PathEvent::Opened { id }) => {
                     self.path_events.send(evt.clone()).ok();
                     if let Some(sender) = self.open_path.remove(&id) {
-                        let _ = sender.send(Ok(()));
+                        let _ = sender.send(Some(Ok(())));
                     }
                 }
                 Path(ref evt @ PathEvent::Closed { id, error_code }) => {
@@ -1245,7 +1268,7 @@ impl State {
                 Path(ref evt @ PathEvent::LocallyClosed { id, error }) => {
                     self.path_events.send(evt.clone()).ok();
                     if let Some(sender) = self.open_path.remove(&id) {
-                        let _ = sender.send(Err(error));
+                        let _ = sender.send(Some(Err(error)));
                     }
                     // this will happen also for already opened paths
                 }
