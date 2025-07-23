@@ -16,6 +16,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Configurable observation rate limiting (0-63 per second)
   - Per-path or all-paths observation mode
   - Full serialization/deserialization with bit-packed encoding
+- Path Management Integration for address discovery
+  - Per-path address tracking with PathAddressInfo structure
+  - Per-path rate limiting for OBSERVED_ADDRESS frames
+  - Address change detection and notification tracking
+  - Automatic initialization on path creation and migration
+- Frame Processing Pipeline for address discovery
+  - AddressDiscoveryState for managing observed addresses
+  - handle_observed_address_frame() for processing incoming frames
+  - should_send_observation() logic with rate limiting
+  - Per-path observation tracking and notification management
+  - queue_observed_address_frame() method for sending observations
+  - check_for_address_observations() for batch processing
+  - Integration with packet sending pipeline
+  - Statistics tracking for OBSERVED_ADDRESS frames
+- Rate Limiting Implementation for address discovery
+  - Token bucket rate limiter with configurable rates
+  - Per-path and global rate limiting
+  - Runtime rate limit configuration updates
+  - Support for rate negotiation via transport parameters
 - ARM build testing to CI workflow
   - Cross-compilation support for aarch64-unknown-linux-gnu
   - Ensures ARM compatibility is tested on every commit

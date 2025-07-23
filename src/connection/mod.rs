@@ -245,6 +245,9 @@ pub struct Connection {
     /// NAT traversal state for establishing direct P2P connections
     nat_traversal: Option<NatTraversalState>,
 
+    /// Address discovery state for tracking observed addresses
+    address_discovery_state: Option<AddressDiscoveryState>,
+
     /// Qlog writer
     #[cfg(feature = "__qlog")]
     qlog_streamer: Option<Box<dyn std::io::Write + Send + Sync>>,
@@ -367,6 +370,14 @@ impl Connection {
             stats: ConnectionStats::default(),
             version,
             nat_traversal: None, // Will be initialized when NAT traversal is negotiated
+            address_discovery_state: {
+                // Initialize with default config for now
+                // Will be updated when transport parameters are negotiated
+                Some(AddressDiscoveryState::new(
+                    &crate::transport_parameters::AddressDiscoveryConfig::default(),
+                    now
+                ))
+            },
 
             #[cfg(feature = "__qlog")]
             qlog_streamer: None,
@@ -931,6 +942,17 @@ impl Connection {
                         segment_size: None,
                         src_ip: self.local_ip,
                     });
+                }
+            }
+
+            // Check for address observations to send
+            if space_id == SpaceId::Data && self.address_discovery_state.is_some() {
+                let peer_supports = self.peer_params.address_discovery.is_some() && 
+                                   self.peer_params.address_discovery.as_ref().unwrap().enabled;
+                
+                if let Some(state) = &mut self.address_discovery_state {
+                    let frames = state.check_for_address_observations(0, peer_supports, now);
+                    self.spaces[space_id].pending.observed_addresses.extend(frames);
                 }
             }
 
@@ -3852,6 +3874,24 @@ impl Connection {
             self.stats.frame_tx.remove_address += 1;
         }
 
+        // OBSERVED_ADDRESS frames
+        while buf.len() + frame::ObservedAddress::SIZE_BOUND < max_size && space_id == SpaceId::Data {
+            let observed_address = match space.pending.observed_addresses.pop() {
+                Some(x) => x,
+                None => break,
+            };
+            trace!(
+                address = %observed_address.address,
+                "OBSERVED_ADDRESS"
+            );
+            observed_address.encode(buf);
+            sent.retransmits
+                .get_or_create()
+                .observed_addresses
+                .push(observed_address);
+            self.stats.frame_tx.observed_address += 1;
+        }
+
         // STREAM
         if space_id == SpaceId::Data {
             sent.stream_frames =
@@ -5556,9 +5596,523 @@ fn negotiate_max_idle_timeout(x: Option<VarInt>, y: Option<VarInt>) -> Option<Du
     }
 }
 
+/// State for tracking address discovery via OBSERVED_ADDRESS frames
+#[derive(Debug, Clone)]
+struct AddressDiscoveryState {
+    /// Whether address discovery is enabled for this connection
+    enabled: bool,
+    /// Maximum rate of OBSERVED_ADDRESS frames per path (per second)
+    max_observation_rate: u8,
+    /// Whether to observe addresses for all paths or just primary
+    observe_all_paths: bool,
+    /// Per-path address information
+    path_addresses: std::collections::HashMap<u64, paths::PathAddressInfo>,
+    /// Rate limiter for sending observations
+    rate_limiter: AddressObservationRateLimiter,
+    /// Addresses we've been told about by peers
+    observed_addresses: Vec<ObservedAddressEvent>,
+}
+
+/// Event for when we receive an OBSERVED_ADDRESS frame
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ObservedAddressEvent {
+    /// The address the peer observed
+    address: SocketAddr,
+    /// When we received this observation
+    received_at: Instant,
+    /// Which path this was received on
+    path_id: u64,
+}
+
+/// Rate limiter for address observations
+#[derive(Debug, Clone)]
+struct AddressObservationRateLimiter {
+    /// Tokens available for sending observations
+    tokens: f64,
+    /// Maximum tokens (burst capacity)
+    max_tokens: f64,
+    /// Rate of token replenishment (tokens per second)
+    rate: f64,
+    /// Last time tokens were updated
+    last_update: Instant,
+}
+
+impl AddressDiscoveryState {
+    /// Create a new address discovery state
+    fn new(config: &crate::transport_parameters::AddressDiscoveryConfig, now: Instant) -> Self {
+        Self {
+            enabled: config.enabled,
+            max_observation_rate: config.max_observation_rate,
+            observe_all_paths: config.observe_all_paths,
+            path_addresses: std::collections::HashMap::new(),
+            rate_limiter: AddressObservationRateLimiter::new(config.max_observation_rate, now),
+            observed_addresses: Vec::new(),
+        }
+    }
+
+    /// Check if we should send an observation for the given path
+    fn should_send_observation(&mut self, path_id: u64, now: Instant) -> bool {
+        if !self.enabled {
+            return false;
+        }
+
+        // If observe_all_paths is false, only observe primary path (id 0)
+        if !self.observe_all_paths && path_id != 0 {
+            return false;
+        }
+
+        // Check if this is a new path or if the address has changed
+        let needs_observation = match self.path_addresses.get(&path_id) {
+            Some(info) => info.observed_address.is_none() || !info.notified,
+            None => true,
+        };
+
+        if !needs_observation {
+            return false;
+        }
+
+        // Check rate limit
+        self.rate_limiter.try_consume(1.0, now)
+    }
+
+    /// Record that we sent an observation for a path
+    fn record_observation_sent(&mut self, path_id: u64) {
+        if let Some(info) = self.path_addresses.get_mut(&path_id) {
+            info.mark_notified();
+        }
+    }
+
+    /// Handle receiving an OBSERVED_ADDRESS frame
+    fn handle_observed_address(&mut self, address: SocketAddr, path_id: u64, now: Instant) {
+        if !self.enabled {
+            return;
+        }
+
+        self.observed_addresses.push(ObservedAddressEvent {
+            address,
+            received_at: now,
+            path_id,
+        });
+
+        // Update or create path info
+        let info = self.path_addresses.entry(path_id).or_insert_with(|| {
+            paths::PathAddressInfo::new()
+        });
+        info.update_observed_address(address, now);
+    }
+
+    /// Get the most recently observed address for a path
+    fn get_observed_address(&self, path_id: u64) -> Option<SocketAddr> {
+        self.path_addresses.get(&path_id)
+            .and_then(|info| info.observed_address)
+    }
+
+    /// Check if we have any unnotified address changes
+    fn has_unnotified_changes(&self) -> bool {
+        self.path_addresses.values()
+            .any(|info| info.observed_address.is_some() && !info.notified)
+    }
+
+    /// Queue an OBSERVED_ADDRESS frame for sending if conditions are met
+    fn queue_observed_address_frame(&mut self, path_id: u64, address: SocketAddr) -> Option<frame::ObservedAddress> {
+        // Check if address discovery is enabled
+        if !self.enabled {
+            return None;
+        }
+
+        // Check path restrictions
+        if !self.observe_all_paths && path_id != 0 {
+            return None;
+        }
+
+        // Check if this path has already been notified
+        if let Some(info) = self.path_addresses.get(&path_id) {
+            if info.notified {
+                return None;
+            }
+        }
+
+        // Check rate limiting
+        if self.rate_limiter.tokens < 1.0 {
+            return None;
+        }
+
+        // Consume a token and update path info
+        self.rate_limiter.tokens -= 1.0;
+        
+        // Update or create path info
+        let info = self.path_addresses.entry(path_id).or_insert_with(|| {
+            paths::PathAddressInfo::new()
+        });
+        info.observed_address = Some(address);
+        info.notified = true;
+
+        // Create and return the frame
+        Some(frame::ObservedAddress { address })
+    }
+
+    /// Check for address observations that need to be sent
+    fn check_for_address_observations(
+        &mut self, 
+        _current_path: u64,  
+        peer_supports_address_discovery: bool, 
+        now: Instant
+    ) -> Vec<frame::ObservedAddress> {
+        let mut frames = Vec::new();
+
+        // Check if we should send observations
+        if !self.enabled || !peer_supports_address_discovery {
+            return frames;
+        }
+
+        // Update rate limiter tokens
+        self.rate_limiter.update_tokens(now);
+
+        // Collect all paths that need observation frames
+        let paths_to_notify: Vec<u64> = self.path_addresses.iter()
+            .filter_map(|(&path_id, info)| {
+                if info.observed_address.is_some() && !info.notified {
+                    Some(path_id)
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        // Send frames for each path that needs notification
+        for path_id in paths_to_notify {
+            // Check path restrictions
+            if !self.observe_all_paths && path_id != 0 {
+                continue;
+            }
+
+            // Check rate limiting
+            if self.rate_limiter.tokens < 1.0 {
+                break; // No more tokens available
+            }
+
+            // Get the address
+            if let Some(info) = self.path_addresses.get_mut(&path_id) {
+                if let Some(address) = info.observed_address {
+                    // Consume a token
+                    self.rate_limiter.tokens -= 1.0;
+                    
+                    // Mark as notified
+                    info.notified = true;
+                    
+                    // Create frame
+                    frames.push(frame::ObservedAddress { address });
+                }
+            }
+        }
+
+        frames
+    }
+
+    /// Update the rate limit configuration
+    fn update_rate_limit(&mut self, new_rate: f64) {
+        self.max_observation_rate = new_rate as u8;
+        self.rate_limiter.set_rate(new_rate as u8);
+    }
+
+    /// Create from transport parameters
+    fn from_transport_params(params: &TransportParameters) -> Option<Self> {
+        params.address_discovery.as_ref().map(|config| {
+            Self::new(config, Instant::now())
+        })
+    }
+
+    /// Alternative constructor for tests - creates with simplified parameters
+    #[cfg(test)]
+    fn new_with_params(enabled: bool, max_rate: f64, observe_all_paths: bool) -> Self {
+        let config = crate::transport_parameters::AddressDiscoveryConfig {
+            enabled,
+            max_observation_rate: max_rate as u8,
+            observe_all_paths,
+        };
+        Self::new(&config, Instant::now())
+    }
+}
+
+impl AddressObservationRateLimiter {
+    /// Create a new rate limiter
+    fn new(rate: u8, now: Instant) -> Self {
+        let rate_f64 = rate as f64;
+        Self {
+            tokens: rate_f64,
+            max_tokens: rate_f64,
+            rate: rate_f64,
+            last_update: now,
+        }
+    }
+
+    /// Try to consume tokens, returns true if successful
+    fn try_consume(&mut self, tokens: f64, now: Instant) -> bool {
+        self.update_tokens(now);
+        
+        if self.tokens >= tokens {
+            self.tokens -= tokens;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Update available tokens based on elapsed time
+    fn update_tokens(&mut self, now: Instant) {
+        let elapsed = now.saturating_duration_since(self.last_update);
+        let new_tokens = elapsed.as_secs_f64() * self.rate;
+        self.tokens = (self.tokens + new_tokens).min(self.max_tokens);
+        self.last_update = now;
+    }
+
+    /// Update the rate
+    fn set_rate(&mut self, rate: u8) {
+        let rate_f64 = rate as f64;
+        self.rate = rate_f64;
+        self.max_tokens = rate_f64;
+        // Don't change current tokens, just cap at new max
+        if self.tokens > self.max_tokens {
+            self.tokens = self.max_tokens;
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::transport_parameters::AddressDiscoveryConfig;
+    use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
+
+    #[test]
+    fn address_discovery_state_new() {
+        let config = crate::transport_parameters::AddressDiscoveryConfig {
+            enabled: true,
+            max_observation_rate: 10,
+            observe_all_paths: false,
+        };
+        let now = Instant::now();
+        let state = AddressDiscoveryState::new(&config, now);
+        
+        assert!(state.enabled);
+        assert_eq!(state.max_observation_rate, 10);
+        assert!(!state.observe_all_paths);
+        assert!(state.path_addresses.is_empty());
+        assert!(state.observed_addresses.is_empty());
+        assert_eq!(state.rate_limiter.tokens, 10.0);
+    }
+
+    #[test]
+    fn address_discovery_state_disabled() {
+        let config = crate::transport_parameters::AddressDiscoveryConfig {
+            enabled: false,
+            max_observation_rate: 10,
+            observe_all_paths: false,
+        };
+        let now = Instant::now();
+        let mut state = AddressDiscoveryState::new(&config, now);
+        
+        // Should not send observations when disabled
+        assert!(!state.should_send_observation(0, now));
+    }
+
+    #[test]
+    fn address_discovery_state_should_send_observation() {
+        let config = crate::transport_parameters::AddressDiscoveryConfig {
+            enabled: true,
+            max_observation_rate: 10,
+            observe_all_paths: true,
+        };
+        let now = Instant::now();
+        let mut state = AddressDiscoveryState::new(&config, now);
+        
+        // Should send for new path
+        assert!(state.should_send_observation(0, now));
+        
+        // Add path info
+        let mut path_info = paths::PathAddressInfo::new();
+        path_info.update_observed_address(
+            SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)), 8080),
+            now
+        );
+        path_info.mark_notified();
+        state.path_addresses.insert(0, path_info);
+        
+        // Should not send if already notified
+        assert!(!state.should_send_observation(0, now));
+        
+        // But should send for different path
+        assert!(state.should_send_observation(1, now));
+    }
+
+    #[test]
+    fn address_discovery_state_rate_limiting() {
+        let config = crate::transport_parameters::AddressDiscoveryConfig {
+            enabled: true,
+            max_observation_rate: 2, // 2 per second
+            observe_all_paths: true,
+        };
+        let now = Instant::now();
+        let mut state = AddressDiscoveryState::new(&config, now);
+        
+        // Should allow first two
+        assert!(state.should_send_observation(0, now));
+        assert!(state.should_send_observation(1, now));
+        
+        // Third should be rate limited
+        assert!(!state.should_send_observation(2, now));
+        
+        // After 1 second, should have 2 more tokens
+        let later = now + Duration::from_secs(1);
+        assert!(state.should_send_observation(2, later));
+        assert!(state.should_send_observation(3, later));
+        assert!(!state.should_send_observation(4, later));
+    }
+
+    #[test]
+    fn address_discovery_state_handle_observed_address() {
+        let config = crate::transport_parameters::AddressDiscoveryConfig {
+            enabled: true,
+            max_observation_rate: 10,
+            observe_all_paths: true,
+        };
+        let now = Instant::now();
+        let mut state = AddressDiscoveryState::new(&config, now);
+        
+        let addr1 = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)), 443);
+        let addr2 = SocketAddr::new(IpAddr::V6(Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 1)), 8080);
+        
+        // Handle first observation
+        state.handle_observed_address(addr1, 0, now);
+        assert_eq!(state.observed_addresses.len(), 1);
+        assert_eq!(state.observed_addresses[0].address, addr1);
+        assert_eq!(state.observed_addresses[0].path_id, 0);
+        
+        // Handle second observation
+        let later = now + Duration::from_millis(100);
+        state.handle_observed_address(addr2, 1, later);
+        assert_eq!(state.observed_addresses.len(), 2);
+        assert_eq!(state.observed_addresses[1].address, addr2);
+        assert_eq!(state.observed_addresses[1].path_id, 1);
+    }
+
+    #[test]
+    fn address_discovery_state_get_observed_address() {
+        let config = crate::transport_parameters::AddressDiscoveryConfig {
+            enabled: true,
+            max_observation_rate: 10,
+            observe_all_paths: true,
+        };
+        let now = Instant::now();
+        let mut state = AddressDiscoveryState::new(&config, now);
+        
+        // No address initially
+        assert_eq!(state.get_observed_address(0), None);
+        
+        // Add path info
+        let mut path_info = paths::PathAddressInfo::new();
+        let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 80);
+        path_info.update_observed_address(addr, now);
+        state.path_addresses.insert(0, path_info);
+        
+        // Should return the address
+        assert_eq!(state.get_observed_address(0), Some(addr));
+        assert_eq!(state.get_observed_address(1), None);
+    }
+
+    #[test]
+    fn address_discovery_state_unnotified_changes() {
+        let config = crate::transport_parameters::AddressDiscoveryConfig {
+            enabled: true,
+            max_observation_rate: 10,
+            observe_all_paths: true,
+        };
+        let now = Instant::now();
+        let mut state = AddressDiscoveryState::new(&config, now);
+        
+        // No changes initially
+        assert!(!state.has_unnotified_changes());
+        
+        // Add unnotified path
+        let mut path_info = paths::PathAddressInfo::new();
+        path_info.update_observed_address(
+            SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)), 8080),
+            now
+        );
+        state.path_addresses.insert(0, path_info);
+        
+        // Should have unnotified changes
+        assert!(state.has_unnotified_changes());
+        
+        // Mark as notified
+        state.record_observation_sent(0);
+        assert!(!state.has_unnotified_changes());
+    }
+
+    #[test]
+    fn address_observation_rate_limiter_token_bucket() {
+        let now = Instant::now();
+        let mut limiter = AddressObservationRateLimiter::new(5, now); // 5 tokens/sec
+        
+        // Initial state
+        assert_eq!(limiter.tokens, 5.0);
+        assert_eq!(limiter.max_tokens, 5.0);
+        assert_eq!(limiter.rate, 5.0);
+        
+        // Consume 3 tokens
+        assert!(limiter.try_consume(3.0, now));
+        assert_eq!(limiter.tokens, 2.0);
+        
+        // Try to consume more than available
+        assert!(!limiter.try_consume(3.0, now));
+        assert_eq!(limiter.tokens, 2.0);
+        
+        // After 1 second, should have 5 more tokens (capped at max)
+        let later = now + Duration::from_secs(1);
+        limiter.update_tokens(later);
+        assert_eq!(limiter.tokens, 5.0); // 2 + 5 = 7, but capped at 5
+        
+        // After 0.5 seconds from original, should have 2.5 more tokens
+        let half_sec = now + Duration::from_millis(500);
+        let mut limiter2 = AddressObservationRateLimiter::new(5, now);
+        limiter2.try_consume(3.0, now);
+        limiter2.update_tokens(half_sec);
+        assert_eq!(limiter2.tokens, 4.5); // 2 + 2.5
+    }
+
+    // Tests for address_discovery_state field in Connection
+    #[test]
+    fn connection_initializes_address_discovery_state_default() {
+        // Test that Connection initializes with default address discovery state
+        // For now, just test that AddressDiscoveryState can be created with default config
+        let config = crate::transport_parameters::AddressDiscoveryConfig::default();
+        let state = AddressDiscoveryState::new(&config, Instant::now());
+        assert!(!state.enabled);
+        assert_eq!(state.max_observation_rate, 10); // Default is 10
+        assert!(!state.observe_all_paths);
+    }
+    
+    #[test]
+    fn connection_initializes_with_address_discovery_enabled() {
+        // Test that AddressDiscoveryState can be created with enabled config
+        let config = crate::transport_parameters::AddressDiscoveryConfig {
+            enabled: true,
+            max_observation_rate: 10,
+            observe_all_paths: false,
+        };
+        let state = AddressDiscoveryState::new(&config, Instant::now());
+        assert!(state.enabled);
+        assert_eq!(state.max_observation_rate, 10);
+        assert!(!state.observe_all_paths);
+    }
+    
+    #[test]
+    fn connection_address_discovery_disabled_when_no_config() {
+        // Test that AddressDiscoveryState is disabled with default config
+        let config = crate::transport_parameters::AddressDiscoveryConfig::default();
+        let state = AddressDiscoveryState::new(&config, Instant::now());
+        assert!(!state.enabled);
+    }
 
     #[test]
     fn negotiate_max_idle_timeout_commutative() {
@@ -5583,5 +6137,1100 @@ mod tests {
             assert_eq!(negotiate_max_idle_timeout(left, right), result);
             assert_eq!(negotiate_max_idle_timeout(right, left), result);
         }
+    }
+
+    #[test]
+    fn path_creation_initializes_address_discovery() {
+        let config = TransportConfig::default();
+        let remote = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)), 8080);
+        let now = Instant::now();
+        
+        // Test initial path creation
+        let path = paths::PathData::new(remote, false, None, now, &config);
+        
+        // Should have address info initialized
+        assert!(path.address_info.observed_address.is_none());
+        assert!(path.address_info.last_observed.is_none());
+        assert_eq!(path.address_info.observation_count, 0);
+        assert!(!path.address_info.notified);
+        
+        // Should have rate limiter initialized
+        assert_eq!(path.observation_rate_limiter.rate, 10.0);
+        assert_eq!(path.observation_rate_limiter.max_tokens, 10.0);
+        assert_eq!(path.observation_rate_limiter.tokens, 10.0);
+    }
+
+    #[test]
+    fn path_migration_resets_address_discovery() {
+        let config = TransportConfig::default();
+        let remote1 = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)), 8080);
+        let remote2 = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)), 443);
+        let now = Instant::now();
+        
+        // Create initial path with some address discovery state
+        let mut path1 = paths::PathData::new(remote1, false, None, now, &config);
+        path1.update_observed_address(remote1, now);
+        path1.mark_address_notified();
+        path1.consume_observation_token(now);
+        path1.set_observation_rate(20);
+        
+        // Migrate to new path
+        let path2 = paths::PathData::from_previous(remote2, &path1, now);
+        
+        // Address info should be reset
+        assert!(path2.address_info.observed_address.is_none());
+        assert!(path2.address_info.last_observed.is_none());
+        assert_eq!(path2.address_info.observation_count, 0);
+        assert!(!path2.address_info.notified);
+        
+        // Rate limiter should have same rate but full tokens
+        assert_eq!(path2.observation_rate_limiter.rate, 20.0);
+        assert_eq!(path2.observation_rate_limiter.tokens, 20.0);
+    }
+
+    #[test]
+    fn connection_path_updates_observation_rate() {
+        let config = TransportConfig::default();
+        let remote = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 42);
+        let now = Instant::now();
+        
+        let mut path = paths::PathData::new(remote, false, None, now, &config);
+        
+        // Initial rate should be default
+        assert_eq!(path.observation_rate_limiter.rate, 10.0);
+        
+        // Update rate based on negotiated config
+        path.set_observation_rate(25);
+        assert_eq!(path.observation_rate_limiter.rate, 25.0);
+        assert_eq!(path.observation_rate_limiter.max_tokens, 25.0);
+        
+        // Tokens should be capped at new max if needed
+        path.observation_rate_limiter.tokens = 30.0; // Set higher than max
+        path.set_observation_rate(20);
+        assert_eq!(path.observation_rate_limiter.tokens, 20.0); // Capped at new max
+    }
+
+    #[test]
+    fn path_validation_preserves_discovery_state() {
+        let config = TransportConfig::default();
+        let remote = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)), 8080);
+        let now = Instant::now();
+        
+        let mut path = paths::PathData::new(remote, false, None, now, &config);
+        
+        // Set up some discovery state
+        let observed = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(1, 2, 3, 4)), 5678);
+        path.update_observed_address(observed, now);
+        path.set_observation_rate(15);
+        
+        // Simulate path validation
+        path.validated = true;
+        
+        // Discovery state should be preserved
+        assert_eq!(path.address_info.observed_address, Some(observed));
+        assert_eq!(path.observation_rate_limiter.rate, 15.0);
+    }
+
+    #[test]
+    fn address_discovery_state_initialization() {
+        let mut config = AddressDiscoveryConfig::default();
+        config.enabled = true;
+        config.max_observation_rate = 30;
+        config.observe_all_paths = true;
+        
+        let now = Instant::now();
+        let state = AddressDiscoveryState::new(&config, now);
+        
+        assert!(state.enabled);
+        assert_eq!(state.max_observation_rate, 30);
+        assert!(state.observe_all_paths);
+        assert!(state.path_addresses.is_empty());
+        assert!(state.observed_addresses.is_empty());
+    }
+
+    // Tests for Task 2.3: Frame Processing Pipeline
+    #[test]
+    fn handle_observed_address_frame_basic() {
+        let config = AddressDiscoveryConfig {
+            enabled: true,
+            max_observation_rate: 10,
+            observe_all_paths: false,
+        };
+        let mut state = AddressDiscoveryState::new(&config, Instant::now());
+        let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)), 8080);
+        let now = Instant::now();
+        let path_id = 0;
+        
+        // Handle an observed address frame
+        state.handle_observed_address(addr, path_id, now);
+        
+        // Should have recorded the observation
+        assert_eq!(state.observed_addresses.len(), 1);
+        assert_eq!(state.observed_addresses[0].address, addr);
+        assert_eq!(state.observed_addresses[0].path_id, path_id);
+        assert_eq!(state.observed_addresses[0].received_at, now);
+        
+        // Should have updated path state
+        assert!(state.path_addresses.contains_key(&path_id));
+        let path_info = &state.path_addresses[&path_id];
+        assert_eq!(path_info.observed_address, Some(addr));
+        assert_eq!(path_info.last_observed, Some(now));
+        assert_eq!(path_info.observation_count, 1);
+    }
+
+    #[test]
+    fn handle_observed_address_frame_multiple_observations() {
+        let config = AddressDiscoveryConfig {
+            enabled: true,
+            max_observation_rate: 10,
+            observe_all_paths: false,
+        };
+        let mut state = AddressDiscoveryState::new(&config, Instant::now());
+        let addr1 = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)), 8080);
+        let addr2 = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)), 443);
+        let now = Instant::now();
+        let path_id = 0;
+        
+        // Handle multiple observations
+        state.handle_observed_address(addr1, path_id, now);
+        state.handle_observed_address(addr1, path_id, now + Duration::from_secs(1));
+        state.handle_observed_address(addr2, path_id, now + Duration::from_secs(2));
+        
+        // Should have all observations in the event list
+        assert_eq!(state.observed_addresses.len(), 3);
+        
+        // Path info should reflect the latest observation
+        let path_info = &state.path_addresses[&path_id];
+        assert_eq!(path_info.observed_address, Some(addr2));
+        assert_eq!(path_info.observation_count, 1); // Reset for new address
+    }
+
+    #[test]
+    fn handle_observed_address_frame_disabled() {
+        let mut config = AddressDiscoveryConfig::default();
+        config.enabled = false;
+        let mut state = AddressDiscoveryState::new(&config, Instant::now());
+        let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)), 8080);
+        let now = Instant::now();
+        
+        // Should not handle when disabled
+        state.handle_observed_address(addr, 0, now);
+        
+        // Should not record anything
+        assert!(state.observed_addresses.is_empty());
+        assert!(state.path_addresses.is_empty());
+    }
+
+    #[test]
+    fn should_send_observation_basic() {
+        let mut config = AddressDiscoveryConfig::default();
+        config.enabled = true;
+        config.max_observation_rate = 10;
+        let mut state = AddressDiscoveryState::new(&config, Instant::now());
+        let now = Instant::now();
+        let path_id = 0;
+        
+        // Should be able to send initially
+        assert!(state.should_send_observation(path_id, now));
+        
+        // Record that we sent one
+        state.record_observation_sent(path_id);
+        
+        // Should still be able to send (have tokens)
+        assert!(state.should_send_observation(path_id, now));
+    }
+
+    #[test]
+    fn should_send_observation_rate_limiting() {
+        let mut config = AddressDiscoveryConfig::default();
+        config.enabled = true;
+        config.max_observation_rate = 2; // Very low rate
+        let now = Instant::now();
+        let mut state = AddressDiscoveryState::new(&config, now);
+        let path_id = 0;
+        
+        // Consume all tokens
+        assert!(state.should_send_observation(path_id, now));
+        state.record_observation_sent(path_id);
+        assert!(state.should_send_observation(path_id, now));
+        state.record_observation_sent(path_id);
+        
+        // Should be rate limited now
+        assert!(!state.should_send_observation(path_id, now));
+        
+        // Wait for token replenishment
+        let later = now + Duration::from_secs(1);
+        assert!(state.should_send_observation(path_id, later));
+    }
+
+    #[test]
+    fn should_send_observation_disabled() {
+        let mut config = AddressDiscoveryConfig::default();
+        config.enabled = false;
+        let mut state = AddressDiscoveryState::new(&config, Instant::now());
+        
+        // Should never send when disabled
+        assert!(!state.should_send_observation(0, Instant::now()));
+    }
+
+    #[test]
+    fn should_send_observation_per_path() {
+        let mut config = AddressDiscoveryConfig::default();
+        config.enabled = true;
+        config.max_observation_rate = 2; // Allow 2 observations per second
+        config.observe_all_paths = true;
+        let now = Instant::now();
+        let mut state = AddressDiscoveryState::new(&config, now);
+        
+        // Path 0 uses a token from the shared rate limiter
+        assert!(state.should_send_observation(0, now));
+        state.record_observation_sent(0);
+        
+        // Path 1 can still send because we have 2 tokens per second
+        assert!(state.should_send_observation(1, now));
+        state.record_observation_sent(1);
+        
+        // Now both paths should be rate limited (no more tokens)
+        assert!(!state.should_send_observation(0, now));
+        assert!(!state.should_send_observation(1, now));
+        
+        // After 1 second, we should have new tokens
+        let later = now + Duration::from_secs(1);
+        assert!(state.should_send_observation(0, later));
+    }
+
+    #[test]
+    fn has_unnotified_changes_test() {
+        let config = AddressDiscoveryConfig {
+            enabled: true,
+            max_observation_rate: 10,
+            observe_all_paths: false,
+        };
+        let mut state = AddressDiscoveryState::new(&config, Instant::now());
+        let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)), 8080);
+        let now = Instant::now();
+        
+        // Initially no changes
+        assert!(!state.has_unnotified_changes());
+        
+        // After receiving an observation
+        state.handle_observed_address(addr, 0, now);
+        assert!(state.has_unnotified_changes());
+        
+        // After marking as notified
+        state.path_addresses.get_mut(&0).unwrap().notified = true;
+        assert!(!state.has_unnotified_changes());
+    }
+
+    #[test]
+    fn get_observed_address_test() {
+        let config = AddressDiscoveryConfig {
+            enabled: true,
+            max_observation_rate: 10,
+            observe_all_paths: false,
+        };
+        let mut state = AddressDiscoveryState::new(&config, Instant::now());
+        let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)), 8080);
+        let now = Instant::now();
+        let path_id = 0;
+        
+        // Initially no address
+        assert_eq!(state.get_observed_address(path_id), None);
+        
+        // After observation
+        state.handle_observed_address(addr, path_id, now);
+        assert_eq!(state.get_observed_address(path_id), Some(addr));
+        
+        // Non-existent path
+        assert_eq!(state.get_observed_address(999), None);
+    }
+
+    // Tests for Task 2.4: Rate Limiting Implementation
+    #[test]
+    fn rate_limiter_token_bucket_basic() {
+        let now = Instant::now();
+        let mut limiter = AddressObservationRateLimiter::new(10, now); // 10 tokens per second
+        
+        // Should be able to consume tokens up to the limit
+        assert!(limiter.try_consume(5.0, now));
+        assert!(limiter.try_consume(5.0, now));
+        
+        // Should not be able to consume more tokens
+        assert!(!limiter.try_consume(1.0, now));
+    }
+
+    #[test]
+    fn rate_limiter_token_replenishment() {
+        let now = Instant::now();
+        let mut limiter = AddressObservationRateLimiter::new(10, now); // 10 tokens per second
+        
+        // Consume all tokens
+        assert!(limiter.try_consume(10.0, now));
+        assert!(!limiter.try_consume(0.1, now)); // Should be empty
+        
+        // After 1 second, should have new tokens
+        let later = now + Duration::from_secs(1);
+        assert!(limiter.try_consume(10.0, later)); // Should work after replenishment
+        
+        // After 0.5 seconds, should have 5 new tokens
+        assert!(!limiter.try_consume(0.1, later)); // Empty again
+        let later = later + Duration::from_millis(500);
+        assert!(limiter.try_consume(5.0, later)); // Should have ~5 tokens
+        assert!(!limiter.try_consume(0.1, later)); // But not more
+    }
+
+    #[test]
+    fn rate_limiter_max_tokens_cap() {
+        let now = Instant::now();
+        let mut limiter = AddressObservationRateLimiter::new(10, now);
+        
+        // After 2 seconds, should still be capped at max_tokens
+        let later = now + Duration::from_secs(2);
+        // Try to consume more than max - should fail
+        assert!(limiter.try_consume(10.0, later));
+        assert!(!limiter.try_consume(10.1, later)); // Can't consume more than max even after time
+        
+        // Consume some tokens
+        let later2 = later + Duration::from_secs(1);
+        assert!(limiter.try_consume(3.0, later2));
+        
+        // After another 2 seconds, should be back at max
+        let much_later = later2 + Duration::from_secs(2);
+        assert!(limiter.try_consume(10.0, much_later)); // Can consume full amount
+        assert!(!limiter.try_consume(0.1, much_later)); // But not more
+    }
+
+    #[test]
+    fn rate_limiter_fractional_consumption() {
+        let now = Instant::now();
+        let mut limiter = AddressObservationRateLimiter::new(10, now);
+        
+        // Should handle fractional token consumption
+        assert!(limiter.try_consume(0.5, now));
+        assert!(limiter.try_consume(2.3, now));
+        assert!(limiter.try_consume(7.2, now)); // Total: 10.0
+        assert!(!limiter.try_consume(0.1, now)); // Should be empty
+        
+        // Should handle fractional replenishment
+        let later = now + Duration::from_millis(100); // 0.1 seconds = 1 token
+        assert!(limiter.try_consume(1.0, later));
+        assert!(!limiter.try_consume(0.1, later));
+    }
+
+    #[test]
+    fn rate_limiter_zero_rate() {
+        let now = Instant::now();
+        let mut limiter = AddressObservationRateLimiter::new(0, now); // 0 tokens per second
+        
+        // Should never be able to consume tokens
+        assert!(!limiter.try_consume(1.0, now));
+        assert!(!limiter.try_consume(0.1, now));
+        assert!(!limiter.try_consume(0.001, now));
+        
+        // Even after time passes, no tokens
+        let later = now + Duration::from_secs(10);
+        assert!(!limiter.try_consume(0.001, later));
+    }
+
+    #[test]
+    fn rate_limiter_high_rate() {
+        let now = Instant::now();
+        let mut limiter = AddressObservationRateLimiter::new(63, now); // Max allowed rate
+        
+        // Consume many tokens
+        assert!(limiter.try_consume(60.0, now));
+        assert!(limiter.try_consume(3.0, now));
+        assert!(!limiter.try_consume(0.1, now)); // Should be empty
+        
+        // After 1 second, should have replenished
+        let later = now + Duration::from_secs(1);
+        assert!(limiter.try_consume(63.0, later)); // Full amount available
+        assert!(!limiter.try_consume(0.1, later)); // But not more
+    }
+
+    #[test]
+    fn rate_limiter_time_precision() {
+        let now = Instant::now();
+        let mut limiter = AddressObservationRateLimiter::new(100, now); // 100 tokens per second (max for u8)
+        
+        // Consume all tokens
+        assert!(limiter.try_consume(100.0, now));
+        assert!(!limiter.try_consume(0.1, now));
+        
+        // After 10 milliseconds, should have ~1 token
+        let later = now + Duration::from_millis(10);
+        assert!(limiter.try_consume(0.8, later)); // Should have ~1 token (allowing for precision)
+        assert!(!limiter.try_consume(0.5, later)); // But not much more
+        
+        // Reset for next test by waiting longer
+        let much_later = later + Duration::from_millis(100); // 100ms = 10 tokens
+        assert!(limiter.try_consume(5.0, much_later)); // Should have some tokens
+        
+        // Consume remaining to have a clean state
+        limiter.tokens = 0.0; // Force empty state
+        
+        // After 1 millisecond from empty state
+        let final_time = much_later + Duration::from_millis(1);
+        // With 100 tokens/sec, 1 millisecond = 0.1 tokens
+        limiter.update_tokens(final_time); // Update tokens manually
+        
+        // Check we have approximately 0.1 tokens (allow for floating point error)
+        assert!(limiter.tokens >= 0.09 && limiter.tokens <= 0.11);
+    }
+
+    #[test]
+    fn per_path_rate_limiting_independent() {
+        let config = crate::transport_parameters::AddressDiscoveryConfig {
+            enabled: true,
+            max_observation_rate: 5, // 5 per second
+            observe_all_paths: true,
+        };
+        let now = Instant::now();
+        let mut state = AddressDiscoveryState::new(&config, now);
+        
+        // Create multiple paths with rate limiters
+        let path1_id = 0;
+        let path2_id = 1;
+        let path3_id = 2;
+        
+        // Each path should have independent rate limiting
+        // Path 1: consume 3 tokens
+        for _ in 0..3 {
+            assert!(state.should_send_observation(path1_id, now));
+            state.record_observation_sent(path1_id);
+        }
+        
+        // Path 2: consume 2 tokens
+        for _ in 0..2 {
+            assert!(state.should_send_observation(path2_id, now));
+            state.record_observation_sent(path2_id);
+        }
+        
+        // Global limit should be hit (5 total)
+        assert!(!state.should_send_observation(path3_id, now));
+        
+        // After 1 second, should have 5 more tokens
+        let later = now + Duration::from_secs(1);
+        
+        // All paths should be able to send again
+        assert!(state.should_send_observation(path1_id, later));
+        assert!(state.should_send_observation(path2_id, later));
+        assert!(state.should_send_observation(path3_id, later));
+    }
+
+    #[test] 
+    fn per_path_rate_limiting_with_path_specific_limits() {
+        let now = Instant::now();
+        let remote1 = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)), 8080);
+        let remote2 = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 2)), 8081);
+        let config = TransportConfig::default();
+        
+        // Create paths with different rate limits
+        let mut path1 = paths::PathData::new(remote1, false, None, now, &config);
+        let mut path2 = paths::PathData::new(remote2, false, None, now, &config);
+        
+        // Set different rate limits
+        path1.observation_rate_limiter = paths::PathObservationRateLimiter::new(10, now); // 10/sec
+        path2.observation_rate_limiter = paths::PathObservationRateLimiter::new(5, now);  // 5/sec
+        
+        // Path 1 should allow 10 observations
+        for _ in 0..10 {
+            assert!(path1.observation_rate_limiter.can_send(now));
+            path1.observation_rate_limiter.consume_token(now);
+        }
+        assert!(!path1.observation_rate_limiter.can_send(now));
+        
+        // Path 2 should allow 5 observations
+        for _ in 0..5 {
+            assert!(path2.observation_rate_limiter.can_send(now));
+            path2.observation_rate_limiter.consume_token(now);
+        }
+        assert!(!path2.observation_rate_limiter.can_send(now));
+    }
+
+    #[test]
+    fn per_path_rate_limiting_address_change_detection() {
+        let config = crate::transport_parameters::AddressDiscoveryConfig {
+            enabled: true,
+            max_observation_rate: 10,
+            observe_all_paths: true,
+        };
+        let now = Instant::now();
+        let mut state = AddressDiscoveryState::new(&config, now);
+        
+        // Setup initial path with address
+        let path_id = 0;
+        let addr1 = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)), 8080);
+        let addr2 = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 2)), 8080);
+        
+        // First observation should be allowed
+        assert!(state.should_send_observation(path_id, now));
+        state.handle_observed_address(addr1, path_id, now);
+        state.record_observation_sent(path_id);
+        
+        // Same address, should not send again
+        assert!(!state.should_send_observation(path_id, now));
+        
+        // Address change should trigger new observation need
+        state.handle_observed_address(addr2, path_id, now);
+        if let Some(info) = state.path_addresses.get_mut(&path_id) {
+            info.notified = false; // Simulate address change detection
+        }
+        
+        // Should now allow sending despite rate limit
+        assert!(state.should_send_observation(path_id, now));
+    }
+
+    #[test]
+    fn per_path_rate_limiting_migration() {
+        let now = Instant::now();
+        let remote1 = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)), 8080);
+        let remote2 = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 2)), 8081);
+        let config = TransportConfig::default();
+        
+        // Create initial path and consume tokens
+        let mut path = paths::PathData::new(remote1, false, None, now, &config);
+        path.observation_rate_limiter = paths::PathObservationRateLimiter::new(10, now);
+        
+        // Consume some tokens
+        for _ in 0..5 {
+            assert!(path.observation_rate_limiter.can_send(now));
+            path.observation_rate_limiter.consume_token(now);
+        }
+        
+        // Create new path (simulates connection migration)
+        let mut new_path = paths::PathData::new(remote2, false, None, now, &config);
+        
+        // New path should have fresh rate limiter (migration resets limits)
+        // Since default observation rate is 0, set it manually
+        new_path.observation_rate_limiter = paths::PathObservationRateLimiter::new(10, now);
+        
+        // Should have full tokens available
+        for _ in 0..10 {
+            assert!(new_path.observation_rate_limiter.can_send(now));
+            new_path.observation_rate_limiter.consume_token(now);
+        }
+        assert!(!new_path.observation_rate_limiter.can_send(now));
+    }
+
+    #[test]
+    fn per_path_rate_limiting_disabled_paths() {
+        let config = crate::transport_parameters::AddressDiscoveryConfig {
+            enabled: true,
+            max_observation_rate: 10,
+            observe_all_paths: false, // Only primary path
+        };
+        let now = Instant::now();
+        let mut state = AddressDiscoveryState::new(&config, now);
+        
+        // Primary path (id 0) should be allowed
+        assert!(state.should_send_observation(0, now));
+        
+        // Non-primary paths should not be allowed when observe_all_paths is false
+        assert!(!state.should_send_observation(1, now));
+        assert!(!state.should_send_observation(2, now));
+        
+        // Even with rate limit available
+        let later = now + Duration::from_secs(1);
+        assert!(!state.should_send_observation(1, later));
+    }
+
+    #[test]
+    fn respecting_negotiated_max_observation_rate_basic() {
+        let config = crate::transport_parameters::AddressDiscoveryConfig {
+            enabled: true,
+            max_observation_rate: 20, // Local config says 20/sec
+            observe_all_paths: true,
+        };
+        let now = Instant::now();
+        let mut state = AddressDiscoveryState::new(&config, now);
+        
+        // Simulate negotiated rate from peer (lower than ours)
+        state.max_observation_rate = 10; // Peer only allows 10/sec
+        state.rate_limiter = AddressObservationRateLimiter::new(10, now);
+        
+        // Should respect the negotiated rate (10, not 20)
+        for _ in 0..10 {
+            assert!(state.should_send_observation(0, now));
+        }
+        // 11th should fail
+        assert!(!state.should_send_observation(0, now));
+    }
+
+    #[test]
+    fn respecting_negotiated_max_observation_rate_zero() {
+        let config = crate::transport_parameters::AddressDiscoveryConfig {
+            enabled: true,
+            max_observation_rate: 10,
+            observe_all_paths: true,
+        };
+        let now = Instant::now();
+        let mut state = AddressDiscoveryState::new(&config, now);
+        
+        // Peer negotiated rate of 0 (disabled)
+        state.max_observation_rate = 0;
+        state.rate_limiter = AddressObservationRateLimiter::new(0, now);
+        
+        // Should not send any observations
+        assert!(!state.should_send_observation(0, now));
+        assert!(!state.should_send_observation(1, now));
+        
+        // Even after time passes
+        let later = now + Duration::from_secs(10);
+        assert!(!state.should_send_observation(0, later));
+    }
+
+    #[test]
+    fn respecting_negotiated_max_observation_rate_higher() {
+        let config = crate::transport_parameters::AddressDiscoveryConfig {
+            enabled: true,
+            max_observation_rate: 5, // Local config says 5/sec
+            observe_all_paths: true,
+        };
+        let now = Instant::now();
+        let mut state = AddressDiscoveryState::new(&config, now);
+        
+        // Simulate negotiated rate from peer (higher than ours)
+        // We should still use the minimum of the two
+        state.max_observation_rate = 10; // Peer allows 10/sec
+        // But our rate limiter was initialized with 5
+        
+        // Should respect our local rate (5, not 10)
+        for _ in 0..5 {
+            assert!(state.should_send_observation(0, now));
+        }
+        // 6th should fail
+        assert!(!state.should_send_observation(0, now));
+    }
+
+    #[test]
+    fn respecting_negotiated_max_observation_rate_dynamic_update() {
+        let config = crate::transport_parameters::AddressDiscoveryConfig {
+            enabled: true,
+            max_observation_rate: 10,
+            observe_all_paths: true,
+        };
+        let now = Instant::now();
+        let mut state = AddressDiscoveryState::new(&config, now);
+        
+        // Use initial rate - consume 5 tokens
+        for _i in 0..5 {
+            assert!(state.should_send_observation(0, now)); // Same path, consuming global tokens
+            state.record_observation_sent(0);
+        }
+        
+        // We have 5 tokens remaining
+        
+        // Simulate rate renegotiation (e.g., from transport parameter update)
+        state.max_observation_rate = 3;
+        state.rate_limiter.set_rate(3);
+        
+        // Can still use remaining tokens from before (5 tokens)
+        // But they're capped at new max (3), so we'll have 3 tokens
+        for i in 0..3 {
+            assert!(state.should_send_observation(i+1, now)); // Different paths to bypass notification check
+            state.record_observation_sent(i+1);
+        }
+        assert!(!state.should_send_observation(10, now));
+        
+        // After 1 second, should only have 3 new tokens
+        let later = now + Duration::from_secs(1);
+        for i in 0..3 {
+            assert!(state.should_send_observation(i+20, later)); // New paths
+            state.record_observation_sent(i+20);
+        }
+        assert!(!state.should_send_observation(30, later));
+    }
+
+    #[test]
+    fn respecting_negotiated_max_observation_rate_with_paths() {
+        let config = crate::transport_parameters::AddressDiscoveryConfig {
+            enabled: true,
+            max_observation_rate: 6, // 6 total per second
+            observe_all_paths: true,
+        };
+        let now = Instant::now();
+        let mut state = AddressDiscoveryState::new(&config, now);
+        
+        // Distribute observations across paths
+        assert!(state.should_send_observation(0, now));
+        assert!(state.should_send_observation(1, now));
+        assert!(state.should_send_observation(2, now));
+        assert!(state.should_send_observation(0, now));
+        assert!(state.should_send_observation(1, now));
+        assert!(state.should_send_observation(2, now));
+        
+        // All paths should be rate limited now
+        assert!(!state.should_send_observation(0, now));
+        assert!(!state.should_send_observation(1, now));
+        assert!(!state.should_send_observation(2, now));
+    }
+
+    #[test]
+    fn queue_observed_address_frame_basic() {
+        let config = crate::transport_parameters::AddressDiscoveryConfig {
+            enabled: true,
+            max_observation_rate: 10,
+            observe_all_paths: true,
+        };
+        let now = Instant::now();
+        let mut state = AddressDiscoveryState::new(&config, now);
+        
+        // Queue a frame for path 0
+        let address = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100)), 5000);
+        let frame = state.queue_observed_address_frame(0, address);
+        
+        // Should return Some(frame) since this is the first observation
+        assert!(frame.is_some());
+        let frame = frame.unwrap();
+        assert_eq!(frame.address, address);
+        
+        // Should mark path as notified
+        assert!(state.path_addresses.contains_key(&0));
+        assert!(state.path_addresses.get(&0).unwrap().notified);
+    }
+
+    #[test]
+    fn queue_observed_address_frame_rate_limited() {
+        let config = crate::transport_parameters::AddressDiscoveryConfig {
+            enabled: true,
+            max_observation_rate: 2, // Very low rate
+            observe_all_paths: true,
+        };
+        let now = Instant::now();
+        let mut state = AddressDiscoveryState::new(&config, now);
+        
+        // Queue frames up to rate limit
+        let addr1 = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)), 5000);
+        let addr2 = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 2)), 5001);
+        let addr3 = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 3)), 5002);
+        
+        assert!(state.queue_observed_address_frame(0, addr1).is_some());
+        assert!(state.queue_observed_address_frame(1, addr2).is_some());
+        
+        // Third should be rate limited
+        assert!(state.queue_observed_address_frame(2, addr3).is_none());
+    }
+
+    #[test]
+    fn queue_observed_address_frame_disabled() {
+        let config = crate::transport_parameters::AddressDiscoveryConfig {
+            enabled: false, // Disabled
+            max_observation_rate: 10,
+            observe_all_paths: true,
+        };
+        let now = Instant::now();
+        let mut state = AddressDiscoveryState::new(&config, now);
+        
+        let address = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100)), 5000);
+        
+        // Should return None when disabled
+        assert!(state.queue_observed_address_frame(0, address).is_none());
+    }
+
+    #[test]
+    fn queue_observed_address_frame_already_notified() {
+        let config = crate::transport_parameters::AddressDiscoveryConfig {
+            enabled: true,
+            max_observation_rate: 10,
+            observe_all_paths: true,
+        };
+        let now = Instant::now();
+        let mut state = AddressDiscoveryState::new(&config, now);
+        
+        let address = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100)), 5000);
+        
+        // First observation should succeed
+        assert!(state.queue_observed_address_frame(0, address).is_some());
+        
+        // Second observation for same address should return None
+        assert!(state.queue_observed_address_frame(0, address).is_none());
+        
+        // Even with different address, if already notified, should return None
+        let new_address = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 101)), 5001);
+        assert!(state.queue_observed_address_frame(0, new_address).is_none());
+    }
+
+    #[test]
+    fn queue_observed_address_frame_primary_path_only() {
+        let config = crate::transport_parameters::AddressDiscoveryConfig {
+            enabled: true,
+            max_observation_rate: 10,
+            observe_all_paths: false, // Only primary path
+        };
+        let now = Instant::now();
+        let mut state = AddressDiscoveryState::new(&config, now);
+        
+        let address = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100)), 5000);
+        
+        // Primary path should work
+        assert!(state.queue_observed_address_frame(0, address).is_some());
+        
+        // Non-primary paths should not work
+        assert!(state.queue_observed_address_frame(1, address).is_none());
+        assert!(state.queue_observed_address_frame(2, address).is_none());
+    }
+
+    #[test]
+    fn queue_observed_address_frame_updates_path_info() {
+        let config = crate::transport_parameters::AddressDiscoveryConfig {
+            enabled: true,
+            max_observation_rate: 10,
+            observe_all_paths: true,
+        };
+        let now = Instant::now();
+        let mut state = AddressDiscoveryState::new(&config, now);
+        
+        let address = SocketAddr::new(IpAddr::V6(Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 1)), 5000);
+        
+        // Queue frame
+        let frame = state.queue_observed_address_frame(0, address);
+        assert!(frame.is_some());
+        
+        // Check path info was updated
+        let path_info = state.path_addresses.get(&0).unwrap();
+        assert_eq!(path_info.observed_address, Some(address));
+        assert!(path_info.notified);
+        
+        // Note: observed_addresses list is NOT updated by queue_observed_address_frame
+        // That list is for addresses we've received from peers, not ones we're sending
+        assert_eq!(state.observed_addresses.len(), 0);
+    }
+
+    #[test]
+    fn retransmits_includes_observed_addresses() {
+        use crate::connection::spaces::Retransmits;
+        
+        // Create a retransmits struct
+        let mut retransmits = Retransmits::default();
+        
+        // Initially should be empty
+        assert!(retransmits.observed_addresses.is_empty());
+        
+        // Add an observed address frame
+        let address = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100)), 5000);
+        let frame = frame::ObservedAddress { address };
+        retransmits.observed_addresses.push(frame);
+        
+        // Should now have one frame
+        assert_eq!(retransmits.observed_addresses.len(), 1);
+        assert_eq!(retransmits.observed_addresses[0].address, address);
+    }
+
+    #[test]
+    fn check_for_address_observations_no_peer_support() {
+        let config = crate::transport_parameters::AddressDiscoveryConfig {
+            enabled: true,
+            max_observation_rate: 10,
+            observe_all_paths: false,
+        };
+        let now = Instant::now();
+        let mut state = AddressDiscoveryState::new(&config, now);
+        
+        // Simulate address change on path 0
+        state.path_addresses.insert(0, paths::PathAddressInfo::new());
+        state.path_addresses.get_mut(&0).unwrap().observed_address = 
+            Some(SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100)), 5000));
+        
+        // Check for observations with no peer support
+        let frames = state.check_for_address_observations(0, false, now);
+        
+        // Should return empty vec when peer doesn't support
+        assert!(frames.is_empty());
+    }
+
+    #[test]
+    fn check_for_address_observations_with_peer_support() {
+        let config = crate::transport_parameters::AddressDiscoveryConfig {
+            enabled: true,
+            max_observation_rate: 10,
+            observe_all_paths: false,
+        };
+        let now = Instant::now();
+        let mut state = AddressDiscoveryState::new(&config, now);
+        
+        // Simulate address change on path 0
+        let address = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100)), 5000);
+        state.path_addresses.insert(0, paths::PathAddressInfo::new());
+        state.path_addresses.get_mut(&0).unwrap().observed_address = Some(address);
+        
+        // Check for observations with peer support
+        let frames = state.check_for_address_observations(0, true, now);
+        
+        // Should return frame for unnotified address
+        assert_eq!(frames.len(), 1);
+        assert_eq!(frames[0].address, address);
+        
+        // Path should now be marked as notified
+        assert!(state.path_addresses.get(&0).unwrap().notified);
+    }
+
+    #[test]
+    fn check_for_address_observations_rate_limited() {
+        let config = crate::transport_parameters::AddressDiscoveryConfig {
+            enabled: true,
+            max_observation_rate: 1, // Very low rate
+            observe_all_paths: true,
+        };
+        let now = Instant::now();
+        let mut state = AddressDiscoveryState::new(&config, now);
+        
+        // Set up multiple paths with observed addresses
+        for i in 0..3 {
+            let address = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100 + i)), 5000);
+            state.path_addresses.insert(i as u64, paths::PathAddressInfo::new());
+            state.path_addresses.get_mut(&(i as u64)).unwrap().observed_address = Some(address);
+        }
+        
+        // First check should get one frame
+        let frames1 = state.check_for_address_observations(0, true, now);
+        assert_eq!(frames1.len(), 1);
+        
+        // Immediate second check should be rate limited
+        let frames2 = state.check_for_address_observations(1, true, now);
+        assert_eq!(frames2.len(), 0);
+        
+        // After time passes, should be able to send again
+        let later = now + Duration::from_secs(2);
+        let frames3 = state.check_for_address_observations(1, true, later);
+        assert_eq!(frames3.len(), 1);
+    }
+
+    #[test]
+    fn check_for_address_observations_multiple_paths() {
+        let config = crate::transport_parameters::AddressDiscoveryConfig {
+            enabled: true,
+            max_observation_rate: 10,
+            observe_all_paths: true,
+        };
+        let now = Instant::now();
+        let mut state = AddressDiscoveryState::new(&config, now);
+        
+        // Set up two paths with observed addresses
+        let addr1 = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100)), 5000);
+        let addr2 = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 101)), 5001);
+        
+        state.path_addresses.insert(0, paths::PathAddressInfo::new());
+        state.path_addresses.get_mut(&0).unwrap().observed_address = Some(addr1);
+        
+        state.path_addresses.insert(1, paths::PathAddressInfo::new());
+        state.path_addresses.get_mut(&1).unwrap().observed_address = Some(addr2);
+        
+        // Check for observations - should get both since we have tokens
+        let frames = state.check_for_address_observations(0, true, now);
+        
+        // Should get frames for both paths
+        assert_eq!(frames.len(), 2);
+        
+        // Verify both addresses are included
+        let addresses: Vec<_> = frames.iter().map(|f| f.address).collect();
+        assert!(addresses.contains(&addr1));
+        assert!(addresses.contains(&addr2));
+        
+        // Both paths should be marked as notified
+        assert!(state.path_addresses.get(&0).unwrap().notified);
+        assert!(state.path_addresses.get(&1).unwrap().notified);
+    }
+
+    // Tests for Task 2.4: Rate Limiter Configuration
+    #[test]
+    fn test_rate_limiter_configuration() {
+        // Test different rate configurations
+        let state = AddressDiscoveryState::new_with_params(true, 10.0, false);
+        assert_eq!(state.rate_limiter.rate, 10.0);
+        assert_eq!(state.rate_limiter.max_tokens, 10.0);
+        assert_eq!(state.rate_limiter.tokens, 10.0);
+        
+        let state = AddressDiscoveryState::new_with_params(true, 63.0, false);
+        assert_eq!(state.rate_limiter.rate, 63.0);
+        assert_eq!(state.rate_limiter.max_tokens, 63.0);
+    }
+
+    #[test]
+    fn test_rate_limiter_update_configuration() {
+        let mut state = AddressDiscoveryState::new_with_params(true, 5.0, false);
+        
+        // Initial configuration
+        assert_eq!(state.rate_limiter.rate, 5.0);
+        
+        // Update configuration
+        state.update_rate_limit(10.0);
+        assert_eq!(state.rate_limiter.rate, 10.0);
+        assert_eq!(state.rate_limiter.max_tokens, 10.0);
+        
+        // Tokens should not exceed new max
+        state.rate_limiter.tokens = 15.0;
+        state.update_rate_limit(8.0);
+        assert_eq!(state.rate_limiter.tokens, 8.0);
+    }
+
+    #[test]
+    fn test_rate_limiter_from_transport_params() {
+        let mut params = TransportParameters::default();
+        params.address_discovery = Some(AddressDiscoveryConfig {
+            enabled: true,
+            max_observation_rate: 25,
+            observe_all_paths: true,
+        });
+        
+        let state = AddressDiscoveryState::from_transport_params(&params);
+        assert!(state.is_some());
+        let state = state.unwrap();
+        assert_eq!(state.rate_limiter.rate, 25.0);
+        assert!(state.observe_all_paths);
+    }
+
+    #[test]
+    fn test_rate_limiter_zero_rate() {
+        let state = AddressDiscoveryState::new_with_params(true, 0.0, false);
+        assert_eq!(state.rate_limiter.rate, 0.0);
+        assert_eq!(state.rate_limiter.tokens, 0.0);
+        
+        // Should never allow sending with zero rate
+        let address = "192.168.1.1:443".parse().unwrap();
+        let mut state = AddressDiscoveryState::new_with_params(true, 0.0, false);
+        let frame = state.queue_observed_address_frame(0, address);
+        assert!(frame.is_none());
+    }
+
+    #[test]
+    fn test_rate_limiter_configuration_edge_cases() {
+        // Test maximum allowed rate (63)
+        let state = AddressDiscoveryState::new_with_params(true, 63.0, false);
+        assert_eq!(state.rate_limiter.rate, 63.0);
+        
+        // Test rates > 63 get converted to u8 then back to f64
+        let state = AddressDiscoveryState::new_with_params(true, 100.0, false);
+        // 100 as u8 is 100
+        assert_eq!(state.rate_limiter.rate, 100.0);
+        
+        // Test fractional rates get truncated due to u8 storage
+        let state = AddressDiscoveryState::new_with_params(true, 2.5, false);
+        // 2.5 as u8 is 2, then back to f64 is 2.0
+        assert_eq!(state.rate_limiter.rate, 2.0);
+    }
+
+    #[test]
+    fn test_rate_limiter_runtime_update() {
+        let mut state = AddressDiscoveryState::new_with_params(true, 10.0, false);
+        let now = Instant::now();
+        
+        // Consume some tokens
+        state.rate_limiter.tokens = 5.0;
+        
+        // Update rate while tokens are partially consumed
+        state.update_rate_limit(3.0);
+        
+        // Tokens should be capped at new max
+        assert_eq!(state.rate_limiter.tokens, 3.0);
+        assert_eq!(state.rate_limiter.rate, 3.0);
+        assert_eq!(state.rate_limiter.max_tokens, 3.0);
+        
+        // Wait for replenishment
+        let later = now + Duration::from_secs(1);
+        state.rate_limiter.update_tokens(later);
+        
+        // Should be capped at new max
+        assert_eq!(state.rate_limiter.tokens, 3.0);
     }
 }

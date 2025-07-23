@@ -56,6 +56,7 @@ pub struct FrameStats {
     pub add_address: u64,
     pub punch_me_now: u64,
     pub remove_address: u64,
+    pub observed_address: u64,
 }
 
 impl FrameStats {
@@ -99,9 +100,7 @@ impl FrameStats {
             Frame::AddAddress(_) => self.add_address += 1,
             Frame::PunchMeNow(_) => self.punch_me_now += 1,
             Frame::RemoveAddress(_) => self.remove_address += 1,
-            Frame::ObservedAddress(_) => {
-                // TODO: Add counter for observed address frames when needed
-            }
+            Frame::ObservedAddress(_) => self.observed_address += 1,
         }
     }
 }
@@ -136,6 +135,7 @@ impl std::fmt::Debug for FrameStats {
             .field("ADD_ADDRESS", &self.add_address)
             .field("PUNCH_ME_NOW", &self.punch_me_now)
             .field("REMOVE_ADDRESS", &self.remove_address)
+            .field("OBSERVED_ADDRESS", &self.observed_address)
             .finish()
     }
 }
