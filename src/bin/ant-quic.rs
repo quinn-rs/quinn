@@ -240,6 +240,27 @@ impl QuicDemoNode {
             }
         }
 
+        // Wait a bit for address discovery to complete
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        
+        // Print discovered external address
+        if !self.quic_node.get_config().bootstrap_nodes.is_empty() {
+            let nat_status = self.nat_status.lock().await;
+            if !nat_status.reflexive_addresses.is_empty() {
+                // Print the first discovered external address
+                info!("🌐 Discovered external address: {}", nat_status.reflexive_addresses[0]);
+                if !self.dashboard_enabled {
+                    println!("🌐 Discovered external address: {}", nat_status.reflexive_addresses[0]);
+                }
+            } else {
+                warn!("⚠️  CANNOT_FIND_EXTERNAL_ADDRESS - No external address discovered yet");
+                if !self.dashboard_enabled {
+                    println!("⚠️  CANNOT_FIND_EXTERNAL_ADDRESS - No external address discovered yet");
+                }
+            }
+            drop(nat_status);
+        }
+
         // Start dashboard update task if enabled
         if self.dashboard_enabled {
             if let Some(dashboard) = &self.dashboard {
@@ -609,8 +630,14 @@ impl QuicDemoNode {
                                         candidate_address, evt_peer
                                     );
                                     let mut status = nat_status.lock().await;
+                                    let was_empty = status.reflexive_addresses.is_empty();
                                     if !status.reflexive_addresses.contains(&candidate_address) {
                                         status.reflexive_addresses.push(candidate_address);
+                                        // Print the first discovered external address
+                                        if was_empty {
+                                            info!("🌐 Discovered external address: {}", candidate_address);
+                                            println!("🌐 Discovered external address: {}", candidate_address);
+                                        }
                                     }
                                     status.last_update = std::time::Instant::now();
                                 }

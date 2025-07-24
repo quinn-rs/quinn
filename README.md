@@ -117,6 +117,11 @@ ant-quic --listen 0.0.0.0:9000
 # Connect to bootstrap nodes for peer discovery (automatic connection on startup)
 ant-quic --bootstrap node1.example.com:9000,node2.example.com:9000
 
+# Discover your external address (requires bootstrap node)
+ant-quic --bootstrap 159.89.81.21:9000
+# Will print: 🌐 Discovered external address: YOUR.PUBLIC.IP:PORT
+# Or if unable to discover: ⚠️ CANNOT_FIND_EXTERNAL_ADDRESS
+
 # Run as coordinator with NAT traversal event monitoring
 ant-quic --force-coordinator --listen 0.0.0.0:9000
 
