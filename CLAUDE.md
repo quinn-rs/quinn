@@ -209,12 +209,15 @@ cargo test --test nat_traversal_comprehensive
 - Real-time monitoring dashboard
 - GitHub Actions for automated releases
 - Multi-platform binary releases
+- Platform-specific network interface discovery (Windows, Linux, macOS)
+- QUIC Address Discovery Extension (draft-ietf-quic-address-discovery-00)
+- OBSERVED_ADDRESS frame (0x43) implementation
+- Transport parameter 0x1f00 for address discovery configuration
 
 ### In Progress 🚧
 - Session state machine polling in `nat_traversal_api.rs` (line 2022)
 - Connection status checking in `connection_establishment.rs` (line 844)
 - Wiring `SimpleConnectionEstablishmentManager` to actual QUIC connections
-- Platform-specific network interface discovery (placeholders exist)
 - Windows and Linux ARM builds in GitHub Actions (failing)
 
 ### Architecture Notes

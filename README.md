@@ -384,10 +384,6 @@ ant-quic implements and extends the following IETF specifications and drafts:
 - 7x faster connection establishment times
 
 🚧 **In Progress/TODO**:
-- Platform-specific network interface discovery:
-  - Windows: IP Helper API integration
-  - Linux: Netlink interface enumeration
-  - macOS: System Configuration framework
 - Session state machine polling implementation
 - Relay connection logic for fallback scenarios
 
@@ -397,7 +393,7 @@ ant-quic implements and extends the following IETF specifications and drafts:
 - ✅ Core NAT traversal functionality
 - ✅ Basic binary tools
 - ✅ Full Quinn endpoint integration
-- 🚧 Complete platform-specific interface discovery
+- ✅ Complete platform-specific interface discovery
 - 📋 Performance benchmarking and optimization
 
 #### v0.2.0 - Authentication & Security ✅
@@ -465,7 +461,6 @@ ant-quic implements and extends the following IETF specifications and drafts:
 
 ### Known Limitations
 
-- Platform-specific interface discovery requires completion for full functionality
 - Relay selection algorithms need real-world testing and optimization
 - IPv6 support needs enhancement for production deployment
 - Performance optimization required for high-scale deployments

@@ -61,6 +61,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed crypto configuration in address discovery tests (proper QuicServerConfig/QuicClientConfig usage)
 - Fixed rate limiting logic in connection tests by properly resetting path notification state
 - Fixed test assertions to match new default enabled state for address discovery
+
+### Documentation
+- Enhanced README with comprehensive technical specifications and deployment guidance
+  - Added system requirements with specific OS versions and memory needs
+  - Added network configuration section with firewall rules for all platforms
+  - Added complete CLI reference with all options and subcommands
+  - Added detailed QUIC Address Discovery specifications (transport parameter 0x1f00, frame 0x43)
+  - Added troubleshooting guide with common issues and solutions
+  - Added production deployment guide with systemd service and scaling considerations
+  - Added monitoring section with metrics and high availability setup
+  - Added pre-built binary download information
+  - Added Docker installation option
+  - Added API stability guarantees and versioning policy
+  - Added protocol timeouts and constants reference
+  - Added benchmark methodology details
   - Higher priority given to QUIC-discovered addresses over predicted ones
   - Full integration with existing NAT traversal flow
 - Comprehensive testing suite for address discovery NAT traversal integration
