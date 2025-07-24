@@ -33,6 +33,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Created `phase6_test_log.md` to track real-world test results
   - Pending: Mobile network, enterprise firewall, and CGNAT testing
 
+### Added
+- External address discovery display in ant-quic binary
+  - Automatically prints discovered external address when connected to bootstrap nodes
+  - Shows `🌐 Discovered external address: IP:PORT` on success
+  - Shows `⚠️ CANNOT_FIND_EXTERNAL_ADDRESS` if discovery fails
+  - Helps users verify NAT traversal and connectivity
+- Added `scripts/check_external_address.sh` utility script
+
 ## [0.4.4] - 2025-07-24
 
 ### Changed
