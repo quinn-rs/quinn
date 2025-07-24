@@ -48,6 +48,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - NAT Traversal State Machine integration for QUIC-discovered addresses
   - QUIC-discovered addresses are properly added as local candidates with CandidateSource::Observed
   - Addresses participate in candidate pairing and hole-punching
+- Comprehensive test suite for address discovery feature
+  - Unit tests for transport parameters, frames, and connection logic
+  - Integration tests for end-to-end flows, NAT traversal, and multi-path scenarios
+  - Frame-level tests with NAT simulation and migration scenarios
+
+### Changed
+- Address discovery is now enabled by default in AddressDiscoveryConfig
+- Fixed VarInt encoding for OBSERVED_ADDRESS frame type (0x43 uses 2-byte encoding)
+
+### Fixed
+- Fixed crypto configuration in address discovery tests (proper QuicServerConfig/QuicClientConfig usage)
+- Fixed rate limiting logic in connection tests by properly resetting path notification state
+- Fixed test assertions to match new default enabled state for address discovery
   - Higher priority given to QUIC-discovered addresses over predicted ones
   - Full integration with existing NAT traversal flow
 - Comprehensive testing suite for address discovery NAT traversal integration

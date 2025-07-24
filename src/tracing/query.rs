@@ -171,6 +171,7 @@ mod implementation {
 }
 
 // Re-export from implementation
+#[cfg(feature = "trace")]
 pub use implementation::*;
 
 #[cfg(test)]
@@ -211,7 +212,7 @@ mod tests {
         use std::sync::Arc;
         
         let log = Arc::new(EventLog::new());
-        let query = TraceQuery::new(log);
+        let query = super::implementation::TraceQuery::new(log);
         
         // All operations should be no-ops
         assert_eq!(query.event_count(), 0);

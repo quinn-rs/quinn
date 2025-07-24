@@ -6452,7 +6452,7 @@ mod tests {
         // For now, just test that AddressDiscoveryState can be created with default config
         let config = crate::transport_parameters::AddressDiscoveryConfig::default();
         let state = AddressDiscoveryState::new(&config, Instant::now());
-        assert!(!state.enabled);
+        assert!(state.enabled); // Default is now enabled
         assert_eq!(state.max_observation_rate, 10); // Default is 10
         assert!(!state.observe_all_paths);
     }
@@ -6472,11 +6472,11 @@ mod tests {
     }
     
     #[test]
-    fn connection_address_discovery_disabled_when_no_config() {
-        // Test that AddressDiscoveryState is disabled with default config
+    fn connection_address_discovery_enabled_by_default() {
+        // Test that AddressDiscoveryState is enabled with default config
         let config = crate::transport_parameters::AddressDiscoveryConfig::default();
         let state = AddressDiscoveryState::new(&config, Instant::now());
-        assert!(!state.enabled);
+        assert!(state.enabled); // Default is now enabled
     }
 
     #[test]
@@ -7614,7 +7614,7 @@ mod tests {
         let state = address_discovery_state.unwrap();
         
         // Default config should have address discovery disabled
-        assert!(!state.enabled);
+        assert!(state.enabled); // Default is now enabled
         assert_eq!(state.max_observation_rate, 10); // Default rate
         assert!(!state.observe_all_paths);
     }
@@ -7683,7 +7683,7 @@ mod tests {
         
         // Verify it's disabled
         let state = address_discovery_state.unwrap();
-        assert!(!state.enabled);
+        assert!(!state.enabled); // Should be disabled when peer doesn't support it
     }
 
     #[test]
@@ -8097,24 +8097,41 @@ mod tests {
         );
         state.path_addresses.insert(0, path_info);
         
-        // First two checks should queue observations
+        // First observation should succeed
         let frame1 = state.queue_observed_address_frame(0, SocketAddr::from(([192, 168, 1, 1], 8080)));
         assert!(frame1.is_some());
         state.record_observation_sent(0);
         
+        // Reset notified flag to test rate limiting (simulate address change or new observation opportunity)
+        if let Some(info) = state.path_addresses.get_mut(&0) {
+            info.notified = false;
+        }
+        
+        // Second observation should also succeed (still have tokens)
         let frame2 = state.queue_observed_address_frame(0, SocketAddr::from(([192, 168, 1, 1], 8080)));
         assert!(frame2.is_some());
         state.record_observation_sent(0);
         
-        // Third should be rate limited
+        // Reset notified flag again to test pure rate limiting
+        if let Some(info) = state.path_addresses.get_mut(&0) {
+            info.notified = false;
+        }
+        
+        // Third should be rate limited (no more tokens)
         let frame3 = state.queue_observed_address_frame(0, SocketAddr::from(([192, 168, 1, 1], 8080)));
-        assert!(frame3.is_none());
+        assert!(frame3.is_none()); // Should fail due to rate limiting
         
         // After 500ms, should allow 1 more (rate is 2/sec, so 0.5s = 1 token)
         let later = now + Duration::from_millis(500);
         state.rate_limiter.update_tokens(later); // Update tokens based on elapsed time
+        
+        // Reset notified flag to test token replenishment
+        if let Some(info) = state.path_addresses.get_mut(&0) {
+            info.notified = false;
+        }
+        
         let frame4 = state.queue_observed_address_frame(0, SocketAddr::from(([192, 168, 1, 1], 8080)));
-        assert!(frame4.is_some());
+        assert!(frame4.is_some()); // Should succeed due to token replenishment
     }
 
     #[test]
@@ -8139,15 +8156,25 @@ mod tests {
         state.record_observation_sent(0);
         
         // Should respect rate limiting
-        for _ in 0..4 {
+        for i in 0..4 {
+            // Reset notified flag to test rate limiting  
+            if let Some(info) = state.path_addresses.get_mut(&0) {
+                info.notified = false;
+            }
+            
             let frame = state.queue_observed_address_frame(0, addr);
-            assert!(frame.is_some());
+            assert!(frame.is_some(), "Frame {} should be allowed", i + 2);
             state.record_observation_sent(0);
         }
         
-        // 6th should be rate limited
+        // Reset notified flag one more time
+        if let Some(info) = state.path_addresses.get_mut(&0) {
+            info.notified = false;
+        }
+        
+        // 6th should be rate limited (we've used all 5 tokens)
         let frame = state.queue_observed_address_frame(0, addr);
-        assert!(frame.is_none());
+        assert!(frame.is_none(), "6th frame should be rate limited");
     }
 
     #[test]

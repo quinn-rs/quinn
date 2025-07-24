@@ -373,7 +373,7 @@ impl AddressDiscoveryConfig {
 impl Default for AddressDiscoveryConfig {
     fn default() -> Self {
         Self {
-            enabled: false,
+            enabled: true, // Enabled by default
             max_observation_rate: 10,
             observe_all_paths: false,
         }

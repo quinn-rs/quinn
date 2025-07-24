@@ -69,6 +69,8 @@ mod implementation {
     impl EventLog {
         pub fn new() -> Self { EventLog }
         pub fn log(&self, _event: Event) {}
+        pub fn recent_events(&self, _count: usize) -> Vec<Event> { Vec::new() }
+        pub fn get_events_by_trace(&self, _trace_id: TraceId) -> Vec<Event> { Vec::new() }
     }
     
     /// Zero-sized trace context when tracing is disabled

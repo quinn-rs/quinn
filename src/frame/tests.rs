@@ -16,11 +16,13 @@ fn test_observed_address_frame_ipv4() {
     let mut buf = BytesMut::new();
     frame.encode(&mut buf);
     
-    // Frame type is written by encode(), check it
-    assert_eq!(buf[0], 0x43); // OBSERVED_ADDRESS frame type
+    // Frame type is written by encode() as VarInt
+    // 0x43 (67) uses 2-byte VarInt encoding: first byte 0x40, second byte 0x43
+    assert_eq!(buf[0], 0x40); // First byte of VarInt encoding for 67
+    assert_eq!(buf[1], 0x43); // Second byte contains the actual value
     
-    // Test decoding - skip frame type byte
-    let mut reader = &buf[1..];
+    // Test decoding - skip frame type bytes (2 bytes for VarInt)
+    let mut reader = &buf[2..];
     let decoded = ObservedAddress::decode(&mut reader).unwrap();
     
     assert_eq!(decoded.address, addr);
@@ -40,11 +42,13 @@ fn test_observed_address_frame_ipv6() {
     let mut buf = BytesMut::new();
     frame.encode(&mut buf);
     
-    // Frame type is written by encode(), check it
-    assert_eq!(buf[0], 0x43); // OBSERVED_ADDRESS frame type
+    // Frame type is written by encode() as VarInt
+    // 0x43 (67) uses 2-byte VarInt encoding: first byte 0x40, second byte 0x43
+    assert_eq!(buf[0], 0x40); // First byte of VarInt encoding for 67
+    assert_eq!(buf[1], 0x43); // Second byte contains the actual value
     
-    // Test decoding - skip frame type byte
-    let mut reader = &buf[1..];
+    // Test decoding - skip frame type bytes (2 bytes for VarInt)
+    let mut reader = &buf[2..];
     let decoded = ObservedAddress::decode(&mut reader).unwrap();
     
     assert_eq!(decoded.address, addr);
@@ -96,7 +100,7 @@ fn test_observed_address_edge_cases() {
         let mut buf = BytesMut::new();
         frame.encode(&mut buf);
         
-        let mut reader = &buf[1..]; // Skip frame type
+        let mut reader = &buf[2..]; // Skip frame type (2 bytes for VarInt)
         let decoded = ObservedAddress::decode(&mut reader).unwrap();
         assert_eq!(decoded.address, addr);
     }
@@ -113,7 +117,7 @@ fn test_observed_address_edge_cases() {
         let mut buf = BytesMut::new();
         frame.encode(&mut buf);
         
-        let mut reader = &buf[1..]; // Skip frame type
+        let mut reader = &buf[2..]; // Skip frame type (2 bytes for VarInt)
         let decoded = ObservedAddress::decode(&mut reader).unwrap();
         assert_eq!(decoded.address.port(), port);
     }
@@ -131,13 +135,13 @@ fn test_observed_address_wire_format() {
     frame.encode(&mut buf);
     
     // Verify wire format:
-    // - Frame type (OBSERVED_ADDRESS = 0x43)
-    // - Address family (0x00 for IPv4)
+    // - Frame type (OBSERVED_ADDRESS = 0x43 as 2-byte VarInt: 0x40, 0x43)
+    // - Address family (4 for IPv4)
     // - IPv4 bytes (192, 168, 1, 1) 
     // - Port in network byte order (8080 = 0x1F90)
     
     let expected = vec![
-        0x43,                   // Frame type
+        0x40, 0x43,             // Frame type as 2-byte VarInt
         4,                      // IPv4 indicator
         192, 168, 1, 1,         // IPv4 address
         0x1F, 0x90,             // Port 8080 in big-endian
@@ -164,7 +168,8 @@ fn test_observed_address_frame_integration() {
             // Test encoding through the struct directly
             let mut buf = BytesMut::new();
             obs.encode(&mut buf);
-            assert_eq!(buf[0], 0x43); // OBSERVED_ADDRESS frame type
+            assert_eq!(buf[0], 0x40); // First byte of VarInt for 0x43
+            assert_eq!(buf[1], 0x43); // Second byte of VarInt
         }
         _ => panic!("Wrong frame type"),
     }
@@ -184,7 +189,7 @@ fn test_observed_address_unspecified() {
         let mut buf = BytesMut::new();
         frame.encode(&mut buf);
         
-        let mut reader = &buf[1..]; // Skip frame type
+        let mut reader = &buf[2..]; // Skip frame type (2 bytes for VarInt)
         let decoded = ObservedAddress::decode(&mut reader).unwrap();
         assert_eq!(decoded.address, addr);
     }

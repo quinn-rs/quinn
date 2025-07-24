@@ -304,6 +304,9 @@ mod tests {
         let event = Event::conn_init("127.0.0.1:8080".parse().unwrap(), trace_id);
         
         assert_eq!(event.trace_id, trace_id);
+        #[cfg(feature = "trace")]
         assert!(event.timestamp > 0);
+        #[cfg(not(feature = "trace"))]
+        assert_eq!(event.timestamp, 0); // Zero when trace is disabled
     }
 }

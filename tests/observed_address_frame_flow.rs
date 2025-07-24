@@ -10,14 +10,14 @@ use std::{
     collections::HashMap,
 };
 use ant_quic::{
-    Endpoint, EndpointConfig, ClientConfig, ServerConfig,
-    Connection, ConnectionError, TransportConfig,
+    Endpoint, ClientConfig, ServerConfig,
+    crypto::rustls::{QuicServerConfig, QuicClientConfig},
 };
-use bytes::Bytes;
-use tokio::sync::{mpsc, oneshot};
-use tracing::{info, debug, trace};
+use tokio::sync::mpsc;
+use tracing::{info, debug};
 
 /// Mock NAT environment for testing
+#[derive(Clone)]
 struct NatEnvironment {
     /// Maps local addresses to public addresses
     mappings: Arc<Mutex<HashMap<SocketAddr, SocketAddr>>>,
@@ -58,7 +58,7 @@ async fn test_basic_observed_address_flow() {
     info!("Starting basic OBSERVED_ADDRESS frame flow test");
     
     // Create endpoints
-    let server = create_test_server().await;
+    let server = create_test_server();
     let server_addr = server.local_addr().unwrap();
     
     // Track observations
@@ -68,7 +68,7 @@ async fn test_basic_observed_address_flow() {
     // Server accepts connections and logs observations
     let server_handle = tokio::spawn(async move {
         if let Some(incoming) = server.accept().await {
-            let mut connection = incoming.await.unwrap();
+            let connection = incoming.await.unwrap();
             let remote = connection.remote_address();
             info!("Server accepted connection from {}", remote);
             
@@ -91,7 +91,7 @@ async fn test_basic_observed_address_flow() {
     });
     
     // Client connects
-    let client = create_test_client().await;
+    let client = create_test_client();
     let connection = client
         .connect(server_addr, "localhost")
         .unwrap()
@@ -128,7 +128,7 @@ async fn test_observed_address_with_nat() {
     let nat = NatEnvironment::new();
     
     // Bootstrap server (public IP)
-    let bootstrap = create_test_server().await;
+    let bootstrap = create_test_server();
     let bootstrap_addr = bootstrap.local_addr().unwrap();
     info!("Bootstrap server at {}", bootstrap_addr);
     
@@ -137,7 +137,6 @@ async fn test_observed_address_with_nat() {
     let client_public = nat.map_address(client_local);
     
     // Bootstrap accepts and observes
-    let nat_clone = nat.clone();
     let bootstrap_handle = tokio::spawn(async move {
         if let Some(incoming) = bootstrap.accept().await {
             let connection = incoming.await.unwrap();
@@ -156,7 +155,7 @@ async fn test_observed_address_with_nat() {
     });
     
     // Client connects through NAT
-    let client = create_test_client().await;
+    let client = create_test_client();
     let connection = client
         .connect(bootstrap_addr, "localhost")
         .unwrap()
@@ -183,7 +182,7 @@ async fn test_multipath_observations() {
 
     info!("Starting multipath observations test");
     
-    let server = create_test_server().await;
+    let server = create_test_server();
     let server_addr = server.local_addr().unwrap();
     
     // Server handles multiple connections
@@ -211,7 +210,7 @@ async fn test_multipath_observations() {
     // Multiple clients connect (simulating different paths)
     let mut clients = vec![];
     for i in 0..3 {
-        let client = create_test_client().await;
+        let client = create_test_client();
         let connection = client
             .connect(server_addr, "localhost")
             .unwrap()
@@ -245,7 +244,7 @@ async fn test_observation_rate_limiting() {
 
     info!("Starting rate limiting test");
     
-    let server = create_test_server().await;
+    let server = create_test_server();
     let server_addr = server.local_addr().unwrap();
     
     // Track observation attempts
@@ -260,14 +259,16 @@ async fn test_observation_rate_limiting() {
             // Simulate multiple observation triggers
             for i in 0..10 {
                 // Check if we should send (rate limited)
-                let mut count = attempts_clone.lock().unwrap();
-                *count += 1;
-                
-                // Simulate rate limiting: only first few should succeed
-                if i < 3 {
-                    info!("Observation {} would be sent", i);
-                } else {
-                    debug!("Observation {} rate limited", i);
+                {
+                    let mut count = attempts_clone.lock().unwrap();
+                    *count += 1;
+                    
+                    // Simulate rate limiting: only first few should succeed
+                    if i < 3 {
+                        info!("Observation {} would be sent", i);
+                    } else {
+                        debug!("Observation {} rate limited", i);
+                    }
                 }
                 
                 tokio::time::sleep(Duration::from_millis(10)).await;
@@ -280,7 +281,7 @@ async fn test_observation_rate_limiting() {
     });
     
     // Client connects
-    let client = create_test_client().await;
+    let client = create_test_client();
     let _connection = client
         .connect(server_addr, "localhost")
         .unwrap()
@@ -307,7 +308,7 @@ async fn test_observation_during_migration() {
 
     info!("Starting migration observation test");
     
-    let server = create_test_server().await;
+    let server = create_test_server();
     let server_addr = server.local_addr().unwrap();
     
     // Server monitors for address changes
@@ -315,7 +316,7 @@ async fn test_observation_during_migration() {
     
     let server_handle = tokio::spawn(async move {
         if let Some(incoming) = server.accept().await {
-            let mut connection = incoming.await.unwrap();
+            let connection = incoming.await.unwrap();
             let initial = connection.remote_address();
             tx.send(format!("Initial: {}", initial)).await.unwrap();
             
@@ -337,7 +338,7 @@ async fn test_observation_during_migration() {
     });
     
     // Client connects
-    let client = create_test_client().await;
+    let client = create_test_client();
     let _connection = client
         .connect(server_addr, "localhost")
         .unwrap()
@@ -361,9 +362,9 @@ async fn test_observation_during_migration() {
 }
 
 /// Helper to create test server endpoint
-async fn create_test_server() -> Endpoint {
+fn create_test_server() -> Endpoint {
     let cert = rcgen::generate_simple_self_signed(vec!["localhost".to_string()]).unwrap();
-    let key = rustls::pki_types::PrivateKeyDer::Pkcs8(cert.key_pair.serialize_der().into());
+    let key = rustls::pki_types::PrivateKeyDer::Pkcs8(cert.signing_key.serialize_der().into());
     let cert = cert.cert.into();
     
     let mut server_config = rustls::ServerConfig::builder()
@@ -372,67 +373,38 @@ async fn create_test_server() -> Endpoint {
         .unwrap();
     server_config.alpn_protocols = vec![b"test".to_vec()];
     
-    let mut config = EndpointConfig::default();
-    // Address discovery enabled by default
+    let server_config = ServerConfig::with_crypto(Arc::new(QuicServerConfig::try_from(server_config).unwrap()));
     
     Endpoint::server(
-        config,
-        SocketAddr::from((Ipv4Addr::LOCALHOST, 0)),
-        Arc::new(ServerConfig::with_crypto(Arc::new(server_config)))
+        server_config,
+        SocketAddr::from((Ipv4Addr::LOCALHOST, 0))
     )
-    .await
     .unwrap()
 }
 
 /// Helper to create test client endpoint
-async fn create_test_client() -> Endpoint {
-    let config = EndpointConfig::default();
-    // Address discovery enabled by default
+fn create_test_client() -> Endpoint {
+    // Create a client config that skips certificate verification for testing
+    let mut client_crypto = rustls::ClientConfig::builder()
+        .dangerous()
+        .with_custom_certificate_verifier(Arc::new(SkipVerification))
+        .with_no_client_auth();
     
-    Endpoint::client(
-        SocketAddr::from((Ipv4Addr::LOCALHOST, 0)),
-        config
+    // Set ALPN protocols to match server
+    client_crypto.alpn_protocols = vec![b"test".to_vec()];
+    
+    let client_config = ClientConfig::new(Arc::new(
+        QuicClientConfig::try_from(client_crypto).unwrap()
+    ));
+    
+    let mut endpoint = Endpoint::client(
+        SocketAddr::from((Ipv4Addr::LOCALHOST, 0))
     )
-    .await
-    .unwrap()
+    .unwrap();
+    
+    endpoint.set_default_client_config(client_config);
+    endpoint
 }
-
-/// Extension trait for client connections
-impl EndpointExt for Endpoint {
-    fn connect(
-        &self,
-        addr: SocketAddr,
-        server_name: &str,
-    ) -> Result<Connecting, ConnectError> {
-        let mut roots = rustls::RootCertStore::empty();
-        roots.add_trust_anchors(webpki_roots::TLS_SERVER_ROOTS.iter().map(|ta| {
-            rustls::pki_types::TrustAnchor {
-                subject: ta.subject.clone(),
-                subject_public_key_info: ta.subject_public_key_info.clone(),
-                name_constraints: ta.name_constraints.clone(),
-            }
-        }));
-        
-        let client_config = ClientConfig::new(Arc::new(
-            rustls::ClientConfig::builder()
-                .dangerous()
-                .with_custom_certificate_verifier(Arc::new(SkipVerification))
-                .with_no_client_auth()
-        ));
-        
-        self.connect_with(client_config, addr, server_name)
-    }
-}
-
-trait EndpointExt {
-    fn connect(
-        &self,
-        addr: SocketAddr,
-        server_name: &str,
-    ) -> Result<Connecting, ConnectError>;
-}
-
-use ant_quic::{Connecting, ConnectError};
 
 #[derive(Debug)]
 struct SkipVerification;

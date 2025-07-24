@@ -6,7 +6,7 @@ use std::net::{Ipv4Addr, Ipv6Addr};
 #[test]
 fn test_address_discovery_config_default() {
     let config = AddressDiscoveryConfig::default();
-    assert!(!config.enabled); // Default is disabled
+    assert!(config.enabled); // Default is enabled
     assert_eq!(config.max_observation_rate, 10);
     assert_eq!(config.observe_all_paths, false);
 }

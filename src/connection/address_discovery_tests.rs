@@ -78,14 +78,20 @@ fn test_rate_limiting() {
     
     // First observation should be allowed
     assert!(state.should_send_observation(path_id, now));
-    state.record_observation_sent(path_id);
     
-    // Immediate retry should be rate limited (no path info yet)
+    // Consume enough tokens to exhaust the rate limit
+    // With rate 10/sec, we start with 10 tokens
+    for _ in 0..10 {
+        state.rate_limiter.try_consume(1.0, now);
+    }
+    
+    // Now rate limiter should be exhausted
     assert!(!state.should_send_observation(path_id, now));
     
     // After sufficient time, should be allowed again
     now += Duration::from_millis(200);
-    state.rate_limiter.last_update = now; // Update the rate limiter
+    // Force update tokens with new time (200ms = 0.2s * 10/s = 2 tokens)
+    state.rate_limiter.update_tokens(now);
     assert!(state.should_send_observation(path_id, now));
 }
 

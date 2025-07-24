@@ -247,7 +247,7 @@ impl EventLog {
 unsafe impl Send for EventLog {}
 unsafe impl Sync for EventLog {}
 
-#[cfg(test)]
+#[cfg(all(test, feature = "trace"))]
 mod tests {
     use super::*;
     use std::thread;
@@ -270,7 +270,7 @@ mod tests {
         
         // Most recent should have highest packet number
         match &recent[0].event_data {
-            crate::tracing::EventData::PacketSent { packet_num, .. } => {
+            crate::tracing::event::EventData::PacketSent { packet_num, .. } => {
                 assert_eq!(*packet_num, 9);
             }
             _ => panic!("Wrong event type"),
