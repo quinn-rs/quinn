@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.3] - 2025-07-24
+
 ### Added
 - OBSERVED_ADDRESS frame (0x43) implementation for QUIC Address Discovery extension (draft-ietf-quic-address-discovery-00)
   - Full encoding/decoding support for both IPv4 and IPv6 addresses
