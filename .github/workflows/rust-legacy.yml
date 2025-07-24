@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: ['main', '0.8.x']
+    branches: ['master', '0.8.x']
   pull_request:
   merge_group:
   schedule:

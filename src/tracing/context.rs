@@ -33,7 +33,7 @@ impl TraceContext {
             flags: TraceFlags::default(),
         }
     }
-    
+
     /// Create a new trace context with flags
     pub fn with_flags(trace_id: TraceId, flags: TraceFlags) -> Self {
         TraceContext {
@@ -42,22 +42,22 @@ impl TraceContext {
             flags,
         }
     }
-    
+
     /// Get the trace ID
     pub fn trace_id(&self) -> TraceId {
         self.trace_id
     }
-    
+
     /// Check if trace is being sampled
     pub fn is_sampled(&self) -> bool {
         self.flags.sampled
     }
-    
+
     /// Enable sampling for this trace
     pub fn enable_sampling(&mut self) {
         self.flags.sampled = true;
     }
-    
+
     /// Get elapsed time since trace start
     pub fn elapsed(&self) -> u64 {
         crate::tracing::timestamp_now() - self.start_time
@@ -73,19 +73,19 @@ impl Default for TraceContext {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_trace_context() {
         let trace_id = TraceId::new();
         let mut context = TraceContext::new(trace_id);
-        
+
         assert_eq!(context.trace_id(), trace_id);
         assert!(!context.is_sampled());
-        
+
         context.enable_sampling();
         assert!(context.is_sampled());
     }
-    
+
     #[test]
     fn test_trace_flags() {
         let flags = TraceFlags {
@@ -93,10 +93,10 @@ mod tests {
             debug: false,
             app_initiated: true,
         };
-        
+
         let trace_id = TraceId::new();
         let context = TraceContext::with_flags(trace_id, flags);
-        
+
         assert!(context.is_sampled());
         assert!(context.flags.app_initiated);
         assert!(!context.flags.debug);

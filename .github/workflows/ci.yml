@@ -2,107 +2,256 @@ name: CI
 
 on:
   push:
-    branches: [ master, main ]
+    branches: [master, '0.8.x']
   pull_request:
-    branches: [ master, main ]
+    branches: [master]
+  merge_group:
+  schedule:
+    - cron: '21 3 * * 5'  # Weekly on Fridays
 
 env:
-  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -Dwarnings
   RUST_BACKTRACE: 1
 
 jobs:
-  test:
-    name: Test
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-        rust: [stable]
+  # Quick validation - fail fast on basic issues
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@master
+      - uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: ${{ matrix.rust }}
           components: rustfmt, clippy
-      
-      - name: Cache cargo registry
-        uses: actions/cache@v3
-        with:
-          path: ~/.cargo/registry
-          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
-      
-      - name: Cache cargo index
-        uses: actions/cache@v3
-        with:
-          path: ~/.cargo/git
-          key: ${{ runner.os }}-cargo-index-${{ hashFiles('**/Cargo.lock') }}
-      
-      - name: Cache cargo build
-        uses: actions/cache@v3
-        with:
-          path: target
-          key: ${{ runner.os }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
-      
+      - uses: Swatinem/rust-cache@v2
       - name: Check formatting
         run: cargo fmt --all -- --check
-      
       - name: Run clippy
-        run: cargo clippy --all-targets || true
-      
-      - name: Build
-        run: cargo build --verbose
-      
-      - name: Run tests
-        run: cargo test --verbose
-      
-      - name: Build release
-        run: cargo build --release --verbose
+        run: cargo clippy --all-targets -- -D warnings
+      - name: Check documentation
+        run: cargo doc --no-deps --document-private-items
 
-  # ARM builds require cross-compilation
-  test-arm:
-    name: Test ARM
+  # Security audit
+  audit:
+    name: Security Audit
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        target: [aarch64-unknown-linux-gnu]
-        rust: [stable]
     steps:
       - uses: actions/checkout@v4
-      
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@master
+      - uses: EmbarkStudios/cargo-deny-action@v2
+
+  # Core platform tests
+  test:
+    name: Test (${{ matrix.os }} / ${{ matrix.rust }})
+    needs: [lint]
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        rust: [stable, beta]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ matrix.rust }}
-          targets: ${{ matrix.target }}
-      
-      - name: Install Cross
-        run: cargo install cross --git https://github.com/cross-rs/cross
-      
-      - name: Build with Cross
-        run: cross build --target ${{ matrix.target }} --verbose
-      
-      - name: Run tests with Cross
-        run: cross test --target ${{ matrix.target }} --verbose
+      - uses: Swatinem/rust-cache@v2
+      - name: Build
+        run: cargo build --all-targets
+      - name: Run tests
+        run: cargo test
+      - name: Run tests (AWS LC)
+        if: matrix.rust == 'stable'
+        run: cargo test --no-default-features --features rustls-aws-lc-rs
+      - name: Run ignored tests
+        if: matrix.rust == 'stable'
+        run: cargo test -- --ignored stress
+        continue-on-error: true
+      - name: Build release
+        if: matrix.rust == 'stable'
+        run: cargo build --release
 
-  coverage:
-    name: Code Coverage
+  # ARM64 cross-compilation and testing
+  test-arm:
+    name: Test ARM64 Linux
+    needs: [lint]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-      
-      - name: Install tarpaulin
-        run: cargo install cargo-tarpaulin
-      
-      - name: Generate coverage
-        run: cargo tarpaulin --out Xml --all-features --workspace --timeout 300
-      
-      - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v3
+      - uses: dtolnay/rust-toolchain@stable
         with:
-          token: ${{ secrets.CODECOV_TOKEN }}
+          targets: aarch64-unknown-linux-gnu
+      - uses: Swatinem/rust-cache@v2
+      - name: Install cross-compilation tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+      - name: Cross compile for ARM64
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+        run: cargo build --target aarch64-unknown-linux-gnu --release
+
+  # Extended platform coverage - BSD variants
+  test-bsd:
+    name: Test ${{ matrix.name }}
+    needs: [lint]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: FreeBSD
+            architecture: x86-64
+            version: '14.0'
+            hypervisor: qemu
+            target: x86_64-unknown-freebsd
+            test-cmd: cargo test --all-targets && cargo test --doc && cargo test --benches
+          - name: NetBSD
+            architecture: x86-64
+            version: '10.0'
+            hypervisor: qemu
+            target: x86_64-unknown-netbsd
+            test-cmd: cargo build --all-targets && cargo test
+          - name: Illumos
+            architecture: x86-64
+            version: '20240704'
+            hypervisor: qemu
+            target: x86_64-unknown-illumos
+            test-cmd: cargo build --all-targets && cargo test
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test on ${{ matrix.name }}
+        uses: cross-platform-actions/action@v0.25.0
+        with:
+          operating_system: ${{ matrix.name }}
+          architecture: ${{ matrix.architecture }}
+          version: ${{ matrix.version }}
+          hypervisor: ${{ matrix.hypervisor }}
+          run: |
+            curl https://sh.rustup.rs -sSf | sh -s -- -y --profile minimal --default-toolchain stable
+            export PATH="$HOME/.cargo/bin:$PATH"
+            rustup target add ${{ matrix.target }}
+            ${{ matrix.test-cmd }}
+
+  # WebAssembly testing
+  test-wasm:
+    name: Test WASM
+    needs: [lint]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+      - name: Build WASM
+        run: cargo build --target wasm32-unknown-unknown -p quinn-proto
+      - name: Test WASM
+        run: cargo test --target wasm32-unknown-unknown -p quinn-proto
+
+  # Android testing
+  test-android:
+    name: Test Android (${{ matrix.arch }})
+    needs: [lint]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86
+            abi: x86
+            emu-options: -no-snapshot-save -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          - arch: x86_64
+            abi: x86_64
+            emu-options: -no-snapshot-save -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+      - name: Run Android tests
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 29
+          arch: ${{ matrix.arch }}
+          profile: Nexus 6
+          script: |
+            cargo install cargo-ndk
+            rustup target add i686-linux-android x86_64-linux-android
+            cargo ndk --target ${{ matrix.arch == 'x86' && 'i686-linux-android' || 'x86_64-linux-android' }} build
+            cargo ndk --target ${{ matrix.arch == 'x86' && 'i686-linux-android' || 'x86_64-linux-android' }} test --lib
+
+  # Minimum supported Rust version check
+  msrv:
+    name: Check MSRV
+    needs: [lint]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.74.1
+      - uses: Swatinem/rust-cache@v2
+      - name: Check MSRV
+        run: cargo check -p quinn-proto && cargo check -p quinn-udp && cargo check -p quinn
+
+  # Feature powerset testing
+  features:
+    name: Feature Tests (${{ matrix.os }})
+    needs: [lint]
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@cargo-hack
+      - name: Test feature powerset
+        run: cargo hack check --feature-powerset --optional-deps --no-dev-deps --ignore-unknown-features
+
+  # Coverage reporting
+  coverage:
+    name: Code Coverage
+    needs: [test]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+      - uses: Swatinem/rust-cache@v2
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
+      - name: Generate coverage
+        run: cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info
+      - name: Upload to codecov
+        uses: codecov/codecov-action@v4
+        with:
+          files: lcov.info
           fail_ci_if_error: false
+          token: ${{ secrets.CODECOV_TOKEN }}
+
+  # All jobs passed
+  ci-success:
+    name: CI Success
+    if: success()
+    needs: [lint, audit, test, test-arm, test-bsd, test-wasm, test-android, msrv, features, coverage]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Mark CI as successful
+        run: echo "All CI checks passed!"

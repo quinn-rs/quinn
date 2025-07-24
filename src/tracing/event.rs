@@ -43,7 +43,7 @@ impl TraceId {
         rand::thread_rng().fill_bytes(&mut id);
         TraceId(id)
     }
-    
+
     /// Create a trace ID from bytes
     pub fn from_bytes(bytes: [u8; 16]) -> Self {
         TraceId(bytes)
@@ -68,7 +68,7 @@ pub struct Event {
     pub sequence: u32,
     /// Padding for alignment (4 bytes)
     pub _padding: u32,
-    /// Local node identifier (32 bytes) 
+    /// Local node identifier (32 bytes)
     pub node_id: [u8; 32],
     /// Event-specific data (64 bytes)
     pub event_data: EventData,
@@ -79,18 +79,18 @@ pub struct Event {
 #[repr(C)]
 pub enum EventData {
     // QUIC protocol events
-    ConnInit { 
+    ConnInit {
         /// Encoded socket address (4 bytes for IPv4 + 2 port, 16 bytes for IPv6 + 2 port)
         endpoint_bytes: [u8; 18],
         /// 0 = IPv4, 1 = IPv6
         addr_type: u8,
         _padding: [u8; 45], // Pad to 64 bytes
     },
-    ConnEstablished { 
+    ConnEstablished {
         rtt: u32,
         _padding: [u8; 60],
     },
-    StreamOpened { 
+    StreamOpened {
         stream_id: u64,
         _padding: [u8; 56],
     },
@@ -99,21 +99,21 @@ pub enum EventData {
         error_code: u32,
         _padding: [u8; 52],
     },
-    PacketSent { 
-        size: u32, 
+    PacketSent {
+        size: u32,
         packet_num: u64,
         _padding: [u8; 52],
     },
-    PacketReceived { 
-        size: u32, 
+    PacketReceived {
+        size: u32,
         packet_num: u64,
         _padding: [u8; 52],
     },
-    PacketLost { 
+    PacketLost {
         packet_num: u64,
         _padding: [u8; 56],
     },
-    
+
     // NAT traversal events
     CandidateDiscovered {
         addr_bytes: [u8; 18],
@@ -130,7 +130,7 @@ pub enum EventData {
         rtt: u32,
         _padding: [u8; 28],
     },
-    
+
     // Address discovery events
     ObservedAddressSent {
         addr_bytes: [u8; 18],
@@ -144,7 +144,7 @@ pub enum EventData {
         from_peer: [u8; 32],
         _padding: [u8; 13],
     },
-    
+
     // Application events
     #[cfg(feature = "trace-app")]
     AppCommand {
@@ -153,7 +153,7 @@ pub enum EventData {
         data: [u8; 42],
         _padding: [u8; 16],
     },
-    
+
     // Generic events
     Custom {
         category: u16,
@@ -172,22 +172,31 @@ const _: () = {
 #[cfg(test)]
 mod size_debug {
     use super::*;
-    
+
     #[test]
     fn print_sizes() {
         println!("Event size: {} bytes", std::mem::size_of::<Event>());
         println!("EventData size: {} bytes", std::mem::size_of::<EventData>());
         println!("TraceId size: {} bytes", std::mem::size_of::<TraceId>());
-        
+
         // Print field sizes
         println!("\nEvent fields:");
         println!("  timestamp (u64): {} bytes", std::mem::size_of::<u64>());
-        println!("  trace_id (TraceId): {} bytes", std::mem::size_of::<TraceId>());
+        println!(
+            "  trace_id (TraceId): {} bytes",
+            std::mem::size_of::<TraceId>()
+        );
         println!("  sequence (u32): {} bytes", std::mem::size_of::<u32>());
         println!("  _padding (u32): {} bytes", std::mem::size_of::<u32>());
-        println!("  node_id ([u8; 32]): {} bytes", std::mem::size_of::<[u8; 32]>());
-        println!("  event_data (EventData): {} bytes", std::mem::size_of::<EventData>());
-        
+        println!(
+            "  node_id ([u8; 32]): {} bytes",
+            std::mem::size_of::<[u8; 32]>()
+        );
+        println!(
+            "  event_data (EventData): {} bytes",
+            std::mem::size_of::<EventData>()
+        );
+
         let expected = 8 + 16 + 4 + 4 + 32; // Without EventData
         println!("\nExpected size without EventData: {} bytes", expected);
         println!("Space for EventData: {} bytes", 128 - expected);
@@ -228,7 +237,7 @@ impl Event {
             ..Default::default()
         }
     }
-    
+
     /// Create a connection init event
     pub fn conn_init(endpoint: SocketAddr, trace_id: TraceId) -> Self {
         let (endpoint_bytes, addr_type) = socket_addr_to_bytes(endpoint);
@@ -243,7 +252,7 @@ impl Event {
             ..Default::default()
         }
     }
-    
+
     /// Create a packet sent event
     pub fn packet_sent(size: u32, packet_num: u64, trace_id: TraceId) -> Self {
         Event {
@@ -257,7 +266,7 @@ impl Event {
             ..Default::default()
         }
     }
-    
+
     /// Create a packet received event
     pub fn packet_received(size: u32, packet_num: u64, trace_id: TraceId) -> Self {
         Event {
@@ -274,7 +283,7 @@ impl Event {
 }
 
 #[cfg(feature = "serde")]
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "serde")]
 impl Serialize for TraceId {
@@ -289,7 +298,7 @@ impl Serialize for TraceId {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     #[ignore] // Temporarily ignore until we fix the sizes
     fn test_event_size() {
@@ -297,12 +306,12 @@ mod tests {
         assert_eq!(std::mem::size_of::<EventData>(), 64);
         assert_eq!(std::mem::size_of::<TraceId>(), 16);
     }
-    
+
     #[test]
     fn test_event_creation() {
         let trace_id = TraceId::new();
         let event = Event::conn_init("127.0.0.1:8080".parse().unwrap(), trace_id);
-        
+
         assert_eq!(event.trace_id, trace_id);
         #[cfg(feature = "trace")]
         assert!(event.timestamp > 0);

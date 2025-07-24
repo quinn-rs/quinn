@@ -50,11 +50,11 @@ pub mod cid_generator;
 mod congestion;
 
 // Zero-cost tracing system
-pub mod tracing;
 mod connection_establishment_simple;
 pub mod nat_traversal_api;
 mod token;
 mod token_memory_cache;
+pub mod tracing;
 
 // Public modules with new structure
 pub mod api;

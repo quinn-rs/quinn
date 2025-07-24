@@ -42,7 +42,7 @@ pub struct AddressDiscoveryConfig {
 impl Default for AddressDiscoveryConfig {
     fn default() -> Self {
         Self {
-            enabled: true, // Enabled by default as requested
+            enabled: true,            // Enabled by default as requested
             max_observation_rate: 10, // Reasonable default rate
             observe_all_paths: false, // Only observe active paths by default
         }
@@ -186,9 +186,9 @@ impl EndpointConfig {
         self.rng_seed = seed;
         self
     }
-    
+
     /// Check if address discovery is enabled
-    /// 
+    ///
     /// Checks environment variables first, then falls back to configuration
     pub fn address_discovery_enabled(&self) -> bool {
         // Check environment variable override
@@ -197,15 +197,15 @@ impl EndpointConfig {
         }
         self.address_discovery_config.enabled
     }
-    
+
     /// Set whether address discovery is enabled
     pub fn set_address_discovery_enabled(&mut self, enabled: bool) -> &mut Self {
         self.address_discovery_config.enabled = enabled;
         self
     }
-    
+
     /// Get the maximum observation rate
-    /// 
+    ///
     /// Checks environment variables first, then falls back to configuration
     pub fn max_observation_rate(&self) -> u8 {
         // Check environment variable override
@@ -216,44 +216,44 @@ impl EndpointConfig {
         }
         self.address_discovery_config.max_observation_rate
     }
-    
+
     /// Set the maximum observation rate (0-63 per second)
     pub fn set_max_observation_rate(&mut self, rate: u8) -> &mut Self {
         self.address_discovery_config.max_observation_rate = rate.min(63);
         self
     }
-    
+
     /// Check if all paths should be observed
     pub fn observe_all_paths(&self) -> bool {
         self.address_discovery_config.observe_all_paths
     }
-    
+
     /// Set whether to observe all paths or just active ones
     pub fn set_observe_all_paths(&mut self, observe_all: bool) -> &mut Self {
         self.address_discovery_config.observe_all_paths = observe_all;
         self
     }
-    
+
     /// Builder method for enabling address discovery
     pub fn address_discovery(mut self, enabled: bool) -> Self {
         self.address_discovery_config.enabled = enabled;
         self
     }
-    
+
     /// Builder method for setting observation rate
     pub fn observation_rate(mut self, rate: u8) -> Self {
         self.address_discovery_config.max_observation_rate = rate.min(63);
         self
     }
-    
+
     /// Builder method for observing all paths
     pub fn with_observe_all_paths(mut self, observe_all: bool) -> Self {
         self.address_discovery_config.observe_all_paths = observe_all;
         self
     }
-    
+
     /// Check if address discovery feature is available
-    /// 
+    ///
     /// Always returns true as address discovery is a core feature
     pub fn address_discovery_available(&self) -> bool {
         true

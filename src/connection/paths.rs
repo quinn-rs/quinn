@@ -49,7 +49,7 @@ pub(super) struct PathData {
     /// Snapshot of the qlog recovery metrics
     #[cfg(feature = "__qlog")]
     congestion_metrics: CongestionMetrics,
-    
+
     /// Address discovery information for this path
     pub(super) address_info: PathAddressInfo,
     /// Rate limiter for OBSERVED_ADDRESS frames on this path
@@ -131,7 +131,10 @@ impl PathData {
             #[cfg(feature = "__qlog")]
             congestion_metrics: prev.congestion_metrics.clone(),
             address_info: PathAddressInfo::new(), // Reset for new path
-            observation_rate_limiter: PathObservationRateLimiter::new(prev.observation_rate_limiter.rate as u8, now), // Fresh limiter with same rate
+            observation_rate_limiter: PathObservationRateLimiter::new(
+                prev.observation_rate_limiter.rate as u8,
+                now,
+            ), // Fresh limiter with same rate
         }
     }
 
@@ -151,17 +154,17 @@ impl PathData {
         let rate = self.observation_rate_limiter.rate as u8;
         self.observation_rate_limiter = PathObservationRateLimiter::new(rate, now);
     }
-    
+
     /// Update the observed address for this path
     pub(super) fn update_observed_address(&mut self, address: SocketAddr, now: Instant) {
         self.address_info.update_observed_address(address, now);
     }
-    
+
     /// Check if the observed address has changed from the expected remote address
     pub(super) fn has_address_changed(&self) -> bool {
         self.address_info.has_address_changed(&self.remote)
     }
-    
+
     /// Mark that we've notified the application about the current address
     pub(super) fn mark_address_notified(&mut self) {
         self.address_info.mark_notified();
@@ -566,7 +569,9 @@ impl PathObservationRateLimiter {
 
     /// Update tokens based on elapsed time
     pub(super) fn update_tokens(&mut self, now: Instant) {
-        let elapsed = now.saturating_duration_since(self.last_update).as_secs_f64();
+        let elapsed = now
+            .saturating_duration_since(self.last_update)
+            .as_secs_f64();
         self.tokens = (self.tokens + elapsed * self.rate).min(self.max_tokens);
         self.last_update = now;
     }
@@ -652,9 +657,9 @@ mod tests {
         let mut info = PathAddressInfo::new();
         let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)), 8080);
         let now = Instant::now();
-        
+
         info.update_observed_address(addr, now);
-        
+
         assert_eq!(info.observed_address, Some(addr));
         assert_eq!(info.last_observed, Some(now));
         assert_eq!(info.observation_count, 1);
@@ -666,13 +671,13 @@ mod tests {
         let mut info = PathAddressInfo::new();
         let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)), 443);
         let now1 = Instant::now();
-        
+
         info.update_observed_address(addr, now1);
         assert_eq!(info.observation_count, 1);
-        
+
         let now2 = now1 + Duration::from_secs(1);
         info.update_observed_address(addr, now2);
-        
+
         assert_eq!(info.observed_address, Some(addr));
         assert_eq!(info.last_observed, Some(now2));
         assert_eq!(info.observation_count, 2);
@@ -684,14 +689,14 @@ mod tests {
         let addr1 = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)), 8080);
         let addr2 = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)), 443);
         let now1 = Instant::now();
-        
+
         info.update_observed_address(addr1, now1);
         info.mark_notified();
         assert!(info.notified);
-        
+
         let now2 = now1 + Duration::from_secs(1);
         info.update_observed_address(addr2, now2);
-        
+
         assert_eq!(info.observed_address, Some(addr2));
         assert_eq!(info.last_observed, Some(now2));
         assert_eq!(info.observation_count, 1);
@@ -703,14 +708,14 @@ mod tests {
         let mut info = PathAddressInfo::new();
         let expected = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)), 8080);
         let observed = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)), 443);
-        
+
         // No observed address yet
         assert!(!info.has_address_changed(&expected));
-        
+
         // Same as expected
         info.update_observed_address(expected, Instant::now());
         assert!(!info.has_address_changed(&expected));
-        
+
         // Different from expected
         info.update_observed_address(observed, Instant::now());
         assert!(info.has_address_changed(&expected));
@@ -724,9 +729,9 @@ mod tests {
             8080,
         );
         let now = Instant::now();
-        
+
         info.update_observed_address(addr, now);
-        
+
         assert_eq!(info.observed_address, Some(addr));
         assert_eq!(info.observation_count, 1);
     }
@@ -735,20 +740,20 @@ mod tests {
     fn path_address_info_notification_tracking() {
         let mut info = PathAddressInfo::new();
         assert!(!info.notified);
-        
+
         // First observe an address
         let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 80);
         info.update_observed_address(addr, Instant::now());
         assert!(!info.notified);
-        
+
         // Mark as notified
         info.mark_notified();
         assert!(info.notified);
-        
+
         // Notification flag persists when observing same address
         info.update_observed_address(addr, Instant::now());
         assert!(info.notified); // Still true for same address
-        
+
         // But resets on address change
         let new_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 2)), 80);
         info.update_observed_address(new_addr, Instant::now());
@@ -761,9 +766,9 @@ mod tests {
         let remote = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)), 8080);
         let config = TransportConfig::default();
         let now = Instant::now();
-        
+
         let mut path = PathData::new(remote, false, None, now, &config);
-        
+
         // Should have address_info field
         assert!(path.address_info.observed_address.is_none());
         assert!(path.address_info.last_observed.is_none());
@@ -776,13 +781,13 @@ mod tests {
         let remote = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)), 8080);
         let config = TransportConfig::default();
         let now = Instant::now();
-        
+
         let mut path = PathData::new(remote, false, None, now, &config);
-        
+
         // Update observed address
         let observed = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)), 443);
         path.update_observed_address(observed, now);
-        
+
         assert_eq!(path.address_info.observed_address, Some(observed));
         assert_eq!(path.address_info.last_observed, Some(now));
         assert_eq!(path.address_info.observation_count, 1);
@@ -794,16 +799,16 @@ mod tests {
         let remote = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)), 8080);
         let config = TransportConfig::default();
         let now = Instant::now();
-        
+
         let mut path = PathData::new(remote, false, None, now, &config);
-        
+
         // No change when no observed address
         assert!(!path.has_address_changed());
-        
+
         // Update with same as remote
         path.update_observed_address(remote, now);
         assert!(!path.has_address_changed());
-        
+
         // Update with different address
         let different = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)), 443);
         path.update_observed_address(different, now);
@@ -815,14 +820,14 @@ mod tests {
         let remote = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)), 8080);
         let config = TransportConfig::default();
         let now = Instant::now();
-        
+
         let mut path = PathData::new(remote, false, None, now, &config);
-        
+
         // Update and mark as notified
         let observed = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)), 443);
         path.update_observed_address(observed, now);
         assert!(!path.address_info.notified);
-        
+
         path.mark_address_notified();
         assert!(path.address_info.notified);
     }
@@ -833,17 +838,17 @@ mod tests {
         let remote2 = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)), 443);
         let config = TransportConfig::default();
         let now = Instant::now();
-        
+
         let mut path1 = PathData::new(remote1, false, None, now, &config);
-        
+
         // Set up address info
         let observed = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(1, 2, 3, 4)), 5678);
         path1.update_observed_address(observed, now);
         path1.mark_address_notified();
-        
+
         // Create new path from previous
         let path2 = PathData::from_previous(remote2, &path1, now);
-        
+
         // Address info should be reset for new path
         assert!(path2.address_info.observed_address.is_none());
         assert!(path2.address_info.last_observed.is_none());
@@ -856,17 +861,17 @@ mod tests {
         let remote = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)), 8080);
         let config = TransportConfig::default();
         let now = Instant::now();
-        
+
         let mut path = PathData::new(remote, false, None, now, &config);
-        
+
         // Set up address info
         let observed = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)), 443);
         path.update_observed_address(observed, now);
         path.mark_address_notified();
-        
+
         // Reset should clear address info
         path.reset(now, &config);
-        
+
         assert!(path.address_info.observed_address.is_none());
         assert!(path.address_info.last_observed.is_none());
         assert_eq!(path.address_info.observation_count, 0);
@@ -879,9 +884,9 @@ mod tests {
         let remote = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)), 8080);
         let config = TransportConfig::default();
         let now = Instant::now();
-        
+
         let path = PathData::new(remote, false, None, now, &config);
-        
+
         // Should have a rate limiter
         assert!(path.observation_rate_limiter.tokens > 0.0);
         assert_eq!(path.observation_rate_limiter.rate, 10.0); // Default rate
@@ -894,26 +899,26 @@ mod tests {
         let remote = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)), 8080);
         let config = TransportConfig::default();
         let now = Instant::now();
-        
+
         let mut path = PathData::new(remote, false, None, now, &config);
-        
+
         // Should be able to send initially (has tokens)
         assert!(path.can_send_observation(now));
-        
+
         // Consume a token
         path.consume_observation_token(now);
-        
+
         // Should still have tokens available
         assert!(path.can_send_observation(now));
-        
+
         // Consume all tokens
         for _ in 0..9 {
             path.consume_observation_token(now);
         }
-        
+
         // Should be out of tokens
         assert!(!path.can_send_observation(now));
-        
+
         // Wait for token replenishment
         let later = now + Duration::from_millis(200); // 0.2 seconds = 2 tokens
         assert!(path.can_send_observation(later));
@@ -924,19 +929,19 @@ mod tests {
         let remote = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)), 8080);
         let config = TransportConfig::default();
         let now = Instant::now();
-        
+
         let mut path = PathData::new(remote, false, None, now, &config);
-        
+
         // Consume all tokens
         for _ in 0..10 {
             path.consume_observation_token(now);
         }
         assert_eq!(path.observation_rate_limiter.tokens, 0.0);
-        
+
         // Check replenishment after 1 second
         let later = now + Duration::from_secs(1);
         path.update_observation_tokens(later);
-        
+
         // Should have replenished to max (rate = 10/sec)
         assert_eq!(path.observation_rate_limiter.tokens, 10.0);
     }
@@ -946,20 +951,20 @@ mod tests {
         let remote = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)), 8080);
         let config = TransportConfig::default();
         let now = Instant::now();
-        
+
         let mut path = PathData::new(remote, false, None, now, &config);
-        
+
         // Update with custom rate
         path.set_observation_rate(5); // 5 per second
         assert_eq!(path.observation_rate_limiter.rate, 5.0);
         assert_eq!(path.observation_rate_limiter.max_tokens, 5.0);
-        
+
         // Consume all tokens
         for _ in 0..5 {
             path.consume_observation_token(now);
         }
         assert!(!path.can_send_observation(now));
-        
+
         // Check replenishment with new rate
         let later = now + Duration::from_millis(400); // 0.4 seconds = 2 tokens at rate 5
         path.update_observation_tokens(later);
@@ -972,18 +977,18 @@ mod tests {
         let remote2 = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)), 443);
         let config = TransportConfig::default();
         let now = Instant::now();
-        
+
         let mut path1 = PathData::new(remote1, false, None, now, &config);
-        
+
         // Set custom rate and consume some tokens
         path1.set_observation_rate(20);
         for _ in 0..5 {
             path1.consume_observation_token(now);
         }
-        
+
         // Create new path from previous
         let path2 = PathData::from_previous(remote2, &path1, now);
-        
+
         // New path should have fresh rate limiter with same rate
         assert_eq!(path2.observation_rate_limiter.rate, 20.0);
         assert_eq!(path2.observation_rate_limiter.max_tokens, 20.0);
@@ -995,20 +1000,20 @@ mod tests {
         let remote = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)), 8080);
         let config = TransportConfig::default();
         let now = Instant::now();
-        
+
         let mut path = PathData::new(remote, false, None, now, &config);
-        
+
         // Set custom rate
         path.set_observation_rate(15);
-        
+
         // Consume some tokens
         for _ in 0..3 {
             path.consume_observation_token(now);
         }
-        
+
         // Reset the path
         path.reset(now, &config);
-        
+
         // Rate should be preserved, tokens should be reset
         assert_eq!(path.observation_rate_limiter.rate, 15.0);
         assert_eq!(path.observation_rate_limiter.tokens, 15.0); // Full tokens after reset

@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.4] - 2025-07-24
+
+### Changed
+- Renamed `quinn_high_level` module to `high_level` for better project identity
+  - Updated all imports and references throughout the codebase
+  - No functional changes, purely internal reorganization
+- Consolidated CI workflows: merged `ci.yml` and `rust.yml` into comprehensive CI pipeline
+  - Added extensive platform testing (FreeBSD, NetBSD, Illumos, Android, WASM)
+  - Added beta Rust channel testing and security audits
+  - Improved job dependencies for fail-fast behavior
+  - Better error handling for platform-specific tests
+
 ## [0.4.3] - 2025-07-24
 
 ### Added

@@ -384,7 +384,8 @@ impl ::std::ops::BitOrAssign for Retransmits {
         self.punch_me_now.extend_from_slice(&rhs.punch_me_now);
         self.remove_addresses
             .extend_from_slice(&rhs.remove_addresses);
-        self.observed_addresses.extend_from_slice(&rhs.observed_addresses);
+        self.observed_addresses
+            .extend_from_slice(&rhs.observed_addresses);
     }
 }
 

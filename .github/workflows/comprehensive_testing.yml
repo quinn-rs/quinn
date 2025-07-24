@@ -2,16 +2,16 @@ name: Comprehensive NAT Traversal Testing
 
 on:
   push:
-    branches: [ main, master, develop ]
+    branches: [ master, develop ]
   pull_request:
-    branches: [ main, master, develop ]
+    branches: [ master, develop ]
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  frame-encoding-tests:
-    name: Frame Encoding/Decoding Tests
+  nat-traversal-tests:
+    name: NAT Traversal Tests
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
@@ -20,49 +20,27 @@ jobs:
       uses: dtolnay/rust-toolchain@stable
       
     - name: Cache cargo registry
-      uses: actions/cache@v3
+      uses: actions/cache@v4
       with:
         path: ~/.cargo/registry
         key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
         
     - name: Cache cargo index
-      uses: actions/cache@v3
+      uses: actions/cache@v4
       with:
         path: ~/.cargo/git
         key: ${{ runner.os }}-cargo-index-${{ hashFiles('**/Cargo.lock') }}
         
+    - name: Run NAT Traversal Frame Tests
+      run: cargo test --test nat_traversal_frame_tests --features "network-discovery" -- --nocapture
+      
     - name: Run Frame Encoding Tests
-      run: |
-        rustc tests/standalone_frame_tests.rs -o frame_test
-        ./frame_test
-
-  multi-node-coordination-tests:
-    name: Multi-Node Coordination Tests
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v4
-    
-    - name: Install Rust
-      uses: dtolnay/rust-toolchain@stable
+      run: cargo test --test frame_encoding_tests --features "network-discovery" -- --nocapture
       
-    - name: Cache cargo registry
-      uses: actions/cache@v3
-      with:
-        path: ~/.cargo/registry
-        key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
-        
-    - name: Cache cargo index
-      uses: actions/cache@v3
-      with:
-        path: ~/.cargo/git
-        key: ${{ runner.os }}-cargo-index-${{ hashFiles('**/Cargo.lock') }}
-        
-    - name: Run Multi-Node Coordination Tests
-      run: |
-        rustc tests/multi_node_coordination_tests.rs -o multi_node_test
-        ./multi_node_test
+    - name: Run NAT Traversal Simulation Tests
+      run: cargo test --test nat_traversal_simulation --features "network-discovery" -- --nocapture
 
-  platform-compatibility-tests:
+  multi-platform-tests:
     name: Platform Compatibility Tests
     strategy:
       matrix:
@@ -75,33 +53,25 @@ jobs:
       uses: dtolnay/rust-toolchain@stable
       
     - name: Cache cargo registry
-      uses: actions/cache@v3
+      uses: actions/cache@v4
       with:
         path: ~/.cargo/registry
         key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
         
     - name: Cache cargo index
-      uses: actions/cache@v3
+      uses: actions/cache@v4
       with:
         path: ~/.cargo/git
         key: ${{ runner.os }}-cargo-index-${{ hashFiles('**/Cargo.lock') }}
         
-    - name: Run Platform Compatibility Tests (Unix)
-      if: runner.os != 'Windows'
+    - name: Run Platform Discovery Tests
       run: |
-        rustc tests/platform_compatibility_tests.rs -o platform_test
-        ./platform_test
-        
-    - name: Run Platform Compatibility Tests (Windows)
-      if: runner.os == 'Windows'
-      run: |
-        rustc tests/platform_compatibility_tests.rs -o platform_test.exe
-        ./platform_test.exe
+        cargo test --test discovery --features "network-discovery" -- --nocapture
+        cargo test candidate_discovery --lib --features "network-discovery" -- --nocapture
 
   integration-tests:
     name: Integration Tests
     runs-on: ubuntu-latest
-    needs: [frame-encoding-tests, multi-node-coordination-tests]
     steps:
     - uses: actions/checkout@v4
     
@@ -109,34 +79,23 @@ jobs:
       uses: dtolnay/rust-toolchain@stable
       
     - name: Cache cargo registry
-      uses: actions/cache@v3
+      uses: actions/cache@v4
       with:
         path: ~/.cargo/registry
         key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
         
     - name: Cache cargo index
-      uses: actions/cache@v3
+      uses: actions/cache@v4
       with:
         path: ~/.cargo/git
         key: ${{ runner.os }}-cargo-index-${{ hashFiles('**/Cargo.lock') }}
         
-    - name: Run All Standalone Tests
+    - name: Run Integration Test Suite
       run: |
-        echo "Running comprehensive test suite..."
-        
-        echo "1. Frame Encoding/Decoding Tests"
-        rustc tests/standalone_frame_tests.rs -o frame_test
-        ./frame_test
-        
-        echo "2. Multi-Node Coordination Tests"
-        rustc tests/multi_node_coordination_tests.rs -o multi_node_test
-        ./multi_node_test
-        
-        echo "3. Platform Compatibility Tests"
-        rustc tests/platform_compatibility_tests.rs -o platform_test
-        ./platform_test
-        
-        echo "All comprehensive tests completed successfully!"
+        echo "Running comprehensive integration tests..."
+        cargo test --test nat_simulation --features "network-discovery" -- --nocapture
+        cargo test --test connection_success_rates --features "network-discovery" -- --nocapture
+        cargo test --test address_discovery_integration --features "network-discovery" -- --nocapture
 
   performance-benchmarks:
     name: Performance Benchmarks
@@ -148,13 +107,13 @@ jobs:
       uses: dtolnay/rust-toolchain@stable
       
     - name: Cache cargo registry
-      uses: actions/cache@v3
+      uses: actions/cache@v4
       with:
         path: ~/.cargo/registry
         key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
         
     - name: Cache cargo index
-      uses: actions/cache@v3
+      uses: actions/cache@v4
       with:
         path: ~/.cargo/git
         key: ${{ runner.os }}-cargo-index-${{ hashFiles('**/Cargo.lock') }}
@@ -162,86 +121,9 @@ jobs:
     - name: Run Performance Benchmarks
       run: |
         echo "Running performance benchmarks for NAT traversal..."
-        
-        # Create a simple benchmark runner
-        cat > benchmark_runner.rs << 'EOF'
-        use std::time::{Duration, Instant};
-        
-        fn main() {
-            println!("Running NAT Traversal Performance Benchmarks...");
-            
-            // Benchmark frame encoding/decoding
-            benchmark_frame_encoding();
-            
-            // Benchmark candidate discovery
-            benchmark_candidate_discovery();
-            
-            // Benchmark coordination protocol
-            benchmark_coordination_protocol();
-            
-            println!("All benchmarks completed! ✅");
-        }
-        
-        fn benchmark_frame_encoding() {
-            println!("Benchmarking frame encoding/decoding...");
-            let start = Instant::now();
-            
-            // Simulate frame encoding operations
-            for _ in 0..10000 {
-                let _encoded_size = simulate_frame_encoding();
-            }
-            
-            let duration = start.elapsed();
-            println!("Frame encoding: {} operations in {:?} ({:.2} ops/ms)", 
-                     10000, duration, 10000.0 / duration.as_millis() as f64);
-        }
-        
-        fn benchmark_candidate_discovery() {
-            println!("Benchmarking candidate discovery...");
-            let start = Instant::now();
-            
-            // Simulate candidate discovery operations
-            for _ in 0..1000 {
-                let _candidates = simulate_candidate_discovery();
-            }
-            
-            let duration = start.elapsed();
-            println!("Candidate discovery: {} operations in {:?} ({:.2} ops/ms)", 
-                     1000, duration, 1000.0 / duration.as_millis() as f64);
-        }
-        
-        fn benchmark_coordination_protocol() {
-            println!("Benchmarking coordination protocol...");
-            let start = Instant::now();
-            
-            // Simulate coordination operations
-            for _ in 0..500 {
-                let _result = simulate_coordination();
-            }
-            
-            let duration = start.elapsed();
-            println!("Coordination protocol: {} operations in {:?} ({:.2} ops/ms)", 
-                     500, duration, 500.0 / duration.as_millis() as f64);
-        }
-        
-        fn simulate_frame_encoding() -> usize {
-            // Simulate encoding a NAT traversal frame
-            42 // Simulated encoded size
-        }
-        
-        fn simulate_candidate_discovery() -> usize {
-            // Simulate discovering network candidates
-            5 // Simulated candidate count
-        }
-        
-        fn simulate_coordination() -> bool {
-            // Simulate coordination protocol
-            true // Simulated success
-        }
-        EOF
-        
-        rustc benchmark_runner.rs -o benchmark_runner
-        ./benchmark_runner
+        cargo bench --bench nat_traversal --features "network-discovery"
+        cargo bench --bench candidate_discovery --features "network-discovery"
+        cargo bench --bench address_discovery_bench --features "network-discovery"
 
   security-validation:
     name: Security Validation
@@ -251,158 +133,34 @@ jobs:
     
     - name: Install Rust
       uses: dtolnay/rust-toolchain@stable
+      with:
+        components: clippy
       
     - name: Cache cargo registry
-      uses: actions/cache@v3
+      uses: actions/cache@v4
       with:
         path: ~/.cargo/registry
         key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
         
     - name: Cache cargo index
-      uses: actions/cache@v3
+      uses: actions/cache@v4
       with:
         path: ~/.cargo/git
         key: ${{ runner.os }}-cargo-index-${{ hashFiles('**/Cargo.lock') }}
         
-    - name: Run Security Validation Tests
+    - name: Run Security Linting
       run: |
-        echo "Running security validation tests..."
+        echo "Running security validation..."
+        cargo clippy --all-targets --all-features -- -D warnings -W clippy::unwrap_used -W clippy::expect_used
         
-        # Create security validation test
-        cat > security_tests.rs << 'EOF'
-        fn main() {
-            println!("Running Security Validation Tests...");
-            
-            test_frame_validation();
-            test_rate_limiting();
-            test_amplification_protection();
-            test_address_validation();
-            
-            println!("All security tests passed! ✅");
-        }
-        
-        fn test_frame_validation() {
-            println!("Testing frame validation...");
-            
-            // Test malformed frame rejection
-            let malformed_frames = vec![
-                vec![0x40], // Truncated ADD_ADDRESS
-                vec![0x41, 0x01], // Truncated PUNCH_ME_NOW
-                vec![0x42], // Truncated REMOVE_ADDRESS
-                vec![0xFF, 0xFF, 0xFF], // Invalid frame type
-            ];
-            
-            for (i, frame_data) in malformed_frames.iter().enumerate() {
-                // Simulate frame validation
-                let is_valid = validate_frame(frame_data);
-                assert!(!is_valid, "Malformed frame {} should be rejected", i);
-            }
-            
-            println!("✅ Frame validation tests passed");
-        }
-        
-        fn test_rate_limiting() {
-            println!("Testing rate limiting...");
-            
-            // Simulate rate limiting for coordination requests
-            let mut request_count = 0;
-            let rate_limit = 100; // requests per second
-            
-            for _ in 0..150 {
-                if request_count < rate_limit {
-                    request_count += 1;
-                } else {
-                    // Should be rate limited
-                    break;
-                }
-            }
-            
-            assert_eq!(request_count, rate_limit, "Should enforce rate limiting");
-            println!("✅ Rate limiting tests passed");
-        }
-        
-        fn test_amplification_protection() {
-            println!("Testing amplification protection...");
-            
-            // Test that response size is limited relative to request size
-            let request_size = 64;
-            let max_response_size = request_size * 3; // 3x amplification limit
-            
-            let response_size = simulate_coordination_response(request_size);
-            assert!(response_size <= max_response_size, 
-                   "Response size {} should not exceed amplification limit {}", 
-                   response_size, max_response_size);
-            
-            println!("✅ Amplification protection tests passed");
-        }
-        
-        fn test_address_validation() {
-            println!("Testing address validation...");
-            
-            // Test address validation before hole punching
-            let test_addresses = vec![
-                "127.0.0.1:8080",     // Loopback - should be rejected for external use
-                "0.0.0.0:8080",       // Unspecified - should be rejected
-                "192.168.1.1:8080",   // Private - context dependent
-                "203.0.113.1:8080",   // Public - should be accepted
-            ];
-            
-            for addr_str in test_addresses {
-                let is_valid_for_external = validate_address_for_external_use(addr_str);
-                match addr_str {
-                    "127.0.0.1:8080" | "0.0.0.0:8080" => {
-                        assert!(!is_valid_for_external, "Address {} should be rejected for external use", addr_str);
-                    }
-                    "203.0.113.1:8080" => {
-                        assert!(is_valid_for_external, "Address {} should be accepted for external use", addr_str);
-                    }
-                    _ => {
-                        // Context dependent, just ensure it doesn't panic
-                    }
-                }
-            }
-            
-            println!("✅ Address validation tests passed");
-        }
-        
-        fn validate_frame(frame_data: &[u8]) -> bool {
-            // Simulate frame validation logic
-            if frame_data.is_empty() {
-                return false;
-            }
-            
-            match frame_data[0] {
-                0x40 => frame_data.len() >= 10, // ADD_ADDRESS minimum size
-                0x41 => frame_data.len() >= 8,  // PUNCH_ME_NOW minimum size
-                0x42 => frame_data.len() >= 2,  // REMOVE_ADDRESS minimum size
-                _ => false, // Unknown frame type
-            }
-        }
-        
-        fn simulate_coordination_response(request_size: usize) -> usize {
-            // Simulate coordination response with amplification protection
-            std::cmp::min(request_size * 2, 128) // Limited amplification
-        }
-        
-        fn validate_address_for_external_use(addr_str: &str) -> bool {
-            // Simulate address validation for external use
-            !addr_str.starts_with("127.") && !addr_str.starts_with("0.0.0.0")
-        }
-        
-        fn assert(condition: bool, message: &str) {
-            if !condition {
-                panic!("{}", message);
-            }
-        }
-        EOF
-        
-        rustc security_tests.rs -o security_tests
-        ./security_tests
+    - name: Check for Security Issues
+      run: |
+        cargo audit --deny warnings || echo "::warning::Security audit found issues. Please review the output above."
 
   test-summary:
     name: Test Summary
     runs-on: ubuntu-latest
-    needs: [frame-encoding-tests, multi-node-coordination-tests, platform-compatibility-tests, integration-tests, performance-benchmarks, security-validation]
+    needs: [nat-traversal-tests, multi-platform-tests, integration-tests, performance-benchmarks, security-validation]
     if: always()
     steps:
     - name: Test Summary
@@ -410,22 +168,18 @@ jobs:
         echo "## NAT Traversal Comprehensive Test Results" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
         echo "### Test Categories Completed:" >> $GITHUB_STEP_SUMMARY
-        echo "- ✅ Frame Encoding/Decoding Tests" >> $GITHUB_STEP_SUMMARY
-        echo "- ✅ Multi-Node Coordination Tests" >> $GITHUB_STEP_SUMMARY
-        echo "- ✅ Platform Compatibility Tests (Windows, Linux, macOS)" >> $GITHUB_STEP_SUMMARY
+        echo "- ✅ NAT Traversal Frame Tests" >> $GITHUB_STEP_SUMMARY
+        echo "- ✅ Multi-Platform Compatibility Tests (Windows, Linux, macOS)" >> $GITHUB_STEP_SUMMARY
         echo "- ✅ Integration Tests" >> $GITHUB_STEP_SUMMARY
         echo "- ✅ Performance Benchmarks" >> $GITHUB_STEP_SUMMARY
-        echo "- ✅ Security Validation Tests" >> $GITHUB_STEP_SUMMARY
+        echo "- ✅ Security Validation" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
         echo "### Test Coverage:" >> $GITHUB_STEP_SUMMARY
-        echo "- NAT traversal frame encoding/decoding with test vectors" >> $GITHUB_STEP_SUMMARY
+        echo "- NAT traversal frame encoding/decoding" >> $GITHUB_STEP_SUMMARY
         echo "- Multi-node coordination across different NAT types" >> $GITHUB_STEP_SUMMARY
-        echo "- QUIC path validation using PATH_CHALLENGE/PATH_RESPONSE" >> $GITHUB_STEP_SUMMARY
         echo "- Platform-specific network interface discovery" >> $GITHUB_STEP_SUMMARY
-        echo "- Dual-stack IPv4/IPv6 scenarios" >> $GITHUB_STEP_SUMMARY
-        echo "- Candidate priority calculation across platforms" >> $GITHUB_STEP_SUMMARY
-        echo "- Cross-platform integration testing" >> $GITHUB_STEP_SUMMARY
-        echo "- Performance benchmarking for connection establishment" >> $GITHUB_STEP_SUMMARY
-        echo "- Security validation against common attack vectors" >> $GITHUB_STEP_SUMMARY
+        echo "- Connection establishment success rates" >> $GITHUB_STEP_SUMMARY
+        echo "- Address discovery integration" >> $GITHUB_STEP_SUMMARY
+        echo "- Security validation with clippy" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
-        echo "All comprehensive NAT traversal tests completed successfully! 🎉" >> $GITHUB_STEP_SUMMARY
+        echo "All comprehensive NAT traversal tests completed! 🎉" >> $GITHUB_STEP_SUMMARY

@@ -10,26 +10,8 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  create-release:
-    name: Create Release
-    runs-on: ubuntu-latest
-    outputs:
-      upload_url: ${{ steps.create_release.outputs.upload_url }}
-    steps:
-      - name: Create Release
-        id: create_release
-        uses: actions/create-release@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tag_name: ${{ github.ref }}
-          release_name: Release ${{ github.ref }}
-          draft: false
-          prerelease: false
-
   build:
     name: Build ${{ matrix.target }}
-    needs: create-release
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -101,12 +83,54 @@ jobs:
           7z a ../../../${{ matrix.archive }} ${{ matrix.binary }}
           cd -
 
-      - name: Upload Release Asset
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
         with:
-          upload_url: ${{ needs.create-release.outputs.upload_url }}
-          asset_path: ./${{ matrix.archive }}
-          asset_name: ${{ matrix.archive }}
-          asset_content_type: application/octet-stream
+          name: ${{ matrix.archive }}
+          path: ${{ matrix.archive }}
+          retention-days: 1
+
+  release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/**/*
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+          body: |
+            ## ant-quic Release ${{ github.ref_name }}
+            
+            ### Installation
+            
+            Download the appropriate binary for your platform from the assets below.
+            
+            #### Linux/macOS
+            ```bash
+            tar -xzf ant-quic-*.tar.gz
+            chmod +x ant-quic
+            ./ant-quic --help
+            ```
+            
+            #### Windows
+            ```powershell
+            Expand-Archive ant-quic-*.zip
+            .\ant-quic.exe --help
+            ```
+            
+            ### What's Changed
+            See the automatically generated release notes below for a complete list of changes.

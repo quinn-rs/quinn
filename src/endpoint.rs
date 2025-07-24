@@ -1402,9 +1402,9 @@ impl Endpoint {
     pub fn config(&self) -> &EndpointConfig {
         &self.config
     }
-    
+
     /// Enable or disable address discovery for this endpoint
-    /// 
+    ///
     /// Address discovery is enabled by default. When enabled, the endpoint will:
     /// - Send OBSERVED_ADDRESS frames to peers to inform them of their reflexive addresses
     /// - Process received OBSERVED_ADDRESS frames to learn about its own reflexive addresses
@@ -1414,26 +1414,26 @@ impl Endpoint {
         // Note: Existing connections will continue with their current setting.
         // New connections will use the updated setting.
     }
-    
+
     /// Check if address discovery is enabled
     pub fn address_discovery_enabled(&self) -> bool {
         self.address_discovery_enabled
     }
-    
+
     /// Get all discovered addresses across all connections
-    /// 
+    ///
     /// Returns a list of unique socket addresses that have been observed
     /// by remote peers and reported via OBSERVED_ADDRESS frames.
-    /// 
+    ///
     /// Note: This returns an empty vector in the current implementation.
     /// Applications should track discovered addresses at the connection level.
     pub fn discovered_addresses(&self) -> Vec<SocketAddr> {
         // TODO: Implement address tracking at the endpoint level
         Vec::new()
     }
-    
+
     /// Set a callback to be invoked when an address change is detected
-    /// 
+    ///
     /// The callback receives the old address (if any) and the new address.
     /// Only one callback can be set at a time; setting a new callback replaces the previous one.
     pub fn set_address_change_callback<F>(&mut self, callback: F)
@@ -1442,14 +1442,14 @@ impl Endpoint {
     {
         self.address_change_callback = Some(Box::new(callback));
     }
-    
+
     /// Clear the address change callback
     pub fn clear_address_change_callback(&mut self) {
         self.address_change_callback = None;
     }
-    
+
     /// Get address discovery statistics
-    /// 
+    ///
     /// Note: This returns default statistics in the current implementation.
     /// Applications should track statistics at the connection level.
     pub fn address_discovery_stats(&self) -> AddressDiscoveryStats {

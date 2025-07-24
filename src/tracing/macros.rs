@@ -15,16 +15,19 @@ macro_rules! trace_event {
 #[macro_export]
 macro_rules! trace_packet_sent {
     ($log:expr, $trace_id:expr, $size:expr, $num:expr) => {
-        $crate::trace_event!($log, $crate::tracing::Event {
-            timestamp: $crate::tracing::timestamp_now(),
-            trace_id: $trace_id,
-            event_data: $crate::tracing::EventData::PacketSent {
-                size: $size as u32,
-                packet_num: $num,
-                _padding: [0u8; 52],
-            },
-            ..Default::default()
-        })
+        $crate::trace_event!(
+            $log,
+            $crate::tracing::Event {
+                timestamp: $crate::tracing::timestamp_now(),
+                trace_id: $trace_id,
+                event_data: $crate::tracing::EventData::PacketSent {
+                    size: $size as u32,
+                    packet_num: $num,
+                    _padding: [0u8; 52],
+                },
+                ..Default::default()
+            }
+        )
     };
 }
 
@@ -32,16 +35,19 @@ macro_rules! trace_packet_sent {
 #[macro_export]
 macro_rules! trace_packet_received {
     ($log:expr, $trace_id:expr, $size:expr, $num:expr) => {
-        $crate::trace_event!($log, $crate::tracing::Event {
-            timestamp: $crate::tracing::timestamp_now(),
-            trace_id: $trace_id,
-            event_data: $crate::tracing::EventData::PacketReceived {
-                size: $size as u32,
-                packet_num: $num,
-                _padding: [0u8; 52],
-            },
-            ..Default::default()
-        })
+        $crate::trace_event!(
+            $log,
+            $crate::tracing::Event {
+                timestamp: $crate::tracing::timestamp_now(),
+                trace_id: $trace_id,
+                event_data: $crate::tracing::EventData::PacketReceived {
+                    size: $size as u32,
+                    packet_num: $num,
+                    _padding: [0u8; 52],
+                },
+                ..Default::default()
+            }
+        )
     };
 }
 
@@ -49,15 +55,18 @@ macro_rules! trace_packet_received {
 #[macro_export]
 macro_rules! trace_stream_opened {
     ($log:expr, $trace_id:expr, $stream_id:expr) => {
-        $crate::trace_event!($log, $crate::tracing::Event {
-            timestamp: $crate::tracing::timestamp_now(),
-            trace_id: $trace_id,
-            event_data: $crate::tracing::EventData::StreamOpened {
-                stream_id: $stream_id,
-                _padding: [0u8; 56],
-            },
-            ..Default::default()
-        })
+        $crate::trace_event!(
+            $log,
+            $crate::tracing::Event {
+                timestamp: $crate::tracing::timestamp_now(),
+                trace_id: $trace_id,
+                event_data: $crate::tracing::EventData::StreamOpened {
+                    stream_id: $stream_id,
+                    _padding: [0u8; 56],
+                },
+                ..Default::default()
+            }
+        )
     };
 }
 
@@ -65,15 +74,18 @@ macro_rules! trace_stream_opened {
 #[macro_export]
 macro_rules! trace_conn_established {
     ($log:expr, $trace_id:expr, $rtt:expr) => {
-        $crate::trace_event!($log, $crate::tracing::Event {
-            timestamp: $crate::tracing::timestamp_now(),
-            trace_id: $trace_id,
-            event_data: $crate::tracing::EventData::ConnEstablished {
-                rtt: $rtt as u32,
-                _padding: [0u8; 60],
-            },
-            ..Default::default()
-        })
+        $crate::trace_event!(
+            $log,
+            $crate::tracing::Event {
+                timestamp: $crate::tracing::timestamp_now(),
+                trace_id: $trace_id,
+                event_data: $crate::tracing::EventData::ConnEstablished {
+                    rtt: $rtt as u32,
+                    _padding: [0u8; 60],
+                },
+                ..Default::default()
+            }
+        )
     };
 }
 
@@ -155,33 +167,36 @@ macro_rules! trace_candidate_discovered {
 #[macro_export]
 macro_rules! trace_hole_punching_started {
     ($log:expr, $trace_id:expr, $peer:expr) => {
-        $crate::trace_event!($log, $crate::tracing::Event {
-            timestamp: $crate::tracing::timestamp_now(),
-            trace_id: $trace_id,
-            event_data: $crate::tracing::EventData::HolePunchingStarted {
-                peer: $peer,
-                _padding: [0u8; 32],
-            },
-            ..Default::default()
-        })
+        $crate::trace_event!(
+            $log,
+            $crate::tracing::Event {
+                timestamp: $crate::tracing::timestamp_now(),
+                trace_id: $trace_id,
+                event_data: $crate::tracing::EventData::HolePunchingStarted {
+                    peer: $peer,
+                    _padding: [0u8; 32],
+                },
+                ..Default::default()
+            }
+        )
     };
 }
 
 #[cfg(test)]
 mod tests {
     use crate::tracing::{EventLog, TraceId};
-    
+
     #[test]
     fn test_trace_macros() {
         let log = EventLog::new();
         let trace_id = TraceId::new();
-        
+
         // These should compile whether trace is enabled or not
         trace_packet_sent!(&log, trace_id, 1200, 42);
         trace_packet_received!(&log, trace_id, 1200, 43);
         trace_stream_opened!(&log, trace_id, 1);
         trace_conn_established!(&log, trace_id, 25);
-        
+
         if_trace! {
             // This code only exists when trace is enabled
             #[cfg(feature = "trace")]

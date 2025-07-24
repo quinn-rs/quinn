@@ -1,8 +1,8 @@
 //! Lock-free ring buffer for event storage
 
 use super::event::{Event, TraceId};
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::ptr;
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
 #[cfg(feature = "trace-index")]
 use dashmap::DashMap;
@@ -14,10 +14,10 @@ impl TraceConfig {
     /// Ring buffer size (must be power of 2)
     #[cfg(not(feature = "trace-minimal"))]
     pub const BUFFER_SIZE: usize = 65536; // ~8MB
-    
+
     #[cfg(feature = "trace-minimal")]
     pub const BUFFER_SIZE: usize = 4096; // ~512KB
-    
+
     pub const BUFFER_MASK: usize = Self::BUFFER_SIZE - 1;
 }
 
@@ -29,7 +29,7 @@ pub struct EventLog {
     write_index: AtomicU64,
     /// Sequence counter for events
     sequence_counter: AtomicU32,
-    
+
     /// Optional indices for fast queries
     #[cfg(feature = "trace-index")]
     indices: EventIndices,
@@ -54,9 +54,10 @@ impl EventLog {
             .collect();
         let events = events.into_boxed_slice();
         let events = unsafe {
-            Box::from_raw(Box::into_raw(events) as *mut [std::cell::UnsafeCell<Event>; TraceConfig::BUFFER_SIZE])
+            Box::from_raw(Box::into_raw(events)
+                as *mut [std::cell::UnsafeCell<Event>; TraceConfig::BUFFER_SIZE])
         };
-        
+
         EventLog {
             events,
             write_index: AtomicU64::new(0),
@@ -68,27 +69,27 @@ impl EventLog {
             },
         }
     }
-    
+
     /// Log an event (lock-free)
     pub fn log(&self, mut event: Event) {
         // Set sequence number
         event.sequence = self.sequence_counter.fetch_add(1, Ordering::Relaxed);
-        
+
         // Get write position
         let idx = self.write_index.fetch_add(1, Ordering::Relaxed);
         let slot = (idx & TraceConfig::BUFFER_MASK as u64) as usize;
-        
+
         // Write to ring buffer (atomic write)
         unsafe {
             let ptr = self.events[slot].get();
             ptr::write_volatile(ptr, event.clone());
         }
-        
+
         // Update indices if enabled
         #[cfg(feature = "trace-index")]
         self.update_indices(slot, &event);
     }
-    
+
     #[cfg(feature = "trace-index")]
     fn update_indices(&self, slot: usize, event: &Event) {
         // Index by trace ID
@@ -97,13 +98,15 @@ impl EventLog {
             .entry(event.trace_id)
             .or_insert_with(Vec::new)
             .push(slot as u32);
-        
+
         // Index by peer if present in event data
         use super::event::EventData;
         match &event.event_data {
-            EventData::HolePunchingStarted { peer, .. } |
-            EventData::HolePunchingSucceeded { peer, .. } |
-            EventData::ObservedAddressReceived { from_peer: peer, .. } => {
+            EventData::HolePunchingStarted { peer, .. }
+            | EventData::HolePunchingSucceeded { peer, .. }
+            | EventData::ObservedAddressReceived {
+                from_peer: peer, ..
+            } => {
                 self.indices
                     .by_peer
                     .entry(*peer)
@@ -113,39 +116,41 @@ impl EventLog {
             _ => {}
         }
     }
-    
+
     /// Get recent events (newest first)
     pub fn recent_events(&self, count: usize) -> Vec<Event> {
         let current_idx = self.write_index.load(Ordering::Relaxed);
         let mut events = Vec::with_capacity(count.min(TraceConfig::BUFFER_SIZE));
-        
+
         // Don't scan more than we've written
-        let scan_count = count.min(current_idx as usize).min(TraceConfig::BUFFER_SIZE);
-        
+        let scan_count = count
+            .min(current_idx as usize)
+            .min(TraceConfig::BUFFER_SIZE);
+
         for i in 0..scan_count {
             let idx = current_idx.saturating_sub(i as u64 + 1);
             if idx >= current_idx {
                 break; // Underflow protection
             }
-            
+
             let slot = (idx & TraceConfig::BUFFER_MASK as u64) as usize;
-            
+
             let event = unsafe {
                 let ptr = self.events[slot].get();
                 ptr::read_volatile(ptr)
             };
-            
+
             // Skip uninitialized slots
             if event.timestamp == 0 {
                 break;
             }
-            
+
             events.push(event);
         }
-        
+
         events
     }
-    
+
     /// Query events by trace ID
     #[cfg(feature = "trace-index")]
     pub fn query_trace(&self, trace_id: TraceId) -> Vec<Event> {
@@ -161,82 +166,82 @@ impl EventLog {
             Vec::new()
         }
     }
-    
+
     /// Query events by trace ID (without index)
     #[cfg(not(feature = "trace-index"))]
     pub fn query_trace(&self, trace_id: TraceId) -> Vec<Event> {
         let current_idx = self.write_index.load(Ordering::Relaxed);
         let mut events = Vec::new();
-        
+
         // Only scan up to current write position or buffer size
         let scan_count = current_idx.min(TraceConfig::BUFFER_SIZE as u64);
-        
+
         // Linear scan through buffer
         for i in 0..scan_count {
             let idx = current_idx.saturating_sub(i + 1);
             let slot = (idx & TraceConfig::BUFFER_MASK as u64) as usize;
-            
+
             let event = unsafe {
                 let ptr = self.events[slot].get();
                 ptr::read_volatile(ptr)
             };
-            
+
             if event.timestamp == 0 {
                 break;
             }
-            
+
             if event.trace_id == trace_id {
                 events.push(event);
             }
         }
-        
+
         events
     }
-    
+
     /// Query events by time range
     pub fn query_time_range(&self, start: u64, end: u64) -> Vec<Event> {
         let current_idx = self.write_index.load(Ordering::Relaxed);
         let mut events = Vec::new();
-        
+
         for i in 0..TraceConfig::BUFFER_SIZE {
             let idx = current_idx.saturating_sub(i as u64 + 1);
             let slot = (idx & TraceConfig::BUFFER_MASK as u64) as usize;
-            
+
             let event = unsafe {
                 let ptr = self.events[slot].get();
                 ptr::read_volatile(ptr)
             };
-            
+
             if event.timestamp == 0 || event.timestamp < start {
                 break;
             }
-            
+
             if event.timestamp <= end {
                 events.push(event);
             }
         }
-        
+
         events.reverse(); // Return in chronological order
         events
     }
-    
+
     /// Get total number of events logged
     pub fn event_count(&self) -> u64 {
         self.write_index.load(Ordering::Relaxed)
     }
-    
+
     // Alias methods for TraceQuery compatibility
-    
+
     /// Get events by trace ID (alias for query_trace)
     pub fn get_events_by_trace(&self, trace_id: TraceId) -> Vec<Event> {
         self.query_trace(trace_id)
     }
-    
+
     /// Get recent events (alias for recent_events)
     pub fn get_recent_events(&self, count: usize) -> Vec<Event> {
         self.recent_events(count)
     }
-    
+
     /// Get events in time range (alias for query_time_range)
     pub fn get_events_in_range(&self, start: u64, end: u64) -> Vec<Event> {
         self.query_time_range(start, end)
@@ -250,24 +255,24 @@ unsafe impl Sync for EventLog {}
 #[cfg(all(test, feature = "trace"))]
 mod tests {
     use super::*;
-    use std::thread;
     use std::sync::Arc;
-    
+    use std::thread;
+
     #[test]
     fn test_ring_buffer_basic() {
         let log = EventLog::new();
         let trace_id = TraceId::new();
-        
+
         // Log some events
         for i in 0..10 {
             let event = Event::packet_sent(100 + i, i as u64, trace_id);
             log.log(event);
         }
-        
+
         // Check recent events
         let recent = log.recent_events(5);
         assert_eq!(recent.len(), 5);
-        
+
         // Most recent should have highest packet number
         match &recent[0].event_data {
             crate::tracing::event::EventData::PacketSent { packet_num, .. } => {
@@ -276,12 +281,12 @@ mod tests {
             _ => panic!("Wrong event type"),
         }
     }
-    
+
     #[test]
     fn test_concurrent_logging() {
         let log = Arc::new(EventLog::new());
         let mut handles = vec![];
-        
+
         // Spawn multiple threads logging concurrently
         for thread_id in 0..4 {
             let log_clone = log.clone();
@@ -294,27 +299,27 @@ mod tests {
             });
             handles.push(handle);
         }
-        
+
         // Wait for all threads
         for handle in handles {
             handle.join().unwrap();
         }
-        
+
         // Should have logged 400 events
         assert_eq!(log.event_count(), 400);
     }
-    
+
     #[test]
     fn test_ring_buffer_wraparound() {
         let log = EventLog::new();
         let trace_id = TraceId::new();
-        
+
         // Log more events than buffer size
         for i in 0..(TraceConfig::BUFFER_SIZE + 100) {
             let event = Event::packet_sent(i as u32, i as u64, trace_id);
             log.log(event);
         }
-        
+
         // Recent events should still work
         let recent = log.recent_events(10);
         assert_eq!(recent.len(), 10);

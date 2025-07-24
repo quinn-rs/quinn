@@ -1173,7 +1173,7 @@ pub(crate) struct ObservedAddress {
 impl ObservedAddress {
     pub(crate) fn encode<W: BufMut>(&self, buf: &mut W) {
         buf.write(FrameType::OBSERVED_ADDRESS);
-        
+
         match self.address {
             SocketAddr::V4(addr) => {
                 buf.put_u8(4); // IPv4 indicator
@@ -1685,7 +1685,7 @@ mod test {
         for original in ipv4_cases {
             let mut buf = Vec::new();
             original.encode(&mut buf);
-            
+
             let decoded_frames = frames(buf);
             assert_eq!(decoded_frames.len(), 1);
 
@@ -1719,7 +1719,7 @@ mod test {
         for original in ipv6_cases {
             let mut buf = Vec::new();
             original.encode(&mut buf);
-            
+
             let decoded_frames = frames(buf);
             assert_eq!(decoded_frames.len(), 1);
 
@@ -1787,7 +1787,7 @@ mod test {
     fn observed_address_frame_serialization_edge_cases() {
         use bytes::BufMut;
         use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
-        
+
         // Test with port 0
         let frame_port_0 = ObservedAddress {
             address: SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)), 0),
@@ -1855,7 +1855,7 @@ mod test {
     #[test]
     fn observed_address_frame_size_compliance() {
         use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
-        
+
         // Test that frame sizes are reasonable and within expected bounds
         let test_addresses = vec![
             ObservedAddress {
@@ -1872,16 +1872,24 @@ mod test {
         for frame in test_addresses {
             let mut buf = Vec::new();
             frame.encode(&mut buf);
-            
+
             // Frame type (1-2 bytes) + IP version (1 byte) + address + port (2 bytes)
             // IPv4: 1-2 + 1 + 4 + 2 = 8-9 bytes
             // IPv6: 1-2 + 1 + 16 + 2 = 20-21 bytes
             match frame.address.ip() {
                 IpAddr::V4(_) => {
-                    assert!(buf.len() >= 8 && buf.len() <= 9, "IPv4 frame size {} out of expected range", buf.len());
+                    assert!(
+                        buf.len() >= 8 && buf.len() <= 9,
+                        "IPv4 frame size {} out of expected range",
+                        buf.len()
+                    );
                 }
                 IpAddr::V6(_) => {
-                    assert!(buf.len() >= 20 && buf.len() <= 21, "IPv6 frame size {} out of expected range", buf.len());
+                    assert!(
+                        buf.len() >= 20 && buf.len() <= 21,
+                        "IPv6 frame size {} out of expected range",
+                        buf.len()
+                    );
                 }
             }
         }
@@ -1891,7 +1899,7 @@ mod test {
     fn observed_address_multiple_frames_in_packet() {
         use crate::coding::BufMutExt;
         use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
-        
+
         // Test that multiple OBSERVED_ADDRESS frames can be encoded/decoded in a single packet
         let observed1 = ObservedAddress {
             address: SocketAddr::new(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)), 1234),
@@ -1915,7 +1923,7 @@ mod test {
 
         let decoded_frames = frames(buf);
         assert_eq!(decoded_frames.len(), 4);
-        
+
         // Verify each frame matches
         match &decoded_frames[0] {
             Frame::ObservedAddress(dec) => {
@@ -1923,19 +1931,19 @@ mod test {
             }
             _ => panic!("Expected ObservedAddress at position 0"),
         }
-        
+
         match &decoded_frames[1] {
             Frame::Ping => {}
             _ => panic!("Expected Ping at position 1"),
         }
-        
+
         match &decoded_frames[2] {
             Frame::ObservedAddress(dec) => {
                 assert_eq!(observed2.address, dec.address);
             }
             _ => panic!("Expected ObservedAddress at position 2"),
         }
-        
+
         match &decoded_frames[3] {
             Frame::Padding => {}
             _ => panic!("Expected Padding at position 3"),
@@ -1948,33 +1956,33 @@ mod test {
 
         // Test that parser can recover from malformed OBSERVED_ADDRESS frames
         let mut buf = Vec::new();
-        
+
         // Valid PING frame
         buf.put_u8(FrameType::PING.0 as u8);
-        
+
         // Malformed OBSERVED_ADDRESS frame (invalid IP version)
         buf.put_u8(FrameType::OBSERVED_ADDRESS.0 as u8);
         buf.put_u8(99); // Invalid IP version
         buf.put_slice(&[192, 168, 1, 1]);
         buf.put_u16(8080);
-        
+
         // Another valid PING frame (should not be parsed due to error above)
         buf.put_u8(FrameType::PING.0 as u8);
 
         let result = Iter::new(Bytes::from(buf));
         assert!(result.is_ok());
         let mut iter = result.unwrap();
-        
+
         // First frame should parse successfully
         let frame1 = iter.next();
         assert!(frame1.is_some());
         assert!(frame1.unwrap().is_ok());
-        
+
         // Second frame should fail
         let frame2 = iter.next();
         assert!(frame2.is_some());
         assert!(frame2.unwrap().is_err());
-        
+
         // Iterator should stop after error
         let frame3 = iter.next();
         assert!(frame3.is_none());
@@ -1983,15 +1991,15 @@ mod test {
     #[test]
     fn observed_address_frame_varint_encoding() {
         use std::net::{IpAddr, Ipv4Addr};
-        
+
         // Ensure frame type is correctly encoded as varint
         let frame = ObservedAddress {
             address: SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 80),
         };
-        
+
         let mut buf = Vec::new();
         frame.encode(&mut buf);
-        
+
         // Frame type 0x43 should encode as single byte since it's < 0x40
         // Actually, 0x43 (67) is >= 0x40 (64), so it needs 2-byte varint encoding
         // First byte: 0x40 | (0x43 & 0x3f) = 0x40 | 0x03 = 0x43 = 67
@@ -2004,12 +2012,12 @@ mod test {
         // First byte: 0x40 | (value & 0x3f) for 2-byte encoding
         // So for 67: First byte = 0x40 | (67 & 0x3f) = 0x40 | 0x03 = 0x43 = 67
         // No wait, let's think about this correctly:
-        // Value 67 in 2-byte varint: 
+        // Value 67 in 2-byte varint:
         // Binary: 67 = 0b1000011
         // First byte: 0b01000000 | (67 & 0b00111111) = 0b01000000 | 0b00000011 = 0b01000011 = 67
         // Second byte: 67 >> 6 = 0b00000001 = 1
         // So it should be [0x43, 0x01]? No, that's not right either.
-        
+
         // Let's verify the actual encoding by checking the buffer
         // QUIC varint encoding for 0x43 (67):
         // Since 67 is in range 64-16383, it uses 2-byte encoding
@@ -2020,7 +2028,7 @@ mod test {
         assert_eq!(buf[0], 64); // First byte of varint encoding
         assert_eq!(buf[1], 67); // Second byte contains the actual value
     }
-    
+
     // Include comprehensive tests module
     mod comprehensive_tests {
         include!("frame/tests.rs");

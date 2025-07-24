@@ -7,8 +7,8 @@ use ant_quic::{
         derive_peer_id_from_public_key, generate_ed25519_keypair,
     },
     nat_traversal_api::{
-        EndpointRole, NatTraversalConfig, NatTraversalEndpoint,
-        NatTraversalError, NatTraversalEvent, PeerId,
+        EndpointRole, NatTraversalConfig, NatTraversalEndpoint, NatTraversalError,
+        NatTraversalEvent, PeerId,
     },
 };
 use std::{
@@ -21,7 +21,7 @@ use std::{
     time::Duration,
 };
 use tokio::{
-    sync::{mpsc, Mutex, RwLock},
+    sync::{Mutex, RwLock, mpsc},
     time::{sleep, timeout},
 };
 use tracing::{debug, info};
@@ -30,14 +30,29 @@ use tracing::{debug, info};
 async fn create_endpoint(
     role: EndpointRole,
     bootstrap_nodes: Vec<SocketAddr>,
-) -> Result<(Arc<NatTraversalEndpoint>, mpsc::UnboundedReceiver<NatTraversalEvent>), NatTraversalError> {
+) -> Result<
+    (
+        Arc<NatTraversalEndpoint>,
+        mpsc::UnboundedReceiver<NatTraversalEvent>,
+    ),
+    NatTraversalError,
+> {
     // For server endpoints that can coordinate, we need bootstrap nodes
-    let bootstrap_nodes = if matches!(role, EndpointRole::Server { can_coordinate: true }) && bootstrap_nodes.is_empty() {
-        vec![SocketAddr::new(IpAddr::V4(Ipv4Addr::new(203, 0, 113, 1)), 8080)]
+    let bootstrap_nodes = if matches!(
+        role,
+        EndpointRole::Server {
+            can_coordinate: true
+        }
+    ) && bootstrap_nodes.is_empty()
+    {
+        vec![SocketAddr::new(
+            IpAddr::V4(Ipv4Addr::new(203, 0, 113, 1)),
+            8080,
+        )]
     } else {
         bootstrap_nodes
     };
-    
+
     let config = NatTraversalConfig {
         role,
         bootstrap_nodes,
@@ -67,7 +82,10 @@ async fn test_create_client_endpoint() {
     };
 
     let result = NatTraversalEndpoint::new(config, None).await;
-    assert!(result.is_err(), "Client endpoint should fail without bootstrap nodes");
+    assert!(
+        result.is_err(),
+        "Client endpoint should fail without bootstrap nodes"
+    );
 
     // With bootstrap nodes, it should succeed
     let bootstrap_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(203, 0, 113, 1)), 8080);
@@ -78,7 +96,10 @@ async fn test_create_client_endpoint() {
     };
 
     let result = NatTraversalEndpoint::new(config, None).await;
-    assert!(result.is_ok(), "Client endpoint should succeed with bootstrap nodes");
+    assert!(
+        result.is_ok(),
+        "Client endpoint should succeed with bootstrap nodes"
+    );
 }
 
 #[tokio::test]
@@ -106,7 +127,9 @@ async fn test_create_server_endpoint() {
 
     // Server endpoints can work with or without bootstrap nodes
     let config = NatTraversalConfig {
-        role: EndpointRole::Server { can_coordinate: false },
+        role: EndpointRole::Server {
+            can_coordinate: false,
+        },
         bootstrap_nodes: vec![],
         ..NatTraversalConfig::default()
     };
@@ -121,13 +144,18 @@ async fn test_create_server_endpoint() {
 async fn test_start_listening() {
     let _ = tracing_subscriber::fmt::try_init();
 
-    let (endpoint, _rx) = create_endpoint(EndpointRole::Server { can_coordinate: false }, vec![])
-        .await
-        .expect("Failed to create endpoint");
+    let (endpoint, _rx) = create_endpoint(
+        EndpointRole::Server {
+            can_coordinate: false,
+        },
+        vec![],
+    )
+    .await
+    .expect("Failed to create endpoint");
 
     let bind_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0);
     let result = endpoint.start_listening(bind_addr).await;
-    
+
     assert!(result.is_ok(), "Should be able to start listening");
 }
 
@@ -135,9 +163,14 @@ async fn test_start_listening() {
 async fn test_shutdown() {
     let _ = tracing_subscriber::fmt::try_init();
 
-    let (endpoint, _rx) = create_endpoint(EndpointRole::Server { can_coordinate: false }, vec![])
-        .await
-        .expect("Failed to create endpoint");
+    let (endpoint, _rx) = create_endpoint(
+        EndpointRole::Server {
+            can_coordinate: false,
+        },
+        vec![],
+    )
+    .await
+    .expect("Failed to create endpoint");
 
     let bind_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0);
     endpoint.start_listening(bind_addr).await.unwrap();
@@ -166,24 +199,35 @@ async fn test_connection_to_nonexistent_peer() {
     // Connection should fail
     let result = timeout(
         Duration::from_secs(5),
-        endpoint.connect_to_peer(peer_id, "test.invalid", remote_addr)
-    ).await;
+        endpoint.connect_to_peer(peer_id, "test.invalid", remote_addr),
+    )
+    .await;
 
-    assert!(result.is_err() || result.unwrap().is_err(), 
-            "Connection to non-existent peer should fail");
+    assert!(
+        result.is_err() || result.unwrap().is_err(),
+        "Connection to non-existent peer should fail"
+    );
 }
 
 #[tokio::test]
 async fn test_list_connections() {
     let _ = tracing_subscriber::fmt::try_init();
 
-    let (endpoint, _rx) = create_endpoint(EndpointRole::Server { can_coordinate: false }, vec![])
-        .await
-        .expect("Failed to create endpoint");
+    let (endpoint, _rx) = create_endpoint(
+        EndpointRole::Server {
+            can_coordinate: false,
+        },
+        vec![],
+    )
+    .await
+    .expect("Failed to create endpoint");
 
     let connections = endpoint.list_connections();
     assert!(connections.is_ok(), "Should be able to list connections");
-    assert!(connections.unwrap().is_empty(), "Should have no connections initially");
+    assert!(
+        connections.unwrap().is_empty(),
+        "Should have no connections initially"
+    );
 }
 
 // ===== Event Handling Tests =====
@@ -196,7 +240,9 @@ async fn test_event_callback() {
     let event_count_clone = event_count.clone();
 
     let config = NatTraversalConfig {
-        role: EndpointRole::Server { can_coordinate: false },
+        role: EndpointRole::Server {
+            can_coordinate: false,
+        },
         bootstrap_nodes: vec![],
         ..NatTraversalConfig::default()
     };
@@ -228,9 +274,14 @@ async fn test_event_callback() {
 async fn test_double_shutdown() {
     let _ = tracing_subscriber::fmt::try_init();
 
-    let (endpoint, _rx) = create_endpoint(EndpointRole::Server { can_coordinate: false }, vec![])
-        .await
-        .expect("Failed to create endpoint");
+    let (endpoint, _rx) = create_endpoint(
+        EndpointRole::Server {
+            can_coordinate: false,
+        },
+        vec![],
+    )
+    .await
+    .expect("Failed to create endpoint");
 
     // First shutdown should succeed
     let result1 = endpoint.shutdown().await;
@@ -246,7 +297,7 @@ async fn test_double_shutdown() {
 #[tokio::test]
 async fn test_default_config() {
     let config = NatTraversalConfig::default();
-    
+
     // Default should be Client role
     assert_eq!(config.role, EndpointRole::Client);
     assert!(config.bootstrap_nodes.is_empty());
@@ -272,7 +323,10 @@ async fn test_config_with_multiple_bootstrap_nodes() {
     };
 
     let result = NatTraversalEndpoint::new(config, None).await;
-    assert!(result.is_ok(), "Should create endpoint with multiple bootstrap nodes");
+    assert!(
+        result.is_ok(),
+        "Should create endpoint with multiple bootstrap nodes"
+    );
 }
 
 // ===== Peer ID Tests =====
@@ -281,20 +335,30 @@ async fn test_config_with_multiple_bootstrap_nodes() {
 async fn test_peer_id_generation() {
     let _ = tracing_subscriber::fmt::try_init();
 
-    let (endpoint1, _rx1) = create_endpoint(EndpointRole::Server { can_coordinate: false }, vec![])
-        .await
-        .expect("Failed to create endpoint 1");
+    let (endpoint1, _rx1) = create_endpoint(
+        EndpointRole::Server {
+            can_coordinate: false,
+        },
+        vec![],
+    )
+    .await
+    .expect("Failed to create endpoint 1");
 
-    let (endpoint2, _rx2) = create_endpoint(EndpointRole::Server { can_coordinate: false }, vec![])
-        .await
-        .expect("Failed to create endpoint 2");
+    let (endpoint2, _rx2) = create_endpoint(
+        EndpointRole::Server {
+            can_coordinate: false,
+        },
+        vec![],
+    )
+    .await
+    .expect("Failed to create endpoint 2");
 
     // Each endpoint is unique
     // Note: peer_id() method doesn't exist in the public API
     // We can test that different endpoints have different configurations
     let stats1 = endpoint1.get_statistics().unwrap();
     let stats2 = endpoint2.get_statistics().unwrap();
-    
+
     // They should have independent statistics
     assert_eq!(stats1.total_attempts, 0);
     assert_eq!(stats2.total_attempts, 0);
@@ -306,16 +370,24 @@ async fn test_peer_id_generation() {
 async fn test_get_statistics() {
     let _ = tracing_subscriber::fmt::try_init();
 
-    let (endpoint, _rx) = create_endpoint(EndpointRole::Server { can_coordinate: false }, vec![])
-        .await
-        .expect("Failed to create endpoint");
+    let (endpoint, _rx) = create_endpoint(
+        EndpointRole::Server {
+            can_coordinate: false,
+        },
+        vec![],
+    )
+    .await
+    .expect("Failed to create endpoint");
 
     let stats = endpoint.get_statistics();
     assert!(stats.is_ok(), "Should be able to get statistics");
 
     let stats = stats.unwrap();
     assert_eq!(stats.total_attempts, 0, "Should have no attempts initially");
-    assert_eq!(stats.successful_connections, 0, "Should have no successful connections initially");
+    assert_eq!(
+        stats.successful_connections, 0,
+        "Should have no successful connections initially"
+    );
 }
 
 // ===== Concurrent Operations Tests =====
@@ -324,9 +396,14 @@ async fn test_get_statistics() {
 async fn test_concurrent_operations() {
     let _ = tracing_subscriber::fmt::try_init();
 
-    let (endpoint, _rx) = create_endpoint(EndpointRole::Server { can_coordinate: false }, vec![])
-        .await
-        .expect("Failed to create endpoint");
+    let (endpoint, _rx) = create_endpoint(
+        EndpointRole::Server {
+            can_coordinate: false,
+        },
+        vec![],
+    )
+    .await
+    .expect("Failed to create endpoint");
 
     let endpoint1 = endpoint.clone();
     let endpoint2 = endpoint.clone();
@@ -335,7 +412,7 @@ async fn test_concurrent_operations() {
     // Run multiple operations concurrently
     let r1 = endpoint1.list_connections();
     let r2 = endpoint2.get_statistics();
-    
+
     // Add a bootstrap node instead
     let new_bootstrap = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(203, 0, 113, 10)), 8080);
     let r3 = endpoint3.add_bootstrap_node(new_bootstrap);

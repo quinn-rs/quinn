@@ -7,13 +7,13 @@ use std::sync::Arc;
 pub trait AppProtocol: Send + Sync {
     /// Unique 4-byte identifier for this protocol
     const APP_ID: [u8; 4];
-    
+
     /// Convert application command and payload to trace data
     fn to_trace_data(&self, cmd: u16, payload: &[u8]) -> [u8; 42];
-    
+
     /// Get human-readable description of a command
     fn describe_command(&self, cmd: u16) -> &'static str;
-    
+
     /// Decide whether to trace this command (for sampling)
     fn should_trace(&self, cmd: u16) -> bool {
         true // Default: trace everything
@@ -32,17 +32,17 @@ impl AppRegistry {
             apps: DashMap::new(),
         }
     }
-    
+
     /// Register an application protocol
     pub fn register<A: AppProtocol + 'static>(&self, app: A) {
         self.apps.insert(A::APP_ID, Arc::new(app));
     }
-    
+
     /// Get an application protocol by ID
     pub fn get(&self, app_id: &[u8; 4]) -> Option<Arc<dyn AppProtocol>> {
         self.apps.get(app_id).map(|entry| entry.clone())
     }
-    
+
     /// Check if an app should trace a command
     pub fn should_trace(&self, app_id: &[u8; 4], cmd: u16) -> bool {
         if let Some(app) = self.get(app_id) {
@@ -51,7 +51,7 @@ impl AppRegistry {
             true // Default to tracing if app not registered
         }
     }
-    
+
     /// Get command description
     pub fn describe_command(&self, app_id: &[u8; 4], cmd: u16) -> String {
         if let Some(app) = self.get(app_id) {
@@ -73,23 +73,26 @@ pub struct DataMapProtocol;
 
 impl AppProtocol for DataMapProtocol {
     const APP_ID: [u8; 4] = *b"DMAP";
-    
+
     fn to_trace_data(&self, cmd: u16, payload: &[u8]) -> [u8; 42] {
         let mut data = [0u8; 42];
-        
+
         match cmd {
-            0x01 => { // STORE
+            0x01 => {
+                // STORE
                 if payload.len() >= 36 {
                     data[0..32].copy_from_slice(&payload[0..32]); // chunk hash
                     data[32..36].copy_from_slice(&payload[32..36]); // size
                 }
             }
-            0x02 => { // GET
+            0x02 => {
+                // GET
                 if payload.len() >= 32 {
                     data[0..32].copy_from_slice(&payload[0..32]); // chunk hash
                 }
             }
-            0x03 => { // DELETE
+            0x03 => {
+                // DELETE
                 if payload.len() >= 32 {
                     data[0..32].copy_from_slice(&payload[0..32]); // chunk hash
                 }
@@ -100,10 +103,10 @@ impl AppProtocol for DataMapProtocol {
                 data[..len].copy_from_slice(&payload[..len]);
             }
         }
-        
+
         data
     }
-    
+
     fn describe_command(&self, cmd: u16) -> &'static str {
         match cmd {
             0x01 => "STORE_CHUNK",
@@ -113,7 +116,7 @@ impl AppProtocol for DataMapProtocol {
             _ => "UNKNOWN",
         }
     }
-    
+
     fn should_trace(&self, cmd: u16) -> bool {
         match cmd {
             0x04 => false, // Don't trace existence checks (too frequent)
@@ -145,7 +148,7 @@ macro_rules! trace_app_command {
 }
 
 // Global app registry
-static APP_REGISTRY: once_cell::sync::Lazy<AppRegistry> = 
+static APP_REGISTRY: once_cell::sync::Lazy<AppRegistry> =
     once_cell::sync::Lazy::new(AppRegistry::new);
 
 /// Get the global app registry
@@ -156,28 +159,28 @@ pub fn global_app_registry() -> &'static AppRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_app_protocol() {
         let protocol = DataMapProtocol;
-        
+
         assert_eq!(protocol.describe_command(0x01), "STORE_CHUNK");
         assert_eq!(protocol.describe_command(0x02), "GET_CHUNK");
         assert_eq!(protocol.describe_command(0xFF), "UNKNOWN");
-        
+
         assert!(protocol.should_trace(0x01));
         assert!(!protocol.should_trace(0x04));
     }
-    
+
     #[test]
     fn test_app_registry() {
         let registry = AppRegistry::new();
         registry.register(DataMapProtocol);
-        
+
         assert!(registry.get(&DataMapProtocol::APP_ID).is_some());
         assert!(registry.should_trace(&DataMapProtocol::APP_ID, 0x01));
         assert!(!registry.should_trace(&DataMapProtocol::APP_ID, 0x04));
-        
+
         let desc = registry.describe_command(&DataMapProtocol::APP_ID, 0x01);
         assert_eq!(desc, "STORE_CHUNK");
     }

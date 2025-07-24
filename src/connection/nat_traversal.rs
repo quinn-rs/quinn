@@ -4788,8 +4788,8 @@ mod tests {
     fn create_test_state(role: NatTraversalRole) -> NatTraversalState {
         NatTraversalState::new(
             role,
-            10,  // max_candidates
-            Duration::from_secs(30)  // coordination_timeout
+            10,                      // max_candidates
+            Duration::from_secs(30), // coordination_timeout
         )
     }
 
@@ -4798,22 +4798,22 @@ mod tests {
         // Test that QUIC-discovered addresses are properly added as local candidates
         let mut state = create_test_state(NatTraversalRole::Client);
         let now = Instant::now();
-        
+
         // Add a QUIC-discovered address (using add_local_candidate with Observed source)
         let discovered_addr = SocketAddr::from(([1, 2, 3, 4], 5678));
         let seq = state.add_local_candidate(
-            discovered_addr, 
+            discovered_addr,
             CandidateSource::Observed { by_node: None },
-            now
+            now,
         );
-        
+
         // Verify it was added correctly
         assert_eq!(state.local_candidates.len(), 1);
         let candidate = state.local_candidates.get(&seq).unwrap();
         assert_eq!(candidate.address, discovered_addr);
         assert!(matches!(candidate.source, CandidateSource::Observed { .. }));
         assert_eq!(candidate.state, CandidateState::New);
-        
+
         // Verify priority is set appropriately for server-reflexive
         assert!(candidate.priority > 0);
     }
@@ -4823,26 +4823,23 @@ mod tests {
         // Test adding multiple QUIC-discovered addresses
         let mut state = create_test_state(NatTraversalRole::Client);
         let now = Instant::now();
-        
+
         let addrs = vec![
             SocketAddr::from(([1, 2, 3, 4], 5678)),
             SocketAddr::from(([5, 6, 7, 8], 9012)),
             SocketAddr::from(([2001, 0xdb8, 0, 0, 0, 0, 0, 1], 443)),
         ];
-        
+
         let mut sequences = Vec::new();
         for addr in &addrs {
-            let seq = state.add_local_candidate(
-                *addr, 
-                CandidateSource::Observed { by_node: None },
-                now
-            );
+            let seq =
+                state.add_local_candidate(*addr, CandidateSource::Observed { by_node: None }, now);
             sequences.push(seq);
         }
-        
+
         // Verify all were added
         assert_eq!(state.local_candidates.len(), 3);
-        
+
         // Verify each address
         for (seq, addr) in sequences.iter().zip(&addrs) {
             let candidate = state.local_candidates.get(seq).unwrap();
@@ -4856,20 +4853,16 @@ mod tests {
         // Test that QUIC-discovered addresses are included in local candidates
         let mut state = create_test_state(NatTraversalRole::Client);
         let now = Instant::now();
-        
+
         // Add a discovered address
         let addr = SocketAddr::from(([192, 168, 1, 100], 5000));
-        let seq = state.add_local_candidate(
-            addr, 
-            CandidateSource::Observed { by_node: None },
-            now
-        );
-        
+        let seq = state.add_local_candidate(addr, CandidateSource::Observed { by_node: None }, now);
+
         // Verify it's in local candidates for advertisement
         assert!(state.local_candidates.contains_key(&seq));
         let candidate = state.local_candidates.get(&seq).unwrap();
         assert_eq!(candidate.address, addr);
-        
+
         // Verify it has appropriate priority for server-reflexive
         assert!(matches!(candidate.source, CandidateSource::Observed { .. }));
     }
@@ -4879,24 +4872,21 @@ mod tests {
         // Test that QUIC-discovered addresses are used in hole punching
         let mut state = create_test_state(NatTraversalRole::Client);
         let now = Instant::now();
-        
+
         // Add a local discovered address
         let local_addr = SocketAddr::from(([192, 168, 1, 100], 5000));
-        state.add_local_candidate(
-            local_addr, 
-            CandidateSource::Observed { by_node: None },
-            now
-        );
-        
+        state.add_local_candidate(local_addr, CandidateSource::Observed { by_node: None }, now);
+
         // Add a remote candidate (using valid public IP, not documentation range)
         let remote_addr = SocketAddr::from(([1, 2, 3, 4], 6000));
         let priority = VarInt::from_u32(100);
-        state.add_remote_candidate(VarInt::from_u32(1), remote_addr, priority, now)
+        state
+            .add_remote_candidate(VarInt::from_u32(1), remote_addr, priority, now)
             .expect("add remote candidate should succeed");
-        
+
         // Generate candidate pairs
         state.generate_candidate_pairs(now);
-        
+
         // Should have one pair
         assert_eq!(state.candidate_pairs.len(), 1);
         let pair = &state.candidate_pairs[0];
@@ -4909,23 +4899,28 @@ mod tests {
         // Test that QUIC-discovered addresses have higher priority than predicted
         let mut state = create_test_state(NatTraversalRole::Client);
         let now = Instant::now();
-        
+
         // Add a predicted address
         let predicted_addr = SocketAddr::from(([1, 2, 3, 4], 5000));
-        let predicted_seq = state.add_local_candidate(predicted_addr, CandidateSource::Predicted, now);
-        
+        let predicted_seq =
+            state.add_local_candidate(predicted_addr, CandidateSource::Predicted, now);
+
         // Add a QUIC-discovered address
         let discovered_addr = SocketAddr::from(([1, 2, 3, 4], 5001));
         let discovered_seq = state.add_local_candidate(
-            discovered_addr, 
+            discovered_addr,
             CandidateSource::Observed { by_node: None },
-            now
+            now,
         );
-        
+
         // Compare priorities
         let predicted_priority = state.local_candidates.get(&predicted_seq).unwrap().priority;
-        let discovered_priority = state.local_candidates.get(&discovered_seq).unwrap().priority;
-        
+        let discovered_priority = state
+            .local_candidates
+            .get(&discovered_seq)
+            .unwrap()
+            .priority;
+
         // QUIC-discovered (server-reflexive) should have higher priority than predicted
         // Both are server-reflexive type, but observed addresses should get higher local preference
         assert!(discovered_priority >= predicted_priority);
@@ -4936,35 +4931,39 @@ mod tests {
         // Test full integration with NAT traversal flow
         let mut state = create_test_state(NatTraversalRole::Client);
         let now = Instant::now();
-        
+
         // Add both local interface and QUIC-discovered addresses
         let local_addr = SocketAddr::from(([192, 168, 1, 2], 5000));
         state.add_local_candidate(local_addr, CandidateSource::Local, now);
-        
+
         let discovered_addr = SocketAddr::from(([44, 55, 66, 77], 5000));
         state.add_local_candidate(
-            discovered_addr, 
+            discovered_addr,
             CandidateSource::Observed { by_node: None },
-            now
+            now,
         );
-        
+
         // Add remote candidates (using valid public IPs)
         let remote1 = SocketAddr::from(([93, 184, 215, 123], 6000));
         let remote2 = SocketAddr::from(([172, 217, 16, 34], 7000));
         let priority = VarInt::from_u32(100);
-        state.add_remote_candidate(VarInt::from_u32(1), remote1, priority, now)
+        state
+            .add_remote_candidate(VarInt::from_u32(1), remote1, priority, now)
             .expect("add remote candidate should succeed");
-        state.add_remote_candidate(VarInt::from_u32(2), remote2, priority, now)
+        state
+            .add_remote_candidate(VarInt::from_u32(2), remote2, priority, now)
             .expect("add remote candidate should succeed");
-        
+
         // Generate candidate pairs
         state.generate_candidate_pairs(now);
-        
+
         // Should have 4 pairs (2 local × 2 remote)
         assert_eq!(state.candidate_pairs.len(), 4);
-        
+
         // Verify QUIC-discovered addresses are included
-        let discovered_pairs: Vec<_> = state.candidate_pairs.iter()
+        let discovered_pairs: Vec<_> = state
+            .candidate_pairs
+            .iter()
             .filter(|p| p.local_addr == discovered_addr)
             .collect();
         assert_eq!(discovered_pairs.len(), 2);
