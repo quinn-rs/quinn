@@ -72,10 +72,10 @@ pub mod stats_dashboard;
 pub mod terminal_ui;
 
 // High-level async API modules (ported from quinn crate)
-pub mod quinn_high_level;
+pub mod high_level;
 
 // Re-export high-level API types for easier usage
-pub use quinn_high_level::{
+pub use high_level::{
     Accept, Connecting, Connection as HighLevelConnection, Endpoint,
     RecvStream as HighLevelRecvStream, SendStream as HighLevelSendStream,
 };

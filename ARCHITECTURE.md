@@ -50,7 +50,7 @@ This layer provides developer-friendly APIs wrapping the low-level protocol.
   - Automatic bootstrap node connection (v0.4.1)
   - Connection state tracking and statistics
 
-- **`src/quinn_high_level/`** - Async QUIC wrapper
+- **`src/high_level/`** - Async QUIC wrapper
   - `Endpoint` - Async endpoint management
   - `Connection` - High-level connection API
   - `SendStream`/`RecvStream` - Stream I/O with tokio integration
@@ -93,7 +93,7 @@ QuicP2PNode
     ↓
 NatTraversalEndpoint
     ↓
-quinn_high_level::Endpoint
+high_level::Endpoint
     ↓
 Low-level Endpoint → Connection → Streams
 ```

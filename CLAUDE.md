@@ -101,7 +101,7 @@ ant-quic has a three-layer architecture:
 ### Layer 2: Integration APIs (High-Level)
 - **`src/nat_traversal_api.rs`**: `NatTraversalEndpoint` - High-level NAT traversal API
 - **`src/quic_node.rs`**: `QuicP2PNode` - Application-friendly P2P node wrapper
-- **`src/quinn_high_level/`**: Async wrapper around low-level Quinn
+- **`src/high_level/`**: Async wrapper around low-level Quinn
 - **`src/connection_establishment.rs`**: Connection orchestration (needs wiring to actual QUIC)
 
 ### Layer 3: Applications (Binaries)

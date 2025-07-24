@@ -13,7 +13,7 @@ use std::{
 
 use tracing::{debug, info, warn};
 
-use crate::quinn_high_level::{Endpoint as QuinnEndpoint, Connection as QuinnConnection, Connecting};
+use crate::high_level::{Endpoint as QuinnEndpoint, Connection as QuinnConnection, Connecting};
 
 use crate::{
     candidate_discovery::{CandidateDiscoveryManager, DiscoveryEvent, DiscoveryError},

@@ -17,7 +17,7 @@ use tokio::{
 };
 
 #[cfg(feature = "runtime-tokio")]
-use crate::quinn_high_level::TokioRuntime;
+use crate::high_level::TokioRuntime;
 
 use crate::{
     VarInt,
@@ -29,7 +29,7 @@ use crate::{
     ClientConfig, ConnectionError, EndpointConfig, ServerConfig, TransportConfig,
     crypto::rustls::QuicClientConfig,
     crypto::rustls::QuicServerConfig,
-    quinn_high_level::{Connection as QuinnConnection, Endpoint as QuinnEndpoint},
+    high_level::{Connection as QuinnConnection, Endpoint as QuinnEndpoint},
 };
 
 use crate::config::validation::{ConfigValidator, ValidationResult};
@@ -646,7 +646,7 @@ impl NatTraversalEndpoint {
     }
 
     /// Get the underlying Quinn endpoint
-    pub fn get_quinn_endpoint(&self) -> Option<&crate::quinn_high_level::Endpoint> {
+    pub fn get_quinn_endpoint(&self) -> Option<&crate::high_level::Endpoint> {
         self.quinn_endpoint.as_ref()
     }
 
@@ -1395,8 +1395,8 @@ impl NatTraversalEndpoint {
 
     /// Handle a bidirectional stream
     async fn handle_bi_stream(
-        _send: crate::quinn_high_level::SendStream,
-        _recv: crate::quinn_high_level::RecvStream,
+        _send: crate::high_level::SendStream,
+        _recv: crate::high_level::RecvStream,
     ) {
         // TODO: Implement bidirectional stream handling
         // Note: read() and write_all() methods ARE available on RecvStream and SendStream
@@ -1429,7 +1429,7 @@ impl NatTraversalEndpoint {
     }
 
     /// Handle a unidirectional stream
-    async fn handle_uni_stream(mut recv: crate::quinn_high_level::RecvStream) {
+    async fn handle_uni_stream(mut recv: crate::high_level::RecvStream) {
         let mut buffer = vec![0u8; 1024];
 
         loop {
