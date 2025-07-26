@@ -277,18 +277,19 @@ impl Event {
     }
 }
 
-#[cfg(feature = "serde")]
-use serde::{Deserialize, Serialize};
+// TODO: Add serde feature and re-enable
+// #[cfg(feature = "serde")]
+// use serde::{Deserialize, Serialize};
 
-#[cfg(feature = "serde")]
-impl Serialize for TraceId {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        serializer.serialize_str(&hex::encode(&self.0))
-    }
-}
+// #[cfg(feature = "serde")]
+// impl Serialize for TraceId {
+//     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+//     where
+//         S: serde::Serializer,
+//     {
+//         serializer.serialize_str(&hex::encode(&self.0))
+//     }
+// }
 
 #[cfg(test)]
 mod tests {

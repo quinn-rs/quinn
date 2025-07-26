@@ -12,11 +12,7 @@ pub(super) struct TraceConfig;
 
 impl TraceConfig {
     /// Ring buffer size (must be power of 2)
-    #[cfg(not(feature = "trace-minimal"))]
     pub(super) const BUFFER_SIZE: usize = 65536; // ~8MB
-
-    #[cfg(feature = "trace-minimal")]
-    pub const BUFFER_SIZE: usize = 4096; // ~512KB
 
     pub(super) const BUFFER_MASK: usize = Self::BUFFER_SIZE - 1;
 }

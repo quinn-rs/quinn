@@ -5,11 +5,7 @@
 
 use std::{
     collections::HashMap,
-    ffi::{CStr, CString},
-    io, mem,
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
-    os::unix::io::{AsRawFd, RawFd},
-    ptr, slice,
     time::Instant,
 };
 
