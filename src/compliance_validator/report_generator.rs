@@ -1,10 +1,9 @@
 /// Report Generator Module
-/// 
+///
 /// Generates compliance reports in various formats
-
 use super::{ComplianceReport, ComplianceResult, Evidence};
 use chrono::{DateTime, Utc};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::HashMap;
 
 /// Generate HTML compliance report
@@ -13,7 +12,8 @@ pub fn generate_html_report(report: &ComplianceReport) -> String {
     let mut html = String::new();
 
     // HTML header
-    html.push_str(r#"<!DOCTYPE html>
+    html.push_str(
+        r#"<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -106,7 +106,8 @@ pub fn generate_html_report(report: &ComplianceReport) -> String {
     </style>
 </head>
 <body>
-"#);
+"#,
+    );
 
     // Title and summary
     html.push_str(&format!(
@@ -153,14 +154,20 @@ pub fn generate_html_report(report: &ComplianceReport) -> String {
         report.summary.total_requirements,
         report.summary.passed,
         report.summary.failed,
-        if report.summary.must_requirements_met() { "✅ Yes" } else { "❌ No" }
+        if report.summary.must_requirements_met() {
+            "✅ Yes"
+        } else {
+            "❌ No"
+        }
     ));
 
     // Compliance by category
-    html.push_str(r#"
+    html.push_str(
+        r#"
     <h2>Compliance by Category</h2>
     <div class="category-chart">
-"#);
+"#,
+    );
 
     for (category, pass_rate) in &report.summary.pass_rate_by_category {
         html.push_str(&format!(
@@ -182,25 +189,28 @@ pub fn generate_html_report(report: &ComplianceReport) -> String {
     html.push_str("</div>");
 
     // Detailed results
-    html.push_str(r#"
+    html.push_str(
+        r#"
     <h2>Detailed Results</h2>
-"#);
+"#,
+    );
 
     // Group by specification
     let mut by_spec: HashMap<&str, Vec<&ComplianceResult>> = HashMap::new();
     for result in &report.results {
-        by_spec.entry(&result.requirement.spec_id)
+        by_spec
+            .entry(&result.requirement.spec_id)
             .or_default()
             .push(result);
     }
 
     for (spec_id, results) in by_spec {
         html.push_str(&format!("<h3>{spec_id}</h3>"));
-        
+
         for result in results {
             let status_class = if result.compliant { "passed" } else { "failed" };
             let status_icon = if result.compliant { "✅" } else { "❌" };
-            
+
             html.push_str(&format!(
                 r#"
         <div class="requirement {}">
@@ -217,7 +227,11 @@ pub fn generate_html_report(report: &ComplianceReport) -> String {
                 result.requirement.level.to_string().to_lowercase(),
                 result.requirement.level,
                 result.requirement.description,
-                if result.compliant { "COMPLIANT" } else { "NON-COMPLIANT" },
+                if result.compliant {
+                    "COMPLIANT"
+                } else {
+                    "NON-COMPLIANT"
+                },
                 result.details
             ));
 
@@ -227,7 +241,11 @@ pub fn generate_html_report(report: &ComplianceReport) -> String {
                 for evidence in &result.evidence {
                     html.push_str(r#"<div class="evidence">"#);
                     match evidence {
-                        Evidence::TestResult { test_name, passed, output } => {
+                        Evidence::TestResult {
+                            test_name,
+                            passed,
+                            output,
+                        } => {
                             html.push_str(&format!(
                                 "Test: {} - {}<br>Output: {}",
                                 test_name,
@@ -235,10 +253,15 @@ pub fn generate_html_report(report: &ComplianceReport) -> String {
                                 html_escape(output)
                             ));
                         }
-                        Evidence::CodeReference { file, line, snippet } => {
+                        Evidence::CodeReference {
+                            file,
+                            line,
+                            snippet,
+                        } => {
                             html.push_str(&format!(
                                 "Code: {}:{}<br>{}",
-                                file, line,
+                                file,
+                                line,
                                 html_escape(snippet)
                             ));
                         }
@@ -262,10 +285,12 @@ pub fn generate_html_report(report: &ComplianceReport) -> String {
     }
 
     // Footer
-    html.push_str(r#"
+    html.push_str(
+        r#"
 </body>
 </html>
-"#);
+"#,
+    );
 
     html
 }
@@ -273,19 +298,27 @@ pub fn generate_html_report(report: &ComplianceReport) -> String {
 /// Generate JSON compliance report
 pub fn generate_json_report(report: &ComplianceReport) -> Value {
     let timestamp: DateTime<Utc> = report.timestamp.into();
-    
+
     let mut results_json = Vec::new();
     for result in &report.results {
         let mut evidence_json = Vec::new();
         for ev in &result.evidence {
             evidence_json.push(match ev {
-                Evidence::TestResult { test_name, passed, output } => json!({
+                Evidence::TestResult {
+                    test_name,
+                    passed,
+                    output,
+                } => json!({
                     "type": "test_result",
                     "test_name": test_name,
                     "passed": passed,
                     "output": output
                 }),
-                Evidence::CodeReference { file, line, snippet } => json!({
+                Evidence::CodeReference {
+                    file,
+                    line,
+                    snippet,
+                } => json!({
                     "type": "code_reference",
                     "file": file,
                     "line": line,
@@ -296,14 +329,17 @@ pub fn generate_json_report(report: &ComplianceReport) -> Value {
                     "endpoint": endpoint,
                     "result": result
                 }),
-                Evidence::PacketCapture { description, packets } => json!({
+                Evidence::PacketCapture {
+                    description,
+                    packets,
+                } => json!({
                     "type": "packet_capture",
                     "description": description,
                     "packet_count": packets.len()
                 }),
             });
         }
-        
+
         results_json.push(json!({
             "requirement": {
                 "spec_id": result.requirement.spec_id,
@@ -317,19 +353,19 @@ pub fn generate_json_report(report: &ComplianceReport) -> Value {
             "evidence": evidence_json
         }));
     }
-    
+
     // Calculate category statistics
     let mut category_stats = HashMap::new();
     for (cat, rate) in &report.summary.pass_rate_by_category {
         category_stats.insert(format!("{cat:?}"), rate * 100.0);
     }
-    
+
     // Calculate level statistics
     let mut level_stats = HashMap::new();
     for (level, rate) in &report.summary.pass_rate_by_level {
         level_stats.insert(format!("{level:?}"), rate * 100.0);
     }
-    
+
     json!({
         "report": {
             "timestamp": timestamp.to_rfc3339(),
@@ -377,22 +413,26 @@ Generated: {}
         report.summary.total_requirements,
         report.summary.passed,
         report.summary.failed,
-        if report.summary.must_requirements_met() { "✅ Yes" } else { "❌ No" }
+        if report.summary.must_requirements_met() {
+            "✅ Yes"
+        } else {
+            "❌ No"
+        }
     ));
 
     // Compliance by category
     md.push_str("## Compliance by Category\n\n");
     md.push_str("| Category | Pass Rate |\n");
     md.push_str("|----------|----------|\n");
-    
+
     for (category, pass_rate) in &report.summary.pass_rate_by_category {
         md.push_str(&format!("| {:?} | {:.1}% |\n", category, pass_rate * 100.0));
     }
-    
+
     md.push_str("\n## Compliance by Level\n\n");
     md.push_str("| Level | Pass Rate |\n");
     md.push_str("|-------|----------|\n");
-    
+
     for (level, pass_rate) in &report.summary.pass_rate_by_level {
         md.push_str(&format!("| {:?} | {:.1}% |\n", level, pass_rate * 100.0));
     }
@@ -403,17 +443,22 @@ Generated: {}
     // Group by specification
     let mut by_spec: HashMap<&str, Vec<&ComplianceResult>> = HashMap::new();
     for result in &report.results {
-        by_spec.entry(&result.requirement.spec_id)
+        by_spec
+            .entry(&result.requirement.spec_id)
             .or_default()
             .push(result);
     }
 
     for (spec_id, results) in by_spec {
         md.push_str(&format!("### {spec_id}\n\n"));
-        
+
         for result in results {
-            let status = if result.compliant { "✅ COMPLIANT" } else { "❌ NON-COMPLIANT" };
-            
+            let status = if result.compliant {
+                "✅ COMPLIANT"
+            } else {
+                "❌ NON-COMPLIANT"
+            };
+
             md.push_str(&format!(
                 r#"#### {} - Section {}
 
@@ -436,7 +481,9 @@ Generated: {}
                 md.push_str("**Evidence:**\n\n");
                 for evidence in &result.evidence {
                     match evidence {
-                        Evidence::TestResult { test_name, passed, .. } => {
+                        Evidence::TestResult {
+                            test_name, passed, ..
+                        } => {
                             md.push_str(&format!(
                                 "- Test `{}`: {}\n",
                                 test_name,
@@ -474,30 +521,28 @@ fn html_escape(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compliance_validator::{ComplianceRequirement, RequirementLevel, RequirementCategory};
+    use crate::compliance_validator::{
+        ComplianceRequirement, RequirementCategory, RequirementLevel,
+    };
 
     fn create_test_report() -> ComplianceReport {
-        let results = vec![
-            ComplianceResult {
-                requirement: ComplianceRequirement {
-                    spec_id: "RFC9000".to_string(),
-                    section: "7.2".to_string(),
-                    level: RequirementLevel::Must,
-                    description: "Test requirement".to_string(),
-                    category: RequirementCategory::Transport,
-                },
-                compliant: true,
-                details: "Passed".to_string(),
-                evidence: vec![
-                    Evidence::TestResult {
-                        test_name: "test_transport".to_string(),
-                        passed: true,
-                        output: "All good".to_string(),
-                    }
-                ],
+        let results = vec![ComplianceResult {
+            requirement: ComplianceRequirement {
+                spec_id: "RFC9000".to_string(),
+                section: "7.2".to_string(),
+                level: RequirementLevel::Must,
+                description: "Test requirement".to_string(),
+                category: RequirementCategory::Transport,
             },
-        ];
-        
+            compliant: true,
+            details: "Passed".to_string(),
+            evidence: vec![Evidence::TestResult {
+                test_name: "test_transport".to_string(),
+                passed: true,
+                output: "All good".to_string(),
+            }],
+        }];
+
         ComplianceReport::new(results)
     }
 
@@ -505,7 +550,7 @@ mod tests {
     fn test_html_report_generation() {
         let report = create_test_report();
         let html = generate_html_report(&report);
-        
+
         assert!(html.contains("QUIC Compliance Report"));
         assert!(html.contains("100.0%")); // Compliance score
         assert!(html.contains("RFC9000"));
@@ -516,7 +561,7 @@ mod tests {
     fn test_json_report_generation() {
         let report = create_test_report();
         let json = generate_json_report(&report);
-        
+
         assert_eq!(json["summary"]["compliance_percentage"], 100.0);
         assert_eq!(json["summary"]["total_requirements"], 1);
         assert_eq!(json["summary"]["passed"], 1);
@@ -527,7 +572,7 @@ mod tests {
     fn test_markdown_report_generation() {
         let report = create_test_report();
         let md = generate_markdown_report(&report);
-        
+
         assert!(md.contains("# QUIC Compliance Report"));
         assert!(md.contains("Overall Compliance Score: 100.0%"));
         assert!(md.contains("✅ COMPLIANT"));

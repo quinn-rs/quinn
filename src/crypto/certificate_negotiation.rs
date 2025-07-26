@@ -43,9 +43,7 @@ impl NegotiationState {
     pub fn is_complete(&self) -> bool {
         matches!(
             self,
-            Self::Completed { .. }
-                | Self::Failed { .. }
-                | Self::TimedOut { .. }
+            Self::Completed { .. } | Self::Failed { .. } | Self::TimedOut { .. }
         )
     }
 
@@ -348,10 +346,8 @@ impl CertificateNegotiationManager {
                     // Evict old entries if cache is full
                     if cache.len() >= self.config.max_cache_size {
                         // Simple eviction: remove oldest entries
-                        let mut entries: Vec<_> = cache
-                            .iter()
-                            .map(|(k, (_, t))| (k.clone(), *t))
-                            .collect();
+                        let mut entries: Vec<_> =
+                            cache.iter().map(|(k, (_, t))| (k.clone(), *t)).collect();
                         entries.sort_by_key(|(_, timestamp)| *timestamp);
 
                         let to_remove = cache.len() - self.config.max_cache_size + 1;

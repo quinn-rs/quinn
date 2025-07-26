@@ -685,14 +685,15 @@ impl QuicP2PNode {
     ) -> Result<NatTraversalStatistics, Box<dyn std::error::Error + Send + Sync>> {
         self.nat_endpoint.get_nat_stats()
     }
-    
+
     /// Inject an observed address (temporary workaround for OBSERVED_ADDRESS frame integration)
     pub fn inject_observed_address(
         &self,
         observed_address: SocketAddr,
         from_peer: PeerId,
     ) -> Result<(), NatTraversalError> {
-        self.nat_endpoint.inject_observed_address(observed_address, from_peer)
+        self.nat_endpoint
+            .inject_observed_address(observed_address, from_peer)
     }
 
     /// Get connection metrics for a specific peer

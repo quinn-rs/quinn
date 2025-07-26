@@ -1,7 +1,6 @@
 /// Log formatting utilities
-/// 
+///
 /// Provides various utility functions for formatting log data
-
 use crate::{ConnectionId, Duration};
 
 /// Format bytes in a human-readable way
@@ -9,12 +8,12 @@ pub fn format_bytes(bytes: u64) -> String {
     const UNITS: &[&str] = &["B", "KB", "MB", "GB", "TB"];
     let mut size = bytes as f64;
     let mut unit_idx = 0;
-    
+
     while size >= 1024.0 && unit_idx < UNITS.len() - 1 {
         size /= 1024.0;
         unit_idx += 1;
     }
-    
+
     if unit_idx == 0 {
         format!("{} {}", bytes, UNITS[unit_idx])
     } else {
@@ -45,9 +44,10 @@ pub fn format_conn_id(conn_id: &ConnectionId) -> String {
     if bytes.len() <= 8 {
         hex::encode(bytes)
     } else {
-        format!("{}..{}", 
+        format!(
+            "{}..{}",
             hex::encode(&bytes[..4]),
-            hex::encode(&bytes[bytes.len()-4..])
+            hex::encode(&bytes[bytes.len() - 4..])
         )
     }
 }
@@ -55,7 +55,7 @@ pub fn format_conn_id(conn_id: &ConnectionId) -> String {
 /// Format a structured log event as JSON  
 pub(super) fn format_as_json(event: &super::LogEvent) -> String {
     use serde_json::json;
-    
+
     let json = json!({
         "timestamp": event.timestamp.elapsed().as_secs(),
         "level": match event.level {
@@ -70,14 +70,14 @@ pub(super) fn format_as_json(event: &super::LogEvent) -> String {
         "fields": event.fields,
         "span_id": event.span_id,
     });
-    
+
     json.to_string()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_format_bytes() {
         assert_eq!(format_bytes(0), "0 B");
@@ -87,11 +87,11 @@ mod tests {
         assert_eq!(format_bytes(1048576), "1.00 MB");
         assert_eq!(format_bytes(1073741824), "1.00 GB");
     }
-    
+
     #[test]
     fn test_format_duration() {
         use crate::Duration;
-        
+
         assert_eq!(format_duration(Duration::from_micros(500)), "500μs");
         assert_eq!(format_duration(Duration::from_micros(1500)), "1.50ms");
         assert_eq!(format_duration(Duration::from_millis(50)), "50.00ms");

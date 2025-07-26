@@ -1241,10 +1241,7 @@ impl std::fmt::Display for MacOSNetworkError {
                 interface_name,
                 reason,
             } => {
-                write!(
-                    f,
-                    "Invalid interface config for {interface_name}: {reason}"
-                )
+                write!(f, "Invalid interface config for {interface_name}: {reason}")
             }
             Self::ServiceEnumerationFailed { reason } => {
                 write!(f, "Service enumeration failed: {reason}")

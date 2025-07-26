@@ -1,7 +1,7 @@
 use crate::TransportError;
-use crate::transport_parameters::{TransportParameters, Side, TransportParameterId};
 use crate::VarInt;
 use crate::frame;
+use crate::transport_parameters::{Side, TransportParameterId, TransportParameters};
 use tracing::error;
 
 /// Enhanced error handling for transport parameter validation
@@ -26,7 +26,12 @@ impl TransportParameterErrorHandler {
     }
 
     /// Log specific validation failures with RFC references
-    pub(super) fn log_validation_failure(param_name: &str, value: u64, constraint: &str, rfc_ref: &str) {
+    pub(super) fn log_validation_failure(
+        param_name: &str,
+        value: u64,
+        constraint: &str,
+        rfc_ref: &str,
+    ) {
         error!(
             parameter = param_name,
             value = value,
@@ -179,7 +184,7 @@ pub(crate) fn validate_server_only_params(
 ) -> Result<(), TransportError> {
     if side.is_server() {
         let mut violations = Vec::new();
-        
+
         if params.original_dst_cid.is_some() {
             violations.push("original_dst_cid");
         }
@@ -192,7 +197,7 @@ pub(crate) fn validate_server_only_params(
         if params.stateless_reset_token.is_some() {
             violations.push("stateless_reset_token");
         }
-        
+
         if !violations.is_empty() {
             TransportParameterErrorHandler::log_semantic_error(
                 "Server received server-only parameters",
@@ -245,13 +250,13 @@ mod tests {
     #[test]
     fn test_min_ack_delay_validation() {
         let max_delay = VarInt::from_u32(25); // 25ms
-        
+
         // Valid: 25ms = 25000μs
         assert!(validate_min_ack_delay(Some(VarInt::from_u32(25000)), max_delay).is_ok());
-        
+
         // Invalid: 26ms = 26000μs > 25ms
         assert!(validate_min_ack_delay(Some(VarInt::from_u32(26000)), max_delay).is_err());
-        
+
         // Valid: No min_ack_delay
         assert!(validate_min_ack_delay(None, max_delay).is_ok());
     }

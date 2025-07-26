@@ -57,7 +57,7 @@ cargo fmt --all -- --check
 cargo run --bin ant-quic -- --listen 0.0.0.0:9000
 
 # Connect to bootstrap nodes
-cargo run --bin ant-quic -- --bootstrap node1.example.com:9000,node2.example.com:9000
+cargo run --bin ant-quic -- --bootstrap quic.saorsalabs.com:9000
 
 # Run with monitoring dashboard
 cargo run --bin ant-quic -- --dashboard --listen 0.0.0.0:9000
@@ -117,7 +117,7 @@ The NAT traversal system implements the IETF QUIC NAT traversal draft with custo
 - **Transport Parameter 0x58**: Negotiates NAT traversal capabilities
 - **Extension Frames**:
   - `ADD_ADDRESS` (0x40): Advertise candidate addresses
-  - `PUNCH_ME_NOW` (0x41): Coordinate simultaneous hole punching  
+  - `PUNCH_ME_NOW` (0x41): Coordinate simultaneous hole punching
   - `REMOVE_ADDRESS` (0x42): Remove invalid candidates
 - **Roles**: Client, Server (with relay capability), Bootstrap coordinator
 - **Candidate Pairing**: Priority-based ICE-like connection establishment

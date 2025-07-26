@@ -182,10 +182,7 @@ impl RelayQueue {
 
     /// Record a relay request for rate limiting
     fn record_relay_request(&mut self, peer_id: PeerId, now: Instant) {
-        self.rate_limiter
-            .entry(peer_id)
-            .or_default()
-            .push_back(now);
+        self.rate_limiter.entry(peer_id).or_default().push_back(now);
     }
 
     /// Clean up old rate limiting entries

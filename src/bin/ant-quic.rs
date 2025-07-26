@@ -229,28 +229,36 @@ impl QuicDemoNode {
                             .lock()
                             .await
                             .insert(peer_id, format!("bootstrap-{}", bootstrap_addr));
-                        
+
                         // TEMPORARY: Simulate receiving OBSERVED_ADDRESS frame
                         // In production, this would come from actual OBSERVED_ADDRESS frames
                         // For demonstration, we'll simulate that bootstrap observes us on a public IP
                         tokio::time::sleep(Duration::from_millis(500)).await;
-                        
+
                         // DEMO: Simulate receiving an OBSERVED_ADDRESS frame
                         // In production, the bootstrap node would send us our actual external address
                         // via OBSERVED_ADDRESS frames on this connection
-                        
+
                         // For demonstration, simulate with a public IP
                         let simulated_external = SocketAddr::new(
                             std::net::IpAddr::V4(std::net::Ipv4Addr::new(203, 0, 113, 42)), // Example public IP
-                            9876 // Example port
+                            9876, // Example port
                         );
-                        
+
                         // Inject the "observed" address
-                        if let Err(e) = self.quic_node.inject_observed_address(simulated_external, peer_id) {
+                        if let Err(e) = self
+                            .quic_node
+                            .inject_observed_address(simulated_external, peer_id)
+                        {
                             warn!("Failed to inject observed address: {}", e);
                         } else {
-                            info!("DEMO: Simulated OBSERVED_ADDRESS reception: {}", simulated_external);
-                            info!("In production, this would be your actual external IP:port from OBSERVED_ADDRESS frames");
+                            info!(
+                                "DEMO: Simulated OBSERVED_ADDRESS reception: {}",
+                                simulated_external
+                            );
+                            info!(
+                                "In production, this would be your actual external IP:port from OBSERVED_ADDRESS frames"
+                            );
                             // The NAT traversal system should now process this and emit events
                         }
                     }
@@ -266,20 +274,28 @@ impl QuicDemoNode {
 
         // Wait a bit for address discovery to complete
         tokio::time::sleep(Duration::from_secs(2)).await;
-        
+
         // Print discovered external address
         if !self.quic_node.get_config().bootstrap_nodes.is_empty() {
             let nat_status = self.nat_status.lock().await;
             if !nat_status.reflexive_addresses.is_empty() {
                 // Print the first discovered external address
-                info!("🌐 Discovered external address: {}", nat_status.reflexive_addresses[0]);
+                info!(
+                    "🌐 Discovered external address: {}",
+                    nat_status.reflexive_addresses[0]
+                );
                 if !self.dashboard_enabled {
-                    println!("🌐 Discovered external address: {}", nat_status.reflexive_addresses[0]);
+                    println!(
+                        "🌐 Discovered external address: {}",
+                        nat_status.reflexive_addresses[0]
+                    );
                 }
             } else {
                 warn!("⚠️  CANNOT_FIND_EXTERNAL_ADDRESS - No external address discovered yet");
                 if !self.dashboard_enabled {
-                    println!("⚠️  CANNOT_FIND_EXTERNAL_ADDRESS - No external address discovered yet");
+                    println!(
+                        "⚠️  CANNOT_FIND_EXTERNAL_ADDRESS - No external address discovered yet"
+                    );
                 }
             }
             drop(nat_status);
@@ -659,8 +675,14 @@ impl QuicDemoNode {
                                         status.reflexive_addresses.push(candidate_address);
                                         // Print the first discovered external address
                                         if was_empty {
-                                            info!("🌐 Discovered external address: {}", candidate_address);
-                                            println!("🌐 Discovered external address: {}", candidate_address);
+                                            info!(
+                                                "🌐 Discovered external address: {}",
+                                                candidate_address
+                                            );
+                                            println!(
+                                                "🌐 Discovered external address: {}",
+                                                candidate_address
+                                            );
                                         }
                                     }
                                     status.last_update = std::time::Instant::now();

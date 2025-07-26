@@ -1,15 +1,12 @@
 /// Component-specific logging functions
-/// 
+///
 /// Provides specialized logging for different components of the QUIC stack
-
 use std::collections::HashMap;
 use tracing::{debug, trace};
 
-use crate::{
-    ConnectionId, Frame,
-};
+use crate::{ConnectionId, Frame};
 
-use super::{logger, LogEvent, ConnectionInfo, FrameInfo, TransportParamInfo, NatTraversalInfo};
+use super::{ConnectionInfo, FrameInfo, LogEvent, NatTraversalInfo, TransportParamInfo, logger};
 
 /// Connection event types
 #[derive(Debug, Clone, Copy)]
@@ -69,19 +66,19 @@ pub fn log_connection_event(event_type: ConnectionEventType, conn_info: &Connect
         ConnectionEventType::Lost => "connection.lost",
         ConnectionEventType::Stalled => "connection.stalled",
     };
-    
+
     let mut fields = HashMap::new();
     fields.insert("conn_id".to_string(), format!("{:?}", conn_info.id));
     fields.insert("remote_addr".to_string(), conn_info.remote_addr.to_string());
     fields.insert("role".to_string(), format!("{:?}", conn_info.role));
     fields.insert("event_type".to_string(), format!("{event_type:?}"));
-    
+
     let level = match event_type {
         ConnectionEventType::Lost | ConnectionEventType::Stalled => tracing::Level::WARN,
         ConnectionEventType::Closed => tracing::Level::DEBUG,
         _ => tracing::Level::INFO,
     };
-    
+
     logger().log_event(LogEvent {
         timestamp: crate::Instant::now(),
         level,
@@ -101,20 +98,23 @@ pub fn log_frame_event(event_type: FrameEventType, frame_info: &FrameInfo) {
         FrameEventType::Retransmitted => "frame.retransmitted",
         FrameEventType::Acknowledged => "frame.acknowledged",
     };
-    
+
     let mut fields = HashMap::new();
-    fields.insert("frame_type".to_string(), format!("{:?}", frame_info.frame_type));
+    fields.insert(
+        "frame_type".to_string(),
+        format!("{:?}", frame_info.frame_type),
+    );
     fields.insert("size".to_string(), frame_info.size.to_string());
     if let Some(pn) = frame_info.packet_number {
         fields.insert("packet_number".to_string(), pn.to_string());
     }
     fields.insert("event_type".to_string(), format!("{event_type:?}"));
-    
+
     let level = match event_type {
         FrameEventType::Dropped => tracing::Level::WARN,
         _ => tracing::Level::TRACE,
     };
-    
+
     logger().log_event(LogEvent {
         timestamp: crate::Instant::now(),
         level,
@@ -126,7 +126,10 @@ pub fn log_frame_event(event_type: FrameEventType, frame_info: &FrameInfo) {
 }
 
 /// Log a transport parameter event
-pub fn log_transport_param_event(event_type: TransportParamEventType, param_info: &TransportParamInfo) {
+pub fn log_transport_param_event(
+    event_type: TransportParamEventType,
+    param_info: &TransportParamInfo,
+) {
     let message = match event_type {
         TransportParamEventType::Sent => "transport_param.sent",
         TransportParamEventType::Received => "transport_param.received",
@@ -134,7 +137,7 @@ pub fn log_transport_param_event(event_type: TransportParamEventType, param_info
         TransportParamEventType::Rejected => "transport_param.rejected",
         TransportParamEventType::Invalid => "transport_param.invalid",
     };
-    
+
     let mut fields = HashMap::new();
     fields.insert("param_id".to_string(), format!("{:?}", param_info.param_id));
     fields.insert("side".to_string(), format!("{:?}", param_info.side));
@@ -142,12 +145,14 @@ pub fn log_transport_param_event(event_type: TransportParamEventType, param_info
         fields.insert("value_len".to_string(), value.len().to_string());
     }
     fields.insert("event_type".to_string(), format!("{event_type:?}"));
-    
+
     let level = match event_type {
-        TransportParamEventType::Rejected | TransportParamEventType::Invalid => tracing::Level::WARN,
+        TransportParamEventType::Rejected | TransportParamEventType::Invalid => {
+            tracing::Level::WARN
+        }
         _ => tracing::Level::DEBUG,
     };
-    
+
     logger().log_event(LogEvent {
         timestamp: crate::Instant::now(),
         level,
@@ -170,19 +175,26 @@ pub fn log_nat_traversal_event(event_type: NatTraversalEventType, nat_info: &Nat
         NatTraversalEventType::Completed => "nat_traversal.completed",
         NatTraversalEventType::Failed => "nat_traversal.failed",
     };
-    
+
     let mut fields = HashMap::new();
     fields.insert("role".to_string(), format!("{:?}", nat_info.role));
     fields.insert("remote_addr".to_string(), nat_info.remote_addr.to_string());
-    fields.insert("candidate_count".to_string(), nat_info.candidate_count.to_string());
+    fields.insert(
+        "candidate_count".to_string(),
+        nat_info.candidate_count.to_string(),
+    );
     fields.insert("event_type".to_string(), format!("{event_type:?}"));
-    
+
     let level = match event_type {
-        NatTraversalEventType::HolePunchingFailed | NatTraversalEventType::Failed => tracing::Level::WARN,
-        NatTraversalEventType::HolePunchingSucceeded | NatTraversalEventType::Completed => tracing::Level::INFO,
+        NatTraversalEventType::HolePunchingFailed | NatTraversalEventType::Failed => {
+            tracing::Level::WARN
+        }
+        NatTraversalEventType::HolePunchingSucceeded | NatTraversalEventType::Completed => {
+            tracing::Level::INFO
+        }
         _ => tracing::Level::DEBUG,
     };
-    
+
     logger().log_event(LogEvent {
         timestamp: crate::Instant::now(),
         level,
@@ -198,27 +210,27 @@ pub fn log_error_with_context(error: &dyn std::error::Error, context: super::Err
     let mut fields = HashMap::new();
     fields.insert("component".to_string(), context.component.to_string());
     fields.insert("operation".to_string(), context.operation.to_string());
-    
+
     if let Some(conn_id) = context.connection_id {
         fields.insert("conn_id".to_string(), format!("{conn_id:?}"));
     }
-    
+
     // Add error chain
     let mut error_chain = Vec::new();
     let mut current_error: &dyn std::error::Error = error;
     error_chain.push(current_error.to_string());
-    
+
     while let Some(source) = current_error.source() {
         error_chain.push(source.to_string());
         current_error = source;
     }
-    
+
     fields.insert("error_chain".to_string(), error_chain.join(" -> "));
-    
+
     for (key, value) in context.additional_fields {
         fields.insert(key.to_string(), value.to_string());
     }
-    
+
     logger().log_event(LogEvent {
         timestamp: crate::Instant::now(),
         level: tracing::Level::ERROR,
@@ -238,7 +250,7 @@ pub fn log_frame_details(frame: &Frame, direction: &str, conn_id: &ConnectionId)
         frame_type = ?frame.ty(),
         "Processing frame"
     );
-    
+
     match frame {
         Frame::ObservedAddress(addr) => {
             debug!(
@@ -291,11 +303,11 @@ pub fn log_packet_event(
     fields.insert("conn_id".to_string(), format!("{conn_id:?}"));
     fields.insert("packet_number".to_string(), packet_number.to_string());
     fields.insert("size".to_string(), size.to_string());
-    
+
     for (key, value) in details {
         fields.insert(key.to_string(), value.to_string());
     }
-    
+
     logger().log_event(LogEvent {
         timestamp: crate::Instant::now(),
         level: tracing::Level::TRACE,
@@ -316,11 +328,11 @@ pub fn log_stream_event(
     let mut fields = HashMap::new();
     fields.insert("conn_id".to_string(), format!("{conn_id:?}"));
     fields.insert("stream_id".to_string(), format!("{stream_id}"));
-    
+
     for (key, value) in details {
         fields.insert(key.to_string(), value.to_string());
     }
-    
+
     logger().log_event(LogEvent {
         timestamp: crate::Instant::now(),
         level: tracing::Level::DEBUG,

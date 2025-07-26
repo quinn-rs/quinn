@@ -6,11 +6,11 @@ This guide is for external testers who want to validate the ant-quic QUIC implem
 
 We maintain a public ant-quic test instance for interoperability testing:
 
-- **Endpoint**: `ant-quic-test.example.com:9000` (UDP)
+- **Endpoint**: `quic.saorsalabs.com:9000` (UDP)
 - **IPv4**: `YOUR.IP.HERE:9000`
 - **IPv6**: `[YOUR:IPv6:HERE]:9000`
-- **Dashboard**: https://ant-quic-test.example.com
-- **Health Check**: https://ant-quic-test.example.com/health
+- **Dashboard**: https://quic.saorsalabs.com
+- **Health Check**: https://quic.saorsalabs.com/health
 
 ## Testing Scenarios
 
@@ -20,13 +20,13 @@ Test basic QUIC handshake and connection establishment:
 
 ```bash
 # Using ant-quic client
-ant-quic --connect ant-quic-test.example.com:9000
+ant-quic --connect quic.saorsalabs.com:9000
 
 # Using quinn-examples (if compatible)
-cargo run --example client ant-quic-test.example.com:9000
+cargo run --example client quic.saorsalabs.com:9000
 
 # Using quiche
-quiche-client https://ant-quic-test.example.com:9000
+quiche-client https://quic.saorsalabs.com:9000
 ```
 
 Expected result: Successful QUIC connection with TLS 1.3 handshake.
@@ -37,7 +37,7 @@ Test NAT traversal capabilities with our QUIC extensions:
 
 ```bash
 # Behind NAT (most home/office networks)
-ant-quic --connect ant-quic-test.example.com:9000 --enable-nat-traversal
+ant-quic --connect quic.saorsalabs.com:9000 --enable-nat-traversal
 
 # Expected output:
 # - Local candidate addresses discovered
@@ -51,7 +51,7 @@ Test the OBSERVED_ADDRESS frame implementation:
 
 ```bash
 # Enable debug logging to see address discovery
-RUST_LOG=ant_quic::frame=debug ant-quic --connect ant-quic-test.example.com:9000
+RUST_LOG=ant_quic::frame=debug ant-quic --connect quic.saorsalabs.com:9000
 
 # Look for:
 # - "Received OBSERVED_ADDRESS frame"
@@ -64,8 +64,8 @@ Test connection racing and path migration:
 
 ```bash
 # Start two connections simultaneously
-ant-quic --connect ant-quic-test.example.com:9000 &
-ant-quic --connect ant-quic-test.example.com:9000 &
+ant-quic --connect quic.saorsalabs.com:9000 &
+ant-quic --connect quic.saorsalabs.com:9000 &
 
 # Both should succeed without interference
 ```
@@ -76,13 +76,13 @@ Measure throughput and latency:
 
 ```bash
 # Download test (1GB file)
-ant-quic --connect ant-quic-test.example.com:9000 --download-test
+ant-quic --connect quic.saorsalabs.com:9000 --download-test
 
 # Upload test (100MB)
-ant-quic --connect ant-quic-test.example.com:9000 --upload-test
+ant-quic --connect quic.saorsalabs.com:9000 --upload-test
 
 # Latency test (1000 pings)
-ant-quic --connect ant-quic-test.example.com:9000 --ping-test
+ant-quic --connect quic.saorsalabs.com:9000 --ping-test
 ```
 
 ## Interoperability Matrix
@@ -113,7 +113,7 @@ chmod +x ant-quic-linux-x86_64
 ```bash
 # Run test client in Docker
 docker run --rm -it ghcr.io/dirvine/ant-quic:latest \
-  ant-quic --connect ant-quic-test.example.com:9000
+  ant-quic --connect quic.saorsalabs.com:9000
 ```
 
 ### 3. Python Test Script
@@ -126,7 +126,7 @@ import sys
 
 def test_ant_quic(endpoint):
     """Test ant-quic connectivity and features"""
-    
+
     tests = {
         "basic_connectivity": [
             "ant-quic", "--connect", endpoint, "--test", "basic"
@@ -138,7 +138,7 @@ def test_ant_quic(endpoint):
             "ant-quic", "--connect", endpoint, "--test", "perf"
         ]
     }
-    
+
     results = {}
     for test_name, cmd in tests.items():
         try:
@@ -153,11 +153,11 @@ def test_ant_quic(endpoint):
                 "success": False,
                 "error": "Timeout after 30 seconds"
             }
-    
+
     return results
 
 if __name__ == "__main__":
-    endpoint = sys.argv[1] if len(sys.argv) > 1 else "ant-quic-test.example.com:9000"
+    endpoint = sys.argv[1] if len(sys.argv) > 1 else "quic.saorsalabs.com:9000"
     results = test_ant_quic(endpoint)
     print(json.dumps(results, indent=2))
 ```
@@ -168,26 +168,26 @@ The test server exposes several HTTP(S) API endpoints for testing:
 
 ### Health Check
 ```bash
-curl https://ant-quic-test.example.com/health
+curl https://quic.saorsalabs.com/health
 # Response: "OK"
 ```
 
 ### Server Statistics
 ```bash
-curl https://ant-quic-test.example.com/api/stats
+curl https://quic.saorsalabs.com/api/stats
 # Response: JSON with connection statistics
 ```
 
 ### NAT Traversal Stats
 ```bash
-curl https://ant-quic-test.example.com/api/stats/nat
+curl https://quic.saorsalabs.com/api/stats/nat
 # Response: JSON with NAT traversal success rates
 ```
 
 ### Test Echo Service
 ```bash
 # Send data and receive echo
-echo "Hello QUIC" | ant-quic --connect ant-quic-test.example.com:9000 --echo
+echo "Hello QUIC" | ant-quic --connect quic.saorsalabs.com:9000 --echo
 ```
 
 ## Debugging Connection Issues
@@ -195,7 +195,7 @@ echo "Hello QUIC" | ant-quic --connect ant-quic-test.example.com:9000 --echo
 ### 1. Enable Verbose Logging
 
 ```bash
-RUST_LOG=ant_quic=debug ant-quic --connect ant-quic-test.example.com:9000
+RUST_LOG=ant_quic=debug ant-quic --connect quic.saorsalabs.com:9000
 ```
 
 ### 2. Packet Capture
@@ -212,7 +212,7 @@ wireshark quic-test.pcap
 
 ```bash
 # Our endpoint will report your NAT type
-ant-quic --connect ant-quic-test.example.com:9000 --nat-check
+ant-quic --connect quic.saorsalabs.com:9000 --nat-check
 ```
 
 ## Reporting Issues
@@ -234,7 +234,7 @@ Report issues at: https://github.com/dirvine/ant-quic/issues
 Test with specific transport parameters:
 
 ```bash
-ant-quic --connect ant-quic-test.example.com:9000 \
+ant-quic --connect quic.saorsalabs.com:9000 \
   --max-idle-timeout 60000 \
   --initial-max-data 10485760 \
   --initial-max-stream-data-bidi-local 1048576
@@ -246,7 +246,7 @@ Test connection migration between networks:
 
 ```bash
 # Start connection on WiFi
-ant-quic --connect ant-quic-test.example.com:9000 --interactive
+ant-quic --connect quic.saorsalabs.com:9000 --interactive
 
 # In interactive mode:
 > migrate eth0  # Switch to ethernet
@@ -259,10 +259,10 @@ Test 0-RTT data transmission:
 
 ```bash
 # First connection (saves session)
-ant-quic --connect ant-quic-test.example.com:9000 --save-session
+ant-quic --connect quic.saorsalabs.com:9000 --save-session
 
 # Subsequent connection with 0-RTT
-ant-quic --connect ant-quic-test.example.com:9000 --enable-0rtt
+ant-quic --connect quic.saorsalabs.com:9000 --enable-0rtt
 ```
 
 ## Compliance Testing
@@ -278,7 +278,7 @@ Our implementation aims for compliance with:
 
 ```bash
 # Run compliance test suite
-ant-quic --compliance-test ant-quic-test.example.com:9000
+ant-quic --compliance-test quic.saorsalabs.com:9000
 
 # Output includes:
 # - Supported versions
@@ -300,6 +300,6 @@ Expected performance metrics:
 
 - **Technical Issues**: https://github.com/dirvine/ant-quic/issues
 - **Security Issues**: security@example.com
-- **General Inquiries**: quic-test@example.com
+- **General Inquiries**: quic-quic.saorsalabs.com
 
 Thank you for testing ant-quic!

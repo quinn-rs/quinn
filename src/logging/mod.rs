@@ -1,40 +1,37 @@
 /// Comprehensive Logging System for ant-quic
-/// 
+///
 /// This module provides structured logging capabilities for debugging,
-/// monitoring, and analyzing QUIC connections, NAT traversal, and 
+/// monitoring, and analyzing QUIC connections, NAT traversal, and
 /// protocol-level events.
-
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-use tracing::{debug, error, info, trace, warn, Level, Span};
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Layer};
+use tracing::{Level, Span, debug, error, info, trace, warn};
+use tracing_subscriber::{EnvFilter, Layer, layer::SubscriberExt, util::SubscriberInitExt};
 
 use crate::{
-    ConnectionId, Duration, Instant, Side,
-    connection::nat_traversal::NatTraversalRole,
-    frame::FrameType,
-    transport_parameters::TransportParameterId,
+    ConnectionId, Duration, Instant, Side, connection::nat_traversal::NatTraversalRole,
+    frame::FrameType, transport_parameters::TransportParameterId,
 };
 
 #[cfg(test)]
 mod tests;
 
-mod structured;
+mod components;
 mod filters;
 mod formatters;
-mod metrics;
 mod lifecycle;
-mod components;
+mod metrics;
+mod structured;
 
-pub use structured::*;
+pub use components::*;
 pub use filters::*;
 pub use formatters::*;
-pub use metrics::*;
 pub use lifecycle::*;
-pub use components::*;
+pub use metrics::*;
+pub use structured::*;
 
 /// Global logger instance
 static LOGGER: once_cell::sync::OnceCell<Arc<Logger>> = once_cell::sync::OnceCell::new();
@@ -42,22 +39,21 @@ static LOGGER: once_cell::sync::OnceCell<Arc<Logger>> = once_cell::sync::OnceCel
 /// Initialize the logging system
 pub fn init_logging(config: LoggingConfig) -> Result<(), LoggingError> {
     let logger = Arc::new(Logger::new(config)?);
-    
+
     LOGGER
         .set(logger.clone())
         .map_err(|_| LoggingError::AlreadyInitialized)?;
-    
+
     // Initialize tracing subscriber
-    let env_filter = EnvFilter::from_default_env()
-        .add_directive("ant_quic=debug".parse().unwrap());
-    
+    let env_filter = EnvFilter::from_default_env().add_directive("ant_quic=debug".parse().unwrap());
+
     if logger.use_json() {
         let fmt_layer = tracing_subscriber::fmt::layer()
             .json()
             .with_target(true)
             .with_thread_ids(true)
             .with_level(true);
-        
+
         tracing_subscriber::registry()
             .with(env_filter)
             .with(fmt_layer)
@@ -67,13 +63,13 @@ pub fn init_logging(config: LoggingConfig) -> Result<(), LoggingError> {
             .with_target(true)
             .with_thread_ids(true)
             .with_level(true);
-        
+
         tracing_subscriber::registry()
             .with(env_filter)
             .with(fmt_layer)
             .init();
     }
-    
+
     info!("ant-quic logging system initialized");
     Ok(())
 }
@@ -106,31 +102,28 @@ impl Logger {
             config,
             metrics_collector: Arc::new(MetricsCollector::new()),
             event_buffer: Arc::new(Mutex::new(Vec::with_capacity(buffer_size))),
-            rate_limiter: Arc::new(RateLimiter::new(
-                rate_limit,
-                Duration::from_secs(1),
-            )),
+            rate_limiter: Arc::new(RateLimiter::new(rate_limit, Duration::from_secs(1))),
         })
     }
-    
+
     /// Check if JSON output is enabled
     fn use_json(&self) -> bool {
         self.config.json_output
     }
-    
+
     /// Log a structured event
     pub fn log_event(&self, event: LogEvent) {
         if !self.rate_limiter.should_log(event.level) {
             return;
         }
-        
+
         // Add to buffer for analysis
         if let Ok(mut buffer) = self.event_buffer.lock() {
             if buffer.len() < 10000 {
                 buffer.push(event.clone());
             }
         }
-        
+
         // Log using tracing
         match event.level {
             Level::ERROR => error!("{} - {}", event.target, event.message),
@@ -139,11 +132,11 @@ impl Logger {
             Level::DEBUG => debug!("{} - {}", event.target, event.message),
             Level::TRACE => trace!("{} - {}", event.target, event.message),
         }
-        
+
         // Update metrics
         self.metrics_collector.record_event(&event);
     }
-    
+
     /// Get recent events for analysis
     pub fn recent_events(&self, count: usize) -> Vec<LogEvent> {
         if let Ok(buffer) = self.event_buffer.lock() {
@@ -152,7 +145,7 @@ impl Logger {
             Vec::new()
         }
     }
-    
+
     /// Get metrics summary
     pub fn metrics_summary(&self) -> MetricsSummary {
         self.metrics_collector.summary()
@@ -299,22 +292,22 @@ impl RateLimiter {
             window_start: Mutex::new(Instant::now()),
         }
     }
-    
+
     pub fn should_log(&self, level: Level) -> bool {
         // Always allow ERROR level
         if level == Level::ERROR {
             return true;
         }
-        
+
         let now = Instant::now();
         let mut window_start = self.window_start.lock().unwrap();
-        
+
         // Reset window if expired
         if now.duration_since(*window_start) > self.window {
             *window_start = now;
             self.events_in_window.store(0, Ordering::Relaxed);
         }
-        
+
         // Check rate limit
         let current = self.events_in_window.fetch_add(1, Ordering::Relaxed);
         current < self.max_events
@@ -328,15 +321,15 @@ pub fn log_error(message: &str, context: ErrorContext) {
     let mut fields = HashMap::new();
     fields.insert("component".to_string(), context.component.to_string());
     fields.insert("operation".to_string(), context.operation.to_string());
-    
+
     if let Some(conn_id) = context.connection_id {
         fields.insert("conn_id".to_string(), format!("{conn_id:?}"));
     }
-    
+
     for (key, value) in context.additional_fields {
         fields.insert(key.to_string(), value.to_string());
     }
-    
+
     logger().log_event(LogEvent {
         timestamp: Instant::now(),
         level: Level::ERROR,
@@ -351,11 +344,11 @@ pub fn log_error(message: &str, context: ErrorContext) {
 pub fn log_warning(message: &str, context: WarningContext) {
     let mut fields = HashMap::new();
     fields.insert("component".to_string(), context.component.to_string());
-    
+
     for (key, value) in context.details {
         fields.insert(key.to_string(), value.to_string());
     }
-    
+
     logger().log_event(LogEvent {
         timestamp: Instant::now(),
         level: Level::WARN,
@@ -370,11 +363,11 @@ pub fn log_warning(message: &str, context: WarningContext) {
 pub fn log_info(message: &str, context: InfoContext) {
     let mut fields = HashMap::new();
     fields.insert("component".to_string(), context.component.to_string());
-    
+
     for (key, value) in context.details {
         fields.insert(key.to_string(), value.to_string());
     }
-    
+
     logger().log_event(LogEvent {
         timestamp: Instant::now(),
         level: Level::INFO,
@@ -389,11 +382,11 @@ pub fn log_info(message: &str, context: InfoContext) {
 pub fn log_debug(message: &str, context: DebugContext) {
     let mut fields = HashMap::new();
     fields.insert("component".to_string(), context.component.to_string());
-    
+
     for (key, value) in context.details {
         fields.insert(key.to_string(), value.to_string());
     }
-    
+
     logger().log_event(LogEvent {
         timestamp: Instant::now(),
         level: Level::DEBUG,
@@ -408,11 +401,11 @@ pub fn log_debug(message: &str, context: DebugContext) {
 pub fn log_trace(message: &str, context: TraceContext) {
     let mut fields = HashMap::new();
     fields.insert("component".to_string(), context.component.to_string());
-    
+
     for (key, value) in context.details {
         fields.insert(key.to_string(), value.to_string());
     }
-    
+
     logger().log_event(LogEvent {
         timestamp: Instant::now(),
         level: Level::TRACE,

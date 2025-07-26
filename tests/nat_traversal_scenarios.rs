@@ -7,10 +7,7 @@ use ant_quic::{
     crypto::raw_public_keys::key_utils::{
         derive_peer_id_from_public_key, generate_ed25519_keypair,
     },
-    nat_traversal_api::{
-        EndpointRole,
-        NatTraversalEvent, PeerId,
-    },
+    nat_traversal_api::{EndpointRole, NatTraversalEvent, PeerId},
     quic_node::{QuicNodeConfig, QuicP2PNode},
 };
 use std::{

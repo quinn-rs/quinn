@@ -1,15 +1,15 @@
 //! Protocol violation detection and handling for QUIC compliance
-//! 
+//!
 //! This module implements RFC 9000 protocol violation detection, generating
 //! PROTOCOL_VIOLATION (0x0A) errors for violations not covered by more specific errors.
 
+use crate::Side;
+use crate::connection::State as ConnectionState;
 use crate::frame::{self, FrameType};
 use crate::packet::{Header, LongType, SpaceId};
-use crate::connection::State as ConnectionState;
-use crate::transport_error::{Error as TransportError, Code as TransportErrorCode};
-use crate::Side;
-use tracing::error;
+use crate::transport_error::{Code as TransportErrorCode, Error as TransportError};
 use std::collections::HashSet;
+use tracing::error;
 
 /// Simplified packet type for protocol validation
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -31,8 +31,14 @@ impl PacketType {
     pub(crate) fn from_header(header: &Header) -> Self {
         match header {
             Header::Initial(_) => Self::Initial,
-            Header::Long { ty: LongType::Handshake, .. } => Self::Handshake,
-            Header::Long { ty: LongType::ZeroRtt, .. } => Self::ZeroRtt,
+            Header::Long {
+                ty: LongType::Handshake,
+                ..
+            } => Self::Handshake,
+            Header::Long {
+                ty: LongType::ZeroRtt,
+                ..
+            } => Self::ZeroRtt,
             Header::Short { .. } => Self::Short,
             Header::Retry { .. } => Self::Retry,
             Header::VersionNegotiate { .. } => Self::Retry, // Treat as special case
@@ -108,21 +114,21 @@ pub(crate) fn validate_frame_in_packet_type(
     let allowed = match frame_type {
         // PADDING, PING, and ACK can appear in any packet type
         FrameType::PADDING | FrameType::PING | FrameType::ACK | FrameType::ACK_ECN => true,
-        
+
         // CRYPTO and CONNECTION_CLOSE can appear in any packet type
         FrameType::CRYPTO | FrameType::CONNECTION_CLOSE => true,
-        
+
         // NEW_TOKEN can only appear in 1-RTT packets
         FrameType::NEW_TOKEN => matches!(packet_type, PacketType::Short),
-        
+
         // HANDSHAKE_DONE can only appear in 1-RTT packets
         FrameType::HANDSHAKE_DONE => matches!(packet_type, PacketType::Short),
-        
+
         // All STREAM-related frames can only appear in 1-RTT packets
         // STREAM frames are in the range 0x08-0x0f
         _ if frame_type.is_stream() => matches!(packet_type, PacketType::Short),
-        
-        FrameType::MAX_DATA 
+
+        FrameType::MAX_DATA
         | FrameType::MAX_STREAM_DATA
         | FrameType::MAX_STREAMS_BIDI
         | FrameType::MAX_STREAMS_UNI
@@ -132,18 +138,20 @@ pub(crate) fn validate_frame_in_packet_type(
         | FrameType::STREAMS_BLOCKED_UNI
         | FrameType::RESET_STREAM
         | FrameType::STOP_SENDING => matches!(packet_type, PacketType::Short),
-        
+
         // Connection ID management frames in 1-RTT only
-        FrameType::NEW_CONNECTION_ID
-        | FrameType::RETIRE_CONNECTION_ID => matches!(packet_type, PacketType::Short),
-        
+        FrameType::NEW_CONNECTION_ID | FrameType::RETIRE_CONNECTION_ID => {
+            matches!(packet_type, PacketType::Short)
+        }
+
         // PATH_CHALLENGE and PATH_RESPONSE in 1-RTT only
-        FrameType::PATH_CHALLENGE
-        | FrameType::PATH_RESPONSE => matches!(packet_type, PacketType::Short),
-        
+        FrameType::PATH_CHALLENGE | FrameType::PATH_RESPONSE => {
+            matches!(packet_type, PacketType::Short)
+        }
+
         // Application close in 1-RTT only
         FrameType::APPLICATION_CLOSE => matches!(packet_type, PacketType::Short),
-        
+
         // Extension frames follow their own rules
         _ => {
             // For unknown frame types, assume 1-RTT only to be safe
@@ -206,10 +214,10 @@ pub(crate) fn validate_frame_in_connection_state(
     let allowed = match frame_type {
         // STREAM frames require established connection
         _ if frame_type.is_stream() => is_established_state(conn_state),
-        
+
         // HANDSHAKE_DONE requires confirmed handshake
         FrameType::HANDSHAKE_DONE => is_established_state(conn_state),
-        
+
         // Most frames allowed after handshake starts
         _ => true,
     };
@@ -222,7 +230,7 @@ pub(crate) fn validate_frame_in_connection_state(
         } else {
             "Other"
         };
-        
+
         error!(
             frame_type = ?frame_type,
             state = state_name,
@@ -244,7 +252,7 @@ pub(crate) fn validate_coalesced_packet_order(
 ) -> Result<(), TransportError> {
     // RFC 9000 Section 12.2: Initial packets must come first in coalesced packets
     let mut saw_non_initial = false;
-    
+
     for packet_type in packet_types {
         match packet_type {
             PacketType::Initial => {
@@ -262,7 +270,7 @@ pub(crate) fn validate_coalesced_packet_order(
             _ => saw_non_initial = true,
         }
     }
-    
+
     Ok(())
 }
 
@@ -272,7 +280,7 @@ pub(crate) fn validate_version_negotiation_packet(
     is_client: bool,
 ) -> Result<(), TransportError> {
     // RFC 9000 Section 6: Version negotiation validation
-    
+
     // Clients must not send version negotiation packets
     if is_client {
         error!(
@@ -284,7 +292,7 @@ pub(crate) fn validate_version_negotiation_packet(
             None,
         ));
     }
-    
+
     // Check for version 0 in the list (not allowed)
     for chunk in versions.chunks(4) {
         if chunk.len() == 4 && chunk == [0, 0, 0, 0] {
@@ -298,7 +306,7 @@ pub(crate) fn validate_version_negotiation_packet(
             ));
         }
     }
-    
+
     Ok(())
 }
 
@@ -328,11 +336,7 @@ pub(crate) fn create_protocol_violation_close(
 }
 
 /// Log protocol violation with RFC reference
-pub(crate) fn log_protocol_violation(
-    violation_type: &str,
-    details: &str,
-    rfc_section: &str,
-) {
+pub(crate) fn log_protocol_violation(violation_type: &str, details: &str, rfc_section: &str) {
     error!(
         violation = violation_type,
         details = details,
@@ -348,10 +352,10 @@ mod tests {
     #[test]
     fn test_protocol_validator_handshake_done() {
         let mut validator = ProtocolValidator::new(Side::Server);
-        
+
         // First HANDSHAKE_DONE is ok
         assert!(validator.record_handshake_done().is_ok());
-        
+
         // Second is a violation
         assert!(validator.record_handshake_done().is_err());
     }
@@ -359,13 +363,13 @@ mod tests {
     #[test]
     fn test_path_challenge_response_tracking() {
         let mut validator = ProtocolValidator::new(Side::Client);
-        
+
         // Record a challenge
         validator.record_path_challenge(12345);
-        
+
         // Valid response
         assert!(validator.validate_path_response(12345).is_ok());
-        
+
         // Invalid response (no matching challenge)
         assert!(validator.validate_path_response(67890).is_err());
     }
@@ -373,22 +377,19 @@ mod tests {
     #[test]
     fn test_frame_packet_type_validation() {
         // NEW_TOKEN in Initial packet is invalid
-        assert!(validate_frame_in_packet_type(
-            FrameType::NEW_TOKEN,
-            PacketType::Initial
-        ).is_err());
-        
+        assert!(validate_frame_in_packet_type(FrameType::NEW_TOKEN, PacketType::Initial).is_err());
+
         // CRYPTO in Initial is valid
-        assert!(validate_frame_in_packet_type(
-            FrameType::CRYPTO,
-            PacketType::Initial
-        ).is_ok());
-        
+        assert!(validate_frame_in_packet_type(FrameType::CRYPTO, PacketType::Initial).is_ok());
+
         // STREAM in Short (1-RTT) is valid
         // Use a STREAM frame type (0x08)
-        assert!(validate_frame_in_packet_type(
-            FrameType(0x08), // STREAM frame
-            PacketType::Short
-        ).is_ok());
+        assert!(
+            validate_frame_in_packet_type(
+                FrameType(0x08), // STREAM frame
+                PacketType::Short
+            )
+            .is_ok()
+        );
     }
 }

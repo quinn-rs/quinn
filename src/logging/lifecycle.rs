@@ -1,12 +1,11 @@
 /// Connection lifecycle logging
-/// 
+///
 /// Tracks and logs the complete lifecycle of QUIC connections
-
 use std::collections::HashMap;
-use tracing::{debug, info, warn, Span};
+use tracing::{Span, debug, info, warn};
 
+use super::{ConnectionRole, LogEvent, logger};
 use crate::{ConnectionId, Duration, Instant};
-use super::{logger, LogEvent, ConnectionRole};
 
 /// Connection lifecycle state
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -61,12 +60,12 @@ impl ConnectionLifecycle {
             total_packets_received: 0,
         }
     }
-    
+
     /// Update connection state
     pub fn update_state(&mut self, new_state: ConnectionState) {
         let old_state = self.state;
         self.state = new_state;
-        
+
         match new_state {
             ConnectionState::Handshaking => {
                 self.handshake_started_at = Some(Instant::now());
@@ -79,10 +78,10 @@ impl ConnectionLifecycle {
             }
             _ => {}
         }
-        
+
         self.log_state_transition(old_state, new_state);
     }
-    
+
     /// Log state transition
     fn log_state_transition(&self, old_state: ConnectionState, new_state: ConnectionState) {
         let mut fields = HashMap::new();
@@ -90,18 +89,18 @@ impl ConnectionLifecycle {
         fields.insert("role".to_string(), format!("{:?}", self.role));
         fields.insert("old_state".to_string(), format!("{old_state:?}"));
         fields.insert("new_state".to_string(), format!("{new_state:?}"));
-        
+
         // Add timing information
         if let Some(duration) = self.duration_in_state(old_state) {
             fields.insert("duration_ms".to_string(), duration.as_millis().to_string());
         }
-        
+
         let level = match new_state {
             ConnectionState::Lost => tracing::Level::WARN,
             ConnectionState::Established => tracing::Level::INFO,
             _ => tracing::Level::DEBUG,
         };
-        
+
         logger().log_event(LogEvent {
             timestamp: Instant::now(),
             level,
@@ -111,7 +110,7 @@ impl ConnectionLifecycle {
             span_id: None,
         });
     }
-    
+
     /// Get duration in a specific state
     fn duration_in_state(&self, state: ConnectionState) -> Option<Duration> {
         match state {
@@ -138,34 +137,53 @@ impl ConnectionLifecycle {
             _ => None,
         }
     }
-    
+
     /// Log connection summary when closed
     pub fn log_summary(&self) {
-        let total_duration = self.closed_at
+        let total_duration = self
+            .closed_at
             .unwrap_or_else(Instant::now)
             .duration_since(self.initiated_at);
-        
+
         let mut fields = HashMap::new();
         fields.insert("conn_id".to_string(), format!("{:?}", self.conn_id));
         fields.insert("role".to_string(), format!("{:?}", self.role));
-        fields.insert("total_duration_ms".to_string(), total_duration.as_millis().to_string());
+        fields.insert(
+            "total_duration_ms".to_string(),
+            total_duration.as_millis().to_string(),
+        );
         fields.insert("bytes_sent".to_string(), self.total_bytes_sent.to_string());
-        fields.insert("bytes_received".to_string(), self.total_bytes_received.to_string());
-        fields.insert("packets_sent".to_string(), self.total_packets_sent.to_string());
-        fields.insert("packets_received".to_string(), self.total_packets_received.to_string());
-        
+        fields.insert(
+            "bytes_received".to_string(),
+            self.total_bytes_received.to_string(),
+        );
+        fields.insert(
+            "packets_sent".to_string(),
+            self.total_packets_sent.to_string(),
+        );
+        fields.insert(
+            "packets_received".to_string(),
+            self.total_packets_received.to_string(),
+        );
+
         if let Some(handshake_duration) = self.duration_in_state(ConnectionState::Handshaking) {
-            fields.insert("handshake_duration_ms".to_string(), handshake_duration.as_millis().to_string());
+            fields.insert(
+                "handshake_duration_ms".to_string(),
+                handshake_duration.as_millis().to_string(),
+            );
         }
-        
+
         if let Some(established_duration) = self.duration_in_state(ConnectionState::Established) {
-            fields.insert("established_duration_ms".to_string(), established_duration.as_millis().to_string());
+            fields.insert(
+                "established_duration_ms".to_string(),
+                established_duration.as_millis().to_string(),
+            );
         }
-        
+
         if let Some(reason) = &self.close_reason {
             fields.insert("close_reason".to_string(), reason.clone());
         }
-        
+
         logger().log_event(LogEvent {
             timestamp: Instant::now(),
             level: tracing::Level::INFO,
@@ -178,7 +196,11 @@ impl ConnectionLifecycle {
 }
 
 /// Log connection lifecycle events
-pub fn log_connection_initiated(conn_id: &ConnectionId, role: ConnectionRole, remote_addr: std::net::SocketAddr) {
+pub fn log_connection_initiated(
+    conn_id: &ConnectionId,
+    role: ConnectionRole,
+    remote_addr: std::net::SocketAddr,
+) {
     info!(
         target: "ant_quic::connection::lifecycle",
         conn_id = ?conn_id,
@@ -228,11 +250,11 @@ pub fn log_connection_closed(conn_id: &ConnectionId, reason: &str, error_code: O
     let mut fields = HashMap::new();
     fields.insert("conn_id".to_string(), format!("{conn_id:?}"));
     fields.insert("reason".to_string(), reason.to_string());
-    
+
     if let Some(code) = error_code {
         fields.insert("error_code".to_string(), format!("0x{code:x}"));
     }
-    
+
     logger().log_event(LogEvent {
         timestamp: Instant::now(),
         level: tracing::Level::DEBUG,

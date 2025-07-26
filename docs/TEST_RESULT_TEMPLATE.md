@@ -4,10 +4,10 @@ Please use this template when submitting test results for ant-quic interoperabil
 
 ## Tester Information
 
-**Organization/Individual**: [Your name or organization]  
-**Contact Email**: [your-email@example.com]  
-**Date of Testing**: [YYYY-MM-DD]  
-**ant-quic Version Tested**: [e.g., v0.4.4 or commit hash]  
+**Organization/Individual**: [Your name or organization]
+**Contact Email**: [your-email@example.com]
+**Date of Testing**: [YYYY-MM-DD]
+**ant-quic Version Tested**: [e.g., v0.4.4 or commit hash]
 
 ## Test Environment
 
@@ -24,7 +24,7 @@ Please use this template when submitting test results for ant-quic interoperabil
 - NAT Type: [e.g., Full Cone, Symmetric, None]
 
 **Test Endpoint Used**:
-- [ ] ant-quic-test.example.com:9000 (Production)
+- [ ] quic.saorsalabs.com:9000 (Production)
 - [ ] Custom endpoint: _______________
 
 ## Test Results
@@ -132,10 +132,10 @@ Active streams tested: _____
 
 ### 6. Stress Testing (Optional)
 
-**Concurrent Connections**: _____  
-**Streams per Connection**: _____  
-**Test Duration**: _____ minutes  
-**Failures**: _____  
+**Concurrent Connections**: _____
+**Streams per Connection**: _____
+**Test Duration**: _____ minutes
+**Failures**: _____
 **Success Rate**: _____ %
 
 ### 7. Interoperability Issues
@@ -224,5 +224,5 @@ Thank you for testing ant-quic!
 
 ---
 
-*Template Version: 1.0*  
+*Template Version: 1.0*
 *Last Updated: 2025-07-26*

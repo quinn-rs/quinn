@@ -70,7 +70,7 @@ cargo run --bin ant-quic -- --help
 cargo run --bin ant-quic -- --listen 0.0.0.0:9000
 
 # Run with bootstrap nodes
-cargo run --bin ant-quic -- --bootstrap node1.example.com:9000
+cargo run --bin ant-quic -- --bootstrap quic.saorsalabs.com:9000
 ```
 
 ### Benchmarking

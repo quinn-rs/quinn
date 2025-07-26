@@ -28,10 +28,10 @@ This guide helps diagnose and resolve common issues with ant-quic's NAT traversa
 1. **Check network connectivity**
    ```bash
    # Test basic network connectivity
-   ping bootstrap.example.com
-   
+   ping quic.saorsalabs.com
+
    # Check if port is reachable
-   nc -zv bootstrap.example.com 9000
+   nc -zv quic.saorsalabs.com 9000
    ```
 
 2. **Verify bootstrap nodes are running**
@@ -39,9 +39,7 @@ This guide helps diagnose and resolve common issues with ant-quic's NAT traversa
    // Use multiple bootstrap nodes for redundancy
    let config = NatTraversalConfig {
        bootstrap_nodes: vec![
-           "bootstrap1.example.com:9000".parse()?,
-           "bootstrap2.example.com:9000".parse()?,
-           "bootstrap3.example.com:9000".parse()?,
+           "quic.saorsalabs.com:9000".parse()?
        ],
        ..Default::default()
    };
@@ -51,10 +49,10 @@ This guide helps diagnose and resolve common issues with ant-quic's NAT traversa
    ```bash
    # Linux: Check iptables
    sudo iptables -L -n | grep 9000
-   
+
    # macOS: Check firewall
    sudo pfctl -sr | grep 9000
-   
+
    # Windows: Check Windows Firewall
    netsh advfirewall firewall show rule name=all | findstr 9000
    ```
@@ -169,7 +167,7 @@ This guide helps diagnose and resolve common issues with ant-quic's NAT traversa
    # Ensure system clocks are synchronized
    # Linux/macOS
    ntpdate -q pool.ntp.org
-   
+
    # Windows
    w32tm /query /status
    ```
@@ -214,7 +212,7 @@ This guide helps diagnose and resolve common issues with ant-quic's NAT traversa
    ```rust
    // Temporarily increase rate limit for testing
    endpoint_config.set_max_observation_rate(60);
-   
+
    // Check statistics
    let stats = endpoint.address_discovery_stats();
    println!("Observation rate limited: {}", stats.rate_limited_count);
@@ -243,7 +241,7 @@ This guide helps diagnose and resolve common issues with ant-quic's NAT traversa
    ```bash
    # Check if behind proxy
    curl -s https://api.ipify.org
-   
+
    # Compare with discovered addresses
    ```
 
@@ -251,8 +249,8 @@ This guide helps diagnose and resolve common issues with ant-quic's NAT traversa
    ```rust
    // For IPv4-only networks
    let socket = std::net::UdpSocket::bind("0.0.0.0:0")?;
-   
-   // For IPv6-only networks  
+
+   // For IPv6-only networks
    let socket = std::net::UdpSocket::bind("[::]:0")?;
    ```
 
@@ -316,7 +314,7 @@ This guide helps diagnose and resolve common issues with ant-quic's NAT traversa
    ```bash
    # Use valgrind on Linux
    valgrind --leak-check=full cargo run
-   
+
    # Use heaptrack
    heaptrack cargo run
    ```

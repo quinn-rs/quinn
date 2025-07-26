@@ -98,13 +98,13 @@ Welcome to the ant-quic documentation! This directory contains comprehensive gui
 # Download and test immediately
 wget https://github.com/dirvine/ant-quic/releases/latest/download/ant-quic-linux-x86_64
 chmod +x ant-quic-linux-x86_64
-./ant-quic-linux-x86_64 --connect ant-quic-test.example.com:9000
+./ant-quic-linux-x86_64 --connect quic.saorsalabs.com:9000
 ```
 
 ### Docker Testing
 ```bash
 docker run --rm ghcr.io/dirvine/ant-quic:latest \
-    ant-quic --connect ant-quic-test.example.com:9000 --enable-nat-traversal
+    ant-quic --connect quic.saorsalabs.com:9000 --enable-nat-traversal
 ```
 
 ### Python Testing
@@ -116,10 +116,10 @@ python3 test_interop.py --all
 ## 📊 Test Endpoints
 
 ### Production Test Server
-- **Host**: `ant-quic-test.example.com`
+- **Host**: `quic.saorsalabs.com`
 - **Port**: `9000` (UDP)
-- **Dashboard**: https://ant-quic-test.example.com
-- **Health**: https://ant-quic-test.example.com/health
+- **Dashboard**: https://quic.saorsalabs.com
+- **Health**: https://quic.saorsalabs.com/health
 
 ### Features Supported
 - ✅ QUIC v1 (RFC 9000)
@@ -169,7 +169,7 @@ cargo bench
 1. Use the [Test Result Template](TEST_RESULT_TEMPLATE.md)
 2. File via:
    - GitHub Issue with `test-results` label
-   - Email to quic-test@example.com
+   - Email to quic-quic.saorsalabs.com
    - PR to `docs/test-results/`
 
 ### Report Issues
@@ -191,6 +191,6 @@ Documentation is licensed under CC BY 4.0. See [LICENSE](../LICENSE) for details
 
 ---
 
-**Version**: 0.4.4  
-**Last Updated**: 2025-07-26  
+**Version**: 0.4.4
+**Last Updated**: 2025-07-26
 **Maintainer**: David Irvine (@dirvine)

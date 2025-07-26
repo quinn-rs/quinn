@@ -1,15 +1,18 @@
 #[cfg(test)]
 mod transport_parameter_error_tests {
-    use crate::transport_parameters::{TransportParameters, Side, Error};
     use crate::TransportError;
     use crate::VarInt;
     use crate::coding::BufMutExt;
+    use crate::transport_parameters::{Error, Side, TransportParameters};
 
     #[test]
     fn test_transport_parameter_error_from_malformed() {
         // Test that malformed parameters generate TRANSPORT_PARAMETER_ERROR
         let err = TransportError::from(Error::Malformed);
-        assert_eq!(err.code, crate::transport_error::Code::TRANSPORT_PARAMETER_ERROR);
+        assert_eq!(
+            err.code,
+            crate::transport_error::Code::TRANSPORT_PARAMETER_ERROR
+        );
         assert_eq!(err.reason, "malformed");
     }
 
@@ -17,7 +20,10 @@ mod transport_parameter_error_tests {
     fn test_transport_parameter_error_from_illegal_value() {
         // Test that illegal values generate TRANSPORT_PARAMETER_ERROR
         let err = TransportError::from(Error::IllegalValue);
-        assert_eq!(err.code, crate::transport_error::Code::TRANSPORT_PARAMETER_ERROR);
+        assert_eq!(
+            err.code,
+            crate::transport_error::Code::TRANSPORT_PARAMETER_ERROR
+        );
         assert_eq!(err.reason, "illegal value");
     }
 
@@ -88,10 +94,10 @@ mod transport_parameter_error_tests {
         // min_ack_delay must be <= max_ack_delay * 1000 (converting ms to us)
         let mut params = TransportParameters::default();
         params.max_ack_delay = VarInt::from_u32(25); // 25ms
-        
+
         let mut buf = Vec::new();
         params.write(&mut buf);
-        
+
         // Append min_ack_delay parameter
         buf.write_var(0xde1b); // min_ack_delay ID (temporary draft ID)
         buf.write_var(4); // length
@@ -111,7 +117,7 @@ mod transport_parameter_error_tests {
         let mut buf = Vec::new();
         buf.write_var(0x0d); // preferred_address ID
         buf.write_var(36); // minimal length
-        
+
         // Write a minimal preferred address
         buf.extend_from_slice(&[127, 0, 0, 1]); // IPv4
         buf.extend_from_slice(&[0x1f, 0x90]); // port 8080 in big-endian
@@ -133,12 +139,12 @@ mod transport_parameter_error_tests {
     fn test_duplicate_parameter_error() {
         // Duplicate parameters should cause an error
         let mut buf = Vec::new();
-        
+
         // First max_idle_timeout
         buf.write_var(0x01); // max_idle_timeout ID
         buf.write_var(2); // length
         buf.write_var(30000); // value
-        
+
         // Duplicate max_idle_timeout
         buf.write_var(0x01); // max_idle_timeout ID again
         buf.write_var(2); // length
@@ -168,7 +174,7 @@ mod transport_parameter_error_tests {
     #[test]
     fn test_nat_traversal_wrong_side_error() {
         // Test NAT traversal parameter validation per draft-seemann-quic-nat-traversal-02
-        
+
         // Client sending non-empty value (invalid - clients must send empty)
         let mut buf = Vec::new();
         buf.write_var(0x3d7e9f0bca12fea6); // NAT traversal parameter ID
@@ -224,7 +230,10 @@ mod transport_parameter_error_tests {
                 frame: None,
                 reason: msg.into(),
             };
-            assert_eq!(err.code, crate::transport_error::Code::TRANSPORT_PARAMETER_ERROR);
+            assert_eq!(
+                err.code,
+                crate::transport_error::Code::TRANSPORT_PARAMETER_ERROR
+            );
             assert_eq!(err.reason, msg);
         }
     }
@@ -245,12 +254,12 @@ mod transport_parameter_error_tests {
     fn test_unknown_parameters_ignored() {
         // Unknown parameters should be ignored, not cause errors
         let mut buf = Vec::new();
-        
+
         // Known parameter
         buf.write_var(0x01); // max_idle_timeout
         buf.write_var(VarInt::from_u32(30000).size() as u64); // length
         buf.write_var(30000); // value
-        
+
         // Unknown parameter (should be ignored)
         buf.write_var(0xffffff); // Unknown ID
         buf.write_var(4); // length

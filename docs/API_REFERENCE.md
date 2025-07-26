@@ -77,7 +77,7 @@ let endpoint = Endpoint::server(server_config, "0.0.0.0:9000")?;
 // Accept incoming connections
 while let Some(connecting) = endpoint.accept().await {
     let connection = connecting.await?;
-    
+
     // Handle connection
     tokio::spawn(async move {
         handle_connection(connection).await;
@@ -104,7 +104,7 @@ use ant_quic::nat_traversal_api::{NatTraversalEndpoint, NatTraversalConfig, Endp
 // Create NAT traversal endpoint
 let config = NatTraversalConfig {
     role: EndpointRole::Client,
-    bootstrap_nodes: vec!["bootstrap.example.com:9000".parse()?],
+    bootstrap_nodes: vec!["quic.saorsalabs.com:9000".parse()?],
     max_candidates: 50,
     coordination_timeout: Duration::from_secs(30),
     enable_symmetric_nat: true,
@@ -325,34 +325,34 @@ use std::sync::Arc;
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Parse server address
-    let server_addr: SocketAddr = "example.com:9000".parse()?;
-    
+    let server_addr: SocketAddr = "quic.saorsalabs.com:9000".parse()?;
+
     // Create client endpoint
     let mut endpoint = Endpoint::client("0.0.0.0:0")?;
-    
+
     // Configure client
     let client_config = ClientConfig::with_native_roots();
     endpoint.set_default_client_config(client_config);
-    
+
     // Connect to server
     let connection = endpoint.connect(server_addr, "example.com")?.await?;
     println!("Connected to {}", connection.remote_address());
-    
+
     // Open a bidirectional stream
     let (mut send, mut recv) = connection.open_bi().await?;
-    
+
     // Send data
     send.write_all(b"Hello, QUIC!").await?;
     send.finish().await?;
-    
+
     // Receive response
     let response = recv.read_to_end(1024).await?;
     println!("Received: {:?}", String::from_utf8(response)?);
-    
+
     // Close connection
     connection.close(0u32.into(), b"done");
     endpoint.wait_idle().await;
-    
+
     Ok(())
 }
 ```
@@ -369,17 +369,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cert = rcgen::generate_simple_self_signed(vec!["localhost".to_string()])?;
     let cert_der = cert.serialize_der()?;
     let key_der = cert.serialize_private_key_der();
-    
+
     // Create server configuration
     let server_config = ServerConfig::with_single_cert(
         vec![cert_der],
         key_der
     )?;
-    
+
     // Create endpoint
     let endpoint = Endpoint::server(server_config, "0.0.0.0:9000")?;
     println!("Listening on {}", endpoint.local_addr()?);
-    
+
     // Accept connections
     while let Some(connecting) = endpoint.accept().await {
         tokio::spawn(async move {
@@ -394,7 +394,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         });
     }
-    
+
     Ok(())
 }
 
@@ -423,17 +423,17 @@ async fn handle_connection(connection: quinn::Connection) {
 
 ```bash
 # Test against ant-quic
-cargo run --example your_client -- ant-quic-test.example.com:9000
+cargo run --example your_client -- quic.saorsalabs.com:9000
 
 # Enable debug logging
-RUST_LOG=debug cargo run --example your_client -- ant-quic-test.example.com:9000
+RUST_LOG=debug cargo run --example your_client -- quic.saorsalabs.com:9000
 
 # Test specific features
 cargo run --example your_client -- \
     --test-0rtt \
     --test-migration \
     --test-nat-traversal \
-    ant-quic-test.example.com:9000
+    quic.saorsalabs.com:9000
 ```
 
 ### Performance Test

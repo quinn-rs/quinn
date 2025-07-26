@@ -39,8 +39,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = NatTraversalConfig {
         role: EndpointRole::Client,
         bootstrap_nodes: vec![
-            "bootstrap1.example.com:9000".parse()?,
-            "bootstrap2.example.com:9000".parse()?,
+            "quic.saorsalabs.com:9000".parse()?
         ],
         max_candidates: 10,
         coordination_timeout: Duration::from_secs(15),
@@ -49,11 +48,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Create endpoint (address discovery enabled by default)
     let endpoint = NatTraversalEndpoint::new(config).await?;
-    
+
     // Your peer ID is automatically generated
     let my_peer_id = endpoint.peer_id();
     println!("My Peer ID: {:?}", my_peer_id);
-    
+
     Ok(())
 }
 ```
@@ -93,7 +92,7 @@ endpoint_config.set_observe_all_paths(false); // Only observe primary path
 // Create endpoint with custom config
 let nat_config = NatTraversalConfig {
     role: EndpointRole::Client,
-    bootstrap_nodes: vec!["bootstrap.example.com:9000".parse()?],
+    bootstrap_nodes: vec!["quic.saorsalabs.com:9000".parse()?],
     endpoint_config: Some(endpoint_config),
     ..Default::default()
 };
@@ -183,15 +182,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let endpoint = NatTraversalEndpoint::new(config).await?;
-    
+
     println!("Bootstrap node running on :9000");
     println!("Peer ID: {:?}", endpoint.peer_id());
-    
+
     // Bootstrap nodes automatically:
     // - Use aggressive address observation (5x rate)
     // - Coordinate hole punching between clients
     // - Help with peer discovery
-    
+
     // Keep running
     loop {
         tokio::time::sleep(Duration::from_secs(60)).await;
@@ -217,7 +216,7 @@ use ant_quic::auth::AuthConfig;
 // 1. Create P2P node
 let config = QuicNodeConfig {
     role: EndpointRole::Client,
-    bootstrap_nodes: vec!["bootstrap.example.com:9000".parse()?],
+    bootstrap_nodes: vec!["quic.saorsalabs.com:9000".parse()?],
     enable_coordinator: false,
     max_connections: 100,
     connection_timeout: Duration::from_secs(30),
@@ -237,7 +236,7 @@ let node = QuicP2PNode::new(config).await?;
 
 // 3. Connect to a specific peer
 let peer_id = PeerId([0xAB; 32]);
-let coordinator = "bootstrap.example.com:9000".parse()?;
+let coordinator = "quic.saorsalabs.com:9000".parse()?;
 node.connect_to_peer(peer_id, coordinator).await?;
 
 // 4. Connection established!
@@ -320,7 +319,7 @@ match timeout(connection_timeout, endpoint.connect_to_peer(peer_id)).await {
 // Monitor for address changes
 endpoint.set_address_change_callback(|old_addr, new_addr| {
     println!("Network change detected: {:?} -> {}", old_addr, new_addr);
-    
+
     // Address discovery automatically handles this
     // But you may want to:
     // - Notify connected peers
@@ -381,17 +380,17 @@ struct ConnectionPool {
 }
 
 impl ConnectionPool {
-    async fn get_or_create(&self, 
-                          endpoint: &NatTraversalEndpoint, 
+    async fn get_or_create(&self,
+                          endpoint: &NatTraversalEndpoint,
                           peer_id: PeerId) -> Result<Connection, Error> {
         let mut conns = self.connections.lock().await;
-        
+
         if let Some(conn) = conns.get(&peer_id) {
             if conn.is_alive() {
                 return Ok(conn.clone());
             }
         }
-        
+
         // Create new connection
         let conn = endpoint.connect_to_peer(peer_id).await?;
         conns.insert(peer_id, conn.clone());
@@ -406,21 +405,21 @@ impl ConnectionPool {
 // Regular monitoring for production systems
 tokio::spawn(async move {
     let mut interval = tokio::time::interval(Duration::from_secs(60));
-    
+
     loop {
         interval.tick().await;
-        
+
         // Get current stats
         let stats = endpoint.address_discovery_stats();
         let discovered = endpoint.discovered_addresses();
-        
+
         // Log or send to monitoring system
         println!("Address Discovery Stats:");
         println!("  Addresses discovered: {}", discovered.len());
         println!("  Observation frames sent: {}", stats.frames_sent);
         println!("  Observation frames received: {}", stats.frames_received);
         println!("  Current observation rate: {}/s", stats.observation_rate);
-        
+
         // Check connection health
         let connections = endpoint.active_connections();
         println!("  Active connections: {}", connections.len());

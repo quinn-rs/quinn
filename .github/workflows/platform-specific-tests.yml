@@ -56,7 +56,7 @@ jobs:
       
       - name: Run Windows-specific tests
         run: |
-          cargo test --features "platform-native" -- --test-threads=1 windows
+          cargo test --features "windows-tests" -- --test-threads=1 windows
           cargo test --test platform_compatibility_tests windows_interface_discovery
       
       - name: Run Windows IP Helper tests
@@ -68,7 +68,7 @@ jobs:
           netsh interface show interface
       
       - name: Run integration tests
-        run: cargo test --test platform_api_integration_tests --features "platform-native" windows
+        run: cargo test --test platform_api_integration_tests --features "windows-tests" windows
 
   # Linux-specific tests with different distributions
   linux-tests:
@@ -118,7 +118,7 @@ jobs:
       
       - name: Run Linux-specific tests
         run: |
-          cargo test --features "platform-native" -- --test-threads=1 linux
+          cargo test --features "linux-tests" -- --test-threads=1 linux
           cargo test --test platform_compatibility_tests linux_interface_discovery
       
       - name: Run Linux Netlink tests
@@ -140,7 +140,7 @@ jobs:
           fi
       
       - name: Run integration tests
-        run: cargo test --test platform_api_integration_tests --features "platform-native" linux
+        run: cargo test --test platform_api_integration_tests --features "linux-tests" linux
 
   # macOS-specific tests with different versions
   macos-tests:
@@ -187,7 +187,7 @@ jobs:
       
       - name: Run macOS-specific tests
         run: |
-          cargo test --features "platform-native" -- --test-threads=1 macos
+          cargo test --features "macos-tests" -- --test-threads=1 macos
           cargo test --test platform_compatibility_tests macos_interface_discovery
       
       - name: Run macOS System Configuration tests
@@ -200,7 +200,7 @@ jobs:
           scutil --nwi
       
       - name: Run integration tests
-        run: cargo test --test platform_api_integration_tests --features "platform-native" macos
+        run: cargo test --test platform_api_integration_tests --features "macos-tests" macos
 
   # Cross-platform feature matrix tests
   feature-matrix-tests:
@@ -210,9 +210,9 @@ jobs:
         features: 
           - "rustls-ring"
           - "rustls-aws-lc-rs"
-          - "platform-native"
-          - "platform-native,rustls-ring"
-          - "platform-native,rustls-aws-lc-rs"
+          - "platform-tests"
+          - "platform-tests,rustls-ring"
+          - "platform-tests,rustls-aws-lc-rs"
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4

@@ -334,8 +334,6 @@ impl Default for FrameBatchingConfig {
 impl ConnectionPool {
     /// Create a new connection pool
     pub fn new(config: ConnectionPoolConfig) -> Self {
-        
-
         Self {
             active_connections: Arc::new(RwLock::new(HashMap::new())),
             config,
@@ -587,8 +585,6 @@ impl ConnectionPool {
 impl CandidateCache {
     /// Create a new candidate cache
     pub fn new(config: CandidateCacheConfig) -> Self {
-        
-
         Self {
             cache: Arc::new(RwLock::new(HashMap::new())),
             config,

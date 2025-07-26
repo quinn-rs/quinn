@@ -1,15 +1,14 @@
+use anyhow::{Context, Result};
+use serde::{Deserialize, Serialize};
+use std::io::{BufRead, BufReader};
 /// NAT Test Harness
-/// 
+///
 /// Comprehensive test harness for NAT traversal scenarios
 /// Integrates with Docker environment and real ant-quic binaries
-
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
-use std::io::{BufRead, BufReader};
 use tokio::sync::mpsc;
 use tokio::time::timeout;
-use serde::{Deserialize, Serialize};
-use anyhow::{Result, Context};
 
 /// NAT test configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -69,53 +68,48 @@ impl NatTestHarness {
         nat_type1: &str,
         nat_type2: &str,
     ) -> Result<NatTraversalResult> {
-        println!("Testing NAT traversal: {} ({}) <-> {} ({})", 
-            client1_container, nat_type1, client2_container, nat_type2);
+        println!(
+            "Testing NAT traversal: {} ({}) <-> {} ({})",
+            client1_container, nat_type1, client2_container, nat_type2
+        );
 
         let start_time = Instant::now();
 
         // Start listener on client2
         let listener_handle = self.start_listener(client2_container).await?;
-        
+
         // Get peer ID from listener
         let peer_id = self.get_peer_id_from_logs(&listener_handle).await?;
-        
+
         // Connect from client1
-        let connection_result = self.connect_to_peer(
-            client1_container,
-            &peer_id,
-        ).await;
+        let connection_result = self.connect_to_peer(client1_container, &peer_id).await;
 
         let elapsed = start_time.elapsed();
 
         // Analyze results
         let result = match connection_result {
-            Ok(metrics) => {
-                NatTraversalResult {
-                    success: true,
-                    connection_time_ms: Some(elapsed.as_millis() as u64),
-                    nat_type_client1: nat_type1.to_string(),
-                    nat_type_client2: nat_type2.to_string(),
-                    hole_punching_used: metrics.hole_punching_used,
-                    relay_used: metrics.relay_used,
-                    packets_sent: metrics.packets_sent,
-                    packets_received: metrics.packets_received,
-                    error_message: None,
-                }
-            }
-            Err(e) => {
-                NatTraversalResult {
-                    success: false,
-                    connection_time_ms: None,
-                    nat_type_client1: nat_type1.to_string(),
-                    nat_type_client2: nat_type2.to_string(),
-                    hole_punching_used: false,
-                    relay_used: false,
-                    packets_sent: 0,
-                    packets_received: 0,
-                    error_message: Some(e.to_string()),
-                }
-            }
+            Ok(metrics) => NatTraversalResult {
+                success: true,
+                connection_time_ms: Some(elapsed.as_millis() as u64),
+                nat_type_client1: nat_type1.to_string(),
+                nat_type_client2: nat_type2.to_string(),
+                hole_punching_used: metrics.hole_punching_used,
+                relay_used: metrics.relay_used,
+                packets_sent: metrics.packets_sent,
+                packets_received: metrics.packets_received,
+                error_message: None,
+            },
+            Err(e) => NatTraversalResult {
+                success: false,
+                connection_time_ms: None,
+                nat_type_client1: nat_type1.to_string(),
+                nat_type_client2: nat_type2.to_string(),
+                hole_punching_used: false,
+                relay_used: false,
+                packets_sent: 0,
+                packets_received: 0,
+                error_message: Some(e.to_string()),
+            },
         };
 
         self.results.push(result.clone());
@@ -167,11 +161,7 @@ impl NatTestHarness {
     }
 
     /// Connect to a peer from a container
-    async fn connect_to_peer(
-        &self,
-        container: &str,
-        peer_id: &str,
-    ) -> Result<ConnectionMetrics> {
+    async fn connect_to_peer(&self, container: &str, peer_id: &str) -> Result<ConnectionMetrics> {
         let cmd = format!(
             "docker exec -e RUST_LOG={} {} ant-quic --connect {} --bootstrap {}",
             self.config.log_level, container, peer_id, self.config.bootstrap_addr
@@ -179,13 +169,9 @@ impl NatTestHarness {
 
         let output = timeout(
             self.config.connection_timeout,
-            tokio::task::spawn_blocking(move || {
-                Command::new("sh")
-                    .arg("-c")
-                    .arg(&cmd)
-                    .output()
-            })
-        ).await??
+            tokio::task::spawn_blocking(move || Command::new("sh").arg("-c").arg(&cmd).output()),
+        )
+        .await??
         .context("Failed to execute connection command")?;
 
         let stdout = String::from_utf8_lossy(&output.stdout);
@@ -215,14 +201,15 @@ impl NatTestHarness {
     pub fn generate_report(&self) -> TestReport {
         let total = self.results.len();
         let successful = self.results.iter().filter(|r| r.success).count();
-        let hole_punching_used = self.results.iter()
-            .filter(|r| r.hole_punching_used).count();
-        let relay_used = self.results.iter()
-            .filter(|r| r.relay_used).count();
+        let hole_punching_used = self.results.iter().filter(|r| r.hole_punching_used).count();
+        let relay_used = self.results.iter().filter(|r| r.relay_used).count();
 
-        let avg_connection_time = self.results.iter()
+        let avg_connection_time = self
+            .results
+            .iter()
             .filter_map(|r| r.connection_time_ms)
-            .sum::<u64>() as f64 / successful as f64;
+            .sum::<u64>() as f64
+            / successful as f64;
 
         TestReport {
             total_tests: total,
@@ -307,8 +294,11 @@ impl NatTypeMatrix {
             (nat2.to_string(), nat1.to_string())
         };
 
-        if let Some(entry) = self.entries.iter_mut()
-            .find(|e| e.nat_type1 == key.0 && e.nat_type2 == key.1) {
+        if let Some(entry) = self
+            .entries
+            .iter_mut()
+            .find(|e| e.nat_type1 == key.0 && e.nat_type2 == key.1)
+        {
             entry.attempts += 1;
             if success {
                 entry.successes += 1;
@@ -334,18 +324,18 @@ mod tests {
     async fn test_nat_harness_creation() {
         let config = NatTestConfig::default();
         let harness = NatTestHarness::new(config);
-        
+
         assert!(harness.results.is_empty());
     }
 
     #[test]
     fn test_nat_matrix() {
         let mut matrix = NatTypeMatrix::new();
-        
+
         matrix.record_result("full_cone", "symmetric", true);
         matrix.record_result("full_cone", "symmetric", false);
         matrix.record_result("full_cone", "symmetric", true);
-        
+
         assert_eq!(matrix.entries.len(), 1);
         assert_eq!(matrix.entries[0].attempts, 3);
         assert_eq!(matrix.entries[0].successes, 2);

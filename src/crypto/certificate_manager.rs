@@ -270,9 +270,8 @@ impl CertificateManager {
     ) -> Result<Vec<CertificateDer<'static>>, CertificateError> {
         use rustls_pemfile::certs;
 
-        let ca_file = std::fs::File::open(ca_path).map_err(|e| {
-            CertificateError::LoadingFailed(format!("Failed to open CA file: {e}"))
-        })?;
+        let ca_file = std::fs::File::open(ca_path)
+            .map_err(|e| CertificateError::LoadingFailed(format!("Failed to open CA file: {e}")))?;
 
         let mut ca_reader = std::io::BufReader::new(ca_file);
         let ca_certs: Vec<CertificateDer<'static>> = certs(&mut ca_reader)

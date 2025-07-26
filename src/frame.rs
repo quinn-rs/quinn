@@ -31,7 +31,7 @@ impl FrameType {
             None
         }
     }
-    
+
     /// Check if this is a STREAM frame type
     pub(crate) fn is_stream(self) -> bool {
         STREAM_TYS.contains(&self.0)
@@ -1228,7 +1228,7 @@ impl ObservedAddress {
     pub(crate) fn decode<R: Buf>(r: &mut R, is_ipv6: bool) -> Result<Self, UnexpectedEnd> {
         // Read sequence number first
         let sequence_number = VarInt::from_u64(r.get_var()?).map_err(|_| UnexpectedEnd)?;
-        
+
         // Decode address based on frame type (no IP version byte)
         let address = if is_ipv6 {
             if r.remaining() < 18 {
@@ -1248,7 +1248,10 @@ impl ObservedAddress {
             SocketAddr::new(octets.into(), port)
         };
 
-        Ok(Self { sequence_number, address })
+        Ok(Self {
+            sequence_number,
+            address,
+        })
     }
 }
 
@@ -1570,18 +1573,18 @@ mod test {
         let malformed_frames = vec![
             // Too short for any NAT traversal frame (4-byte frame types)
             vec![0xc0, 0x90, 0xf9, 0x0f], // Just ADD_ADDRESS_IPV4 frame type, no data
-            vec![0xc0, 0x92, 0xf9, 0x0f], // Just PUNCH_ME_NOW_IPV4 frame type, no data  
+            vec![0xc0, 0x92, 0xf9, 0x0f], // Just PUNCH_ME_NOW_IPV4 frame type, no data
             vec![0xc0, 0x94, 0xf9, 0x0f], // Just REMOVE_ADDRESS frame type, no data
             // Incomplete AddAddress frames
-            vec![0xc0, 0x90, 0xf9, 0x0f, 0x01],       // Frame type + partial sequence
+            vec![0xc0, 0x90, 0xf9, 0x0f, 0x01], // Frame type + partial sequence
             vec![0xc0, 0x90, 0xf9, 0x0f, 0x01, 0x04], // Frame type + sequence + incomplete
-            // Incomplete PunchMeNow frames  
-            vec![0xc0, 0x92, 0xf9, 0x0f, 0x01],       // Frame type + partial round
+            // Incomplete PunchMeNow frames
+            vec![0xc0, 0x92, 0xf9, 0x0f, 0x01], // Frame type + partial round
             vec![0xc0, 0x92, 0xf9, 0x0f, 0x01, 0x02], // Frame type + round + partial
             // Incomplete RemoveAddress frames
             // RemoveAddress is actually hard to make malformed since it only has sequence
 
-            // Invalid IP address types  
+            // Invalid IP address types
             vec![0xc0, 0x90, 0xf9, 0x0f, 0x01, 0x99, 0x01, 0x02, 0x03, 0x04], // Invalid
         ];
 
@@ -1778,8 +1781,8 @@ mod test {
 
     #[test]
     fn observed_address_malformed_frames() {
-        use bytes::BufMut;
         use crate::coding::BufMutExt;
+        use bytes::BufMut;
 
         // Test truncated sequence number
         let mut buf = Vec::new();
@@ -2073,22 +2076,22 @@ mod test {
     mod comprehensive_tests {
         include!("frame/tests.rs");
     }
-    
+
     // Include sequence edge case tests
     mod sequence_edge_cases {
         include!("frame/sequence_edge_case_tests.rs");
     }
-    
+
     // Include IP version encoding tests
     mod ip_version_tests {
         include!("frame/ip_version_encoding_tests.rs");
     }
-    
+
     // Include observed address tests
     mod observed_address_test {
         include!("frame/observed_address_tests.rs");
     }
-    
+
     // Include observed address sequence validation tests
     mod observed_address_validation {
         include!("frame/observed_address_sequence_validation_tests.rs");

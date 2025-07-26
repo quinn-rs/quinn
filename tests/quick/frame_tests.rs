@@ -26,7 +26,7 @@ fn test_frame_size_calculations() {
     super::utils::assert_duration(Duration::from_millis(10), || {
         // Test that basic structures have reasonable sizes
         use std::mem::size_of;
-        
+
         // Socket addresses should be reasonable size
         assert!(size_of::<SocketAddr>() <= 32);
     });

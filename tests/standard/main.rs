@@ -3,9 +3,9 @@
 
 pub mod utils {
     use std::time::Duration;
-    
+
     pub const STANDARD_TEST_TIMEOUT: Duration = Duration::from_secs(30);
-    
+
     // Add common test utilities here
     pub fn setup_test_logger() {
         let _ = tracing_subscriber::fmt()
@@ -16,8 +16,8 @@ pub mod utils {
 
 // Test modules
 pub mod integration_tests;
-pub mod protocol_tests;
 pub mod nat_basic_tests;
+pub mod protocol_tests;
 
 // Re-export test utilities
 pub use utils::*;

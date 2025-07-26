@@ -150,7 +150,7 @@ use ant_quic::{QuicP2PNode, QuicNodeConfig};
 // Create configuration
 let config = QuicNodeConfig {
     listen_addr: "0.0.0.0:0".parse()?,
-    bootstrap_nodes: vec!["bootstrap.example.com:9000".parse()?],
+    bootstrap_nodes: vec!["quic.saorsalabs.com:9000".parse()?],
     private_key: generate_ed25519_keypair(),
     ..Default::default()
 };

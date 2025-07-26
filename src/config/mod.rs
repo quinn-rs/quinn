@@ -28,7 +28,6 @@ use crate::{
 mod transport;
 pub use transport::{AckFrequencyConfig, IdleTimeout, MtuDiscoveryConfig, TransportConfig};
 
-
 pub mod timeouts;
 
 // Production-ready configuration validation
@@ -255,8 +254,14 @@ impl fmt::Debug for EndpointConfig {
             .field("grease_quic_bit", &self.grease_quic_bit)
             .field("rng_seed", &self.rng_seed)
             .field("address_discovery_enabled", &self.address_discovery_enabled)
-            .field("address_discovery_max_rate", &self.address_discovery_max_rate)
-            .field("address_discovery_observe_all", &self.address_discovery_observe_all)
+            .field(
+                "address_discovery_max_rate",
+                &self.address_discovery_max_rate,
+            )
+            .field(
+                "address_discovery_observe_all",
+                &self.address_discovery_observe_all,
+            )
             .finish_non_exhaustive()
     }
 }

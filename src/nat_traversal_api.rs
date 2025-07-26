@@ -861,24 +861,24 @@ impl NatTraversalEndpoint {
         observed_address: SocketAddr,
         _from_peer: PeerId,
     ) -> Result<(), NatTraversalError> {
-        info!(
-            "Injecting observed address {}",
-            observed_address
-        );
-        
+        info!("Injecting observed address {}", observed_address);
+
         // Feed the address to the discovery manager
         let mut discovery = self.discovery_manager.lock().map_err(|_| {
             NatTraversalError::ProtocolError("Discovery manager lock poisoned".to_string())
         })?;
-        
+
         // Use a special peer ID to represent our own discovered address
         let our_peer_id = self.local_peer_id;
-        
+
         // Accept the QUIC-discovered address
         match discovery.accept_quic_discovered_address(our_peer_id, observed_address) {
             Ok(()) => {
-                info!("Successfully accepted observed address: {}", observed_address);
-                
+                info!(
+                    "Successfully accepted observed address: {}",
+                    observed_address
+                );
+
                 // Emit event for the application
                 if let Some(ref event_tx) = self.event_tx {
                     let _ = event_tx.send(NatTraversalEvent::CandidateValidated {
@@ -886,11 +886,14 @@ impl NatTraversalEndpoint {
                         candidate_address: observed_address,
                     });
                 }
-                
+
                 Ok(())
             }
             Err(e) => {
-                warn!("Failed to accept observed address {}: {}", observed_address, e);
+                warn!(
+                    "Failed to accept observed address {}: {}",
+                    observed_address, e
+                );
                 Err(NatTraversalError::CandidateDiscoveryFailed(e.to_string()))
             }
         }
@@ -1018,7 +1021,7 @@ impl NatTraversalEndpoint {
                     EndpointRole::Bootstrap | EndpointRole::Server { .. } => {
                         crate::transport_parameters::NatTraversalConfig::ServerSupport {
                             concurrency_limit: VarInt::from_u32(
-                                config.max_concurrent_attempts as u32
+                                config.max_concurrent_attempts as u32,
                             ),
                         }
                     }
@@ -1042,9 +1045,7 @@ impl NatTraversalEndpoint {
             };
 
             let cert_manager = CertificateManager::new(cert_config).map_err(|e| {
-                NatTraversalError::ConfigError(format!(
-                    "Certificate manager creation failed: {e}"
-                ))
+                NatTraversalError::ConfigError(format!("Certificate manager creation failed: {e}"))
             })?;
 
             let _cert_bundle = cert_manager.generate_certificate().map_err(|e| {
@@ -1075,9 +1076,7 @@ impl NatTraversalEndpoint {
                 }
                 EndpointRole::Bootstrap | EndpointRole::Server { .. } => {
                     crate::transport_parameters::NatTraversalConfig::ServerSupport {
-                        concurrency_limit: VarInt::from_u32(
-                            config.max_concurrent_attempts as u32
-                        ),
+                        concurrency_limit: VarInt::from_u32(config.max_concurrent_attempts as u32),
                     }
                 }
             };
@@ -1496,9 +1495,7 @@ impl NatTraversalEndpoint {
         let connection = timeout(Duration::from_secs(10), connecting)
             .await
             .map_err(|_| NatTraversalError::Timeout)?
-            .map_err(|e| {
-                NatTraversalError::ConnectionFailed(format!("Connection failed: {e}"))
-            })?;
+            .map_err(|e| NatTraversalError::ConnectionFailed(format!("Connection failed: {e}")))?;
 
         info!(
             "Successfully connected to peer {:?} at {}",
@@ -2537,26 +2534,30 @@ impl NatTraversalEndpoint {
         let connections = self.connections.read().map_err(|_| {
             NatTraversalError::ProtocolError("Connections lock poisoned".to_string())
         })?;
-        
+
         // Look for bootstrap connections - they should send us OBSERVED_ADDRESS frames
         // In the current implementation, we need to wait for the low-level connection
         // to receive OBSERVED_ADDRESS frames and propagate them up
-        
+
         // For now, simulate the discovery for testing
         // In production, this would be triggered by actual OBSERVED_ADDRESS frames
         if !connections.is_empty() && self.config.role == EndpointRole::Client {
             // Check if we have any bootstrap connections
             for (_peer_id, connection) in connections.iter() {
                 let remote_addr = connection.remote_address();
-                
+
                 // Check if this is a bootstrap node connection
                 let is_bootstrap = {
                     let bootstrap_nodes = self.bootstrap_nodes.read().map_err(|_| {
-                        NatTraversalError::ProtocolError("Bootstrap nodes lock poisoned".to_string())
+                        NatTraversalError::ProtocolError(
+                            "Bootstrap nodes lock poisoned".to_string(),
+                        )
                     })?;
-                    bootstrap_nodes.iter().any(|node| node.address == remote_addr)
+                    bootstrap_nodes
+                        .iter()
+                        .any(|node| node.address == remote_addr)
                 };
-                
+
                 if is_bootstrap {
                     // In a real implementation, we would check the connection for observed addresses
                     // For now, emit a debug message
@@ -2564,13 +2565,13 @@ impl NatTraversalEndpoint {
                         "Bootstrap connection to {} should provide our external address via OBSERVED_ADDRESS frames",
                         remote_addr
                     );
-                    
+
                     // The actual observed address would come from the OBSERVED_ADDRESS frame
                     // received on this connection
                 }
             }
         }
-        
+
         Ok(())
     }
 
@@ -3012,7 +3013,8 @@ impl NatTraversalEndpoint {
         // Try to get the peer ID from the most recent active session
         if let Ok(sessions) = self.active_sessions.read() {
             if let Some((peer_id, _session)) = sessions
-                .iter().find(|(_, s)| matches!(s.phase, TraversalPhase::Discovery))
+                .iter()
+                .find(|(_, s)| matches!(s.phase, TraversalPhase::Discovery))
             {
                 return *peer_id;
             }
@@ -3176,9 +3178,7 @@ impl NatTraversalEndpoint {
         let connection = timeout(Duration::from_secs(10), connecting)
             .await
             .map_err(|_| NatTraversalError::Timeout)?
-            .map_err(|e| {
-                NatTraversalError::ConnectionFailed(format!("Connection failed: {e}"))
-            })?;
+            .map_err(|e| NatTraversalError::ConnectionFailed(format!("Connection failed: {e}")))?;
 
         // Store the established connection
         {

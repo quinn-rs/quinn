@@ -19,22 +19,22 @@ The cleanup strategy follows these core principles:
 graph TB
     App[Application Layer] --> API[High-Level NAT Traversal API]
     API --> Core[Core NAT Traversal]
-    
+
     Core --> Discovery[Network Discovery]
     Core --> Protocol[NAT Traversal Protocol]
     Core --> Auth[Raw Public Key Auth]
-    
+
     Discovery --> Windows[Windows IP Helper]
     Discovery --> Linux[Linux Netlink]
     Discovery --> MacOS[macOS System Config]
-    
+
     Protocol --> Frames[QUIC Extension Frames]
     Protocol --> Bootstrap[Bootstrap Coordination]
     Protocol --> Validation[Path Validation]
-    
+
     Auth --> Keys[Ed25519 Keys]
     Auth --> TLS[TLS Extensions]
-    
+
     Core --> Transport[QUIC Transport]
 Module Structure
 The refactored codebase will have a clean, modular structure with clear separation of concerns:
@@ -55,11 +55,11 @@ pub mod transport {
     pub struct QuicEndpoint {
         // Essential endpoint state
     }
-    
+
     pub struct QuicConnection {
         // Essential connection state
     }
-    
+
     // Minimal stream implementations
     pub struct SendStream { /* ... */ }
     pub struct RecvStream { /* ... */ }
@@ -79,15 +79,15 @@ pub mod nat_traversal {
     pub struct NatTraversalEndpoint {
         // NAT traversal state
     }
-    
+
     pub mod frames {
         // ADD_ADDRESS, PUNCH_ME_NOW, REMOVE_ADDRESS frame implementations
     }
-    
+
     pub mod bootstrap {
         // Bootstrap coordination protocol
     }
-    
+
     pub mod hole_punching {
         // Hole punching algorithm implementation
     }
@@ -108,19 +108,19 @@ pub mod discovery {
         fn discover_interfaces(&self) -> Result<Vec<NetworkInterface>, DiscoveryError>;
         fn get_default_route(&self) -> Result<Option<SocketAddr>, DiscoveryError>;
     }
-    
+
     #[cfg(windows)]
     pub mod windows {
         pub struct WindowsDiscovery;
         // Windows IP Helper API implementation
     }
-    
+
     #[cfg(target_os = "linux")]
     pub mod linux {
         pub struct LinuxDiscovery;
         // Linux Netlink implementation
     }
-    
+
     #[cfg(target_os = "macos")]
     pub mod macos {
         pub struct MacOSDiscovery;
@@ -142,12 +142,12 @@ pub mod crypto {
     pub mod raw_keys {
         pub struct RawPublicKeyVerifier;
         pub struct RawPublicKeyResolver;
-        
+
         // Ed25519 key handling
         pub fn generate_ed25519_keypair() -> (PublicKey, PrivateKey);
         pub fn public_key_to_spki(key: &PublicKey) -> Vec<u8>;
     }
-    
+
     pub mod tls {
         // Minimal TLS extension handling for certificate type negotiation
     }
@@ -167,15 +167,15 @@ pub mod api {
     pub struct P2PNode {
         // High-level P2P node implementation
     }
-    
+
     pub struct P2PConnection {
         // High-level P2P connection
     }
-    
+
     pub enum P2PEvent {
         // High-level events
     }
-    
+
     pub struct P2PConfig {
         // Configuration options
     }
@@ -289,19 +289,19 @@ The error handling will be streamlined and improved:
 pub enum NatTraversalError {
     #[error("Network discovery failed: {0}")]
     Discovery(#[from] DiscoveryError),
-    
+
     #[error("Bootstrap coordination failed: {0}")]
     Bootstrap(String),
-    
+
     #[error("Hole punching failed: {0}")]
     HolePunching(String),
-    
+
     #[error("Connection establishment failed: {0}")]
     Connection(String),
-    
+
     #[error("Authentication failed: {0}")]
     Authentication(String),
-    
+
     #[error("Timeout: {0}")]
     Timeout(String),
 }
@@ -370,7 +370,7 @@ while let Some(event) = node.next_event().await {
 Configuration API Example
 // Create a custom configuration
 let config = P2PConfig::builder()
-    .with_bootstrap_nodes(vec!["bootstrap1.example.com:9000".parse()?])
+    .with_bootstrap_nodes(vec!["quic.saorsalabs.com:9000".parse()?])
     .with_keypair(generate_ed25519_keypair())
     .with_nat_traversal(true)
     .build()?;

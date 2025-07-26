@@ -26,10 +26,10 @@ Invoke-WebRequest -Uri https://github.com/dirvine/ant-quic/releases/latest/downl
 
 ```bash
 # Connect to public test server
-./ant-quic --connect ant-quic-test.example.com:9000
+./ant-quic --connect quic.saorsalabs.com:9000
 
 # Expected output:
-# Connecting to ant-quic-test.example.com:9000...
+# Connecting to quic.saorsalabs.com:9000...
 # Connected! Your address: 203.0.113.5:54321
 # Connection established in 127ms
 ```
@@ -38,7 +38,7 @@ Invoke-WebRequest -Uri https://github.com/dirvine/ant-quic/releases/latest/downl
 
 ```bash
 # Test from behind NAT
-./ant-quic --connect ant-quic-test.example.com:9000 --enable-nat-traversal
+./ant-quic --connect quic.saorsalabs.com:9000 --enable-nat-traversal
 
 # Expected output:
 # NAT traversal enabled
@@ -61,11 +61,11 @@ docker pull ghcr.io/dirvine/ant-quic:latest
 ```bash
 # Basic test
 docker run --rm ghcr.io/dirvine/ant-quic:latest \
-    ant-quic --connect ant-quic-test.example.com:9000
+    ant-quic --connect quic.saorsalabs.com:9000
 
 # NAT traversal test
 docker run --rm ghcr.io/dirvine/ant-quic:latest \
-    ant-quic --connect ant-quic-test.example.com:9000 --enable-nat-traversal
+    ant-quic --connect quic.saorsalabs.com:9000 --enable-nat-traversal
 ```
 
 ## Option 3: Using Python Test Script
@@ -96,30 +96,30 @@ chmod +x test_interop.py
 
 ```bash
 # First connection (saves session)
-./ant-quic --connect ant-quic-test.example.com:9000 --save-session
+./ant-quic --connect quic.saorsalabs.com:9000 --save-session
 
 # Second connection (uses 0-RTT)
-./ant-quic --connect ant-quic-test.example.com:9000 --enable-0rtt
+./ant-quic --connect quic.saorsalabs.com:9000 --enable-0rtt
 ```
 
 ### Test Performance
 
 ```bash
 # Download speed test (10MB)
-./ant-quic --connect ant-quic-test.example.com:9000 --download-test 10
+./ant-quic --connect quic.saorsalabs.com:9000 --download-test 10
 
 # Upload speed test (10MB)
-./ant-quic --connect ant-quic-test.example.com:9000 --upload-test 10
+./ant-quic --connect quic.saorsalabs.com:9000 --upload-test 10
 
 # Latency test (100 pings)
-./ant-quic --connect ant-quic-test.example.com:9000 --ping-test 100
+./ant-quic --connect quic.saorsalabs.com:9000 --ping-test 100
 ```
 
 ### Test Connection Migration
 
 ```bash
 # Test path migration
-./ant-quic --connect ant-quic-test.example.com:9000 --test-migration
+./ant-quic --connect quic.saorsalabs.com:9000 --test-migration
 ```
 
 ## Debugging Failed Tests
@@ -128,10 +128,10 @@ chmod +x test_interop.py
 
 ```bash
 # Verbose output
-RUST_LOG=debug ./ant-quic --connect ant-quic-test.example.com:9000
+RUST_LOG=debug ./ant-quic --connect quic.saorsalabs.com:9000
 
 # Trace frames
-RUST_LOG=ant_quic::frame=trace ./ant-quic --connect ant-quic-test.example.com:9000
+RUST_LOG=ant_quic::frame=trace ./ant-quic --connect quic.saorsalabs.com:9000
 ```
 
 ### Common Issues and Solutions
@@ -162,11 +162,11 @@ RUST_LOG=ant_quic::frame=trace ./ant-quic --connect ant-quic-test.example.com:90
 
 ```bash
 # Your client should connect to:
-# Host: ant-quic-test.example.com
+# Host: quic.saorsalabs.com
 # Port: 9000
 # ALPN: "ant-quic/1"
 
-your-quic-client connect ant-quic-test.example.com:9000
+your-quic-client connect quic.saorsalabs.com:9000
 ```
 
 ### 2. Expected Behavior
@@ -180,7 +180,7 @@ your-quic-client connect ant-quic-test.example.com:9000
 
 ```bash
 # Check for OBSERVED_ADDRESS frames
-your-quic-client connect ant-quic-test.example.com:9000 --log-frames
+your-quic-client connect quic.saorsalabs.com:9000 --log-frames
 
 # Should see:
 # RX Frame: OBSERVED_ADDRESS seq=1 addr=203.0.113.5:12345

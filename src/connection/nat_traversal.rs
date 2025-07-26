@@ -3535,8 +3535,7 @@ struct PendingCoordinationRequest {
 }
 
 /// Configuration for bootstrap coordinator behavior (stub implementation)
-#[derive(Debug, Clone)]
-#[derive(Default)]
+#[derive(Debug, Clone, Default)]
 pub(crate) struct BootstrapConfig {
     _unused: (),
 }
@@ -3722,7 +3721,9 @@ impl BootstrapCoordinator {
         sequence: VarInt,
         priority: VarInt,
     ) -> Option<crate::frame::AddAddress> {
-        self.peer_registry.get(&peer_id).map(|peer_record| crate::frame::AddAddress {
+        self.peer_registry
+            .get(&peer_id)
+            .map(|peer_record| crate::frame::AddAddress {
                 sequence,
                 address: peer_record.observed_address,
                 priority,
@@ -4375,7 +4376,9 @@ impl BootstrapCoordinator {
     fn estimate_peer_rtt(&self, peer_id: &PeerId) -> Option<Duration> {
         // Simple estimation based on peer record
         // In a real implementation, this would use historical RTT data
-        self.peer_registry.get(peer_id).map(|_peer_record| Duration::from_millis(100))
+        self.peer_registry
+            .get(peer_id)
+            .map(|_peer_record| Duration::from_millis(100))
     }
 
     /// Coordinate hole punching between two peers
@@ -4683,7 +4686,6 @@ impl BootstrapCoordinator {
         self.peer_registry.get(&peer_id)
     }
 }
-
 
 /// Multi-destination packet transmission manager for NAT traversal
 ///

@@ -2,7 +2,7 @@
 
 terraform {
   required_version = ">= 1.0"
-  
+
   required_providers {
     digitalocean = {
       source  = "digitalocean/digitalocean"
@@ -53,67 +53,67 @@ resource "digitalocean_droplet" "ant_quic_test" {
   region   = var.region
   size     = var.droplet_size
   image    = "ubuntu-22-04-x64"
-  
+
   ssh_keys = concat([digitalocean_ssh_key.ant_quic.fingerprint], var.ssh_keys)
-  
+
   # Enable monitoring
   monitoring = true
-  
+
   # Enable IPv6
   ipv6 = true
-  
+
   # User data script for initial setup
   user_data = file("${path.module}/user-data.sh")
-  
+
   tags = ["ant-quic", "test-node", "quic"]
 }
 
 # Create a firewall for QUIC
 resource "digitalocean_firewall" "ant_quic" {
   name = "ant-quic-firewall"
-  
+
   droplet_ids = [digitalocean_droplet.ant_quic_test.id]
-  
+
   # Allow SSH
   inbound_rule {
     protocol         = "tcp"
     port_range       = "22"
     source_addresses = ["0.0.0.0/0", "::/0"]
   }
-  
+
   # Allow QUIC (UDP)
   inbound_rule {
     protocol         = "udp"
     port_range       = "9000-9010"
     source_addresses = ["0.0.0.0/0", "::/0"]
   }
-  
+
   # Allow HTTP/HTTPS for monitoring dashboard
   inbound_rule {
     protocol         = "tcp"
     port_range       = "80"
     source_addresses = ["0.0.0.0/0", "::/0"]
   }
-  
+
   inbound_rule {
     protocol         = "tcp"
     port_range       = "443"
     source_addresses = ["0.0.0.0/0", "::/0"]
   }
-  
+
   # Allow all outbound traffic
   outbound_rule {
     protocol              = "tcp"
     port_range            = "1-65535"
     destination_addresses = ["0.0.0.0/0", "::/0"]
   }
-  
+
   outbound_rule {
     protocol              = "udp"
     port_range            = "1-65535"
     destination_addresses = ["0.0.0.0/0", "::/0"]
   }
-  
+
   outbound_rule {
     protocol              = "icmp"
     destination_addresses = ["0.0.0.0/0", "::/0"]
@@ -133,7 +133,7 @@ resource "digitalocean_floating_ip_assignment" "ant_quic" {
 
 # Create a domain record for the test node
 resource "digitalocean_domain" "ant_quic" {
-  name = "ant-quic-test.example.com"  # Replace with actual domain
+  name = "quic.saorsalabs.com"  # Replace with actual domain
 }
 
 resource "digitalocean_record" "ant_quic_a" {

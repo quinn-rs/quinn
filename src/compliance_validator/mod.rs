@@ -1,17 +1,16 @@
 /// IETF Compliance Validator Framework
-/// 
+///
 /// This module provides comprehensive validation of QUIC implementation
 /// against IETF specifications including RFC 9000, draft-ietf-quic-address-discovery,
 /// and draft-seemann-quic-nat-traversal.
-
 use std::collections::HashMap;
-use std::path::Path;
 use std::fmt;
+use std::path::Path;
 
-pub mod rfc_parser;
-pub mod spec_validator;
 pub mod endpoint_tester;
 pub mod report_generator;
+pub mod rfc_parser;
+pub mod spec_validator;
 
 #[cfg(test)]
 mod tests;
@@ -115,10 +114,7 @@ pub enum Evidence {
         snippet: String,
     },
     /// External endpoint test
-    EndpointTest {
-        endpoint: String,
-        result: String,
-    },
+    EndpointTest { endpoint: String, result: String },
 }
 
 /// Main compliance validator
@@ -168,7 +164,7 @@ impl ComplianceValidator {
     /// Run all compliance validations
     pub fn validate_all(&self) -> ComplianceReport {
         let mut results = Vec::new();
-        
+
         for requirement in &self.requirements {
             if let Some(validator) = self.validators.get(&requirement.spec_id) {
                 let result = validator.validate(requirement);
@@ -200,7 +196,7 @@ impl ComplianceValidator {
 pub trait SpecValidator: Send + Sync {
     /// Validate a specific requirement
     fn validate(&self, requirement: &ComplianceRequirement) -> ComplianceResult;
-    
+
     /// Get the specification ID this validator handles
     fn spec_id(&self) -> &str;
 }
@@ -273,7 +269,7 @@ impl ComplianceSummary {
                 .iter()
                 .filter(|r| &r.requirement.level == level)
                 .collect();
-            
+
             if !level_results.is_empty() {
                 let level_passed = level_results.iter().filter(|r| r.compliant).count();
                 let pass_rate = level_passed as f64 / level_results.len() as f64;
@@ -297,7 +293,7 @@ impl ComplianceSummary {
                 .iter()
                 .filter(|r| &r.requirement.category == category)
                 .collect();
-            
+
             if !category_results.is_empty() {
                 let category_passed = category_results.iter().filter(|r| r.compliant).count();
                 let pass_rate = category_passed as f64 / category_results.len() as f64;

@@ -1,28 +1,24 @@
 #[cfg(test)]
 mod tests {
-    
-    use crate::{ConnectionId, Side, frame::FrameType, transport_parameters::TransportParameterId,
-        TransportError, Duration, Instant,
-        logging::{
-            log_connection_event, ConnectionEventType, ConnectionInfo, ConnectionRole,
-            log_error, log_warning, log_info, log_debug, log_trace,
-            ErrorContext, WarningContext, InfoContext, DebugContext, TraceContext,
-            LogFilter, LogEvent,
-            log_frame_event, FrameEventType, FrameInfo,
-            log_transport_param_event, TransportParamEventType, TransportParamInfo,
-            log_nat_traversal_event, NatTraversalEventType, NatTraversalInfo,
-            log_throughput_metrics, log_latency_metrics,
-            ThroughputMetrics, LatencyMetrics,
-            log_error_with_context,
-            create_connection_span, create_frame_span,
-            RateLimiter,
-        },
+
+    use crate::{
+        ConnectionId, Duration, Instant, Side, TransportError,
         connection::nat_traversal::NatTraversalRole,
+        frame::FrameType,
+        logging::{
+            ConnectionEventType, ConnectionInfo, ConnectionRole, DebugContext, ErrorContext,
+            FrameEventType, FrameInfo, InfoContext, LatencyMetrics, LogEvent, LogFilter,
+            NatTraversalEventType, NatTraversalInfo, RateLimiter, ThroughputMetrics, TraceContext,
+            TransportParamEventType, TransportParamInfo, WarningContext, create_connection_span,
+            create_frame_span, log_connection_event, log_debug, log_error, log_error_with_context,
+            log_frame_event, log_info, log_latency_metrics, log_nat_traversal_event,
+            log_throughput_metrics, log_trace, log_transport_param_event, log_warning,
+        },
+        transport_parameters::TransportParameterId,
     };
     use tracing::Level;
-    
+
     use std::sync::{Arc, Mutex};
-    
 
     /// Mock subscriber for testing log output
     #[derive(Default)]
@@ -132,25 +128,20 @@ mod tests {
 
     #[test]
     fn test_error_context_logging() {
-        
-
         // Test with error chain
         let transport_error = TransportError {
             code: crate::TransportErrorCode::CONNECTION_REFUSED,
             frame: None,
             reason: "connection refused".to_string(),
         };
-        
+
         log_error_with_context(
             &transport_error,
             ErrorContext {
                 component: "endpoint",
                 operation: "connect",
                 connection_id: Some(ConnectionId::new(&[9, 10, 11, 12])),
-                additional_fields: vec![
-                    ("remote_addr", "192.168.1.1:8080"),
-                    ("retry_count", "3"),
-                ],
+                additional_fields: vec![("remote_addr", "192.168.1.1:8080"), ("retry_count", "3")],
             },
         );
     }
@@ -163,8 +154,14 @@ mod tests {
             .with_module("ant_quic::frame", Level::TRACE)
             .with_module("ant_quic::endpoint", Level::INFO);
 
-        assert_eq!(filter.level_for("ant_quic::connection::mod"), Some(Level::DEBUG));
-        assert_eq!(filter.level_for("ant_quic::frame::encoding"), Some(Level::TRACE));
+        assert_eq!(
+            filter.level_for("ant_quic::connection::mod"),
+            Some(Level::DEBUG)
+        );
+        assert_eq!(
+            filter.level_for("ant_quic::frame::encoding"),
+            Some(Level::TRACE)
+        );
         assert_eq!(filter.level_for("ant_quic::endpoint"), Some(Level::INFO));
         assert_eq!(filter.level_for("ant_quic::unknown"), None);
     }
@@ -180,7 +177,9 @@ mod tests {
                 ("conn_id".to_string(), "abcd1234".to_string()),
                 ("remote_addr".to_string(), "10.0.0.1:443".to_string()),
                 ("duration_ms".to_string(), "150".to_string()),
-            ].into_iter().collect(),
+            ]
+            .into_iter()
+            .collect(),
             span_id: Some("conn_123".to_string()),
         };
 
@@ -194,7 +193,7 @@ mod tests {
     #[test]
     fn test_span_integration() {
         let conn_span = create_connection_span(&ConnectionId::new(&[1, 2, 3, 4]));
-        
+
         conn_span.in_scope(|| {
             log_info("operation within connection span", InfoContext::default());
         });
@@ -211,7 +210,7 @@ mod tests {
     #[test]
     fn test_rate_limiting() {
         let rate_limiter = RateLimiter::new(
-            10, // max 10 messages
+            10,                     // max 10 messages
             Duration::from_secs(1), // per second
         );
 

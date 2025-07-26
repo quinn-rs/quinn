@@ -1,11 +1,7 @@
 //! Property test generators for ant-quic types
 
+use ant_quic::{VarInt, frame::*, transport_parameters::*};
 use proptest::prelude::*;
-use ant_quic::{
-    frame::*,
-    transport_parameters::*,
-    VarInt,
-};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::time::Duration;
 
@@ -32,12 +28,16 @@ pub fn arb_ipv4() -> impl Strategy<Value = Ipv4Addr> {
 /// Generate arbitrary IPv6 addresses
 pub fn arb_ipv6() -> impl Strategy<Value = Ipv6Addr> {
     (
-        any::<u16>(), any::<u16>(), any::<u16>(), any::<u16>(),
-        any::<u16>(), any::<u16>(), any::<u16>(), any::<u16>(),
+        any::<u16>(),
+        any::<u16>(),
+        any::<u16>(),
+        any::<u16>(),
+        any::<u16>(),
+        any::<u16>(),
+        any::<u16>(),
+        any::<u16>(),
     )
-        .prop_map(|(a, b, c, d, e, f, g, h)| {
-            Ipv6Addr::new(a, b, c, d, e, f, g, h)
-        })
+        .prop_map(|(a, b, c, d, e, f, g, h)| Ipv6Addr::new(a, b, c, d, e, f, g, h))
 }
 
 /// Generate arbitrary IP addresses
@@ -50,13 +50,12 @@ pub fn arb_ip_addr() -> impl Strategy<Value = IpAddr> {
 
 /// Generate arbitrary socket addresses
 pub fn arb_socket_addr() -> impl Strategy<Value = SocketAddr> {
-    (arb_ip_addr(), 1u16..=65535)
-        .prop_map(|(ip, port)| SocketAddr::new(ip, port))
+    (arb_ip_addr(), 1u16..=65535).prop_map(|(ip, port)| SocketAddr::new(ip, port))
 }
 
 /// Generate arbitrary durations within reasonable bounds
 pub fn arb_duration() -> impl Strategy<Value = Duration> {
-    (0u64..=3600_000)  // 0 to 1 hour in milliseconds
+    (0u64..=3600_000) // 0 to 1 hour in milliseconds
         .prop_map(Duration::from_millis)
 }
 
@@ -113,69 +112,71 @@ pub fn arb_transport_params() -> impl Strategy<Value = TransportParameters> {
         option::of(any::<bool>()),
         option::of(prop::collection::vec(any::<u8>(), 0..=255)),
     )
-        .prop_map(|(
-            original_dst_cid,
-            max_idle_timeout,
-            max_udp_payload_size,
-            initial_max_data,
-            initial_max_stream_data_bidi_local,
-            max_ack_delay,
-            initial_max_streams_bidi,
-            initial_max_streams_uni,
-            ack_delay_exponent,
-            disable_active_migration,
-            stateless_reset_token,
-        )| {
-            let mut params = TransportParameters::default();
-            
-            if let Some(addr) = original_dst_cid {
-                params.original_dst_cid = Some(format!("{}", addr).into_bytes());
-            }
-            
-            if let Some(timeout) = max_idle_timeout {
-                params.max_idle_timeout = Some(timeout.into());
-            }
-            
-            if let Some(size) = max_udp_payload_size {
-                params.max_udp_payload_size = Some(size.into());
-            }
-            
-            if let Some(data) = initial_max_data {
-                params.initial_max_data = data.into();
-            }
-            
-            if let Some(data) = initial_max_stream_data_bidi_local {
-                params.initial_max_stream_data_bidi_local = data.into();
-            }
-            
-            if let Some(delay) = max_ack_delay {
-                params.max_ack_delay = Some(delay.into());
-            }
-            
-            if let Some(streams) = initial_max_streams_bidi {
-                params.initial_max_streams_bidi = streams.into();
-            }
-            
-            if let Some(streams) = initial_max_streams_uni {
-                params.initial_max_streams_uni = streams.into();
-            }
-            
-            if let Some(exp) = ack_delay_exponent {
-                params.ack_delay_exponent = Some(exp.into());
-            }
-            
-            if let Some(disable) = disable_active_migration {
-                params.disable_active_migration = disable;
-            }
-            
-            if let Some(token) = stateless_reset_token {
-                if token.len() == 16 {
-                    params.stateless_reset_token = Some(token.try_into().unwrap());
+        .prop_map(
+            |(
+                original_dst_cid,
+                max_idle_timeout,
+                max_udp_payload_size,
+                initial_max_data,
+                initial_max_stream_data_bidi_local,
+                max_ack_delay,
+                initial_max_streams_bidi,
+                initial_max_streams_uni,
+                ack_delay_exponent,
+                disable_active_migration,
+                stateless_reset_token,
+            )| {
+                let mut params = TransportParameters::default();
+
+                if let Some(addr) = original_dst_cid {
+                    params.original_dst_cid = Some(format!("{}", addr).into_bytes());
                 }
-            }
-            
-            params
-        })
+
+                if let Some(timeout) = max_idle_timeout {
+                    params.max_idle_timeout = Some(timeout.into());
+                }
+
+                if let Some(size) = max_udp_payload_size {
+                    params.max_udp_payload_size = Some(size.into());
+                }
+
+                if let Some(data) = initial_max_data {
+                    params.initial_max_data = data.into();
+                }
+
+                if let Some(data) = initial_max_stream_data_bidi_local {
+                    params.initial_max_stream_data_bidi_local = data.into();
+                }
+
+                if let Some(delay) = max_ack_delay {
+                    params.max_ack_delay = Some(delay.into());
+                }
+
+                if let Some(streams) = initial_max_streams_bidi {
+                    params.initial_max_streams_bidi = streams.into();
+                }
+
+                if let Some(streams) = initial_max_streams_uni {
+                    params.initial_max_streams_uni = streams.into();
+                }
+
+                if let Some(exp) = ack_delay_exponent {
+                    params.ack_delay_exponent = Some(exp.into());
+                }
+
+                if let Some(disable) = disable_active_migration {
+                    params.disable_active_migration = disable;
+                }
+
+                if let Some(token) = stateless_reset_token {
+                    if token.len() == 16 {
+                        params.stateless_reset_token = Some(token.try_into().unwrap());
+                    }
+                }
+
+                params
+            },
+        )
 }
 
 /// Generate arbitrary NAT types for testing

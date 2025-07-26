@@ -26,7 +26,7 @@ A QUIC transport protocol implementation with advanced NAT traversal capabilitie
 ## System Requirements
 
 ### Minimum Requirements
-- **Operating System**: 
+- **Operating System**:
   - Linux (kernel 3.10+)
   - Windows 10/11 or Windows Server 2016+
   - macOS 10.15+
@@ -61,14 +61,14 @@ A QUIC transport protocol implementation with advanced NAT traversal capabilitie
 ### Port Requirements
 - **Listen Port**: Configurable (default: random port 1024-65535)
 - **Protocol**: UDP only (QUIC requirement)
-- **Firewall Rules**: 
+- **Firewall Rules**:
   ```bash
   # Linux (iptables)
   sudo iptables -A INPUT -p udp --dport 9000 -j ACCEPT
-  
+
   # Windows (PowerShell as Administrator)
   New-NetFirewallRule -DisplayName "ant-quic" -Direction Inbound -Protocol UDP -LocalPort 9000 -Action Allow
-  
+
   # macOS
   # Add to System Preferences > Security & Privacy > Firewall > Firewall Options
   ```
@@ -118,7 +118,7 @@ docker run -p 9000:9000/udp autonomi/ant-quic:latest --listen 0.0.0.0:9000
 ant-quic --listen 0.0.0.0:9000
 
 # Connect to bootstrap nodes for peer discovery (automatic connection on startup)
-ant-quic --bootstrap node1.example.com:9000,node2.example.com:9000
+ant-quic --bootstrap quic.saorsalabs.com:9000
 
 # Discover your external address (requires bootstrap node)
 ant-quic --bootstrap 159.89.81.21:9000
@@ -161,12 +161,12 @@ SUBCOMMANDS:
     connect     Connect to specific peer via coordinator
                 --coordinator <ADDR>    Coordinator address
                 <PEER_ID>               Target peer ID (hex)
-    
+
     coordinator Run as pure coordinator node
-    
+
     chat        Run as chat client
                 --nickname <NAME>       Chat nickname
-    
+
     help        Print detailed help information
 ```
 
@@ -191,7 +191,7 @@ use ant_quic::{
 // Create NAT traversal endpoint (address discovery enabled by default)
 let config = NatTraversalConfig {
     role: EndpointRole::Client,
-    bootstrap_nodes: vec!["bootstrap.example.com:9000".parse().unwrap()],
+    bootstrap_nodes: vec!["quic.saorsalabs.com:9000".parse().unwrap()],
     max_candidates: 8,
     coordination_timeout: Duration::from_secs(10),
     discovery_timeout: Duration::from_secs(5),
@@ -264,7 +264,7 @@ The repository includes several example applications demonstrating various featu
 Run examples with:
 ```bash
 cargo run --example simple_chat -- --listen 0.0.0.0:9000
-cargo run --example chat_demo -- --bootstrap node1.example.com:9000,node2.example.com:9000
+cargo run --example chat_demo -- --bootstrap quic.saorsalabs.com:9000
 cargo run --example dashboard_demo
 ```
 
@@ -330,7 +330,7 @@ ant-quic extends the proven Quinn QUIC implementation with sophisticated NAT tra
 ### Protocol Timeouts and Constants
 
 - **Connection Timeout**: 30 seconds
-- **Coordination Timeout**: 10 seconds  
+- **Coordination Timeout**: 10 seconds
 - **Discovery Timeout**: 5 seconds
 - **Retry Token Lifetime**: 15 seconds
 - **Keep-Alive Interval**: 5 seconds (bootstrap nodes)
@@ -361,25 +361,25 @@ ant-quic extends the proven Quinn QUIC implementation with sophisticated NAT tra
 ant-quic implements and extends the following IETF specifications and drafts:
 
 ### 1. QUIC Core Specification
-- **RFC 9000** – "QUIC: A UDP-Based Multiplexed and Secure Transport"  
-  https://datatracker.ietf.org/doc/rfc9000/  
+- **RFC 9000** – "QUIC: A UDP-Based Multiplexed and Secure Transport"
+  https://datatracker.ietf.org/doc/rfc9000/
   (Companion RFCs: RFC 9001 for TLS integration and RFC 9002 for loss detection)
 
 ### 2. Raw Key Encoding / Key Schedule Used by QUIC
-- **RFC 9001** – "Using TLS to Secure QUIC" (see §5 Key Derivation)  
-  https://datatracker.ietf.org/doc/rfc9001/  
-- **RFC 7250** – "Using Raw Public Keys in TLS/DTLS"  
-  https://www.rfc-editor.org/rfc/rfc7250  
+- **RFC 9001** – "Using TLS to Secure QUIC" (see §5 Key Derivation)
+  https://datatracker.ietf.org/doc/rfc9001/
+- **RFC 7250** – "Using Raw Public Keys in TLS/DTLS"
+  https://www.rfc-editor.org/rfc/rfc7250
   Used for raw public key support instead of X.509 certificates
 
 ### 3. QUIC Address Discovery Extension
-- **draft-ietf-quic-address-discovery-00** – "QUIC Address Discovery"  
-  https://datatracker.ietf.org/doc/draft-ietf-quic-address-discovery-00/  
+- **draft-ietf-quic-address-discovery-00** – "QUIC Address Discovery"
+  https://datatracker.ietf.org/doc/draft-ietf-quic-address-discovery-00/
   Enables endpoints to learn the public IP:port a peer sees for any QUIC path
 
 ### 4. Native NAT Traversal for QUIC
-- **draft-seemann-quic-nat-traversal-02** – "Using QUIC to traverse NATs"  
-  https://datatracker.ietf.org/doc/draft-seemann-quic-nat-traversal/  
+- **draft-seemann-quic-nat-traversal-02** – "Using QUIC to traverse NATs"
+  https://datatracker.ietf.org/doc/draft-seemann-quic-nat-traversal/
   Describes hole-punching and ICE-style techniques directly over QUIC, including new frames such as ADD_ADDRESS and PUNCH_ME_NOW
 
 ## Future Work & Roadmap
@@ -506,10 +506,10 @@ sudo iptables -L -n | grep 9000  # Linux
 netsh advfirewall firewall show rule name=all | findstr 9000  # Windows
 
 # Solution 2: Verify bootstrap node is reachable
-nc -u -v bootstrap.example.com 9000  # Test UDP connectivity
+nc -u -v quic.saorsalabs.com 9000  # Test UDP connectivity
 
 # Solution 3: Enable debug logging
-ant-quic --debug --bootstrap node.example.com:9000
+ant-quic --debug --bootstrap quic.saorsalabs.com:9000
 ```
 
 #### NAT Traversal Issues
@@ -564,12 +564,12 @@ WantedBy=multi-user.target
 #### High Availability Setup
 ```bash
 # Run multiple bootstrap nodes behind DNS round-robin
-bootstrap1.example.com A 1.2.3.4
-bootstrap1.example.com A 5.6.7.8
-bootstrap1.example.com A 9.10.11.12
+quic.saorsalabs.com A 1.2.3.4
+quic.saorsalabs.com A 5.6.7.8
+quic.saorsalabs.com A 9.10.11.12
 
 # Client configuration
-ant-quic --bootstrap bootstrap1.example.com:9000,bootstrap2.example.com:9000
+ant-quic --bootstrap quic.saorsalabs.com:9000
 ```
 
 ### Monitoring
@@ -607,7 +607,7 @@ ant-quic is designed for high-performance P2P networking with minimal overhead:
 ### Benchmark Results
 
 #### Frame Processing Performance
-- **OBSERVED_ADDRESS Encoding**: 
+- **OBSERVED_ADDRESS Encoding**:
   - IPv4: 15.397 ns (±0.181 ns)
   - IPv6: 15.481 ns (±0.036 ns)
 - **OBSERVED_ADDRESS Decoding**:
@@ -681,7 +681,7 @@ All benchmarks run on:
 - **Hardware**: AMD Ryzen 9 5900X, 32GB RAM
 - **Network**: 1 Gbps symmetric, <1ms local latency
 - **OS**: Ubuntu 22.04 LTS, kernel 5.15
-- **Methodology**: 
+- **Methodology**:
   - Criterion.rs for micro-benchmarks
   - 1000 connection attempts for success rate
   - 10,000 iterations for timing measurements

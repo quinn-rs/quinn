@@ -1,14 +1,13 @@
+use anyhow::{Context, Result};
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 /// NAT Docker Integration Tests
-/// 
+///
 /// Integration tests that use the Docker NAT testing environment
 /// to validate NAT traversal under realistic network conditions
-
 use std::process::Command;
 use std::time::Duration;
-use std::collections::HashMap;
 use tokio::time::{sleep, timeout};
-use serde::{Deserialize, Serialize};
-use anyhow::{Result, Context};
 
 /// Docker-based NAT test configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -68,11 +67,11 @@ impl DockerNatTestRunner {
 
         // Run test scenarios
         let test_scenarios = self.create_test_scenarios();
-        
+
         for scenario in test_scenarios {
             println!("\n=== Running: {} ===", scenario.name);
             println!("Description: {}", scenario.description);
-            
+
             let result = self.run_test_scenario(&scenario).await;
             self.test_results.push(result);
         }
@@ -126,7 +125,6 @@ impl DockerNatTestRunner {
                 expected_result: ExpectedResult::FailWithRelay,
                 timeout_seconds: 60,
             },
-            
             // Network condition tests
             DockerNatTest {
                 name: "high_latency_nat".to_string(),
@@ -155,7 +153,6 @@ impl DockerNatTestRunner {
                 expected_result: ExpectedResult::Success,
                 timeout_seconds: 120,
             },
-            
             // Mobile network scenarios
             DockerNatTest {
                 name: "mobile_3g_nat".to_string(),
@@ -181,7 +178,7 @@ impl DockerNatTestRunner {
     /// Run a single test scenario
     async fn run_test_scenario(&mut self, scenario: &DockerNatTest) -> TestExecutionResult {
         let start_time = std::time::Instant::now();
-        
+
         // Apply network profile
         if let Err(e) = self.apply_network_profile(&scenario.network_profile).await {
             return TestExecutionResult {
@@ -195,20 +192,28 @@ impl DockerNatTestRunner {
         }
 
         // Get container names
-        let client1_container = format!("ant-quic-client{}", 
-            scenario.client1_nat.chars().last().unwrap_or('1'));
-        let client2_container = format!("ant-quic-client{}", 
-            scenario.client2_nat.chars().last().unwrap_or('2'));
+        let client1_container = format!(
+            "ant-quic-client{}",
+            scenario.client1_nat.chars().last().unwrap_or('1')
+        );
+        let client2_container = format!(
+            "ant-quic-client{}",
+            scenario.client2_nat.chars().last().unwrap_or('2')
+        );
 
         // Execute test in containers
         match timeout(
             Duration::from_secs(scenario.timeout_seconds),
-            self.execute_nat_test(&client1_container, &client2_container)
-        ).await {
+            self.execute_nat_test(&client1_container, &client2_container),
+        )
+        .await
+        {
             Ok(Ok((success, relay_used))) => {
                 let elapsed = start_time.elapsed();
-                let logs = self.collect_container_logs(&[&client1_container, &client2_container]).await;
-                
+                let logs = self
+                    .collect_container_logs(&[&client1_container, &client2_container])
+                    .await;
+
                 TestExecutionResult {
                     test_name: scenario.name.clone(),
                     success,
@@ -219,8 +224,10 @@ impl DockerNatTestRunner {
                 }
             }
             Ok(Err(e)) => {
-                let logs = self.collect_container_logs(&[&client1_container, &client2_container]).await;
-                
+                let logs = self
+                    .collect_container_logs(&[&client1_container, &client2_container])
+                    .await;
+
                 TestExecutionResult {
                     test_name: scenario.name.clone(),
                     success: false,
@@ -231,8 +238,10 @@ impl DockerNatTestRunner {
                 }
             }
             Err(_) => {
-                let logs = self.collect_container_logs(&[&client1_container, &client2_container]).await;
-                
+                let logs = self
+                    .collect_container_logs(&[&client1_container, &client2_container])
+                    .await;
+
                 TestExecutionResult {
                     test_name: scenario.name.clone(),
                     success: false,
@@ -246,17 +255,10 @@ impl DockerNatTestRunner {
     }
 
     /// Execute NAT traversal test between two containers
-    async fn execute_nat_test(
-        &self,
-        client1: &str,
-        client2: &str,
-    ) -> Result<(bool, bool)> {
+    async fn execute_nat_test(&self, client1: &str, client2: &str) -> Result<(bool, bool)> {
         // Start ant-quic in listening mode on client2
-        let listen_cmd = format!(
-            "docker exec -d {} ant-quic --listen 0.0.0.0:9000",
-            client2
-        );
-        
+        let listen_cmd = format!("docker exec -d {} ant-quic --listen 0.0.0.0:9000", client2);
+
         Command::new("sh")
             .arg("-c")
             .arg(&listen_cmd)
@@ -285,13 +287,13 @@ impl DockerNatTestRunner {
         let stderr = String::from_utf8_lossy(&output.stderr);
 
         // Check if connection succeeded
-        let success = output.status.success() && 
-            (stdout.contains("Connection established") || 
-             stdout.contains("Connected successfully"));
+        let success = output.status.success()
+            && (stdout.contains("Connection established")
+                || stdout.contains("Connected successfully"));
 
         // Check if relay was used
-        let relay_used = stdout.contains("Using relay") || 
-            stdout.contains("Relay connection established");
+        let relay_used =
+            stdout.contains("Using relay") || stdout.contains("Relay connection established");
 
         if !success {
             println!("Connection failed. Stdout: {}", stdout);
@@ -304,11 +306,8 @@ impl DockerNatTestRunner {
     /// Apply network profile to containers
     async fn apply_network_profile(&self, profile: &str) -> Result<()> {
         let script_path = "docker/scripts/network-conditions.sh";
-        
-        let cmd = format!(
-            "bash {} apply {}",
-            script_path, profile
-        );
+
+        let cmd = format!("bash {} apply {}", script_path, profile);
 
         let output = Command::new("sh")
             .arg("-c")
@@ -317,8 +316,10 @@ impl DockerNatTestRunner {
             .context("Failed to apply network profile")?;
 
         if !output.status.success() {
-            anyhow::bail!("Failed to apply network profile: {}", 
-                String::from_utf8_lossy(&output.stderr));
+            anyhow::bail!(
+                "Failed to apply network profile: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
         }
 
         Ok(())
@@ -330,12 +331,8 @@ impl DockerNatTestRunner {
 
         for container in containers {
             let cmd = format!("docker logs {} --tail 100", container);
-            
-            if let Ok(output) = Command::new("sh")
-                .arg("-c")
-                .arg(&cmd)
-                .output() 
-            {
+
+            if let Ok(output) = Command::new("sh").arg("-c").arg(&cmd).output() {
                 let container_logs = String::from_utf8_lossy(&output.stdout);
                 logs.push(format!("=== {} logs ===\n{}", container, container_logs));
             }
@@ -357,8 +354,10 @@ impl DockerNatTestRunner {
             .context("Failed to start Docker environment")?;
 
         if !output.status.success() {
-            anyhow::bail!("Failed to start Docker environment: {}", 
-                String::from_utf8_lossy(&output.stderr));
+            anyhow::bail!(
+                "Failed to start Docker environment: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
         }
 
         Ok(())
@@ -376,8 +375,10 @@ impl DockerNatTestRunner {
             .context("Failed to stop Docker environment")?;
 
         if !output.status.success() {
-            eprintln!("Warning: Failed to cleanup Docker environment: {}", 
-                String::from_utf8_lossy(&output.stderr));
+            eprintln!(
+                "Warning: Failed to cleanup Docker environment: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
         }
 
         Ok(())
@@ -392,24 +393,38 @@ impl DockerNatTestRunner {
         let failed = total - passed;
 
         println!("Total Tests: {}", total);
-        println!("Passed: {} ({:.1}%)", passed, (passed as f64 / total as f64) * 100.0);
+        println!(
+            "Passed: {} ({:.1}%)",
+            passed,
+            (passed as f64 / total as f64) * 100.0
+        );
         println!("Failed: {}", failed);
         println!();
 
         println!("Detailed Results:");
         println!("{:-<80}", "");
-        println!("{:<30} {:<15} {:<15} {:<20}", "Test Name", "Result", "Time (ms)", "Relay Used");
+        println!(
+            "{:<30} {:<15} {:<15} {:<20}",
+            "Test Name", "Result", "Time (ms)", "Relay Used"
+        );
         println!("{:-<80}", "");
 
         for result in &self.test_results {
-            let status = if result.success { "✓ PASS" } else { "✗ FAIL" };
-            let time = result.connection_time_ms
+            let status = if result.success {
+                "✓ PASS"
+            } else {
+                "✗ FAIL"
+            };
+            let time = result
+                .connection_time_ms
                 .map(|t| t.to_string())
                 .unwrap_or_else(|| "N/A".to_string());
             let relay = if result.relay_used { "Yes" } else { "No" };
 
-            println!("{:<30} {:<15} {:<15} {:<20}", 
-                result.test_name, status, time, relay);
+            println!(
+                "{:<30} {:<15} {:<15} {:<20}",
+                result.test_name, status, time, relay
+            );
 
             if let Some(ref error) = result.error_message {
                 println!("  Error: {}", error);
@@ -448,14 +463,17 @@ mod tests {
     #[ignore] // Requires Docker environment
     async fn test_docker_nat_integration() {
         let mut runner = DockerNatTestRunner::new();
-        runner.run_all_tests().await.expect("Docker NAT tests failed");
+        runner
+            .run_all_tests()
+            .await
+            .expect("Docker NAT tests failed");
     }
 
     #[test]
     fn test_scenario_creation() {
         let runner = DockerNatTestRunner::new();
         let scenarios = runner.create_test_scenarios();
-        
+
         assert!(!scenarios.is_empty());
         assert!(scenarios.iter().any(|s| s.name.contains("symmetric")));
         assert!(scenarios.iter().any(|s| s.name.contains("cgnat")));

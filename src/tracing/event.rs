@@ -51,7 +51,6 @@ impl TraceId {
     }
 }
 
-
 /// Fixed-size event structure (128 bytes)
 #[derive(Debug, Clone)]
 #[repr(C)]

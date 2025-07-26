@@ -1,7 +1,6 @@
 /// Specification Validators
-/// 
+///
 /// Validators for specific IETF specifications
-
 use super::{ComplianceRequirement, ComplianceResult, Evidence, SpecValidator};
 use std::process::Command;
 
@@ -136,7 +135,13 @@ impl AddressDiscoveryValidator {
     fn validate_sequence_numbers(&self, req: &ComplianceRequirement) -> ComplianceResult {
         // Check sequence number implementation
         let test_output = Command::new("cargo")
-            .args(["test", "observed_address_sequence", "--lib", "--", "--quiet"])
+            .args([
+                "test",
+                "observed_address_sequence",
+                "--lib",
+                "--",
+                "--quiet",
+            ])
             .output();
 
         let evidence = vec![
@@ -210,7 +215,10 @@ impl SpecValidator for NatTraversalValidator {
 }
 
 impl NatTraversalValidator {
-    fn validate_transport_parameter_encoding(&self, req: &ComplianceRequirement) -> ComplianceResult {
+    fn validate_transport_parameter_encoding(
+        &self,
+        req: &ComplianceRequirement,
+    ) -> ComplianceResult {
         // Check NAT traversal parameter encoding
         let test_output = Command::new("cargo")
             .args(["test", "nat_traversal_wrong_side", "--lib", "--", "--quiet"])
@@ -233,7 +241,7 @@ impl NatTraversalValidator {
             // Client requirement
             true // We validate clients send empty
         } else {
-            // Server requirement  
+            // Server requirement
             true // We validate servers send concurrency limit
         };
 
@@ -301,7 +309,7 @@ impl SpecValidator for QuicComplianceValidator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compliance_validator::{RequirementLevel, RequirementCategory};
+    use crate::compliance_validator::{RequirementCategory, RequirementLevel};
 
     #[test]
     fn test_rfc9000_validator() {
@@ -357,7 +365,7 @@ mod tests {
     #[test]
     fn test_composite_validator() {
         let validator = QuicComplianceValidator::new();
-        
+
         // Test RFC9000
         let req = ComplianceRequirement {
             spec_id: "RFC9000".to_string(),
@@ -366,10 +374,10 @@ mod tests {
             description: "Test".to_string(),
             category: RequirementCategory::TransportParameters,
         };
-        
+
         let result = validator.validate(&req);
         assert_eq!(result.requirement.spec_id, "RFC9000");
-        
+
         // Test unknown spec
         let req = ComplianceRequirement {
             spec_id: "RFC9999".to_string(),
@@ -378,7 +386,7 @@ mod tests {
             description: "Unknown".to_string(),
             category: RequirementCategory::Transport,
         };
-        
+
         let result = validator.validate(&req);
         assert!(!result.compliant);
     }

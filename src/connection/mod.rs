@@ -4288,34 +4288,48 @@ impl Connection {
         // With the new enum-based config, negotiation is simple:
         // - Client/Server roles are determined by who initiated the connection
         // - Concurrency limit is taken from the server's config
-        
+
         match (local_config, peer_config) {
             // We're client, peer is server - use server's concurrency limit
-            (crate::transport_parameters::NatTraversalConfig::ClientSupport, 
-             crate::transport_parameters::NatTraversalConfig::ServerSupport { concurrency_limit }) => {
-                Ok(crate::transport_parameters::NatTraversalConfig::ServerSupport { 
-                    concurrency_limit: *concurrency_limit 
-                })
-            }
+            (
+                crate::transport_parameters::NatTraversalConfig::ClientSupport,
+                crate::transport_parameters::NatTraversalConfig::ServerSupport {
+                    concurrency_limit,
+                },
+            ) => Ok(
+                crate::transport_parameters::NatTraversalConfig::ServerSupport {
+                    concurrency_limit: *concurrency_limit,
+                },
+            ),
             // We're server, peer is client - use our concurrency limit
-            (crate::transport_parameters::NatTraversalConfig::ServerSupport { concurrency_limit }, 
-             crate::transport_parameters::NatTraversalConfig::ClientSupport) => {
-                Ok(crate::transport_parameters::NatTraversalConfig::ServerSupport { 
-                    concurrency_limit: *concurrency_limit 
-                })
-            }
+            (
+                crate::transport_parameters::NatTraversalConfig::ServerSupport {
+                    concurrency_limit,
+                },
+                crate::transport_parameters::NatTraversalConfig::ClientSupport,
+            ) => Ok(
+                crate::transport_parameters::NatTraversalConfig::ServerSupport {
+                    concurrency_limit: *concurrency_limit,
+                },
+            ),
             // Both are servers (e.g., peer-to-peer) - use minimum concurrency
-            (crate::transport_parameters::NatTraversalConfig::ServerSupport { concurrency_limit: limit1 },
-             crate::transport_parameters::NatTraversalConfig::ServerSupport { concurrency_limit: limit2 }) => {
-                Ok(crate::transport_parameters::NatTraversalConfig::ServerSupport {
+            (
+                crate::transport_parameters::NatTraversalConfig::ServerSupport {
+                    concurrency_limit: limit1,
+                },
+                crate::transport_parameters::NatTraversalConfig::ServerSupport {
+                    concurrency_limit: limit2,
+                },
+            ) => Ok(
+                crate::transport_parameters::NatTraversalConfig::ServerSupport {
                     concurrency_limit: (*limit1).min(*limit2),
-                })
-            }
+                },
+            ),
             // Both are clients - shouldn't happen in normal operation
-            (crate::transport_parameters::NatTraversalConfig::ClientSupport,
-             crate::transport_parameters::NatTraversalConfig::ClientSupport) => {
-                Err("Both endpoints claim to be NAT traversal clients".to_string())
-            }
+            (
+                crate::transport_parameters::NatTraversalConfig::ClientSupport,
+                crate::transport_parameters::NatTraversalConfig::ClientSupport,
+            ) => Err("Both endpoints claim to be NAT traversal clients".to_string()),
         }
     }
 
@@ -4331,9 +4345,14 @@ impl Connection {
                 // We're operating as a client
                 (NatTraversalRole::Client, 10) // Default concurrency
             }
-            crate::transport_parameters::NatTraversalConfig::ServerSupport { concurrency_limit } => {
+            crate::transport_parameters::NatTraversalConfig::ServerSupport {
+                concurrency_limit,
+            } => {
                 // We're operating as a server - default to non-relay server
-                (NatTraversalRole::Server { can_relay: false }, concurrency_limit.into_inner() as u32)
+                (
+                    NatTraversalRole::Server { can_relay: false },
+                    concurrency_limit.into_inner() as u32,
+                )
             }
         };
 
@@ -4792,7 +4811,9 @@ impl Connection {
         }
 
         // Update the last received sequence number for this path
-        state.last_received_sequence.insert(path_id, observed_address.sequence_number);
+        state
+            .last_received_sequence
+            .insert(path_id, observed_address.sequence_number);
 
         // Process the observed address
         state.handle_observed_address(observed_address.address, path_id, now);
@@ -4869,17 +4890,18 @@ impl Connection {
         // Get sequence number from address discovery state
         let sequence_number = if let Some(state) = &mut self.address_discovery_state {
             let seq = state.next_sequence_number;
-            state.next_sequence_number = VarInt::from_u64(state.next_sequence_number.into_inner() + 1)
-                .expect("sequence number overflow");
+            state.next_sequence_number =
+                VarInt::from_u64(state.next_sequence_number.into_inner() + 1)
+                    .expect("sequence number overflow");
             seq
         } else {
             // Fallback if no state (shouldn't happen in practice)
             VarInt::from_u32(0)
         };
-        
-        let observed_address = frame::ObservedAddress { 
+
+        let observed_address = frame::ObservedAddress {
             sequence_number,
-            address 
+            address,
         };
         self.spaces[SpaceId::Data]
             .pending
@@ -5964,19 +5986,19 @@ impl AddressDiscoveryState {
     /// Create a new address discovery state
     fn new(config: &crate::transport_parameters::AddressDiscoveryConfig, now: Instant) -> Self {
         use crate::transport_parameters::AddressDiscoveryConfig::*;
-        
+
         // Set defaults based on the config variant
         let (enabled, _can_send, _can_receive) = match config {
             SendOnly => (true, true, false),
             ReceiveOnly => (true, false, true),
             SendAndReceive => (true, true, true),
         };
-        
+
         // For now, use fixed defaults for rate limiting
         // TODO: These could be made configurable via a separate mechanism
         let max_observation_rate = 10u8; // Default rate
         let observe_all_paths = false; // Default to primary path only
-        
+
         Self {
             enabled,
             max_observation_rate,
@@ -6117,10 +6139,10 @@ impl AddressDiscoveryState {
         let sequence_number = self.next_sequence_number;
         self.next_sequence_number = VarInt::from_u64(self.next_sequence_number.into_inner() + 1)
             .expect("sequence number overflow");
-        
-        Some(frame::ObservedAddress { 
+
+        Some(frame::ObservedAddress {
             sequence_number,
-            address 
+            address,
         })
     }
 
@@ -6181,12 +6203,13 @@ impl AddressDiscoveryState {
 
                     // Create frame with sequence number
                     let sequence_number = self.next_sequence_number;
-                    self.next_sequence_number = VarInt::from_u64(self.next_sequence_number.into_inner() + 1)
-                        .expect("sequence number overflow");
-                    
-                    frames.push(frame::ObservedAddress { 
+                    self.next_sequence_number =
+                        VarInt::from_u64(self.next_sequence_number.into_inner() + 1)
+                            .expect("sequence number overflow");
+
+                    frames.push(frame::ObservedAddress {
                         sequence_number,
-                        address 
+                        address,
                     });
                 }
             }
@@ -6227,7 +6250,7 @@ impl AddressDiscoveryState {
                 last_received_sequence: std::collections::HashMap::new(),
             };
         }
-        
+
         // Create using the config, then override specific fields for test purposes
         let config = crate::transport_parameters::AddressDiscoveryConfig::SendAndReceive;
         let mut state = Self::new(&config, Instant::now());
@@ -6355,7 +6378,7 @@ mod tests {
         let config = crate::transport_parameters::AddressDiscoveryConfig::SendAndReceive;
         let now = Instant::now();
         let mut state = AddressDiscoveryState::new(&config, now);
-        
+
         // Disable the state
         state.enabled = false;
 
@@ -6396,13 +6419,13 @@ mod tests {
 
         // Configure to observe all paths for this test
         state.observe_all_paths = true;
-        
+
         // Should allow first observation on path 0
         assert!(state.should_send_observation(0, now));
-        
+
         // Consume some tokens to test rate limiting
         state.rate_limiter.try_consume(9.0, now); // Consume 9 tokens (leaving ~1)
-        
+
         // Next observation should be rate limited
         assert!(!state.should_send_observation(0, now));
 
@@ -6991,25 +7014,37 @@ mod tests {
         let config = crate::transport_parameters::AddressDiscoveryConfig::SendAndReceive;
         let now = Instant::now();
         let mut state = AddressDiscoveryState::new(&config, now);
-        
+
         // Enable all paths observation
         state.observe_all_paths = true;
-        
+
         // Set a lower rate limit for this test (5 tokens)
         state.update_rate_limit(5.0);
-        
+
         // Set up path addresses so should_send_observation returns true
-        state.path_addresses.insert(0, paths::PathAddressInfo::new());
-        state.path_addresses.insert(1, paths::PathAddressInfo::new());
-        state.path_addresses.insert(2, paths::PathAddressInfo::new());
-        
+        state
+            .path_addresses
+            .insert(0, paths::PathAddressInfo::new());
+        state
+            .path_addresses
+            .insert(1, paths::PathAddressInfo::new());
+        state
+            .path_addresses
+            .insert(2, paths::PathAddressInfo::new());
+
         // Set observed addresses so paths need observation
-        state.path_addresses.get_mut(&0).unwrap().observed_address = 
-            Some(SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)), 8080));
-        state.path_addresses.get_mut(&1).unwrap().observed_address = 
-            Some(SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 2)), 8081));
-        state.path_addresses.get_mut(&2).unwrap().observed_address = 
-            Some(SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 3)), 8082));
+        state.path_addresses.get_mut(&0).unwrap().observed_address = Some(SocketAddr::new(
+            IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)),
+            8080,
+        ));
+        state.path_addresses.get_mut(&1).unwrap().observed_address = Some(SocketAddr::new(
+            IpAddr::V4(Ipv4Addr::new(192, 168, 1, 2)),
+            8081,
+        ));
+        state.path_addresses.get_mut(&2).unwrap().observed_address = Some(SocketAddr::new(
+            IpAddr::V4(Ipv4Addr::new(192, 168, 1, 3)),
+            8082,
+        ));
 
         // Path 0: consume 3 tokens
         for _ in 0..3 {
@@ -7190,15 +7225,19 @@ mod tests {
         let config = crate::transport_parameters::AddressDiscoveryConfig::SendAndReceive;
         let now = Instant::now();
         let mut state = AddressDiscoveryState::new(&config, now);
-        
+
         // Set up a path with an address to observe
-        state.path_addresses.insert(0, paths::PathAddressInfo::new());
-        state.path_addresses.get_mut(&0).unwrap().observed_address = 
-            Some(SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)), 8080));
+        state
+            .path_addresses
+            .insert(0, paths::PathAddressInfo::new());
+        state.path_addresses.get_mut(&0).unwrap().observed_address = Some(SocketAddr::new(
+            IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)),
+            8080,
+        ));
 
         // Set our local rate to 5
         state.update_rate_limit(5.0);
-        
+
         // Simulate negotiated rate from peer (higher than ours)
         state.max_observation_rate = 20; // Peer allows 20/sec
 
@@ -7218,11 +7257,15 @@ mod tests {
         let config = crate::transport_parameters::AddressDiscoveryConfig::SendAndReceive;
         let now = Instant::now();
         let mut state = AddressDiscoveryState::new(&config, now);
-        
+
         // Set up initial path
-        state.path_addresses.insert(0, paths::PathAddressInfo::new());
-        state.path_addresses.get_mut(&0).unwrap().observed_address = 
-            Some(SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)), 8080));
+        state
+            .path_addresses
+            .insert(0, paths::PathAddressInfo::new());
+        state.path_addresses.get_mut(&0).unwrap().observed_address = Some(SocketAddr::new(
+            IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)),
+            8080,
+        ));
 
         // Use initial rate - consume 5 tokens
         for _ in 0..5 {
@@ -7246,7 +7289,7 @@ mod tests {
             // Reset notified flag for next iteration
             state.path_addresses.get_mut(&0).unwrap().notified = false;
         }
-        
+
         // Should be out of tokens now
         assert!(!state.should_send_observation(0, now));
 
@@ -7258,7 +7301,7 @@ mod tests {
             // Reset notified flag for next iteration
             state.path_addresses.get_mut(&0).unwrap().notified = false;
         }
-        
+
         // Should be out of tokens again
         assert!(!state.should_send_observation(0, later));
     }
@@ -7268,15 +7311,19 @@ mod tests {
         let config = crate::transport_parameters::AddressDiscoveryConfig::SendAndReceive;
         let now = Instant::now();
         let mut state = AddressDiscoveryState::new(&config, now);
-        
+
         // Enable all paths observation
         state.observe_all_paths = true;
-        
+
         // Set up multiple paths with addresses
         for i in 0..3 {
-            state.path_addresses.insert(i, paths::PathAddressInfo::new());
-            state.path_addresses.get_mut(&i).unwrap().observed_address = 
-                Some(SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100 + i as u8)), 5000));
+            state
+                .path_addresses
+                .insert(i, paths::PathAddressInfo::new());
+            state.path_addresses.get_mut(&i).unwrap().observed_address = Some(SocketAddr::new(
+                IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100 + i as u8)),
+                5000,
+            ));
         }
 
         // Consume tokens by sending observations
@@ -7291,7 +7338,7 @@ mod tests {
                 }
             }
         }
-        
+
         // We've sent 9 observations (3 iterations × 3 paths), have 1 token left
         // One more observation should succeed
         assert!(state.should_send_observation(0, now));
@@ -7335,14 +7382,24 @@ mod tests {
         // With 10 tokens initially, we should be able to send 10 frames
         let mut addresses = Vec::new();
         for i in 0..10 {
-            let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, i as u8)), 5000 + i as u16);
+            let addr = SocketAddr::new(
+                IpAddr::V4(Ipv4Addr::new(192, 168, 1, i as u8)),
+                5000 + i as u16,
+            );
             addresses.push(addr);
-            assert!(state.queue_observed_address_frame(i as u64, addr).is_some(), "Frame {} should be allowed", i + 1);
+            assert!(
+                state.queue_observed_address_frame(i as u64, addr).is_some(),
+                "Frame {} should be allowed",
+                i + 1
+            );
         }
 
         // 11th should be rate limited
         let addr11 = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 11)), 5011);
-        assert!(state.queue_observed_address_frame(10, addr11).is_none(), "11th frame should be rate limited");
+        assert!(
+            state.queue_observed_address_frame(10, addr11).is_none(),
+            "11th frame should be rate limited"
+        );
     }
 
     #[test]
@@ -7350,7 +7407,7 @@ mod tests {
         let config = crate::transport_parameters::AddressDiscoveryConfig::SendAndReceive;
         let now = Instant::now();
         let mut state = AddressDiscoveryState::new(&config, now);
-        
+
         // Disable address discovery
         state.enabled = false;
 
@@ -7432,9 +7489,9 @@ mod tests {
 
         // Add an observed address frame
         let address = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100)), 5000);
-        let frame = frame::ObservedAddress { 
+        let frame = frame::ObservedAddress {
             sequence_number: VarInt::from_u32(1),
-            address 
+            address,
         };
         retransmits.observed_addresses.push(frame);
 
@@ -7500,11 +7557,7 @@ mod tests {
         state
             .path_addresses
             .insert(0, paths::PathAddressInfo::new());
-        state
-            .path_addresses
-            .get_mut(&0)
-            .unwrap()
-            .observed_address = Some(address);
+        state.path_addresses.get_mut(&0).unwrap().observed_address = Some(address);
 
         // Consume all initial tokens (starts with 10)
         for _ in 0..10 {
@@ -7515,17 +7568,17 @@ mod tests {
             // Mark path as unnotified again for next iteration
             state.path_addresses.get_mut(&0).unwrap().notified = false;
         }
-        
+
         // Verify we've consumed all tokens
         assert_eq!(state.rate_limiter.tokens, 0.0);
-        
+
         // Mark path as unnotified again to test rate limiting
         state.path_addresses.get_mut(&0).unwrap().notified = false;
 
         // Now check should be rate limited (no tokens left)
         let frames2 = state.check_for_address_observations(0, true, now);
         assert_eq!(frames2.len(), 0);
-        
+
         // Mark path as unnotified again
         state.path_addresses.get_mut(&0).unwrap().notified = false;
 
@@ -7540,7 +7593,7 @@ mod tests {
         let config = crate::transport_parameters::AddressDiscoveryConfig::SendAndReceive;
         let now = Instant::now();
         let mut state = AddressDiscoveryState::new(&config, now);
-        
+
         // Enable observation on all paths for this test
         state.observe_all_paths = true;
 
@@ -7759,7 +7812,7 @@ mod tests {
         // Our config with rate 30
         let our_config = AddressDiscoveryConfig::SendAndReceive;
         let mut address_discovery_state = Some(AddressDiscoveryState::new(&our_config, now));
-        
+
         // Set a custom rate for testing
         if let Some(state) = &mut address_discovery_state {
             state.max_observation_rate = 30;
@@ -7818,7 +7871,7 @@ mod tests {
         assert!(state.should_send_observation(0, now)); // Primary path
         assert!(!state.should_send_observation(1, now)); // Secondary path not observed by default
         assert!(!state.should_send_observation(2, now)); // Additional path not observed by default
-        
+
         // Enable all paths
         state.observe_all_paths = true;
         assert!(state.should_send_observation(1, now)); // Now secondary path is observed
@@ -7940,7 +7993,7 @@ mod tests {
         let now = Instant::now();
         let config = AddressDiscoveryConfig::SendAndReceive;
         let mut state = AddressDiscoveryState::new(&config, now);
-        
+
         // Disable address discovery after creation
         state.enabled = false;
 
@@ -7961,7 +8014,7 @@ mod tests {
         let now = Instant::now();
         let config = AddressDiscoveryConfig::SendAndReceive;
         let mut state = AddressDiscoveryState::new(&config, now);
-        
+
         // Enable all paths for this test and set a low rate
         state.observe_all_paths = true;
         state.rate_limiter.set_rate(2); // 2 per second
@@ -8023,11 +8076,15 @@ mod tests {
         let now = Instant::now();
         let config = AddressDiscoveryConfig::SendAndReceive;
         let mut state = AddressDiscoveryState::new(&config, now);
-        
+
         // Set up path 0 with an address to observe
-        state.path_addresses.insert(0, paths::PathAddressInfo::new());
-        state.path_addresses.get_mut(&0).unwrap().observed_address = 
-            Some(SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)), 8080));
+        state
+            .path_addresses
+            .insert(0, paths::PathAddressInfo::new());
+        state.path_addresses.get_mut(&0).unwrap().observed_address = Some(SocketAddr::new(
+            IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)),
+            8080,
+        ));
 
         // Use up all initial tokens (we start with 10)
         for _ in 0..10 {
@@ -8044,7 +8101,7 @@ mod tests {
         let later = now + Duration::from_millis(100);
         assert!(state.should_send_observation(0, later));
         state.record_observation_sent(0);
-        
+
         // Reset notified flag to test again
         state.path_addresses.get_mut(&0).unwrap().notified = false;
 
@@ -8058,7 +8115,7 @@ mod tests {
         let now = Instant::now();
         let config = AddressDiscoveryConfig::SendAndReceive;
         let mut state = AddressDiscoveryState::new(&config, now);
-        
+
         // Set rate to 0
         state.rate_limiter.set_rate(0);
         state.rate_limiter.tokens = 0.0;
@@ -8076,15 +8133,19 @@ mod tests {
         let now = Instant::now();
         let config = AddressDiscoveryConfig::SendAndReceive;
         let mut state = AddressDiscoveryState::new(&config, now);
-        
+
         // Enable all paths observation
         state.observe_all_paths = true;
-        
+
         // Set up multiple paths with addresses to observe
         for i in 0..12 {
-            state.path_addresses.insert(i, paths::PathAddressInfo::new());
-            state.path_addresses.get_mut(&i).unwrap().observed_address = 
-                Some(SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, (i + 1) as u8)), 8080));
+            state
+                .path_addresses
+                .insert(i, paths::PathAddressInfo::new());
+            state.path_addresses.get_mut(&i).unwrap().observed_address = Some(SocketAddr::new(
+                IpAddr::V4(Ipv4Addr::new(192, 168, 1, (i + 1) as u8)),
+                8080,
+            ));
         }
 
         // Initially we have 10 tokens (rate is 10/sec)
@@ -8165,7 +8226,8 @@ mod tests {
             if let Some(info) = state.path_addresses.get_mut(&0) {
                 info.notified = false;
             }
-            let frame = state.queue_observed_address_frame(0, SocketAddr::from(([192, 168, 1, 1], 8080)));
+            let frame =
+                state.queue_observed_address_frame(0, SocketAddr::from(([192, 168, 1, 1], 8080)));
             assert!(frame.is_some());
             state.record_observation_sent(0);
         }
@@ -8287,15 +8349,19 @@ mod tests {
         let now = Instant::now();
         let config = AddressDiscoveryConfig::SendAndReceive;
         let mut state = AddressDiscoveryState::new(&config, now);
-        
+
         // Enable all paths observation
         state.observe_all_paths = true;
-        
+
         // Set up multiple paths with addresses to observe
         for i in 0..21 {
-            state.path_addresses.insert(i, paths::PathAddressInfo::new());
-            state.path_addresses.get_mut(&i).unwrap().observed_address = 
-                Some(SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, (i + 1) as u8)), 8080));
+            state
+                .path_addresses
+                .insert(i, paths::PathAddressInfo::new());
+            state.path_addresses.get_mut(&i).unwrap().observed_address = Some(SocketAddr::new(
+                IpAddr::V4(Ipv4Addr::new(192, 168, 1, (i + 1) as u8)),
+                8080,
+            ));
         }
 
         // Use all 10 initial tokens across different paths
@@ -8306,7 +8372,7 @@ mod tests {
 
         // All tokens consumed, no path can send
         assert!(!state.should_send_observation(10, now));
-        
+
         // Reset path 0 to test if it can send again (it shouldn't)
         state.path_addresses.get_mut(&0).unwrap().notified = false;
         assert!(!state.should_send_observation(0, now)); // Even path 0 can't send again
@@ -8391,7 +8457,7 @@ mod tests {
         let now = Instant::now();
         let config = AddressDiscoveryConfig::SendAndReceive;
         let mut state = AddressDiscoveryState::new(&config, now);
-        
+
         // Enable observation of all paths
         state.observe_all_paths = true;
 
@@ -8548,12 +8614,11 @@ mod tests {
         // Bootstrap mode should enable aggressive observation
         assert!(state.bootstrap_mode);
         assert!(state.enabled);
-        
+
         // Rate limiter should be updated for bootstrap mode
         let effective_rate = state.get_effective_rate_limit();
         assert!(effective_rate > state.max_observation_rate as f64);
     }
-
 
     #[test]
     fn test_bootstrap_node_persistent_observation() {

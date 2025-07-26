@@ -25,11 +25,11 @@ use crate::{
     shared::ConnectionId,
 };
 
+mod error_handling;
 #[cfg(test)]
 mod error_tests;
 #[cfg(test)]
 mod integration_tests;
-mod error_handling;
 
 use error_handling::*;
 
@@ -678,12 +678,10 @@ impl TransportParameters {
                             if limit == 0 {
                                 return Err(Error::IllegalValue);
                             }
-                            params.nat_traversal = Some(
-                                NatTraversalConfig::ServerSupport {
-                                    concurrency_limit: VarInt::from_u64(limit)
-                                        .map_err(|_| Error::IllegalValue)?
-                                }
-                            );
+                            params.nat_traversal = Some(NatTraversalConfig::ServerSupport {
+                                concurrency_limit: VarInt::from_u64(limit)
+                                    .map_err(|_| Error::IllegalValue)?,
+                            });
                         }
                         _ => {
                             // Invalid combination of side and parameter value
@@ -723,16 +721,15 @@ impl TransportParameters {
         // Validate individual parameters
         validate_ack_delay_exponent(params.ack_delay_exponent.0 as u8)
             .map_err(|_| Error::IllegalValue)?;
-        
-        validate_max_ack_delay(params.max_ack_delay)
-            .map_err(|_| Error::IllegalValue)?;
-        
+
+        validate_max_ack_delay(params.max_ack_delay).map_err(|_| Error::IllegalValue)?;
+
         validate_active_connection_id_limit(params.active_connection_id_limit)
             .map_err(|_| Error::IllegalValue)?;
-        
+
         validate_max_udp_payload_size(params.max_udp_payload_size)
             .map_err(|_| Error::IllegalValue)?;
-        
+
         // Stream count validation
         if params.initial_max_streams_bidi.0 > MAX_STREAM_COUNT {
             TransportParameterErrorHandler::log_validation_failure(
@@ -752,17 +749,17 @@ impl TransportParameters {
             );
             return Err(Error::IllegalValue);
         }
-        
+
         // Min/max ack delay validation
         // TODO: Implement min_ack_delay validation
         // validate_min_ack_delay(params.min_ack_delay, params.max_ack_delay)
         //     .map_err(|_| Error::IllegalValue)?;
-        
+
         // Server-only parameter validation
         // TODO: Implement server-only parameter validation
         // validate_server_only_params(side, &params)
         //     .map_err(|_| Error::IllegalValue)?;
-        
+
         // Preferred address validation
         if let Some(ref pref_addr) = params.preferred_address {
             if pref_addr.connection_id.is_empty() {
@@ -1059,7 +1056,10 @@ mod test {
         // Client should see server's concurrency limit
         assert!(client_decoded.nat_traversal.is_some());
         let client_view = client_decoded.nat_traversal.unwrap();
-        assert!(matches!(client_view, NatTraversalConfig::ServerSupport { .. }));
+        assert!(matches!(
+            client_view,
+            NatTraversalConfig::ServerSupport { .. }
+        ));
         assert_eq!(client_view.concurrency_limit(), Some(VarInt::from_u32(5)));
     }
 
@@ -1237,32 +1237,35 @@ mod test {
     #[test]
     fn test_nat_traversal_simple_encoding() {
         // Test the simplified NAT traversal encoding per draft-seemann-quic-nat-traversal-02
-        
+
         // Test 1: Client sends empty parameter
         let mut client_params = TransportParameters::default();
         client_params.nat_traversal = Some(NatTraversalConfig::ClientSupport);
-        
+
         let mut encoded = Vec::new();
         client_params.write(&mut encoded);
-        
+
         // Verify it can be decoded by server
         let decoded = TransportParameters::read(Side::Server, &mut encoded.as_slice())
             .expect("Should decode client params");
-        assert!(matches!(decoded.nat_traversal, Some(NatTraversalConfig::ClientSupport)));
-        
+        assert!(matches!(
+            decoded.nat_traversal,
+            Some(NatTraversalConfig::ClientSupport)
+        ));
+
         // Test 2: Server sends concurrency limit
         let mut server_params = TransportParameters::default();
         server_params.nat_traversal = Some(NatTraversalConfig::ServerSupport {
             concurrency_limit: VarInt::from_u32(10),
         });
-        
+
         let mut encoded = Vec::new();
         server_params.write(&mut encoded);
-        
+
         // Verify it can be decoded by client
         let decoded = TransportParameters::read(Side::Client, &mut encoded.as_slice())
             .expect("Should decode server params");
-        
+
         match decoded.nat_traversal {
             Some(NatTraversalConfig::ServerSupport { concurrency_limit }) => {
                 assert_eq!(concurrency_limit, VarInt::from_u32(10));
@@ -1571,9 +1574,18 @@ mod test {
     #[test]
     fn test_address_discovery_config_from_value() {
         // Test from_value conversion
-        assert_eq!(AddressDiscoveryConfig::from_value(VarInt::from_u32(0)).unwrap(), AddressDiscoveryConfig::SendOnly);
-        assert_eq!(AddressDiscoveryConfig::from_value(VarInt::from_u32(1)).unwrap(), AddressDiscoveryConfig::ReceiveOnly);
-        assert_eq!(AddressDiscoveryConfig::from_value(VarInt::from_u32(2)).unwrap(), AddressDiscoveryConfig::SendAndReceive);
+        assert_eq!(
+            AddressDiscoveryConfig::from_value(VarInt::from_u32(0)).unwrap(),
+            AddressDiscoveryConfig::SendOnly
+        );
+        assert_eq!(
+            AddressDiscoveryConfig::from_value(VarInt::from_u32(1)).unwrap(),
+            AddressDiscoveryConfig::ReceiveOnly
+        );
+        assert_eq!(
+            AddressDiscoveryConfig::from_value(VarInt::from_u32(2)).unwrap(),
+            AddressDiscoveryConfig::SendAndReceive
+        );
         assert!(AddressDiscoveryConfig::from_value(VarInt::from_u32(3)).is_err());
     }
 
@@ -1637,7 +1649,11 @@ mod test {
     #[test]
     fn test_address_discovery_all_variants() {
         // Test all address discovery variants roundtrip correctly
-        for variant in [AddressDiscoveryConfig::SendOnly, AddressDiscoveryConfig::ReceiveOnly, AddressDiscoveryConfig::SendAndReceive] {
+        for variant in [
+            AddressDiscoveryConfig::SendOnly,
+            AddressDiscoveryConfig::ReceiveOnly,
+            AddressDiscoveryConfig::SendAndReceive,
+        ] {
             let mut params = TransportParameters::default();
             params.address_discovery = Some(variant);
 
@@ -1679,7 +1695,10 @@ mod test {
         let decoded = TransportParameters::read(Side::Client, &mut encoded.as_slice())
             .expect("Failed to decode");
 
-        assert_eq!(decoded.address_discovery, Some(AddressDiscoveryConfig::SendOnly));
+        assert_eq!(
+            decoded.address_discovery,
+            Some(AddressDiscoveryConfig::SendOnly)
+        );
         assert_eq!(decoded.initial_max_data, VarInt::from_u32(1_000_000));
     }
 
@@ -1708,7 +1727,7 @@ mod test {
         let result = TransportParameters::read(Side::Client, &mut encoded.as_slice());
         assert!(result.is_err());
 
-        // Test value too large  
+        // Test value too large
         let mut encoded = Vec::new();
         encoded.write_var(TransportParameterId::AddressDiscovery as u64);
         encoded.write_var(1); // Length
@@ -1720,7 +1739,6 @@ mod test {
 
     #[test]
     fn test_address_discovery_malformed_length() {
-
         // Create a malformed parameter with wrong length
         let mut encoded = Vec::new();
         encoded.write_var(TransportParameterId::AddressDiscovery as u64);
@@ -1733,7 +1751,6 @@ mod test {
 
     #[test]
     fn test_address_discovery_duplicate_parameter() {
-
         // Create parameters with duplicate address discovery
         let mut encoded = Vec::new();
 
@@ -1769,7 +1786,10 @@ mod test {
         // Check all parameters are preserved
         assert_eq!(decoded.max_idle_timeout, params.max_idle_timeout);
         assert_eq!(decoded.initial_max_data, params.initial_max_data);
-        assert_eq!(decoded.address_discovery, Some(AddressDiscoveryConfig::SendAndReceive));
+        assert_eq!(
+            decoded.address_discovery,
+            Some(AddressDiscoveryConfig::SendAndReceive)
+        );
     }
 
     // Include comprehensive tests module
