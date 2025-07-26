@@ -16,14 +16,14 @@ on:
         default: 'all'
         type: string
   push:
-    branches: [ master, main ]
+    branches: [master, main]
     paths:
       - '**.rs'
       - '**/Cargo.toml'
       - '**/Cargo.lock'
       - '.github/workflows/cross-platform.yml'
   pull_request:
-    branches: [ master, main ]
+    branches: [master, main]
   schedule:
     # Run weekly on Monday at 2 AM UTC
     - cron: '0 2 * * 1'
@@ -61,10 +61,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix: ${{ fromJson(needs.define-matrix.outputs.matrix) }}
-    
+
     steps:
       - uses: actions/checkout@v4
-      
+
       # Cache setup
       - name: Cache cargo registry
         uses: actions/cache@v4
@@ -76,7 +76,7 @@ jobs:
           key: ${{ matrix.os }}-${{ matrix.target }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
             ${{ matrix.os }}-${{ matrix.target }}-cargo-registry-
-      
+
       - name: Cache cargo build
         uses: actions/cache@v4
         with:
@@ -85,35 +85,35 @@ jobs:
           restore-keys: |
             ${{ matrix.os }}-${{ matrix.target }}-cargo-build-${{ matrix.rust }}-
             ${{ matrix.os }}-${{ matrix.target }}-cargo-build-
-      
+
       # Rust toolchain setup
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ matrix.rust }}
           targets: ${{ matrix.target }}
-      
+
       # Cross compilation setup
       - name: Install cross-compilation tools
         if: matrix.cross == true
         uses: taiki-e/install-action@v2
         with:
           tool: cross
-      
+
       # WASM setup
       - name: Install wasm-pack
         if: matrix.wasm == true
         uses: taiki-e/install-action@v2
         with:
           tool: wasm-pack
-      
+
       # Platform-specific setup
       - name: Windows-specific setup
         if: runner.os == 'Windows'
         run: |
           echo "CARGO_BUILD_JOBS=2" >> $env:GITHUB_ENV
           echo "Running on Windows with ${{ matrix.target }}"
-      
+
       - name: macOS-specific setup
         if: runner.os == 'macOS'
         run: |
@@ -123,7 +123,7 @@ jobs:
           if [[ "${{ matrix.target }}" == "aarch64-apple-darwin" ]]; then
             echo "Cross-compiling for Apple Silicon"
           fi
-      
+
       - name: Linux-specific setup
         if: runner.os == 'Linux'
         run: |
@@ -141,16 +141,16 @@ jobs:
                 ;;
             esac
           fi
-      
+
       # Build
       - name: Build (native)
         if: matrix.cross != true && matrix.wasm != true
         run: cargo build --target ${{ matrix.target }} --all-features --verbose
-      
+
       - name: Build (cross)
         if: matrix.cross == true
         run: cross build --target ${{ matrix.target }} --all-features --verbose
-      
+
       - name: Build (wasm)
         if: matrix.wasm == true
         run: |
@@ -158,25 +158,25 @@ jobs:
           # Test WASM build of specific packages
           cd quinn-proto
           wasm-pack build --target web
-      
+
       # Tests
       - name: Run tests (native)
         if: matrix.cross != true && matrix.wasm != true
         run: |
           cargo test --target ${{ matrix.target }} --all-features --verbose
           cargo test --target ${{ matrix.target }} --no-default-features --verbose
-      
+
       - name: Run tests (cross)
         if: matrix.cross == true && matrix.target != 'aarch64-apple-darwin'
         run: cross test --target ${{ matrix.target }} --all-features --verbose
-      
+
       # Platform-specific tests
       - name: Run platform-specific tests
         if: matrix.cross != true && matrix.wasm != true
         run: |
           # Run platform-specific test suites
           cargo test --target ${{ matrix.target }} --test platform_specific --features platform-tests
-      
+
       # Feature combination tests
       - name: Test feature combinations
         if: matrix.cross != true && matrix.wasm != true && matrix.rust == 'stable'
@@ -184,21 +184,21 @@ jobs:
           # Test with different crypto providers
           cargo test --target ${{ matrix.target }} --no-default-features --features rustls-ring
           cargo test --target ${{ matrix.target }} --no-default-features --features rustls-aws-lc-rs
-          
+
           # Test runtime combinations
           cargo test --target ${{ matrix.target }} --no-default-features --features runtime-tokio,rustls-ring
           cargo test --target ${{ matrix.target }} --no-default-features --features runtime-async-std,rustls-ring
-      
+
       # Benchmarks (only on stable)
       - name: Check benchmarks compile
         if: matrix.rust == 'stable' && matrix.cross != true && matrix.wasm != true
         run: cargo bench --target ${{ matrix.target }} --no-run
-      
+
       # Examples
       - name: Build examples
         if: matrix.cross != true && matrix.wasm != true
         run: cargo build --target ${{ matrix.target }} --examples
-      
+
       # Generate test report
       - name: Generate platform test report
         if: always()
@@ -209,7 +209,7 @@ jobs:
           echo "Rust: ${{ matrix.rust }}" >> test-results/platform-report-${{ matrix.target }}-${{ matrix.rust }}.txt
           echo "Status: ${{ job.status }}" >> test-results/platform-report-${{ matrix.target }}-${{ matrix.rust }}.txt
           echo "Duration: ${{ github.run_duration }}" >> test-results/platform-report-${{ matrix.target }}-${{ matrix.rust }}.txt
-      
+
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@v4
@@ -223,16 +223,16 @@ jobs:
     needs: cross-platform-test
     if: always()
     runs-on: ubuntu-latest
-    
+
     steps:
       - uses: actions/checkout@v4
-      
+
       - name: Download all test results
         uses: actions/download-artifact@v4
         with:
           pattern: test-results-*
           path: all-results/
-      
+
       - name: Generate summary report
         run: |
           echo "# Cross-Platform Test Summary" > $GITHUB_STEP_SUMMARY
@@ -241,7 +241,7 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "| Platform | Target | Rust Version | Status |" >> $GITHUB_STEP_SUMMARY
           echo "|----------|--------|--------------|--------|" >> $GITHUB_STEP_SUMMARY
-          
+
           # Process all test results
           for report in all-results/*/platform-report-*.txt; do
             if [ -f "$report" ]; then
@@ -249,18 +249,18 @@ jobs:
               target=$(grep "Target:" "$report" | cut -d' ' -f2-)
               rust=$(grep "Rust:" "$report" | cut -d' ' -f2-)
               status=$(grep "Status:" "$report" | cut -d' ' -f2-)
-              
+
               # Add emoji for status
               if [ "$status" = "success" ]; then
                 status="✅ Success"
               else
                 status="❌ Failed"
               fi
-              
+
               echo "| $platform | $target | $rust | $status |" >> $GITHUB_STEP_SUMMARY
             fi
           done
-          
+
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "## Platform Coverage" >> $GITHUB_STEP_SUMMARY
           echo "- ✅ Linux (x86_64, ARM64, ARMv7)" >> $GITHUB_STEP_SUMMARY
@@ -272,7 +272,7 @@ jobs:
           echo "- ✅ Stable" >> $GITHUB_STEP_SUMMARY
           echo "- ✅ Beta" >> $GITHUB_STEP_SUMMARY
           echo "- ✅ MSRV (1.74.1)" >> $GITHUB_STEP_SUMMARY
-      
+
       - name: Check overall status
         run: |
           # Fail if any platform tests failed
@@ -294,12 +294,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      
+
       - name: Install MSRV toolchain
         uses: dtolnay/rust-toolchain@master
         with:
           toolchain: 1.74.1
-      
+
       - name: Check MSRV
         run: |
           cargo check --all-features

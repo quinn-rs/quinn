@@ -2,9 +2,9 @@ name: Quick Checks
 
 on:
   push:
-    branches: [ master ]
+    branches: [master]
   pull_request:
-    branches: [ master ]
+    branches: [master]
   workflow_call:
     outputs:
       passed:
@@ -27,14 +27,12 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 1
-        with:
-          fetch-depth: 1
-      
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
-      
+
       - name: Check formatting
         run: cargo fmt --all -- --check
 
@@ -45,14 +43,14 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 1
-      
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
-      
+
       - uses: Swatinem/rust-cache@v2
-      
+
       - name: Run clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
 
@@ -64,12 +62,12 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 1
-      
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
-      
+
       - uses: Swatinem/rust-cache@v2
-      
+
       - name: Run quick tests
         run: |
           # Run categorized quick tests
@@ -85,12 +83,12 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 1
-      
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
-      
+
       - uses: Swatinem/rust-cache@v2
-      
+
       - name: Check compilation
         run: cargo check --all-targets
 
@@ -101,22 +99,22 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 1
-      
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
-      
+
       - uses: Swatinem/rust-cache@v2
-      
+
       - name: Check for unused dependencies
         run: |
           cargo install cargo-machete --locked
           cargo machete || true  # Non-blocking for now
-      
+
       - name: Check for outdated dependencies
         run: |
           cargo install cargo-outdated --locked
           cargo outdated --exit-code 1 || true  # Non-blocking for now
-      
+
       - name: Check minimum supported Rust version
         run: |
           # Verify MSRV is maintained (1.74.1 for ant-quic)
@@ -129,12 +127,12 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 1
-      
+
       - name: Check license headers
         run: |
           # Check that all Rust source files have proper license headers
           # ant-quic uses dual MIT/Apache-2.0 licensing
-          
+
           missing_headers=0
           for file in $(find src tests examples -name "*.rs" -type f); do
             if ! head -10 "$file" | grep -q -E "(MIT|Apache|License)"; then
@@ -142,7 +140,7 @@ jobs:
               missing_headers=$((missing_headers + 1))
             fi
           done
-          
+
           if [ $missing_headers -gt 0 ]; then
             echo "::warning::Found $missing_headers files without license headers"
             # Non-blocking for now, will be enforced later
@@ -155,10 +153,10 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 1
-      
+
       - name: Validate GitHub Actions YAML
         uses: reviewdog/action-actionlint@v1
-      
+
       - name: Validate TOML files
         run: |
           # Check Cargo.toml files are valid
@@ -188,7 +186,7 @@ jobs:
             echo "passed=false" >> $GITHUB_OUTPUT
             exit 1
           fi
-        
+
       - name: Report Status
         if: always()
         run: |
