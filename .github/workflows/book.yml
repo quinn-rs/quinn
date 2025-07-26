@@ -1,9 +1,8 @@
 name: Build book
 
 on:
-  # Disabled until we have a book
-  # push:
-  #   branches: ['master']
+  push:
+    branches: ['master']
   workflow_dispatch:
 
 jobs:

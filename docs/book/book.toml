@@ -1,0 +1,14 @@
+[book]
+title = "ant-quic Documentation"
+authors = ["ant-quic contributors"]
+language = "en"
+multilingual = false
+src = "src"
+
+[build]
+build-dir = "book"
+
+[output.html]
+theme = "rust"
+git-repository-url = "https://github.com/dirvine/ant-quic"
+git-repository-icon = "fa-github"
