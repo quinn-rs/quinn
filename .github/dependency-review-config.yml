@@ -1,0 +1,39 @@
+# Configuration for dependency-review-action
+# https://github.com/actions/dependency-review-action
+
+# Fail the action on these severities
+fail-on-severity: low
+
+# Licenses to allow
+allow-licenses:
+  - MIT
+  - Apache-2.0
+  - Apache-2.0 WITH LLVM-exception
+  - BSD-2-Clause
+  - BSD-3-Clause
+  - ISC
+  - Unicode-DFS-2016
+  - CC0-1.0
+  - MPL-2.0
+  - Unlicense
+  - Zlib
+
+# Licenses to deny
+deny-licenses:
+  - GPL-2.0
+  - GPL-3.0
+  - AGPL-3.0
+  - LGPL-2.0
+  - LGPL-3.0
+
+# Allow specific advisories to be ignored
+# allow-ghsas:
+#   - GHSA-xxxx-yyyy-zzzz
+
+# Deny packages
+deny-packages:
+  - pkg:cargo/openssl
+  - pkg:cargo/openssl-sys
+
+# Allow dependencies with these CVSS scores or lower
+# max-cvss: 7.5

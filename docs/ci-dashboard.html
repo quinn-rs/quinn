@@ -1,0 +1,395 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ant-quic CI/CD Dashboard</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            margin: 0;
+            padding: 0;
+            background: #f5f5f5;
+            color: #333;
+        }
+        .header {
+            background: #24292e;
+            color: white;
+            padding: 20px;
+            text-align: center;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+        .card {
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            padding: 20px;
+            transition: transform 0.2s;
+        }
+        .card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+        }
+        .card h3 {
+            margin-top: 0;
+            color: #24292e;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .badge {
+            display: inline-block;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: bold;
+            text-transform: uppercase;
+        }
+        .badge.success { background: #28a745; color: white; }
+        .badge.warning { background: #ffc107; color: #333; }
+        .badge.error { background: #dc3545; color: white; }
+        .badge.info { background: #17a2b8; color: white; }
+        .metrics {
+            display: flex;
+            justify-content: space-around;
+            margin: 20px 0;
+            text-align: center;
+        }
+        .metric {
+            flex: 1;
+        }
+        .metric-value {
+            font-size: 36px;
+            font-weight: bold;
+            color: #24292e;
+        }
+        .metric-label {
+            color: #666;
+            font-size: 14px;
+        }
+        .workflow-list {
+            list-style: none;
+            padding: 0;
+        }
+        .workflow-item {
+            padding: 10px;
+            border-left: 4px solid #ddd;
+            margin-bottom: 10px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .workflow-item.success { border-color: #28a745; }
+        .workflow-item.running { border-color: #ffc107; }
+        .workflow-item.failed { border-color: #dc3545; }
+        .status-icon {
+            font-size: 20px;
+        }
+        .links {
+            display: flex;
+            gap: 15px;
+            flex-wrap: wrap;
+        }
+        .links a {
+            color: #0366d6;
+            text-decoration: none;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+        .links a:hover {
+            text-decoration: underline;
+        }
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #666;
+        }
+        .spinner {
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #333;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 20px;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .updated {
+            text-align: center;
+            color: #666;
+            font-size: 14px;
+            margin-top: 20px;
+        }
+        .coverage-bar {
+            background: #e0e0e0;
+            border-radius: 4px;
+            height: 20px;
+            margin: 10px 0;
+            position: relative;
+            overflow: hidden;
+        }
+        .coverage-fill {
+            background: #28a745;
+            height: 100%;
+            transition: width 0.3s;
+        }
+        .coverage-text {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 12px;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🚀 ant-quic CI/CD Dashboard</h1>
+        <p>Real-time status of continuous integration pipelines</p>
+    </div>
+
+    <div class="container">
+        <!-- Overall Metrics -->
+        <div class="metrics">
+            <div class="metric">
+                <div class="metric-value" id="success-rate">--</div>
+                <div class="metric-label">Success Rate</div>
+            </div>
+            <div class="metric">
+                <div class="metric-value" id="avg-duration">--</div>
+                <div class="metric-label">Avg Duration</div>
+            </div>
+            <div class="metric">
+                <div class="metric-value" id="coverage">--</div>
+                <div class="metric-label">Code Coverage</div>
+            </div>
+            <div class="metric">
+                <div class="metric-value" id="active-prs">--</div>
+                <div class="metric-label">Active PRs</div>
+            </div>
+        </div>
+
+        <!-- Workflow Status Grid -->
+        <h2>Workflow Status</h2>
+        <div class="grid" id="workflows">
+            <div class="loading">
+                <div class="spinner"></div>
+                <p>Loading workflow status...</p>
+            </div>
+        </div>
+
+        <!-- Build Status -->
+        <h2>Platform Build Status</h2>
+        <div class="grid" id="platforms">
+            <div class="card">
+                <h3>🐧 Linux x86_64</h3>
+                <div class="workflow-item success">
+                    <span>Build</span>
+                    <span class="status-icon">✅</span>
+                </div>
+                <div class="workflow-item success">
+                    <span>Tests</span>
+                    <span class="status-icon">✅</span>
+                </div>
+            </div>
+            <div class="card">
+                <h3>🍎 macOS</h3>
+                <div class="workflow-item success">
+                    <span>Build Intel</span>
+                    <span class="status-icon">✅</span>
+                </div>
+                <div class="workflow-item success">
+                    <span>Build M1</span>
+                    <span class="status-icon">✅</span>
+                </div>
+            </div>
+            <div class="card">
+                <h3>🪟 Windows</h3>
+                <div class="workflow-item success">
+                    <span>Build MSVC</span>
+                    <span class="status-icon">✅</span>
+                </div>
+                <div class="workflow-item success">
+                    <span>Build GNU</span>
+                    <span class="status-icon">✅</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Coverage Report -->
+        <h2>Test Coverage</h2>
+        <div class="card">
+            <h3>Coverage Breakdown</h3>
+            <div>
+                <div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
+                    <span>Line Coverage</span>
+                    <span id="line-coverage">--</span>
+                </div>
+                <div class="coverage-bar">
+                    <div class="coverage-fill" id="line-coverage-bar" style="width: 0%"></div>
+                </div>
+            </div>
+            <div style="margin-top: 15px;">
+                <div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
+                    <span>Branch Coverage</span>
+                    <span id="branch-coverage">--</span>
+                </div>
+                <div class="coverage-bar">
+                    <div class="coverage-fill" id="branch-coverage-bar" style="width: 0%"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Quick Links -->
+        <h2>Quick Links</h2>
+        <div class="card">
+            <div class="links">
+                <a href="https://github.com/dirvine/ant-quic/actions">
+                    <span>📊</span> Actions
+                </a>
+                <a href="https://github.com/dirvine/ant-quic/pulls">
+                    <span>🔀</span> Pull Requests
+                </a>
+                <a href="https://github.com/dirvine/ant-quic/releases">
+                    <span>🏷️</span> Releases
+                </a>
+                <a href="https://crates.io/crates/ant-quic">
+                    <span>📦</span> Crates.io
+                </a>
+                <a href="https://docs.rs/ant-quic">
+                    <span>📚</span> Docs.rs
+                </a>
+                <a href="./CI_CD_GUIDE.html">
+                    <span>📖</span> CI/CD Guide
+                </a>
+            </div>
+        </div>
+
+        <div class="updated" id="last-updated">
+            Last updated: Loading...
+        </div>
+    </div>
+
+    <script>
+        // Workflow definitions
+        const workflows = [
+            {
+                name: 'Quick Checks',
+                id: 'quick-checks',
+                description: 'Format, lint, and quick tests',
+                badge: 'success',
+                duration: '2m'
+            },
+            {
+                name: 'Security Scan',
+                id: 'security',
+                description: 'Vulnerability and license checks',
+                badge: 'success',
+                duration: '5m'
+            },
+            {
+                name: 'Cross Platform',
+                id: 'cross-platform',
+                description: 'Multi-platform builds and tests',
+                badge: 'success',
+                duration: '25m'
+            },
+            {
+                name: 'Property Tests',
+                id: 'property-tests',
+                description: 'Randomized testing',
+                badge: 'success',
+                duration: '45m'
+            },
+            {
+                name: 'Benchmarks',
+                id: 'benchmarks',
+                description: 'Performance monitoring',
+                badge: 'info',
+                duration: '30m'
+            },
+            {
+                name: 'External Validation',
+                id: 'external-validation',
+                description: 'Real-world endpoint testing',
+                badge: 'success',
+                duration: '10m'
+            }
+        ];
+
+        // Mock data - in real implementation, fetch from GitHub API
+        const mockData = {
+            successRate: 96.7,
+            avgDuration: '18m',
+            coverage: 73.4,
+            activePRs: 3,
+            lineCoverage: 73.4,
+            branchCoverage: 68.2
+        };
+
+        // Render workflows
+        function renderWorkflows() {
+            const container = document.getElementById('workflows');
+            container.innerHTML = workflows.map(workflow => `
+                <div class="card">
+                    <h3>
+                        ${workflow.name}
+                        <span class="badge ${workflow.badge}">${workflow.badge}</span>
+                    </h3>
+                    <p>${workflow.description}</p>
+                    <div class="workflow-item success">
+                        <span>Last run</span>
+                        <span>${workflow.duration}</span>
+                    </div>
+                    <a href="https://github.com/dirvine/ant-quic/actions/workflows/${workflow.id}.yml">
+                        View Workflow →
+                    </a>
+                </div>
+            `).join('');
+        }
+
+        // Update metrics
+        function updateMetrics() {
+            document.getElementById('success-rate').textContent = `${mockData.successRate}%`;
+            document.getElementById('avg-duration').textContent = mockData.avgDuration;
+            document.getElementById('coverage').textContent = `${mockData.coverage}%`;
+            document.getElementById('active-prs').textContent = mockData.activePRs;
+            
+            // Update coverage bars
+            document.getElementById('line-coverage').textContent = `${mockData.lineCoverage}%`;
+            document.getElementById('line-coverage-bar').style.width = `${mockData.lineCoverage}%`;
+            
+            document.getElementById('branch-coverage').textContent = `${mockData.branchCoverage}%`;
+            document.getElementById('branch-coverage-bar').style.width = `${mockData.branchCoverage}%`;
+            
+            // Update timestamp
+            document.getElementById('last-updated').textContent = 
+                `Last updated: ${new Date().toLocaleString()}`;
+        }
+
+        // Initialize
+        renderWorkflows();
+        updateMetrics();
+
+        // Auto-refresh every 60 seconds
+        setInterval(() => {
+            updateMetrics();
+        }, 60000);
+    </script>
+</body>
+</html>

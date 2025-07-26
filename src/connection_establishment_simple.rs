@@ -213,7 +213,7 @@ impl SimpleConnectionEstablishmentManager {
             if let Ok(mut discovery) = self.discovery_manager.lock() {
                 discovery
                     .start_discovery(peer_id, self.bootstrap_nodes.clone())
-                    .map_err(|e| format!("Discovery failed: {:?}", e))?;
+                    .map_err(|e| format!("Discovery failed: {e:?}"))?;
             } else {
                 return Err("Failed to lock discovery manager".to_string());
             }
@@ -264,10 +264,10 @@ impl SimpleConnectionEstablishmentManager {
 
                     if let Err(e) = discovery_result {
                         attempt.state = SimpleAttemptState::Failed;
-                        attempt.last_error = Some(format!("Discovery failed: {:?}", e));
+                        attempt.last_error = Some(format!("Discovery failed: {e:?}"));
                         events.push(SimpleConnectionEvent::ConnectionFailed {
                             peer_id,
-                            error: format!("Discovery failed: {:?}", e),
+                            error: format!("Discovery failed: {e:?}"),
                         });
                         return true;
                     }
@@ -354,10 +354,10 @@ impl SimpleConnectionEstablishmentManager {
                 for peer_id in peer_ids {
                     if let Some(attempt) = self.active_attempts.get_mut(&peer_id) {
                         attempt.state = SimpleAttemptState::Failed;
-                        attempt.last_error = Some(format!("Discovery failed: {:?}", error));
+                        attempt.last_error = Some(format!("Discovery failed: {error:?}"));
                         events.push(SimpleConnectionEvent::ConnectionFailed {
                             peer_id,
-                            error: format!("Discovery failed: {:?}", error),
+                            error: format!("Discovery failed: {error:?}"),
                         });
                     }
                 }

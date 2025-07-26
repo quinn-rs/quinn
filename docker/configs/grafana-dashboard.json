@@ -1,0 +1,82 @@
+{
+  "dashboard": {
+    "title": "ANT-QUIC NAT Testing Dashboard",
+    "panels": [
+      {
+        "title": "Connection Success Rate",
+        "gridPos": {"x": 0, "y": 0, "w": 12, "h": 8},
+        "targets": [
+          {
+            "expr": "rate(ant_quic_connection_success_total[5m]) / rate(ant_quic_connection_attempts_total[5m]) * 100",
+            "legendFormat": "{{nat_type}}"
+          }
+        ]
+      },
+      {
+        "title": "NAT Traversal Latency",
+        "gridPos": {"x": 12, "y": 0, "w": 12, "h": 8},
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, rate(ant_quic_nat_traversal_duration_seconds_bucket[5m]))",
+            "legendFormat": "p95 - {{nat_type}}"
+          }
+        ]
+      },
+      {
+        "title": "Active Connections",
+        "gridPos": {"x": 0, "y": 8, "w": 8, "h": 6},
+        "targets": [
+          {
+            "expr": "ant_quic_active_connections",
+            "legendFormat": "{{instance}}"
+          }
+        ]
+      },
+      {
+        "title": "Packet Loss Rate",
+        "gridPos": {"x": 8, "y": 8, "w": 8, "h": 6},
+        "targets": [
+          {
+            "expr": "rate(ant_quic_packets_lost_total[5m]) / rate(ant_quic_packets_sent_total[5m]) * 100",
+            "legendFormat": "{{instance}}"
+          }
+        ]
+      },
+      {
+        "title": "Throughput (Mbps)",
+        "gridPos": {"x": 16, "y": 8, "w": 8, "h": 6},
+        "targets": [
+          {
+            "expr": "rate(ant_quic_bytes_transmitted_total[5m]) * 8 / 1000000",
+            "legendFormat": "{{instance}}"
+          }
+        ]
+      },
+      {
+        "title": "NAT Table Usage",
+        "gridPos": {"x": 0, "y": 14, "w": 12, "h": 6},
+        "targets": [
+          {
+            "expr": "node_netstat_Conntrack_Entries",
+            "legendFormat": "{{instance}}"
+          }
+        ]
+      },
+      {
+        "title": "CPU Usage",
+        "gridPos": {"x": 12, "y": 14, "w": 12, "h": 6},
+        "targets": [
+          {
+            "expr": "100 - (avg by (instance) (irate(node_cpu_seconds_total{mode=\"idle\"}[5m])) * 100)",
+            "legendFormat": "{{instance}}"
+          }
+        ]
+      }
+    ],
+    "time": {
+      "from": "now-30m",
+      "to": "now"
+    },
+    "refresh": "5s"
+  }
+}

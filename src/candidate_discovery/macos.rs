@@ -873,7 +873,7 @@ impl MacOSInterfaceDiscovery {
             "lo0" => "Loopback".to_string(),
             name if name.starts_with("utun") => "VPN".to_string(),
             name if name.starts_with("awdl") => "AirDrop".to_string(),
-            name => format!("Interface {}", name),
+            name => format!("Interface {name}"),
         }
     }
 
@@ -1182,7 +1182,7 @@ impl NetworkInterfaceDiscovery for MacOSInterfaceDiscovery {
                 Ok(())
             }
             Err(e) => {
-                let error_msg = format!("macOS interface enumeration failed: {:?}", e);
+                let error_msg = format!("macOS interface enumeration failed: {e:?}");
                 error!("{}", error_msg);
                 self.scan_state = ScanState::Failed {
                     error: error_msg.clone(),
@@ -1232,10 +1232,10 @@ impl std::fmt::Display for MacOSNetworkError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::SystemConfigurationError { function, message } => {
-                write!(f, "System Configuration error in {}: {}", function, message)
+                write!(f, "System Configuration error in {function}: {message}")
             }
             Self::InterfaceNotFound { interface_name } => {
-                write!(f, "Interface not found: {}", interface_name)
+                write!(f, "Interface not found: {interface_name}")
             }
             Self::InvalidInterfaceConfig {
                 interface_name,
@@ -1243,27 +1243,25 @@ impl std::fmt::Display for MacOSNetworkError {
             } => {
                 write!(
                     f,
-                    "Invalid interface config for {}: {}",
-                    interface_name, reason
+                    "Invalid interface config for {interface_name}: {reason}"
                 )
             }
             Self::ServiceEnumerationFailed { reason } => {
-                write!(f, "Service enumeration failed: {}", reason)
+                write!(f, "Service enumeration failed: {reason}")
             }
             Self::AddressParsingFailed { address, reason } => {
-                write!(f, "Address parsing failed for {}: {}", address, reason)
+                write!(f, "Address parsing failed for {address}: {reason}")
             }
             Self::DynamicStoreAccessFailed { reason } => {
-                write!(f, "Dynamic store access failed: {}", reason)
+                write!(f, "Dynamic store access failed: {reason}")
             }
             Self::RunLoopSourceCreationFailed { reason } => {
-                write!(f, "Run loop source creation failed: {}", reason)
+                write!(f, "Run loop source creation failed: {reason}")
             }
             Self::DynamicStoreConfigurationFailed { operation, reason } => {
                 write!(
                     f,
-                    "Dynamic store configuration failed in {}: {}",
-                    operation, reason
+                    "Dynamic store configuration failed in {operation}: {reason}"
                 )
             }
         }
@@ -1296,7 +1294,7 @@ mod tests {
         };
 
         discovery.set_interface_config(config.clone());
-        assert_eq!(discovery.interface_config.include_loopback, true);
+        assert!(discovery.interface_config.include_loopback);
         assert_eq!(discovery.interface_config.min_mtu, 1000);
     }
 

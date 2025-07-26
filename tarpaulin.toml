@@ -1,0 +1,59 @@
+# Tarpaulin configuration for ant-quic test coverage
+
+[default]
+# Exclude test files, examples, and benchmarks from coverage
+exclude-files = ["*/tests/*", "*/examples/*", "*/benches/*", "*/build.rs", "*/target/*"]
+
+# Include all workspace members
+workspace = true
+
+# Generate multiple output formats
+out = ["Html", "Json", "Lcov"]
+
+# Output directory
+output-dir = "coverage"
+
+# Timeout for test execution (10 minutes)
+timeout = "600s"
+
+# Run tests in parallel
+jobs = 4
+
+# Follow executable links
+follow-exec = true
+
+# Coverage threshold (80%)
+fail-under = 80
+
+# Ignored functions/modules
+ignore-tests = true
+ignore-panics = true
+
+# Branch coverage (if supported)
+branch = true
+
+# Count hits (not just presence)
+count = true
+
+# Clean build before running
+force-clean = true
+
+# Print test output
+print-summary = true
+print-uncovered = true
+
+[report]
+# Skip files with no coverage
+skip-clean = false
+
+# Include inline tests
+include-tests = false
+
+[features]
+# Run with all features enabled
+all-features = true
+
+[env]
+# Environment variables for tests
+RUST_BACKTRACE = "1"
+RUST_LOG = "warn"

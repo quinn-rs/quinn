@@ -21,15 +21,20 @@ use arbitrary::Arbitrary;
 
 /// A QUIC frame type
 #[derive(Copy, Clone, Eq, PartialEq)]
-pub struct FrameType(u64);
+pub struct FrameType(pub(crate) u64);
 
 impl FrameType {
-    fn stream(self) -> Option<StreamInfo> {
+    pub(crate) fn stream(self) -> Option<StreamInfo> {
         if STREAM_TYS.contains(&self.0) {
             Some(StreamInfo(self.0 as u8))
         } else {
             None
         }
+    }
+    
+    /// Check if this is a STREAM frame type
+    pub(crate) fn is_stream(self) -> bool {
+        STREAM_TYS.contains(&self.0)
     }
     fn datagram(self) -> Option<DatagramInfo> {
         if DATAGRAM_TYS.contains(&self.0) {
@@ -134,12 +139,15 @@ frame_types! {
     // ACK Frequency
     ACK_FREQUENCY = 0xaf,
     IMMEDIATE_ACK = 0x1f,
-    // NAT Traversal Extension
-    ADD_ADDRESS = 0x40,
-    PUNCH_ME_NOW = 0x41,
-    REMOVE_ADDRESS = 0x42,
+    // NAT Traversal Extension - draft-seemann-quic-nat-traversal-02
+    ADD_ADDRESS_IPV4 = 0x3d7e90,
+    ADD_ADDRESS_IPV6 = 0x3d7e91,
+    PUNCH_ME_NOW_IPV4 = 0x3d7e92,
+    PUNCH_ME_NOW_IPV6 = 0x3d7e93,
+    REMOVE_ADDRESS = 0x3d7e94,
     // Address Discovery Extension - draft-ietf-quic-address-discovery-00
-    OBSERVED_ADDRESS = 0x43,
+    OBSERVED_ADDRESS_IPV4 = 0x9f81a6,
+    OBSERVED_ADDRESS_IPV6 = 0x9f81a7,
     // DATAGRAM
 }
 
@@ -180,7 +188,7 @@ pub(crate) enum Frame {
 impl Frame {
     pub(crate) fn ty(&self) -> FrameType {
         use Frame::*;
-        match *self {
+        match self {
             Padding => FrameType::PADDING,
             ResetStream(_) => FrameType::RESET_STREAM,
             Close(self::Close::Connection(_)) => FrameType::CONNECTION_CLOSE,
@@ -216,10 +224,19 @@ impl Frame {
             AckFrequency(_) => FrameType::ACK_FREQUENCY,
             ImmediateAck => FrameType::IMMEDIATE_ACK,
             HandshakeDone => FrameType::HANDSHAKE_DONE,
-            AddAddress(_) => FrameType::ADD_ADDRESS,
-            PunchMeNow(_) => FrameType::PUNCH_ME_NOW,
+            AddAddress(a) => match a.address {
+                SocketAddr::V4(_) => FrameType::ADD_ADDRESS_IPV4,
+                SocketAddr::V6(_) => FrameType::ADD_ADDRESS_IPV6,
+            },
+            PunchMeNow(p) => match p.local_address {
+                SocketAddr::V4(_) => FrameType::PUNCH_ME_NOW_IPV4,
+                SocketAddr::V6(_) => FrameType::PUNCH_ME_NOW_IPV6,
+            },
             RemoveAddress(_) => FrameType::REMOVE_ADDRESS,
-            ObservedAddress(_) => FrameType::OBSERVED_ADDRESS,
+            ObservedAddress(o) => match o.address {
+                SocketAddr::V4(_) => FrameType::OBSERVED_ADDRESS_IPV4,
+                SocketAddr::V6(_) => FrameType::OBSERVED_ADDRESS_IPV6,
+            },
         }
     }
 
@@ -710,13 +727,20 @@ impl Iter {
                 reordering_threshold: self.bytes.get()?,
             }),
             FrameType::IMMEDIATE_ACK => Frame::ImmediateAck,
-            FrameType::ADD_ADDRESS => Frame::AddAddress(AddAddress::decode(&mut self.bytes)?),
-            FrameType::PUNCH_ME_NOW => Frame::PunchMeNow(PunchMeNow::decode(&mut self.bytes)?),
+            FrameType::ADD_ADDRESS_IPV4 | FrameType::ADD_ADDRESS_IPV6 => {
+                Frame::AddAddress(AddAddress::decode(&mut self.bytes)?)
+            }
+            FrameType::PUNCH_ME_NOW_IPV4 | FrameType::PUNCH_ME_NOW_IPV6 => {
+                Frame::PunchMeNow(PunchMeNow::decode(&mut self.bytes)?)
+            }
             FrameType::REMOVE_ADDRESS => {
                 Frame::RemoveAddress(RemoveAddress::decode(&mut self.bytes)?)
             }
-            FrameType::OBSERVED_ADDRESS => {
-                Frame::ObservedAddress(ObservedAddress::decode(&mut self.bytes)?)
+            FrameType::OBSERVED_ADDRESS_IPV4 => {
+                Frame::ObservedAddress(ObservedAddress::decode(&mut self.bytes, false)?)
+            }
+            FrameType::OBSERVED_ADDRESS_IPV6 => {
+                Frame::ObservedAddress(ObservedAddress::decode(&mut self.bytes, true)?)
             }
             _ => {
                 if let Some(s) = ty.stream() {
@@ -971,7 +995,10 @@ pub(crate) struct AddAddress {
 
 impl AddAddress {
     pub(crate) fn encode<W: BufMut>(&self, buf: &mut W) {
-        buf.write(FrameType::ADD_ADDRESS);
+        match self.address {
+            SocketAddr::V4(_) => buf.write(FrameType::ADD_ADDRESS_IPV4),
+            SocketAddr::V6(_) => buf.write(FrameType::ADD_ADDRESS_IPV6),
+        };
         buf.write(self.sequence);
         buf.write(self.priority);
 
@@ -1031,7 +1058,7 @@ impl AddAddress {
 }
 
 impl FrameStruct for AddAddress {
-    const SIZE_BOUND: usize = 1 + 9 + 9 + 1 + 16 + 2 + 4 + 4; // Worst case IPv6
+    const SIZE_BOUND: usize = 4 + 9 + 9 + 1 + 16 + 2 + 4 + 4; // frame type (4) + worst case IPv6
 }
 
 /// NAT traversal frame for requesting simultaneous hole punching
@@ -1050,7 +1077,10 @@ pub(crate) struct PunchMeNow {
 
 impl PunchMeNow {
     pub(crate) fn encode<W: BufMut>(&self, buf: &mut W) {
-        buf.write(FrameType::PUNCH_ME_NOW);
+        match self.local_address {
+            SocketAddr::V4(_) => buf.write(FrameType::PUNCH_ME_NOW_IPV4),
+            SocketAddr::V6(_) => buf.write(FrameType::PUNCH_ME_NOW_IPV6),
+        };
         buf.write(self.round);
         buf.write(self.target_sequence);
 
@@ -1136,7 +1166,7 @@ impl PunchMeNow {
 }
 
 impl FrameStruct for PunchMeNow {
-    const SIZE_BOUND: usize = 1 + 9 + 9 + 1 + 16 + 2 + 4 + 4 + 1 + 32; // Worst case IPv6 + peer ID
+    const SIZE_BOUND: usize = 4 + 9 + 9 + 1 + 16 + 2 + 4 + 4 + 1 + 32; // frame type (4) + worst case IPv6 + peer ID
 }
 
 /// NAT traversal frame for removing stale addresses
@@ -1159,65 +1189,71 @@ impl RemoveAddress {
 }
 
 impl FrameStruct for RemoveAddress {
-    const SIZE_BOUND: usize = 1 + 9; // frame type + sequence
+    const SIZE_BOUND: usize = 4 + 9; // frame type (4) + sequence
 }
 
 /// Address Discovery frame for informing peers of their observed address
 /// draft-ietf-quic-address-discovery-00
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ObservedAddress {
+    /// Monotonically increasing sequence number
+    pub(crate) sequence_number: VarInt,
     /// The socket address observed by the sender
     pub(crate) address: SocketAddr,
 }
 
 impl ObservedAddress {
     pub(crate) fn encode<W: BufMut>(&self, buf: &mut W) {
-        buf.write(FrameType::OBSERVED_ADDRESS);
+        match self.address {
+            SocketAddr::V4(_) => buf.write(FrameType::OBSERVED_ADDRESS_IPV4),
+            SocketAddr::V6(_) => buf.write(FrameType::OBSERVED_ADDRESS_IPV6),
+        };
 
+        // Write sequence number as varint
+        buf.write_var(self.sequence_number.0);
+
+        // Write address and port directly (no IP version byte needed)
         match self.address {
             SocketAddr::V4(addr) => {
-                buf.put_u8(4); // IPv4 indicator
                 buf.put_slice(&addr.ip().octets());
                 buf.put_u16(addr.port());
             }
             SocketAddr::V6(addr) => {
-                buf.put_u8(6); // IPv6 indicator
                 buf.put_slice(&addr.ip().octets());
                 buf.put_u16(addr.port());
             }
         }
     }
 
-    pub(crate) fn decode<R: Buf>(r: &mut R) -> Result<Self, UnexpectedEnd> {
-        let ip_version = r.get::<u8>()?;
-        let address = match ip_version {
-            4 => {
-                if r.remaining() < 6 {
-                    return Err(UnexpectedEnd);
-                }
-                let mut octets = [0u8; 4];
-                r.copy_to_slice(&mut octets);
-                let port = r.get::<u16>()?;
-                SocketAddr::new(octets.into(), port)
+    pub(crate) fn decode<R: Buf>(r: &mut R, is_ipv6: bool) -> Result<Self, UnexpectedEnd> {
+        // Read sequence number first
+        let sequence_number = VarInt::from_u64(r.get_var()?).map_err(|_| UnexpectedEnd)?;
+        
+        // Decode address based on frame type (no IP version byte)
+        let address = if is_ipv6 {
+            if r.remaining() < 18 {
+                return Err(UnexpectedEnd);
             }
-            6 => {
-                if r.remaining() < 18 {
-                    return Err(UnexpectedEnd);
-                }
-                let mut octets = [0u8; 16];
-                r.copy_to_slice(&mut octets);
-                let port = r.get::<u16>()?;
-                SocketAddr::new(octets.into(), port)
+            let mut octets = [0u8; 16];
+            r.copy_to_slice(&mut octets);
+            let port = r.get::<u16>()?;
+            SocketAddr::new(octets.into(), port)
+        } else {
+            if r.remaining() < 6 {
+                return Err(UnexpectedEnd);
             }
-            _ => return Err(UnexpectedEnd),
+            let mut octets = [0u8; 4];
+            r.copy_to_slice(&mut octets);
+            let port = r.get::<u16>()?;
+            SocketAddr::new(octets.into(), port)
         };
 
-        Ok(Self { address })
+        Ok(Self { sequence_number, address })
     }
 }
 
 impl FrameStruct for ObservedAddress {
-    const SIZE_BOUND: usize = 1 + 1 + 16 + 2; // frame type + ip version + IPv6 + port
+    const SIZE_BOUND: usize = 4 + 8 + 16 + 2; // frame type (4) + sequence (8) + IPv6 + port
 }
 
 #[cfg(test)]
@@ -1532,21 +1568,21 @@ mod test {
     fn nat_traversal_frame_error_handling() {
         // Test malformed frame data
         let malformed_frames = vec![
-            // Too short for any NAT traversal frame
-            vec![0x40], // Just frame type, no data
-            vec![0x41], // Just frame type, no data
-            vec![0x42], // Just frame type, no data
+            // Too short for any NAT traversal frame (4-byte frame types)
+            vec![0xc0, 0x90, 0xf9, 0x0f], // Just ADD_ADDRESS_IPV4 frame type, no data
+            vec![0xc0, 0x92, 0xf9, 0x0f], // Just PUNCH_ME_NOW_IPV4 frame type, no data  
+            vec![0xc0, 0x94, 0xf9, 0x0f], // Just REMOVE_ADDRESS frame type, no data
             // Incomplete AddAddress frames
-            vec![0x40, 0x01],       // Frame type + partial sequence
-            vec![0x40, 0x01, 0x04], // Frame type + sequence + incomplete address
-            // Incomplete PunchMeNow frames
-            vec![0x41, 0x01],       // Frame type + partial round
-            vec![0x41, 0x01, 0x02], // Frame type + round + partial target_sequence
+            vec![0xc0, 0x90, 0xf9, 0x0f, 0x01],       // Frame type + partial sequence
+            vec![0xc0, 0x90, 0xf9, 0x0f, 0x01, 0x04], // Frame type + sequence + incomplete
+            // Incomplete PunchMeNow frames  
+            vec![0xc0, 0x92, 0xf9, 0x0f, 0x01],       // Frame type + partial round
+            vec![0xc0, 0x92, 0xf9, 0x0f, 0x01, 0x02], // Frame type + round + partial
             // Incomplete RemoveAddress frames
             // RemoveAddress is actually hard to make malformed since it only has sequence
 
-            // Invalid IP address types
-            vec![0x40, 0x01, 0x99, 0x01, 0x02, 0x03, 0x04], // Invalid address type
+            // Invalid IP address types  
+            vec![0xc0, 0x90, 0xf9, 0x0f, 0x01, 0x99, 0x01, 0x02, 0x03, 0x04], // Invalid
         ];
 
         for malformed in malformed_frames {
@@ -1660,9 +1696,11 @@ mod test {
     #[test]
     fn nat_traversal_frame_type_constants() {
         // Verify that the frame type constants match the NAT traversal draft specification
-        assert_eq!(FrameType::ADD_ADDRESS.0, 0x40);
-        assert_eq!(FrameType::PUNCH_ME_NOW.0, 0x41);
-        assert_eq!(FrameType::REMOVE_ADDRESS.0, 0x42);
+        assert_eq!(FrameType::ADD_ADDRESS_IPV4.0, 0x3d7e90);
+        assert_eq!(FrameType::ADD_ADDRESS_IPV6.0, 0x3d7e91);
+        assert_eq!(FrameType::PUNCH_ME_NOW_IPV4.0, 0x3d7e92);
+        assert_eq!(FrameType::PUNCH_ME_NOW_IPV6.0, 0x3d7e93);
+        assert_eq!(FrameType::REMOVE_ADDRESS.0, 0x3d7e94);
     }
 
     #[test]
@@ -1672,12 +1710,15 @@ mod test {
         // Test IPv4 address encoding/decoding
         let ipv4_cases = vec![
             ObservedAddress {
+                sequence_number: VarInt::from_u32(1),
                 address: SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)), 8080),
             },
             ObservedAddress {
+                sequence_number: VarInt::from_u32(2),
                 address: SocketAddr::new(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)), 443),
             },
             ObservedAddress {
+                sequence_number: VarInt::from_u32(3),
                 address: SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 65535),
             },
         ];
@@ -1700,15 +1741,18 @@ mod test {
         // Test IPv6 address encoding/decoding
         let ipv6_cases = vec![
             ObservedAddress {
+                sequence_number: VarInt::from_u32(4),
                 address: SocketAddr::new(
                     IpAddr::V6(Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 1)),
                     8080,
                 ),
             },
             ObservedAddress {
+                sequence_number: VarInt::from_u32(5),
                 address: SocketAddr::new(IpAddr::V6(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1)), 443),
             },
             ObservedAddress {
+                sequence_number: VarInt::from_u32(6),
                 address: SocketAddr::new(
                     IpAddr::V6(Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, 1)),
                     65535,
@@ -1735,13 +1779,13 @@ mod test {
     #[test]
     fn observed_address_malformed_frames() {
         use bytes::BufMut;
+        use crate::coding::BufMutExt;
 
-        // Test invalid IP version
+        // Test truncated sequence number
         let mut buf = Vec::new();
-        buf.put_u8(FrameType::OBSERVED_ADDRESS.0 as u8);
-        buf.put_u8(5); // Invalid IP version
-        buf.put_slice(&[192, 168, 1, 1]);
-        buf.put_u16(8080);
+        // Use IPv4 variant for test
+        buf.write(FrameType::OBSERVED_ADDRESS_IPV4);
+        // No sequence number, just go straight to address - this is invalid
 
         let result = Iter::new(Bytes::from(buf));
         assert!(result.is_ok());
@@ -1752,7 +1796,8 @@ mod test {
 
         // Test truncated IPv4 address
         let mut buf = Vec::new();
-        buf.put_u8(FrameType::OBSERVED_ADDRESS.0 as u8);
+        // Use IPv4 variant for test
+        buf.write(FrameType::OBSERVED_ADDRESS_IPV4);
         buf.put_u8(4); // IPv4
         buf.put_slice(&[192, 168]); // Only 2 bytes instead of 4
 
@@ -1765,8 +1810,9 @@ mod test {
 
         // Test truncated IPv6 address
         let mut buf = Vec::new();
-        buf.put_u8(FrameType::OBSERVED_ADDRESS.0 as u8);
-        buf.put_u8(6); // IPv6
+        // Use IPv6 variant for test
+        buf.write(FrameType::OBSERVED_ADDRESS_IPV6);
+        buf.write_var(1); // sequence number
         buf.put_slice(&[0x20, 0x01, 0x0d, 0xb8]); // Only 4 bytes instead of 16
 
         let result = Iter::new(Bytes::from(buf));
@@ -1780,16 +1826,17 @@ mod test {
     #[test]
     fn observed_address_frame_type_constant() {
         // Verify that the frame type constant matches the address discovery draft
-        assert_eq!(FrameType::OBSERVED_ADDRESS.0, 0x43);
+        assert_eq!(FrameType::OBSERVED_ADDRESS_IPV4.0, 0x9f81a6);
+        assert_eq!(FrameType::OBSERVED_ADDRESS_IPV6.0, 0x9f81a7);
     }
 
     #[test]
     fn observed_address_frame_serialization_edge_cases() {
-        use bytes::BufMut;
         use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
         // Test with port 0
         let frame_port_0 = ObservedAddress {
+            sequence_number: VarInt::from_u32(100),
             address: SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)), 0),
         };
         let mut buf = Vec::new();
@@ -1806,6 +1853,7 @@ mod test {
 
         // Test with maximum port
         let frame_max_port = ObservedAddress {
+            sequence_number: VarInt::from_u32(101),
             address: SocketAddr::new(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)), 65535),
         };
         let mut buf = Vec::new();
@@ -1822,6 +1870,7 @@ mod test {
 
         // Test with unspecified addresses
         let unspecified_v4 = ObservedAddress {
+            sequence_number: VarInt::from_u32(102),
             address: SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 8080),
         };
         let mut buf = Vec::new();
@@ -1837,6 +1886,7 @@ mod test {
         }
 
         let unspecified_v6 = ObservedAddress {
+            sequence_number: VarInt::from_u32(103),
             address: SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), 443),
         };
         let mut buf = Vec::new();
@@ -1859,9 +1909,11 @@ mod test {
         // Test that frame sizes are reasonable and within expected bounds
         let test_addresses = vec![
             ObservedAddress {
+                sequence_number: VarInt::from_u32(1),
                 address: SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)), 8080),
             },
             ObservedAddress {
+                sequence_number: VarInt::from_u32(2),
                 address: SocketAddr::new(
                     IpAddr::V6(Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 1)),
                     443,
@@ -1873,20 +1925,20 @@ mod test {
             let mut buf = Vec::new();
             frame.encode(&mut buf);
 
-            // Frame type (1-2 bytes) + IP version (1 byte) + address + port (2 bytes)
-            // IPv4: 1-2 + 1 + 4 + 2 = 8-9 bytes
-            // IPv6: 1-2 + 1 + 16 + 2 = 20-21 bytes
+            // Frame type (4 bytes) + sequence (1 byte for small values) + address + port (2 bytes)
+            // IPv4: 4 + 1 + 4 + 2 = 11 bytes
+            // IPv6: 4 + 1 + 16 + 2 = 23 bytes
             match frame.address.ip() {
                 IpAddr::V4(_) => {
                     assert!(
-                        buf.len() >= 8 && buf.len() <= 9,
+                        buf.len() == 11,
                         "IPv4 frame size {} out of expected range",
                         buf.len()
                     );
                 }
                 IpAddr::V6(_) => {
                     assert!(
-                        buf.len() >= 20 && buf.len() <= 21,
+                        buf.len() == 23,
                         "IPv6 frame size {} out of expected range",
                         buf.len()
                     );
@@ -1902,9 +1954,11 @@ mod test {
 
         // Test that multiple OBSERVED_ADDRESS frames can be encoded/decoded in a single packet
         let observed1 = ObservedAddress {
+            sequence_number: VarInt::from_u32(10),
             address: SocketAddr::new(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)), 1234),
         };
         let observed2 = ObservedAddress {
+            sequence_number: VarInt::from_u32(11),
             address: SocketAddr::new(
                 IpAddr::V6(Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 2)),
                 5678,
@@ -1960,11 +2014,11 @@ mod test {
         // Valid PING frame
         buf.put_u8(FrameType::PING.0 as u8);
 
-        // Malformed OBSERVED_ADDRESS frame (invalid IP version)
-        buf.put_u8(FrameType::OBSERVED_ADDRESS.0 as u8);
-        buf.put_u8(99); // Invalid IP version
-        buf.put_slice(&[192, 168, 1, 1]);
-        buf.put_u16(8080);
+        // Malformed OBSERVED_ADDRESS frame (truncated)
+        // Use IPv4 variant for test
+        buf.write(FrameType::OBSERVED_ADDRESS_IPV4);
+        buf.write_var(1); // sequence number
+        buf.put_slice(&[192, 168]); // Only 2 bytes instead of 4 for IPv4
 
         // Another valid PING frame (should not be parsed due to error above)
         buf.put_u8(FrameType::PING.0 as u8);
@@ -1994,43 +2048,49 @@ mod test {
 
         // Ensure frame type is correctly encoded as varint
         let frame = ObservedAddress {
+            sequence_number: VarInt::from_u32(1000),
             address: SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 80),
         };
 
         let mut buf = Vec::new();
         frame.encode(&mut buf);
 
-        // Frame type 0x43 should encode as single byte since it's < 0x40
-        // Actually, 0x43 (67) is >= 0x40 (64), so it needs 2-byte varint encoding
-        // First byte: 0x40 | (0x43 & 0x3f) = 0x40 | 0x03 = 0x43 = 67
-        // Wait, that's not right. Let me check varint encoding:
-        // For values 0-63: single byte
-        // For values 64-16383: two bytes with pattern 01xxxxxx xxxxxxxx
-        // 0x43 = 67, which is > 63, so needs 2 bytes:
-        // First byte: 0x40 | ((67 >> 0) & 0x3f) = 0x40 | 67 & 0x3f = 0x40 | 0x43 = 0x43
-        // Actually the encoding is:
-        // First byte: 0x40 | (value & 0x3f) for 2-byte encoding
-        // So for 67: First byte = 0x40 | (67 & 0x3f) = 0x40 | 0x03 = 0x43 = 67
-        // No wait, let's think about this correctly:
-        // Value 67 in 2-byte varint:
-        // Binary: 67 = 0b1000011
-        // First byte: 0b01000000 | (67 & 0b00111111) = 0b01000000 | 0b00000011 = 0b01000011 = 67
-        // Second byte: 67 >> 6 = 0b00000001 = 1
-        // So it should be [0x43, 0x01]? No, that's not right either.
-
-        // Let's verify the actual encoding by checking the buffer
-        // QUIC varint encoding for 0x43 (67):
-        // Since 67 is in range 64-16383, it uses 2-byte encoding
-        // Format: 01xxxxxx xxxxxxxx where value = xxxxxxxxxxxxxx
-        // 67 = 0b0000000001000011
-        // First byte:  0b01000000 | (0b00000001 & 0b00111111) = 0b01000000 = 64
-        // Second byte: 0b01000011 = 67
-        assert_eq!(buf[0], 64); // First byte of varint encoding
-        assert_eq!(buf[1], 67); // Second byte contains the actual value
+        // Frame type 0x9f81a6 (10453414) needs 4-byte varint encoding
+        // QUIC varint encoding for values >= 2^21 and < 2^30:
+        // Format: 10xxxxxx xxxxxxxx xxxxxxxx xxxxxxxx
+        // 0x9f81a6 = 10453414
+        // First byte:  0x80 | ((value >> 24) & 0x3f) = 0x80
+        // Second byte: (value >> 16) & 0xff = 0x9f
+        // Third byte:  (value >> 8) & 0xff = 0x81
+        // Fourth byte: value & 0xff = 0xa6
+        assert_eq!(buf[0], 0x80); // First byte of 4-byte VarInt
+        assert_eq!(buf[1], 0x9f); // Second byte
+        assert_eq!(buf[2], 0x81); // Third byte
+        assert_eq!(buf[3], 0xa6); // Fourth byte
     }
 
     // Include comprehensive tests module
     mod comprehensive_tests {
         include!("frame/tests.rs");
+    }
+    
+    // Include sequence edge case tests
+    mod sequence_edge_cases {
+        include!("frame/sequence_edge_case_tests.rs");
+    }
+    
+    // Include IP version encoding tests
+    mod ip_version_tests {
+        include!("frame/ip_version_encoding_tests.rs");
+    }
+    
+    // Include observed address tests
+    mod observed_address_test {
+        include!("frame/observed_address_tests.rs");
+    }
+    
+    // Include observed address sequence validation tests
+    mod observed_address_validation {
+        include!("frame/observed_address_sequence_validation_tests.rs");
     }
 }

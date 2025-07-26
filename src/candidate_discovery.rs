@@ -512,7 +512,7 @@ impl CandidateDiscoveryManager {
             .unwrap()
             .start_scan()
             .map_err(|e| {
-                DiscoveryError::NetworkError(format!("Failed to start interface scan: {}", e))
+                DiscoveryError::NetworkError(format!("Failed to start interface scan: {e}"))
             })?;
 
         // Poll until scan completes (this should be quick for local interfaces)
@@ -567,8 +567,7 @@ impl CandidateDiscoveryManager {
         // Check if session already exists for this peer
         if self.active_sessions.contains_key(&peer_id) {
             return Err(DiscoveryError::InternalError(format!(
-                "Discovery already in progress for peer {:?}",
-                peer_id
+                "Discovery already in progress for peer {peer_id:?}"
             )));
         }
 
@@ -600,20 +599,17 @@ impl CandidateDiscoveryManager {
         // First, check for local interface scanning completions
         let mut local_scan_events = Vec::new();
         for (peer_id, session) in &mut self.active_sessions {
-            match &session.current_phase {
-                DiscoveryPhase::LocalInterfaceScanning { started_at } => {
-                    // Handle timeouts
-                    if started_at.elapsed() > self.config.local_scan_timeout {
-                        local_scan_events.push((
-                            *peer_id,
-                            DiscoveryEvent::LocalScanningCompleted {
-                                candidate_count: 0,
-                                duration: started_at.elapsed(),
-                            },
-                        ));
-                    }
+            if let DiscoveryPhase::LocalInterfaceScanning { started_at } = &session.current_phase {
+                // Handle timeouts
+                if started_at.elapsed() > self.config.local_scan_timeout {
+                    local_scan_events.push((
+                        *peer_id,
+                        DiscoveryEvent::LocalScanningCompleted {
+                            candidate_count: 0,
+                            duration: started_at.elapsed(),
+                        },
+                    ));
                 }
-                _ => {}
             }
         }
 
@@ -887,10 +883,10 @@ impl CandidateDiscoveryManager {
                     continue;
                 }
 
-                if self.is_valid_local_address(&address) {
+                if self.is_valid_local_address(address) {
                     let candidate = DiscoveryCandidate {
                         address: *address,
-                        priority: self.calculate_local_priority(address, &interface),
+                        priority: self.calculate_local_priority(address, interface),
                         source: DiscoverySourceType::Local,
                         state: CandidateState::New,
                     };
@@ -964,7 +960,7 @@ impl CandidateDiscoveryManager {
             let candidate = DiscoveryCandidate {
                 address: validated.address,
                 priority: validated.priority,
-                source: validated.source.clone(),
+                source: validated.source,
                 state: CandidateState::New,
             };
 
@@ -1473,7 +1469,7 @@ impl CandidateDiscoveryManager {
             .map(|dc| ValidatedCandidate {
                 id: CandidateId(rand::random()),
                 address: dc.address,
-                source: dc.source.clone(),
+                source: dc.source,
                 priority: dc.priority,
                 rtt: None,
                 reliability_score: 1.0,
@@ -1726,8 +1722,7 @@ impl CandidateDiscoveryManager {
         // Get the active session for this peer
         let session = self.active_sessions.get_mut(&peer_id).ok_or_else(|| {
             DiscoveryError::InternalError(format!(
-                "No active discovery session for peer {:?}",
-                peer_id
+                "No active discovery session for peer {peer_id:?}"
             ))
         })?;
 
@@ -2599,7 +2594,7 @@ impl SymmetricNatPredictor {
     /// Check if a port number is valid for prediction
     fn is_valid_port(&self, port: u16) -> bool {
         // Avoid well-known ports and ensure it's in usable range
-        port >= 1024 && port <= 65535 && port != 0
+        (1024..=65535).contains(&port) && port != 0
     }
 
     /// Create a predicted candidate with appropriate priority
@@ -3120,10 +3115,7 @@ impl BootstrapNodeManager {
             self.bootstrap_nodes.insert(node_id, node_info);
 
             // Initialize health stats if not exists
-            if !self.health_stats.contains_key(&node_id) {
-                self.health_stats
-                    .insert(node_id, BootstrapHealthStats::default());
-            }
+            self.health_stats.entry(node_id).or_default();
         }
 
         info!("Updated {} bootstrap nodes", self.bootstrap_nodes.len());
@@ -3636,11 +3628,11 @@ impl std::fmt::Display for DiscoveryError {
             Self::AllBootstrapsFailed => write!(f, "all bootstrap node queries failed"),
             Self::DiscoveryTimeout => write!(f, "discovery process timed out"),
             Self::InsufficientCandidates { found, required } => {
-                write!(f, "insufficient candidates found: {} < {}", found, required)
+                write!(f, "insufficient candidates found: {found} < {required}")
             }
-            Self::NetworkError(msg) => write!(f, "network error: {}", msg),
-            Self::ConfigurationError(msg) => write!(f, "configuration error: {}", msg),
-            Self::InternalError(msg) => write!(f, "internal error: {}", msg),
+            Self::NetworkError(msg) => write!(f, "network error: {msg}"),
+            Self::ConfigurationError(msg) => write!(f, "configuration error: {msg}"),
+            Self::InternalError(msg) => write!(f, "internal error: {msg}"),
         }
     }
 }
@@ -3699,7 +3691,6 @@ pub mod test_utils {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashSet;
 
     fn create_test_manager() -> CandidateDiscoveryManager {
         let config = DiscoveryConfig {
@@ -3993,7 +3984,7 @@ mod tests {
                 .discovered_candidates
                 .iter()
                 .find(|c| c.address == addr)
-                .unwrap_or_else(|| panic!("No candidate found for {}", description));
+                .unwrap_or_else(|| panic!("No candidate found for {description}"));
 
             assert!(
                 candidate.priority >= min_priority && candidate.priority <= max_priority,
@@ -4167,7 +4158,7 @@ mod tests {
                     if candidate.address == *addr
                 )
             });
-            assert!(has_event, "Should have event for address {}", addr);
+            assert!(has_event, "Should have event for address {addr}");
         }
     }
 
@@ -4246,8 +4237,7 @@ mod tests {
 
         assert!(
             server_reflexive_count >= 2,
-            "Should deliver all queued events on poll, got {} events",
-            server_reflexive_count
+            "Should deliver all queued events on poll, got {server_reflexive_count} events"
         );
 
         // Subsequent poll should return no new server reflexive events

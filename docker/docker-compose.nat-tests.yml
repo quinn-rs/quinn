@@ -1,0 +1,177 @@
+version: '3.8'
+
+# NAT Testing Configuration for ant-quic
+# This file extends the base docker-compose.yml for testing scenarios
+
+services:
+  # Test orchestrator - runs the test suite
+  test-runner:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.test-runner
+    container_name: nat-test-runner
+    depends_on:
+      - bootstrap
+      - client1
+      - client2
+      - client3
+      - client4
+    networks:
+      - internet
+      - nat1_lan
+      - nat2_lan
+      - nat3_lan
+      - nat4_lan
+    volumes:
+      - ./test-results:/test-results
+      - ../tests:/tests:ro
+      - ./scripts:/scripts:ro
+    environment:
+      - RUST_LOG=debug
+      - RUST_BACKTRACE=1
+      - TEST_TIMEOUT=300
+      - BOOTSTRAP_ADDR=203.0.113.10:9000
+    command: >
+      bash -c "
+        echo 'Waiting for all nodes to be ready...';
+        sleep 10;
+        echo 'Running NAT traversal tests...';
+        /scripts/run-nat-tests.sh
+      "
+
+  # Additional test scenarios
+  
+  # Double NAT scenario - client behind two NAT layers
+  double-nat-gateway:
+    extends:
+      service: nat1_gateway
+    container_name: double-nat-outer
+    networks:
+      internet:
+        ipv4_address: 203.0.113.60
+      double_nat_middle:
+        ipv4_address: 172.16.0.1
+    environment:
+      - NAT_TYPE=symmetric
+      - WAN_INTERFACE=eth0
+      - LAN_INTERFACE=eth1
+
+  double-nat-inner:
+    extends:
+      service: nat1_gateway
+    container_name: double-nat-inner
+    networks:
+      double_nat_middle:
+        ipv4_address: 172.16.0.2
+      double_nat_lan:
+        ipv4_address: 192.168.100.1
+    environment:
+      - NAT_TYPE=port_restricted
+      - WAN_INTERFACE=eth0
+      - LAN_INTERFACE=eth1
+    depends_on:
+      - double-nat-gateway
+
+  client-double-nat:
+    extends:
+      service: client1
+    container_name: ant-quic-client-double-nat
+    hostname: client-double-nat
+    networks:
+      double_nat_lan:
+        ipv4_address: 192.168.100.10
+    depends_on:
+      - double-nat-inner
+      - bootstrap
+
+  # Hairpin NAT test scenario
+  hairpin-nat:
+    extends:
+      service: nat1_gateway
+    container_name: hairpin-nat
+    networks:
+      internet:
+        ipv4_address: 203.0.113.70
+      hairpin_lan:
+        ipv4_address: 192.168.200.1
+    environment:
+      - NAT_TYPE=full_cone
+      - ENABLE_HAIRPIN=true
+      - WAN_INTERFACE=eth0
+      - LAN_INTERFACE=eth1
+
+  client-hairpin-1:
+    extends:
+      service: client1
+    container_name: ant-quic-hairpin-1
+    networks:
+      hairpin_lan:
+        ipv4_address: 192.168.200.10
+
+  client-hairpin-2:
+    extends:
+      service: client1
+    container_name: ant-quic-hairpin-2
+    networks:
+      hairpin_lan:
+        ipv4_address: 192.168.200.11
+
+  # Performance monitoring
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: nat-test-prometheus
+    networks:
+      - internet
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./configs/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+    profiles:
+      - monitoring
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: nat-test-grafana
+    networks:
+      - internet
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./configs/grafana-dashboards:/etc/grafana/provisioning/dashboards
+    profiles:
+      - monitoring
+
+# Additional networks for complex scenarios
+networks:
+  double_nat_middle:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.16.0.0/24
+          gateway: 172.16.0.1
+  
+  double_nat_lan:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 192.168.100.0/24
+          gateway: 192.168.100.1
+  
+  hairpin_lan:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 192.168.200.0/24
+          gateway: 192.168.200.1
+
+volumes:
+  prometheus_data:
+  grafana_data:
+  test-results:

@@ -48,6 +48,9 @@ pub mod transport_error;
 pub mod candidate_discovery;
 pub mod cid_generator;
 mod congestion;
+mod protocol_violations;
+#[cfg(test)]
+mod protocol_violations_tests;
 
 // Zero-cost tracing system
 mod connection_establishment_simple;
@@ -70,6 +73,12 @@ pub mod optimization;
 pub mod quic_node;
 pub mod stats_dashboard;
 pub mod terminal_ui;
+
+// Compliance validation framework
+pub mod compliance_validator;
+
+// Comprehensive logging system
+pub mod logging;
 
 // High-level async API modules (ported from quinn crate)
 pub mod high_level;

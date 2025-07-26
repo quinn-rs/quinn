@@ -43,6 +43,14 @@ trace-app = ["trace"]
 trace-index = ["trace"]
 trace-full = ["trace", "trace-app", "trace-index"]
 
+# Test utilities
+test-utils = []
+docker-tests = ["test-utils"]
+platform-tests = ["test-utils"]
+linux-tests = ["platform-tests"]
+macos-tests = ["platform-tests"]
+windows-tests = ["platform-tests"]
+
 [dependencies]
 # Core dependencies
 bytes = "1"
@@ -54,6 +62,7 @@ tracing = { version = "0.1.10", default-features = false, features = ["std", "at
 async-trait = "0.1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+serde_yaml = "0.9"
 ed25519-dalek = { version = "2.1", features = ["rand_core"] }
 
 # Data structures
@@ -99,9 +108,14 @@ dashmap = "6"
 # Dependencies for ant-quic binary
 clap = { version = "4", features = ["derive"] }
 tokio = { version = "1.28.1", features = ["full"] }
-tracing-subscriber = { version = "0.3.0", default-features = false, features = ["env-filter", "fmt", "ansi", "time", "local-time"] }
+tracing-subscriber = { version = "0.3.0", default-features = false, features = ["env-filter", "fmt", "ansi", "time", "local-time", "json"] }
 quinn-udp = { version = "0.5", features = ["log", "tracing"] }
 pin-project-lite = "0.2"
+
+# Compliance validator dependencies
+regex = "1.11"
+chrono = { version = "0.4", features = ["serde"] }
+rustls-native-certs = "0.8"
 
 # Platform-specific target dependencies
 [target.'cfg(windows)'.dependencies]
@@ -129,10 +143,19 @@ assert_matches = "1.1"
 hex-literal = "1"
 rand_pcg = "0.3"
 rcgen = "0.14"
-tracing-subscriber = { version = "0.3.0", default-features = false, features = ["env-filter", "fmt", "ansi", "time", "local-time"] }
+tracing-subscriber = { version = "0.3.0", default-features = false, features = ["env-filter", "fmt", "ansi", "time", "local-time", "json"] }
 tempfile = "3"
 lazy_static = "1"
 criterion = { version = "0.5", features = ["html_reports"] }
+anyhow = "1"
+serde_yaml = "0.9"
+serde_json = "1"
+webpki-roots = "1.0"
+tokio = { version = "1.36", features = ["full"] }
+proptest = { version = "1.5", features = ["std"] }
+proptest-derive = "0.5"
+quickcheck = "1.0"
+quickcheck_macros = "1.0"
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(fuzzing)', 'cfg(wasm_browser)', 'cfg(feature, values("arbitrary", "__qlog", "bloom"))'] }
@@ -142,7 +165,21 @@ unexpected_cfgs = { level = "warn", check-cfg = ['cfg(fuzzing)', 'cfg(wasm_brows
 name = "ant-quic"
 path = "src/bin/ant-quic.rs"
 
+# Interoperability test runner
+[[bin]]
+name = "interop-test"
+path = "src/bin/interop-test.rs"
+
+# Public endpoint tester
+[[bin]]
+name = "test-public-endpoints"
+path = "src/bin/test_public_endpoints.rs"
+
 # Benchmarks
+[[bench]]
+name = "quic_benchmarks"
+harness = false
+
 [[bench]]
 name = "relay_queue"
 harness = false
@@ -162,6 +199,24 @@ harness = false
 [[bench]]
 name = "connection_management"
 harness = false
+
+[[bench]]
+name = "nat_traversal_performance"
+harness = false
+
+# Test categorization
+[[test]]
+name = "quick"
+path = "tests/quick/main.rs"
+
+[[test]]
+name = "standard"
+path = "tests/standard/main.rs"
+
+[[test]]
+name = "long"
+path = "tests/long/main.rs"
+harness = false  # Custom test runner for long tests
 
 [package.metadata.docs.rs]
 features = ["rustls-aws-lc-rs", "rustls-ring", "platform-verifier", "log"]

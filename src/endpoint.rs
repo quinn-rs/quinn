@@ -184,7 +184,7 @@ impl RelayQueue {
     fn record_relay_request(&mut self, peer_id: PeerId, now: Instant) {
         self.rate_limiter
             .entry(peer_id)
-            .or_insert_with(VecDeque::new)
+            .or_default()
             .push_back(now);
     }
 

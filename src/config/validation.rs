@@ -62,34 +62,29 @@ pub(crate) fn validate_socket_addr(addr: &SocketAddr, context: &str) -> Validati
         std::net::IpAddr::V4(ipv4) => {
             if ipv4.is_unspecified() {
                 return Err(ConfigValidationError::InvalidAddress(format!(
-                    "{}: IPv4 address cannot be unspecified (0.0.0.0)",
-                    context
+                    "{context}: IPv4 address cannot be unspecified (0.0.0.0)"
                 )));
             }
             if ipv4.is_broadcast() {
                 return Err(ConfigValidationError::InvalidAddress(format!(
-                    "{}: IPv4 address cannot be broadcast (255.255.255.255)",
-                    context
+                    "{context}: IPv4 address cannot be broadcast (255.255.255.255)"
                 )));
             }
             if ipv4.is_multicast() {
                 return Err(ConfigValidationError::InvalidAddress(format!(
-                    "{}: IPv4 address cannot be multicast",
-                    context
+                    "{context}: IPv4 address cannot be multicast"
                 )));
             }
         }
         std::net::IpAddr::V6(ipv6) => {
             if ipv6.is_unspecified() {
                 return Err(ConfigValidationError::InvalidAddress(format!(
-                    "{}: IPv6 address cannot be unspecified (::)",
-                    context
+                    "{context}: IPv6 address cannot be unspecified (::)"
                 )));
             }
             if ipv6.is_multicast() {
                 return Err(ConfigValidationError::InvalidAddress(format!(
-                    "{}: IPv6 address cannot be multicast",
-                    context
+                    "{context}: IPv6 address cannot be multicast"
                 )));
             }
         }
@@ -98,8 +93,7 @@ pub(crate) fn validate_socket_addr(addr: &SocketAddr, context: &str) -> Validati
     // Check port range
     if addr.port() == 0 {
         return Err(ConfigValidationError::InvalidAddress(format!(
-            "{}: port cannot be 0",
-            context
+            "{context}: port cannot be 0"
         )));
     }
 
@@ -130,15 +124,13 @@ pub(crate) fn validate_duration(
 ) -> ValidationResult<()> {
     if duration < min {
         return Err(ConfigValidationError::ValueOutOfRange(format!(
-            "{}: duration {:?} is less than minimum {:?}",
-            context, duration, min
+            "{context}: duration {duration:?} is less than minimum {min:?}"
         )));
     }
 
     if duration > max {
         return Err(ConfigValidationError::ValueOutOfRange(format!(
-            "{}: duration {:?} is greater than maximum {:?}",
-            context, duration, max
+            "{context}: duration {duration:?} is greater than maximum {max:?}"
         )));
     }
 
@@ -152,15 +144,13 @@ where
 {
     if value < min {
         return Err(ConfigValidationError::ValueOutOfRange(format!(
-            "{}: value {} is less than minimum {}",
-            context, value, min
+            "{context}: value {value} is less than minimum {min}"
         )));
     }
 
     if value > max {
         return Err(ConfigValidationError::ValueOutOfRange(format!(
-            "{}: value {} is greater than maximum {}",
-            context, value, max
+            "{context}: value {value} is greater than maximum {max}"
         )));
     }
 
@@ -186,12 +176,11 @@ pub(crate) fn validate_bootstrap_nodes(nodes: &[SocketAddr]) -> ValidationResult
     for (i, node) in nodes.iter().enumerate() {
         if !seen.insert(node) {
             return Err(ConfigValidationError::InvalidBootstrapNode(format!(
-                "Duplicate bootstrap node at index {}: {}",
-                i, node
+                "Duplicate bootstrap node at index {i}: {node}"
             )));
         }
 
-        validate_socket_addr(node, &format!("bootstrap node {}", i))?;
+        validate_socket_addr(node, &format!("bootstrap node {i}"))?;
     }
 
     Ok(())

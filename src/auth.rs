@@ -511,7 +511,7 @@ impl AuthProtocol {
                 info!(
                     "Authentication successful with peer {:?}, session: {:?}",
                     peer_id,
-                    hex::encode(&session_id)
+                    hex::encode(session_id)
                 );
                 Ok(None)
             }

@@ -1,0 +1,332 @@
+---
+name: External Endpoint Validation
+
+'on':
+  schedule:
+    # Run daily at 2 AM UTC
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+    inputs:
+      endpoints:
+        description: 'Specific endpoints to test (comma-separated)'
+        required: false
+        default: 'all'
+      test_categories:
+        description: 'Test categories to run'
+        required: false
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - basic_connectivity
+          - protocol_negotiation
+          - advanced_features
+      verbose:
+        description: 'Enable verbose logging'
+        type: boolean
+        default: false
+
+env:
+  RUST_BACKTRACE: 1
+  CARGO_TERM_COLOR: always
+
+jobs:
+  validate-endpoints:
+    name: Validate QUIC Endpoints
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+    outputs:
+      success_rate: ${{ steps.analyze.outputs.success_rate }}
+      total_endpoints: ${{ steps.analyze.outputs.total_endpoints }}
+      passed_endpoints: ${{ steps.analyze.outputs.passed_endpoints }}
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: external-validation-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build validation tool
+        run: |
+          cargo build --release --bin test_public_endpoints
+          cargo build --release --bin ant-quic
+
+      - name: Run endpoint validation
+        id: validate
+        env:
+          RUST_LOG: ${{ inputs.verbose && 'debug' || 'info' }}
+        run: |
+          # Create results directory
+          mkdir -p validation-results
+          
+          # Run validation
+          if [ "${{ inputs.endpoints }}" = "all" ]; then
+            ./target/release/test_public_endpoints \
+              --config docs/public-quic-endpoints.yaml \
+              --output validation-results/results.json \
+              --timeout 10 \
+              --parallel 5
+          else
+            ./target/release/test_public_endpoints \
+              --config docs/public-quic-endpoints.yaml \
+              --endpoints "${{ inputs.endpoints }}" \
+              --output validation-results/results.json \
+              --timeout 10
+          fi
+          
+          # Generate reports
+          ./target/release/test_public_endpoints \
+            --analyze validation-results/results.json \
+            --format markdown > validation-results/report.md
+          
+          ./target/release/test_public_endpoints \
+            --analyze validation-results/results.json \
+            --format json > validation-results/summary.json
+
+      - name: Analyze results
+        id: analyze
+        run: |
+          # Extract metrics from JSON summary
+          TOTAL=$(jq -r '.total_endpoints' validation-results/summary.json)
+          PASSED=$(jq -r '.passed_endpoints' validation-results/summary.json)
+          SUCCESS_RATE=$(jq -r '.success_rate' validation-results/summary.json)
+          
+          echo "total_endpoints=$TOTAL" >> $GITHUB_OUTPUT
+          echo "passed_endpoints=$PASSED" >> $GITHUB_OUTPUT
+          echo "success_rate=$SUCCESS_RATE" >> $GITHUB_OUTPUT
+          
+          # Check if we meet the threshold
+          THRESHOLD=80
+          if (( $(echo "$SUCCESS_RATE < $THRESHOLD" | bc -l) )); then
+            echo "⚠️ Success rate ($SUCCESS_RATE%) below threshold ($THRESHOLD%)"
+            echo "threshold_met=false" >> $GITHUB_OUTPUT
+          else
+            echo "✅ Success rate ($SUCCESS_RATE%) meets threshold ($THRESHOLD%)"
+            echo "threshold_met=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Upload results
+        uses: actions/upload-artifact@v4
+        with:
+          name: validation-results-${{ github.run_id }}
+          path: validation-results/
+          retention-days: 30
+
+      - name: Update endpoint status
+        if: github.event_name == 'schedule' || 
+            (github.event_name == 'workflow_dispatch' && 
+             github.event.inputs.endpoints == 'all')
+        run: |
+          # Update the public-quic-endpoints.yaml with latest status
+          python3 .github/scripts/update-endpoint-status.py \
+            --config docs/public-quic-endpoints.yaml \
+            --results validation-results/results.json \
+            --output docs/public-quic-endpoints.yaml
+
+      - name: Generate badges
+        run: |
+          # Success rate badge
+          SUCCESS_RATE="${{ steps.analyze.outputs.success_rate }}"
+          if (( $(echo "$SUCCESS_RATE >= 90" | bc -l) )); then
+            COLOR="brightgreen"
+          elif (( $(echo "$SUCCESS_RATE >= 80" | bc -l) )); then
+            COLOR="green"
+          elif (( $(echo "$SUCCESS_RATE >= 70" | bc -l) )); then
+            COLOR="yellow"
+          elif (( $(echo "$SUCCESS_RATE >= 60" | bc -l) )); then
+            COLOR="orange"
+          else
+            COLOR="red"
+          fi
+          
+          # Create badge JSON
+          mkdir -p .github/badges
+          cat > .github/badges/quic-compatibility.json << EOF
+          {
+            "schemaVersion": 1,
+            "label": "QUIC Compatibility",
+            "message": "${SUCCESS_RATE}%",
+            "color": "$COLOR"
+          }
+          EOF
+          
+          # Endpoint count badge
+          cat > .github/badges/endpoints-tested.json << EOF
+          {
+            "schemaVersion": 1,
+            "label": "Endpoints Tested",
+            "message": "${{ steps.analyze.outputs.passed_endpoints }}/${{ steps.analyze.outputs.total_endpoints }}",
+            "color": "blue"
+          }
+          EOF
+
+      - name: Update validation report
+        if: github.event_name == 'schedule'
+        run: |
+          # Copy report to docs
+          cp validation-results/report.md docs/quic-endpoint-validation-report.md
+          
+          # Add timestamp and commit info
+          cat >> docs/quic-endpoint-validation-report.md << EOF
+          
+          ---
+          
+          ## Validation Metadata
+          
+          - **Run Date**: $(date -u '+%Y-%m-%d %H:%M:%S UTC')
+          - **Run ID**: ${{ github.run_id }}
+          - **Success Rate**: ${{ steps.analyze.outputs.success_rate }}%
+          - **Total Endpoints**: ${{ steps.analyze.outputs.total_endpoints }}
+          - **Passed Endpoints**: ${{ steps.analyze.outputs.passed_endpoints }}
+          - **ant-quic Version**: $(cargo pkgid ant-quic | cut -d# -f2)
+          EOF
+
+      - name: Create issue if threshold not met
+        if: steps.analyze.outputs.threshold_met == 'false' && 
+            github.event_name == 'schedule'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const title = `QUIC Endpoint Validation: Success rate below threshold`;
+            const body = `## Endpoint Validation Failed
+            
+            The daily QUIC endpoint validation has detected issues:
+            
+            - **Success Rate**: ${{ steps.analyze.outputs.success_rate }}%
+            - **Threshold**: 80%
+            - **Passed**: ${{ steps.analyze.outputs.passed_endpoints }}/${{ steps.analyze.outputs.total_endpoints }} endpoints
+            
+            ### Action Required
+            
+            Please review the [validation report](https://github.com/${{ github.repository }}/blob/main/docs/quic-endpoint-validation-report.md) and investigate failing endpoints.
+            
+            [View Full Results](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})
+            `;
+            
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: title,
+              body: body,
+              labels: ['ci/cd', 'validation', 'automated']
+            });
+
+      - name: Commit updates
+        if: github.event_name == 'schedule' && 
+            steps.analyze.outputs.threshold_met == 'true'
+        run: |
+          git config user.name github-actions
+          git config user.email github-actions@github.com
+          
+          # Check for changes
+          if ! git diff --quiet docs/; then
+            git add docs/public-quic-endpoints.yaml
+            git add docs/quic-endpoint-validation-report.md
+            git add .github/badges/
+            
+            git commit -m "chore: update QUIC endpoint validation results
+            
+            Success Rate: ${{ steps.analyze.outputs.success_rate }}%
+            Endpoints: ${{ steps.analyze.outputs.passed_endpoints }}/${{ steps.analyze.outputs.total_endpoints }} passed
+            Run: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            
+            git push
+          fi
+
+  performance-analysis:
+    name: Performance Analysis
+    needs: validate-endpoints
+    runs-on: ubuntu-latest
+    if: success()
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download results
+        uses: actions/download-artifact@v4
+        with:
+          name: validation-results-${{ github.run_id }}
+          path: validation-results/
+
+      - name: Analyze performance trends
+        run: |
+          # Install dependencies
+          pip install pandas matplotlib seaborn
+          
+          # Run performance analysis
+          python3 .github/scripts/analyze-endpoint-performance.py \
+            --results validation-results/results.json \
+            --history .github/endpoint-history/ \
+            --output validation-results/performance-report.html
+
+      - name: Upload performance report
+        uses: actions/upload-artifact@v4
+        with:
+          name: performance-report-${{ github.run_id }}
+          path: validation-results/performance-report.html
+          retention-days: 90
+
+  notify:
+    name: Notify Results
+    needs: [validate-endpoints, performance-analysis]
+    runs-on: ubuntu-latest
+    if: always() && github.event_name == 'schedule'
+    
+    steps:
+      - name: Notify Discord
+        if: env.DISCORD_WEBHOOK != ''
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+        run: |
+          STATUS_EMOJI="✅"
+          STATUS_TEXT="passed"
+          COLOR="3066993"  # Green
+          
+          if [ "${{ needs.validate-endpoints.outputs.success_rate }}" -lt "80" ]; then
+            STATUS_EMOJI="⚠️"
+            STATUS_TEXT="needs attention"
+            COLOR="15105570"  # Orange
+          fi
+          
+          curl -H "Content-Type: application/json" \
+            -d "{
+              \"embeds\": [{
+                \"title\": \"$STATUS_EMOJI QUIC Endpoint Validation Results\",
+                \"description\": \"Daily validation $STATUS_TEXT\",
+                \"color\": $COLOR,
+                \"fields\": [
+                  {
+                    \"name\": \"Success Rate\",
+                    \"value\": \"${{ needs.validate-endpoints.outputs.success_rate }}%\",
+                    \"inline\": true
+                  },
+                  {
+                    \"name\": \"Endpoints\",
+                    \"value\": \"${{ needs.validate-endpoints.outputs.passed_endpoints }}/${{ needs.validate-endpoints.outputs.total_endpoints }}\",
+                    \"inline\": true
+                  }
+                ],
+                \"footer\": {
+                  \"text\": \"View full report: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}\"
+                }
+              }]
+            }" \
+            $DISCORD_WEBHOOK

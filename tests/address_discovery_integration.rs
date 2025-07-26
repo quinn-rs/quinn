@@ -4,18 +4,15 @@
 //! connection establishment through frame exchange to NAT traversal integration.
 
 use ant_quic::{
-    ClientConfig, ConnectionError, Endpoint, EndpointConfig, Event, ServerConfig, TransportConfig,
-    VarInt,
+    ClientConfig, Endpoint, ServerConfig,
     crypto::rustls::{QuicClientConfig, QuicServerConfig},
 };
-use bytes::Bytes;
 use std::{
     collections::HashMap,
-    net::{IpAddr, Ipv4Addr, SocketAddr},
+    net::{Ipv4Addr, SocketAddr},
     sync::Arc,
     time::Duration,
 };
-use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
 
 /// Helper to create a test certificate
@@ -456,7 +453,7 @@ async fn test_address_discovery_disabled() {
     // When address discovery is disabled at endpoint creation,
     // no OBSERVED_ADDRESS frames are exchanged
 
-    let server_conn = server_handle.await.unwrap();
+    let _server_conn = server_handle.await.unwrap();
     info!("Connection established without address discovery");
 
     info!("✓ Disabled address discovery test completed");
@@ -509,7 +506,7 @@ async fn test_address_discovery_with_migration() {
     });
 
     // Client connects and simulates migration
-    let mut connection = client
+    let connection = client
         .connect(server_addr, "localhost")
         .unwrap()
         .await
@@ -591,7 +588,7 @@ async fn test_nat_traversal_integration() {
     ));
     client_a.set_default_client_config(client_config_a);
 
-    let conn_a = client_a
+    let _conn_a = client_a
         .connect(bootstrap_addr, "localhost")
         .unwrap()
         .await
@@ -605,7 +602,7 @@ async fn test_nat_traversal_integration() {
         ClientConfig::new(Arc::new(QuicClientConfig::try_from(client_crypto).unwrap()));
     client_b.set_default_client_config(client_config_b);
 
-    let conn_b = client_b
+    let _conn_b = client_b
         .connect(bootstrap_addr, "localhost")
         .unwrap()
         .await

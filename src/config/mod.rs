@@ -28,26 +28,6 @@ use crate::{
 mod transport;
 pub use transport::{AckFrequencyConfig, IdleTimeout, MtuDiscoveryConfig, TransportConfig};
 
-/// Configuration for QUIC Address Discovery extension
-#[derive(Debug, Clone)]
-pub struct AddressDiscoveryConfig {
-    /// Whether address discovery is enabled
-    pub enabled: bool,
-    /// Maximum observation rate (frames per second)
-    pub max_observation_rate: u8,
-    /// Whether to observe all paths or just active ones
-    pub observe_all_paths: bool,
-}
-
-impl Default for AddressDiscoveryConfig {
-    fn default() -> Self {
-        Self {
-            enabled: true,            // Enabled by default as requested
-            max_observation_rate: 10, // Reasonable default rate
-            observe_all_paths: false, // Only observe active paths by default
-        }
-    }
-}
 
 pub mod timeouts;
 
@@ -73,7 +53,10 @@ pub struct EndpointConfig {
     /// Optional seed to be used internally for random number generation
     pub(crate) rng_seed: Option<[u8; 32]>,
     /// Address discovery configuration
-    pub(crate) address_discovery_config: AddressDiscoveryConfig,
+    /// Since transport parameters use an enum, we store settings separately here
+    pub(crate) address_discovery_enabled: bool,
+    pub(crate) address_discovery_max_rate: u8,
+    pub(crate) address_discovery_observe_all: bool,
 }
 
 impl EndpointConfig {
@@ -89,7 +72,9 @@ impl EndpointConfig {
             grease_quic_bit: true,
             min_reset_interval: Duration::from_millis(20),
             rng_seed: None,
-            address_discovery_config: AddressDiscoveryConfig::default(),
+            address_discovery_enabled: true,
+            address_discovery_max_rate: 10,
+            address_discovery_observe_all: false,
         }
     }
 
@@ -195,12 +180,12 @@ impl EndpointConfig {
         if let Ok(val) = std::env::var("ANT_QUIC_ADDRESS_DISCOVERY_ENABLED") {
             return val.to_lowercase() == "true" || val == "1";
         }
-        self.address_discovery_config.enabled
+        self.address_discovery_enabled
     }
 
     /// Set whether address discovery is enabled
     pub fn set_address_discovery_enabled(&mut self, enabled: bool) -> &mut Self {
-        self.address_discovery_config.enabled = enabled;
+        self.address_discovery_enabled = enabled;
         self
     }
 
@@ -214,41 +199,41 @@ impl EndpointConfig {
                 return rate.min(63); // Cap at protocol maximum
             }
         }
-        self.address_discovery_config.max_observation_rate
+        self.address_discovery_max_rate
     }
 
     /// Set the maximum observation rate (0-63 per second)
     pub fn set_max_observation_rate(&mut self, rate: u8) -> &mut Self {
-        self.address_discovery_config.max_observation_rate = rate.min(63);
+        self.address_discovery_max_rate = rate.min(63);
         self
     }
 
     /// Check if all paths should be observed
     pub fn observe_all_paths(&self) -> bool {
-        self.address_discovery_config.observe_all_paths
+        self.address_discovery_observe_all
     }
 
     /// Set whether to observe all paths or just active ones
     pub fn set_observe_all_paths(&mut self, observe_all: bool) -> &mut Self {
-        self.address_discovery_config.observe_all_paths = observe_all;
+        self.address_discovery_observe_all = observe_all;
         self
     }
 
     /// Builder method for enabling address discovery
     pub fn address_discovery(mut self, enabled: bool) -> Self {
-        self.address_discovery_config.enabled = enabled;
+        self.address_discovery_enabled = enabled;
         self
     }
 
     /// Builder method for setting observation rate
     pub fn observation_rate(mut self, rate: u8) -> Self {
-        self.address_discovery_config.max_observation_rate = rate.min(63);
+        self.address_discovery_max_rate = rate.min(63);
         self
     }
 
     /// Builder method for observing all paths
     pub fn with_observe_all_paths(mut self, observe_all: bool) -> Self {
-        self.address_discovery_config.observe_all_paths = observe_all;
+        self.address_discovery_observe_all = observe_all;
         self
     }
 
@@ -269,7 +254,9 @@ impl fmt::Debug for EndpointConfig {
             .field("supported_versions", &self.supported_versions)
             .field("grease_quic_bit", &self.grease_quic_bit)
             .field("rng_seed", &self.rng_seed)
-            .field("address_discovery_config", &self.address_discovery_config)
+            .field("address_discovery_enabled", &self.address_discovery_enabled)
+            .field("address_discovery_max_rate", &self.address_discovery_max_rate)
+            .field("address_discovery_observe_all", &self.address_discovery_observe_all)
             .finish_non_exhaustive()
     }
 }

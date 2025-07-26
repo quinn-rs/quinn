@@ -1,0 +1,778 @@
+name: Long Running Tests
+
+on:
+  # Manual trigger for long tests
+  workflow_dispatch:
+    inputs:
+      test-suite:
+        description: 'Test suite to run'
+        required: true
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - stress
+          - performance
+          - nat-comprehensive
+          - integration
+          - docker-nat
+      test-intensity:
+        description: 'Test intensity level'
+        required: false
+        default: 'normal'
+        type: choice
+        options:
+          - quick    # 5-15 minutes
+          - normal   # 15-60 minutes
+          - thorough # 60+ minutes
+      
+  # Weekly schedule instead of daily
+  schedule:
+    - cron: '0 3 * * 0'  # Sunday at 3 AM UTC
+  
+  # On release branches
+  push:
+    branches:
+      - 'release/**'
+      - 'rc/**'
+  
+  # PR with specific label
+  pull_request:
+    types: [labeled]
+
+env:
+  RUST_BACKTRACE: full
+  CARGO_TERM_COLOR: always
+  RUST_TEST_THREADS: 1  # Prevent test interference in long tests
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Quick validation before running long tests
+  pre-check:
+    name: Pre-flight Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: |
+      github.event_name == 'schedule' ||
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'run-long-tests')) ||
+      (github.event_name == 'push' && (startsWith(github.ref, 'refs/heads/release/') || startsWith(github.ref, 'refs/heads/rc/')))
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-long-${{ hashFiles('**/Cargo.lock') }}
+      
+      - name: Quick build check
+        run: cargo check --all-targets
+      
+      - name: Run quick tests subset
+        run: |
+          # Run a small subset of tests to ensure basic functionality
+          cargo test --lib --release -- --skip stress --skip long --test-threads=4
+        timeout-minutes: 5
+
+  # Comprehensive integration tests
+  integration-tests:
+    name: Integration Tests - ${{ matrix.suite }}
+    needs: pre-check
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: ${{ matrix.timeout }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - suite: p2p-integration
+            os: ubuntu-latest
+            test: p2p_integration_tests
+            timeout: 60
+          - suite: auth-comprehensive
+            os: ubuntu-latest
+            test: auth_comprehensive_tests
+            timeout: 45
+          - suite: nat-scenarios
+            os: ubuntu-latest
+            test: nat_traversal_scenarios
+            timeout: 30
+          - suite: relay-queue
+            os: ubuntu-latest
+            test: relay_queue_tests
+            timeout: 30
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      
+      - name: Install system dependencies
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y iproute2 iputils-ping netcat-openbsd
+      
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-long-${{ matrix.suite }}-${{ hashFiles('**/Cargo.lock') }}
+      
+      - name: Build release mode
+        run: cargo build --release --all-targets
+      
+      - name: Run ${{ matrix.suite }} tests
+        run: |
+          echo "Running ${{ matrix.suite }} test suite..."
+          
+          # Set intensity-based parameters
+          case "${{ github.event.inputs.test-intensity || 'normal' }}" in
+            quick)
+              export TEST_ITERATIONS=10
+              export STRESS_DURATION=300
+              ;;
+            thorough)
+              export TEST_ITERATIONS=1000
+              export STRESS_DURATION=3600
+              ;;
+            *)
+              export TEST_ITERATIONS=100
+              export STRESS_DURATION=900
+              ;;
+          esac
+          
+          # Run the specific test
+          cargo test --release --test ${{ matrix.test }} \
+            -- --test-threads=1 --nocapture \
+            2>&1 | tee test-output-${{ matrix.suite }}.log
+          
+          # Check for test failures
+          if grep -q "test result: FAILED" test-output-${{ matrix.suite }}.log; then
+            echo "Tests failed!"
+            exit 1
+          fi
+        env:
+          RUST_LOG: ant_quic=info
+          RUST_TEST_TIME_UNIT: 60000  # 1 minute timeout per test
+      
+      - name: Generate test report
+        if: always()
+        run: |
+          mkdir -p test-results
+          
+          # Parse test output
+          echo "# Test Report: ${{ matrix.suite }}" > test-results/report-${{ matrix.suite }}.md
+          echo "Date: $(date)" >> test-results/report-${{ matrix.suite }}.md
+          echo "Duration: ${{ matrix.timeout }} minutes max" >> test-results/report-${{ matrix.suite }}.md
+          echo "" >> test-results/report-${{ matrix.suite }}.md
+          
+          # Extract test summary
+          grep -E "test result:|running \d+ test" test-output-${{ matrix.suite }}.log \
+            >> test-results/report-${{ matrix.suite }}.md || true
+          
+          # Count passed/failed
+          echo "" >> test-results/report-${{ matrix.suite }}.md
+          echo "## Summary" >> test-results/report-${{ matrix.suite }}.md
+          passed=$(grep -c "test .* ... ok" test-output-${{ matrix.suite }}.log || echo 0)
+          failed=$(grep -c "test .* ... FAILED" test-output-${{ matrix.suite }}.log || echo 0)
+          echo "- Passed: $passed" >> test-results/report-${{ matrix.suite }}.md
+          echo "- Failed: $failed" >> test-results/report-${{ matrix.suite }}.md
+      
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-${{ matrix.suite }}
+          path: |
+            test-results/
+            test-output-${{ matrix.suite }}.log
+          retention-days: 30
+
+  # Docker-based NAT simulation tests
+  docker-nat-tests:
+    name: Docker NAT Simulation
+    needs: pre-check
+    if: |
+      github.event.inputs.test-suite == 'all' || 
+      github.event.inputs.test-suite == 'docker-nat' ||
+      github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      
+      - name: Build NAT test infrastructure
+        run: |
+          cd docker
+          docker-compose build
+      
+      - name: Run Docker NAT tests
+        run: |
+          # Start the NAT simulation environment
+          cd docker
+          docker-compose up -d
+          
+          # Wait for containers to be ready
+          sleep 10
+          
+          # Run tests through different NAT types
+          echo "Testing Full Cone NAT..."
+          docker exec nat-fullcone cargo test --test nat_docker_integration -- full_cone
+          
+          echo "Testing Restricted NAT..."
+          docker exec nat-restricted cargo test --test nat_docker_integration -- restricted
+          
+          echo "Testing Port Restricted NAT..."
+          docker exec nat-port-restricted cargo test --test nat_docker_integration -- port_restricted
+          
+          echo "Testing Symmetric NAT..."
+          docker exec nat-symmetric cargo test --test nat_docker_integration -- symmetric
+        timeout-minutes: 60
+      
+      - name: Collect Docker logs
+        if: always()
+        run: |
+          cd docker
+          docker-compose logs > docker-nat-test.log
+          docker-compose down
+      
+      - name: Upload Docker test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-nat-results
+          path: docker/docker-nat-test.log
+          retention-days: 30
+
+  # Stress and load testing
+  stress-tests:
+    name: Stress Tests - ${{ matrix.scenario }}
+    needs: pre-check
+    if: |
+      github.event.inputs.test-suite == 'all' || 
+      github.event.inputs.test-suite == 'stress' ||
+      github.event_name == 'schedule'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - scenario: connection-storm
+            connections: 1000
+            duration: 900  # 15 minutes
+            os: ubuntu-latest
+          - scenario: high-throughput
+            connections: 100
+            duration: 1800  # 30 minutes
+            os: ubuntu-latest
+          - scenario: memory-stress
+            connections: 500
+            duration: 600   # 10 minutes
+            os: ubuntu-latest
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      
+      - name: Install monitoring tools
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y htop iotop sysstat
+      
+      - name: Set system limits
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          # Increase file descriptor limits
+          ulimit -n 65536
+          ulimit -u 32768
+          
+          # Show current limits
+          ulimit -a
+      
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-stress-${{ hashFiles('**/Cargo.lock') }}
+      
+      - name: Build optimized binary
+        run: |
+          cargo build --release --features stress-test
+      
+      - name: Start resource monitoring
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          # Monitor CPU and memory
+          nohup bash -c 'while true; do 
+            echo "=== $(date) ===" >> resource-monitor.log
+            ps aux | grep ant-quic | grep -v grep >> resource-monitor.log
+            free -m >> resource-monitor.log
+            echo "" >> resource-monitor.log
+            sleep 30
+          done' &
+          
+          # Monitor network connections
+          nohup bash -c 'while true; do
+            ss -tan | grep ESTAB | wc -l >> connection-count.log
+            sleep 10
+          done' &
+      
+      - name: Run ${{ matrix.scenario }} stress test
+        run: |
+          echo "Starting ${{ matrix.scenario }} stress test..."
+          echo "Connections: ${{ matrix.connections }}"
+          echo "Duration: ${{ matrix.duration }} seconds"
+          
+          # Create stress test configuration
+          cat > stress-config.toml << EOF
+          [stress]
+          scenario = "${{ matrix.scenario }}"
+          connections = ${{ matrix.connections }}
+          duration = ${{ matrix.duration }}
+          report_interval = 60
+          EOF
+          
+          # Run the stress test
+          ./target/release/ant-quic-stress --config stress-config.toml \
+            2>&1 | tee stress-test-output.log || true
+        timeout-minutes: ${{ matrix.duration / 60 + 10 }}
+      
+      - name: Analyze stress test results
+        if: always()
+        run: |
+          echo "# Stress Test Analysis: ${{ matrix.scenario }}" > stress-analysis.md
+          echo "" >> stress-analysis.md
+          
+          # Peak connections
+          if [ -f connection-count.log ]; then
+            peak_conn=$(sort -nr connection-count.log | head -1)
+            echo "## Peak Connections: $peak_conn" >> stress-analysis.md
+          fi
+          
+          # Memory usage
+          if [ -f resource-monitor.log ]; then
+            echo "## Memory Usage" >> stress-analysis.md
+            grep "ant-quic" resource-monitor.log | \
+              awk '{sum+=$6} END {print "Average RSS: " sum/NR/1024 " MB"}' \
+              >> stress-analysis.md || true
+          fi
+          
+          # Test summary
+          echo "## Test Summary" >> stress-analysis.md
+          grep -E "Completed|Failed|Error rate" stress-test-output.log \
+            >> stress-analysis.md || echo "No summary found" >> stress-analysis.md
+      
+      - name: Upload stress test artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stress-test-${{ matrix.scenario }}
+          path: |
+            stress-*.log
+            stress-*.md
+            resource-monitor.log
+            connection-count.log
+          retention-days: 30
+
+  # Performance benchmarking for long-running scenarios  
+  performance-benchmarks:
+    name: Performance Benchmarks
+    needs: pre-check
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    if: |
+      github.event_name == 'schedule' || 
+      github.event.inputs.test-suite == 'all' || 
+      github.event.inputs.test-suite == 'performance'
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y linux-tools-generic
+          
+          # Allow perf without sudo
+          echo -1 | sudo tee /proc/sys/kernel/perf_event_paranoid
+      
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-bench-long-${{ hashFiles('**/Cargo.lock') }}
+      
+      - name: Install criterion
+        run: |
+          cargo install cargo-criterion --locked || true
+      
+      - name: Run extended benchmarks
+        run: |
+          # Configure for long benchmark runs
+          export CRITERION_HOME=./target/criterion
+          
+          # Run benchmarks with extended parameters
+          echo "Running extended benchmarks..."
+          cargo bench --all-features -- \
+            --warm-up-time 10 \
+            --measurement-time 60 \
+            --sample-size 100
+        timeout-minutes: 90
+      
+      - name: Run NAT traversal performance tests
+        run: |
+          # Build optimized test binary
+          cargo build --release --test nat_traversal_performance
+          
+          # Run performance scenarios
+          echo "Testing connection establishment performance..."
+          ./target/release/deps/nat_traversal_performance-* \
+            --test connection_establishment_benchmark \
+            --nocapture
+          
+          echo "Testing throughput under NAT..."
+          ./target/release/deps/nat_traversal_performance-* \
+            --test throughput_benchmark \
+            --nocapture
+        timeout-minutes: 30
+      
+      - name: Analyze benchmark results
+        run: |
+          # Create performance report
+          echo "# Performance Benchmark Report" > performance-report.md
+          echo "Date: $(date)" >> performance-report.md
+          echo "" >> performance-report.md
+          
+          # Extract key metrics
+          echo "## Key Metrics" >> performance-report.md
+          
+          # Find and report improvements/regressions
+          if [ -d "target/criterion" ]; then
+            find target/criterion -name "change.json" -exec \
+              jq -r '"\(.name): \(.mean.estimate * 100)% change"' {} \; \
+              >> performance-report.md || true
+          fi
+          
+          echo "" >> performance-report.md
+          echo "## Detailed Results" >> performance-report.md
+          
+          # List all benchmark results
+          find target/criterion -name "estimates.json" -exec \
+            jq -r '"\(.mean.point_estimate) \(.mean.unit)"' {} \; \
+            2>/dev/null | head -50 >> performance-report.md || true
+      
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@v4
+        with:
+          name: performance-benchmarks
+          path: |
+            target/criterion/
+            performance-report.md
+          retention-days: 90
+
+  # Long-running property tests with high iteration counts
+  property-tests-extended:
+    name: Extended Property Tests
+    needs: pre-check
+    runs-on: ubuntu-latest
+    timeout-minutes: 180  # 3 hours for thorough property testing
+    if: |
+      github.event_name == 'schedule' || 
+      github.event.inputs.test-suite == 'all' || 
+      github.event.inputs.test-suite == 'property'
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-proptest-${{ hashFiles('**/Cargo.lock') }}
+      
+      - name: Configure proptest for extended runs
+        run: |
+          # Create proptest config for long runs
+          mkdir -p .config
+          cat > proptest.toml << EOF
+          # Extended property test configuration
+          cases = 10000  # 10x normal
+          max_local_rejects = 100000
+          max_global_rejects = 1000000
+          max_shrink_iters = 10000
+          max_shrink_time = 600  # 10 minutes
+          fork = true
+          timeout = 300000  # 5 minutes per test
+          
+          # Regression file
+          failure_persistence = ".proptest-regressions"
+          EOF
+      
+      - name: Run extended property tests
+        run: |
+          echo "Running extended property tests with high iteration counts..."
+          
+          # Set environment for extended runs
+          export PROPTEST_CASES=10000
+          export PROPTEST_MAX_SHRINK_TIME=600
+          export RUST_TEST_THREADS=4  # Use multiple threads for property tests
+          
+          # Run property tests with extended configuration
+          cargo test --release --features proptest-extended \
+            -- --test-threads=4 proptest 2>&1 | tee proptest-output.log
+        env:
+          RUST_LOG: proptest=debug,quickcheck=debug
+      
+      - name: Check for regressions
+        if: always()
+        run: |
+          # Check if any regression files were created
+          if find . -name "*.proptest-regressions" -type f | grep -q .; then
+            echo "Property test regressions found!"
+            find . -name "*.proptest-regressions" -type f -exec cat {} \;
+            exit 1
+          fi
+      
+      - name: Generate property test report
+        if: always()
+        run: |
+          echo "# Property Test Report" > proptest-report.md
+          echo "Date: $(date)" >> proptest-report.md
+          echo "" >> proptest-report.md
+          
+          # Extract test counts
+          echo "## Test Statistics" >> proptest-report.md
+          grep -E "proptest|quickcheck" proptest-output.log | \
+            grep -E "passed|failed" >> proptest-report.md || true
+          
+          # Look for shrinking information
+          echo "" >> proptest-report.md
+          echo "## Shrinking Results" >> proptest-report.md
+          grep -A5 -B5 "Shrinking" proptest-output.log >> proptest-report.md || \
+            echo "No shrinking performed" >> proptest-report.md
+      
+      - name: Upload property test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: property-test-results
+          path: |
+            proptest-*.log
+            proptest-*.md
+            .proptest-regressions/
+          retention-days: 30
+
+  # Summary and reporting
+  test-summary:
+    name: Long Test Summary
+    needs: [
+      integration-tests,
+      docker-nat-tests,
+      stress-tests,
+      performance-benchmarks,
+      property-tests-extended
+    ]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: all-results/
+      
+      - name: Generate comprehensive summary
+        run: |
+          echo "# Long Test Run Summary" > SUMMARY.md
+          echo "Date: $(date)" >> SUMMARY.md
+          echo "Triggered by: ${{ github.event_name }}" >> SUMMARY.md
+          echo "Test Suite: ${{ github.event.inputs.test-suite || 'all' }}" >> SUMMARY.md
+          echo "Intensity: ${{ github.event.inputs.test-intensity || 'normal' }}" >> SUMMARY.md
+          echo "" >> SUMMARY.md
+          
+          # Job status summary
+          echo "## Job Status" >> SUMMARY.md
+          echo "| Job | Status |" >> SUMMARY.md
+          echo "|----|--------|" >> SUMMARY.md
+          echo "| Integration Tests | ${{ needs.integration-tests.result }} |" >> SUMMARY.md
+          echo "| Docker NAT Tests | ${{ needs.docker-nat-tests.result }} |" >> SUMMARY.md
+          echo "| Stress Tests | ${{ needs.stress-tests.result }} |" >> SUMMARY.md
+          echo "| Performance Benchmarks | ${{ needs.performance-benchmarks.result }} |" >> SUMMARY.md
+          echo "| Property Tests | ${{ needs.property-tests-extended.result }} |" >> SUMMARY.md
+          echo "" >> SUMMARY.md
+          
+          # Extract key metrics from each test type
+          echo "## Key Findings" >> SUMMARY.md
+          
+          # Integration test results
+          if [ -d "all-results/test-results-*" ]; then
+            echo "### Integration Tests" >> SUMMARY.md
+            find all-results -name "report-*.md" -exec grep -h "Passed:\|Failed:" {} \; | \
+              sort | uniq -c >> SUMMARY.md || true
+            echo "" >> SUMMARY.md
+          fi
+          
+          # Stress test results
+          if [ -d "all-results/stress-test-*" ]; then
+            echo "### Stress Tests" >> SUMMARY.md
+            find all-results -name "stress-analysis.md" -exec grep -h "Peak\|Average" {} \; \
+              >> SUMMARY.md || true
+            echo "" >> SUMMARY.md
+          fi
+          
+          # Performance results
+          if [ -f "all-results/performance-benchmarks/performance-report.md" ]; then
+            echo "### Performance Highlights" >> SUMMARY.md
+            grep -A10 "Key Metrics" all-results/performance-benchmarks/performance-report.md \
+              >> SUMMARY.md || true
+            echo "" >> SUMMARY.md
+          fi
+          
+          # Add to GitHub summary
+          cat SUMMARY.md >> $GITHUB_STEP_SUMMARY
+      
+      - name: Create detailed report
+        run: |
+          # Create HTML report for better visualization
+          cat > long-test-report.html << 'EOF'
+          <!DOCTYPE html>
+          <html>
+          <head>
+              <title>Long Test Report - ${{ github.run_id }}</title>
+              <style>
+                  body { font-family: Arial, sans-serif; margin: 20px; }
+                  .success { color: green; }
+                  .failure { color: red; }
+                  .warning { color: orange; }
+                  table { border-collapse: collapse; width: 100%; }
+                  th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+                  th { background-color: #f2f2f2; }
+              </style>
+          </head>
+          <body>
+              <h1>Long Test Execution Report</h1>
+              <p>Run ID: ${{ github.run_id }}</p>
+              <p>Date: $(date)</p>
+              <div id="content">
+                  <!-- Report content will be inserted here -->
+              </div>
+          </body>
+          </html>
+          EOF
+      
+      - name: Upload final summary
+        uses: actions/upload-artifact@v4
+        with:
+          name: long-test-summary
+          path: |
+            SUMMARY.md
+            long-test-report.html
+          retention-days: 90
+      
+      - name: Post PR comment (if applicable)
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const summary = fs.readFileSync('SUMMARY.md', 'utf8');
+            
+            // Find existing comment
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+            
+            const botComment = comments.find(comment => 
+              comment.user.type === 'Bot' && 
+              comment.body.includes('Long Test Run Summary')
+            );
+            
+            if (botComment) {
+              // Update existing comment
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: botComment.id,
+                body: summary
+              });
+            } else {
+              // Create new comment
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: summary
+              });
+            }
+      
+      - name: Create issue on failure
+        if: |
+          failure() && 
+          github.event_name == 'schedule'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const failed_jobs = [];
+            if ('${{ needs.integration-tests.result }}' === 'failure') failed_jobs.push('Integration Tests');
+            if ('${{ needs.docker-nat-tests.result }}' === 'failure') failed_jobs.push('Docker NAT Tests');
+            if ('${{ needs.stress-tests.result }}' === 'failure') failed_jobs.push('Stress Tests');
+            if ('${{ needs.performance-benchmarks.result }}' === 'failure') failed_jobs.push('Performance Benchmarks');
+            if ('${{ needs.property-tests-extended.result }}' === 'failure') failed_jobs.push('Property Tests');
+            
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `Long Test Failure - ${new Date().toISOString().split('T')[0]}`,
+              body: `The scheduled long test run failed.\n\nFailed jobs:\n${failed_jobs.map(j => `- ${j}`).join('\n')}\n\nPlease check the [workflow run](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}).`,
+              labels: ['test-failure', 'long-tests']
+            });

@@ -1,0 +1,113 @@
+# Network Condition Profiles for Testing
+# These simulate various real-world network conditions
+
+profiles:
+  # Mobile Networks
+  3g:
+    description: "3G Mobile Network"
+    bandwidth: 1mbit
+    latency: 150ms
+    jitter: 50ms
+    loss: 2%
+    
+  4g:
+    description: "4G LTE Network"
+    bandwidth: 10mbit
+    latency: 50ms
+    jitter: 10ms
+    loss: 0.1%
+    
+  5g:
+    description: "5G Network"
+    bandwidth: 100mbit
+    latency: 10ms
+    jitter: 2ms
+    loss: 0.01%
+
+  # Fixed Networks
+  dsl:
+    description: "DSL Broadband"
+    bandwidth: 5mbit
+    latency: 20ms
+    jitter: 5ms
+    loss: 0.05%
+    
+  cable:
+    description: "Cable Internet"
+    bandwidth: 50mbit
+    latency: 15ms
+    jitter: 3ms
+    loss: 0.01%
+    
+  fiber:
+    description: "Fiber Optic"
+    bandwidth: 1000mbit
+    latency: 2ms
+    jitter: 0.5ms
+    loss: 0.001%
+
+  # Challenging Conditions
+  satellite:
+    description: "Satellite Internet"
+    bandwidth: 10mbit
+    latency: 600ms
+    jitter: 20ms
+    loss: 0.5%
+    
+  congested:
+    description: "Congested Network"
+    bandwidth: 100kbit
+    latency: 200ms
+    jitter: 100ms
+    loss: 5%
+    
+  lossy_wifi:
+    description: "Poor WiFi Connection"
+    bandwidth: 5mbit
+    latency: 50ms
+    jitter: 30ms
+    loss: 10%
+
+  # Geographic Simulations
+  transcontinental:
+    description: "Cross-Continental Link"
+    bandwidth: 100mbit
+    latency: 150ms
+    jitter: 10ms
+    loss: 0.1%
+    
+  regional:
+    description: "Regional Network"
+    bandwidth: 1000mbit
+    latency: 20ms
+    jitter: 2ms
+    loss: 0.01%
+    
+  local:
+    description: "Local Network"
+    bandwidth: 10000mbit
+    latency: 0.5ms
+    jitter: 0.1ms
+    loss: 0.001%
+
+# Test Scenarios
+scenarios:
+  basic_nat_traversal:
+    description: "Basic NAT traversal test"
+    duration: 60s
+    network_profile: normal
+    
+  stressed_nat_traversal:
+    description: "NAT traversal under network stress"
+    duration: 120s
+    network_profile: congested
+    
+  mobile_nat_traversal:
+    description: "NAT traversal on mobile networks"
+    duration: 90s
+    network_profile: 4g
+    
+  satellite_nat_traversal:
+    description: "NAT traversal over satellite"
+    duration: 180s
+    network_profile: satellite

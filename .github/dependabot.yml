@@ -1,11 +1,57 @@
 version: 2
 updates:
-- package-ecosystem: cargo
-  directory: "/"
-  schedule:
-    interval: weekly
-    time: "13:00"
-- package-ecosystem: github-actions
-  directory: "/"
-  schedule:
-    interval: weekly
+  # Rust dependencies
+  - package-ecosystem: "cargo"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "UTC"
+    open-pull-requests-limit: 10
+    reviewers:
+      - "dirvine"
+    labels:
+      - "dependencies"
+      - "rust"
+    commit-message:
+      prefix: "chore"
+      prefix-development: "chore"
+      include: "scope"
+    groups:
+      # Group minor and patch updates together
+      minor-and-patch:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+    # Security updates should be prioritized
+    allow:
+      - dependency-type: "all"
+    ignore:
+      # Don't update these automatically (require manual review)
+      - dependency-name: "quinn"
+        versions: [">=0.11.0"]
+      - dependency-name: "quinn-proto"
+        versions: [">=0.11.0"]
+      - dependency-name: "quinn-udp"
+        versions: [">=0.5.0"]
+
+  # GitHub Actions
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "UTC"
+    open-pull-requests-limit: 5
+    reviewers:
+      - "dirvine"
+    labels:
+      - "dependencies"
+      - "github-actions"
+    commit-message:
+      prefix: "ci"
+      include: "scope"

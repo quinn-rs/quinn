@@ -1,25 +1,20 @@
 // Comprehensive unit tests for address discovery in connections
 
 use super::*;
-use crate::frame::{Frame, ObservedAddress};
 use crate::transport_parameters::AddressDiscoveryConfig;
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::time::{Duration, Instant};
 
 #[test]
 fn test_address_discovery_state_initialization() {
-    let config = AddressDiscoveryConfig {
-        enabled: true,
-        max_observation_rate: 20,
-        observe_all_paths: false,
-    };
+    let config = AddressDiscoveryConfig::SendAndReceive;
     
     let now = Instant::now();
     let state = AddressDiscoveryState::new(&config, now);
     
     assert!(state.enabled);
-    assert_eq!(state.max_observation_rate, 20);
-    assert!(!state.observe_all_paths);
+    assert_eq!(state.max_observation_rate, 10); // Default rate
+    assert!(!state.observe_all_paths); // Default is primary path only
     assert!(state.observed_addresses.is_empty());
     assert!(!state.bootstrap_mode);
 }
@@ -47,11 +42,9 @@ fn test_multiple_observations() {
     let mut state = AddressDiscoveryState::new(&config, now);
     
     // Add multiple addresses
-    let addresses = vec![
-        SocketAddr::new(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)), 8080),
+    let addresses = [SocketAddr::new(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)), 8080),
         SocketAddr::new(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2)), 8081),
-        SocketAddr::new(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 3)), 8082),
-    ];
+        SocketAddr::new(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 3)), 8082)];
     
     for (i, addr) in addresses.iter().enumerate() {
         state.handle_observed_address(*addr, i as u64, now);
@@ -66,11 +59,7 @@ fn test_multiple_observations() {
 
 #[test]
 fn test_rate_limiting() {
-    let config = AddressDiscoveryConfig {
-        enabled: true,
-        max_observation_rate: 10, // 10 per second
-        observe_all_paths: false,
-    };
+    let config = AddressDiscoveryConfig::SendAndReceive;
     
     let mut now = Instant::now();
     let mut state = AddressDiscoveryState::new(&config, now);
@@ -111,38 +100,36 @@ fn test_bootstrap_mode() {
 
 #[test]
 fn test_disabled_state() {
-    let config = AddressDiscoveryConfig {
-        enabled: false,
-        max_observation_rate: 10,
-        observe_all_paths: false,
-    };
+    let config = AddressDiscoveryConfig::SendAndReceive;
     
     let now = Instant::now();
     let mut state = AddressDiscoveryState::new(&config, now);
     
-    // When disabled, observations are not stored
+    // Disable the state
+    state.enabled = false;
+    
+    // When disabled, observations should not be sent
+    assert!(!state.should_send_observation(0, now));
+    
+    // When disabled, addresses are not stored
     let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)), 80);
     state.handle_observed_address(addr, 0, now);
     
-    // Address is not stored when disabled
-    assert!(state.observed_addresses.is_empty());
+    // No addresses should be stored when disabled
+    assert_eq!(state.observed_addresses.len(), 0);
 }
 
 #[test]
 fn test_observe_all_paths_configuration() {
-    let config = AddressDiscoveryConfig {
-        enabled: true,
-        max_observation_rate: 10,
-        observe_all_paths: true,
-    };
+    let config = AddressDiscoveryConfig::SendAndReceive;
     
     let now = Instant::now();
     let state = AddressDiscoveryState::new(&config, now);
     
-    // Should be able to observe multiple paths
+    // By default, only the primary path (0) is observed
     assert!(state.should_observe_path(0));
-    assert!(state.should_observe_path(1));
-    assert!(state.should_observe_path(2));
+    assert!(!state.should_observe_path(1));
+    assert!(!state.should_observe_path(2));
 }
 
 #[test]
@@ -152,11 +139,9 @@ fn test_ipv6_address_handling() {
     let mut state = AddressDiscoveryState::new(&config, now);
     
     // Test with IPv6 addresses
-    let ipv6_addresses = vec![
-        SocketAddr::new(IpAddr::V6("2001:db8::1".parse().unwrap()), 443),
+    let ipv6_addresses = [SocketAddr::new(IpAddr::V6("2001:db8::1".parse().unwrap()), 443),
         SocketAddr::new(IpAddr::V6("::1".parse().unwrap()), 8080),
-        SocketAddr::new(IpAddr::V6("fe80::1".parse().unwrap()), 22),
-    ];
+        SocketAddr::new(IpAddr::V6("fe80::1".parse().unwrap()), 22)];
     
     for (i, addr) in ipv6_addresses.iter().enumerate() {
         state.handle_observed_address(*addr, i as u64, now);

@@ -110,7 +110,7 @@ mod timestamp_serde {
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-    pub fn serialize<S>(time: &SystemTime, serializer: S) -> Result<S::Ok, S::Error>
+    pub(super) fn serialize<S>(time: &SystemTime, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
@@ -123,7 +123,7 @@ mod timestamp_serde {
         (secs, nanos).serialize(serializer)
     }
 
-    pub fn deserialize<'de, D>(deserializer: D) -> Result<SystemTime, D::Error>
+    pub(super) fn deserialize<'de, D>(deserializer: D) -> Result<SystemTime, D::Error>
     where
         D: Deserializer<'de>,
     {
@@ -144,7 +144,7 @@ struct ChatWireFormat {
 impl ChatMessage {
     /// Create a new join message
     pub fn join(nickname: String, peer_id: PeerId) -> Self {
-        ChatMessage::Join {
+        Self::Join {
             nickname,
             peer_id: peer_id.0,
             timestamp: SystemTime::now(),
@@ -153,7 +153,7 @@ impl ChatMessage {
 
     /// Create a new leave message
     pub fn leave(nickname: String, peer_id: PeerId) -> Self {
-        ChatMessage::Leave {
+        Self::Leave {
             nickname,
             peer_id: peer_id.0,
             timestamp: SystemTime::now(),
@@ -162,7 +162,7 @@ impl ChatMessage {
 
     /// Create a new text message
     pub fn text(nickname: String, peer_id: PeerId, text: String) -> Self {
-        ChatMessage::Text {
+        Self::Text {
             nickname,
             peer_id: peer_id.0,
             text,
@@ -172,7 +172,7 @@ impl ChatMessage {
 
     /// Create a new status message
     pub fn status(nickname: String, peer_id: PeerId, status: String) -> Self {
-        ChatMessage::Status {
+        Self::Status {
             nickname,
             peer_id: peer_id.0,
             status,
@@ -187,7 +187,7 @@ impl ChatMessage {
         to_peer_id: PeerId,
         text: String,
     ) -> Self {
-        ChatMessage::Direct {
+        Self::Direct {
             from_nickname,
             from_peer_id: from_peer_id.0,
             to_peer_id: to_peer_id.0,
@@ -198,7 +198,7 @@ impl ChatMessage {
 
     /// Create a typing indicator
     pub fn typing(nickname: String, peer_id: PeerId, is_typing: bool) -> Self {
-        ChatMessage::Typing {
+        Self::Typing {
             nickname,
             peer_id: peer_id.0,
             is_typing,
@@ -241,27 +241,27 @@ impl ChatMessage {
     /// Get the peer ID from the message
     pub fn peer_id(&self) -> Option<PeerId> {
         match self {
-            ChatMessage::Join { peer_id, .. }
-            | ChatMessage::Leave { peer_id, .. }
-            | ChatMessage::Text { peer_id, .. }
-            | ChatMessage::Status { peer_id, .. }
-            | ChatMessage::Typing { peer_id, .. }
-            | ChatMessage::PeerListRequest { peer_id, .. } => Some(PeerId(*peer_id)),
-            ChatMessage::Direct { from_peer_id, .. } => Some(PeerId(*from_peer_id)),
-            ChatMessage::PeerListResponse { .. } => None,
+            Self::Join { peer_id, .. }
+            | Self::Leave { peer_id, .. }
+            | Self::Text { peer_id, .. }
+            | Self::Status { peer_id, .. }
+            | Self::Typing { peer_id, .. }
+            | Self::PeerListRequest { peer_id, .. } => Some(PeerId(*peer_id)),
+            Self::Direct { from_peer_id, .. } => Some(PeerId(*from_peer_id)),
+            Self::PeerListResponse { .. } => None,
         }
     }
 
     /// Get the nickname from the message
     pub fn nickname(&self) -> Option<&str> {
         match self {
-            ChatMessage::Join { nickname, .. }
-            | ChatMessage::Leave { nickname, .. }
-            | ChatMessage::Text { nickname, .. }
-            | ChatMessage::Status { nickname, .. }
-            | ChatMessage::Typing { nickname, .. } => Some(nickname),
-            ChatMessage::Direct { from_nickname, .. } => Some(from_nickname),
-            ChatMessage::PeerListRequest { .. } | ChatMessage::PeerListResponse { .. } => None,
+            Self::Join { nickname, .. }
+            | Self::Leave { nickname, .. }
+            | Self::Text { nickname, .. }
+            | Self::Status { nickname, .. }
+            | Self::Typing { nickname, .. } => Some(nickname),
+            Self::Direct { from_nickname, .. } => Some(from_nickname),
+            Self::PeerListRequest { .. } | Self::PeerListResponse { .. } => None,
         }
     }
 }

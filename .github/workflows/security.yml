@@ -1,0 +1,268 @@
+name: Security Audit
+
+on:
+  workflow_call:
+  workflow_dispatch:
+  push:
+    branches: [ master, main ]
+    paths:
+      - '**/Cargo.toml'
+      - '**/Cargo.lock'
+      - '.github/workflows/security.yml'
+      - 'deny.toml'
+  pull_request:
+    branches: [ master, main ]
+    paths:
+      - '**/Cargo.toml'
+      - '**/Cargo.lock'
+  schedule:
+    # Run daily at 2 AM UTC
+    - cron: '0 2 * * *'
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  # Vulnerability scanning with cargo-audit
+  vulnerability-scan:
+    name: Vulnerability Scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      
+      - name: Cache cargo-audit
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/cargo-audit
+          key: cargo-audit-${{ runner.os }}
+      
+      - name: Install cargo-audit
+        run: |
+          if ! command -v cargo-audit &> /dev/null; then
+            cargo install cargo-audit --locked
+          fi
+      
+      - name: Run cargo-audit
+        run: |
+          # Generate both human-readable and SARIF output
+          cargo audit --json > audit-results.json || true
+          cargo audit || AUDIT_EXIT_CODE=$?
+          
+          # Generate SARIF from JSON results
+          if [ -f audit-results.json ]; then
+            echo "Converting audit results to SARIF format..."
+            python3 .github/scripts/audit-to-sarif.py audit-results.json audit-results.sarif
+          fi
+          
+          exit ${AUDIT_EXIT_CODE:-0}
+      
+      - name: Upload SARIF results
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: audit-results.sarif
+          category: cargo-audit
+      
+      - name: Upload audit results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: audit-results
+          path: |
+            audit-results.json
+            audit-results.sarif
+
+  # License and dependency policy enforcement with cargo-deny
+  policy-check:
+    name: Policy Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      
+      - name: Install cargo-deny
+        uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check
+          arguments: --all-features
+          log-level: warn
+          
+      - name: Check licenses
+        uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check licenses
+          arguments: --all-features
+      
+      - name: Check bans
+        uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check bans
+          arguments: --all-features
+      
+      - name: Check advisories
+        uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check advisories
+          arguments: --all-features
+      
+      - name: Check sources
+        uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check sources
+          arguments: --all-features
+
+  # Supply chain security
+  supply-chain:
+    name: Supply Chain Security
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      
+      - name: Install cargo-vet
+        run: cargo install cargo-vet --locked
+      
+      - name: Initialize cargo-vet
+        run: cargo vet init || true
+      
+      - name: Run cargo-vet
+        run: |
+          cargo vet --locked || VET_EXIT_CODE=$?
+          
+          # Generate report
+          cargo vet dump-graph > supply-chain-report.json || true
+          
+          exit ${VET_EXIT_CODE:-0}
+      
+      - name: Upload supply chain report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: supply-chain-report
+          path: supply-chain-report.json
+
+  # Security scorecard
+  scorecard:
+    name: Security Scorecard
+    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request'
+    permissions:
+      security-events: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      
+      - name: Run Scorecard analysis
+        uses: ossf/scorecard-action@v2.3.1
+        with:
+          results_file: scorecard-results.sarif
+          results_format: sarif
+          publish_results: true
+      
+      - name: Upload Scorecard results
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: scorecard-results.sarif
+          category: scorecard
+
+  # SBOM generation
+  sbom-generation:
+    name: Generate SBOM
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      
+      - name: Install cargo-sbom
+        run: cargo install cargo-sbom --locked
+      
+      - name: Generate SBOM
+        run: |
+          cargo sbom > sbom.spdx.json
+          cargo sbom --output-format cyclonedx > sbom.cyclonedx.json
+      
+      - name: Upload SBOM artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: |
+            sbom.spdx.json
+            sbom.cyclonedx.json
+
+  # Security metrics and reporting
+  security-report:
+    name: Security Report
+    needs: [vulnerability-scan, policy-check, supply-chain, scorecard]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: security-artifacts/
+      
+      - name: Generate security report
+        run: |
+          echo "# Security Scan Report" > security-report.md
+          echo "Date: $(date)" >> security-report.md
+          echo "" >> security-report.md
+          
+          echo "## Summary" >> security-report.md
+          echo "- Vulnerability Scan: ${{ needs.vulnerability-scan.result }}" >> security-report.md
+          echo "- Policy Check: ${{ needs.policy-check.result }}" >> security-report.md
+          echo "- Supply Chain: ${{ needs.supply-chain.result }}" >> security-report.md
+          echo "- Scorecard: ${{ needs.scorecard.result }}" >> security-report.md
+          echo "" >> security-report.md
+          
+          # Add vulnerability summary if available
+          if [ -f security-artifacts/audit-results/audit-results.json ]; then
+            echo "## Vulnerabilities" >> security-report.md
+            echo '```json' >> security-report.md
+            jq '.vulnerabilities.count' security-artifacts/audit-results/audit-results.json >> security-report.md || echo "0" >> security-report.md
+            echo '```' >> security-report.md
+            echo "" >> security-report.md
+          fi
+          
+          # Add to GitHub summary
+          cat security-report.md >> $GITHUB_STEP_SUMMARY
+      
+      - name: Upload security report
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-report
+          path: security-report.md
+
+  # Fail the workflow if critical vulnerabilities are found
+  security-gate:
+    name: Security Gate
+    needs: [vulnerability-scan, policy-check]
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check security status
+        run: |
+          if [ "${{ needs.vulnerability-scan.result }}" == "failure" ]; then
+            echo "::error::Critical vulnerabilities found. Please fix before merging."
+            exit 1
+          fi
+          
+          if [ "${{ needs.policy-check.result }}" == "failure" ]; then
+            echo "::error::Security policy violations found. Please fix before merging."
+            exit 1
+          fi
+          
+          echo "✅ All security checks passed!"

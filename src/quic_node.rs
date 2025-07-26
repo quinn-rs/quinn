@@ -247,8 +247,7 @@ impl QuicP2PNode {
                             stats.failed_connections += 1;
                         }
                         Err(NatTraversalError::NetworkError(format!(
-                            "Connection failed: {}",
-                            e
+                            "Connection failed: {e}"
                         )))
                     }
                 }
@@ -263,8 +262,7 @@ impl QuicP2PNode {
                     stats.failed_connections += 1;
                 }
                 Err(NatTraversalError::NetworkError(format!(
-                    "Connect error: {}",
-                    e
+                    "Connect error: {e}"
                 )))
             }
         }
@@ -360,8 +358,7 @@ impl QuicP2PNode {
                                             stats.active_connections.saturating_sub(1);
                                         stats.failed_connections += 1;
                                         return Err(NatTraversalError::ConfigError(format!(
-                                            "Authentication failed: {}",
-                                            e
+                                            "Authentication failed: {e}"
                                         )));
                                     }
                                 }
@@ -495,18 +492,18 @@ impl QuicP2PNode {
                     let mut send_stream = connection
                         .open_uni()
                         .await
-                        .map_err(|e| format!("Failed to open unidirectional stream: {}", e))?;
+                        .map_err(|e| format!("Failed to open unidirectional stream: {e}"))?;
 
                     // Send the data
                     send_stream
                         .write_all(data)
                         .await
-                        .map_err(|e| format!("Failed to write data: {}", e))?;
+                        .map_err(|e| format!("Failed to write data: {e}"))?;
 
                     // Finish the stream
                     send_stream
                         .finish()
-                        .map_err(|e| format!("Failed to finish stream: {}", e))?;
+                        .map_err(|e| format!("Failed to finish stream: {e}"))?;
 
                     debug!(
                         "Successfully sent {} bytes to peer {:?}",
@@ -688,6 +685,15 @@ impl QuicP2PNode {
     ) -> Result<NatTraversalStatistics, Box<dyn std::error::Error + Send + Sync>> {
         self.nat_endpoint.get_nat_stats()
     }
+    
+    /// Inject an observed address (temporary workaround for OBSERVED_ADDRESS frame integration)
+    pub fn inject_observed_address(
+        &self,
+        observed_address: SocketAddr,
+        from_peer: PeerId,
+    ) -> Result<(), NatTraversalError> {
+        self.nat_endpoint.inject_observed_address(observed_address, from_peer)
+    }
 
     /// Get connection metrics for a specific peer
     pub async fn get_connection_metrics(
@@ -711,7 +717,7 @@ impl QuicP2PNode {
                 })
             }
             Ok(None) => Err("Connection not found".into()),
-            Err(e) => Err(format!("Failed to get connection: {}", e).into()),
+            Err(e) => Err(format!("Failed to get connection: {e}").into()),
         }
     }
 
@@ -766,7 +772,7 @@ impl QuicP2PNode {
                                 return Ok(());
                             }
                             Ok(AuthMessage::AuthFailure { reason }) => {
-                                return Err(format!("Authentication failed: {}", reason).into());
+                                return Err(format!("Authentication failed: {reason}").into());
                             }
                             _ => continue,
                         }

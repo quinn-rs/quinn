@@ -43,21 +43,21 @@ impl NegotiationState {
     pub fn is_complete(&self) -> bool {
         matches!(
             self,
-            NegotiationState::Completed { .. }
-                | NegotiationState::Failed { .. }
-                | NegotiationState::TimedOut { .. }
+            Self::Completed { .. }
+                | Self::Failed { .. }
+                | Self::TimedOut { .. }
         )
     }
 
     /// Check if negotiation succeeded
     pub fn is_successful(&self) -> bool {
-        matches!(self, NegotiationState::Completed { .. })
+        matches!(self, Self::Completed { .. })
     }
 
     /// Get the negotiation result if successful
     pub fn get_result(&self) -> Option<&NegotiationResult> {
         match self {
-            NegotiationState::Completed { result, .. } => Some(result),
+            Self::Completed { result, .. } => Some(result),
             _ => None,
         }
     }
@@ -65,7 +65,7 @@ impl NegotiationState {
     /// Get error message if failed
     pub fn get_error(&self) -> Option<&str> {
         match self {
-            NegotiationState::Failed { error, .. } => Some(error),
+            Self::Failed { error, .. } => Some(error),
             _ => None,
         }
     }
@@ -101,6 +101,12 @@ impl Default for NegotiationConfig {
 /// Unique identifier for a negotiation session
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct NegotiationId(u64);
+
+impl Default for NegotiationId {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl NegotiationId {
     /// Generate a new unique negotiation ID
@@ -148,8 +154,8 @@ impl CacheKey {
         let remote_hash = hasher.finish();
 
         Self {
-            local_preferences: format!("{:x}", local_hash),
-            remote_preferences: format!("{:x}", remote_hash),
+            local_preferences: format!("{local_hash:x}"),
+            remote_preferences: format!("{remote_hash:x}"),
         }
     }
 }
@@ -243,7 +249,7 @@ impl CertificateNegotiationManager {
 
         let mut sessions = self.sessions.write().unwrap();
         let state = sessions.get(&id).ok_or_else(|| {
-            TlsExtensionError::InvalidExtensionData(format!("Unknown negotiation ID: {:?}", id))
+            TlsExtensionError::InvalidExtensionData(format!("Unknown negotiation ID: {id:?}"))
         })?;
 
         let our_preferences = match state {
@@ -344,7 +350,7 @@ impl CertificateNegotiationManager {
                         // Simple eviction: remove oldest entries
                         let mut entries: Vec<_> = cache
                             .iter()
-                            .map(|(k, (_, t))| (k.clone(), t.clone()))
+                            .map(|(k, (_, t))| (k.clone(), *t))
                             .collect();
                         entries.sort_by_key(|(_, timestamp)| *timestamp);
 

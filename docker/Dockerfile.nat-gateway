@@ -1,0 +1,45 @@
+# NAT Gateway Container for simulating various NAT types
+FROM debian:bookworm-slim
+
+# Install networking tools and iptables
+RUN apt-get update && apt-get install -y \
+    iptables \
+    iproute2 \
+    iputils-ping \
+    tcpdump \
+    net-tools \
+    dnsutils \
+    conntrack \
+    nftables \
+    procps \
+    bash \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy NAT configuration scripts
+COPY docker/scripts/nat-types /opt/nat-gateway/scripts
+
+# Make scripts executable
+RUN chmod +x /opt/nat-gateway/scripts/*.sh
+
+# Enable IP forwarding
+RUN echo "net.ipv4.ip_forward=1" >> /etc/sysctl.conf && \
+    echo "net.ipv6.conf.all.forwarding=1" >> /etc/sysctl.conf
+
+# Set working directory
+WORKDIR /opt/nat-gateway
+
+# Environment variables for NAT configuration
+ENV NAT_TYPE=full_cone \
+    WAN_INTERFACE=eth0 \
+    LAN_INTERFACE=eth1 \
+    LOG_LEVEL=info
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+    CMD iptables -L -n || exit 1
+
+# Entry point script
+COPY docker/scripts/nat-gateway-entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+ENTRYPOINT ["/entrypoint.sh"]

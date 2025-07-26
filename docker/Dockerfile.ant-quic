@@ -1,0 +1,64 @@
+# Base image for ant-quic testing
+FROM rust:1.74-slim AS builder
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y \
+    pkg-config \
+    libssl-dev \
+    protobuf-compiler \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create app directory
+WORKDIR /usr/src/ant-quic
+
+# Copy source files
+COPY Cargo.toml Cargo.lock ./
+COPY src ./src/
+COPY benches ./benches/
+COPY examples ./examples/
+
+# Build the project in release mode
+RUN cargo build --release --bin ant-quic --examples
+
+# Runtime image
+FROM debian:bookworm-slim
+
+# Install runtime dependencies and network tools
+RUN apt-get update && apt-get install -y \
+    libssl3 \
+    ca-certificates \
+    iproute2 \
+    iptables \
+    iputils-ping \
+    tcpdump \
+    net-tools \
+    dnsutils \
+    netcat-traditional \
+    iperf3 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy built binaries from builder
+COPY --from=builder /usr/src/ant-quic/target/release/ant-quic /usr/local/bin/
+COPY --from=builder /usr/src/ant-quic/target/release/examples/* /usr/local/bin/
+
+# Copy test scripts and configurations
+COPY docker/scripts /opt/ant-quic/scripts
+COPY docker/configs /opt/ant-quic/configs
+
+# Create a non-root user for running tests
+RUN useradd -m -u 1000 antquic && \
+    mkdir -p /opt/ant-quic/logs && \
+    chown -R antquic:antquic /opt/ant-quic
+
+# Set working directory
+WORKDIR /opt/ant-quic
+
+# Default to running as non-root (can be overridden for NAT setup)
+USER antquic
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+    CMD ant-quic --version || exit 1
+
+# Default command (can be overridden)
+CMD ["ant-quic", "--help"]

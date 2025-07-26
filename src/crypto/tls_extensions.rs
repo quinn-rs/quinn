@@ -27,8 +27,8 @@ impl CertificateType {
     /// Parse certificate type from wire format
     pub fn from_u8(value: u8) -> Result<Self, TlsExtensionError> {
         match value {
-            0 => Ok(CertificateType::X509),
-            2 => Ok(CertificateType::RawPublicKey),
+            0 => Ok(Self::X509),
+            2 => Ok(Self::RawPublicKey),
             _ => Err(TlsExtensionError::UnsupportedCertificateType(value)),
         }
     }
@@ -40,20 +40,20 @@ impl CertificateType {
 
     /// Check if this certificate type is Raw Public Key
     pub fn is_raw_public_key(self) -> bool {
-        matches!(self, CertificateType::RawPublicKey)
+        matches!(self, Self::RawPublicKey)
     }
 
     /// Check if this certificate type is X.509
     pub fn is_x509(self) -> bool {
-        matches!(self, CertificateType::X509)
+        matches!(self, Self::X509)
     }
 }
 
 impl fmt::Display for CertificateType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            CertificateType::X509 => write!(f, "X.509"),
-            CertificateType::RawPublicKey => write!(f, "RawPublicKey"),
+            Self::X509 => write!(f, "X.509"),
+            Self::RawPublicKey => write!(f, "RawPublicKey"),
         }
     }
 }
@@ -83,26 +83,26 @@ impl CertificateTypeList {
             }
         }
 
-        Ok(CertificateTypeList { types })
+        Ok(Self { types })
     }
 
     /// Create a Raw Public Key only preference list
     pub fn raw_public_key_only() -> Self {
-        CertificateTypeList {
+        Self {
             types: vec![CertificateType::RawPublicKey],
         }
     }
 
     /// Create a preference list favoring Raw Public Keys with X.509 fallback
     pub fn prefer_raw_public_key() -> Self {
-        CertificateTypeList {
+        Self {
             types: vec![CertificateType::RawPublicKey, CertificateType::X509],
         }
     }
 
     /// Create an X.509 only preference list
     pub fn x509_only() -> Self {
-        CertificateTypeList {
+        Self {
             types: vec![CertificateType::X509],
         }
     }
@@ -123,7 +123,7 @@ impl CertificateTypeList {
     }
 
     /// Find the best common certificate type between two preference lists
-    pub fn negotiate(&self, other: &CertificateTypeList) -> Option<CertificateType> {
+    pub fn negotiate(&self, other: &Self) -> Option<CertificateType> {
         // Find the first certificate type in our preference list that is also supported by the other party
         for cert_type in &self.types {
             if other.types.contains(cert_type) {
@@ -172,7 +172,7 @@ impl CertificateTypeList {
             types.push(cert_type);
         }
 
-        CertificateTypeList::new(types)
+        Self::new(types)
     }
 }
 
@@ -211,36 +211,35 @@ pub enum TlsExtensionError {
 impl fmt::Display for TlsExtensionError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            TlsExtensionError::UnsupportedCertificateType(value) => {
-                write!(f, "Unsupported certificate type: {}", value)
+            Self::UnsupportedCertificateType(value) => {
+                write!(f, "Unsupported certificate type: {value}")
             }
-            TlsExtensionError::EmptyCertificateTypeList => {
+            Self::EmptyCertificateTypeList => {
                 write!(f, "Certificate type list cannot be empty")
             }
-            TlsExtensionError::CertificateTypeListTooLong(len) => {
-                write!(f, "Certificate type list too long: {} (max 255)", len)
+            Self::CertificateTypeListTooLong(len) => {
+                write!(f, "Certificate type list too long: {len} (max 255)")
             }
-            TlsExtensionError::DuplicateCertificateType(cert_type) => {
-                write!(f, "Duplicate certificate type: {}", cert_type)
+            Self::DuplicateCertificateType(cert_type) => {
+                write!(f, "Duplicate certificate type: {cert_type}")
             }
-            TlsExtensionError::InvalidExtensionData(msg) => {
-                write!(f, "Invalid extension data: {}", msg)
+            Self::InvalidExtensionData(msg) => {
+                write!(f, "Invalid extension data: {msg}")
             }
-            TlsExtensionError::NegotiationFailed {
+            Self::NegotiationFailed {
                 client_types,
                 server_types,
             } => {
                 write!(
                     f,
-                    "Certificate type negotiation failed: client={:?}, server={:?}",
-                    client_types, server_types
+                    "Certificate type negotiation failed: client={client_types:?}, server={server_types:?}"
                 )
             }
-            TlsExtensionError::ExtensionAlreadyRegistered(id) => {
-                write!(f, "Extension already registered: {}", id)
+            Self::ExtensionAlreadyRegistered(id) => {
+                write!(f, "Extension already registered: {id}")
             }
-            TlsExtensionError::RustlsError(msg) => {
-                write!(f, "rustls error: {}", msg)
+            Self::RustlsError(msg) => {
+                write!(f, "rustls error: {msg}")
             }
         }
     }

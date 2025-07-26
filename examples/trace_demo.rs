@@ -5,8 +5,6 @@ use ant_quic::tracing::{Event, EventData, EventLog, TraceId};
 #[cfg(not(feature = "trace"))]
 use ant_quic::tracing::{Event, EventLog, TraceId};
 use std::sync::Arc;
-use std::thread;
-use std::time::Duration;
 
 fn main() {
     println!("ANT-QUIC Zero-Cost Tracing Demo");

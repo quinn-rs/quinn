@@ -1,0 +1,41 @@
+# Test Runner for NAT Testing
+FROM rust:1.74-alpine3.19
+
+# Install dependencies
+RUN apk add --no-cache \
+    bash \
+    curl \
+    jq \
+    netcat-openbsd \
+    tcpdump \
+    iperf3 \
+    git \
+    musl-dev \
+    openssl-dev \
+    pkgconfig
+
+# Create workspace
+WORKDIR /workspace
+
+# Copy the entire project
+COPY . .
+
+# Build test binaries
+RUN cargo test --no-run --release
+
+# Install test utilities
+RUN cargo install cargo-nextest
+
+# Create directories for test results
+RUN mkdir -p /test-results /scripts
+
+# Copy test scripts
+COPY docker/scripts/run-nat-tests.sh /scripts/
+RUN chmod +x /scripts/*.sh
+
+# Default environment
+ENV RUST_LOG=info \
+    RUST_BACKTRACE=1 \
+    TEST_THREADS=1
+
+ENTRYPOINT ["/scripts/run-nat-tests.sh"]

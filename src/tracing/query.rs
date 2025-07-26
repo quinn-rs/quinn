@@ -125,41 +125,41 @@ mod implementation {
     use std::sync::Arc;
 
     /// Query interface for analyzing traces (no-op when trace is disabled)
-    pub struct TraceQuery;
+    pub(super) struct TraceQuery;
 
     impl TraceQuery {
-        pub fn new(_log: Arc<EventLog>) -> Self {
-            TraceQuery
+        pub(super) fn new(_log: Arc<EventLog>) -> Self {
+            Self
         }
 
-        pub fn get_trace(&self, _trace_id: TraceId) -> Vec<Event> {
+        pub(super) fn get_trace(&self, _trace_id: TraceId) -> Vec<Event> {
             vec![]
         }
 
-        pub fn recent(&self, _count: usize) -> Vec<Event> {
+        pub(super) fn recent(&self, _count: usize) -> Vec<Event> {
             vec![]
         }
 
-        pub fn time_range(&self, _start: u64, _end: u64) -> Vec<Event> {
+        pub(super) fn time_range(&self, _start: u64, _end: u64) -> Vec<Event> {
             vec![]
         }
 
-        pub fn event_count(&self) -> u64 {
+        pub(super) fn event_count(&self) -> u64 {
             0
         }
 
-        pub fn analyze_connection(&self, _trace_id: TraceId) -> ConnectionAnalysis {
+        pub(super) fn analyze_connection(&self, _trace_id: TraceId) -> ConnectionAnalysis {
             ConnectionAnalysis::default()
         }
 
-        pub fn find_problematic_traces(&self, _recent_count: usize) -> Vec<TraceId> {
+        pub(super) fn find_problematic_traces(&self, _recent_count: usize) -> Vec<TraceId> {
             vec![]
         }
     }
 
     /// Analysis results for a connection
     #[derive(Debug, Default)]
-    pub struct ConnectionAnalysis {
+    pub(super) struct ConnectionAnalysis {
         pub packets_sent: u64,
         pub packets_received: u64,
         pub packets_lost: u64,

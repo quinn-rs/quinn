@@ -147,7 +147,7 @@ pub fn extract_ed25519_key_from_spki(spki_der: &[u8]) -> Result<[u8; 32], RawKey
 pub fn verifying_key_from_spki(spki_der: &[u8]) -> Result<VerifyingKey, RawKeyError> {
     let key_bytes = extract_ed25519_key_from_spki(spki_der)?;
     VerifyingKey::from_bytes(&key_bytes)
-        .map_err(|e| RawKeyError::InvalidFormat(format!("Invalid Ed25519 public key: {}", e)))
+        .map_err(|e| RawKeyError::InvalidFormat(format!("Invalid Ed25519 public key: {e}")))
 }
 
 /// Derive a peer ID from a public key

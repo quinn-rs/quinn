@@ -2106,7 +2106,7 @@ impl NatTraversalState {
         // Cache compatibility checks to avoid repeated work
         let mut compatibility_cache: HashMap<(SocketAddr, SocketAddr), bool> = HashMap::new();
 
-        for (_local_seq, local_candidate) in &self.local_candidates {
+        for local_candidate in self.local_candidates.values() {
             // Skip removed candidates early
             if local_candidate.state == CandidateState::Removed {
                 continue;
@@ -3060,7 +3060,7 @@ impl NatTraversalState {
         }
 
         // Check validation timeouts
-        for (_, validation) in &self.active_validations {
+        for validation in self.active_validations.values() {
             let timeout_at = validation.sent_at + validation.timeout_state.get_timeout();
             next_timeout = Some(next_timeout.map_or(timeout_at, |t: Instant| t.min(timeout_at)));
         }
@@ -3536,6 +3536,7 @@ struct PendingCoordinationRequest {
 
 /// Configuration for bootstrap coordinator behavior (stub implementation)
 #[derive(Debug, Clone)]
+#[derive(Default)]
 pub(crate) struct BootstrapConfig {
     _unused: (),
 }
@@ -3721,15 +3722,11 @@ impl BootstrapCoordinator {
         sequence: VarInt,
         priority: VarInt,
     ) -> Option<crate::frame::AddAddress> {
-        if let Some(peer_record) = self.peer_registry.get(&peer_id) {
-            Some(crate::frame::AddAddress {
+        self.peer_registry.get(&peer_id).map(|peer_record| crate::frame::AddAddress {
                 sequence,
                 address: peer_record.observed_address,
                 priority,
             })
-        } else {
-            None
-        }
     }
 
     /// Process a PUNCH_ME_NOW frame from a peer
@@ -3982,7 +3979,7 @@ impl BootstrapCoordinator {
             } else {
                 // Decrease success rate
                 let alpha = 0.1;
-                peer_record.success_rate = peer_record.success_rate * (1.0 - alpha);
+                peer_record.success_rate *= 1.0 - alpha;
             }
 
             // Disable coordination for peers with very low success rates
@@ -4033,7 +4030,7 @@ impl BootstrapCoordinator {
                                 session_id,
                                 peer_a,
                                 peer_b,
-                                reason: format!("State advancement error: {:?}", e),
+                                reason: format!("State advancement error: {e:?}"),
                             }]
                         }
                     }
@@ -4378,12 +4375,7 @@ impl BootstrapCoordinator {
     fn estimate_peer_rtt(&self, peer_id: &PeerId) -> Option<Duration> {
         // Simple estimation based on peer record
         // In a real implementation, this would use historical RTT data
-        if let Some(_peer_record) = self.peer_registry.get(peer_id) {
-            // Return a reasonable default based on peer observation patterns
-            Some(Duration::from_millis(100))
-        } else {
-            None
-        }
+        self.peer_registry.get(peer_id).map(|_peer_record| Duration::from_millis(100))
     }
 
     /// Coordinate hole punching between two peers
@@ -4692,11 +4684,6 @@ impl BootstrapCoordinator {
     }
 }
 
-impl Default for BootstrapConfig {
-    fn default() -> Self {
-        Self { _unused: () }
-    }
-}
 
 /// Multi-destination packet transmission manager for NAT traversal
 ///

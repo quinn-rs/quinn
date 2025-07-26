@@ -1,0 +1,61 @@
+[Unit]
+Description=ant-quic QUIC server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ant-quic
+Group=ant-quic
+WorkingDirectory=/opt/ant-quic
+
+# Main executable
+ExecStart=/opt/ant-quic/bin/ant-quic \
+    --config /opt/ant-quic/config/server.toml \
+    --listen 0.0.0.0:9000 \
+    --force-coordinator \
+    --dashboard \
+    --log-level {{ ant_quic_log_level | default('info') }}
+
+# Restart configuration
+Restart=always
+RestartSec=10
+StartLimitBurst=3
+StartLimitInterval=60s
+
+# Output logging
+StandardOutput=append:/var/log/ant-quic/ant-quic.log
+StandardError=append:/var/log/ant-quic/ant-quic-error.log
+
+# Environment
+Environment="RUST_BACKTRACE=1"
+Environment="RUST_LOG=ant_quic={{ ant_quic_log_level | default('info') }}"
+
+# Security hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/ant-quic/data /var/log/ant-quic
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+RemoveIPC=true
+
+# Resource limits
+LimitNOFILE=65536
+LimitNPROC=4096
+
+# CPU and Memory limits (adjust as needed)
+CPUQuota=200%
+MemoryLimit=4G
+MemoryHigh=3G
+
+[Install]
+WantedBy=multi-user.target

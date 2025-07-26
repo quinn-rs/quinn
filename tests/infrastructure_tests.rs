@@ -218,10 +218,10 @@ async fn test_nat_endpoint_access() {
     match node.get_nat_stats().await {
         Ok(stats) => {
             info!("Retrieved NAT stats: {:?}", stats);
-            // Basic validation
             // Basic validation - just check the stats structure is populated
-            assert!(stats.active_sessions >= 0);
-            assert!(stats.total_bootstrap_nodes >= 0);
+            // Note: usize fields are always >= 0, just verify they exist
+            let _sessions = stats.active_sessions;
+            let _nodes = stats.total_bootstrap_nodes;
         }
         Err(e) => {
             // This is expected with stub implementation

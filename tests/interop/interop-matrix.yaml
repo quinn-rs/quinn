@@ -1,0 +1,266 @@
+# QUIC Interoperability Test Matrix
+# Defines test combinations for ant-quic compatibility testing
+
+version: "1.0"
+last_updated: "2025-07-25"
+
+# QUIC implementations to test against
+implementations:
+  # Production implementations
+  google:
+    name: "Google QUIC"
+    endpoints:
+      - "www.google.com:443"
+      - "quic.rocks:4433"
+    supported_versions: ["v1", "gQUIC"]
+    features:
+      - http3
+      - 0rtt
+      - connection_migration
+      - version_negotiation
+    
+  cloudflare:
+    name: "Cloudflare"
+    endpoints:
+      - "cloudflare.com:443"
+      - "cloudflare-quic.com:443"
+    supported_versions: ["v1"]
+    features:
+      - http3
+      - 0rtt
+      - connection_migration
+      - version_negotiation
+      - ecn
+    
+  facebook:
+    name: "Facebook/Meta"
+    endpoints:
+      - "facebook.com:443"
+    supported_versions: ["v1"]
+    features:
+      - http3
+      - 0rtt
+      - connection_migration
+    
+  nginx:
+    name: "NGINX"
+    endpoints:
+      - "quic.nginx.org:443"
+    supported_versions: ["v1"]
+    features:
+      - http3
+      - version_negotiation
+    
+  litespeed:
+    name: "LiteSpeed"
+    endpoints:
+      - "www.litespeedtech.com:443"
+      - "http3-test.litespeedtech.com:4433"
+      - "http3-test.litespeedtech.com:4434"  # with retry
+    supported_versions: ["v1", "draft-34", "draft-29", "draft-27"]
+    features:
+      - http3
+      - 0rtt
+      - connection_migration
+      - version_negotiation
+      - multipath
+    
+  picoquic:
+    name: "Picoquic"
+    endpoints:
+      - "test.privateoctopus.com:4433"
+      - "test.privateoctopus.com:4434"  # retry test
+    supported_versions: ["v1", "draft-latest"]
+    features:
+      - http3
+      - 0rtt
+      - connection_migration
+      - version_negotiation
+      - address_discovery
+      - nat_traversal
+    
+  pquic:
+    name: "PQUIC"
+    endpoints:
+      - "test.pquic.org:443"
+    supported_versions: ["v1"]
+    features:
+      - http3
+      - plugins
+      - version_negotiation
+
+# Test categories
+test_categories:
+  basic:
+    name: "Basic Connectivity"
+    tests:
+      - handshake
+      - data_transfer
+      - connection_close
+    required: true
+    
+  version_negotiation:
+    name: "Version Negotiation"
+    tests:
+      - compatible_versions
+      - incompatible_versions
+      - version_downgrade
+    required: true
+    
+  transport_features:
+    name: "Transport Features"
+    tests:
+      - stream_operations
+      - flow_control
+      - congestion_control
+      - loss_recovery
+    required: true
+    
+  extensions:
+    name: "Extensions"
+    tests:
+      - transport_parameters
+      - frame_types
+      - error_codes
+    required: false
+    
+  http3:
+    name: "HTTP/3 Compatibility"
+    tests:
+      - request_response
+      - server_push
+      - qpack
+    required: false
+    
+  advanced:
+    name: "Advanced Features"
+    tests:
+      - 0rtt
+      - connection_migration
+      - multipath
+      - ecn
+    required: false
+    
+  nat_traversal:
+    name: "NAT Traversal"
+    tests:
+      - address_discovery
+      - hole_punching
+      - keepalive
+    required: false
+
+# Expected outcomes matrix
+expected_outcomes:
+  # ant-quic as client
+  ant_quic_client:
+    google:
+      basic: pass
+      version_negotiation: pass
+      transport_features: pass
+      http3: pass
+      advanced:
+        0rtt: pass
+        connection_migration: warn  # May not work behind NAT
+    
+    cloudflare:
+      basic: pass
+      version_negotiation: pass
+      transport_features: pass
+      http3: pass
+      advanced:
+        0rtt: pass
+        connection_migration: pass
+        ecn: pass
+    
+    facebook:
+      basic: pass
+      version_negotiation: pass
+      transport_features: pass
+      http3: pass
+    
+    nginx:
+      basic: pass
+      version_negotiation: pass
+      transport_features: pass
+      http3: pass
+    
+    litespeed:
+      basic: pass
+      version_negotiation: pass
+      transport_features: pass
+      http3: pass
+      advanced:
+        0rtt: pass
+        connection_migration: pass
+    
+    picoquic:
+      basic: pass
+      version_negotiation: pass
+      transport_features: pass
+      extensions:
+        transport_parameters: pass
+        frame_types: pass
+      nat_traversal:
+        address_discovery: pass
+        hole_punching: experimental
+    
+    pquic:
+      basic: pass
+      version_negotiation: pass
+      transport_features: pass
+
+# Known issues and workarounds
+known_issues:
+  - implementation: google
+    issue: "gQUIC versions may require special handling"
+    workaround: "Use QUIC v1 only for best compatibility"
+    
+  - implementation: cloudflare
+    issue: "Strict transport parameter validation"
+    workaround: "Ensure all required parameters are sent"
+    
+  - implementation: litespeed
+    issue: "Multiple draft versions may cause confusion"
+    workaround: "Explicitly specify version in ALPN"
+    
+  - implementation: all
+    issue: "Connection migration may fail behind NAT"
+    workaround: "Test from public IP or use NAT traversal"
+
+# Performance benchmarks
+performance_targets:
+  handshake_time:
+    target: 100ms
+    max: 500ms
+    
+  throughput:
+    min: 10mbps
+    target: 100mbps
+    
+  latency:
+    target: 10ms
+    max: 50ms
+    
+  cpu_usage:
+    max: 50%
+    
+  memory_usage:
+    max: 100MB
+
+# CI/CD configuration
+ci_config:
+  schedule: "0 0 * * *"  # Daily
+  timeout: 3600  # 1 hour
+  parallel_jobs: 4
+  
+  notifications:
+    on_failure: true
+    on_regression: true
+    channels:
+      - email
+      - slack
+      
+  artifacts:
+    - compatibility_matrix.html
+    - detailed_report.json
+    - performance_graphs.png

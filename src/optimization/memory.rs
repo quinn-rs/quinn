@@ -334,14 +334,14 @@ impl Default for FrameBatchingConfig {
 impl ConnectionPool {
     /// Create a new connection pool
     pub fn new(config: ConnectionPoolConfig) -> Self {
-        let pool = Self {
+        
+
+        Self {
             active_connections: Arc::new(RwLock::new(HashMap::new())),
             config,
             stats: Arc::new(Mutex::new(ConnectionPoolStats::default())),
             cleanup_handle: None,
-        };
-
-        pool
+        }
     }
 
     /// Start the connection pool with cleanup task
@@ -440,18 +440,18 @@ impl ConnectionPool {
             .with_no_client_auth();
 
         let client_crypto = crate::crypto::rustls::QuicClientConfig::try_from(rustls_config)
-            .map_err(|e| format!("Failed to create QUIC client config: {}", e))?;
+            .map_err(|e| format!("Failed to create QUIC client config: {e}"))?;
 
         let client_config = crate::ClientConfig::new(Arc::new(client_crypto));
 
         let connecting = endpoint
             .connect_with(client_config, remote_address, "ant-quic")
-            .map_err(|e| format!("Failed to initiate connection: {}", e))?;
+            .map_err(|e| format!("Failed to initiate connection: {e}"))?;
 
         // Wait for the connection to be established
         let connection = connecting
             .await
-            .map_err(|e| format!("Connection failed: {}", e))?;
+            .map_err(|e| format!("Connection failed: {e}"))?;
 
         let connection_arc = Arc::new(connection);
 
@@ -587,14 +587,14 @@ impl ConnectionPool {
 impl CandidateCache {
     /// Create a new candidate cache
     pub fn new(config: CandidateCacheConfig) -> Self {
-        let cache = Self {
+        
+
+        Self {
             cache: Arc::new(RwLock::new(HashMap::new())),
             config,
             stats: Arc::new(Mutex::new(CandidateCacheStats::default())),
             cleanup_handle: None,
-        };
-
-        cache
+        }
     }
 
     /// Start the candidate cache with cleanup task

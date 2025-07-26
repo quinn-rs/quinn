@@ -1,0 +1,36 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: 'ant-quic-bootstrap'
+    static_configs:
+      - targets: ['bootstrap:9090']
+        labels:
+          node_type: 'bootstrap'
+          
+  - job_name: 'ant-quic-clients'
+    static_configs:
+      - targets: 
+        - 'client1:9090'
+        - 'client2:9090'
+        - 'client3:9090'
+        - 'client4:9090'
+        labels:
+          node_type: 'client'
+          
+  - job_name: 'nat-gateways'
+    static_configs:
+      - targets:
+        - 'nat1_gateway:9100'
+        - 'nat2_gateway:9100'
+        - 'nat3_gateway:9100'
+        - 'nat4_gateway:9100'
+        labels:
+          node_type: 'gateway'
+          
+  - job_name: 'docker'
+    static_configs:
+      - targets: ['localhost:9323']
+        labels:
+          node_type: 'docker'

@@ -767,7 +767,7 @@ mod tests {
         let config = TransportConfig::default();
         let now = Instant::now();
 
-        let mut path = PathData::new(remote, false, None, now, &config);
+        let path = PathData::new(remote, false, None, now, &config);
 
         // Should have address_info field
         assert!(path.address_info.observed_address.is_none());

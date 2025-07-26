@@ -362,14 +362,9 @@ impl TransportConfig {
     /// for a client endpoint. Use `nat_traversal_config()` for more control.
     pub fn enable_nat_traversal(&mut self, enabled: bool) -> &mut Self {
         if enabled {
-            use crate::transport_parameters::{NatTraversalConfig, NatTraversalRole};
-            self.nat_traversal_config = Some(NatTraversalConfig {
-                role: NatTraversalRole::Client,
-                max_candidates: VarInt::from_u32(10),
-                coordination_timeout: VarInt::from_u32(5000), // 5 seconds
-                max_concurrent_attempts: VarInt::from_u32(3),
-                peer_id: None, // Will be set later when peer ID is determined
-            });
+            use crate::transport_parameters::NatTraversalConfig;
+            // Default to client support (empty parameter)
+            self.nat_traversal_config = Some(NatTraversalConfig::ClientSupport);
         } else {
             self.nat_traversal_config = None;
         }

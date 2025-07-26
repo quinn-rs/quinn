@@ -8,23 +8,22 @@ use ant_quic::{
     },
     nat_traversal_api::{
         EndpointRole, NatTraversalConfig, NatTraversalEndpoint, NatTraversalError,
-        NatTraversalEvent, PeerId,
+        NatTraversalEvent,
     },
 };
 use std::{
-    collections::HashMap,
     net::{IpAddr, Ipv4Addr, SocketAddr},
     sync::{
         Arc,
-        atomic::{AtomicBool, AtomicU32, Ordering},
+        atomic::{AtomicU32, Ordering},
     },
     time::Duration,
 };
 use tokio::{
-    sync::{Mutex, RwLock, mpsc},
+    sync::mpsc,
     time::{sleep, timeout},
 };
-use tracing::{debug, info};
+use tracing::debug;
 
 /// Test helper to create a NAT traversal endpoint
 async fn create_endpoint(

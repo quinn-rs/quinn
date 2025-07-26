@@ -1,0 +1,286 @@
+version: '3.8'
+
+# Define custom networks for NAT simulation
+networks:
+  internet:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 203.0.113.0/24  # Public network (TEST-NET-3)
+          gateway: 203.0.113.1
+  
+  nat1_lan:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 192.168.1.0/24  # Private network 1
+          gateway: 192.168.1.1
+  
+  nat2_lan:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 192.168.2.0/24  # Private network 2
+          gateway: 192.168.2.1
+  
+  nat3_lan:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 10.0.0.0/24     # Private network 3
+          gateway: 10.0.0.1
+  
+  nat4_lan:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 10.1.0.0/24     # Private network 4 (CGNAT)
+          gateway: 10.1.0.1
+
+services:
+  # Bootstrap/Coordinator node on public internet
+  bootstrap:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.ant-quic
+    container_name: ant-quic-bootstrap
+    hostname: bootstrap
+    networks:
+      internet:
+        ipv4_address: 203.0.113.10
+    ports:
+      - "9000:9000/udp"  # QUIC port
+      - "8080:8080"      # Dashboard
+    environment:
+      - NODE_TYPE=bootstrap
+      - LISTEN_ADDR=0.0.0.0:9000
+      - LOG_LEVEL=debug
+      - ENABLE_DASHBOARD=true
+    command: >
+      ant-quic 
+      --listen 0.0.0.0:9000
+      --force-coordinator
+      --dashboard
+      --log-level debug
+    volumes:
+      - ./logs/bootstrap:/opt/ant-quic/logs
+    cap_add:
+      - NET_ADMIN  # For packet capture
+
+  # Full Cone NAT Gateway
+  nat1_gateway:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.nat-gateway
+    container_name: nat1-full-cone
+    hostname: nat1-gateway
+    networks:
+      internet:
+        ipv4_address: 203.0.113.20
+      nat1_lan:
+        ipv4_address: 192.168.1.1
+    environment:
+      - NAT_TYPE=full_cone
+      - WAN_INTERFACE=eth0
+      - LAN_INTERFACE=eth1
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    sysctls:
+      - net.ipv4.ip_forward=1
+
+  # Client behind Full Cone NAT
+  client1:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.ant-quic
+    container_name: ant-quic-client1
+    hostname: client1
+    networks:
+      nat1_lan:
+        ipv4_address: 192.168.1.10
+    environment:
+      - NODE_TYPE=client
+      - BOOTSTRAP_NODES=203.0.113.10:9000
+      - LOG_LEVEL=debug
+    command: >
+      ant-quic
+      --bootstrap 203.0.113.10:9000
+      --log-level debug
+    volumes:
+      - ./logs/client1:/opt/ant-quic/logs
+    depends_on:
+      - nat1_gateway
+      - bootstrap
+    cap_add:
+      - NET_ADMIN
+
+  # Symmetric NAT Gateway
+  nat2_gateway:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.nat-gateway
+    container_name: nat2-symmetric
+    hostname: nat2-gateway
+    networks:
+      internet:
+        ipv4_address: 203.0.113.30
+      nat2_lan:
+        ipv4_address: 192.168.2.1
+    environment:
+      - NAT_TYPE=symmetric
+      - WAN_INTERFACE=eth0
+      - LAN_INTERFACE=eth1
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    sysctls:
+      - net.ipv4.ip_forward=1
+
+  # Client behind Symmetric NAT
+  client2:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.ant-quic
+    container_name: ant-quic-client2
+    hostname: client2
+    networks:
+      nat2_lan:
+        ipv4_address: 192.168.2.10
+    environment:
+      - NODE_TYPE=client
+      - BOOTSTRAP_NODES=203.0.113.10:9000
+      - LOG_LEVEL=debug
+    command: >
+      ant-quic
+      --bootstrap 203.0.113.10:9000
+      --log-level debug
+    volumes:
+      - ./logs/client2:/opt/ant-quic/logs
+    depends_on:
+      - nat2_gateway
+      - bootstrap
+    cap_add:
+      - NET_ADMIN
+
+  # Port Restricted NAT Gateway
+  nat3_gateway:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.nat-gateway
+    container_name: nat3-port-restricted
+    hostname: nat3-gateway
+    networks:
+      internet:
+        ipv4_address: 203.0.113.40
+      nat3_lan:
+        ipv4_address: 10.0.0.1
+    environment:
+      - NAT_TYPE=port_restricted
+      - WAN_INTERFACE=eth0
+      - LAN_INTERFACE=eth1
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    sysctls:
+      - net.ipv4.ip_forward=1
+
+  # Client behind Port Restricted NAT
+  client3:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.ant-quic
+    container_name: ant-quic-client3
+    hostname: client3
+    networks:
+      nat3_lan:
+        ipv4_address: 10.0.0.10
+    environment:
+      - NODE_TYPE=client
+      - BOOTSTRAP_NODES=203.0.113.10:9000
+      - LOG_LEVEL=debug
+    command: >
+      ant-quic
+      --bootstrap 203.0.113.10:9000
+      --log-level debug
+    volumes:
+      - ./logs/client3:/opt/ant-quic/logs
+    depends_on:
+      - nat3_gateway
+      - bootstrap
+    cap_add:
+      - NET_ADMIN
+
+  # CGNAT (Carrier Grade NAT) Gateway - Double NAT scenario
+  nat4_gateway:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.nat-gateway
+    container_name: nat4-cgnat
+    hostname: nat4-gateway
+    networks:
+      internet:
+        ipv4_address: 203.0.113.50
+      nat4_lan:
+        ipv4_address: 10.1.0.1
+    environment:
+      - NAT_TYPE=cgnat
+      - WAN_INTERFACE=eth0
+      - LAN_INTERFACE=eth1
+      - CGNAT_POOL_START=100.64.0.1
+      - CGNAT_POOL_END=100.64.255.254
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    sysctls:
+      - net.ipv4.ip_forward=1
+
+  # Client behind CGNAT
+  client4:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.ant-quic
+    container_name: ant-quic-client4
+    hostname: client4
+    networks:
+      nat4_lan:
+        ipv4_address: 10.1.0.10
+    environment:
+      - NODE_TYPE=client
+      - BOOTSTRAP_NODES=203.0.113.10:9000
+      - LOG_LEVEL=debug
+    command: >
+      ant-quic
+      --bootstrap 203.0.113.10:9000
+      --log-level debug
+    volumes:
+      - ./logs/client4:/opt/ant-quic/logs
+    depends_on:
+      - nat4_gateway
+      - bootstrap
+    cap_add:
+      - NET_ADMIN
+
+  # Network condition simulator (optional)
+  network_sim:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.nat-gateway
+    container_name: network-simulator
+    hostname: network-sim
+    network_mode: host
+    environment:
+      - SIMULATION_MODE=true
+    volumes:
+      - ./configs/network-conditions.yaml:/opt/network-conditions.yaml
+      - /var/run/docker.sock:/var/run/docker.sock
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    command: >
+      bash -c "while true; do sleep 30; done"
+
+# Volumes for persistent data
+volumes:
+  logs:
+    driver: local

@@ -90,8 +90,7 @@ impl SimulatedExtensionContext {
 
         let state = negotiations.get_mut(conn_id).ok_or_else(|| {
             TlsExtensionError::InvalidExtensionData(format!(
-                "No negotiation state for connection {}",
-                conn_id
+                "No negotiation state for connection {conn_id}"
             ))
         })?;
 
@@ -115,8 +114,7 @@ impl SimulatedExtensionContext {
 
         let state = negotiations.get_mut(conn_id).ok_or_else(|| {
             TlsExtensionError::InvalidExtensionData(format!(
-                "No negotiation state for connection {}",
-                conn_id
+                "No negotiation state for connection {conn_id}"
             ))
         })?;
 
@@ -308,7 +306,7 @@ pub fn should_use_raw_public_key(negotiation_result: &NegotiationResult, is_clie
 
 /// Create a connection identifier for simulation purposes
 pub fn create_connection_id(local_addr: &str, remote_addr: &str) -> String {
-    format!("{}-{}", local_addr, remote_addr)
+    format!("{local_addr}-{remote_addr}")
 }
 
 /// Wrapper for TlsSession that integrates with TlsExtensionHooks

@@ -1,0 +1,49 @@
+{
+  "endpoints": [
+    {
+      "endpoint": "cloudflare-quic.com:443",
+      "endpoint_name": "Cloudflare",
+      "address": "cloudflare-quic.com:443",
+      "success": true,
+      "handshake_time_ms": 125,
+      "rtt_ms": 0,
+      "quic_version": 1,
+      "error": null,
+      "protocols_tested": [
+        "h3",
+        "h3-29"
+      ],
+      "successful_protocols": [
+        "h3",
+        "h3-29"
+      ],
+      "features_tested": [
+        "0-RTT",
+        "connection-migration",
+        "alt-svc"
+      ],
+      "timestamp": "2025-07-26T20:03:28.136569+00:00",
+      "metrics": {
+        "handshake_time_ms": 125,
+        "rtt_ms": 0,
+        "success_rate": 100.0
+      }
+    }
+  ],
+  "summary": {
+    "total_endpoints": 1,
+    "passed_endpoints": 1,
+    "failed_endpoints": 0,
+    "success_rate": 100.0,
+    "average_handshake_time": 125.0,
+    "protocols_seen": [
+      "h3-29",
+      "h3"
+    ]
+  },
+  "metadata": {
+    "ant_quic_version": "0.4.4",
+    "test_date": "2025-07-26T20:03:28.638738+00:00",
+    "test_duration_ms": 627
+  }
+}

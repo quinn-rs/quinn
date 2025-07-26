@@ -1,0 +1,164 @@
+name: Standard Tests
+
+on:
+  workflow_run:
+    workflows: ["Quick Checks"]
+    types:
+      - completed
+  workflow_dispatch:
+  workflow_call:
+
+env:
+  RUST_BACKTRACE: 1
+
+jobs:
+  test:
+    name: Standard Tests
+    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call' }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        rust: [stable]
+        include:
+          - os: ubuntu-latest
+            rust: beta
+          - os: ubuntu-latest
+            rust: nightly
+    runs-on: ${{ matrix.os }}
+    continue-on-error: ${{ matrix.rust != 'stable' }}
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.rust }}
+      
+      - uses: Swatinem/rust-cache@v2
+      
+      - name: Run standard tests
+        run: |
+          # Run categorized standard tests
+          cargo test --test standard --features "test-utils"
+        timeout-minutes: 5
+
+  integration-tests:
+    name: Integration Tests
+    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call' }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      
+      - uses: Swatinem/rust-cache@v2
+      
+      - name: Run integration tests
+        run: |
+          cargo test --test '*' --features "test-utils"
+        timeout-minutes: 5
+
+  doc-tests:
+    name: Documentation Tests
+    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      
+      - uses: Swatinem/rust-cache@v2
+      
+      - name: Run doc tests
+        run: cargo test --doc --all-features
+      
+      - name: Build documentation
+        run: cargo doc --no-deps --all-features
+        env:
+          RUSTDOCFLAGS: "-D warnings"
+
+  feature-combinations:
+    name: Feature Combination Tests
+    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      
+      - uses: Swatinem/rust-cache@v2
+      
+      - name: Test no-default-features
+        run: cargo test --no-default-features
+      
+      - name: Test all-features
+        run: cargo test --all-features
+      
+      - name: Test feature combinations
+        run: |
+          # Test common feature combinations
+          cargo test --no-default-features --features "rustls-ring"
+          cargo test --no-default-features --features "rustls-aws-lc-rs"
+
+  wasm-check:
+    name: WASM Compatibility
+    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      
+      - uses: Swatinem/rust-cache@v2
+      
+      - name: Check WASM compilation
+        run: |
+          cargo check --target wasm32-unknown-unknown -p ant-quic-proto
+          cargo check --target wasm32-unknown-unknown -p ant-quic --no-default-features
+
+  coverage:
+    name: Code Coverage
+    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      
+      - uses: Swatinem/rust-cache@v2
+      
+      - name: Install tarpaulin
+        run: cargo install cargo-tarpaulin
+      
+      - name: Generate coverage
+        run: |
+          cargo tarpaulin --out html --out lcov --output-dir coverage
+        timeout-minutes: 10
+      
+      - name: Upload coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage/
+
+  summary:
+    name: Standard Tests Summary
+    needs: [test, integration-tests, doc-tests, feature-combinations, wasm-check, coverage]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Summary
+        run: |
+          echo "### Standard Tests Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "All standard tests completed!" >> $GITHUB_STEP_SUMMARY

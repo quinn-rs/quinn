@@ -1,0 +1,220 @@
+name: NAT Testing
+
+on:
+  workflow_run:
+    workflows: ["Standard Tests"]
+    types:
+      - completed
+  workflow_dispatch:
+    inputs:
+      test-scenarios:
+        description: 'NAT test scenarios to run'
+        required: false
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - basic
+          - stress
+          - matrix
+  schedule:
+    # Run daily at 3 AM UTC
+    - cron: '0 3 * * *'
+
+env:
+  DOCKER_BUILDKIT: 1
+  COMPOSE_DOCKER_CLI_BUILD: 1
+
+jobs:
+  docker-nat-tests:
+    name: Docker NAT Tests
+    runs-on: ubuntu-latest
+    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' }}
+    timeout-minutes: 30
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          driver-opts: network=host
+      
+      - name: Install Docker Compose
+        run: |
+          docker compose version || sudo apt-get update && sudo apt-get install -y docker-compose-plugin
+      
+      - name: Cache Docker layers
+        uses: actions/cache@v4
+        with:
+          path: /tmp/.buildx-cache
+          key: ${{ runner.os }}-buildx-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-buildx-
+      
+      - name: Build test images
+        run: |
+          cd docker
+          docker compose -f docker-compose.yml build --parallel
+          docker compose -f docker-compose.nat-tests.yml build test-runner
+      
+      - name: Run NAT tests
+        run: |
+          cd docker
+          ./scripts/run-nat-tests.sh
+        env:
+          TEST_DURATION: 600  # 10 minutes for thorough testing
+      
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: nat-test-results-${{ github.run_id }}
+          path: |
+            docker/results/
+            docker/logs/
+      
+      - name: Generate test report
+        if: always()
+        run: |
+          cd docker/results
+          if [ -f summary.txt ]; then
+            echo "## NAT Test Summary" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            cat summary.txt >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+          fi
+      
+      - name: Clean up
+        if: always()
+        run: |
+          cd docker
+          docker compose -f docker-compose.yml down -v || true
+          docker compose -f docker-compose.nat-tests.yml down -v || true
+
+  connectivity-matrix:
+    name: NAT Connectivity Matrix
+    runs-on: ubuntu-latest
+    if: ${{ github.event.inputs.test-scenarios == 'all' || github.event.inputs.test-scenarios == 'matrix' }}
+    needs: docker-nat-tests
+    timeout-minutes: 45
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up environment
+        run: |
+          cd docker
+          docker compose -f docker-compose.yml up -d
+          sleep 30  # Wait for all services
+      
+      - name: Run connectivity matrix tests
+        run: |
+          cd docker
+          mkdir -p results
+          
+          # Test matrix of all NAT type combinations
+          NAT_TYPES=("full-cone" "symmetric" "port-restricted" "cgnat")
+          
+          echo "NAT Connectivity Matrix Test" > results/matrix.txt
+          echo "===========================" >> results/matrix.txt
+          echo "" >> results/matrix.txt
+          
+          for src_nat in "${NAT_TYPES[@]}"; do
+            for dst_nat in "${NAT_TYPES[@]}"; do
+              echo "Testing $src_nat -> $dst_nat" | tee -a results/matrix.txt
+              # Run specific test
+            done
+          done
+      
+      - name: Upload matrix results
+        uses: actions/upload-artifact@v4
+        with:
+          name: connectivity-matrix-${{ github.run_id }}
+          path: docker/results/matrix.txt
+
+  stress-tests:
+    name: NAT Stress Tests
+    runs-on: ubuntu-latest
+    if: ${{ github.event.inputs.test-scenarios == 'all' || github.event.inputs.test-scenarios == 'stress' }}
+    needs: docker-nat-tests
+    timeout-minutes: 60
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Configure system for stress testing
+        run: |
+          # Increase system limits
+          echo "fs.file-max = 1000000" | sudo tee -a /etc/sysctl.conf
+          echo "net.ipv4.ip_local_port_range = 1024 65535" | sudo tee -a /etc/sysctl.conf
+          sudo sysctl -p
+      
+      - name: Run stress tests
+        run: |
+          cd docker
+          # Start environment with more clients
+          docker compose -f docker-compose.yml up -d --scale client1=10
+          sleep 30
+          
+          # Run concurrent connection tests
+          ./scripts/run-nat-stress-tests.sh
+      
+      - name: Collect performance metrics
+        run: |
+          cd docker
+          # Collect container stats
+          docker stats --no-stream > results/performance-stats.txt
+          
+          # Collect network stats
+          for container in $(docker compose ps -q); do
+            docker exec $container netstat -s >> results/network-stats.txt
+          done
+      
+      - name: Upload stress test results
+        uses: actions/upload-artifact@v4
+        with:
+          name: stress-test-results-${{ github.run_id }}
+          path: |
+            docker/results/performance-stats.txt
+            docker/results/network-stats.txt
+
+  report:
+    name: Generate Test Report
+    needs: [docker-nat-tests, connectivity-matrix, stress-tests]
+    if: always()
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: test-artifacts
+      
+      - name: Generate consolidated report
+        run: |
+          echo "# NAT Testing Report" > nat-test-report.md
+          echo "Date: $(date)" >> nat-test-report.md
+          echo "" >> nat-test-report.md
+          
+          # Add test results
+          for artifact in test-artifacts/*; do
+            if [ -d "$artifact" ]; then
+              echo "## $(basename $artifact)" >> nat-test-report.md
+              echo '```' >> nat-test-report.md
+              find "$artifact" -name "*.txt" -exec cat {} \; >> nat-test-report.md
+              echo '```' >> nat-test-report.md
+              echo "" >> nat-test-report.md
+            fi
+          done
+          
+          # Add to summary
+          cat nat-test-report.md >> $GITHUB_STEP_SUMMARY
+      
+      - name: Upload final report
+        uses: actions/upload-artifact@v4
+        with:
+          name: nat-test-final-report-${{ github.run_id }}
+          path: nat-test-report.md

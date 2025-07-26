@@ -4,7 +4,7 @@ use super::event::TraceId;
 
 /// Trace context for a connection or operation
 #[derive(Debug, Clone)]
-pub struct TraceContext {
+pub(super) struct TraceContext {
     /// Unique trace identifier
     pub trace_id: TraceId,
     /// Start time of the trace
@@ -15,7 +15,7 @@ pub struct TraceContext {
 
 /// Flags controlling trace behavior
 #[derive(Debug, Clone, Copy, Default)]
-pub struct TraceFlags {
+pub(super) struct TraceFlags {
     /// Whether this trace is being sampled
     pub sampled: bool,
     /// Debug mode for verbose tracing
@@ -26,8 +26,8 @@ pub struct TraceFlags {
 
 impl TraceContext {
     /// Create a new trace context
-    pub fn new(trace_id: TraceId) -> Self {
-        TraceContext {
+    pub(super) fn new(trace_id: TraceId) -> Self {
+        Self {
             trace_id,
             start_time: crate::tracing::timestamp_now(),
             flags: TraceFlags::default(),
@@ -35,8 +35,8 @@ impl TraceContext {
     }
 
     /// Create a new trace context with flags
-    pub fn with_flags(trace_id: TraceId, flags: TraceFlags) -> Self {
-        TraceContext {
+    pub(super) fn with_flags(trace_id: TraceId, flags: TraceFlags) -> Self {
+        Self {
             trace_id,
             start_time: crate::tracing::timestamp_now(),
             flags,
@@ -44,29 +44,29 @@ impl TraceContext {
     }
 
     /// Get the trace ID
-    pub fn trace_id(&self) -> TraceId {
+    pub(super) fn trace_id(&self) -> TraceId {
         self.trace_id
     }
 
     /// Check if trace is being sampled
-    pub fn is_sampled(&self) -> bool {
+    pub(super) fn is_sampled(&self) -> bool {
         self.flags.sampled
     }
 
     /// Enable sampling for this trace
-    pub fn enable_sampling(&mut self) {
+    pub(super) fn enable_sampling(&mut self) {
         self.flags.sampled = true;
     }
 
     /// Get elapsed time since trace start
-    pub fn elapsed(&self) -> u64 {
+    pub(super) fn elapsed(&self) -> u64 {
         crate::tracing::timestamp_now() - self.start_time
     }
 }
 
 impl Default for TraceContext {
     fn default() -> Self {
-        TraceContext::new(TraceId::default())
+        Self::new(TraceId::default())
     }
 }
 

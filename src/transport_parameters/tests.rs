@@ -1,60 +1,53 @@
 // Comprehensive unit tests for QUIC Address Discovery transport parameters
 
 use super::*;
-use std::net::{Ipv4Addr, Ipv6Addr};
 
 #[test]
 fn test_address_discovery_config_default() {
     let config = AddressDiscoveryConfig::default();
-    assert!(config.enabled); // Default is enabled
-    assert_eq!(config.max_observation_rate, 10);
-    assert_eq!(config.observe_all_paths, false);
+    // Default is SendAndReceive
+    assert_eq!(config, AddressDiscoveryConfig::SendAndReceive);
 }
 
 #[test]
-fn test_address_discovery_config_new() {
-    // Test normal configuration
-    let config = AddressDiscoveryConfig::new(true, 20, false);
-    assert!(config.enabled);
-    assert_eq!(config.max_observation_rate, 20);
-    assert!(!config.observe_all_paths);
+fn test_address_discovery_config_variants() {
+    // Test all variants and their values
+    assert_eq!(AddressDiscoveryConfig::SendOnly.to_value(), VarInt::from_u32(0));
+    assert_eq!(AddressDiscoveryConfig::ReceiveOnly.to_value(), VarInt::from_u32(1));
+    assert_eq!(AddressDiscoveryConfig::SendAndReceive.to_value(), VarInt::from_u32(2));
     
-    // Test that rate is capped at 63 (6 bits)
-    let config = AddressDiscoveryConfig::new(true, 100, true);
-    assert!(config.enabled);
-    assert_eq!(config.max_observation_rate, 63); // Capped
-    assert!(config.observe_all_paths);
+    // Test from_value conversions
+    assert_eq!(AddressDiscoveryConfig::from_value(VarInt::from_u32(0)).unwrap(), AddressDiscoveryConfig::SendOnly);
+    assert_eq!(AddressDiscoveryConfig::from_value(VarInt::from_u32(1)).unwrap(), AddressDiscoveryConfig::ReceiveOnly);
+    assert_eq!(AddressDiscoveryConfig::from_value(VarInt::from_u32(2)).unwrap(), AddressDiscoveryConfig::SendAndReceive);
+    assert!(AddressDiscoveryConfig::from_value(VarInt::from_u32(3)).is_err());
 }
 
 #[test]
-fn test_bootstrap_configuration() {
-    let mut config = AddressDiscoveryConfig::default();
-    config.apply_bootstrap_settings();
-    
-    assert!(config.enabled);
-    assert_eq!(config.max_observation_rate, 63); // Maximum rate
-    assert!(config.observe_all_paths);
+fn test_address_discovery_roundtrip() {
+    // Test that all variants can be encoded and decoded correctly
+    for variant in [AddressDiscoveryConfig::SendOnly, AddressDiscoveryConfig::ReceiveOnly, AddressDiscoveryConfig::SendAndReceive] {
+        let value = variant.to_value();
+        let decoded = AddressDiscoveryConfig::from_value(value).unwrap();
+        assert_eq!(decoded, variant);
+    }
 }
 
 #[test]
-fn test_address_discovery_edge_cases() {
-    // Test edge case values
-    let test_cases = vec![
-        (0, 0),     // Zero gets stored as-is
-        (1, 1),     // Minimum positive value
-        (63, 63),   // Maximum 6-bit value
-        (64, 63),   // Above max gets capped
-        (255, 63),  // Way above max gets capped
+fn test_address_discovery_invalid_values() {
+    // Test that invalid values are rejected
+    let invalid_values = vec![
+        3,     // Invalid enum value
+        10,    // Random invalid value
+        100,   // Large invalid value
+        VarInt::MAX.into_inner(), // Maximum VarInt value
     ];
     
-    for (input, expected) in test_cases {
-        let config = AddressDiscoveryConfig::new(true, input, false);
-        assert_eq!(
-            config.max_observation_rate, 
-            expected,
-            "Rate {} should become {}", 
-            input, 
-            expected
+    for value in invalid_values {
+        let result = AddressDiscoveryConfig::from_value(VarInt::from_u64(value).unwrap());
+        assert!(
+            result.is_err(),
+            "Value {value} should be rejected"
         );
     }
 }
@@ -62,19 +55,11 @@ fn test_address_discovery_edge_cases() {
 #[test]
 fn test_transport_parameters_with_address_discovery() {
     let mut params = TransportParameters::default();
-    params.address_discovery = Some(AddressDiscoveryConfig {
-        enabled: true,
-        max_observation_rate: 15,
-        observe_all_paths: false,
-    });
+    params.address_discovery = Some(AddressDiscoveryConfig::SendAndReceive);
     
     // Test that the field is properly set
     assert!(params.address_discovery.is_some());
-    
-    let config = params.address_discovery.unwrap();
-    assert!(config.enabled);
-    assert_eq!(config.max_observation_rate, 15);
-    assert!(!config.observe_all_paths);
+    assert_eq!(params.address_discovery.unwrap(), AddressDiscoveryConfig::SendAndReceive);
 }
 
 #[test]

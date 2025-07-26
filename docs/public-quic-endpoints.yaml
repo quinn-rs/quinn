@@ -1,0 +1,226 @@
+# Public QUIC Endpoints Database
+# Used for external validation testing of ant-quic implementation
+# Last updated: 2025-07-26
+
+endpoints:
+  # Major Tech Companies
+  - name: Google Search
+    host: www.google.com
+    port: 443
+    protocols:
+      - h3
+      - h3-29
+    type: production
+    category: search
+    reliability: high
+    features:
+      - 0-RTT
+      - connection-migration
+      - multipath
+    notes: Primary Google search endpoint
+
+  - name: YouTube
+    host: www.youtube.com
+    port: 443
+    protocols:
+      - h3
+      - h3-29
+    type: production
+    category: video
+    reliability: high
+    features:
+      - 0-RTT
+      - connection-migration
+    notes: Video streaming with QUIC
+
+  - name: Cloudflare
+    host: cloudflare-quic.com
+    port: 443
+    protocols:
+      - h3
+      - h3-29
+    type: production
+    category: cdn
+    reliability: high
+    features:
+      - 0-RTT
+      - connection-migration
+      - alt-svc
+    notes: Cloudflare's QUIC test endpoint
+
+  - name: Facebook
+    host: www.facebook.com
+    port: 443
+    protocols:
+      - h3
+      - h3-29
+    type: production
+    category: social
+    reliability: high
+    features:
+      - 0-RTT
+      - multipath
+    notes: Meta's QUIC implementation
+
+  # CDN and Infrastructure
+  - name: Akamai
+    host: http3-test.akamai.com
+    port: 443
+    protocols:
+      - h3
+    type: test
+    category: cdn
+    reliability: high
+    features:
+      - 0-RTT
+      - alt-svc
+    notes: Akamai's HTTP/3 test endpoint
+
+  - name: Fastly
+    host: www.fastly.com
+    port: 443
+    protocols:
+      - h3
+      - h3-29
+    type: production
+    category: cdn
+    reliability: medium
+    features:
+      - 0-RTT
+    notes: Fastly CDN with QUIC support
+
+  # Test and Development Endpoints
+  - name: QUIC Interop Runner
+    host: quic.aiortc.org
+    port: 443
+    protocols:
+      - h3
+      - h3-29
+    type: test
+    category: interop
+    reliability: high
+    features:
+      - 0-RTT
+      - connection-migration
+      - key-update
+    notes: QUIC interop testing endpoint
+
+  - name: LiteSpeed Test
+    host: http3-test.litespeedtech.com
+    port: 443
+    protocols:
+      - h3
+      - h3-29
+    type: test
+    category: test
+    reliability: high
+    features:
+      - 0-RTT
+      - server-push
+    notes: LiteSpeed QUIC test server
+
+  - name: NGINX QUIC
+    host: quic.nginx.org
+    port: 443
+    protocols:
+      - h3
+    type: test
+    category: test
+    reliability: medium
+    features:
+      - 0-RTT
+    notes: NGINX QUIC experimental endpoint
+
+  # Academic and Research
+  - name: Picoquic Test
+    host: test.privateoctopus.com
+    port: 4433
+    protocols:
+      - h3
+      - hq-interop
+    type: test
+    category: research
+    reliability: medium
+    features:
+      - 0-RTT
+      - multipath
+      - datagram
+    notes: Picoquic implementation test server
+
+  # Regional Endpoints
+  - name: Alibaba Cloud
+    host: www.aliyun.com
+    port: 443
+    protocols:
+      - h3
+    type: production
+    category: cloud
+    reliability: high
+    region: asia
+    features:
+      - 0-RTT
+    notes: Alibaba Cloud services
+
+  - name: Baidu
+    host: www.baidu.com
+    port: 443
+    protocols:
+      - h3
+    type: production
+    category: search
+    reliability: medium
+    region: asia
+    features:
+      - 0-RTT
+    notes: Chinese search engine with QUIC
+
+# Validation Configuration
+validation:
+  timeout_seconds: 10
+  retry_attempts: 3
+  retry_delay_ms: 1000
+  parallel_connections: 5
+  
+  # Test categories
+  tests:
+    - name: basic_connectivity
+      description: Test basic QUIC connection establishment
+      required: true
+      
+    - name: protocol_negotiation
+      description: Verify ALPN protocol negotiation
+      required: true
+      
+    - name: zero_rtt
+      description: Test 0-RTT resumption
+      required: false
+      
+    - name: connection_migration
+      description: Test connection migration
+      required: false
+      
+    - name: performance_metrics
+      description: Collect RTT and throughput metrics
+      required: false
+
+# Reporting Configuration
+reporting:
+  formats:
+    - markdown
+    - json
+    - html
+  
+  metrics:
+    - connection_success_rate
+    - average_handshake_time
+    - protocol_support
+    - feature_availability
+    - regional_performance
+  
+  badges:
+    - name: QUIC Compatibility
+      threshold: 80  # % of endpoints successfully connected
+    - name: Protocol Support
+      protocols: [h3, h3-29]
+    - name: Performance Grade
+      based_on: average_handshake_time

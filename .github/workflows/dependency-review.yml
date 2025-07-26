@@ -1,0 +1,120 @@
+name: Dependency Review
+
+on:
+  pull_request:
+    branches: [ master, main ]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  dependency-review:
+    name: Dependency Review
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Dependency Review
+        uses: actions/dependency-review-action@v4
+        with:
+          # Fail on any vulnerable dependencies
+          fail-on-severity: low
+          # Warn about license issues
+          license-check: true
+          # Check for vulnerabilities in both runtime and dev dependencies
+          vulnerability-check: true
+          # Configuration file for allowed licenses
+          config-file: .github/dependency-review-config.yml
+      
+      - name: Check for deprecated dependencies
+        run: |
+          echo "Checking for deprecated crates..."
+          cargo install cargo-outdated --locked || true
+          cargo outdated --exit-code 1 || echo "::warning::Some dependencies are outdated"
+
+  # Additional supply chain checks
+  supply-chain-check:
+    name: Supply Chain Security Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      
+      - name: Check for typosquatting
+        run: |
+          # Simple check for common typosquatting patterns
+          echo "Checking for potential typosquatting in dependencies..."
+          
+          # List of known good crates we depend on
+          KNOWN_CRATES="tokio bytes futures rustls ring quinn"
+          
+          # Check for similar names
+          for crate in $KNOWN_CRATES; do
+            # Check for common typos
+            grep -E "${crate}s|${crate}2|${crate}-rs|${crate}_rs" Cargo.toml | grep -v "^#" | grep -v "${crate}" && \
+              echo "::warning::Potential typosquatting detected for $crate" || true
+          done
+      
+      - name: Verify lockfile
+        run: |
+          # Ensure Cargo.lock is up to date
+          cargo update --locked --dry-run
+      
+      - name: Check for suspicious patterns
+        run: |
+          # Check for suspicious dependency patterns
+          echo "Checking for suspicious patterns..."
+          
+          # Check for git dependencies (should be minimal)
+          git_deps=$(grep -c "git = " Cargo.toml || echo 0)
+          if [ "$git_deps" -gt 2 ]; then
+            echo "::warning::High number of git dependencies detected: $git_deps"
+          fi
+          
+          # Check for path dependencies (should be none in production)
+          path_deps=$(grep -c "path = " Cargo.toml || echo 0)
+          if [ "$path_deps" -gt 0 ]; then
+            echo "::error::Path dependencies detected in Cargo.toml"
+            exit 1
+          fi
+
+  # License compatibility check
+  license-check:
+    name: License Compatibility
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      
+      - name: Install cargo-license
+        run: cargo install cargo-license --locked
+      
+      - name: Check licenses
+        run: |
+          # Generate license report
+          cargo license --json > licenses.json
+          
+          # Check for copyleft licenses
+          if grep -E '"license":\s*"GPL|AGPL|LGPL"' licenses.json; then
+            echo "::error::Copyleft licenses detected!"
+            exit 1
+          fi
+          
+          # Generate human-readable report
+          echo "## License Report" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Crate | Version | License |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|---------|---------|" >> $GITHUB_STEP_SUMMARY
+          cargo license --tsv | tail -n +2 | awk -F'\t' '{print "| " $1 " | " $2 " | " $3 " |"}' >> $GITHUB_STEP_SUMMARY
+      
+      - name: Upload license report
+        uses: actions/upload-artifact@v4
+        with:
+          name: license-report
+          path: licenses.json

@@ -143,9 +143,9 @@ impl CertificateManager {
         let expires_at = created_at + self.config.validity_duration;
 
         Ok(CertificateBundle {
-            cert_chain: vec![CertificateDer::from(cert_der.clone())],
+            cert_chain: vec![cert_der.clone()],
             private_key: PrivateKeyDer::try_from(private_key_der).map_err(|e| {
-                CertificateError::PrivateKeyError(format!("Key conversion failed: {:?}", e))
+                CertificateError::PrivateKeyError(format!("Key conversion failed: {e:?}"))
             })?,
             created_at,
             expires_at,
@@ -161,14 +161,14 @@ impl CertificateManager {
 
         // Load certificate file
         let cert_file = std::fs::File::open(cert_path).map_err(|e| {
-            CertificateError::LoadingFailed(format!("Failed to open cert file: {}", e))
+            CertificateError::LoadingFailed(format!("Failed to open cert file: {e}"))
         })?;
 
         let mut cert_reader = std::io::BufReader::new(cert_file);
         let cert_chain: Vec<CertificateDer<'static>> = certs(&mut cert_reader)
             .collect::<Result<Vec<_>, _>>()
             .map_err(|e| {
-                CertificateError::ParsingFailed(format!("Failed to parse certificates: {}", e))
+                CertificateError::ParsingFailed(format!("Failed to parse certificates: {e}"))
             })?;
 
         if cert_chain.is_empty() {
@@ -179,13 +179,13 @@ impl CertificateManager {
 
         // Load private key file
         let key_file = std::fs::File::open(key_path).map_err(|e| {
-            CertificateError::LoadingFailed(format!("Failed to open key file: {}", e))
+            CertificateError::LoadingFailed(format!("Failed to open key file: {e}"))
         })?;
 
         let mut key_reader = std::io::BufReader::new(key_file);
         let private_key = private_key(&mut key_reader)
             .map_err(|e| {
-                CertificateError::ParsingFailed(format!("Failed to parse private key: {}", e))
+                CertificateError::ParsingFailed(format!("Failed to parse private key: {e}"))
             })?
             .ok_or_else(|| {
                 CertificateError::LoadingFailed("No private key found in file".to_string())
@@ -252,7 +252,7 @@ impl CertificateManager {
             let mut root_store = rustls::RootCertStore::empty();
             for ca_cert in &self.ca_certs {
                 root_store.add(ca_cert.clone()).map_err(|e| {
-                    CertificateError::ValidationFailed(format!("Failed to add CA cert: {}", e))
+                    CertificateError::ValidationFailed(format!("Failed to add CA cert: {e}"))
                 })?;
             }
 
@@ -271,14 +271,14 @@ impl CertificateManager {
         use rustls_pemfile::certs;
 
         let ca_file = std::fs::File::open(ca_path).map_err(|e| {
-            CertificateError::LoadingFailed(format!("Failed to open CA file: {}", e))
+            CertificateError::LoadingFailed(format!("Failed to open CA file: {e}"))
         })?;
 
         let mut ca_reader = std::io::BufReader::new(ca_file);
         let ca_certs: Vec<CertificateDer<'static>> = certs(&mut ca_reader)
             .collect::<Result<Vec<_>, _>>()
             .map_err(|e| {
-                CertificateError::ParsingFailed(format!("Failed to parse CA certificates: {}", e))
+                CertificateError::ParsingFailed(format!("Failed to parse CA certificates: {e}"))
             })?;
 
         if ca_certs.is_empty() {

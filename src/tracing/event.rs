@@ -5,7 +5,7 @@
 use std::net::SocketAddr;
 
 /// Helper function to get current timestamp in microseconds
-pub fn timestamp_now() -> u64 {
+pub(super) fn timestamp_now() -> u64 {
     use std::time::{SystemTime, UNIX_EPOCH};
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -14,7 +14,7 @@ pub fn timestamp_now() -> u64 {
 }
 
 /// Convert SocketAddr to bytes for storage in events
-pub fn socket_addr_to_bytes(addr: SocketAddr) -> ([u8; 18], u8) {
+pub(super) fn socket_addr_to_bytes(addr: SocketAddr) -> ([u8; 18], u8) {
     let mut bytes = [0u8; 18];
     match addr {
         SocketAddr::V4(v4) => {
@@ -33,33 +33,29 @@ pub fn socket_addr_to_bytes(addr: SocketAddr) -> ([u8; 18], u8) {
 /// 128-bit trace identifier for correlating events
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(C)]
-pub struct TraceId(pub [u8; 16]);
+#[derive(Default)]
+pub(super) struct TraceId(pub [u8; 16]);
 
 impl TraceId {
     /// Create a new random trace ID
-    pub fn new() -> Self {
+    pub(super) fn new() -> Self {
         let mut id = [0u8; 16];
         use rand::RngCore;
         rand::thread_rng().fill_bytes(&mut id);
-        TraceId(id)
+        Self(id)
     }
 
     /// Create a trace ID from bytes
-    pub fn from_bytes(bytes: [u8; 16]) -> Self {
-        TraceId(bytes)
+    pub(super) fn from_bytes(bytes: [u8; 16]) -> Self {
+        Self(bytes)
     }
 }
 
-impl Default for TraceId {
-    fn default() -> Self {
-        TraceId([0u8; 16])
-    }
-}
 
 /// Fixed-size event structure (128 bytes)
 #[derive(Debug, Clone)]
 #[repr(C)]
-pub struct Event {
+pub(super) struct Event {
     /// Timestamp in microseconds since UNIX epoch (8 bytes)
     pub timestamp: u64,
     /// Trace correlation ID (16 bytes)
@@ -77,7 +73,7 @@ pub struct Event {
 /// Event data variants (must fit in 64 bytes)
 #[derive(Debug, Clone)]
 #[repr(C)]
-pub enum EventData {
+pub(super) enum EventData {
     // QUIC protocol events
     ConnInit {
         /// Encoded socket address (4 bytes for IPv4 + 2 port, 16 bytes for IPv6 + 2 port)
@@ -198,14 +194,14 @@ mod size_debug {
         );
 
         let expected = 8 + 16 + 4 + 4 + 32; // Without EventData
-        println!("\nExpected size without EventData: {} bytes", expected);
+        println!("\nExpected size without EventData: {expected} bytes");
         println!("Space for EventData: {} bytes", 128 - expected);
     }
 }
 
 impl Default for Event {
     fn default() -> Self {
-        Event {
+        Self {
             timestamp: 0,
             trace_id: TraceId::default(),
             sequence: 0,
@@ -223,15 +219,15 @@ impl Default for Event {
 
 // Helper to create Event with proper defaults
 impl Event {
-    pub fn new() -> Self {
+    pub(super) fn new() -> Self {
         Self::default()
     }
 }
 
 impl Event {
     /// Create a new event with the given trace ID
-    pub fn with_trace_id(trace_id: TraceId) -> Self {
-        Event {
+    pub(super) fn with_trace_id(trace_id: TraceId) -> Self {
+        Self {
             trace_id,
             timestamp: crate::tracing::timestamp_now(),
             ..Default::default()
@@ -239,9 +235,9 @@ impl Event {
     }
 
     /// Create a connection init event
-    pub fn conn_init(endpoint: SocketAddr, trace_id: TraceId) -> Self {
+    pub(super) fn conn_init(endpoint: SocketAddr, trace_id: TraceId) -> Self {
         let (endpoint_bytes, addr_type) = socket_addr_to_bytes(endpoint);
-        Event {
+        Self {
             timestamp: crate::tracing::timestamp_now(),
             trace_id,
             event_data: EventData::ConnInit {
@@ -254,8 +250,8 @@ impl Event {
     }
 
     /// Create a packet sent event
-    pub fn packet_sent(size: u32, packet_num: u64, trace_id: TraceId) -> Self {
-        Event {
+    pub(super) fn packet_sent(size: u32, packet_num: u64, trace_id: TraceId) -> Self {
+        Self {
             timestamp: crate::tracing::timestamp_now(),
             trace_id,
             event_data: EventData::PacketSent {
@@ -268,8 +264,8 @@ impl Event {
     }
 
     /// Create a packet received event
-    pub fn packet_received(size: u32, packet_num: u64, trace_id: TraceId) -> Self {
-        Event {
+    pub(super) fn packet_received(size: u32, packet_num: u64, trace_id: TraceId) -> Self {
+        Self {
             timestamp: crate::tracing::timestamp_now(),
             trace_id,
             event_data: EventData::PacketReceived {

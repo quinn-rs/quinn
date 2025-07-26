@@ -1,0 +1,214 @@
+---
+# Ansible playbook for ant-quic deployment on Digital Ocean
+
+- name: Deploy ant-quic QUIC server
+  hosts: ant_quic_servers
+  become: yes
+  vars:
+    ant_quic_version: "{{ lookup('env', 'ANT_QUIC_VERSION') | default('latest') }}"
+    domain_name: "{{ lookup('env', 'DOMAIN_NAME') | default('ant-quic-test.example.com') }}"
+    email: "{{ lookup('env', 'CERTBOT_EMAIL') | default('admin@example.com') }}"
+    
+  tasks:
+    - name: Ensure ant-quic user exists
+      user:
+        name: ant-quic
+        shell: /bin/bash
+        home: /home/ant-quic
+        create_home: yes
+        groups: docker
+        
+    - name: Install required packages
+      apt:
+        name:
+          - build-essential
+          - curl
+          - git
+          - nginx
+          - certbot
+          - python3-certbot-nginx
+          - prometheus-node-exporter
+        state: present
+        update_cache: yes
+        
+    - name: Create ant-quic directories
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: ant-quic
+        group: ant-quic
+        mode: '0755'
+      loop:
+        - /opt/ant-quic/bin
+        - /opt/ant-quic/config
+        - /opt/ant-quic/certs
+        - /opt/ant-quic/data
+        - /var/log/ant-quic
+        
+    - name: Download ant-quic binary
+      get_url:
+        url: "https://github.com/dirvine/ant-quic/releases/download/{{ ant_quic_version }}/ant-quic-linux-x86_64"
+        dest: /opt/ant-quic/bin/ant-quic
+        owner: ant-quic
+        group: ant-quic
+        mode: '0755'
+      when: ant_quic_version != "latest"
+      
+    - name: Build ant-quic from source
+      block:
+        - name: Clone repository
+          git:
+            repo: https://github.com/dirvine/ant-quic.git
+            dest: /tmp/ant-quic
+            version: master
+            
+        - name: Build ant-quic
+          shell: |
+            cd /tmp/ant-quic
+            cargo build --release --bin ant-quic
+            cp target/release/ant-quic /opt/ant-quic/bin/
+            chown ant-quic:ant-quic /opt/ant-quic/bin/ant-quic
+            chmod +x /opt/ant-quic/bin/ant-quic
+          become_user: ant-quic
+      when: ant_quic_version == "latest"
+      
+    - name: Generate self-signed certificate (temporary)
+      command: |
+        openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+        -keyout /opt/ant-quic/certs/key.pem \
+        -out /opt/ant-quic/certs/cert.pem \
+        -subj "/C=US/ST=State/L=City/O=Organization/CN={{ domain_name }}"
+      args:
+        creates: /opt/ant-quic/certs/cert.pem
+        
+    - name: Set certificate permissions
+      file:
+        path: /opt/ant-quic/certs
+        owner: ant-quic
+        group: ant-quic
+        mode: '0600'
+        recurse: yes
+        
+    - name: Configure ant-quic
+      template:
+        src: server.toml.j2
+        dest: /opt/ant-quic/config/server.toml
+        owner: ant-quic
+        group: ant-quic
+        mode: '0644'
+        
+    - name: Configure systemd service
+      template:
+        src: ant-quic.service.j2
+        dest: /etc/systemd/system/ant-quic.service
+        
+    - name: Configure Nginx
+      template:
+        src: nginx.conf.j2
+        dest: /etc/nginx/sites-available/ant-quic
+        
+    - name: Enable Nginx site
+      file:
+        src: /etc/nginx/sites-available/ant-quic
+        dest: /etc/nginx/sites-enabled/ant-quic
+        state: link
+        
+    - name: Remove default Nginx site
+      file:
+        path: /etc/nginx/sites-enabled/default
+        state: absent
+        
+    - name: Obtain Let's Encrypt certificate
+      command: |
+        certbot --nginx --non-interactive --agree-tos \
+        --email {{ email }} \
+        -d {{ domain_name }} \
+        --redirect --hsts --staple-ocsp
+      when: domain_name != "ant-quic-test.example.com"
+      
+    - name: Setup monitoring
+      template:
+        src: ant-quic-monitor.sh.j2
+        dest: /opt/ant-quic/bin/monitor.sh
+        owner: ant-quic
+        group: ant-quic
+        mode: '0755'
+        
+    - name: Configure monitoring service
+      template:
+        src: ant-quic-monitor.service.j2
+        dest: /etc/systemd/system/ant-quic-monitor.service
+        
+    - name: Setup log rotation
+      template:
+        src: logrotate.j2
+        dest: /etc/logrotate.d/ant-quic
+        
+    - name: Configure firewall
+      ufw:
+        rule: allow
+        port: "{{ item.port }}"
+        proto: "{{ item.proto }}"
+      loop:
+        - { port: 22, proto: tcp }
+        - { port: 80, proto: tcp }
+        - { port: 443, proto: tcp }
+        - { port: 9000, proto: udp }
+        - { port: 9001, proto: udp }
+        - { port: 9002, proto: udp }
+        
+    - name: Enable UFW
+      ufw:
+        state: enabled
+        policy: deny
+        direction: incoming
+        
+    - name: Start and enable services
+      systemd:
+        name: "{{ item }}"
+        state: started
+        enabled: yes
+        daemon_reload: yes
+      loop:
+        - ant-quic
+        - ant-quic-monitor
+        - prometheus-node-exporter
+        - nginx
+        
+    - name: Check service status
+      command: systemctl status ant-quic
+      register: service_status
+      changed_when: false
+      
+    - name: Display service status
+      debug:
+        var: service_status.stdout_lines
+        
+    - name: Test QUIC connectivity
+      shell: |
+        timeout 5 nc -u -z localhost 9000 && echo "QUIC port is open" || echo "QUIC port check failed"
+      register: quic_test
+      changed_when: false
+      
+    - name: Display QUIC test result
+      debug:
+        var: quic_test.stdout
+        
+    - name: Create external tester documentation
+      template:
+        src: EXTERNAL_TESTING.md.j2
+        dest: /opt/ant-quic/EXTERNAL_TESTING.md
+        owner: ant-quic
+        group: ant-quic
+        mode: '0644'
+        
+  handlers:
+    - name: restart ant-quic
+      systemd:
+        name: ant-quic
+        state: restarted
+        
+    - name: restart nginx
+      systemd:
+        name: nginx
+        state: restarted

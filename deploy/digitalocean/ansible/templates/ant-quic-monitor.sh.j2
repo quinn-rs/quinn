@@ -1,0 +1,112 @@
+#!/bin/bash
+# Monitoring script for ant-quic
+# Exports metrics to Prometheus node exporter
+
+TEXTFILE_DIR="/var/lib/prometheus/node-exporter"
+METRIC_FILE="${TEXTFILE_DIR}/ant-quic.prom"
+
+# Ensure directory exists
+mkdir -p "${TEXTFILE_DIR}"
+
+while true; do
+    # Start with empty metrics
+    > "${METRIC_FILE}.tmp"
+    
+    # Service status
+    if systemctl is-active --quiet ant-quic; then
+        echo "ant_quic_up 1" >> "${METRIC_FILE}.tmp"
+        
+        # Get process metrics
+        PID=$(systemctl show -p MainPID --value ant-quic)
+        if [ "$PID" != "0" ]; then
+            # CPU usage
+            CPU=$(ps -p "$PID" -o %cpu= | tr -d ' ')
+            echo "ant_quic_cpu_percent ${CPU:-0}" >> "${METRIC_FILE}.tmp"
+            
+            # Memory usage (RSS in KB)
+            MEM=$(ps -p "$PID" -o rss= | tr -d ' ')
+            echo "ant_quic_memory_bytes $((${MEM:-0} * 1024))" >> "${METRIC_FILE}.tmp"
+            
+            # Thread count
+            THREADS=$(ps -p "$PID" -o nlwp= | tr -d ' ')
+            echo "ant_quic_threads ${THREADS:-0}" >> "${METRIC_FILE}.tmp"
+        fi
+    else
+        echo "ant_quic_up 0" >> "${METRIC_FILE}.tmp"
+    fi
+    
+    # Network statistics
+    # UDP connections on port 9000
+    CONNECTIONS=$(ss -u -a -n | grep -c ":9000")
+    echo "ant_quic_connections_total ${CONNECTIONS}" >> "${METRIC_FILE}.tmp"
+    
+    # Active QUIC connections (estimate based on UDP state)
+    ACTIVE=$(ss -u -a -n state connected | grep -c ":9000")
+    echo "ant_quic_connections_active ${ACTIVE}" >> "${METRIC_FILE}.tmp"
+    
+    # Port statistics
+    if [ -f /proc/net/udp ]; then
+        # Count packets (rough estimate)
+        RECV_Q=$(awk '$2 ~ /:2328/ {sum+=$5} END {print sum}' /proc/net/udp)
+        SEND_Q=$(awk '$2 ~ /:2328/ {sum+=$6} END {print sum}' /proc/net/udp)
+        echo "ant_quic_recv_queue_bytes ${RECV_Q:-0}" >> "${METRIC_FILE}.tmp"
+        echo "ant_quic_send_queue_bytes ${SEND_Q:-0}" >> "${METRIC_FILE}.tmp"
+    fi
+    
+    # Log file metrics
+    if [ -f /var/log/ant-quic/ant-quic.log ]; then
+        LOG_SIZE=$(stat -c%s /var/log/ant-quic/ant-quic.log)
+        echo "ant_quic_log_size_bytes ${LOG_SIZE}" >> "${METRIC_FILE}.tmp"
+        
+        # Count errors in last 1000 lines
+        ERRORS=$(tail -n 1000 /var/log/ant-quic/ant-quic.log | grep -ci "error" || true)
+        echo "ant_quic_log_errors_recent ${ERRORS}" >> "${METRIC_FILE}.tmp"
+    fi
+    
+    # Disk usage for data directory
+    if [ -d /opt/ant-quic/data ]; then
+        DISK_USAGE=$(du -sb /opt/ant-quic/data | cut -f1)
+        echo "ant_quic_data_size_bytes ${DISK_USAGE}" >> "${METRIC_FILE}.tmp"
+    fi
+    
+    # Certificate expiry check
+    if [ -f /opt/ant-quic/certs/cert.pem ]; then
+        CERT_EXPIRY=$(openssl x509 -enddate -noout -in /opt/ant-quic/certs/cert.pem | cut -d= -f2)
+        CERT_EXPIRY_EPOCH=$(date -d "${CERT_EXPIRY}" +%s)
+        CURRENT_EPOCH=$(date +%s)
+        CERT_DAYS_LEFT=$(( (CERT_EXPIRY_EPOCH - CURRENT_EPOCH) / 86400 ))
+        echo "ant_quic_cert_expiry_days ${CERT_DAYS_LEFT}" >> "${METRIC_FILE}.tmp"
+    fi
+    
+    # API endpoint health check
+    if curl -sf -o /dev/null http://localhost:8080/api/health; then
+        echo "ant_quic_api_up 1" >> "${METRIC_FILE}.tmp"
+    else
+        echo "ant_quic_api_up 0" >> "${METRIC_FILE}.tmp"
+    fi
+    
+    # NAT traversal statistics (if available from API)
+    NAT_STATS=$(curl -sf http://localhost:8080/api/stats/nat 2>/dev/null || echo "{}")
+    if [ -n "$NAT_STATS" ] && [ "$NAT_STATS" != "{}" ]; then
+        # Parse JSON stats (requires jq)
+        if command -v jq >/dev/null 2>&1; then
+            echo "$NAT_STATS" | jq -r '
+                "ant_quic_nat_success_rate \(.success_rate // 0)",
+                "ant_quic_nat_attempts_total \(.total_attempts // 0)",
+                "ant_quic_nat_successes_total \(.successful_attempts // 0)",
+                "ant_quic_nat_relay_used_total \(.relay_connections // 0)"
+            ' >> "${METRIC_FILE}.tmp" 2>/dev/null || true
+        fi
+    fi
+    
+    # Add timestamp
+    echo "# HELP ant_quic_last_update_timestamp_seconds Unix timestamp of last update" >> "${METRIC_FILE}.tmp"
+    echo "# TYPE ant_quic_last_update_timestamp_seconds gauge" >> "${METRIC_FILE}.tmp"
+    echo "ant_quic_last_update_timestamp_seconds $(date +%s)" >> "${METRIC_FILE}.tmp"
+    
+    # Atomic move to avoid partial reads
+    mv "${METRIC_FILE}.tmp" "${METRIC_FILE}"
+    
+    # Sleep for 30 seconds
+    sleep 30
+done

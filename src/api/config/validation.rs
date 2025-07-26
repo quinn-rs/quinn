@@ -43,7 +43,7 @@ pub(crate) fn validate_bootstrap_nodes(
             )));
         }
 
-        validate_socket_addr(&node.address, &format!("bootstrap node {}", i))?;
+        validate_socket_addr(&node.address, &format!("bootstrap node {i}"))?;
     }
 
     Ok(())
@@ -63,20 +63,17 @@ pub(crate) fn validate_socket_addr(addr: &SocketAddr, context: &str) -> Result<(
             if ipv4.is_unspecified() && context != "listen address" {
                 // Allow unspecified for listen address (0.0.0.0)
                 return Err(ConfigError::InvalidAddress(format!(
-                    "{}: IPv4 address cannot be unspecified (0.0.0.0)",
-                    context
+                    "{context}: IPv4 address cannot be unspecified (0.0.0.0)"
                 )));
             }
             if ipv4.is_broadcast() {
                 return Err(ConfigError::InvalidAddress(format!(
-                    "{}: IPv4 address cannot be broadcast (255.255.255.255)",
-                    context
+                    "{context}: IPv4 address cannot be broadcast (255.255.255.255)"
                 )));
             }
             if ipv4.is_multicast() {
                 return Err(ConfigError::InvalidAddress(format!(
-                    "{}: IPv4 address cannot be multicast",
-                    context
+                    "{context}: IPv4 address cannot be multicast"
                 )));
             }
         }
@@ -84,14 +81,12 @@ pub(crate) fn validate_socket_addr(addr: &SocketAddr, context: &str) -> Result<(
             if ipv6.is_unspecified() && context != "listen address" {
                 // Allow unspecified for listen address (::)
                 return Err(ConfigError::InvalidAddress(format!(
-                    "{}: IPv6 address cannot be unspecified (::)",
-                    context
+                    "{context}: IPv6 address cannot be unspecified (::)"
                 )));
             }
             if ipv6.is_multicast() {
                 return Err(ConfigError::InvalidAddress(format!(
-                    "{}: IPv6 address cannot be multicast",
-                    context
+                    "{context}: IPv6 address cannot be multicast"
                 )));
             }
         }
@@ -101,8 +96,7 @@ pub(crate) fn validate_socket_addr(addr: &SocketAddr, context: &str) -> Result<(
     if addr.port() == 0 && context != "listen address" {
         // Allow port 0 for listen address (system will assign a port)
         return Err(ConfigError::InvalidAddress(format!(
-            "{}: port cannot be 0",
-            context
+            "{context}: port cannot be 0"
         )));
     }
 
@@ -120,15 +114,13 @@ pub(crate) fn validate_duration(
 ) -> Result<(), ConfigError> {
     if duration < min {
         return Err(ConfigError::ValueOutOfRange(format!(
-            "{}: duration {:?} is less than minimum {:?}",
-            context, duration, min
+            "{context}: duration {duration:?} is less than minimum {min:?}"
         )));
     }
 
     if duration > max {
         return Err(ConfigError::ValueOutOfRange(format!(
-            "{}: duration {:?} is greater than maximum {:?}",
-            context, duration, max
+            "{context}: duration {duration:?} is greater than maximum {max:?}"
         )));
     }
 
@@ -144,15 +136,13 @@ where
 {
     if value < min {
         return Err(ConfigError::ValueOutOfRange(format!(
-            "{}: value {} is less than minimum {}",
-            context, value, min
+            "{context}: value {value} is less than minimum {min}"
         )));
     }
 
     if value > max {
         return Err(ConfigError::ValueOutOfRange(format!(
-            "{}: value {} is greater than maximum {}",
-            context, value, max
+            "{context}: value {value} is greater than maximum {max}"
         )));
     }
 

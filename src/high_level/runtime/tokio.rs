@@ -77,7 +77,7 @@ impl AsyncUdpSocket for UdpSocket {
 
     fn try_send(&self, transmit: &quinn_udp::Transmit) -> io::Result<()> {
         self.inner
-            .try_send_to(&transmit.contents, transmit.destination)?;
+            .try_send_to(transmit.contents, transmit.destination)?;
         Ok(())
     }
 

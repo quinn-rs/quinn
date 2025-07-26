@@ -1,0 +1,560 @@
+
+
+
+
+QUIC                                                          M. Seemann
+Internet-Draft                                                          
+Intended status: Standards Track                              E. Kinnear
+Expires: 5 September 2024                                     Apple Inc.
+                                                            4 March 2024
+
+
+                      Using QUIC to traverse NATs
+                  draft-seemann-quic-nat-traversal-02
+
+Abstract
+
+   QUIC is well-suited to various NAT traversal techniques.  As it
+   operates over UDP, and because the QUIC header was designed to be
+   demultipexed from other protocols, STUN can be used on the same UDP
+   socket, enabling ICE to be used with QUIC.  Furthermore, QUIC’s path
+   validation mechanism can be used to test the viability of an address
+   candidate pair while at the same time creating the NAT bindings
+   required for a direction connection, after which QUIC connection
+   migration can be used to migrate the connection to a direct path.
+
+Discussion Venues
+
+   This note is to be removed before publishing as an RFC.
+
+   Discussion of this document takes place on the QUIC Working Group
+   mailing list (quic@ietf.org), which is archived at
+   https://mailarchive.ietf.org/arch/browse/quic/.
+
+   Source for this draft and an issue tracker can be found at
+   https://github.com/marten-seemann/draft-seemann-quic-nat-traversal.
+
+Status of This Memo
+
+   This Internet-Draft is submitted in full conformance with the
+   provisions of BCP 78 and BCP 79.
+
+   Internet-Drafts are working documents of the Internet Engineering
+   Task Force (IETF).  Note that other groups may also distribute
+   working documents as Internet-Drafts.  The list of current Internet-
+   Drafts is at https://datatracker.ietf.org/drafts/current/.
+
+   Internet-Drafts are draft documents valid for a maximum of six months
+   and may be updated, replaced, or obsoleted by other documents at any
+   time.  It is inappropriate to use Internet-Drafts as reference
+   material or to cite them other than as "work in progress."
+
+   This Internet-Draft will expire on 5 September 2024.
+
+
+
+Seemann & Kinnear       Expires 5 September 2024                [Page 1]
+
+Internet-Draft             QUIC NAT Traversal                 March 2024
+
+
+Copyright Notice
+
+   Copyright (c) 2024 IETF Trust and the persons identified as the
+   document authors.  All rights reserved.
+
+   This document is subject to BCP 78 and the IETF Trust's Legal
+   Provisions Relating to IETF Documents (https://trustee.ietf.org/
+   license-info) in effect on the date of publication of this document.
+   Please review these documents carefully, as they describe your rights
+   and restrictions with respect to this document.  Code Components
+   extracted from this document must include Revised BSD License text as
+   described in Section 4.e of the Trust Legal Provisions and are
+   provided without warranty as described in the Revised BSD License.
+
+Table of Contents
+
+   1.  Introduction  . . . . . . . . . . . . . . . . . . . . . . . .   2
+   2.  Conventions and Definitions . . . . . . . . . . . . . . . . .   3
+   3.  NAT Traversal Using an External Signaling Channel . . . . . .   3
+   4.  NAT Traversal using the NAT Traversal QUIC Extension  . . . .   4
+     4.1.  Gathering Address Candidates  . . . . . . . . . . . . . .   4
+     4.2.  Sending Address Candidates to the Client  . . . . . . . .   4
+     4.3.  Address Matching  . . . . . . . . . . . . . . . . . . . .   5
+     4.4.  Probing Paths . . . . . . . . . . . . . . . . . . . . . .   5
+       4.4.1.  Interaction with active_connection_id_limit . . . . .   5
+       4.4.2.  Amplification Attack Mitigation . . . . . . . . . . .   6
+     4.5.  Negotiating Extension Use . . . . . . . . . . . . . . . .   6
+     4.6.  Frames  . . . . . . . . . . . . . . . . . . . . . . . . .   6
+       4.6.1.  ADD_ADDRESS Frame . . . . . . . . . . . . . . . . . .   6
+       4.6.2.  PUNCH_ME_NOW Frame  . . . . . . . . . . . . . . . . .   7
+       4.6.3.  REMOVE_ADDRESS Frame  . . . . . . . . . . . . . . . .   8
+   5.  Security Considerations . . . . . . . . . . . . . . . . . . .   8
+   6.  IANA Considerations . . . . . . . . . . . . . . . . . . . . .   8
+   7.  Normative References  . . . . . . . . . . . . . . . . . . . .   8
+   Acknowledgments . . . . . . . . . . . . . . . . . . . . . . . . .   9
+   Authors' Addresses  . . . . . . . . . . . . . . . . . . . . . . .   9
+
+1.  Introduction
+
+   This document describes two ways to use QUIC ([RFC9000]) to traverse
+   NATs:
+
+   1.  Using ICE ([RFC8445]) with an external signaling channel to
+       select a pair of UDP addresses.  Once candidate nomination is
+       completed, a new QUIC connection between the two endpoints can be
+       established.
+
+
+
+
+
+Seemann & Kinnear       Expires 5 September 2024                [Page 2]
+
+Internet-Draft             QUIC NAT Traversal                 March 2024
+
+
+   2.  Using a (proxied) QUIC connection as the signaling channel.
+       QUIC's path validation logic is used to test connectivity of
+       possible paths.
+
+   The first option documents how NAT traversal can be achieved using
+   unmodified QUIC and ICE stacks.  The only requirement is the ability
+   to send and receive non-QUIC (STUN ([RFC5389])) packets on the UDP
+   socket that a QUIC server is listening on.  However, it necessitates
+   running a separate signaling channel for the communication between
+   the two ICE agents.
+
+   The second option doesn't use ICE at all, although it makes use of
+   some of the concepts, in particular the address matching logic
+   described in [RFC8445].  It is assumed that the nodes are connected
+   via a proxied QUIC connection, for example using
+   [CONNECT-UDP-LISTEN].  Using the QUIC extension defined in this
+   document, the nodes coordinate QUIC path validation attempts that
+   create the necessary NAT bindings to achieve traversal of the NAT.
+   This mechanism makes extensive use of the path validation mechanism
+   described in [RFC9000].  In addition, the QUIC server needs the
+   capability to initiate path validation, which, as per [RFC9000], is
+   initiated by the client.  Starting with a proxied QUIC connection
+   allows the nodes to start exchanging application data right away and
+   switch to the direct connection once it has been established and
+   deemed suitable for the application's needs.
+
+2.  Conventions and Definitions
+
+   The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT",
+   "SHOULD", "SHOULD NOT", "RECOMMENDED", "NOT RECOMMENDED", "MAY", and
+   "OPTIONAL" in this document are to be interpreted as described in
+   BCP 14 [RFC2119] [RFC8174] when, and only when, they appear in all
+   capitals, as shown here.
+
+3.  NAT Traversal Using an External Signaling Channel
+
+   When an external signaling channel is used, the QUIC connection is
+   established after the two ICE agents have agreed on a candidate pair.
+   This mode doesn't require any modification to existing QUIC stacks.
+   In particular, it does not necessitate the negotiation of the
+   extension defined in this document.
+
+   For address discovery to work, QUIC and ICE need to use the same UDP
+   socket.  Since this requires demultiplexing of QUIC and STUN packets,
+   the QUIC bit cannot be greased as described in [RFC9287].
+
+
+
+
+
+
+Seemann & Kinnear       Expires 5 September 2024                [Page 3]
+
+Internet-Draft             QUIC NAT Traversal                 March 2024
+
+
+   Once ICE has completed, the client immediately initiates a normal
+   QUIC handshake using the server's address from the nominated address
+   pair.  The ICE connectivity checks should have created the necessary
+   NAT bindings for the client's first flight to reach the server and
+   for the server's first flight to reach the client.
+
+4.  NAT Traversal using the NAT Traversal QUIC Extension
+
+   QUIC's path validation mechanism can be used to establish the
+   required NAT mappings that allow for a direct connection.  Once the
+   NAT mappings are established, QUIC's connection migration can be used
+   to migrate the connection to a direct path.  During the path
+   validation phase, multiple different paths might be established in
+   parallel.  When using QUIC Multipath [MULTIPATH], these paths may be
+   used at the some time, however, the mechanism described in this
+   document does not require the use of QUIC multipath.
+
+   Although ICE is not directly used, the logic run on the client makes
+   use of ICE's candidate pairing logic (see especially Section 6.1.2.2
+   of [RFC8445]).  Implementations are free to implement different
+   algorithms as they see fit.
+
+   This mode needs be negotiated during the handshake, see Section 4.5.
+
+4.1.  Gathering Address Candidates
+
+   The gathering of address candidates is out of scope for this
+   document.  Endpoints MAY use the logic described in Sections 5.1.1
+   and 5.2 of [RFC8445], or they MAY use address candidates provided by
+   the application.
+
+4.2.  Sending Address Candidates to the Client
+
+   The server sends its address candidates to the client using
+   ADD_ADDRESS frames.  It SHOULD NOT wait until address candidate
+   discovery has finished, instead, it SHOULD send address candidates as
+   soon as they become available.  This speeds up the NAT traversal and
+   is similar to Trickle ICE ([RFC8838]).
+
+   Addresses sent to the client can be removed using the REMOVE_ADDRESS
+   frame if the address candidate becomes stale, e.g. because the
+   network interface becomes unavailable.
+
+   Since address matching is run on the client side, address candidates
+   are only sent from the server to the client.  The client does not
+   send any addresses to the server.
+
+
+
+
+
+Seemann & Kinnear       Expires 5 September 2024                [Page 4]
+
+Internet-Draft             QUIC NAT Traversal                 March 2024
+
+
+4.3.  Address Matching
+
+   The client matches the address candidates sent by the server with its
+   own address candidates, forming candidate pairs.  Section 5.1 of
+   [RFC8445] describes an algorithm for pairing address candidates.
+   Since the pairing algorithm is only run on the client side, the
+   endpoints do not need to agree on the algorithm used, and the client
+   is free to use a different algorithm.
+
+4.4.  Probing Paths
+
+   The client sends candidate pairs to the server using PUNCH_ME_NOW
+   frames.  The client SHOULD start path validation (see Section 8.2 of
+   [RFC9000]) for the respective path immediately after sending the
+   PUNCH_ME_NOW frame.
+
+   The server SHOULD start path validation immediately upon receipt of a
+   PUNCH_ME_NOW frame.  This document introduces the concept of path
+   validation on the server side, since [RFC9000] assumes that any QUIC
+   server is able to receive packets on a path without creating a NAT
+   binding first.  Path validation on the server works as described in
+   Section 8.2.1 of [RFC9000], with additional rate-limiting (see
+   Section 4.4.2) to prevent amplification attacks.
+
+   Path probing happens in rounds, allowing the peers to limit the
+   bandwidth consumed by sending path validation packets.  For every
+   round, the client MUST NOT send more PUNCH_ME_NOW frames than allowed
+   by the server's transport parameter.  A new round is started when a
+   PUNCH_ME_NOW frame with a higher Round value is received.  This
+   immediately cancels all path probes in progress.
+
+   To speed up NAT traversal, the client SHOULD send address pairs as
+   soon as they become available.  However, for small concurrency
+   limits, it MAY delay sending of address pairs in order rank them
+   first and only initiate path validation for the highest-priority
+   candidate pairs.
+
+4.4.1.  Interaction with active_connection_id_limit
+
+   The active_connection_id_limit limits the number of connection IDs
+   that are active at any given time.  Both endpoints need to use a
+   previously unused connection ID when validating a new path in order
+   to avoid linkability.  Therefore, the active_connection_id_limit
+   effectively places a limit on the number of concurrent path
+   validations.
+
+
+
+
+
+
+Seemann & Kinnear       Expires 5 September 2024                [Page 5]
+
+Internet-Draft             QUIC NAT Traversal                 March 2024
+
+
+   Endpoints SHOULD set an active_connection_id_limit that is high
+   enough to allow for the desired number of concurrent path validation
+   attempts.
+
+4.4.2.  Amplification Attack Mitigation
+
+   TODO describe exactly how to migitate amplification attacks
+
+4.5.  Negotiating Extension Use
+
+   Endpoints advertise their support of the extension by sending the
+   nat_traversal (0x3d7e9f0bca12fea6) transport parameter (Section 7.4
+   of [RFC9000]).
+
+   The client MUST send this transport parameter with an empty value.  A
+   server implementation that understands this transport parameter MUST
+   treat the receipt of a non-empty value as a connection error of type
+   TRANSPORT_PARAMETER_ERROR.
+
+   For the server, the value of this transport parameter is a variable-
+   length integer, the concurrency limit.  The concurrency limit limits
+   the amount of concurrent NAT traversal attempts and can be used to
+   limit the bandwith required to execute the path validation.  Any
+   value larger than 0 is valid.  A client implementation that
+   understands this transport parameter MUST treat the receipt of a
+   value that is not a variable-length integer, or the receipt of the
+   value 0, as a connection error of type TRANSPORT_PARAMETER_ERROR.
+
+   In order to the use of this extension in 0-RTT packets, the client
+   MUST remember the value of this transport parameter.  If 0-RTT data
+   is accepted by the server, the server MUST not disable this extension
+   on the resumed connection.
+
+4.6.  Frames
+
+4.6.1.  ADD_ADDRESS Frame
+
+   ADD_ADDRESS Frame {
+       Type (i) = 0x3d7e90..0x3d7e91,
+       Sequence Number (i),
+       [ IPv4 (32) ],
+       [ IPv6 (128) ],
+       Port (16),
+   }
+
+   The ADD_ADDRESS frame contains the following fields:
+
+   Sequence Number:  A variable-length integer encoding the sequence
+
+
+
+Seemann & Kinnear       Expires 5 September 2024                [Page 6]
+
+Internet-Draft             QUIC NAT Traversal                 March 2024
+
+
+      number of this address advertisement.
+
+   IPv4:  The IPv4 address.  Only present if the least significant bit
+      of the frame type is 0.
+
+   IPv6:  The IPv6 address.  Only present if the least significant bit
+      of the frame type is 1.
+
+   Port:  The port number.
+
+   ADD_ADDRESS frames are ack-eliciting.  When lost, they SHOULD be
+   retransmitted, unless the address is not active anymore.
+
+   This frame is only sent from the server to the client.  Servers MUST
+   treat receipt of an ADD_ADDRESS frame as a connection error of type
+   PROTOCOL_VIOLATION.
+
+4.6.2.  PUNCH_ME_NOW Frame
+
+   PUNCH_ME_NOW Frame {
+       Type (i) = 0x3d7e92..0x3d7e93,
+       Round (i),
+       Paired With Sequence Number (i),
+       [ IPv4 (32) ],
+       [ IPv6 (128) ],
+       Port (16),
+   }
+
+   The PUNCH_ME_NOW frame contains the following fields:
+
+   Round:  The sequence number of the NAT Traversal attempts.
+
+   Paired With Sequence Number:  A variable-length integer encoding the
+      sequence number of the address that was paired with this address.
+
+   IPv4:  The IPv4 address.  Only present if the least significant bit
+      of the frame type is 0.
+
+   IPv6:  The IPv6 address.  Only present if the least significant bit
+      of the frame type is 1.
+
+   Port:  The port number.
+
+   PUNCH_ME_NOW frames are ack-eliciting.
+
+   This frame is only sent from the client to the server.  Clients MUST
+   treat receipt of a PUNCH_ME_NOW frame as a connection error of type
+   PROTOCOL_VIOLATION.
+
+
+
+Seemann & Kinnear       Expires 5 September 2024                [Page 7]
+
+Internet-Draft             QUIC NAT Traversal                 March 2024
+
+
+4.6.3.  REMOVE_ADDRESS Frame
+
+   REMOVE_ADDRESS Frame {
+       Type (i) = 0x3d7e94,
+       Sequence Number (i),
+   }
+
+   The REMOVE_ADDRESS frame contains the following fields:
+
+   Sequence Number:  A variable-length integer encoding the sequence
+      number of the address advertisement to be removed.
+
+   REMOVE_ADDRESS frames are ack-eliciting.  When lost, they SHOULD be
+   retransmitted.
+
+   This frame is only sent from the server to the client.  Servers MUST
+   treat receipt of an REMOVE_ADDRESS frame as a connection error of
+   type PROTOCOL_VIOLATION.
+
+5.  Security Considerations
+
+   This document expands QUIC's path validation logic to QUIC servers,
+   allowing a QUIC client to request sending of path validation packets
+   on unverified paths.  A malicious client can direct traffic to a
+   target IP.  This attack is similar to the IP address spoofing attack
+   that address validation during connection establishment (see
+   Section 8.1 of [RFC9000]) is designed to prevent.  In practice
+   however, IP address spoofing is often additionally mitigated by both
+   the ingress and egress network at the IP layer, which is not possible
+   when using this extension.  The server therefore needs to carefully
+   limit the amount of data it sends on unverified paths.
+
+6.  IANA Considerations
+
+   TODO: fill out registration request for the transport parameter and
+   frame types
+
+7.  Normative References
+
+   [CONNECT-UDP-LISTEN]
+              Schinazi, D. and A. Singh, "Proxying Bound UDP in HTTP",
+              Work in Progress, Internet-Draft, draft-ietf-masque-
+              connect-udp-listen-02, 29 February 2024,
+              <https://datatracker.ietf.org/doc/html/draft-ietf-masque-
+              connect-udp-listen-02>.
+
+
+
+
+
+
+Seemann & Kinnear       Expires 5 September 2024                [Page 8]
+
+Internet-Draft             QUIC NAT Traversal                 March 2024
+
+
+   [MULTIPATH]
+              Liu, Y., Ma, Y., De Coninck, Q., Bonaventure, O., Huitema,
+              C., and M. Kühlewind, "Multipath Extension for QUIC", Work
+              in Progress, Internet-Draft, draft-ietf-quic-multipath-06,
+              23 October 2023, <https://datatracker.ietf.org/doc/html/
+              draft-ietf-quic-multipath-06>.
+
+   [RFC2119]  Bradner, S., "Key words for use in RFCs to Indicate
+              Requirement Levels", BCP 14, RFC 2119,
+              DOI 10.17487/RFC2119, March 1997,
+              <https://www.rfc-editor.org/rfc/rfc2119>.
+
+   [RFC5389]  Rosenberg, J., Mahy, R., Matthews, P., and D. Wing,
+              "Session Traversal Utilities for NAT (STUN)", RFC 5389,
+              DOI 10.17487/RFC5389, October 2008,
+              <https://www.rfc-editor.org/rfc/rfc5389>.
+
+   [RFC8174]  Leiba, B., "Ambiguity of Uppercase vs Lowercase in RFC
+              2119 Key Words", BCP 14, RFC 8174, DOI 10.17487/RFC8174,
+              May 2017, <https://www.rfc-editor.org/rfc/rfc8174>.
+
+   [RFC8445]  Keranen, A., Holmberg, C., and J. Rosenberg, "Interactive
+              Connectivity Establishment (ICE): A Protocol for Network
+              Address Translator (NAT) Traversal", RFC 8445,
+              DOI 10.17487/RFC8445, July 2018,
+              <https://www.rfc-editor.org/rfc/rfc8445>.
+
+   [RFC8838]  Ivov, E., Uberti, J., and P. Saint-Andre, "Trickle ICE:
+              Incremental Provisioning of Candidates for the Interactive
+              Connectivity Establishment (ICE) Protocol", RFC 8838,
+              DOI 10.17487/RFC8838, January 2021,
+              <https://www.rfc-editor.org/rfc/rfc8838>.
+
+   [RFC9000]  Iyengar, J., Ed. and M. Thomson, Ed., "QUIC: A UDP-Based
+              Multiplexed and Secure Transport", RFC 9000,
+              DOI 10.17487/RFC9000, May 2021,
+              <https://www.rfc-editor.org/rfc/rfc9000>.
+
+   [RFC9287]  Thomson, M., "Greasing the QUIC Bit", RFC 9287,
+              DOI 10.17487/RFC9287, August 2022,
+              <https://www.rfc-editor.org/rfc/rfc9287>.
+
+Acknowledgments
+
+   TODO acknowledge.
+
+Authors' Addresses
+
+
+
+
+Seemann & Kinnear       Expires 5 September 2024                [Page 9]
+
+Internet-Draft             QUIC NAT Traversal                 March 2024
+
+
+   Marten Seemann
+   Email: martenseemann@gmail.com
+
+
+   Eric Kinnear
+   Apple Inc.
+   One Apple Park Way
+   Cupertino, California 95014,
+   United States of America
+   Email: ekinnear@apple.com
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Seemann & Kinnear       Expires 5 September 2024               [Page 10]

@@ -6,8 +6,11 @@ A QUIC transport protocol implementation with advanced NAT traversal capabilitie
 [![Crates.io](https://img.shields.io/crates/v/ant-quic.svg)](https://crates.io/crates/ant-quic)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE-MIT)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE-APACHE)
-[![Build Status](https://github.com/dirvine/ant-quic/actions/workflows/ci.yml/badge.svg)](https://github.com/dirvine/ant-quic/actions)
-[![Release](https://github.com/dirvine/ant-quic/actions/workflows/release.yml/badge.svg)](https://github.com/dirvine/ant-quic/releases)
+
+[![CI Status](https://github.com/dirvine/ant-quic/actions/workflows/quick-checks.yml/badge.svg)](https://github.com/dirvine/ant-quic/actions/workflows/quick-checks.yml)
+[![Security Audit](https://github.com/dirvine/ant-quic/actions/workflows/security.yml/badge.svg)](https://github.com/dirvine/ant-quic/actions/workflows/security.yml)
+[![Cross-Platform](https://github.com/dirvine/ant-quic/actions/workflows/cross-platform.yml/badge.svg)](https://github.com/dirvine/ant-quic/actions/workflows/cross-platform.yml)
+[![Coverage](https://codecov.io/gh/dirvine/ant-quic/branch/main/graph/badge.svg)](https://codecov.io/gh/dirvine/ant-quic)
 
 ## Features
 

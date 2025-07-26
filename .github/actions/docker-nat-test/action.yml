@@ -1,0 +1,134 @@
+name: 'Docker NAT Test'
+description: 'Run NAT traversal tests in Docker environment'
+inputs:
+  nat-type:
+    description: 'Type of NAT to test (full-cone, symmetric, restricted, cgnat)'
+    required: true
+  client-count:
+    description: 'Number of client nodes to create'
+    required: false
+    default: '2'
+  test-duration:
+    description: 'Duration to run the test in seconds'
+    required: false
+    default: '300'
+  docker-compose-file:
+    description: 'Path to docker-compose file'
+    required: false
+    default: './docker/nat-testing/docker-compose.yml'
+
+outputs:
+  success-rate:
+    description: 'NAT traversal success rate'
+    value: ${{ steps.results.outputs.success-rate }}
+  test-report:
+    description: 'Path to test report file'
+    value: ${{ steps.results.outputs.report-path }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Validate inputs
+      shell: bash
+      run: |
+        NAT_TYPES="full-cone symmetric restricted cgnat"
+        if ! echo "$NAT_TYPES" | grep -q "${{ inputs.nat-type }}"; then
+          echo "::error::Invalid NAT type: ${{ inputs.nat-type }}"
+          exit 1
+        fi
+    
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+    
+    - name: Build test containers
+      shell: bash
+      run: |
+        echo "Building NAT test containers..."
+        docker-compose -f ${{ inputs.docker-compose-file }} build \
+          --build-arg NAT_TYPE=${{ inputs.nat-type }} \
+          --build-arg CLIENT_COUNT=${{ inputs.client-count }}
+    
+    - name: Start NAT environment
+      shell: bash
+      run: |
+        echo "Starting ${{ inputs.nat-type }} NAT environment..."
+        docker-compose -f ${{ inputs.docker-compose-file }} up -d
+        
+        # Wait for containers to be ready
+        sleep 10
+        
+        # Show network topology
+        docker-compose -f ${{ inputs.docker-compose-file }} ps
+    
+    - name: Run NAT traversal tests
+      id: test
+      shell: bash
+      run: |
+        echo "Running NAT traversal tests for ${{ inputs.test-duration }} seconds..."
+        
+        # Start test with timeout
+        timeout ${{ inputs.test-duration }} \
+          docker-compose -f ${{ inputs.docker-compose-file }} \
+          exec -T bootstrap /usr/local/bin/ant-quic \
+          --nat-test-mode \
+          --nat-type ${{ inputs.nat-type }} \
+          --client-count ${{ inputs.client-count }} \
+          > nat-test-output.log 2>&1 || true
+        
+        # Extract results
+        SUCCESS=$(grep -c "NAT traversal successful" nat-test-output.log || echo 0)
+        TOTAL=$(grep -c "NAT traversal attempt" nat-test-output.log || echo 0)
+        
+        if [ "$TOTAL" -gt 0 ]; then
+          SUCCESS_RATE=$((SUCCESS * 100 / TOTAL))
+        else
+          SUCCESS_RATE=0
+        fi
+        
+        echo "success=$SUCCESS" >> $GITHUB_OUTPUT
+        echo "total=$TOTAL" >> $GITHUB_OUTPUT
+        echo "success-rate=$SUCCESS_RATE" >> $GITHUB_OUTPUT
+    
+    - name: Collect logs
+      if: always()
+      shell: bash
+      run: |
+        echo "Collecting container logs..."
+        docker-compose -f ${{ inputs.docker-compose-file }} logs > docker-logs.txt
+        
+        # Collect network statistics
+        docker exec $(docker-compose -f ${{ inputs.docker-compose-file }} ps -q bootstrap) \
+          ip -s link > network-stats.txt || true
+    
+    - name: Generate report
+      id: results
+      if: always()
+      shell: bash
+      run: |
+        REPORT_FILE="nat-test-report-${{ inputs.nat-type }}.md"
+        
+        cat > $REPORT_FILE << EOF
+        # NAT Traversal Test Report
+        
+        **NAT Type**: ${{ inputs.nat-type }}
+        **Date**: $(date -u '+%Y-%m-%d %H:%M:%S UTC')
+        **Test Duration**: ${{ inputs.test-duration }} seconds
+        **Client Count**: ${{ inputs.client-count }}
+        
+        ## Results
+        - Total Attempts: ${{ steps.test.outputs.total }}
+        - Successful: ${{ steps.test.outputs.success }}
+        - Success Rate: ${{ steps.test.outputs.success-rate }}%
+        
+        ## Logs
+        See attached artifacts for detailed logs.
+        EOF
+        
+        echo "report-path=$REPORT_FILE" >> $GITHUB_OUTPUT
+        echo "success-rate=${{ steps.test.outputs.success-rate }}" >> $GITHUB_OUTPUT
+    
+    - name: Stop containers
+      if: always()
+      shell: bash
+      run: |
+        docker-compose -f ${{ inputs.docker-compose-file }} down -v

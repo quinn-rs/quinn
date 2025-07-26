@@ -186,10 +186,10 @@ pub fn draw_box(title: &str, width: usize) -> (String, String, String) {
 
 /// Print the startup banner
 pub fn print_banner(version: &str) {
-    let title = format!("ant-quic v{}", version);
+    let title = format!("ant-quic v{version}");
     let (top, middle, bottom) = draw_box(&title, 60);
 
-    println!("{}", top);
+    println!("{top}");
     println!(
         "{}",
         middle.replace(
@@ -197,7 +197,7 @@ pub fn print_banner(version: &str) {
             "Starting QUIC P2P with NAT Traversal                 "
         )
     );
-    println!("{}", bottom);
+    println!("{bottom}");
     println!();
 }
 
@@ -242,7 +242,7 @@ pub fn format_duration(duration: std::time::Duration) -> String {
     let minutes = (total_seconds % 3600) / 60;
     let seconds = total_seconds % 60;
 
-    format!("{:02}:{:02}:{:02}", hours, minutes, seconds)
+    format!("{hours:02}:{minutes:02}:{seconds:02}")
 }
 
 /// Format timestamp into HH:MM:SS format
@@ -253,14 +253,14 @@ pub fn format_timestamp(_timestamp: std::time::Instant) -> String {
     let now = SystemTime::now();
     let duration_since_epoch = now
         .duration_since(SystemTime::UNIX_EPOCH)
-        .unwrap_or_else(|_| std::time::Duration::ZERO);
+        .unwrap_or(std::time::Duration::ZERO);
 
     let total_seconds = duration_since_epoch.as_secs();
     let hours = (total_seconds % 86400) / 3600;
     let minutes = (total_seconds % 3600) / 60;
     let seconds = total_seconds % 60;
 
-    format!("{:02}:{:02}:{:02}", hours, minutes, seconds)
+    format!("{hours:02}:{minutes:02}:{seconds:02}")
 }
 
 /// Custom log formatter that adds colors and symbols
@@ -290,7 +290,7 @@ where
         };
 
         // Write colored output
-        write!(&mut writer, "{}{} ", color, symbol)?;
+        write!(&mut writer, "{color}{symbol} ")?;
 
         // Write the message
         ctx.field_format().format_fields(writer.by_ref(), event)?;

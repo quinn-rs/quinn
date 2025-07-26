@@ -1,0 +1,50 @@
+name: 'Setup Rust'
+description: 'Set up Rust toolchain with caching and common tools'
+inputs:
+  toolchain:
+    description: 'Rust toolchain to install'
+    required: false
+    default: 'stable'
+  components:
+    description: 'Additional components to install'
+    required: false
+    default: ''
+  targets:
+    description: 'Additional targets to install'
+    required: false
+    default: ''
+  cache-key:
+    description: 'Additional cache key for rust-cache'
+    required: false
+    default: ''
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@master
+      with:
+        toolchain: ${{ inputs.toolchain }}
+        components: ${{ inputs.components }}
+        targets: ${{ inputs.targets }}
+    
+    - name: Cache Rust dependencies
+      uses: Swatinem/rust-cache@v2
+      with:
+        key: ${{ inputs.cache-key }}
+        cache-all-crates: true
+    
+    - name: Install common tools
+      shell: bash
+      run: |
+        # Install commonly needed tools
+        which cargo-machete || cargo install cargo-machete || true
+        which cargo-outdated || cargo install cargo-outdated || true
+    
+    - name: Show versions
+      shell: bash
+      run: |
+        echo "Rust toolchain information:"
+        rustc --version
+        cargo --version
+        rustup show

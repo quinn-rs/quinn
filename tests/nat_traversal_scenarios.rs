@@ -8,7 +8,7 @@ use ant_quic::{
         derive_peer_id_from_public_key, generate_ed25519_keypair,
     },
     nat_traversal_api::{
-        EndpointRole, NatTraversalConfig, NatTraversalEndpoint, NatTraversalError,
+        EndpointRole,
         NatTraversalEvent, PeerId,
     },
     quic_node::{QuicNodeConfig, QuicP2PNode},
@@ -21,9 +21,9 @@ use std::{
 };
 use tokio::{
     sync::{Mutex, mpsc},
-    time::{sleep, timeout},
+    time::timeout,
 };
-use tracing::{debug, info};
+use tracing::debug;
 
 /// Simulated NAT types for testing
 #[derive(Debug, Clone, Copy, PartialEq)]

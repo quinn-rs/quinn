@@ -229,6 +229,30 @@ impl QuicDemoNode {
                             .lock()
                             .await
                             .insert(peer_id, format!("bootstrap-{}", bootstrap_addr));
+                        
+                        // TEMPORARY: Simulate receiving OBSERVED_ADDRESS frame
+                        // In production, this would come from actual OBSERVED_ADDRESS frames
+                        // For demonstration, we'll simulate that bootstrap observes us on a public IP
+                        tokio::time::sleep(Duration::from_millis(500)).await;
+                        
+                        // DEMO: Simulate receiving an OBSERVED_ADDRESS frame
+                        // In production, the bootstrap node would send us our actual external address
+                        // via OBSERVED_ADDRESS frames on this connection
+                        
+                        // For demonstration, simulate with a public IP
+                        let simulated_external = SocketAddr::new(
+                            std::net::IpAddr::V4(std::net::Ipv4Addr::new(203, 0, 113, 42)), // Example public IP
+                            9876 // Example port
+                        );
+                        
+                        // Inject the "observed" address
+                        if let Err(e) = self.quic_node.inject_observed_address(simulated_external, peer_id) {
+                            warn!("Failed to inject observed address: {}", e);
+                        } else {
+                            info!("DEMO: Simulated OBSERVED_ADDRESS reception: {}", simulated_external);
+                            info!("In production, this would be your actual external IP:port from OBSERVED_ADDRESS frames");
+                            // The NAT traversal system should now process this and emit events
+                        }
                     }
                     Err(e) => {
                         warn!(

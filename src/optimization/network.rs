@@ -652,10 +652,10 @@ impl ParallelDiscoveryCoordinator {
 
         for address in &interface.addresses {
             // Skip loopback and link-local addresses for P2P
-            if self.is_valid_candidate_address(&address) {
+            if self.is_valid_candidate_address(address) {
                 let candidate = CandidateAddress {
                     address: *address,
-                    priority: self.calculate_candidate_priority(&address, &interface),
+                    priority: self.calculate_candidate_priority(address, &interface),
                     source: CandidateSource::Local,
                     state: CandidateState::New,
                 };
@@ -823,6 +823,12 @@ impl ParallelDiscoveryCoordinator {
         }
 
         info!("Parallel discovery coordinator shutdown complete");
+    }
+}
+
+impl Default for AdaptiveTimeoutManager {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

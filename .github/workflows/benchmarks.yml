@@ -1,0 +1,209 @@
+name: Performance Benchmarks
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+    inputs:
+      baseline:
+        description: 'Baseline commit/tag to compare against'
+        required: false
+        type: string
+  schedule:
+    # Run benchmarks weekly to track performance over time
+    - cron: '0 0 * * 0'
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+  RUSTFLAGS: "-D warnings"
+
+jobs:
+  benchmark:
+    name: Run Benchmarks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-bench-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-bench-
+            ${{ runner.os }}-cargo-
+
+      - name: Install cargo-criterion
+        run: |
+          cargo install cargo-criterion --locked || true
+
+      - name: Run benchmarks
+        run: |
+          cargo criterion --message-format=json > benchmark-results.json
+          
+      - name: Generate benchmark report
+        run: |
+          python3 .github/scripts/analyze-benchmarks.py benchmark-results.json > benchmark-report.md
+          
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results-${{ github.sha }}
+          path: |
+            benchmark-results.json
+            benchmark-report.md
+            target/criterion/
+
+      # Compare with baseline for PRs
+      - name: Download baseline benchmarks
+        if: github.event_name == 'pull_request'
+        uses: dawidd6/action-download-artifact@v6
+        with:
+          workflow: benchmarks.yml
+          branch: ${{ github.base_ref }}
+          name: benchmark-results-.*
+          name_is_regexp: true
+          path: baseline-benchmarks
+          if_no_artifact_found: warn
+
+      - name: Compare benchmarks
+        if: github.event_name == 'pull_request' && success()
+        id: compare
+        run: |
+          if [ -d "baseline-benchmarks" ]; then
+            python3 .github/scripts/compare-benchmarks.py \
+              baseline-benchmarks/*/benchmark-results.json \
+              benchmark-results.json \
+              > comparison-report.md
+            
+            # Check for regressions
+            if grep -q "REGRESSION" comparison-report.md; then
+              echo "regression_found=true" >> $GITHUB_OUTPUT
+            fi
+          else
+            echo "No baseline benchmarks found for comparison" > comparison-report.md
+          fi
+
+      - name: Comment on PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            let comment = '## 📊 Benchmark Results\n\n';
+            
+            if (fs.existsSync('comparison-report.md')) {
+              comment += fs.readFileSync('comparison-report.md', 'utf8');
+            } else {
+              comment += fs.readFileSync('benchmark-report.md', 'utf8');
+            }
+            
+            // Find existing comment
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+            
+            const botComment = comments.find(comment => 
+              comment.user.type === 'Bot' && 
+              comment.body.includes('## 📊 Benchmark Results')
+            );
+            
+            if (botComment) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: botComment.id,
+                body: comment
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: comment
+              });
+            }
+
+      - name: Fail if regression found
+        if: steps.compare.outputs.regression_found == 'true'
+        run: |
+          echo "❌ Performance regression detected!"
+          cat comparison-report.md
+          exit 1
+
+  benchmark-history:
+    name: Track Benchmark History
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main')
+    needs: benchmark
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download current results
+        uses: actions/download-artifact@v4
+        with:
+          name: benchmark-results-${{ github.sha }}
+
+      - name: Update benchmark history
+        run: |
+          mkdir -p .benchmarks
+          cp benchmark-results.json .benchmarks/results-$(date +%Y%m%d-%H%M%S)-${{ github.sha }}.json
+          
+          # Keep only last 50 results
+          ls -t .benchmarks/results-*.json | tail -n +51 | xargs rm -f || true
+
+      - name: Generate trend graphs
+        run: |
+          python3 .github/scripts/benchmark-trends.py .benchmarks/ > benchmark-trends.md
+
+      - name: Commit benchmark history
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "Update benchmark history [skip ci]"
+          file_pattern: ".benchmarks/*.json benchmark-trends.md"
+          branch: benchmark-history
+          create_branch: true
+
+  performance-dashboard:
+    name: Update Performance Dashboard
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main')
+    needs: benchmark-history
+    steps:
+      - name: Checkout benchmark history
+        uses: actions/checkout@v4
+        with:
+          ref: benchmark-history
+
+      - name: Generate dashboard
+        run: |
+          mkdir -p docs/performance
+          python3 .github/scripts/generate-dashboard.py \
+            .benchmarks/ \
+            docs/performance/index.html
+
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./docs/performance
+          destination_dir: performance

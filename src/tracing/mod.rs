@@ -54,9 +54,15 @@ mod implementation {
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
     pub struct TraceId;
 
+    impl Default for TraceId {
+        fn default() -> Self {
+            Self::new()
+        }
+    }
+
     impl TraceId {
         pub fn new() -> Self {
-            TraceId
+            Self
         }
     }
 
@@ -68,9 +74,15 @@ mod implementation {
     #[derive(Debug)]
     pub struct EventLog;
 
+    impl Default for EventLog {
+        fn default() -> Self {
+            Self::new()
+        }
+    }
+
     impl EventLog {
         pub fn new() -> Self {
-            EventLog
+            Self
         }
         pub fn log(&self, _event: Event) {}
         pub fn recent_events(&self, _count: usize) -> Vec<Event> {
@@ -87,7 +99,7 @@ mod implementation {
 
     impl TraceContext {
         pub fn new(_trace_id: TraceId) -> Self {
-            TraceContext
+            Self
         }
         pub fn trace_id(&self) -> TraceId {
             TraceId
@@ -100,7 +112,7 @@ mod implementation {
 
     impl Default for TraceFlags {
         fn default() -> Self {
-            TraceFlags
+            Self
         }
     }
 

@@ -88,7 +88,7 @@ impl RawPublicKeyVerifier {
 
         debug!(
             "Extracted Ed25519 public key: {:?}",
-            hex::encode(&public_key)
+            hex::encode(public_key)
         );
         Ok(public_key)
     }
@@ -115,10 +115,10 @@ impl ServerCertVerifier for RawPublicKeyVerifier {
         }
 
         if self.trusted_keys.contains(&public_key) {
-            info!("Server public key is trusted: {}", hex::encode(&public_key));
+            info!("Server public key is trusted: {}", hex::encode(public_key));
             Ok(rustls::client::danger::ServerCertVerified::assertion())
         } else {
-            warn!("Unknown server public key: {}", hex::encode(&public_key));
+            warn!("Unknown server public key: {}", hex::encode(public_key));
             Err(TlsError::InvalidCertificate(
                 CertificateError::UnknownIssuer,
             ))
