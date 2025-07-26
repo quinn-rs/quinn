@@ -9,6 +9,5 @@ src = "src"
 build-dir = "book"
 
 [output.html]
-theme = "rust"
 git-repository-url = "https://github.com/dirvine/ant-quic"
 git-repository-icon = "fa-github"
