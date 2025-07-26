@@ -2,11 +2,7 @@
 
 use super::config::*;
 use super::generators::*;
-use ant_quic::{
-    VarInt,
-    coding::{Decoder, Encoder},
-    transport_parameters::*,
-};
+use ant_quic::{VarInt, coding::Codec, transport_parameters::*};
 use bytes::BytesMut;
 use proptest::prelude::*;
 

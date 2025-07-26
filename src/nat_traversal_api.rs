@@ -89,7 +89,10 @@ pub enum EndpointRole {
     /// Regular client node (most common)
     Client,
     /// Server node (always reachable, can coordinate)
-    Server { can_coordinate: bool },
+    Server {
+        /// Whether this server can coordinate NAT traversal
+        can_coordinate: bool,
+    },
     /// Bootstrap node (public, coordinates NAT traversal)
     Bootstrap,
 }
@@ -340,8 +343,11 @@ pub enum NatTraversalEvent {
     },
     /// NAT traversal failed
     TraversalFailed {
+        /// The peer ID that failed to connect
         peer_id: PeerId,
+        /// The NAT traversal error that occurred
         error: NatTraversalError,
+        /// Whether fallback mechanisms are available
         fallback_available: bool,
     },
     /// Connection lost

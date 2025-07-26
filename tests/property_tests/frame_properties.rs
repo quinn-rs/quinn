@@ -3,9 +3,9 @@
 use super::config::*;
 use super::generators::*;
 use ant_quic::{
-    VarInt,
-    coding::{Decoder, Encoder},
-    frame::*,
+    TransportErrorCode, VarInt,
+    coding::Codec,
+    frame::{self, *},
 };
 use bytes::{Bytes, BytesMut};
 use proptest::prelude::*;
@@ -33,7 +33,7 @@ proptest! {
         frame_type.encode(&mut buf);
 
         let mut cursor = std::io::Cursor::new(&buf[..]);
-        let decoded = Type::decode(&mut cursor).expect("Failed to decode frame type");
+        let decoded = FrameFrameType::decode(&mut cursor).expect("Failed to decode frame type");
 
         prop_assert_eq!(frame_type, decoded);
     }
@@ -41,7 +41,7 @@ proptest! {
     /// Test PING frame encoding/decoding
     #[test]
     fn ping_frame_roundtrip(_dummy in 0u8..1) {
-        let frame = frame::Ping;
+        let frame = Frame::Ping;
         let mut buf = BytesMut::new();
 
         frame.encode(&mut buf);
@@ -49,7 +49,7 @@ proptest! {
 
         // PING frame should only contain the type byte
         prop_assert_eq!(buf.len(), 1);
-        prop_assert_eq!(buf[0], Type::PING.0 as u8);
+        prop_assert_eq!(buf[0], FrameFrameType::PING.0 as u8);
     }
 
     /// Test ACK frame properties
@@ -124,13 +124,13 @@ proptest! {
         prop_assert!(buf.len() <= 25); // Max size with 8-byte varints
 
         // First byte should be RESET_STREAM type
-        prop_assert_eq!(buf[0], Type::RESET_STREAM.0 as u8);
+        prop_assert_eq!(buf[0], FrameType::RESET_STREAM.0 as u8);
     }
 
     /// Test MAX_DATA frame properties
     #[test]
     fn max_data_properties(max_data in arb_varint()) {
-        let frame = frame::MaxData(max_data.into());
+        let frame = Frame::MaxData(max_data);
 
         let mut buf = BytesMut::new();
         frame.encode(&mut buf);
@@ -139,22 +139,22 @@ proptest! {
         prop_assert!(buf.len() >= 2);
         prop_assert!(buf.len() <= 9);
 
-        prop_assert_eq!(buf[0], Type::MAX_DATA.0 as u8);
+        prop_assert_eq!(buf[0], FrameType::MAX_DATA.0 as u8);
     }
 
     /// Test CONNECTION_CLOSE frame properties
     #[test]
     fn connection_close_properties(
         error_code in arb_varint(),
-        frame_type in option::of(arb_frame_type()),
+        frame_type in proptest::option::of(arb_frame_type()),
         reason_len in 0usize..256,
     ) {
         let reason = vec![b'x'; reason_len];
-        let close = frame::Close {
-            error_code: error_code.into(),
-            frame_type: frame_type.map(|t| t.0),
+        let close = Close::Connection(ConnectionClose {
+            error_code: TransportErrorCode::NO_ERROR,
+            frame_type: frame_type,
             reason: Bytes::from(reason.clone()),
-        };
+        });
 
         let mut buf = BytesMut::new();
         close.encode(&mut buf);
@@ -172,21 +172,21 @@ proptest! {
     #[test]
     fn path_challenge_response_roundtrip(data: [u8; 8]) {
         // PATH_CHALLENGE
-        let challenge = frame::PathChallenge(data);
+        let challenge = Frame::PathChallenge(u64::from_be_bytes(data));
         let mut buf = BytesMut::new();
         challenge.encode(&mut buf);
 
         prop_assert_eq!(buf.len(), 9); // Type byte + 8 bytes data
-        prop_assert_eq!(buf[0], Type::PATH_CHALLENGE.0 as u8);
+        prop_assert_eq!(buf[0], FrameType::PATH_CHALLENGE.0 as u8);
         prop_assert_eq!(&buf[1..9], &data);
 
         // PATH_RESPONSE
-        let response = frame::PathResponse(data);
+        let response = Frame::PathResponse(u64::from_be_bytes(data));
         let mut buf = BytesMut::new();
         response.encode(&mut buf);
 
         prop_assert_eq!(buf.len(), 9); // Type byte + 8 bytes data
-        prop_assert_eq!(buf[0], Type::PATH_RESPONSE.0 as u8);
+        prop_assert_eq!(buf[0], FrameType::PATH_RESPONSE.0 as u8);
         prop_assert_eq!(&buf[1..9], &data);
     }
 }

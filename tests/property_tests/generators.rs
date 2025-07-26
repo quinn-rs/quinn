@@ -65,30 +65,30 @@ pub fn arb_connection_id() -> impl Strategy<Value = Vec<u8>> {
 }
 
 /// Generate arbitrary frame types for testing
-pub fn arb_frame_type() -> impl Strategy<Value = Type> {
+pub fn arb_frame_type() -> impl Strategy<Value = FrameType> {
     prop_oneof![
-        Just(Type::PADDING),
-        Just(Type::PING),
-        Just(Type::ACK),
-        Just(Type::RESET_STREAM),
-        Just(Type::STOP_SENDING),
-        Just(Type::CRYPTO),
-        Just(Type::NEW_TOKEN),
-        Just(Type::STREAM),
-        Just(Type::MAX_DATA),
-        Just(Type::MAX_STREAM_DATA),
-        Just(Type::MAX_STREAMS_BIDI),
-        Just(Type::MAX_STREAMS_UNI),
-        Just(Type::DATA_BLOCKED),
-        Just(Type::STREAM_DATA_BLOCKED),
-        Just(Type::STREAMS_BLOCKED_BIDI),
-        Just(Type::STREAMS_BLOCKED_UNI),
-        Just(Type::NEW_CONNECTION_ID),
-        Just(Type::RETIRE_CONNECTION_ID),
-        Just(Type::PATH_CHALLENGE),
-        Just(Type::PATH_RESPONSE),
-        Just(Type::CONNECTION_CLOSE),
-        Just(Type::HANDSHAKE_DONE),
+        Just(FrameType::PADDING),
+        Just(FrameType::PING),
+        Just(FrameType::ACK),
+        Just(FrameType::RESET_STREAM),
+        Just(FrameType::STOP_SENDING),
+        Just(FrameType::CRYPTO),
+        Just(FrameType::NEW_TOKEN),
+        Just(FrameType::STREAM),
+        Just(FrameType::MAX_DATA),
+        Just(FrameType::MAX_STREAM_DATA),
+        Just(FrameType::MAX_STREAMS_BIDI),
+        Just(FrameType::MAX_STREAMS_UNI),
+        Just(FrameType::DATA_BLOCKED),
+        Just(FrameType::STREAM_DATA_BLOCKED),
+        Just(FrameType::STREAMS_BLOCKED_BIDI),
+        Just(FrameType::STREAMS_BLOCKED_UNI),
+        Just(FrameType::NEW_CONNECTION_ID),
+        Just(FrameType::RETIRE_CONNECTION_ID),
+        Just(FrameType::PATH_CHALLENGE),
+        Just(FrameType::PATH_RESPONSE),
+        Just(FrameType::CONNECTION_CLOSE),
+        Just(FrameType::HANDSHAKE_DONE),
         // NAT traversal extension frames
         Just(Type(0x40)), // ADD_ADDRESS
         Just(Type(0x41)), // PUNCH_ME_NOW
@@ -100,17 +100,17 @@ pub fn arb_frame_type() -> impl Strategy<Value = Type> {
 /// Generate arbitrary transport parameters
 pub fn arb_transport_params() -> impl Strategy<Value = TransportParameters> {
     (
-        option::of(arb_socket_addr()),
-        option::of(arb_varint()),
-        option::of(arb_varint()),
-        option::of(arb_varint()),
-        option::of(arb_varint()),
-        option::of(arb_duration()),
-        option::of(arb_varint()),
-        option::of(arb_varint()),
-        option::of(arb_varint()),
-        option::of(any::<bool>()),
-        option::of(prop::collection::vec(any::<u8>(), 0..=255)),
+        proptest::option::of(arb_socket_addr()),
+        proptest::option::of(arb_varint()),
+        proptest::option::of(arb_varint()),
+        proptest::option::of(arb_varint()),
+        proptest::option::of(arb_varint()),
+        proptest::option::of(arb_duration()),
+        proptest::option::of(arb_varint()),
+        proptest::option::of(arb_varint()),
+        proptest::option::of(arb_varint()),
+        proptest::option::of(any::<bool>()),
+        proptest::option::of(prop::collection::vec(any::<u8>(), 0..=255)),
     )
         .prop_map(
             |(

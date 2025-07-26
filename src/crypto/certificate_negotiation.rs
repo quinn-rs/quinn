@@ -33,9 +33,17 @@ pub enum NegotiationState {
         completed_at: Instant,
     },
     /// Negotiation failed
-    Failed { error: String, failed_at: Instant },
+    Failed {
+        /// The error message
+        error: String,
+        /// When the failure occurred
+        failed_at: Instant,
+    },
     /// Timed out waiting for response
-    TimedOut { timeout_at: Instant },
+    TimedOut {
+        /// When the timeout occurred
+        timeout_at: Instant,
+    },
 }
 
 impl NegotiationState {

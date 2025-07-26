@@ -72,7 +72,9 @@ pub enum P2PEvent {
     Data { peer_id: PeerId, data: Vec<u8> },
     /// Error occurred
     Error {
+        /// The peer ID if known
         peer_id: Option<PeerId>,
+        /// The error that occurred
         error: P2PError,
     },
 }
@@ -80,6 +82,7 @@ pub enum P2PEvent {
 /// Errors that can occur in the P2P API
 #[derive(Debug, Error)]
 pub enum P2PError {
+    /// Connection-related error
     #[error("Connection error: {0}")]
     Connection(String),
 

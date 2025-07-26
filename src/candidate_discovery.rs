@@ -180,8 +180,11 @@ pub enum DiscoveryPhase {
     },
     /// Discovery failed with error details
     Failed {
+        /// The discovery error that occurred
         error: DiscoveryError,
+        /// When the failure occurred
         failed_at: Instant,
+        /// Available fallback strategies
         fallback_options: Vec<FallbackStrategy>,
     },
 }
@@ -212,7 +215,9 @@ pub enum DiscoveryEvent {
     },
     /// Bootstrap node query failed
     BootstrapQueryFailed {
+        /// The bootstrap node that failed
         bootstrap_node: SocketAddr,
+        /// The error message
         error: String,
     },
     /// Symmetric NAT prediction started
@@ -237,7 +242,9 @@ pub enum DiscoveryEvent {
     },
     /// Discovery failed
     DiscoveryFailed {
+        /// The discovery error that occurred
         error: DiscoveryError,
+        /// Any partial results before failure
         partial_results: Vec<CandidateAddress>,
     },
     /// Path validation requested for a candidate
