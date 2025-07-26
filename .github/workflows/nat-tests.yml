@@ -40,9 +40,9 @@ jobs:
         with:
           driver-opts: network=host
       
-      - name: Install Docker Compose
+      - name: Verify Docker Compose
         run: |
-          docker compose version || sudo apt-get update && sudo apt-get install -y docker-compose-plugin
+          docker compose version
       
       - name: Cache Docker layers
         uses: actions/cache@v4
