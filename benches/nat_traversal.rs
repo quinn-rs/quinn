@@ -34,6 +34,7 @@ enum ValidationState {
 
 /// Mock coordination state for benchmarking
 #[derive(Clone, Debug)]
+#[allow(dead_code)]
 struct CoordinationState {
     pub round: u32,
     pub participants: Vec<PeerId>,
@@ -43,6 +44,7 @@ struct CoordinationState {
 }
 
 #[derive(Clone, Debug)]
+#[allow(dead_code)]
 struct CoordinationResponse {
     pub peer_id: PeerId,
     pub ready: bool,
