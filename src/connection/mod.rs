@@ -4723,7 +4723,7 @@ impl Connection {
             };
 
             // Start coordination with this target
-            nat_state.start_coordination_round(vec![target], now);
+            let _ = nat_state.start_coordination_round(vec![target], now);
         } else {
             debug!(
                 "Failed to synchronize coordination for round {}",
@@ -5784,10 +5784,15 @@ impl From<ConnectionError> for io::Error {
 
 #[allow(unreachable_pub)] // fuzzing only
 #[derive(Clone, Debug)]
+/// Connection state machine states
 pub enum State {
+    /// Connection is in handshake phase
     Handshake(state::Handshake),
+    /// Connection is established and ready for data transfer
     Established,
+    /// Connection is closed with a reason
     Closed(state::Closed),
+    /// Connection is draining (waiting for peer acknowledgment)
     Draining,
     /// Waiting for application to call close so we can dispose of the resources
     Drained,

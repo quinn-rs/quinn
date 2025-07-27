@@ -99,8 +99,11 @@ impl Codec for Ipv6Addr {
     }
 }
 
+/// Extension trait for reading from buffers
 pub trait BufExt {
+    /// Read and decode a value from the buffer
     fn get<T: Codec>(&mut self) -> Result<T>;
+    /// Read a variable-length integer from the buffer
     fn get_var(&mut self) -> Result<u64>;
 }
 
@@ -114,8 +117,11 @@ impl<T: Buf> BufExt for T {
     }
 }
 
+/// Extension trait for writing to buffers
 pub trait BufMutExt {
+    /// Write and encode a value to the buffer
     fn write<T: Codec>(&mut self, x: T);
+    /// Write a variable-length integer to the buffer
     fn write_var(&mut self, x: u64);
 }
 

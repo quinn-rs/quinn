@@ -56,7 +56,10 @@ pub enum NatTraversalRole {
     /// Client endpoint (initiates connections, on-demand)
     Client,
     /// Server endpoint (accepts connections, always reachable)
-    Server { can_relay: bool },
+    Server { 
+        /// Whether this server can relay traffic for other peers
+        can_relay: bool 
+    },
     /// Bootstrap/relay endpoint (publicly reachable, coordinates traversal)
     Bootstrap,
 }
