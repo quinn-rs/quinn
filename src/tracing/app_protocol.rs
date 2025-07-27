@@ -15,7 +15,7 @@ pub trait AppProtocol: Send + Sync {
     fn describe_command(&self, cmd: u16) -> &'static str;
 
     /// Decide whether to trace this command (for sampling)
-    fn should_trace(&self, cmd: u16) -> bool {
+    fn should_trace(&self, _cmd: u16) -> bool {
         true // Default: trace everything
     }
 }
