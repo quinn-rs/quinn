@@ -24,7 +24,9 @@ mod implementation {
     pub use super::ring_buffer::{EventLog, TraceConfig};
 
     #[cfg(feature = "trace-app")]
-    pub use super::app_protocol::{AppProtocol, AppRegistry as AppProtocolRegistry, DataMapProtocol};
+    pub use super::app_protocol::{
+        AppProtocol, AppRegistry as AppProtocolRegistry, DataMapProtocol,
+    };
 
     /// Global event log instance
     static EVENT_LOG: once_cell::sync::Lazy<Arc<EventLog>> =

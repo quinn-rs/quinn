@@ -511,16 +511,16 @@ mod tests {
     use super::key_utils::*;
     use super::*;
     use std::sync::Once;
-    
+
     static INIT: Once = Once::new();
-    
+
     // Ensure crypto provider is installed for tests
     fn ensure_crypto_provider() {
         INIT.call_once(|| {
             // Install the crypto provider if not already installed
             #[cfg(feature = "rustls-aws-lc-rs")]
             let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
-            
+
             #[cfg(feature = "rustls-ring")]
             let _ = rustls::crypto::ring::default_provider().install_default();
         });

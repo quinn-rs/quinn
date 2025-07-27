@@ -402,7 +402,7 @@ impl Connection {
         #[cfg(feature = "trace")]
         {
             use crate::trace_event;
-            use crate::tracing::{socket_addr_to_bytes, timestamp_now, Event, EventData};
+            use crate::tracing::{Event, EventData, socket_addr_to_bytes, timestamp_now};
             // Tracing imports handled by macros
             let _peer_id = {
                 let mut id = [0u8; 32];

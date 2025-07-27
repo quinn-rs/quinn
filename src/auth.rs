@@ -639,9 +639,9 @@ mod tests {
     #[tokio::test]
     async fn test_challenge_expiry() {
         let (secret_key, public_key) = generate_ed25519_keypair();
-        let config = AuthConfig { 
+        let config = AuthConfig {
             challenge_validity: Duration::from_millis(100), // Very short for testing
-            ..Default::default() 
+            ..Default::default()
         };
 
         let auth = AuthManager::new(secret_key, config);

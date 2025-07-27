@@ -34,7 +34,7 @@ fn main() {
         println!("\nEvent log provides these query methods:");
         println!("  - recent_events(count)");
         println!("  - get_events_by_trace(trace_id)");
-        
+
         // Show that the log exists and is functional
         let recent = log.recent_events(5);
         println!("\nQueried {} recent events", recent.len());
@@ -48,11 +48,11 @@ fn main() {
         println!("  - All tracing types are zero-sized");
         println!("  - All tracing operations compile to no-ops");
         println!("  - Zero runtime overhead!");
-        
+
         // Even though we can create these, they're zero-sized
         let _log = EventLog::new();
         let _trace_id = TraceId::new();
-        
+
         println!("\nSizes when tracing is disabled:");
         println!("  EventLog: {} bytes", std::mem::size_of::<EventLog>());
         println!("  TraceId: {} bytes", std::mem::size_of::<TraceId>());

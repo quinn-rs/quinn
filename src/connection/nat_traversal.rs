@@ -56,9 +56,9 @@ pub enum NatTraversalRole {
     /// Client endpoint (initiates connections, on-demand)
     Client,
     /// Server endpoint (accepts connections, always reachable)
-    Server { 
+    Server {
         /// Whether this server can relay traffic for other peers
-        can_relay: bool 
+        can_relay: bool,
     },
     /// Bootstrap/relay endpoint (publicly reachable, coordinates traversal)
     Bootstrap,
@@ -2087,7 +2087,8 @@ impl NatTraversalState {
             SocketAddr::V6(v6) => {
                 if v6.ip().is_loopback() {
                     0
-                } else if v6.ip().segments()[0] == 0xfe80 {  // Link-local IPv6 check
+                } else if v6.ip().segments()[0] == 0xfe80 {
+                    // Link-local IPv6 check
                     30000 // Link-local gets medium-low priority
                 } else {
                     50000 // IPv6 generally gets good priority

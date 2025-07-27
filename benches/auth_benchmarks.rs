@@ -152,58 +152,58 @@ fn bench_auth_flow(c: &mut Criterion) {
     group.bench_function("complete_handshake", |b| {
         b.iter(|| {
             rt.block_on(async {
-            // Create two peers
-            let (alice_secret, alice_public) = generate_ed25519_keypair();
-            let (bob_secret, bob_public) = generate_ed25519_keypair();
+                // Create two peers
+                let (alice_secret, alice_public) = generate_ed25519_keypair();
+                let (bob_secret, bob_public) = generate_ed25519_keypair();
 
-            let alice_id = derive_peer_id_from_public_key(&alice_public);
-            let _bob_id = derive_peer_id_from_public_key(&bob_public);
+                let alice_id = derive_peer_id_from_public_key(&alice_public);
+                let _bob_id = derive_peer_id_from_public_key(&bob_public);
 
-            let alice_auth = AuthManager::new(alice_secret, AuthConfig::default());
-            let bob_auth = AuthManager::new(bob_secret, AuthConfig::default());
+                let alice_auth = AuthManager::new(alice_secret, AuthConfig::default());
+                let bob_auth = AuthManager::new(bob_secret, AuthConfig::default());
 
-            // Step 1: Alice creates auth request
-            let auth_request = alice_auth.create_auth_request();
+                // Step 1: Alice creates auth request
+                let auth_request = alice_auth.create_auth_request();
 
-            // Step 2: Bob handles request and creates challenge
-            let challenge = match auth_request {
-                AuthMessage::AuthRequest {
-                    peer_id,
-                    public_key,
-                    ..
-                } => bob_auth
-                    .handle_auth_request(peer_id, public_key)
-                    .await
-                    .unwrap(),
-                _ => panic!("Expected AuthRequest"),
-            };
-
-            // Step 3: Alice responds to challenge
-            let response = match challenge {
-                AuthMessage::Challenge { nonce, .. } => {
-                    alice_auth.create_challenge_response(nonce).unwrap()
-                }
-                _ => panic!("Expected Challenge"),
-            };
-
-            // Step 4: Bob verifies response
-            let result = match response {
-                AuthMessage::ChallengeResponse {
-                    nonce, signature, ..
-                } => {
-                    bob_auth
-                        .verify_challenge_response(
-                            alice_id,
-                            public_key_to_bytes(&alice_public),
-                            nonce,
-                            &signature,
-                        )
+                // Step 2: Bob handles request and creates challenge
+                let challenge = match auth_request {
+                    AuthMessage::AuthRequest {
+                        peer_id,
+                        public_key,
+                        ..
+                    } => bob_auth
+                        .handle_auth_request(peer_id, public_key)
                         .await
-                }
-                _ => panic!("Expected ChallengeResponse"),
-            };
+                        .unwrap(),
+                    _ => panic!("Expected AuthRequest"),
+                };
 
-            black_box(result)
+                // Step 3: Alice responds to challenge
+                let response = match challenge {
+                    AuthMessage::Challenge { nonce, .. } => {
+                        alice_auth.create_challenge_response(nonce).unwrap()
+                    }
+                    _ => panic!("Expected Challenge"),
+                };
+
+                // Step 4: Bob verifies response
+                let result = match response {
+                    AuthMessage::ChallengeResponse {
+                        nonce, signature, ..
+                    } => {
+                        bob_auth
+                            .verify_challenge_response(
+                                alice_id,
+                                public_key_to_bytes(&alice_public),
+                                nonce,
+                                &signature,
+                            )
+                            .await
+                    }
+                    _ => panic!("Expected ChallengeResponse"),
+                };
+
+                black_box(result)
             })
         });
     });
@@ -225,33 +225,33 @@ fn bench_concurrent_auth(c: &mut Criterion) {
             |b, &peer_count| {
                 b.iter(|| {
                     rt.block_on(async {
-                    let (secret_key, _) = generate_ed25519_keypair();
-                    let auth_manager =
-                        Arc::new(AuthManager::new(secret_key, AuthConfig::default()));
+                        let (secret_key, _) = generate_ed25519_keypair();
+                        let auth_manager =
+                            Arc::new(AuthManager::new(secret_key, AuthConfig::default()));
 
-                    // Create multiple peers trying to authenticate
-                    let mut tasks = Vec::new();
+                        // Create multiple peers trying to authenticate
+                        let mut tasks = Vec::new();
 
-                    for _ in 0..peer_count {
-                        let auth_clone = auth_manager.clone();
+                        for _ in 0..peer_count {
+                            let auth_clone = auth_manager.clone();
 
-                        let task = tokio::spawn(async move {
-                            let (_peer_secret, peer_public) = generate_ed25519_keypair();
-                            let peer_id = derive_peer_id_from_public_key(&peer_public);
+                            let task = tokio::spawn(async move {
+                                let (_peer_secret, peer_public) = generate_ed25519_keypair();
+                                let peer_id = derive_peer_id_from_public_key(&peer_public);
 
-                            auth_clone
-                                .handle_auth_request(peer_id, public_key_to_bytes(&peer_public))
-                                .await
-                        });
+                                auth_clone
+                                    .handle_auth_request(peer_id, public_key_to_bytes(&peer_public))
+                                    .await
+                            });
 
-                        tasks.push(task);
-                    }
+                            tasks.push(task);
+                        }
 
-                    let mut results = Vec::new();
-                    for task in tasks {
-                        results.push(task.await.unwrap());
-                    }
-                    black_box(results)
+                        let mut results = Vec::new();
+                        for task in tasks {
+                            results.push(task.await.unwrap());
+                        }
+                        black_box(results)
                     })
                 });
             },

@@ -2,10 +2,7 @@
 ///
 /// This example verifies which public QUIC endpoints are accessible
 /// and documents their capabilities.
-use ant_quic::{
-    ClientConfig, VarInt,
-    high_level::Endpoint,
-};
+use ant_quic::{ClientConfig, VarInt, high_level::Endpoint};
 use std::time::Duration;
 use tokio::time::timeout;
 use tracing::{info, warn};
