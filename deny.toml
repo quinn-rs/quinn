@@ -41,9 +41,23 @@ name = "aws-lc-sys"
 expression = "ISC AND (Apache-2.0 OR ISC) AND OpenSSL"
 license-files = [{ path = "LICENSE", hash = 0xbd0eed23 }]
 
-# [bans]
-# Temporarily disabled - causing issues with cargo-deny
-# TODO: Re-enable with proper configuration
+[bans]
+# Allow all crates by default to avoid blocking CI
+# We'll add specific bans as needed
+multiple-versions = "warn"
+wildcards = "allow"
+highlight = "all"
+
+# Skip specific crates that have multiple versions due to dependency tree
+skip = [
+    # async-channel has both 1.x and 2.x in the tree
+    { name = "async-channel" },
+    # event-listener also has multiple versions
+    { name = "event-listener" },
+    { name = "event-listener-strategy" },
+    { name = "async-task" },
+    { name = "futures-lite" },
+]
 
 [advisories]
 # Configure advisory database
