@@ -16,6 +16,7 @@ use ant_quic::PeerId;
 
 /// Mock RelayQueueItem for benchmarking
 #[derive(Clone, Debug)]
+#[allow(dead_code)]
 struct RelayQueueItem {
     pub peer_id: PeerId,
     pub data: Vec<u8>,
@@ -270,7 +271,7 @@ fn bench_alternatives(c: &mut Criterion) {
             let mut counter = 0u64;
 
             // Add items
-            for i in 0..1000 {
+            for _i in 0..1000 {
                 let mut peer_id_bytes = [0u8; 32];
                 let uuid = Uuid::new_v4();
                 let uuid_bytes = uuid.as_bytes();
