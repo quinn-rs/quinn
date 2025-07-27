@@ -17,6 +17,7 @@ use ant_quic::{CandidateAddress, CandidateSource, CandidateState, PeerId};
 
 /// Mock path validation state for benchmarking
 #[derive(Clone, Debug)]
+#[allow(dead_code)]
 struct PathValidationState {
     pub address: SocketAddr,
     pub attempts: u32,
