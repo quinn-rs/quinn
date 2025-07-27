@@ -10,7 +10,7 @@ use ant_quic::{
 use clap::Parser;
 use rustls::pki_types::ServerName;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+// use std::collections::HashMap; // Currently unused
 use std::error::Error;
 use std::fs;
 use std::net::{SocketAddr, ToSocketAddrs};
@@ -18,7 +18,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::time::timeout;
-use tracing::{error, info, warn};
+use tracing::{info, warn};
 
 #[derive(Parser, Debug, Clone)]
 #[command(author, version, about, long_about = None)]
@@ -63,6 +63,7 @@ struct EndpointDatabase {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[allow(dead_code)]
 struct EndpointEntry {
     name: String,
     host: String,
@@ -79,6 +80,7 @@ struct EndpointEntry {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[allow(dead_code)]
 struct ValidationConfig {
     timeout_seconds: u64,
     retry_attempts: u32,
@@ -88,6 +90,7 @@ struct ValidationConfig {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[allow(dead_code)]
 struct TestConfig {
     name: String,
     description: String,
