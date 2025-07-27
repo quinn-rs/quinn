@@ -13,8 +13,23 @@ use std::{
 use tokio::time::sleep;
 use tracing::info;
 
+// Ensure crypto provider is installed for tests
+fn ensure_crypto_provider() {
+    // Try to install the crypto provider, ignore if already installed
+    #[cfg(feature = "rustls-aws-lc-rs")]
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+    
+    #[cfg(feature = "rustls-ring")]
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    
+    // If neither feature is enabled, use default
+    #[cfg(not(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring")))]
+    let _ = rustls::crypto::ring::default_provider().install_default();
+}
+
 #[tokio::test]
 async fn test_authenticated_connection() {
+    ensure_crypto_provider();
     let _ = tracing_subscriber::fmt::try_init();
 
     // Create bootstrap node
@@ -138,6 +153,7 @@ async fn test_authenticated_connection() {
 
 #[tokio::test]
 async fn test_authentication_failure() {
+    ensure_crypto_provider();
     let _ = tracing_subscriber::fmt::try_init();
 
     // Create bootstrap node
@@ -200,6 +216,7 @@ async fn test_authentication_failure() {
 
 #[tokio::test]
 async fn test_multiple_authenticated_peers() {
+    ensure_crypto_provider();
     let _ = tracing_subscriber::fmt::try_init();
 
     // Create bootstrap node
@@ -302,6 +319,7 @@ async fn test_multiple_authenticated_peers() {
 
 #[tokio::test]
 async fn test_auth_with_disconnection() {
+    ensure_crypto_provider();
     let _ = tracing_subscriber::fmt::try_init();
 
     // Create bootstrap node
