@@ -92,7 +92,7 @@ async fn test_symmetric_nat_address_discovery() {
     info!("Testing symmetric NAT scenario");
 
     // Symmetric NAT assigns different external ports for each destination
-    let _observations = vec![
+    let _observations = [
         (
             SocketAddr::from(([185, 199, 108, 153], 443)),
             SocketAddr::from(([203, 0, 113, 50], 45678)),

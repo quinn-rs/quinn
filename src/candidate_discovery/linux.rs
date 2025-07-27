@@ -1085,7 +1085,7 @@ mod tests {
         };
 
         discovery.set_interface_config(config.clone());
-        assert_eq!(discovery.interface_config.include_loopback, true);
+        assert!(discovery.interface_config.include_loopback);
         assert_eq!(discovery.interface_config.min_mtu, 1000);
     }
 

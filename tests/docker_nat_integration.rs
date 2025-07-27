@@ -84,7 +84,7 @@ mod docker_nat_tests {
 
 #[cfg(test)]
 mod docker_sanity_checks {
-    use super::*;
+    // use super::*; // Currently unused
 
     #[test]
     fn test_docker_available() {
