@@ -556,6 +556,17 @@ impl QuicServerConfig for Rfc7250QuicServerConfig {
 mod tests {
     use super::super::tls_extensions::CertificateType;
     use super::*;
+    use std::sync::Once;
+    
+    static INIT: Once = Once::new();
+    
+    // Ensure crypto provider is installed for tests
+    fn ensure_crypto_provider() {
+        INIT.call_once(|| {
+            // Install the crypto provider if not already installed
+            let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+        });
+    }
 
     #[test]
     fn test_simulated_negotiation_flow() {
@@ -603,6 +614,7 @@ mod tests {
 
     #[test]
     fn test_wrapper_configs() {
+        ensure_crypto_provider();
         let client_config = ClientConfig::builder()
             .dangerous()
             .with_custom_certificate_verifier(Arc::new(

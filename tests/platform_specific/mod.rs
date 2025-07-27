@@ -242,7 +242,7 @@ mod platform_wasm {
 // Cross-platform network utilities tests
 #[cfg(test)]
 mod network_utils {
-    use ant_quic::endpoint::EndpointConfig;
+    use ant_quic::config::EndpointConfig;
 
     #[test]
     fn test_endpoint_config_cross_platform() {
@@ -250,12 +250,12 @@ mod network_utils {
         let config = EndpointConfig::default();
 
         // These should work on all platforms
-        assert!(config.max_udp_payload_size() > 0);
+        assert!(config.get_max_udp_payload_size() > 0);
 
         #[cfg(not(target_os = "windows"))]
         {
             // Unix-specific tests
-            assert!(config.max_udp_payload_size() >= 1200);
+            assert!(config.get_max_udp_payload_size() >= 1200);
         }
 
         #[cfg(target_os = "windows")]

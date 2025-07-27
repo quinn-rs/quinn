@@ -510,6 +510,17 @@ pub mod key_utils {
 mod tests {
     use super::key_utils::*;
     use super::*;
+    use std::sync::Once;
+    
+    static INIT: Once = Once::new();
+    
+    // Ensure crypto provider is installed for tests
+    fn ensure_crypto_provider() {
+        INIT.call_once(|| {
+            // Install the crypto provider if not already installed
+            let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+        });
+    }
 
     #[test]
     fn test_create_ed25519_subject_public_key_info() {
@@ -598,6 +609,7 @@ mod tests {
 
     #[test]
     fn test_config_builder() {
+        ensure_crypto_provider();
         let (private_key, public_key) = generate_ed25519_keypair();
         let key_bytes = public_key_to_bytes(&public_key);
 
