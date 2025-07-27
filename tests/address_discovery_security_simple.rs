@@ -9,10 +9,24 @@ use ant_quic::{
 };
 use std::{
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
-    sync::Arc,
+    sync::{Arc, Once},
     time::Duration,
 };
 use tokio::time::sleep;
+
+static INIT: Once = Once::new();
+
+// Ensure crypto provider is installed for tests
+fn ensure_crypto_provider() {
+    INIT.call_once(|| {
+        // Install the crypto provider if not already installed
+        #[cfg(feature = "rustls-aws-lc-rs")]
+        let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+        
+        #[cfg(feature = "rustls-ring")]
+        let _ = rustls::crypto::ring::default_provider().install_default();
+    });
+}
 
 /// Test timing attack resistance in address processing
 #[tokio::test]
@@ -265,6 +279,7 @@ fn test_rate_limiting_math() {
 /// Test connection isolation with real nodes
 #[tokio::test]
 async fn test_connection_isolation() {
+    ensure_crypto_provider();
     let _ = tracing_subscriber::fmt::try_init();
 
     // Create bootstrap node
