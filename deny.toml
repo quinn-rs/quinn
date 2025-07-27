@@ -30,9 +30,6 @@ allow = [
     "OpenSSL",
 ]
 
-# Don't require all crates to be explicitly allowed
-default = "allow"
-
 # Clarify specific license cases
 [[licenses.clarify]]
 name = "ring"
