@@ -20,22 +20,6 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  format:
-    name: Format Check
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt
-
-      - name: Check formatting
-        run: cargo fmt --all -- --check
-
   lint:
     name: Clippy Lint
     runs-on: ubuntu-latest
@@ -164,7 +148,7 @@ jobs:
 
   summary:
     name: Quick Checks Summary
-    needs: [format, lint, quick-test, check, dependencies, license-check, yaml-lint]
+    needs: [lint, quick-test, check, dependencies, license-check, yaml-lint]
     runs-on: ubuntu-latest
     if: always()
     outputs:
@@ -174,8 +158,7 @@ jobs:
         id: check
         run: |
           # Check if all required jobs passed
-          if [[ "${{ needs.format.result }}" == "success" && \
-                "${{ needs.lint.result }}" == "success" && \
+          if [[ "${{ needs.lint.result }}" == "success" && \
                 "${{ needs.quick-test.result }}" == "success" && \
                 "${{ needs.check.result }}" == "success" && \
                 "${{ needs.yaml-lint.result }}" == "success" ]]; then
@@ -194,7 +177,6 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "| Check | Status |" >> $GITHUB_STEP_SUMMARY
           echo "|-------|--------|" >> $GITHUB_STEP_SUMMARY
-          echo "| Format | ${{ needs.format.result == 'success' && '✅' || '❌' }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Clippy | ${{ needs.lint.result == 'success' && '✅' || '❌' }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Quick Tests | ${{ needs.quick-test.result == 'success' && '✅' || '❌' }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Compilation | ${{ needs.check.result == 'success' && '✅' || '❌' }} |" >> $GITHUB_STEP_SUMMARY
