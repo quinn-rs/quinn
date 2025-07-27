@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use tracing::{Level, Span, debug, error, info, trace, warn};
-use tracing_subscriber::{EnvFilter, Layer, layer::SubscriberExt, util::SubscriberInitExt};
+use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
 
 use crate::{
     ConnectionId, Duration, Instant, Side, connection::nat_traversal::NatTraversalRole,
@@ -216,7 +216,7 @@ pub struct FrameInfo {
 /// Transport parameter information
 #[derive(Debug)]
 pub struct TransportParamInfo {
-    pub param_id: TransportParameterId,
+    pub(crate) param_id: TransportParameterId,
     pub value: Option<Vec<u8>>,
     pub side: Side,
 }

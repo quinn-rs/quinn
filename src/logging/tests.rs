@@ -215,7 +215,7 @@ mod tests {
         );
 
         // Should allow first 10 messages
-        for i in 0..10 {
+        for _i in 0..10 {
             assert!(rate_limiter.should_log(Level::INFO));
         }
 

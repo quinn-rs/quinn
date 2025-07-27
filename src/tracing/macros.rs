@@ -188,8 +188,8 @@ mod tests {
 
     #[test]
     fn test_trace_macros() {
-        let log = EventLog::new();
-        let trace_id = TraceId::new();
+        let _log = EventLog::new();
+        let _trace_id = TraceId::new();
 
         // These should compile whether trace is enabled or not
         trace_packet_sent!(&log, trace_id, 1200, 42);

@@ -183,7 +183,7 @@ mod observed_address_sequence_validation {
         
         while offset < buf.len() {
             // Read frame type
-            let frame_type_start = offset;
+            let _frame_type_start = offset;
             let mut reader = &buf[offset..];
             let frame_type = match reader.get_var() {
                 Ok(val) => val,

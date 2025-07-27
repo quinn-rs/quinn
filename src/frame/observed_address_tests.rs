@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod observed_address_sequence_tests {
     
-    use crate::coding::{BufMutExt, Codec};
+    // use crate::coding::{BufMutExt, Codec}; // Not needed - imported through frame module
     use crate::frame::{Frame, FrameType, Iter, ObservedAddress};
     use crate::VarInt;
     use bytes::{BufMut, Bytes};

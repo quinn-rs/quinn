@@ -242,7 +242,7 @@ pub fn log_error_with_context(error: &dyn std::error::Error, context: super::Err
 }
 
 /// Log detailed frame information
-pub fn log_frame_details(frame: &Frame, direction: &str, conn_id: &ConnectionId) {
+pub(crate) fn log_frame_details(frame: &Frame, direction: &str, conn_id: &ConnectionId) {
     trace!(
         target: "ant_quic::frame::details",
         conn_id = ?conn_id,

@@ -37,15 +37,24 @@ pub use varint::{VarInt, VarIntBoundsExceeded};
 // Removed optional bloom module
 
 // Core implementation modules
+/// Configuration structures and validation
 pub mod config;
+/// QUIC connection state machine and management
 pub mod connection;
+/// QUIC endpoint for accepting and initiating connections
 pub mod endpoint;
+/// QUIC frame types and encoding/decoding
 pub mod frame;
+/// QUIC packet structures and processing
 pub mod packet;
+/// Shared types and utilities
 pub mod shared;
+/// Transport error types and codes
 pub mod transport_error;
 // Simplified congestion control
+/// Network candidate discovery and management
 pub mod candidate_discovery;
+/// Connection ID generation strategies
 pub mod cid_generator;
 mod congestion;
 mod protocol_violations;
@@ -54,30 +63,45 @@ mod protocol_violations_tests;
 
 // Zero-cost tracing system
 mod connection_establishment_simple;
+/// High-level NAT traversal API
 pub mod nat_traversal_api;
 mod token;
 mod token_memory_cache;
+/// Zero-cost tracing and event logging system
 pub mod tracing;
 
 // Public modules with new structure
+/// High-level API for QUIC operations
 pub mod api;
+/// Cryptographic operations and raw public key support
 pub mod crypto;
+/// Platform-specific network interface discovery
 pub mod discovery;
+/// NAT traversal protocol implementation
 pub mod nat_traversal;
+/// Transport-level protocol implementation
 pub mod transport;
 
 // Additional modules
+/// Peer authentication system
 pub mod auth;
+/// Secure chat protocol implementation
 pub mod chat;
+/// Performance optimization utilities
 pub mod optimization;
+/// High-level QUIC P2P node implementation
 pub mod quic_node;
+/// Real-time statistics dashboard
 pub mod stats_dashboard;
+/// Terminal user interface components
 pub mod terminal_ui;
 
 // Compliance validation framework
+/// IETF compliance validation tools
 pub mod compliance_validator;
 
 // Comprehensive logging system
+/// Structured logging and diagnostics
 pub mod logging;
 
 // High-level async API modules (ported from quinn crate)
