@@ -10,11 +10,25 @@ use ant_quic::{
 use std::{
     collections::HashMap,
     net::{IpAddr, Ipv4Addr, SocketAddr},
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, Once},
     time::Duration,
 };
 use tokio::sync::mpsc;
 use tracing::{debug, info};
+
+static INIT: Once = Once::new();
+
+// Ensure crypto provider is installed for tests
+fn ensure_crypto_provider() {
+    INIT.call_once(|| {
+        // Install the crypto provider if not already installed
+        #[cfg(feature = "rustls-aws-lc-rs")]
+        let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+        
+        #[cfg(feature = "rustls-ring")]
+        let _ = rustls::crypto::ring::default_provider().install_default();
+    });
+}
 
 /// Mock NAT environment for testing
 #[derive(Clone)]
@@ -51,6 +65,7 @@ impl NatEnvironment {
 /// Test OBSERVED_ADDRESS frame flow in basic scenario
 #[tokio::test]
 async fn test_basic_observed_address_flow() {
+    ensure_crypto_provider();
     let _ = tracing_subscriber::fmt()
         .with_env_filter("ant_quic=debug")
         .try_init();
@@ -120,6 +135,7 @@ async fn test_basic_observed_address_flow() {
 /// Test OBSERVED_ADDRESS frames with NAT simulation
 #[tokio::test]
 async fn test_observed_address_with_nat() {
+    ensure_crypto_provider();
     let _ = tracing_subscriber::fmt()
         .with_env_filter("ant_quic=debug")
         .try_init();
@@ -177,6 +193,7 @@ async fn test_observed_address_with_nat() {
 /// Test multiple observations on different paths
 #[tokio::test]
 async fn test_multipath_observations() {
+    ensure_crypto_provider();
     let _ = tracing_subscriber::fmt()
         .with_env_filter("ant_quic=debug")
         .try_init();
@@ -239,6 +256,7 @@ async fn test_multipath_observations() {
 /// Test observation rate limiting behavior
 #[tokio::test]
 async fn test_observation_rate_limiting() {
+    ensure_crypto_provider();
     let _ = tracing_subscriber::fmt()
         .with_env_filter("ant_quic=debug")
         .try_init();
@@ -303,6 +321,7 @@ async fn test_observation_rate_limiting() {
 /// Test address discovery in connection migration scenario
 #[tokio::test]
 async fn test_observation_during_migration() {
+    ensure_crypto_provider();
     let _ = tracing_subscriber::fmt()
         .with_env_filter("ant_quic=debug")
         .try_init();

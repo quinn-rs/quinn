@@ -8,10 +8,24 @@ use ant_quic::{
 };
 use std::{
     net::{Ipv4Addr, SocketAddr},
-    sync::Arc,
+    sync::{Arc, Once},
     time::Duration,
 };
 use tracing::info;
+
+static INIT: Once = Once::new();
+
+// Ensure crypto provider is installed for tests
+fn ensure_crypto_provider() {
+    INIT.call_once(|| {
+        // Install the crypto provider if not already installed
+        #[cfg(feature = "rustls-aws-lc-rs")]
+        let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+        
+        #[cfg(feature = "rustls-ring")]
+        let _ = rustls::crypto::ring::default_provider().install_default();
+    });
+}
 
 /// Custom certificate verifier that accepts any certificate (for testing only)
 #[derive(Debug)]
@@ -59,6 +73,7 @@ impl rustls::client::danger::ServerCertVerifier for SkipServerVerification {
 /// Test that address discovery works by default
 #[tokio::test]
 async fn test_address_discovery_default_enabled() {
+    ensure_crypto_provider();
     let _ = tracing_subscriber::fmt()
         .with_env_filter("ant_quic=debug")
         .try_init();
@@ -138,6 +153,7 @@ async fn test_address_discovery_default_enabled() {
 /// Test multiple concurrent connections
 #[tokio::test]
 async fn test_concurrent_connections() {
+    ensure_crypto_provider();
     let _ = tracing_subscriber::fmt()
         .with_env_filter("ant_quic=debug")
         .try_init();
@@ -221,6 +237,7 @@ async fn test_concurrent_connections() {
 /// Test with data transfer
 #[tokio::test]
 async fn test_with_data_transfer() {
+    ensure_crypto_provider();
     let _ = tracing_subscriber::fmt()
         .with_env_filter("ant_quic=debug")
         .try_init();
