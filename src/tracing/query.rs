@@ -38,12 +38,13 @@ mod implementation {
             self.log.event_count()
         }
 
-        /// Export trace as JSON (requires serde feature)
-        #[cfg(feature = "serde")]
-        pub fn export_json(&self, trace_id: TraceId) -> Result<String, serde_json::Error> {
-            let events = self.get_trace(trace_id);
-            serde_json::to_string_pretty(&events)
-        }
+        // TODO: Add serde feature to Cargo.toml to enable JSON export
+        // /// Export trace as JSON (requires serde feature)
+        // #[cfg(feature = "serde")]
+        // pub fn export_json(&self, trace_id: TraceId) -> Result<String, serde_json::Error> {
+        //     let events = self.get_trace(trace_id);
+        //     serde_json::to_string_pretty(&events)
+        // }
 
         /// Analyze connection performance for a trace
         pub fn analyze_connection(&self, trace_id: TraceId) -> ConnectionAnalysis {

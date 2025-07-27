@@ -5,7 +5,7 @@
 use std::net::SocketAddr;
 
 /// Helper function to get current timestamp in microseconds
-pub(super) fn timestamp_now() -> u64 {
+pub fn timestamp_now() -> u64 {
     use std::time::{SystemTime, UNIX_EPOCH};
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -14,7 +14,7 @@ pub(super) fn timestamp_now() -> u64 {
 }
 
 /// Convert SocketAddr to bytes for storage in events
-pub(super) fn socket_addr_to_bytes(addr: SocketAddr) -> ([u8; 18], u8) {
+pub fn socket_addr_to_bytes(addr: SocketAddr) -> ([u8; 18], u8) {
     let mut bytes = [0u8; 18];
     match addr {
         SocketAddr::V4(v4) => {
@@ -34,11 +34,11 @@ pub(super) fn socket_addr_to_bytes(addr: SocketAddr) -> ([u8; 18], u8) {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(C)]
 #[derive(Default)]
-pub(super) struct TraceId(pub [u8; 16]);
+pub struct TraceId(pub [u8; 16]);
 
 impl TraceId {
     /// Create a new random trace ID
-    pub(super) fn new() -> Self {
+    pub fn new() -> Self {
         let mut id = [0u8; 16];
         use rand::RngCore;
         rand::thread_rng().fill_bytes(&mut id);
@@ -46,7 +46,7 @@ impl TraceId {
     }
 
     /// Create a trace ID from bytes
-    pub(super) fn from_bytes(bytes: [u8; 16]) -> Self {
+    pub fn from_bytes(bytes: [u8; 16]) -> Self {
         Self(bytes)
     }
 }
@@ -54,7 +54,7 @@ impl TraceId {
 /// Fixed-size event structure (128 bytes)
 #[derive(Debug, Clone)]
 #[repr(C)]
-pub(super) struct Event {
+pub struct Event {
     /// Timestamp in microseconds since UNIX epoch (8 bytes)
     pub timestamp: u64,
     /// Trace correlation ID (16 bytes)
@@ -72,7 +72,7 @@ pub(super) struct Event {
 /// Event data variants (must fit in 64 bytes)
 #[derive(Debug, Clone)]
 #[repr(C)]
-pub(super) enum EventData {
+pub enum EventData {
     // QUIC protocol events
     ConnInit {
         /// Encoded socket address (4 bytes for IPv4 + 2 port, 16 bytes for IPv6 + 2 port)
@@ -156,6 +156,16 @@ pub(super) enum EventData {
         data: [u8; 44],
         _padding: [u8; 16],
     },
+}
+
+impl Default for EventData {
+    fn default() -> Self {
+        Self::ConnInit {
+            endpoint_bytes: [0u8; 18],
+            addr_type: 0,
+            _padding: [0u8; 45],
+        }
+    }
 }
 
 // Compile-time size assertions

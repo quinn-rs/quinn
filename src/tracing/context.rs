@@ -4,7 +4,7 @@ use super::event::TraceId;
 
 /// Trace context for a connection or operation
 #[derive(Debug, Clone)]
-pub(super) struct TraceContext {
+pub struct TraceContext {
     /// Unique trace identifier
     pub trace_id: TraceId,
     /// Start time of the trace
@@ -15,7 +15,7 @@ pub(super) struct TraceContext {
 
 /// Flags controlling trace behavior
 #[derive(Debug, Clone, Copy, Default)]
-pub(super) struct TraceFlags {
+pub struct TraceFlags {
     /// Whether this trace is being sampled
     pub sampled: bool,
     /// Debug mode for verbose tracing
@@ -26,7 +26,7 @@ pub(super) struct TraceFlags {
 
 impl TraceContext {
     /// Create a new trace context
-    pub(super) fn new(trace_id: TraceId) -> Self {
+    pub fn new(trace_id: TraceId) -> Self {
         Self {
             trace_id,
             start_time: crate::tracing::timestamp_now(),
@@ -35,7 +35,7 @@ impl TraceContext {
     }
 
     /// Create a new trace context with flags
-    pub(super) fn with_flags(trace_id: TraceId, flags: TraceFlags) -> Self {
+    pub fn with_flags(trace_id: TraceId, flags: TraceFlags) -> Self {
         Self {
             trace_id,
             start_time: crate::tracing::timestamp_now(),
@@ -44,7 +44,7 @@ impl TraceContext {
     }
 
     /// Get the trace ID
-    pub(super) fn trace_id(&self) -> TraceId {
+    pub fn trace_id(&self) -> TraceId {
         self.trace_id
     }
 

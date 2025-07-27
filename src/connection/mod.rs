@@ -402,6 +402,7 @@ impl Connection {
         #[cfg(feature = "trace")]
         {
             use crate::trace_event;
+            use crate::tracing::{socket_addr_to_bytes, timestamp_now, Event, EventData};
             // Tracing imports handled by macros
             let _peer_id = {
                 let mut id = [0u8; 32];
@@ -5942,7 +5943,7 @@ fn negotiate_max_idle_timeout(x: Option<VarInt>, y: Option<VarInt>) -> Option<Du
 
 /// State for tracking address discovery via OBSERVED_ADDRESS frames
 #[derive(Debug, Clone)]
-struct AddressDiscoveryState {
+pub(crate) struct AddressDiscoveryState {
     /// Whether address discovery is enabled for this connection
     enabled: bool,
     /// Maximum rate of OBSERVED_ADDRESS frames per path (per second)

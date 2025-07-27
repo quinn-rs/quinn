@@ -88,7 +88,7 @@ macro_rules! frame_types {
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
-struct StreamInfo(u8);
+pub(crate) struct StreamInfo(u8);
 
 impl StreamInfo {
     fn fin(self) -> bool {

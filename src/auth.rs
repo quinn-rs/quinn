@@ -639,8 +639,10 @@ mod tests {
     #[tokio::test]
     async fn test_challenge_expiry() {
         let (secret_key, public_key) = generate_ed25519_keypair();
-        let mut config = AuthConfig::default();
-        config.challenge_validity = Duration::from_millis(100); // Very short for testing
+        let config = AuthConfig { 
+            challenge_validity: Duration::from_millis(100), // Very short for testing
+            ..Default::default() 
+        };
 
         let auth = AuthManager::new(secret_key, config);
         let peer_id = derive_peer_id_from_public_key(&public_key);

@@ -217,10 +217,12 @@ pub(crate) enum MacOSNetworkError {
 }
 
 // System Configuration Framework types and constants
+#[repr(transparent)]
 #[derive(Debug, Clone, Copy)]
 struct SCDynamicStoreRef(*mut std::ffi::c_void);
 unsafe impl Send for SCDynamicStoreRef {}
 
+#[repr(transparent)]
 #[derive(Debug, Clone, Copy)]
 struct CFRunLoopSourceRef(*mut std::ffi::c_void);
 unsafe impl Send for CFRunLoopSourceRef {}

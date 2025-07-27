@@ -5,8 +5,8 @@ use std::sync::Arc;
 
 /// Trait for application protocols to implement tracing
 pub trait AppProtocol: Send + Sync {
-    /// Unique 4-byte identifier for this protocol
-    const APP_ID: [u8; 4];
+    /// Get unique 4-byte identifier for this protocol
+    fn app_id(&self) -> [u8; 4];
 
     /// Convert application command and payload to trace data
     fn to_trace_data(&self, cmd: u16, payload: &[u8]) -> [u8; 42];
@@ -35,7 +35,8 @@ impl AppRegistry {
 
     /// Register an application protocol
     pub fn register<A: AppProtocol + 'static>(&self, app: A) {
-        self.apps.insert(A::APP_ID, Arc::new(app));
+        let app_id = app.app_id();
+        self.apps.insert(app_id, Arc::new(app));
     }
 
     /// Get an application protocol by ID
@@ -72,7 +73,9 @@ impl Default for AppRegistry {
 pub struct DataMapProtocol;
 
 impl AppProtocol for DataMapProtocol {
-    const APP_ID: [u8; 4] = *b"DMAP";
+    fn app_id(&self) -> [u8; 4] {
+        *b"DMAP"
+    }
 
     fn to_trace_data(&self, cmd: u16, payload: &[u8]) -> [u8; 42] {
         let mut data = [0u8; 42];
@@ -177,11 +180,12 @@ mod tests {
         let registry = AppRegistry::new();
         registry.register(DataMapProtocol);
 
-        assert!(registry.get(&DataMapProtocol::APP_ID).is_some());
-        assert!(registry.should_trace(&DataMapProtocol::APP_ID, 0x01));
-        assert!(!registry.should_trace(&DataMapProtocol::APP_ID, 0x04));
+        let app_id = DataMapProtocol.app_id();
+        assert!(registry.get(&app_id).is_some());
+        assert!(registry.should_trace(&app_id, 0x01));
+        assert!(!registry.should_trace(&app_id, 0x04));
 
-        let desc = registry.describe_command(&DataMapProtocol::APP_ID, 0x01);
+        let desc = registry.describe_command(&app_id, 0x01);
         assert_eq!(desc, "STORE_CHUNK");
     }
 }

@@ -8,17 +8,17 @@ use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use dashmap::DashMap;
 
 /// Configuration for the event log
-pub(super) struct TraceConfig;
+pub struct TraceConfig;
 
 impl TraceConfig {
     /// Ring buffer size (must be power of 2)
-    pub(super) const BUFFER_SIZE: usize = 65536; // ~8MB
+    pub const BUFFER_SIZE: usize = 65536; // ~8MB
 
-    pub(super) const BUFFER_MASK: usize = Self::BUFFER_SIZE - 1;
+    pub const BUFFER_MASK: usize = Self::BUFFER_SIZE - 1;
 }
 
 /// Lock-free ring buffer for event storage
-pub(super) struct EventLog {
+pub struct EventLog {
     /// Fixed-size ring buffer
     events: Box<[std::cell::UnsafeCell<Event>; TraceConfig::BUFFER_SIZE]>,
     /// Write index (always increments)
@@ -44,7 +44,7 @@ const _: () = assert!(TraceConfig::BUFFER_SIZE.count_ones() == 1);
 
 impl EventLog {
     /// Create a new event log
-    pub(super) fn new() -> Self {
+    pub fn new() -> Self {
         let events: Vec<std::cell::UnsafeCell<Event>> = (0..TraceConfig::BUFFER_SIZE)
             .map(|_| std::cell::UnsafeCell::new(Event::default()))
             .collect();
@@ -67,7 +67,7 @@ impl EventLog {
     }
 
     /// Log an event (lock-free)
-    pub(super) fn log(&self, mut event: Event) {
+    pub fn log(&self, mut event: Event) {
         // Set sequence number
         event.sequence = self.sequence_counter.fetch_add(1, Ordering::Relaxed);
 
@@ -114,7 +114,7 @@ impl EventLog {
     }
 
     /// Get recent events (newest first)
-    pub(super) fn recent_events(&self, count: usize) -> Vec<Event> {
+    pub fn recent_events(&self, count: usize) -> Vec<Event> {
         let current_idx = self.write_index.load(Ordering::Relaxed);
         let mut events = Vec::with_capacity(count.min(TraceConfig::BUFFER_SIZE));
 
@@ -229,7 +229,7 @@ impl EventLog {
     // Alias methods for TraceQuery compatibility
 
     /// Get events by trace ID (alias for query_trace)
-    pub(super) fn get_events_by_trace(&self, trace_id: TraceId) -> Vec<Event> {
+    pub fn get_events_by_trace(&self, trace_id: TraceId) -> Vec<Event> {
         self.query_trace(trace_id)
     }
 

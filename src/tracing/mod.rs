@@ -19,12 +19,12 @@ mod implementation {
 
     // Re-export types from parent modules
     pub use super::context::TraceContext;
-    pub use super::event::{Event, EventData, TraceId, socket_addr_to_bytes, timestamp_now};
+    pub use super::event::{Event, EventData, TraceId, socket_addr_to_bytes};
     pub use super::query::{ConnectionAnalysis, TraceQuery};
     pub use super::ring_buffer::{EventLog, TraceConfig};
 
     #[cfg(feature = "trace-app")]
-    pub use super::app_protocol::{AppProtocol, AppProtocolRegistry, DataMapProtocol};
+    pub use super::app_protocol::{AppProtocol, AppRegistry as AppProtocolRegistry, DataMapProtocol};
 
     /// Global event log instance
     static EVENT_LOG: once_cell::sync::Lazy<Arc<EventLog>> =
@@ -160,7 +160,14 @@ mod tests {
     #[test]
     fn test_no_op_operations() {
         let log = EventLog::new();
-        log.log(Event); // Should compile to nothing
+        #[cfg(not(feature = "trace"))]
+        log.log(Event); // Should compile to nothing when trace is disabled
+        #[cfg(feature = "trace")]
+        {
+            // When trace is enabled, Event is a real struct
+            let event = Event::default();
+            log.log(event);
+        }
 
         let trace_id = TraceId::new();
         let _context = TraceContext::new(trace_id);
