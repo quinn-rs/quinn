@@ -90,18 +90,18 @@ fn bench_auth_messages(c: &mut Criterion) {
     });
 
     group.bench_function("handle_auth_request", |b| {
-        let (peer_secret, peer_public) = generate_ed25519_keypair();
+        let (_peer_secret, peer_public) = generate_ed25519_keypair();
         let peer_id = derive_peer_id_from_public_key(&peer_public);
         let public_key_bytes = public_key_to_bytes(&peer_public);
 
-        b.to_async(&rt).iter(|| {
+        b.iter(|| {
             let auth_manager = auth_manager.clone();
-            async move {
+            rt.block_on(async move {
                 let result = auth_manager
                     .handle_auth_request(peer_id, public_key_bytes)
                     .await;
                 black_box(result)
-            }
+            })
         });
     });
 
@@ -124,10 +124,10 @@ fn bench_auth_messages(c: &mut Criterion) {
             _ => panic!("Expected ChallengeResponse"),
         };
 
-        b.to_async(&rt).iter(|| {
+        b.iter(|| {
             let auth_manager = auth_manager.clone();
             let signature = signature.clone();
-            async move {
+            rt.block_on(async move {
                 let result = auth_manager
                     .verify_challenge_response(
                         peer_id,
@@ -137,7 +137,7 @@ fn bench_auth_messages(c: &mut Criterion) {
                     )
                     .await;
                 black_box(result)
-            }
+            })
         });
     });
 
@@ -150,13 +150,14 @@ fn bench_auth_flow(c: &mut Criterion) {
     let mut group = c.benchmark_group("auth_flow");
 
     group.bench_function("complete_handshake", |b| {
-        b.to_async(&rt).iter(|| async {
+        b.iter(|| {
+            rt.block_on(async {
             // Create two peers
             let (alice_secret, alice_public) = generate_ed25519_keypair();
             let (bob_secret, bob_public) = generate_ed25519_keypair();
 
             let alice_id = derive_peer_id_from_public_key(&alice_public);
-            let bob_id = derive_peer_id_from_public_key(&bob_public);
+            let _bob_id = derive_peer_id_from_public_key(&bob_public);
 
             let alice_auth = AuthManager::new(alice_secret, AuthConfig::default());
             let bob_auth = AuthManager::new(bob_secret, AuthConfig::default());
@@ -203,6 +204,7 @@ fn bench_auth_flow(c: &mut Criterion) {
             };
 
             black_box(result)
+            })
         });
     });
 
@@ -221,7 +223,8 @@ fn bench_concurrent_auth(c: &mut Criterion) {
             BenchmarkId::from_parameter(peer_count),
             peer_count,
             |b, &peer_count| {
-                b.to_async(&rt).iter(|| async {
+                b.iter(|| {
+                    rt.block_on(async {
                     let (secret_key, _) = generate_ed25519_keypair();
                     let auth_manager =
                         Arc::new(AuthManager::new(secret_key, AuthConfig::default()));
@@ -233,7 +236,7 @@ fn bench_concurrent_auth(c: &mut Criterion) {
                         let auth_clone = auth_manager.clone();
 
                         let task = tokio::spawn(async move {
-                            let (peer_secret, peer_public) = generate_ed25519_keypair();
+                            let (_peer_secret, peer_public) = generate_ed25519_keypair();
                             let peer_id = derive_peer_id_from_public_key(&peer_public);
 
                             auth_clone
@@ -244,8 +247,12 @@ fn bench_concurrent_auth(c: &mut Criterion) {
                         tasks.push(task);
                     }
 
-                    let results = futures::future::join_all(tasks).await;
+                    let mut results = Vec::new();
+                    for task in tasks {
+                        results.push(task.await.unwrap());
+                    }
                     black_box(results)
+                    })
                 });
             },
         );
@@ -343,7 +350,7 @@ fn bench_peer_management(c: &mut Criterion) {
 
     // Pre-populate with authenticated peers
     rt.block_on(async {
-        for i in 0..1000 {
+        for _i in 0..1000 {
             let (_, peer_public) = generate_ed25519_keypair();
             let peer_id = derive_peer_id_from_public_key(&peer_public);
 
@@ -358,31 +365,31 @@ fn bench_peer_management(c: &mut Criterion) {
         let (_, public_key) = generate_ed25519_keypair();
         let peer_id = derive_peer_id_from_public_key(&public_key);
 
-        b.to_async(&rt).iter(|| {
+        b.iter(|| {
             let auth_manager = auth_manager.clone();
-            async move {
+            rt.block_on(async move {
                 let result = auth_manager.is_authenticated(&peer_id).await;
                 black_box(result)
-            }
+            })
         });
     });
 
     group.bench_function("list_authenticated_peers", |b| {
-        b.to_async(&rt).iter(|| {
+        b.iter(|| {
             let auth_manager = auth_manager.clone();
-            async move {
+            rt.block_on(async move {
                 let peers = auth_manager.list_authenticated_peers().await;
                 black_box(peers)
-            }
+            })
         });
     });
 
     group.bench_function("cleanup_expired_challenges", |b| {
-        b.to_async(&rt).iter(|| {
+        b.iter(|| {
             let auth_manager = auth_manager.clone();
-            async move {
+            rt.block_on(async move {
                 auth_manager.cleanup_expired_challenges().await;
-            }
+            })
         });
     });
 

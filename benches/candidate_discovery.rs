@@ -6,13 +6,12 @@
 use std::{
     collections::HashMap,
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
-    time::Instant,
 };
 
 use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
 use rand::{Rng, thread_rng};
 
-use ant_quic::{CandidateAddress, CandidateDiscoveryManager, CandidateSource, CandidateState};
+use ant_quic::{CandidateAddress, CandidateSource, CandidateState};
 
 /// Generate test IPv4 addresses for benchmarking
 fn generate_ipv4_addresses(count: usize) -> Vec<IpAddr> {
@@ -66,55 +65,28 @@ fn generate_mixed_addresses(count: usize) -> Vec<IpAddr> {
     addresses
 }
 
-/// Benchmark address priority calculation
-fn bench_address_priority(c: &mut Criterion) {
-    let mut group = c.benchmark_group("address_priority");
-
-    // Test with different address types
-    for addr_count in [10, 100, 1000, 10000] {
-        group.throughput(Throughput::Elements(addr_count as u64));
-
-        group.bench_with_input(
-            BenchmarkId::new("ipv4_priority", addr_count),
-            &addr_count,
-            |b, &size| {
-                let addresses = generate_ipv4_addresses(size);
-                b.iter(|| {
-                    for addr in &addresses {
-                        black_box(CandidateDiscoveryManager::calculate_address_priority(addr));
-                    }
-                });
-            },
-        );
-
-        group.bench_with_input(
-            BenchmarkId::new("ipv6_priority", addr_count),
-            &addr_count,
-            |b, &size| {
-                let addresses = generate_ipv6_addresses(size);
-                b.iter(|| {
-                    for addr in &addresses {
-                        black_box(CandidateDiscoveryManager::calculate_address_priority(addr));
-                    }
-                });
-            },
-        );
-
-        group.bench_with_input(
-            BenchmarkId::new("mixed_priority", addr_count),
-            &addr_count,
-            |b, &size| {
-                let addresses = generate_mixed_addresses(size);
-                b.iter(|| {
-                    for addr in &addresses {
-                        black_box(CandidateDiscoveryManager::calculate_address_priority(addr));
-                    }
-                });
-            },
-        );
+/// Simple priority calculation for benchmarking
+fn calculate_priority(addr: &IpAddr) -> u32 {
+    match addr {
+        IpAddr::V4(ipv4) => {
+            if ipv4.is_private() {
+                100
+            } else if ipv4.is_loopback() {
+                0
+            } else {
+                50
+            }
+        }
+        IpAddr::V6(ipv6) => {
+            if ipv6.is_loopback() {
+                0
+            } else if !ipv6.is_multicast() {
+                60
+            } else {
+                30
+            }
+        }
     }
-
-    group.finish();
 }
 
 /// Benchmark candidate address creation
@@ -136,7 +108,7 @@ fn bench_candidate_creation(c: &mut Criterion) {
                     for addr in &addresses {
                         let port = rng.gen_range(1024..=65535);
                         let socket_addr = SocketAddr::new(*addr, port);
-                        let priority = CandidateDiscoveryManager::calculate_address_priority(addr);
+                        let priority = calculate_priority(addr);
 
                         let candidate = CandidateAddress {
                             address: socket_addr,
@@ -179,8 +151,7 @@ fn bench_candidate_pairing(c: &mut Criterion) {
                         .map(|addr| {
                             let port = rng.gen_range(1024..=65535);
                             let socket_addr = SocketAddr::new(*addr, port);
-                            let priority =
-                                CandidateDiscoveryManager::calculate_address_priority(addr);
+                            let priority = calculate_priority(addr);
 
                             CandidateAddress {
                                 address: socket_addr,
@@ -196,8 +167,7 @@ fn bench_candidate_pairing(c: &mut Criterion) {
                         .map(|addr| {
                             let port = rng.gen_range(1024..=65535);
                             let socket_addr = SocketAddr::new(*addr, port);
-                            let priority =
-                                CandidateDiscoveryManager::calculate_address_priority(addr);
+                            let priority = calculate_priority(addr);
 
                             CandidateAddress {
                                 address: socket_addr,
@@ -258,7 +228,7 @@ fn bench_candidate_sorting(c: &mut Criterion) {
                     .map(|addr| {
                         let port = rng.gen_range(1024..=65535);
                         let socket_addr = SocketAddr::new(*addr, port);
-                        let priority = CandidateDiscoveryManager::calculate_address_priority(addr);
+                        let priority = calculate_priority(addr);
 
                         CandidateAddress {
                             address: socket_addr,
@@ -290,7 +260,7 @@ fn bench_candidate_sorting(c: &mut Criterion) {
                     .map(|addr| {
                         let port = rng.gen_range(1024..=65535);
                         let socket_addr = SocketAddr::new(*addr, port);
-                        let priority = CandidateDiscoveryManager::calculate_address_priority(addr);
+                        let priority = calculate_priority(addr);
 
                         CandidateAddress {
                             address: socket_addr,
@@ -349,7 +319,7 @@ fn bench_candidate_storage(c: &mut Criterion) {
                     for (i, addr) in addresses.iter().enumerate() {
                         let port = rng.gen_range(1024..=65535);
                         let socket_addr = SocketAddr::new(*addr, port);
-                        let priority = CandidateDiscoveryManager::calculate_address_priority(addr);
+                        let priority = calculate_priority(addr);
 
                         let candidate = CandidateAddress {
                             address: socket_addr,
@@ -384,7 +354,6 @@ fn bench_candidate_storage(c: &mut Criterion) {
 
 criterion_group!(
     benches,
-    bench_address_priority,
     bench_candidate_creation,
     bench_candidate_pairing,
     bench_candidate_sorting,

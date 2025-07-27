@@ -18,7 +18,7 @@ mod implementation {
     use std::sync::Arc;
 
     // Re-export types from parent modules
-    pub use super::context::{TraceContext, TraceFlags};
+    pub use super::context::TraceContext;
     pub use super::event::{Event, EventData, TraceId, socket_addr_to_bytes, timestamp_now};
     pub use super::query::{ConnectionAnalysis, TraceQuery};
     pub use super::ring_buffer::{EventLog, TraceConfig};

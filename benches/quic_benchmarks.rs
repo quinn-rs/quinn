@@ -1,4 +1,4 @@
-use ant_quic::{TransportError, VarInt};
+use ant_quic::{TransportError, TransportErrorCode, VarInt};
 use bytes::Bytes;
 use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use std::time::Duration;
@@ -47,14 +47,22 @@ fn transport_error_creation(c: &mut Criterion) {
 
     group.bench_function("create_protocol_violation", |b| {
         b.iter(|| {
-            let err = TransportError::PROTOCOL_VIOLATION;
+            let err = TransportError {
+                code: TransportErrorCode::PROTOCOL_VIOLATION,
+                frame: None,
+                reason: "test error".into(),
+            };
             black_box(err);
         });
     });
 
     group.bench_function("create_with_reason", |b| {
         b.iter(|| {
-            let err = TransportError::PROTOCOL_VIOLATION;
+            let err = TransportError {
+                code: TransportErrorCode::INTERNAL_ERROR,
+                frame: None,
+                reason: "internal error occurred".into(),
+            };
             black_box(err);
         });
     });

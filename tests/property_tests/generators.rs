@@ -1,6 +1,6 @@
 //! Property test generators for ant-quic types
 
-use ant_quic::{VarInt, frame::*, transport_parameters::*};
+use ant_quic::{VarInt, frame::{Ack, EcnCounts, FrameType}};
 use proptest::prelude::*;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::time::Duration;
@@ -15,7 +15,7 @@ pub fn arb_varint() -> impl Strategy<Value = VarInt> {
         // Large values (4 bytes)
         (16384u64..=1073741823).prop_map(|n| VarInt::from_u32(n as u32)),
         // Very large values (8 bytes)
-        (1073741824u64..=4611686018427387903).prop_map(VarInt::from),
+        (1073741824u64..=4611686018427387903).prop_map(|n| VarInt::from_u64(n).unwrap()),
     ]
 }
 
@@ -65,118 +65,76 @@ pub fn arb_connection_id() -> impl Strategy<Value = Vec<u8>> {
 }
 
 /// Generate arbitrary frame types for testing
+/// Since FrameType constructor is private, we'll generate raw values and decode them
 pub fn arb_frame_type() -> impl Strategy<Value = FrameType> {
+    use ant_quic::coding::Codec;
+    use bytes::BytesMut;
+    
+    // Generate common frame type values
     prop_oneof![
-        Just(FrameType::PADDING),
-        Just(FrameType::PING),
-        Just(FrameType::ACK),
-        Just(FrameType::RESET_STREAM),
-        Just(FrameType::STOP_SENDING),
-        Just(FrameType::CRYPTO),
-        Just(FrameType::NEW_TOKEN),
-        Just(FrameType::STREAM),
-        Just(FrameType::MAX_DATA),
-        Just(FrameType::MAX_STREAM_DATA),
-        Just(FrameType::MAX_STREAMS_BIDI),
-        Just(FrameType::MAX_STREAMS_UNI),
-        Just(FrameType::DATA_BLOCKED),
-        Just(FrameType::STREAM_DATA_BLOCKED),
-        Just(FrameType::STREAMS_BLOCKED_BIDI),
-        Just(FrameType::STREAMS_BLOCKED_UNI),
-        Just(FrameType::NEW_CONNECTION_ID),
-        Just(FrameType::RETIRE_CONNECTION_ID),
-        Just(FrameType::PATH_CHALLENGE),
-        Just(FrameType::PATH_RESPONSE),
-        Just(FrameType::CONNECTION_CLOSE),
-        Just(FrameType::HANDSHAKE_DONE),
+        Just(0x00u64), // PADDING
+        Just(0x01u64), // PING
+        Just(0x02u64), // ACK
+        Just(0x04u64), // RESET_STREAM
+        Just(0x05u64), // STOP_SENDING
+        Just(0x06u64), // CRYPTO
+        Just(0x07u64), // NEW_TOKEN
+        Just(0x08u64), // STREAM
+        Just(0x10u64), // MAX_DATA
+        Just(0x11u64), // MAX_STREAM_DATA
+        Just(0x12u64), // MAX_STREAMS_BIDI
+        Just(0x13u64), // MAX_STREAMS_UNI
+        Just(0x14u64), // DATA_BLOCKED
+        Just(0x15u64), // STREAM_DATA_BLOCKED
+        Just(0x16u64), // STREAMS_BLOCKED_BIDI
+        Just(0x17u64), // STREAMS_BLOCKED_UNI
+        Just(0x18u64), // NEW_CONNECTION_ID
+        Just(0x19u64), // RETIRE_CONNECTION_ID
+        Just(0x1au64), // PATH_CHALLENGE
+        Just(0x1bu64), // PATH_RESPONSE
+        Just(0x1cu64), // CONNECTION_CLOSE
+        Just(0x1eu64), // HANDSHAKE_DONE
         // NAT traversal extension frames
-        Just(Type(0x40)), // ADD_ADDRESS
-        Just(Type(0x41)), // PUNCH_ME_NOW
-        Just(Type(0x42)), // REMOVE_ADDRESS
-        Just(Type(0x43)), // OBSERVED_ADDRESS
+        Just(0x40u64), // ADD_ADDRESS
+        Just(0x41u64), // PUNCH_ME_NOW
+        Just(0x42u64), // REMOVE_ADDRESS
+        Just(0x43u64), // OBSERVED_ADDRESS
     ]
+    .prop_map(|value| {
+        // Encode and decode to create a valid FrameType
+        let mut buf = BytesMut::new();
+        VarInt::from_u64(value).unwrap().encode(&mut buf);
+        let mut cursor = std::io::Cursor::new(&buf[..]);
+        FrameType::decode(&mut cursor).unwrap()
+    })
 }
 
-/// Generate arbitrary transport parameters
-pub fn arb_transport_params() -> impl Strategy<Value = TransportParameters> {
+/// Generate arbitrary ACK frames
+pub fn arb_ack() -> impl Strategy<Value = Ack> {
     (
-        proptest::option::of(arb_socket_addr()),
-        proptest::option::of(arb_varint()),
-        proptest::option::of(arb_varint()),
-        proptest::option::of(arb_varint()),
-        proptest::option::of(arb_varint()),
-        proptest::option::of(arb_duration()),
-        proptest::option::of(arb_varint()),
-        proptest::option::of(arb_varint()),
-        proptest::option::of(arb_varint()),
-        proptest::option::of(any::<bool>()),
-        proptest::option::of(prop::collection::vec(any::<u8>(), 0..=255)),
+        any::<u64>(), // largest
+        0u64..=1000,  // delay
+        arb_bytes(0..32), // additional
+        proptest::option::of(arb_ecn_counts()),
     )
-        .prop_map(
-            |(
-                original_dst_cid,
-                max_idle_timeout,
-                max_udp_payload_size,
-                initial_max_data,
-                initial_max_stream_data_bidi_local,
-                max_ack_delay,
-                initial_max_streams_bidi,
-                initial_max_streams_uni,
-                ack_delay_exponent,
-                disable_active_migration,
-                stateless_reset_token,
-            )| {
-                let mut params = TransportParameters::default();
+        .prop_map(|(largest, delay, additional, ecn)| {
+            Ack {
+                largest,
+                delay,
+                additional: additional.into(),
+                ecn,
+            }
+        })
+}
 
-                if let Some(addr) = original_dst_cid {
-                    params.original_dst_cid = Some(format!("{}", addr).into_bytes());
-                }
-
-                if let Some(timeout) = max_idle_timeout {
-                    params.max_idle_timeout = Some(timeout.into());
-                }
-
-                if let Some(size) = max_udp_payload_size {
-                    params.max_udp_payload_size = Some(size.into());
-                }
-
-                if let Some(data) = initial_max_data {
-                    params.initial_max_data = data.into();
-                }
-
-                if let Some(data) = initial_max_stream_data_bidi_local {
-                    params.initial_max_stream_data_bidi_local = data.into();
-                }
-
-                if let Some(delay) = max_ack_delay {
-                    params.max_ack_delay = Some(delay.into());
-                }
-
-                if let Some(streams) = initial_max_streams_bidi {
-                    params.initial_max_streams_bidi = streams.into();
-                }
-
-                if let Some(streams) = initial_max_streams_uni {
-                    params.initial_max_streams_uni = streams.into();
-                }
-
-                if let Some(exp) = ack_delay_exponent {
-                    params.ack_delay_exponent = Some(exp.into());
-                }
-
-                if let Some(disable) = disable_active_migration {
-                    params.disable_active_migration = disable;
-                }
-
-                if let Some(token) = stateless_reset_token {
-                    if token.len() == 16 {
-                        params.stateless_reset_token = Some(token.try_into().unwrap());
-                    }
-                }
-
-                params
-            },
-        )
+/// Generate arbitrary ECN counts
+pub fn arb_ecn_counts() -> impl Strategy<Value = EcnCounts> {
+    (
+        any::<u64>(), // ect0
+        any::<u64>(), // ect1 
+        any::<u64>(), // ce
+    )
+        .prop_map(|(ect0, ect1, ce)| EcnCounts { ect0, ect1, ce })
 }
 
 /// Generate arbitrary NAT types for testing

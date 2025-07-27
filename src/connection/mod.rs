@@ -402,7 +402,7 @@ impl Connection {
         #[cfg(feature = "trace")]
         {
             use crate::trace_event;
-            use crate::tracing::*;
+            // Tracing imports handled by macros
             let _peer_id = {
                 let mut id = [0u8; 32];
                 let addr_bytes = match remote {
@@ -1002,7 +1002,7 @@ impl Connection {
                     #[cfg(feature = "trace")]
                     {
                         use crate::trace_packet_sent;
-                        use crate::tracing::*;
+                        // Tracing imports handled by macros
                         trace_packet_sent!(
                             &self.event_log,
                             self.trace_context.trace_id(),
@@ -1150,7 +1150,7 @@ impl Connection {
         #[cfg(feature = "trace")]
         {
             use crate::trace_packet_sent;
-            use crate::tracing::*;
+            // Tracing imports handled by macros
             // Log packet transmission (use highest packet number in transmission)
             let packet_num = self.spaces[SpaceId::Data]
                 .next_packet_number
@@ -2692,7 +2692,7 @@ impl Connection {
             #[cfg(feature = "trace")]
             {
                 use crate::trace_packet_received;
-                use crate::tracing::*;
+                // Tracing imports handled by macros
                 let packet_size = packet.payload.len() + packet.header_data.len();
                 trace_packet_received!(
                     &self.event_log,
@@ -4784,7 +4784,7 @@ impl Connection {
         #[cfg(feature = "trace")]
         {
             use crate::trace_observed_address_received;
-            use crate::tracing::*;
+            // Tracing imports handled by macros
             trace_observed_address_received!(
                 &self.event_log,
                 self.trace_context.trace_id(),
@@ -4945,7 +4945,7 @@ impl Connection {
                 #[cfg(feature = "trace")]
                 {
                     use crate::trace_observed_address_sent;
-                    use crate::tracing::*;
+                    // Tracing imports handled by macros
                     trace_observed_address_sent!(
                         &self.event_log,
                         self.trace_context.trace_id(),

@@ -14,8 +14,8 @@ mod observed_address_sequence_validation {
         // validation works according to RFC draft-ietf-quic-address-discovery-00
         
         // Create a test connection with address discovery enabled
-        let now = Instant::now();
-        let config = crate::transport_parameters::AddressDiscoveryConfig::SendAndReceive;
+        let _now = Instant::now();
+        let _config = crate::transport_parameters::AddressDiscoveryConfig::SendAndReceive;
         
         // Create frames with different sequence numbers
         let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100)), 5000);
