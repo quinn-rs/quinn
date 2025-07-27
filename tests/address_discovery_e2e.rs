@@ -9,11 +9,25 @@ use ant_quic::{
 };
 use std::{
     net::{Ipv4Addr, SocketAddr},
-    sync::Arc,
+    sync::{Arc, Once},
     time::Duration,
 };
 use tokio::sync::mpsc;
 use tracing::{debug, info};
+
+static INIT: Once = Once::new();
+
+// Ensure crypto provider is installed for tests
+fn ensure_crypto_provider() {
+    INIT.call_once(|| {
+        // Install the crypto provider if not already installed
+        #[cfg(feature = "rustls-aws-lc-rs")]
+        let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+        
+        #[cfg(feature = "rustls-ring")]
+        let _ = rustls::crypto::ring::default_provider().install_default();
+    });
+}
 
 /// Helper to generate self-signed certificate for testing
 fn generate_test_cert() -> (
@@ -50,6 +64,7 @@ fn create_client_endpoint() -> Endpoint {
 /// Test that address discovery is enabled by default
 #[tokio::test]
 async fn test_address_discovery_enabled_by_default() {
+    ensure_crypto_provider();
     let _ = tracing_subscriber::fmt()
         .with_env_filter("ant_quic=debug")
         .try_init();
@@ -64,6 +79,7 @@ async fn test_address_discovery_enabled_by_default() {
 /// Test basic client-server address discovery flow
 #[tokio::test]
 async fn test_client_server_address_discovery() {
+    ensure_crypto_provider();
     let _ = tracing_subscriber::fmt()
         .with_env_filter("ant_quic=debug")
         .try_init();
@@ -140,6 +156,7 @@ async fn test_client_server_address_discovery() {
 /// Test disabling address discovery
 #[tokio::test]
 async fn test_disable_address_discovery() {
+    ensure_crypto_provider();
     let _ = tracing_subscriber::fmt()
         .with_env_filter("ant_quic=debug")
         .try_init();
@@ -161,6 +178,7 @@ async fn test_disable_address_discovery() {
 /// Test concurrent connections with address discovery
 #[tokio::test]
 async fn test_concurrent_connections_address_discovery() {
+    ensure_crypto_provider();
     let _ = tracing_subscriber::fmt()
         .with_env_filter("ant_quic=debug")
         .try_init();
@@ -233,6 +251,7 @@ async fn test_concurrent_connections_address_discovery() {
 /// Test address discovery with connection migration
 #[tokio::test]
 async fn test_address_discovery_during_migration() {
+    ensure_crypto_provider();
     let _ = tracing_subscriber::fmt()
         .with_env_filter("ant_quic=debug")
         .try_init();
@@ -298,6 +317,7 @@ async fn test_address_discovery_during_migration() {
 /// Test with simple data exchange
 #[tokio::test]
 async fn test_address_discovery_with_data_transfer() {
+    ensure_crypto_provider();
     let _ = tracing_subscriber::fmt()
         .with_env_filter("ant_quic=debug")
         .try_init();
