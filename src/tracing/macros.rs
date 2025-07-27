@@ -188,19 +188,19 @@ mod tests {
 
     #[test]
     fn test_trace_macros() {
-        let log = EventLog::new();
-        let trace_id = TraceId::new();
+        let _log = EventLog::new();
+        let _trace_id = TraceId::new();
 
         // These should compile whether trace is enabled or not
-        trace_packet_sent!(&log, trace_id, 1200, 42);
-        trace_packet_received!(&log, trace_id, 1200, 43);
-        trace_stream_opened!(&log, trace_id, 1);
-        trace_conn_established!(&log, trace_id, 25);
+        trace_packet_sent!(&_log, _trace_id, 1200, 42);
+        trace_packet_received!(&_log, _trace_id, 1200, 43);
+        trace_stream_opened!(&_log, _trace_id, 1);
+        trace_conn_established!(&_log, _trace_id, 25);
 
         if_trace! {
             // This code only exists when trace is enabled
             #[cfg(feature = "trace")]
-            let _count = log.event_count();
+            let _count = _log.event_count();
         }
     }
 }

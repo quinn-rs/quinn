@@ -261,7 +261,7 @@ mod network_utils {
         #[cfg(target_os = "windows")]
         {
             // Windows-specific tests
-            assert!(config.max_udp_payload_size() >= 1200);
+            assert!(config.get_max_udp_payload_size() >= 1200);
         }
     }
 }
