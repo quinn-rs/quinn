@@ -1265,6 +1265,9 @@ impl State {
                         let _ = sender.send(error_code);
                     }
                 }
+                Path(evt @ PathEvent::Abandoned { .. }) => {
+                    self.path_events.send(evt).ok();
+                }
                 Path(ref evt @ PathEvent::LocallyClosed { id, error }) => {
                     self.path_events.send(evt.clone()).ok();
                     if let Some(sender) = self.open_path.remove(&id) {
@@ -1272,8 +1275,8 @@ impl State {
                     }
                     // this will happen also for already opened paths
                 }
-                Path(ref evt @ PathEvent::RemoteStatus { .. }) => {
-                    self.path_events.send(evt.clone()).ok();
+                Path(evt @ PathEvent::RemoteStatus { .. }) => {
+                    self.path_events.send(evt).ok();
                 }
             }
         }

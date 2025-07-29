@@ -227,6 +227,11 @@ pub(super) struct PacketNumberSpace {
     /// ACK already processed in another space.
     pub(super) ecn_feedback: frame::EcnCounts,
     /// Number of congestion control "in flight" bytes
+    ///
+    /// Note that this is only for this packet number space, while [`PathData::in_flight`]
+    /// tracks the in-flight bytes for all spaces.
+    ///
+    /// [`PathData::in_flight`]: super::paths::PathData::in_flight
     pub(super) in_flight: u64,
     /// Number of packets sent in the current key phase
     pub(super) sent_with_keys: u64,
@@ -899,10 +904,15 @@ impl PendingAcks {
             .map(|earliest_unacked| earliest_unacked + max_ack_delay)
     }
 
-    /// Whether any ACK frames can be sent
+    /// Whether any ACK frames SHOULD be sent
+    ///
+    /// This is used in the top-level [`Connection::space_can_send`], so determines if a
+    /// packet will be built. It is often possible to construct new ACK ranges to send
+    /// before this returns `true`. This results in more ACK frames being sent, and
+    /// processing those at the receiver costs CPU for very little improvements.
+    ///
+    /// [`Connection::space_can_send`]: super::Connection::space_can_send
     pub(super) fn can_send(&self) -> bool {
-        // This always checks all the paths.  If any other path is present then multipath is
-        // assumed to be enabled.
         self.immediate_ack_required && !self.ranges.is_empty()
     }
 

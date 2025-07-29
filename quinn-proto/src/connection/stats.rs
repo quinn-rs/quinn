@@ -165,7 +165,7 @@ impl std::fmt::Debug for FrameStats {
 }
 
 /// Statistics related to a transmission path
-#[derive(Debug, Default, Copy, Clone)]
+#[derive(Debug, Default, Copy, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct PathStats {
     /// Current best estimate of this connection's latency (round-trip-time)

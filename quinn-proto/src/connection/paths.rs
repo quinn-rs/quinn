@@ -4,14 +4,14 @@ use thiserror::Error;
 use tracing::{debug, trace};
 
 use super::{
-    PathError,
+    PathError, PathStats,
     mtud::MtuDiscovery,
     pacing::Pacer,
-    spaces::{PacketSpace, SentPacket},
+    spaces::{PacketNumberSpace, SentPacket},
 };
 use crate::{
-    Duration, Instant, TIMER_GRANULARITY, TransportConfig, VarInt, coding, congestion,
-    frame::ObservedAddr, packet::SpaceId,
+    ConnectionId, Duration, Instant, TIMER_GRANULARITY, TransportConfig, VarInt, coding,
+    congestion, frame::ObservedAddr, packet::SpaceId,
 };
 
 /// Id representing different paths when using multipath extension
@@ -72,6 +72,32 @@ impl<T: Into<u32>> From<T> for PathId {
     }
 }
 
+/// State needed for a single path ID.
+///
+/// A single path ID can migrate according to the rules in RFC9000 §9, either voluntary or
+/// involuntary. We need to keep the [`PathData`] of the previously used such path available
+/// in order to defend against migration attacks (see RFC9000 §9.3.1, §9.3.2 and §9.3.3) as
+/// well as to support path probing (RFC9000 §9.1).
+pub(super) struct PathState {
+    pub(super) data: PathData,
+    pub(super) prev: Option<(ConnectionId, PathData)>,
+}
+
+impl PathState {
+    /// Update counters to account for a packet becoming acknowledged, lost, or abandoned
+    pub(super) fn remove_in_flight(&mut self, pn: u64, packet: &SentPacket) {
+        // Visit known paths from newest to oldest to find the one `pn` was sent on
+        for path_data in [&mut self.data]
+            .into_iter()
+            .chain(self.prev.as_mut().map(|(_, data)| data))
+        {
+            if path_data.remove_in_flight(pn, packet) {
+                return;
+            }
+        }
+    }
+}
+
 /// Description of a particular network path
 pub(super) struct PathData {
     pub(super) remote: SocketAddr,
@@ -101,6 +127,12 @@ pub(super) struct PathData {
     ///
     /// Used in persistent congestion determination.
     pub(super) first_packet_after_rtt_sample: Option<(SpaceId, u64)>,
+    // TODO(flub): We also have [`super::spaces::PacketNumberSpace::in_flight`]
+    /// The in-flight packets and bytes
+    ///
+    /// Note that this is across all spaces on this path, while
+    /// [`PacketNumberSpace::in_flight`] tracks the in-flight bytes for a single packet
+    /// number space.
     pub(super) in_flight: InFlight,
     /// Whether this path has had it's remote address reported back to the peer. This only happens
     /// if both peers agree to so based on their transport parameters.
@@ -111,8 +143,10 @@ pub(super) struct PathData {
     pub(super) status: PathStatusState,
     /// Number of the first packet sent on this path
     ///
-    /// Used to determine whether a packet was sent on an earlier path. Insufficient to determine if
-    /// a packet was sent on a later path.
+    /// With RFC9000 §9 style migration (i.e. not multipath) the PathId does not change and
+    /// hence packet numbers continue. This is used to determine whether a packet was sent
+    /// on such an earlier path. Insufficient to determine if a packet was sent on a later
+    /// path.
     first_packet: Option<u64>,
     /// The number of times a PTO has been sent without receiving an ack.
     pub(super) pto_count: u32,
@@ -246,19 +280,12 @@ impl PathData {
     }
 
     /// Account for transmission of `packet` with number `pn` in `space`
-    pub(super) fn sent(
-        &mut self,
-        path: PathId,
-        pn: u64,
-        packet: SentPacket,
-        space: &mut PacketSpace,
-    ) {
+    pub(super) fn sent(&mut self, pn: u64, packet: SentPacket, space: &mut PacketNumberSpace) {
         self.in_flight.insert(&packet);
         if self.first_packet.is_none() {
             self.first_packet = Some(pn);
         }
-        // TODO(@divma): why is Path receiving a path_id??
-        self.in_flight.bytes -= space.for_path(path).sent(pn, packet);
+        self.in_flight.bytes -= space.sent(pn, packet);
     }
 
     /// Remove `packet` with number `pn` from this path's congestion control counters, or return
@@ -593,6 +620,17 @@ pub enum PathEvent {
         /// See <https://www.ietf.org/archive/id/draft-ietf-quic-multipath-14.html#name-error-codes>
         /// for a list of known errors.
         error_code: VarInt,
+    },
+    /// All remaining state for a path has been removed
+    ///
+    /// The [`PathEvent::Closed`] would have been emitted for this path earlier.
+    Abandoned {
+        /// Which path had its state dropped
+        id: PathId,
+        /// The final path stats, they are no longer available via [`Connection::stats`]
+        ///
+        /// [`Connection::stats`]: super::Connection::stats
+        path_stats: PathStats,
     },
     /// Path was closed locally
     LocallyClosed {
