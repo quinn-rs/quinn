@@ -4,7 +4,7 @@
 //! the public APIs available in ant-quic.
 
 use ant_quic::{
-    ClientConfig, Endpoint, EndpointConfig, ServerConfig, TransportConfig, VarInt,
+    ClientConfig, Endpoint, ServerConfig, VarInt,
     crypto::rustls::{QuicClientConfig, QuicServerConfig},
 };
 use std::{
@@ -13,17 +13,17 @@ use std::{
     time::Duration,
 };
 use tokio::sync::mpsc;
-use tracing::{debug, info};
+use tracing::info;
 
 // Ensure crypto provider is installed for tests
 fn ensure_crypto_provider() {
     // Try to install the crypto provider, ignore if already installed
     #[cfg(feature = "rustls-aws-lc-rs")]
     let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
-    
+
     #[cfg(feature = "rustls-ring")]
     let _ = rustls::crypto::ring::default_provider().install_default();
-    
+
     // If neither feature is enabled, use default
     #[cfg(not(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring")))]
     let _ = rustls::crypto::ring::default_provider().install_default();

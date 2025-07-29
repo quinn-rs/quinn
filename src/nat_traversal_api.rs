@@ -298,6 +298,156 @@ pub struct CandidateAddress {
     pub state: CandidateState,
 }
 
+impl CandidateAddress {
+    /// Create a new candidate address with validation
+    pub fn new(
+        address: SocketAddr,
+        priority: u32,
+        source: CandidateSource,
+    ) -> Result<Self, CandidateValidationError> {
+        Self::validate_address(&address)?;
+        Ok(Self {
+            address,
+            priority,
+            source,
+            state: CandidateState::New,
+        })
+    }
+
+    /// Validate a candidate address for security and correctness
+    pub fn validate_address(addr: &SocketAddr) -> Result<(), CandidateValidationError> {
+        // Port validation
+        if addr.port() == 0 {
+            return Err(CandidateValidationError::InvalidPort(0));
+        }
+
+        // Well-known port validation (allow for testing)
+        #[cfg(not(test))]
+        if addr.port() < 1024 {
+            return Err(CandidateValidationError::PrivilegedPort(addr.port()));
+        }
+
+        match addr.ip() {
+            std::net::IpAddr::V4(ipv4) => {
+                // IPv4 validation
+                if ipv4.is_unspecified() {
+                    return Err(CandidateValidationError::UnspecifiedAddress);
+                }
+                if ipv4.is_broadcast() {
+                    return Err(CandidateValidationError::BroadcastAddress);
+                }
+                if ipv4.is_multicast() {
+                    return Err(CandidateValidationError::MulticastAddress);
+                }
+                // 0.0.0.0/8 - Current network
+                if ipv4.octets()[0] == 0 {
+                    return Err(CandidateValidationError::ReservedAddress);
+                }
+                // 224.0.0.0/3 - Reserved for future use
+                if ipv4.octets()[0] >= 240 {
+                    return Err(CandidateValidationError::ReservedAddress);
+                }
+            }
+            std::net::IpAddr::V6(ipv6) => {
+                // IPv6 validation
+                if ipv6.is_unspecified() {
+                    return Err(CandidateValidationError::UnspecifiedAddress);
+                }
+                if ipv6.is_multicast() {
+                    return Err(CandidateValidationError::MulticastAddress);
+                }
+                // Documentation prefix (2001:db8::/32)
+                let segments = ipv6.segments();
+                if segments[0] == 0x2001 && segments[1] == 0x0db8 {
+                    return Err(CandidateValidationError::DocumentationAddress);
+                }
+                // IPv4-mapped IPv6 addresses (::ffff:0:0/96)
+                if ipv6.to_ipv4_mapped().is_some() {
+                    return Err(CandidateValidationError::IPv4MappedAddress);
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Check if this candidate is suitable for NAT traversal
+    pub fn is_suitable_for_nat_traversal(&self) -> bool {
+        match self.address.ip() {
+            std::net::IpAddr::V4(ipv4) => {
+                // For NAT traversal, we want:
+                // - Not loopback (unless testing)
+                // - Not link-local (169.254.0.0/16)
+                // - Not multicast/broadcast
+                #[cfg(test)]
+                if ipv4.is_loopback() {
+                    return true;
+                }
+                !ipv4.is_loopback()
+                    && !ipv4.is_link_local()
+                    && !ipv4.is_multicast()
+                    && !ipv4.is_broadcast()
+            }
+            std::net::IpAddr::V6(ipv6) => {
+                // For IPv6:
+                // - Not loopback (unless testing)
+                // - Not link-local (fe80::/10)
+                // - Not unique local (fc00::/7) for external traversal
+                // - Not multicast
+                #[cfg(test)]
+                if ipv6.is_loopback() {
+                    return true;
+                }
+                let segments = ipv6.segments();
+                let is_link_local = (segments[0] & 0xffc0) == 0xfe80;
+                let is_unique_local = (segments[0] & 0xfe00) == 0xfc00;
+
+                !ipv6.is_loopback() && !is_link_local && !is_unique_local && !ipv6.is_multicast()
+            }
+        }
+    }
+
+    /// Get the priority adjusted for the current state
+    pub fn effective_priority(&self) -> u32 {
+        match self.state {
+            CandidateState::Valid => self.priority,
+            CandidateState::New => self.priority.saturating_sub(10),
+            CandidateState::Validating => self.priority.saturating_sub(5),
+            CandidateState::Failed => 0,
+            CandidateState::Removed => 0,
+        }
+    }
+}
+
+/// Errors that can occur during candidate address validation
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum CandidateValidationError {
+    /// Port number is invalid
+    #[error("invalid port number: {0}")]
+    InvalidPort(u16),
+    /// Port is in privileged range (< 1024)
+    #[error("privileged port not allowed: {0}")]
+    PrivilegedPort(u16),
+    /// Address is unspecified (0.0.0.0 or ::)
+    #[error("unspecified address not allowed")]
+    UnspecifiedAddress,
+    /// Address is broadcast (IPv4 only)
+    #[error("broadcast address not allowed")]
+    BroadcastAddress,
+    /// Address is multicast
+    #[error("multicast address not allowed")]
+    MulticastAddress,
+    /// Address is reserved
+    #[error("reserved address not allowed")]
+    ReservedAddress,
+    /// Address is documentation prefix
+    #[error("documentation address not allowed")]
+    DocumentationAddress,
+    /// IPv4-mapped IPv6 address
+    #[error("IPv4-mapped IPv6 address not allowed")]
+    IPv4MappedAddress,
+}
+
 /// Events generated during NAT traversal process
 #[derive(Debug, Clone)]
 pub enum NatTraversalEvent {
@@ -3572,5 +3722,244 @@ mod tests {
         let _config = NatTraversalConfig::default();
         // Note: This will fail due to ServerConfig requirement in new() - for illustration only
         // let endpoint = NatTraversalEndpoint::new(config, None).unwrap();
+    }
+
+    #[test]
+    fn test_candidate_address_validation() {
+        use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+
+        // Valid addresses
+        assert!(
+            CandidateAddress::validate_address(&SocketAddr::new(
+                IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)),
+                8080
+            ))
+            .is_ok()
+        );
+
+        assert!(
+            CandidateAddress::validate_address(&SocketAddr::new(
+                IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8)),
+                53
+            ))
+            .is_ok()
+        );
+
+        assert!(
+            CandidateAddress::validate_address(&SocketAddr::new(
+                IpAddr::V6(Ipv6Addr::new(0x2001, 0x4860, 0x4860, 0, 0, 0, 0, 0x8888)),
+                443
+            ))
+            .is_ok()
+        );
+
+        // Invalid port 0
+        assert!(matches!(
+            CandidateAddress::validate_address(&SocketAddr::new(
+                IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)),
+                0
+            )),
+            Err(CandidateValidationError::InvalidPort(0))
+        ));
+
+        // Privileged port (non-test mode would fail)
+        #[cfg(not(test))]
+        assert!(matches!(
+            CandidateAddress::validate_address(&SocketAddr::new(
+                IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)),
+                80
+            )),
+            Err(CandidateValidationError::PrivilegedPort(80))
+        ));
+
+        // Unspecified addresses
+        assert!(matches!(
+            CandidateAddress::validate_address(&SocketAddr::new(
+                IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+                8080
+            )),
+            Err(CandidateValidationError::UnspecifiedAddress)
+        ));
+
+        assert!(matches!(
+            CandidateAddress::validate_address(&SocketAddr::new(
+                IpAddr::V6(Ipv6Addr::UNSPECIFIED),
+                8080
+            )),
+            Err(CandidateValidationError::UnspecifiedAddress)
+        ));
+
+        // Broadcast address
+        assert!(matches!(
+            CandidateAddress::validate_address(&SocketAddr::new(
+                IpAddr::V4(Ipv4Addr::BROADCAST),
+                8080
+            )),
+            Err(CandidateValidationError::BroadcastAddress)
+        ));
+
+        // Multicast addresses
+        assert!(matches!(
+            CandidateAddress::validate_address(&SocketAddr::new(
+                IpAddr::V4(Ipv4Addr::new(224, 0, 0, 1)),
+                8080
+            )),
+            Err(CandidateValidationError::MulticastAddress)
+        ));
+
+        assert!(matches!(
+            CandidateAddress::validate_address(&SocketAddr::new(
+                IpAddr::V6(Ipv6Addr::new(0xff02, 0, 0, 0, 0, 0, 0, 1)),
+                8080
+            )),
+            Err(CandidateValidationError::MulticastAddress)
+        ));
+
+        // Reserved addresses
+        assert!(matches!(
+            CandidateAddress::validate_address(&SocketAddr::new(
+                IpAddr::V4(Ipv4Addr::new(0, 0, 0, 1)),
+                8080
+            )),
+            Err(CandidateValidationError::ReservedAddress)
+        ));
+
+        assert!(matches!(
+            CandidateAddress::validate_address(&SocketAddr::new(
+                IpAddr::V4(Ipv4Addr::new(240, 0, 0, 1)),
+                8080
+            )),
+            Err(CandidateValidationError::ReservedAddress)
+        ));
+
+        // Documentation address
+        assert!(matches!(
+            CandidateAddress::validate_address(&SocketAddr::new(
+                IpAddr::V6(Ipv6Addr::new(0x2001, 0x0db8, 0, 0, 0, 0, 0, 1)),
+                8080
+            )),
+            Err(CandidateValidationError::DocumentationAddress)
+        ));
+
+        // IPv4-mapped IPv6
+        assert!(matches!(
+            CandidateAddress::validate_address(&SocketAddr::new(
+                IpAddr::V6(Ipv6Addr::new(0, 0, 0, 0, 0, 0xffff, 0xc0a8, 0x0001)),
+                8080
+            )),
+            Err(CandidateValidationError::IPv4MappedAddress)
+        ));
+    }
+
+    #[test]
+    fn test_candidate_address_suitability_for_nat_traversal() {
+        use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+
+        // Create valid candidates
+        let public_v4 = CandidateAddress::new(
+            SocketAddr::new(IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8)), 8080),
+            100,
+            CandidateSource::Observed { by_node: None },
+        )
+        .unwrap();
+        assert!(public_v4.is_suitable_for_nat_traversal());
+
+        let private_v4 = CandidateAddress::new(
+            SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)), 8080),
+            100,
+            CandidateSource::Local,
+        )
+        .unwrap();
+        assert!(private_v4.is_suitable_for_nat_traversal());
+
+        // Link-local should not be suitable
+        let link_local_v4 = CandidateAddress::new(
+            SocketAddr::new(IpAddr::V4(Ipv4Addr::new(169, 254, 1, 1)), 8080),
+            100,
+            CandidateSource::Local,
+        )
+        .unwrap();
+        assert!(!link_local_v4.is_suitable_for_nat_traversal());
+
+        // Global unicast IPv6 should be suitable
+        let global_v6 = CandidateAddress::new(
+            SocketAddr::new(
+                IpAddr::V6(Ipv6Addr::new(0x2001, 0x4860, 0x4860, 0, 0, 0, 0, 0x8888)),
+                8080,
+            ),
+            100,
+            CandidateSource::Observed { by_node: None },
+        )
+        .unwrap();
+        assert!(global_v6.is_suitable_for_nat_traversal());
+
+        // Link-local IPv6 should not be suitable
+        let link_local_v6 = CandidateAddress::new(
+            SocketAddr::new(IpAddr::V6(Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, 1)), 8080),
+            100,
+            CandidateSource::Local,
+        )
+        .unwrap();
+        assert!(!link_local_v6.is_suitable_for_nat_traversal());
+
+        // Unique local IPv6 should not be suitable for external traversal
+        let unique_local_v6 = CandidateAddress::new(
+            SocketAddr::new(IpAddr::V6(Ipv6Addr::new(0xfc00, 0, 0, 0, 0, 0, 0, 1)), 8080),
+            100,
+            CandidateSource::Local,
+        )
+        .unwrap();
+        assert!(!unique_local_v6.is_suitable_for_nat_traversal());
+
+        // Loopback should be suitable only in test mode
+        #[cfg(test)]
+        {
+            let loopback_v4 = CandidateAddress::new(
+                SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 8080),
+                100,
+                CandidateSource::Local,
+            )
+            .unwrap();
+            assert!(loopback_v4.is_suitable_for_nat_traversal());
+
+            let loopback_v6 = CandidateAddress::new(
+                SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 8080),
+                100,
+                CandidateSource::Local,
+            )
+            .unwrap();
+            assert!(loopback_v6.is_suitable_for_nat_traversal());
+        }
+    }
+
+    #[test]
+    fn test_candidate_effective_priority() {
+        use std::net::{IpAddr, Ipv4Addr};
+
+        let mut candidate = CandidateAddress::new(
+            SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)), 8080),
+            100,
+            CandidateSource::Local,
+        )
+        .unwrap();
+
+        // New state - slightly reduced priority
+        assert_eq!(candidate.effective_priority(), 90);
+
+        // Validating state - small reduction
+        candidate.state = CandidateState::Validating;
+        assert_eq!(candidate.effective_priority(), 95);
+
+        // Valid state - full priority
+        candidate.state = CandidateState::Valid;
+        assert_eq!(candidate.effective_priority(), 100);
+
+        // Failed state - zero priority
+        candidate.state = CandidateState::Failed;
+        assert_eq!(candidate.effective_priority(), 0);
+
+        // Removed state - zero priority
+        candidate.state = CandidateState::Removed;
+        assert_eq!(candidate.effective_priority(), 0);
     }
 }

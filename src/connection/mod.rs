@@ -249,6 +249,9 @@ pub struct Connection {
     /// Address discovery state for tracking observed addresses
     address_discovery_state: Option<AddressDiscoveryState>,
 
+    /// PQC state for tracking post-quantum cryptography support
+    pqc_state: PqcState,
+
     /// Trace context for this connection
     #[cfg(feature = "trace")]
     trace_context: crate::tracing::TraceContext,
@@ -387,6 +390,7 @@ impl Connection {
                     now,
                 ))
             },
+            pqc_state: PqcState::new(),
 
             #[cfg(feature = "trace")]
             trace_context: crate::tracing::TraceContext::new(crate::tracing::TraceId::new()),
@@ -764,7 +768,7 @@ impl Connection {
                 // Finish current packet
                 if let Some(mut builder) = builder_storage.take() {
                     if pad_datagram {
-                        builder.pad_to(MIN_INITIAL_SIZE);
+                        builder.pad_to(self.pqc_state.min_initial_size());
                     }
 
                     if num_datagrams > 1 || pad_datagram_to_mtu {
@@ -987,7 +991,7 @@ impl Connection {
                     buf.write(frame::FrameType::PATH_RESPONSE);
                     buf.write(token);
                     self.stats.frame_tx.path_response += 1;
-                    builder.pad_to(MIN_INITIAL_SIZE);
+                    builder.pad_to(self.pqc_state.min_initial_size());
                     builder.finish_and_track(
                         now,
                         self,
@@ -1069,7 +1073,7 @@ impl Connection {
         // Finish the last packet
         if let Some(mut builder) = builder_storage {
             if pad_datagram {
-                builder.pad_to(MIN_INITIAL_SIZE);
+                builder.pad_to(self.pqc_state.min_initial_size());
             }
 
             // If this datagram is a loss probe and `segment_size` is larger than `INITIAL_MTU`,
@@ -1205,7 +1209,7 @@ impl Connection {
             "PUNCH_ME_NOW queued without 1-RTT keys"
         );
 
-        buf.reserve(MIN_INITIAL_SIZE as usize);
+        buf.reserve(self.pqc_state.min_initial_size() as usize);
         let buf_capacity = buf.capacity();
 
         let mut builder = PacketBuilder::new(
@@ -1247,7 +1251,7 @@ impl Connection {
 
         self.stats.frame_tx.ping += 1; // Use ping counter for now
 
-        builder.pad_to(MIN_INITIAL_SIZE);
+        builder.pad_to(self.pqc_state.min_initial_size());
         builder.finish_and_track(now, self, None, buf);
 
         // Mark request sent after packet is built
@@ -1304,7 +1308,7 @@ impl Connection {
             "PATH_CHALLENGE queued without 1-RTT keys"
         );
 
-        buf.reserve(MIN_INITIAL_SIZE as usize);
+        buf.reserve(self.pqc_state.min_initial_size() as usize);
         let buf_capacity = buf.capacity();
 
         let mut builder = PacketBuilder::new(
@@ -1326,7 +1330,7 @@ impl Connection {
         buf.write(challenge);
         self.stats.frame_tx.path_challenge += 1;
 
-        builder.pad_to(MIN_INITIAL_SIZE);
+        builder.pad_to(self.pqc_state.min_initial_size());
         builder.finish_and_track(now, self, None, buf);
 
         // Mark coordination as validating after packet is built
@@ -1393,7 +1397,7 @@ impl Connection {
             "PATH_CHALLENGE queued without 1-RTT keys"
         );
 
-        buf.reserve(MIN_INITIAL_SIZE as usize);
+        buf.reserve(self.pqc_state.min_initial_size() as usize);
         let buf_capacity = buf.capacity();
 
         // Use current connection ID for NAT traversal PATH_CHALLENGE
@@ -1417,7 +1421,7 @@ impl Connection {
         self.stats.frame_tx.path_challenge += 1;
 
         // PATH_CHALLENGE frames must be padded to at least 1200 bytes
-        builder.pad_to(MIN_INITIAL_SIZE);
+        builder.pad_to(self.pqc_state.min_initial_size());
 
         builder.finish_and_track(now, self, None, buf);
 
@@ -1450,7 +1454,7 @@ impl Connection {
             SpaceId::Data,
             "PATH_CHALLENGE queued without 1-RTT keys"
         );
-        buf.reserve(MIN_INITIAL_SIZE as usize);
+        buf.reserve(self.pqc_state.min_initial_size() as usize);
 
         let buf_capacity = buf.capacity();
 
@@ -1478,7 +1482,7 @@ impl Connection {
         // to at least the smallest allowed maximum datagram size of 1200 bytes,
         // unless the anti-amplification limit for the path does not permit
         // sending a datagram of this size
-        builder.pad_to(MIN_INITIAL_SIZE);
+        builder.pad_to(self.pqc_state.min_initial_size());
 
         builder.finish(self, buf);
         self.stats.udp_tx.on_sent(1, buf.len());
@@ -4131,6 +4135,24 @@ impl Connection {
         // Handle address discovery negotiation
         self.negotiate_address_discovery(&params);
 
+        // Update PQC state based on peer parameters
+        self.pqc_state.update_from_peer_params(&params);
+
+        // If PQC is enabled, adjust MTU discovery configuration
+        if self.pqc_state.enabled && self.pqc_state.using_pqc {
+            trace!("PQC enabled, adjusting MTU discovery for larger handshake packets");
+            // When PQC is enabled, we need to handle larger packets during handshake
+            // The actual MTU discovery will probe up to the peer's max_udp_payload_size
+            // or the PQC handshake MTU, whichever is smaller
+            let current_mtu = self.path.mtud.current_mtu();
+            if current_mtu < self.pqc_state.handshake_mtu {
+                trace!(
+                    "Current MTU {} is less than PQC handshake MTU {}, will rely on MTU discovery",
+                    current_mtu, self.pqc_state.handshake_mtu
+                );
+            }
+        }
+
         self.peer_params = params;
         self.path.mtud.on_peer_max_udp_payload_size_received(
             u16::try_from(self.peer_params.max_udp_payload_size.into_inner()).unwrap_or(u16::MAX),
@@ -5938,6 +5960,57 @@ fn negotiate_max_idle_timeout(x: Option<VarInt>, y: Option<VarInt>) -> Option<Du
         (Some(VarInt(0)) | None, Some(y)) => Some(Duration::from_millis(y.0)),
         (Some(x), Some(VarInt(0)) | None) => Some(Duration::from_millis(x.0)),
         (Some(x), Some(y)) => Some(Duration::from_millis(cmp::min(x, y).0)),
+    }
+}
+
+/// State for tracking PQC support in the connection
+#[derive(Debug, Clone, Default)]
+pub(crate) struct PqcState {
+    /// Whether the peer supports PQC algorithms
+    enabled: bool,
+    /// Supported PQC algorithms advertised by peer
+    algorithms: Option<crate::transport_parameters::PqcAlgorithms>,
+    /// Target MTU for PQC handshakes
+    handshake_mtu: u16,
+    /// Whether we're currently using PQC algorithms
+    using_pqc: bool,
+}
+
+impl PqcState {
+    fn new() -> Self {
+        Self {
+            enabled: false,
+            algorithms: None,
+            handshake_mtu: MIN_INITIAL_SIZE,
+            using_pqc: false,
+        }
+    }
+
+    /// Get the minimum initial packet size based on PQC state
+    fn min_initial_size(&self) -> u16 {
+        if self.enabled && self.using_pqc {
+            // Use larger initial packet size for PQC handshakes
+            std::cmp::max(self.handshake_mtu, 4096)
+        } else {
+            MIN_INITIAL_SIZE
+        }
+    }
+
+    /// Update PQC state based on peer's transport parameters
+    fn update_from_peer_params(&mut self, params: &TransportParameters) {
+        if let Some(ref algorithms) = params.pqc_algorithms {
+            self.enabled = true;
+            self.algorithms = Some(algorithms.clone());
+            // If any PQC algorithm is supported, prepare for larger packets
+            if algorithms.ml_kem_768
+                || algorithms.ml_dsa_65
+                || algorithms.hybrid_x25519_ml_kem
+                || algorithms.hybrid_ed25519_ml_dsa
+            {
+                self.using_pqc = true;
+                self.handshake_mtu = 4096; // Default PQC handshake MTU
+            }
+        }
     }
 }
 

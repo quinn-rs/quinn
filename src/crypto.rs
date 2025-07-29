@@ -33,6 +33,9 @@ pub mod raw_public_keys;
 /// Ed25519 key pair implementation
 pub mod raw_keys;
 
+/// Post-Quantum Cryptography support
+pub mod pqc;
+
 // NOTE: The following modules were removed because they were written as external
 // integrations with Quinn, but ant-quic IS a fork of Quinn, not something that
 // integrates with it. These need to be rewritten as part of the Quinn implementation

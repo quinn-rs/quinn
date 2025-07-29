@@ -18,10 +18,10 @@ fn ensure_crypto_provider() {
     // Try to install the crypto provider, ignore if already installed
     #[cfg(feature = "rustls-aws-lc-rs")]
     let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
-    
+
     #[cfg(feature = "rustls-ring")]
     let _ = rustls::crypto::ring::default_provider().install_default();
-    
+
     // If neither feature is enabled, use default
     #[cfg(not(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring")))]
     let _ = rustls::crypto::ring::default_provider().install_default();

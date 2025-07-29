@@ -1,0 +1,38 @@
+version: '3.8'
+
+services:
+  # Bootstrap node
+  bootstrap:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.simple
+    container_name: ant-quic-bootstrap
+    command: ant-quic --listen 0.0.0.0:9000 --force-coordinator
+    ports:
+      - "9000:9000"
+    environment:
+      - RUST_LOG=ant_quic::nat_traversal=debug,ant_quic::connection=info
+
+  # Client behind NAT 1
+  client1:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.simple
+    container_name: ant-quic-client1
+    command: ant-quic --listen 0.0.0.0:0 --bootstrap bootstrap:9000
+    depends_on:
+      - bootstrap
+    environment:
+      - RUST_LOG=ant_quic::nat_traversal=debug,ant_quic::connection=info
+
+  # Client behind NAT 2
+  client2:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.simple
+    container_name: ant-quic-client2
+    command: ant-quic --listen 0.0.0.0:0 --bootstrap bootstrap:9000
+    depends_on:
+      - bootstrap
+    environment:
+      - RUST_LOG=ant_quic::nat_traversal=debug,ant_quic::connection=info

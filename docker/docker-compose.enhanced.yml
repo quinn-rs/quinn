@@ -1,0 +1,335 @@
+version: '3.8'
+
+# Enhanced NAT Testing with IPv4/IPv6 dual-stack support
+networks:
+  # Public Internet (dual-stack)
+  internet:
+    driver: bridge
+    enable_ipv6: true
+    ipam:
+      config:
+        - subnet: 203.0.113.0/24  # IPv4 Public (TEST-NET-3)
+          gateway: 203.0.113.1
+        - subnet: 2001:db8:1::/64 # IPv6 Public (Documentation prefix)
+          gateway: 2001:db8:1::1
+  
+  # Full Cone NAT network (dual-stack)
+  nat1_lan:
+    driver: bridge
+    enable_ipv6: true
+    ipam:
+      config:
+        - subnet: 192.168.1.0/24
+          gateway: 192.168.1.1
+        - subnet: fd00:1::/64
+          gateway: fd00:1::1
+  
+  # Symmetric NAT network (dual-stack)
+  nat2_lan:
+    driver: bridge
+    enable_ipv6: true
+    ipam:
+      config:
+        - subnet: 192.168.2.0/24
+          gateway: 192.168.2.1
+        - subnet: fd00:2::/64
+          gateway: fd00:2::1
+  
+  # Port Restricted NAT network (dual-stack)
+  nat3_lan:
+    driver: bridge
+    enable_ipv6: true
+    ipam:
+      config:
+        - subnet: 10.0.0.0/24
+          gateway: 10.0.0.1
+        - subnet: fd00:3::/64
+          gateway: fd00:3::1
+  
+  # CGNAT network (IPv4 only - realistic)
+  nat4_lan:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 10.1.0.0/24
+          gateway: 10.1.0.1
+  
+  # IPv6-only network
+  nat5_lan:
+    driver: bridge
+    enable_ipv6: true
+    ipam:
+      config:
+        - subnet: fd00:5::/64
+          gateway: fd00:5::1
+
+services:
+  # Bootstrap/Coordinator node (dual-stack)
+  bootstrap:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.ant-quic
+    container_name: ant-quic-bootstrap
+    hostname: bootstrap
+    networks:
+      internet:
+        ipv4_address: 203.0.113.10
+        ipv6_address: 2001:db8:1::10
+    ports:
+      - "9000:9000/udp"
+      - "9000:9000/tcp"
+    environment:
+      - RUST_LOG=ant_quic=debug,ant_quic::nat_traversal=trace
+      - ANT_QUIC_ROLE=bootstrap
+      - ANT_QUIC_LISTEN=[::]:9000
+      - ANT_QUIC_ENABLE_IPV6=true
+    volumes:
+      - ./logs/bootstrap:/app/logs
+    command: >
+      ant-quic
+      --role bootstrap
+      --listen [::]:9000
+      --enable-metrics
+      --metrics-port 9090
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9090/metrics"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # NAT Gateway 1 - Full Cone (dual-stack)
+  nat1_gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile.nat-gateway
+    container_name: nat1-gateway
+    networks:
+      internet:
+        ipv4_address: 203.0.113.21
+        ipv6_address: 2001:db8:1::21
+      nat1_lan:
+    cap_add:
+      - NET_ADMIN
+    environment:
+      - NAT_TYPE=full-cone
+      - ENABLE_IPV6=true
+      - IPV6_NAT_TYPE=stateful
+    volumes:
+      - ./scripts/nat-types:/scripts
+
+  # NAT Gateway 2 - Symmetric (dual-stack)
+  nat2_gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile.nat-gateway
+    container_name: nat2-gateway
+    networks:
+      internet:
+        ipv4_address: 203.0.113.22
+        ipv6_address: 2001:db8:1::22
+      nat2_lan:
+    cap_add:
+      - NET_ADMIN
+    environment:
+      - NAT_TYPE=symmetric
+      - ENABLE_IPV6=true
+      - IPV6_NAT_TYPE=stateful
+    volumes:
+      - ./scripts/nat-types:/scripts
+
+  # NAT Gateway 3 - Port Restricted (dual-stack)
+  nat3_gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile.nat-gateway
+    container_name: nat3-gateway
+    networks:
+      internet:
+        ipv4_address: 203.0.113.23
+        ipv6_address: 2001:db8:1::23
+      nat3_lan:
+    cap_add:
+      - NET_ADMIN
+    environment:
+      - NAT_TYPE=port-restricted
+      - ENABLE_IPV6=true
+      - IPV6_NAT_TYPE=stateful
+    volumes:
+      - ./scripts/nat-types:/scripts
+
+  # NAT Gateway 4 - CGNAT (IPv4 only)
+  nat4_gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile.nat-gateway
+    container_name: nat4-gateway
+    networks:
+      internet:
+        ipv4_address: 203.0.113.24
+      nat4_lan:
+    cap_add:
+      - NET_ADMIN
+    environment:
+      - NAT_TYPE=cgnat
+      - ENABLE_IPV6=false
+    volumes:
+      - ./scripts/nat-types:/scripts
+
+  # Client 1 - Behind Full Cone NAT (dual-stack)
+  client1:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.ant-quic
+    container_name: ant-quic-client1
+    hostname: client1
+    networks:
+      nat1_lan:
+        ipv4_address: 192.168.1.100
+        ipv6_address: fd00:1::100
+    environment:
+      - RUST_LOG=ant_quic=debug
+      - ANT_QUIC_BOOTSTRAP=203.0.113.10:9000,2001:db8:1::10:9000
+      - ANT_QUIC_ENABLE_IPV6=true
+    depends_on:
+      - bootstrap
+      - nat1_gateway
+    volumes:
+      - ./logs/client1:/app/logs
+
+  # Client 2 - Behind Symmetric NAT (dual-stack)
+  client2:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.ant-quic
+    container_name: ant-quic-client2
+    hostname: client2
+    networks:
+      nat2_lan:
+        ipv4_address: 192.168.2.100
+        ipv6_address: fd00:2::100
+    environment:
+      - RUST_LOG=ant_quic=debug
+      - ANT_QUIC_BOOTSTRAP=203.0.113.10:9000,2001:db8:1::10:9000
+      - ANT_QUIC_ENABLE_IPV6=true
+    depends_on:
+      - bootstrap
+      - nat2_gateway
+    volumes:
+      - ./logs/client2:/app/logs
+
+  # Client 3 - Behind Port Restricted NAT (dual-stack)
+  client3:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.ant-quic
+    container_name: ant-quic-client3
+    hostname: client3
+    networks:
+      nat3_lan:
+        ipv4_address: 10.0.0.100
+        ipv6_address: fd00:3::100
+    environment:
+      - RUST_LOG=ant_quic=debug
+      - ANT_QUIC_BOOTSTRAP=203.0.113.10:9000,2001:db8:1::10:9000
+      - ANT_QUIC_ENABLE_IPV6=true
+    depends_on:
+      - bootstrap
+      - nat3_gateway
+    volumes:
+      - ./logs/client3:/app/logs
+
+  # Client 4 - Behind CGNAT (IPv4 only)
+  client4:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.ant-quic
+    container_name: ant-quic-client4
+    hostname: client4
+    networks:
+      nat4_lan:
+        ipv4_address: 10.1.0.100
+    environment:
+      - RUST_LOG=ant_quic=debug
+      - ANT_QUIC_BOOTSTRAP=203.0.113.10:9000
+      - ANT_QUIC_ENABLE_IPV6=false
+    depends_on:
+      - bootstrap
+      - nat4_gateway
+    volumes:
+      - ./logs/client4:/app/logs
+
+  # Client 5 - IPv6 only network
+  client5:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.ant-quic
+    container_name: ant-quic-client5
+    hostname: client5
+    networks:
+      nat5_lan:
+        ipv6_address: fd00:5::100
+      internet:
+        ipv6_address: 2001:db8:1::100
+    environment:
+      - RUST_LOG=ant_quic=debug
+      - ANT_QUIC_BOOTSTRAP=2001:db8:1::10:9000
+      - ANT_QUIC_ENABLE_IPV6=true
+      - ANT_QUIC_IPV6_ONLY=true
+    depends_on:
+      - bootstrap
+    volumes:
+      - ./logs/client5:/app/logs
+
+  # Test Runner - Orchestrates test execution
+  test-runner:
+    build:
+      context: .
+      dockerfile: Dockerfile.test-runner
+    container_name: ant-quic-test-runner
+    networks:
+      - internet
+    volumes:
+      - ./scripts:/scripts
+      - ./results:/results
+      - ./logs:/logs
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - TEST_SCENARIOS=basic,ipv6,stress,performance
+      - ENABLE_IPV6_TESTS=true
+    depends_on:
+      - bootstrap
+      - client1
+      - client2
+      - client3
+      - client4
+      - client5
+
+  # Monitoring - Prometheus
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: ant-quic-prometheus
+    networks:
+      - internet
+    ports:
+      - "9091:9090"
+    volumes:
+      - ./configs/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+
+  # Monitoring - Grafana
+  grafana:
+    image: grafana/grafana:latest
+    container_name: ant-quic-grafana
+    networks:
+      - internet
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    volumes:
+      - ./configs/grafana-dashboard.json:/var/lib/grafana/dashboards/ant-quic.json
+      - grafana_data:/var/lib/grafana
+
+volumes:
+  prometheus_data:
+  grafana_data:

@@ -37,6 +37,9 @@ arbitrary = ["dep:arbitrary"]
 __qlog = ["dep:qlog"]
 bloom = []
 
+# Post-Quantum Cryptography support
+pqc = ["aws-lc-rs"]
+
 # Zero-cost tracing system
 trace = []
 trace-app = ["trace"]

@@ -12,13 +12,22 @@ A QUIC transport protocol implementation with advanced NAT traversal capabilitie
 [![Cross-Platform](https://github.com/dirvine/ant-quic/actions/workflows/cross-platform.yml/badge.svg)](https://github.com/dirvine/ant-quic/actions/workflows/cross-platform.yml)
 [![Coverage](https://codecov.io/gh/dirvine/ant-quic/branch/main/graph/badge.svg)](https://codecov.io/gh/dirvine/ant-quic)
 
+## 📚 Documentation
+
+Comprehensive documentation is available in the [`docs/`](docs/) directory:
+- [Architecture Overview](docs/architecture/)
+- [Getting Started Guide](docs/guides/)
+- [API Reference](docs/api/)
+- [Development Guide](docs/development/)
+
 ## Features
 
 - **Advanced NAT Traversal**: ICE-like candidate discovery and coordinated hole punching
 - **P2P Optimized**: Designed for peer-to-peer networks with minimal infrastructure
 - **High Connectivity**: Near 100% connection success rate through sophisticated NAT handling
 - **QUIC Address Discovery**: Automatic peer address detection via IETF draft standard
-- **Autonomi Ready**: Integrated with Autonomi's decentralized networking requirements
+- **Post-Quantum Ready**: Support for ML-KEM-768 and ML-DSA-65 hybrid cryptography
+- **IPv4/IPv6 Dual Stack**: Full support for both protocols with automatic selection
 - **Built on Quinn**: Leverages the proven Quinn QUIC implementation as foundation
 - **Automatic Bootstrap Connection**: Nodes automatically connect to configured bootstrap nodes
 - **Production-Ready Binary**: Full-featured `ant-quic` binary for immediate deployment
@@ -382,6 +391,36 @@ ant-quic implements and extends the following IETF specifications and drafts:
   https://datatracker.ietf.org/doc/draft-seemann-quic-nat-traversal/
   Describes hole-punching and ICE-style techniques directly over QUIC, including new frames such as ADD_ADDRESS and PUNCH_ME_NOW
 
+### 5. Post-Quantum Cryptography Standards
+- **FIPS 203** – "Module-Lattice-Based Key-Encapsulation Mechanism Standard (ML-KEM)"
+  https://csrc.nist.gov/pubs/fips/203/final
+  Defines ML-KEM-512, ML-KEM-768, and ML-KEM-1024 (formerly Kyber)
+- **FIPS 204** – "Module-Lattice-Based Digital Signature Standard (ML-DSA)"
+  https://csrc.nist.gov/pubs/fips/204/final
+  Defines ML-DSA-44, ML-DSA-65, and ML-DSA-87 (formerly Dilithium)
+- **NIST SP 800-56C Rev. 2** – "Recommendation for Key-Derivation Methods in Key-Establishment Schemes"
+  https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-56Cr2.pdf
+  Provides key derivation functions for combining classical and post-quantum secrets
+
+### 6. Post-Quantum TLS/QUIC Integration
+- **draft-ietf-tls-hybrid-design-14** – "Hybrid key exchange in TLS 1.3"
+  https://datatracker.ietf.org/doc/draft-ietf-tls-hybrid-design/
+  Framework for combining classical and post-quantum algorithms in TLS 1.3
+- **draft-ietf-tls-mlkem-04** – "ML-KEM Post-Quantum Key Agreement for TLS 1.3"
+  https://datatracker.ietf.org/doc/draft-ietf-tls-mlkem/
+  Pure post-quantum key agreement using ML-KEM
+- **draft-ietf-tls-ecdhe-mlkem-00** – "Post-quantum hybrid ECDHE-MLKEM Key Agreement for TLSv1.3"
+  https://datatracker.ietf.org/doc/draft-ietf-tls-ecdhe-mlkem/
+  Hybrid key exchange combining ECDHE with ML-KEM
+
+### 7. Post-Quantum Certificate Support
+- **draft-ietf-lamps-kyber-certificates-10** – "Algorithm Identifiers for ML-KEM"
+  https://datatracker.ietf.org/doc/draft-ietf-lamps-kyber-certificates/
+  X.509 certificate support for ML-KEM public keys
+- **draft-ietf-lamps-dilithium-certificates-11** – "Algorithm Identifiers for ML-DSA"
+  https://datatracker.ietf.org/doc/draft-ietf-lamps-dilithium-certificates/
+  X.509 certificate support for ML-DSA signatures
+
 ## Future Work & Roadmap
 
 ### Current Implementation Status
@@ -454,7 +493,16 @@ ant-quic implements and extends the following IETF specifications and drafts:
 - ✅ 27% improvement in connection success rates
 - ✅ Address discovery enabled by default
 
-#### v0.5.0 - Advanced Features (Planned)
+#### v0.5.0 - Post-Quantum Cryptography (Planned)
+- 📋 ML-KEM-768 (Kyber) key encapsulation mechanism
+- 📋 ML-DSA-65 (Dilithium) digital signatures
+- 📋 Hybrid X25519+ML-KEM-768 key exchange
+- 📋 Hybrid Ed25519+ML-DSA-65 signatures
+- 📋 Backward compatibility with classical cryptography
+- 📋 NIST FIPS 203/204 compliance
+- 📋 Extended raw public key support for PQC algorithms
+
+#### v0.6.0 - Advanced Features (Planned)
 - 📋 Adaptive retry strategies based on network conditions
 - 📋 Advanced relay selection algorithms
 - 📋 Protocol optimizations from real-world usage data

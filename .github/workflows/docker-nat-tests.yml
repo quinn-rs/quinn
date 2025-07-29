@@ -1,0 +1,175 @@
+name: Docker NAT Tests
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+    branches: [master, main]
+  workflow_dispatch:
+    inputs:
+      test_scenarios:
+        description: 'Test scenarios to run'
+        required: false
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - basic
+          - ipv6
+          - stress
+          - performance
+
+env:
+  DOCKER_BUILDKIT: 1
+  COMPOSE_DOCKER_CLI_BUILD: 1
+
+jobs:
+  docker-nat-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    
+    strategy:
+      matrix:
+        test-suite:
+          - basic-connectivity
+          - nat-traversal
+          - ipv6-support
+          - stress-testing
+          - pqc-readiness
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+      with:
+        driver-opts: network=host
+        
+    - name: Enable IPv6 in Docker
+      run: |
+        sudo cat > /etc/docker/daemon.json <<EOF
+        {
+          "ipv6": true,
+          "fixed-cidr-v6": "2001:db8::/64",
+          "experimental": true,
+          "ip6tables": true
+        }
+        EOF
+        sudo systemctl restart docker
+        
+    - name: Set up test environment
+      run: |
+        cd docker
+        chmod +x scripts/*.sh
+        mkdir -p logs results
+        
+    - name: Build base images
+      run: |
+        cd docker
+        docker compose -f docker-compose.enhanced.yml build --parallel
+        
+    - name: Run NAT test suite - ${{ matrix.test-suite }}
+      run: |
+        cd docker
+        case "${{ matrix.test-suite }}" in
+          basic-connectivity)
+            ./scripts/run-enhanced-nat-tests.sh test_basic_connectivity
+            ;;
+          nat-traversal)
+            ./scripts/run-enhanced-nat-tests.sh test_nat_traversal
+            ;;
+          ipv6-support)
+            ./scripts/run-enhanced-nat-tests.sh test_address_discovery test_nat_traversal
+            ;;
+          stress-testing)
+            ./scripts/run-enhanced-nat-tests.sh test_network_stress
+            ;;
+          pqc-readiness)
+            ./scripts/run-enhanced-nat-tests.sh test_pqc_scenarios
+            ;;
+        esac
+        
+    - name: Collect test results
+      if: always()
+      run: |
+        cd docker
+        ./scripts/run-enhanced-nat-tests.sh collect_metrics generate_report || true
+        
+    - name: Upload test results
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: nat-test-results-${{ matrix.test-suite }}
+        path: |
+          docker/results/
+          docker/logs/
+          
+    - name: Upload metrics
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: nat-test-metrics-${{ matrix.test-suite }}
+        path: docker/results/metrics/
+        
+    - name: Parse test results
+      if: always()
+      run: |
+        cd docker
+        if [ -f results/enhanced_test_report.md ]; then
+          echo "## Test Results Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          cat results/enhanced_test_report.md >> $GITHUB_STEP_SUMMARY
+        fi
+        
+    - name: Check test status
+      run: |
+        cd docker
+        if [ -f results/enhanced_test_report.md ]; then
+          if grep -q "All tests passed!" results/enhanced_test_report.md; then
+            echo "All NAT tests passed!"
+            exit 0
+          else
+            echo "Some NAT tests failed!"
+            exit 1
+          fi
+        else
+          echo "No test results found!"
+          exit 1
+        fi
+
+  comprehensive-nat-test:
+    runs-on: ubuntu-latest
+    needs: docker-nat-tests
+    timeout-minutes: 90
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+      
+    - name: Run comprehensive NAT test suite
+      run: |
+        cd docker
+        chmod +x scripts/*.sh
+        ./scripts/run-enhanced-nat-tests.sh
+        
+    - name: Generate combined report
+      if: always()
+      run: |
+        cd docker
+        echo "# Comprehensive NAT Test Report" > combined_report.md
+        echo "" >> combined_report.md
+        cat results/enhanced_test_report.md >> combined_report.md
+        
+    - name: Upload comprehensive results
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: comprehensive-nat-test-results
+        path: |
+          docker/combined_report.md
+          docker/results/
+          docker/logs/

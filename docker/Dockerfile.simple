@@ -1,0 +1,26 @@
+# Simple runtime image for pre-built ant-quic
+FROM --platform=linux/arm64 debian:bookworm-slim
+
+# Install runtime dependencies
+RUN apt-get update && apt-get install -y \
+    libssl3 \
+    ca-certificates \
+    iproute2 \
+    iptables \
+    iputils-ping \
+    tcpdump \
+    net-tools \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy pre-built binary
+COPY target/release/ant-quic /usr/local/bin/
+
+# Create working directory
+WORKDIR /opt/ant-quic
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+    CMD ant-quic --version || exit 1
+
+# Default command
+CMD ["ant-quic", "--help"]

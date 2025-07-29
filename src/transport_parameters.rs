@@ -109,6 +109,11 @@ macro_rules! make_struct {
             /// When present, indicates support for QUIC Address Discovery extension
             pub(crate) address_discovery: Option<AddressDiscoveryConfig>,
 
+            /// Post-Quantum Cryptography algorithms supported by this endpoint
+            ///
+            /// When present, indicates support for PQC algorithms
+            pub(crate) pqc_algorithms: Option<PqcAlgorithms>,
+
             // Server-only
             /// The value of the Destination Connection ID field from the first Initial packet sent
             /// by the client
@@ -148,6 +153,7 @@ macro_rules! make_struct {
                     min_ack_delay: None,
                     nat_traversal: None,
                     address_discovery: None,
+                    pqc_algorithms: None,
 
                     original_dst_cid: None,
                     retry_src_cid: None,
@@ -204,6 +210,7 @@ impl TransportParameters {
             }),
             nat_traversal: config.nat_traversal_config.clone(),
             address_discovery: None, // TODO: Wire up to config when needed
+            pqc_algorithms: None,    // TODO: Wire up to config when PQC is enabled
             ..Self::default()
         }
     }
@@ -242,6 +249,14 @@ impl TransportParameters {
     /// examine the negotiated NAT traversal parameters.
     pub fn nat_traversal_config(&self) -> Option<&NatTraversalConfig> {
         self.nat_traversal.as_ref()
+    }
+
+    /// Get the PQC algorithms configuration for this connection
+    ///
+    /// This is a public accessor method for tests and external code that need to
+    /// examine the negotiated PQC algorithm support.
+    pub fn pqc_algorithms(&self) -> Option<&PqcAlgorithms> {
+        self.pqc_algorithms.as_ref()
     }
 }
 
@@ -321,6 +336,22 @@ pub enum AddressDiscoveryConfig {
     /// 2: The node is interested in receiving address observations,
     /// and it is willing to provide address observations.
     SendAndReceive,
+}
+
+/// Post-Quantum Cryptography algorithms configuration
+///
+/// This parameter advertises which PQC algorithms are supported by the endpoint.
+/// When both endpoints support PQC, they can negotiate the use of quantum-resistant algorithms.
+#[derive(Debug, Clone, Eq, PartialEq, Default)]
+pub struct PqcAlgorithms {
+    /// ML-KEM-768 (NIST FIPS 203) support for key encapsulation
+    pub ml_kem_768: bool,
+    /// ML-DSA-65 (NIST FIPS 204) support for digital signatures
+    pub ml_dsa_65: bool,
+    /// Hybrid X25519+ML-KEM-768 key exchange
+    pub hybrid_x25519_ml_kem: bool,
+    /// Hybrid Ed25519+ML-DSA-65 signatures
+    pub hybrid_ed25519_ml_dsa: bool,
 }
 
 impl AddressDiscoveryConfig {
@@ -560,6 +591,27 @@ impl TransportParameters {
                         w.write_var(value.into_inner());
                     }
                 }
+                TransportParameterId::PqcAlgorithms => {
+                    if let Some(ref algorithms) = self.pqc_algorithms {
+                        w.write_var(id as u64);
+                        // Encode as bit field: 4 bits for 4 algorithms
+                        let mut value = 0u8;
+                        if algorithms.ml_kem_768 {
+                            value |= 1 << 0;
+                        }
+                        if algorithms.ml_dsa_65 {
+                            value |= 1 << 1;
+                        }
+                        if algorithms.hybrid_x25519_ml_kem {
+                            value |= 1 << 2;
+                        }
+                        if algorithms.hybrid_ed25519_ml_dsa {
+                            value |= 1 << 3;
+                        }
+                        w.write_var(1u64); // Length is always 1 byte
+                        w.write(value);
+                    }
+                }
                 id => {
                     macro_rules! write_params {
                         {$($(#[$doc:meta])* $name:ident ($id:ident) = $default:expr,)*} => {
@@ -696,6 +748,21 @@ impl TransportParameters {
                     let value = r.get_var()?;
                     let varint = VarInt::from_u64(value).map_err(|_| Error::Malformed)?;
                     params.address_discovery = Some(AddressDiscoveryConfig::from_value(varint)?);
+                }
+                TransportParameterId::PqcAlgorithms => {
+                    if params.pqc_algorithms.is_some() {
+                        return Err(Error::Malformed);
+                    }
+                    if len != 1 {
+                        return Err(Error::Malformed);
+                    }
+                    let value = r.get::<u8>()?;
+                    params.pqc_algorithms = Some(PqcAlgorithms {
+                        ml_kem_768: (value & (1 << 0)) != 0,
+                        ml_dsa_65: (value & (1 << 1)) != 0,
+                        hybrid_x25519_ml_kem: (value & (1 << 2)) != 0,
+                        hybrid_ed25519_ml_dsa: (value & (1 << 3)) != 0,
+                    });
                 }
                 _ => {
                     macro_rules! parse {
@@ -928,11 +995,14 @@ pub(crate) enum TransportParameterId {
     // Address Discovery Extension - draft-ietf-quic-address-discovery-00
     // Transport parameter ID from the specification
     AddressDiscovery = 0x9f81a176,
+    // Post-Quantum Cryptography Algorithms
+    // Using experimental range for now (will be assigned by IANA)
+    PqcAlgorithms = 0x50C0,
 }
 
 impl TransportParameterId {
     /// Array with all supported transport parameter IDs
-    const SUPPORTED: [Self; 23] = [
+    const SUPPORTED: [Self; 24] = [
         Self::MaxIdleTimeout,
         Self::MaxUdpPayloadSize,
         Self::InitialMaxData,
@@ -956,6 +1026,7 @@ impl TransportParameterId {
         Self::MinAckDelayDraft07,
         Self::NatTraversal,
         Self::AddressDiscovery,
+        Self::PqcAlgorithms,
     ];
 }
 
@@ -997,6 +1068,7 @@ impl TryFrom<u64> for TransportParameterId {
             id if Self::MinAckDelayDraft07 == id => Self::MinAckDelayDraft07,
             id if Self::NatTraversal == id => Self::NatTraversal,
             id if Self::AddressDiscovery == id => Self::AddressDiscovery,
+            id if Self::PqcAlgorithms == id => Self::PqcAlgorithms,
             _ => return Err(()),
         };
         Ok(param)
@@ -1790,6 +1862,105 @@ mod test {
             decoded.address_discovery,
             Some(AddressDiscoveryConfig::SendAndReceive)
         );
+    }
+
+    #[test]
+    fn test_pqc_algorithms_transport_parameter() {
+        // Test that PQC algorithms can be encoded and decoded correctly
+        let mut params = TransportParameters::default();
+        params.pqc_algorithms = Some(PqcAlgorithms {
+            ml_kem_768: true,
+            ml_dsa_65: false,
+            hybrid_x25519_ml_kem: true,
+            hybrid_ed25519_ml_dsa: true,
+        });
+
+        // Encode
+        let mut encoded = Vec::new();
+        params.write(&mut encoded);
+
+        // Decode
+        let decoded = TransportParameters::read(Side::Client, &mut encoded.as_slice())
+            .expect("Failed to decode");
+
+        // Verify
+        assert!(decoded.pqc_algorithms.is_some());
+        let pqc = decoded.pqc_algorithms.unwrap();
+        assert!(pqc.ml_kem_768);
+        assert!(!pqc.ml_dsa_65);
+        assert!(pqc.hybrid_x25519_ml_kem);
+        assert!(pqc.hybrid_ed25519_ml_dsa);
+    }
+
+    #[test]
+    fn test_pqc_algorithms_all_combinations() {
+        // Test all possible combinations of PQC algorithm flags
+        for ml_kem in [false, true] {
+            for ml_dsa in [false, true] {
+                for hybrid_kex in [false, true] {
+                    for hybrid_sig in [false, true] {
+                        let mut params = TransportParameters::default();
+                        params.pqc_algorithms = Some(PqcAlgorithms {
+                            ml_kem_768: ml_kem,
+                            ml_dsa_65: ml_dsa,
+                            hybrid_x25519_ml_kem: hybrid_kex,
+                            hybrid_ed25519_ml_dsa: hybrid_sig,
+                        });
+
+                        // Encode and decode
+                        let mut encoded = Vec::new();
+                        params.write(&mut encoded);
+                        let decoded =
+                            TransportParameters::read(Side::Client, &mut encoded.as_slice())
+                                .expect("Failed to decode");
+
+                        // Verify
+                        let pqc = decoded.pqc_algorithms.unwrap();
+                        assert_eq!(pqc.ml_kem_768, ml_kem);
+                        assert_eq!(pqc.ml_dsa_65, ml_dsa);
+                        assert_eq!(pqc.hybrid_x25519_ml_kem, hybrid_kex);
+                        assert_eq!(pqc.hybrid_ed25519_ml_dsa, hybrid_sig);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_pqc_algorithms_not_sent_when_none() {
+        // Test that PQC algorithms parameter is not sent when None
+        let mut params = TransportParameters::default();
+        params.pqc_algorithms = None;
+
+        let mut encoded = Vec::new();
+        params.write(&mut encoded);
+
+        // Check that the parameter ID doesn't appear in the encoding
+        // (Can't easily check for exact bytes due to VarInt encoding)
+        let decoded = TransportParameters::read(Side::Client, &mut encoded.as_slice())
+            .expect("Failed to decode");
+        assert!(decoded.pqc_algorithms.is_none());
+    }
+
+    #[test]
+    fn test_pqc_algorithms_duplicate_parameter() {
+        // Test that duplicate PQC algorithms parameters are rejected
+        let mut encoded = Vec::new();
+
+        // Write a valid parameter
+        encoded.write_var(TransportParameterId::PqcAlgorithms as u64);
+        encoded.write_var(1u64); // Length
+        encoded.write(0b1111u8); // All algorithms enabled
+
+        // Write duplicate
+        encoded.write_var(TransportParameterId::PqcAlgorithms as u64);
+        encoded.write_var(1u64);
+        encoded.write(0b0000u8);
+
+        // Should fail to decode
+        let result = TransportParameters::read(Side::Client, &mut encoded.as_slice());
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), Error::Malformed));
     }
 
     // Include comprehensive tests module
