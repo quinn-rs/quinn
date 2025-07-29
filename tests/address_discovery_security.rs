@@ -7,18 +7,16 @@
 //! - Penetration testing scenarios
 
 use ant_quic::{
-    auth::{AuthConfig, AuthManager},
-    crypto::raw_public_keys::key_utils::public_key_to_bytes,
-    nat_traversal_api::{EndpointRole, PeerId},
+    auth::AuthConfig,
+    nat_traversal_api::EndpointRole,
     quic_node::{QuicNodeConfig, QuicP2PNode},
-    transport_parameters::AddressDiscoveryConfig,
 };
 use std::{
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
     sync::Arc,
     time::Duration,
 };
-use tokio::time::{sleep, timeout};
+use tokio::time::sleep;
 
 /// Test that spoofed OBSERVED_ADDRESS frames are rejected
 #[tokio::test]
