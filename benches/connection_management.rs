@@ -20,7 +20,9 @@ use ant_quic::PeerId;
 #[derive(Clone, Debug)]
 struct MockConnection {
     pub peer_id: PeerId,
+    #[allow(dead_code)]
     pub local_addr: SocketAddr,
+    #[allow(dead_code)]
     pub remote_addr: SocketAddr,
     pub state: ConnectionState,
     pub last_activity: Instant,
@@ -30,6 +32,7 @@ struct MockConnection {
 }
 
 #[derive(Clone, Debug)]
+#[allow(dead_code)]
 enum ConnectionState {
     Connecting,
     Connected,

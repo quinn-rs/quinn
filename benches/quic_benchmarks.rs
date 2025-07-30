@@ -1,6 +1,6 @@
 use ant_quic::{TransportError, TransportErrorCode, VarInt};
 use bytes::Bytes;
-use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
+use criterion::{Criterion, black_box, criterion_group, criterion_main};
 use std::time::Duration;
 
 fn varint_operations(c: &mut Criterion) {

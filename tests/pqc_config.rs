@@ -21,7 +21,7 @@ impl HmacKey for TestHmacKey {
         32
     }
 
-    fn verify(&self, data: &[u8], signature: &[u8]) -> Result<(), CryptoError> {
+    fn verify(&self, _data: &[u8], signature: &[u8]) -> Result<(), CryptoError> {
         // Dummy verification for testing
         if signature.len() >= self.signature_len() {
             Ok(())

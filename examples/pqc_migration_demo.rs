@@ -24,7 +24,7 @@ enum MigrationPhase {
 }
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn Error>> {
+async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
     println!("🔄 Post-Quantum Cryptography Migration Demo");
@@ -66,7 +66,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-async fn run_server_phase(phase: MigrationPhase) -> Result<(), Box<dyn Error>> {
+async fn run_server_phase(phase: MigrationPhase) -> Result<(), Box<dyn Error + Send + Sync>> {
     let pqc_config = match phase {
         MigrationPhase::PreMigration => {
             println!("   🔓 PQC: Disabled");
@@ -136,7 +136,7 @@ async fn run_server_phase(phase: MigrationPhase) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-async fn test_client_compatibility(server_phase: MigrationPhase) -> Result<(), Box<dyn Error>> {
+async fn test_client_compatibility(server_phase: MigrationPhase) -> Result<(), Box<dyn Error + Send + Sync>> {
     // Read server address
     let addr_str = std::fs::read_to_string("server_addr.tmp")?;
     let server_addr: SocketAddr = addr_str.trim().parse()?;
@@ -173,7 +173,7 @@ async fn test_client_compatibility(server_phase: MigrationPhase) -> Result<(), B
 async fn connect_with_config(
     server_addr: SocketAddr,
     _pqc_config: PqcConfig,
-) -> Result<(), Box<dyn Error>> {
+) -> Result<(), Box<dyn Error + Send + Sync>> {
     // Create client configuration
     let client_config = ClientConfig::with_native_roots();
 
@@ -202,7 +202,7 @@ async fn connect_with_config(
     Ok(())
 }
 
-async fn handle_connection(connection: ant_quic::Connection) -> Result<(), Box<dyn Error>> {
+async fn handle_connection(connection: ant_quic::Connection) -> Result<(), Box<dyn Error + Send + Sync>> {
     // Simple echo handler
     while let Ok((mut send, mut recv)) = connection.accept_bi().await {
         let data = recv.read_to_end(1024).await?;
