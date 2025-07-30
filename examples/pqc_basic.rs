@@ -147,7 +147,9 @@ async fn run_client(server_addr: SocketAddr) -> Result<(), Box<dyn Error + Send 
     Ok(())
 }
 
-async fn handle_connection(connection: ant_quic::Connection) -> Result<(), Box<dyn Error + Send + Sync>> {
+async fn handle_connection(
+    connection: ant_quic::Connection,
+) -> Result<(), Box<dyn Error + Send + Sync>> {
     // Accept a stream
     if let Ok((mut send, mut recv)) = connection.accept_bi().await {
         // Read message

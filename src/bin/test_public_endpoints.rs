@@ -284,11 +284,8 @@ async fn test_endpoint(
     // Mark protocols as tested
     protocols_tested = endpoint.protocols.clone();
 
-    let connect_result = timeout(
-        Duration::from_secs(test_config.timeout_seconds),
-        connecting,
-    )
-    .await;
+    let connect_result =
+        timeout(Duration::from_secs(test_config.timeout_seconds), connecting).await;
 
     match connect_result {
         Ok(Ok(connection)) => {
