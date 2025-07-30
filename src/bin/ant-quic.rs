@@ -679,7 +679,9 @@ impl QuicDemoNode {
                                                 "🌐 Discovered external address: {}",
                                                 candidate_address
                                             );
-                                            println!("🌐 Discovered external address: {candidate_address}");
+                                            println!(
+                                                "🌐 Discovered external address: {candidate_address}"
+                                            );
                                         }
                                     }
                                     status.last_update = std::time::Instant::now();

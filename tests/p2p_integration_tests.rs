@@ -327,9 +327,7 @@ async fn test_basic_peer_connection() {
         }
         Err(e) => {
             // Expected with current stub implementation
-            println!(
-                "Connection failed as expected with stub implementation: {e}"
-            );
+            println!("Connection failed as expected with stub implementation: {e}");
             // Verify that we at least created the test environment successfully
             assert_eq!(env.peers.len(), 2);
             assert_eq!(env.bootstrap_nodes.len(), 1);

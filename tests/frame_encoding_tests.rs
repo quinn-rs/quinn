@@ -282,10 +282,7 @@ mod tests {
             let mut decode_buf = buf.freeze();
             let decoded = VarInt::decode(&mut decode_buf).unwrap();
 
-            assert_eq!(
-                varint, decoded,
-                "VarInt roundtrip failed for value {value}"
-            );
+            assert_eq!(varint, decoded, "VarInt roundtrip failed for value {value}");
         }
     }
 
