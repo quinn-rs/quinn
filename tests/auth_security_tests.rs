@@ -210,8 +210,7 @@ async fn test_weak_randomness_detection() {
             let unique_bytes = nonce.iter().collect::<HashSet<_>>().len();
             assert!(
                 unique_bytes > 10,
-                "Low entropy in nonce: only {} unique bytes",
-                unique_bytes
+                "Low entropy in nonce: only {unique_bytes} unique bytes"
             );
         }
     }
@@ -297,8 +296,7 @@ async fn test_signature_malleability() {
 
                 assert!(
                     result.is_err(),
-                    "Malleated signature {} should be rejected",
-                    i
+                    "Malleated signature {i} should be rejected"
                 );
             }
         }
@@ -346,7 +344,7 @@ async fn test_challenge_prediction_attack() {
                 break;
             }
         }
-        assert!(!sequential, "Sequential nonces detected at position {}", i);
+        assert!(!sequential, "Sequential nonces detected at position {i}");
 
         // Check they're not similar (Hamming distance)
         let mut diff_bits = 0;
@@ -357,9 +355,7 @@ async fn test_challenge_prediction_attack() {
         // Should have significant difference (at least 25% of bits)
         assert!(
             diff_bits > 64,
-            "Nonces too similar at position {}: only {} bits different",
-            i,
-            diff_bits
+            "Nonces too similar at position {i}: only {diff_bits} bits different"
         );
     }
 }
@@ -501,7 +497,7 @@ async fn test_timing_side_channel_auth_request() {
 
     // Should not leak information via timing
     let tolerance = Duration::from_micros(100); // Very tight tolerance
-    assert!(diff < tolerance, "Timing difference too large: {:?}", diff);
+    assert!(diff < tolerance, "Timing difference too large: {diff:?}");
 }
 
 #[tokio::test]
@@ -591,8 +587,7 @@ async fn test_cache_timing_attacks() {
 
     assert!(
         ratio < 3.0,
-        "Cache timing ratio too high: {:.2}x difference",
-        ratio
+        "Cache timing ratio too high: {ratio:.2}x difference"
     );
 }
 

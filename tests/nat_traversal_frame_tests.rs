@@ -716,8 +716,7 @@ mod frame_integration_tests {
 
             assert_eq!(
                 original, decoded,
-                "Roundtrip failed for frame: {:?}",
-                original
+                "Roundtrip failed for frame: {original:?}"
             );
         }
     }
@@ -788,7 +787,7 @@ mod edge_case_tests {
             let mut decode_buf = buf.clone().freeze();
             decode_buf.advance(3); // Skip 3-byte frame type
             let decoded = AddAddress::decode(&mut decode_buf)
-                .expect(&format!("Failed to decode IPv6 address: {}", addr));
+                .unwrap_or_else(|_| panic!("Failed to decode IPv6 address: {addr}"));
 
             if let SocketAddr::V6(decoded_addr) = decoded.address {
                 assert_eq!(decoded_addr.ip(), &addr);

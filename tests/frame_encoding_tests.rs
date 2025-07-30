@@ -284,8 +284,7 @@ mod tests {
 
             assert_eq!(
                 varint, decoded,
-                "VarInt roundtrip failed for value {}",
-                value
+                "VarInt roundtrip failed for value {value}"
             );
         }
     }
@@ -536,8 +535,7 @@ mod tests {
 
             assert_eq!(
                 original, decoded,
-                "Roundtrip failed for frame: {:?}",
-                original
+                "Roundtrip failed for frame: {original:?}"
             );
         }
     }
@@ -601,7 +599,7 @@ mod tests {
             let mut decode_buf = buf.freeze();
             decode_buf.advance(1); // Skip frame type
             let decoded = AddAddress::decode(&mut decode_buf)
-                .expect(&format!("Failed to decode IPv6 address: {}", addr));
+                .unwrap_or_else(|_| panic!("Failed to decode IPv6 address: {addr}"));
 
             if let SocketAddr::V6(decoded_addr) = decoded.address {
                 assert_eq!(decoded_addr.ip(), &addr);

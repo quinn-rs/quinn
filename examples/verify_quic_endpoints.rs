@@ -52,7 +52,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         match result {
             Ok(info) => {
                 successful += 1;
-                println!("✅ {} - {}", endpoint_str, description);
+                println!("✅ {endpoint_str} - {description}");
                 println!("   Connected: Yes");
                 println!("   ALPN: {:?}", info.alpn);
                 println!("   Protocol Version: 0x{:08x}", info.protocol_version);
@@ -60,14 +60,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             Err(e) => {
                 failed += 1;
-                println!("❌ {} - {}", endpoint_str, description);
-                println!("   Error: {}", e);
+                println!("❌ {endpoint_str} - {description}");
+                println!("   Error: {e}");
                 println!();
             }
         }
     }
 
-    println!("Summary: {} successful, {} failed", successful, failed);
+    println!("Summary: {successful} successful, {failed} failed");
 
     Ok(())
 }
@@ -125,7 +125,7 @@ async fn test_endpoint(
 
     let connection = match timeout(Duration::from_secs(5), connecting).await {
         Ok(Ok(conn)) => conn,
-        Ok(Err(e)) => return Err(format!("Connection failed: {}", e).into()),
+        Ok(Err(e)) => return Err(format!("Connection failed: {e}").into()),
         Err(_) => return Err("Connection timeout".into()),
     };
 

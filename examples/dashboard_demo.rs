@@ -79,7 +79,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         // Render the dashboard
         let output = dashboard.render().await;
-        print!("{}", output);
+        print!("{output}");
 
         // Wait before next update
         sleep(Duration::from_secs(1)).await;

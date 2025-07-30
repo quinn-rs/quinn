@@ -43,7 +43,14 @@ pub struct TestExecutionResult {
 pub struct DockerNatTestRunner {
     docker_compose_path: String,
     test_results: Vec<TestExecutionResult>,
+    #[allow(dead_code)]
     container_logs: HashMap<String, Vec<String>>,
+}
+
+impl Default for DockerNatTestRunner {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl DockerNatTestRunner {
@@ -186,7 +193,7 @@ impl DockerNatTestRunner {
                 success: false,
                 connection_time_ms: None,
                 relay_used: false,
-                error_message: Some(format!("Failed to apply network profile: {}", e)),
+                error_message: Some(format!("Failed to apply network profile: {e}")),
                 logs: vec![],
             };
         }
@@ -257,7 +264,7 @@ impl DockerNatTestRunner {
     /// Execute NAT traversal test between two containers
     async fn execute_nat_test(&self, client1: &str, client2: &str) -> Result<(bool, bool)> {
         // Start ant-quic in listening mode on client2
-        let listen_cmd = format!("docker exec -d {} ant-quic --listen 0.0.0.0:9000", client2);
+        let listen_cmd = format!("docker exec -d {client2} ant-quic --listen 0.0.0.0:9000");
 
         Command::new("sh")
             .arg("-c")
@@ -273,8 +280,7 @@ impl DockerNatTestRunner {
 
         // Connect from client1 to client2
         let connect_cmd = format!(
-            "docker exec {} ant-quic --connect {} --bootstrap bootstrap:9000",
-            client1, peer_id
+            "docker exec {client1} ant-quic --connect {peer_id} --bootstrap bootstrap:9000"
         );
 
         let output = Command::new("sh")
@@ -296,8 +302,8 @@ impl DockerNatTestRunner {
             stdout.contains("Using relay") || stdout.contains("Relay connection established");
 
         if !success {
-            println!("Connection failed. Stdout: {}", stdout);
-            println!("Stderr: {}", stderr);
+            println!("Connection failed. Stdout: {stdout}");
+            println!("Stderr: {stderr}");
         }
 
         Ok((success, relay_used))
@@ -307,7 +313,7 @@ impl DockerNatTestRunner {
     async fn apply_network_profile(&self, profile: &str) -> Result<()> {
         let script_path = "docker/scripts/network-conditions.sh";
 
-        let cmd = format!("bash {} apply {}", script_path, profile);
+        let cmd = format!("bash {script_path} apply {profile}");
 
         let output = Command::new("sh")
             .arg("-c")
@@ -330,11 +336,11 @@ impl DockerNatTestRunner {
         let mut logs = Vec::new();
 
         for container in containers {
-            let cmd = format!("docker logs {} --tail 100", container);
+            let cmd = format!("docker logs {container} --tail 100");
 
             if let Ok(output) = Command::new("sh").arg("-c").arg(&cmd).output() {
                 let container_logs = String::from_utf8_lossy(&output.stdout);
-                logs.push(format!("=== {} logs ===\n{}", container, container_logs));
+                logs.push(format!("=== {container} logs ===\n{container_logs}"));
             }
         }
 
@@ -392,13 +398,13 @@ impl DockerNatTestRunner {
         let passed = self.test_results.iter().filter(|r| r.success).count();
         let failed = total - passed;
 
-        println!("Total Tests: {}", total);
+        println!("Total Tests: {total}");
         println!(
             "Passed: {} ({:.1}%)",
             passed,
             (passed as f64 / total as f64) * 100.0
         );
-        println!("Failed: {}", failed);
+        println!("Failed: {failed}");
         println!();
 
         println!("Detailed Results:");
@@ -427,7 +433,7 @@ impl DockerNatTestRunner {
             );
 
             if let Some(ref error) = result.error_message {
-                println!("  Error: {}", error);
+                println!("  Error: {error}");
             }
         }
 
@@ -450,7 +456,7 @@ impl DockerNatTestRunner {
 
         for (nat_type, (passed, total)) in nat_stats {
             let rate = (passed as f64 / total as f64) * 100.0;
-            println!("  {}: {}/{} ({:.1}%)", nat_type, passed, total, rate);
+            println!("  {nat_type}: {passed}/{total} ({rate:.1}%)");
         }
     }
 }

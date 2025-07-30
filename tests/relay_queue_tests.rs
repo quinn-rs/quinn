@@ -35,7 +35,7 @@ mod nat_traversal_api_tests {
         assert_eq!(peer_id.0[31], 42);
 
         // Test display format (first 8 bytes as hex)
-        let display_string = format!("{}", peer_id);
+        let display_string = format!("{peer_id}");
         assert_eq!(display_string.len(), 16); // 8 bytes * 2 hex chars
         assert!(display_string.starts_with("2a")); // 42 in hex
     }

@@ -560,15 +560,15 @@ async fn main() -> Result<(), Box<dyn Error>> {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::from_default_env()
-                .add_directive(format!("ant_quic={}", log_level).parse()?)
-                .add_directive(format!("test_public_endpoints={}", log_level).parse()?),
+                .add_directive(format!("ant_quic={log_level}").parse()?)
+                .add_directive(format!("test_public_endpoints={log_level}").parse()?),
         )
         .init();
 
     // Check if we're in analysis mode
     if let Some(analyze_path) = &args.analyze {
         // Load and analyze results
-        let results_content = fs::read_to_string(&analyze_path)?;
+        let results_content = fs::read_to_string(analyze_path)?;
         let results: ValidationResults = serde_json::from_str(&results_content)?;
 
         match args.format.as_str() {
@@ -612,7 +612,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // Save results if output specified
     if let Some(output_path) = &args.output {
         let json_output = serde_json::to_string_pretty(&results)?;
-        fs::write(&output_path, json_output)?;
+        fs::write(output_path, json_output)?;
         println!("\nResults saved to: {}", output_path.display());
     }
 

@@ -4,7 +4,7 @@
 //! IPv4 and IPv6 addresses, including dual-stack scenarios.
 
 use ant_quic::{
-    ClientConfig, Endpoint, EndpointConfig, ServerConfig,
+    ClientConfig, Endpoint, ServerConfig,
     crypto::rustls::{QuicClientConfig, QuicServerConfig},
 };
 use std::{
@@ -63,7 +63,7 @@ async fn test_ipv4_nat_traversal() {
     info!("IPv4 server listening on {}", server_addr);
 
     // Spawn server accept task
-    let server_handle = tokio::spawn(async move {
+    let _server_handle = tokio::spawn(async move {
         if let Some(conn) = server.accept().await {
             let connection = conn.await.expect("Server connection failed");
             info!(
@@ -139,7 +139,7 @@ async fn test_ipv6_nat_traversal() {
     info!("IPv6 server listening on {}", server_addr);
 
     // Spawn server accept task
-    let server_handle = tokio::spawn(async move {
+    let _server_handle = tokio::spawn(async move {
         if let Some(conn) = server.accept().await {
             let connection = conn.await.expect("Server connection failed");
             info!(
@@ -207,7 +207,7 @@ async fn test_dual_stack_nat_traversal() {
 
     // Spawn server accept tasks
     let server_clone = server.clone();
-    let server_handle1 = tokio::spawn(async move {
+    let _server_handle1 = tokio::spawn(async move {
         if let Some(conn) = server_clone.accept().await {
             let connection = conn.await.expect("Server connection failed");
             info!(
@@ -218,7 +218,7 @@ async fn test_dual_stack_nat_traversal() {
     });
 
     let server_clone = server.clone();
-    let server_handle2 = tokio::spawn(async move {
+    let _server_handle2 = tokio::spawn(async move {
         if let Some(conn) = server_clone.accept().await {
             let connection = conn.await.expect("Server connection failed");
             info!(

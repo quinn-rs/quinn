@@ -679,10 +679,7 @@ impl QuicDemoNode {
                                                 "🌐 Discovered external address: {}",
                                                 candidate_address
                                             );
-                                            println!(
-                                                "🌐 Discovered external address: {}",
-                                                candidate_address
-                                            );
+                                            println!("🌐 Discovered external address: {candidate_address}");
                                         }
                                     }
                                     status.last_update = std::time::Instant::now();
@@ -789,7 +786,7 @@ fn generate_random_nickname() -> String {
     let noun = nouns[rng.gen_range(0..nouns.len())];
     let num = rng.gen_range(10..99);
 
-    format!("{}-{}-{}", adj, noun, num)
+    format!("{adj}-{noun}-{num}")
 }
 
 /// Parse a peer ID from string
@@ -865,11 +862,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                             if let Err(e) =
                                 node.quic_node.send_to_peer(&peer_id_parsed, &data).await
                             {
-                                return Err(format!("Failed to send join message: {}", e).into());
+                                return Err(format!("Failed to send join message: {e}").into());
                             }
                         }
                         Err(e) => {
-                            return Err(format!("Failed to serialize join message: {}", e).into());
+                            return Err(format!("Failed to serialize join message: {e}").into());
                         }
                     }
 

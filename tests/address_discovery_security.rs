@@ -130,7 +130,7 @@ async fn test_rate_limiting_flood_protection() {
 
     // Create bootstrap with specific rate limits
 
-    let mut bootstrap_config = QuicNodeConfig {
+    let bootstrap_config = QuicNodeConfig {
         role: EndpointRole::Bootstrap,
         bootstrap_nodes: vec![],
         enable_coordinator: true,
@@ -171,7 +171,7 @@ async fn test_rate_limiting_flood_protection() {
 
                 ..Default::default()
             },
-            bind_addr: Some(format!("127.0.0.1:0").parse().unwrap()),
+            bind_addr: Some("127.0.0.1:0".to_string().parse().unwrap()),
         };
 
         let client_node = Arc::new(
@@ -261,8 +261,7 @@ async fn test_no_information_leaks() {
 
         assert_eq!(
             is_private, expected_private,
-            "Private address detection failed for {:?}",
-            addr
+            "Private address detection failed for {addr:?}"
         );
     }
 }

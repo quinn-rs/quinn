@@ -128,8 +128,7 @@ fn test_frame_size_limits() {
 
     assert!(
         amplification_factor < 0.5,
-        "No amplification possible: factor={}",
-        amplification_factor
+        "No amplification possible: factor={amplification_factor}"
     );
 }
 
@@ -146,8 +145,7 @@ fn test_memory_bounds() {
 
     assert!(
         max_memory < 10_000,
-        "Memory per connection should be bounded: {} bytes",
-        max_memory
+        "Memory per connection should be bounded: {max_memory} bytes"
     );
 
     // With overhead for HashMaps
@@ -156,8 +154,7 @@ fn test_memory_bounds() {
 
     assert!(
         total_memory < 20_000,
-        "Total memory with overhead should be < 20KB: {} bytes",
-        total_memory
+        "Total memory with overhead should be < 20KB: {total_memory} bytes"
     );
 }
 
@@ -201,8 +198,7 @@ fn test_port_randomization() {
 
     assert!(
         sequential_count < 10,
-        "Ports should not be mostly sequential: {} sequential pairs",
-        sequential_count
+        "Ports should not be mostly sequential: {sequential_count} sequential pairs"
     );
 }
 
@@ -268,9 +264,8 @@ fn test_rate_limiting_math() {
     }
 
     assert!(
-        allowed_after_wait >= 9 && allowed_after_wait <= 11,
-        "Should allow ~10 more after 1 second: {}",
-        allowed_after_wait
+        (9..=11).contains(&allowed_after_wait),
+        "Should allow ~10 more after 1 second: {allowed_after_wait}"
     );
 }
 
@@ -300,7 +295,7 @@ async fn test_connection_isolation() {
     let bootstrap_node = match QuicP2PNode::new(bootstrap_config).await {
         Ok(node) => Arc::new(node),
         Err(e) => {
-            eprintln!("Failed to create bootstrap node: {}", e);
+            eprintln!("Failed to create bootstrap node: {e}");
             return; // Skip test if node creation fails
         }
     };
@@ -331,7 +326,7 @@ async fn test_connection_isolation() {
         match QuicP2PNode::new(client_config).await {
             Ok(node) => client_nodes.push(Arc::new(node)),
             Err(e) => {
-                eprintln!("Failed to create client {}: {}", i, e);
+                eprintln!("Failed to create client {i}: {e}");
                 return;
             }
         }
@@ -343,20 +338,19 @@ async fn test_connection_isolation() {
     // Check isolation - each client should only see bootstrap
     for (i, client) in client_nodes.iter().enumerate() {
         let stats = client.get_stats().await;
-        eprintln!("Client {} stats: {:?}", i, stats);
+        eprintln!("Client {i} stats: {stats:?}");
         // Note: In the current implementation, clients may not immediately
         // establish persistent connections to bootstrap nodes
         // Just verify stats are available
         assert!(
             stats.active_connections <= 1,
-            "Client {} should see at most bootstrap connection",
-            i
+            "Client {i} should see at most bootstrap connection"
         );
     }
 
     // Bootstrap should see connections from clients
     let bootstrap_stats = bootstrap_node.get_stats().await;
-    eprintln!("Bootstrap stats: {:?}", bootstrap_stats);
+    eprintln!("Bootstrap stats: {bootstrap_stats:?}");
     // Note: Connections may be transient for address discovery
     assert!(
         bootstrap_stats.active_connections <= 2,

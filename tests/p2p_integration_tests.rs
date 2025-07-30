@@ -100,7 +100,7 @@ impl TestPeer {
         let peer_id = derive_peer_id_from_public_key(&public_key);
 
         let config = QuicNodeConfig {
-            role: role.clone(),
+            role,
             bootstrap_nodes: bootstrap_nodes.clone(),
             enable_coordinator: matches!(role, EndpointRole::Server { .. }),
             max_connections: 100,
@@ -145,12 +145,9 @@ impl TestPeer {
                             messages.lock().await.push(msg_clone);
 
                             // Track connected peers
-                            match &msg {
-                                ChatMessage::Join { peer_id, .. } => {
-                                    // Peer joined
-                                    debug!("Peer joined: {:?}", peer_id);
-                                }
-                                _ => {}
+                            if let ChatMessage::Join { peer_id, .. } = &msg {
+                                // Peer joined
+                                debug!("Peer joined: {:?}", peer_id);
                             }
                         } else {
                             debug!("Failed to deserialize message");
@@ -258,7 +255,7 @@ impl P2PTestEnvironment {
         let from_peer = &self.peers[from_idx];
         let to_id = self.peers[to_idx].id;
 
-        let message = ChatMessage::text(format!("Peer{}", from_idx), from_peer.id, text);
+        let message = ChatMessage::text(format!("Peer{from_idx}"), from_peer.id, text);
 
         from_peer.send_message(&to_id, message).await?;
         Ok(())
@@ -331,8 +328,7 @@ async fn test_basic_peer_connection() {
         Err(e) => {
             // Expected with current stub implementation
             println!(
-                "Connection failed as expected with stub implementation: {}",
-                e
+                "Connection failed as expected with stub implementation: {e}"
             );
             // Verify that we at least created the test environment successfully
             assert_eq!(env.peers.len(), 2);
@@ -361,7 +357,7 @@ async fn test_multiple_peer_mesh() {
             if i != j {
                 env.connect_peers(i, j)
                     .await
-                    .expect(&format!("Failed to connect peer {} to {}", i, j));
+                    .unwrap_or_else(|_| panic!("Failed to connect peer {i} to {j}"));
             }
         }
     }
@@ -373,7 +369,7 @@ async fn test_multiple_peer_mesh() {
     for from in 0..4 {
         for to in 0..4 {
             if from != to {
-                let msg = format!("Hello from {} to {}!", from, to);
+                let msg = format!("Hello from {from} to {to}!");
                 env.send_message(from, to, msg)
                     .await
                     .expect("Failed to send message");
@@ -666,8 +662,8 @@ async fn test_connection_establishment_rate() {
     let total_connections = (10 * 9) / 2; // n*(n-1)/2
     let rate = total_connections as f64 / elapsed.as_secs_f64();
 
-    println!("Connection establishment rate: {:.2} connections/sec", rate);
-    assert!(rate > 5.0, "Connection rate too slow: {:.2}/sec", rate);
+    println!("Connection establishment rate: {rate:.2} connections/sec");
+    assert!(rate > 5.0, "Connection rate too slow: {rate:.2}/sec");
 }
 
 #[tokio::test]
@@ -695,7 +691,7 @@ async fn test_message_throughput() {
     let start = tokio::time::Instant::now();
 
     for i in 0..message_count {
-        let msg = format!("Message {}", i);
+        let msg = format!("Message {i}");
         env.send_message(0, 1, msg)
             .await
             .expect("Failed to send message");
@@ -719,11 +715,10 @@ async fn test_message_throughput() {
     let elapsed = start.elapsed();
     let throughput = received as f64 / elapsed.as_secs_f64();
 
-    println!("Message throughput: {:.2} messages/sec", throughput);
+    println!("Message throughput: {throughput:.2} messages/sec");
     assert!(
         throughput > 50.0,
-        "Message throughput too low: {:.2}/sec",
-        throughput
+        "Message throughput too low: {throughput:.2}/sec"
     );
     assert_eq!(received, message_count, "Not all messages received");
 }
@@ -1036,10 +1031,10 @@ async fn test_rapid_reconnection() {
     for i in 0..10 {
         env.connect_peers(0, 1)
             .await
-            .expect(&format!("Failed to connect on iteration {}", i));
+            .unwrap_or_else(|_| panic!("Failed to connect on iteration {i}"));
 
         // Send a message to verify connection
-        env.send_message(0, 1, format!("Message {}", i))
+        env.send_message(0, 1, format!("Message {i}"))
             .await
             .expect("Failed to send message");
 
