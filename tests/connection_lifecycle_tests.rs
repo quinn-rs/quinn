@@ -478,7 +478,7 @@ async fn test_data_transfer_states() {
 
     // Send multiple messages
     for i in 0..10 {
-        let data = format!("Message {}", i);
+        let data = format!("Message {i}");
         node1
             .send_data(&node2.peer_id, data.as_bytes())
             .await

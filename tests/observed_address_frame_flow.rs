@@ -338,7 +338,7 @@ async fn test_observation_during_migration() {
         if let Some(incoming) = server.accept().await {
             let connection = incoming.await.unwrap();
             let initial = connection.remote_address();
-            tx.send(format!("Initial: {}", initial)).await.unwrap();
+            tx.send(format!("Initial: {initial}")).await.unwrap();
 
             // Monitor for changes
             for i in 0..5 {
@@ -346,7 +346,7 @@ async fn test_observation_during_migration() {
                 let current = connection.remote_address();
 
                 if current != initial {
-                    tx.send(format!("Migration {}: {} -> {}", i, initial, current))
+                    tx.send(format!("Migration {i}: {initial} -> {current}"))
                         .await
                         .unwrap();
                 }

@@ -103,7 +103,7 @@ async fn test_authenticated_connection() {
                 Ok((addr, peer_id))
             }
             Err(e) => {
-                eprintln!("Client 2 accept failed: {}", e);
+                eprintln!("Client 2 accept failed: {e}");
                 Err(e)
             }
         }
@@ -143,7 +143,7 @@ async fn test_authenticated_connection() {
         }
         Err(e) => {
             // Expected with stub implementation
-            eprintln!("Connection failed (expected with stub): {}", e);
+            eprintln!("Connection failed (expected with stub): {e}");
         }
     }
 
@@ -262,7 +262,7 @@ async fn test_multiple_authenticated_peers() {
         let client = Arc::new(
             QuicP2PNode::new(config)
                 .await
-                .expect(&format!("Failed to create client {}", i)),
+                .unwrap_or_else(|_| panic!("Failed to create client {i}")),
         );
         clients.push(client);
     }
@@ -281,7 +281,7 @@ async fn test_multiple_authenticated_peers() {
                     accepted.push((addr, peer_id));
                 }
                 Err(e) => {
-                    eprintln!("Accept failed: {}", e);
+                    eprintln!("Accept failed: {e}");
                     break;
                 }
             }
@@ -302,7 +302,7 @@ async fn test_multiple_authenticated_peers() {
                 info!("Client {} connected to client 0 at {}", i, addr);
             }
             Err(e) => {
-                eprintln!("Client {} connection failed (expected with stub): {}", i, e);
+                eprintln!("Client {i} connection failed (expected with stub): {e}");
             }
         }
     }
@@ -394,7 +394,7 @@ async fn test_auth_with_disconnection() {
             // to test that authentication is required again
         }
         Err(e) => {
-            eprintln!("Connection failed (expected with stub): {}", e);
+            eprintln!("Connection failed (expected with stub): {e}");
         }
     }
 

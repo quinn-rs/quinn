@@ -165,8 +165,7 @@ async fn test_address_discovery_performance() {
     // CI environments can be slower, so we use a more relaxed threshold
     assert!(
         per_frame < Duration::from_micros(100),
-        "Per-frame time {:?} exceeds threshold",
-        per_frame
+        "Per-frame time {per_frame:?} exceeds threshold"
     );
 }
 

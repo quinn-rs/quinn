@@ -739,10 +739,7 @@ async fn test_timing_attack_resistance() {
     let tolerance = valid_avg / 5; // 20% tolerance
     assert!(
         diff < tolerance,
-        "Signature verification timing should be constant. Valid: {:?}, Invalid: {:?}, Diff: {:?}",
-        valid_avg,
-        invalid_avg,
-        diff
+        "Signature verification timing should be constant. Valid: {valid_avg:?}, Invalid: {invalid_avg:?}, Diff: {diff:?}"
     );
 }
 
@@ -761,7 +758,7 @@ async fn test_auth_performance_under_load() {
 
     for i in 0..peer_count {
         let id = env
-            .create_peer(&format!("peer{}", i), AuthConfig::default())
+            .create_peer(&format!("peer{i}"), AuthConfig::default())
             .await;
         peer_ids.push(id);
     }
@@ -774,8 +771,8 @@ async fn test_auth_performance_under_load() {
     for i in 0..peer_count {
         for j in i + 1..peer_count {
             let env_clone = env.clone();
-            let peer_i = format!("peer{}", i);
-            let peer_j = format!("peer{}", j);
+            let peer_i = format!("peer{i}");
+            let peer_j = format!("peer{j}");
 
             let task =
                 tokio::spawn(
@@ -812,8 +809,7 @@ async fn test_auth_performance_under_load() {
     );
     assert!(
         total_time < Duration::from_secs(30),
-        "Should complete {} authentications within 30s",
-        total_auths
+        "Should complete {total_auths} authentications within 30s"
     );
 }
 
@@ -967,7 +963,7 @@ async fn test_concurrent_auth_attempts() {
 
     // Create several peers
     for i in 0..10 {
-        env.create_peer(&format!("peer{}", i), AuthConfig::default())
+        env.create_peer(&format!("peer{i}"), AuthConfig::default())
             .await;
     }
 
@@ -978,7 +974,7 @@ async fn test_concurrent_auth_attempts() {
     for i in 1..10 {
         let env_clone = env.clone();
         let barrier_clone = barrier.clone();
-        let peer_name = format!("peer{}", i);
+        let peer_name = format!("peer{i}");
 
         let task = tokio::spawn(async move {
             barrier_clone.wait().await;

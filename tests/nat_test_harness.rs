@@ -69,8 +69,7 @@ impl NatTestHarness {
         nat_type2: &str,
     ) -> Result<NatTraversalResult> {
         println!(
-            "Testing NAT traversal: {} ({}) <-> {} ({})",
-            client1_container, nat_type1, client2_container, nat_type2
+            "Testing NAT traversal: {client1_container} ({nat_type1}) <-> {client2_container} ({nat_type2})"
         );
 
         let start_time = Instant::now();

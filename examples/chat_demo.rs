@@ -12,7 +12,6 @@ use ant_quic::{
     nat_traversal_api::{EndpointRole, PeerId},
     quic_node::{QuicNodeConfig, QuicP2PNode},
 };
-use hex;
 use std::{collections::HashMap, net::SocketAddr, sync::Arc, time::Duration};
 use tokio::sync::Mutex;
 use tracing::{error, info};
@@ -68,7 +67,7 @@ impl ChatNode {
             .node
             .connect_to_bootstrap(bootstrap_addr)
             .await
-            .map_err(|e| format!("Failed to connect to bootstrap: {}", e))?;
+            .map_err(|e| format!("Failed to connect to bootstrap: {e}"))?;
 
         // Send join message to bootstrap
         let join_msg = ChatMessage::join(self.nickname.clone(), self.peer_id);
@@ -76,7 +75,7 @@ impl ChatNode {
         self.node
             .send_to_peer(&bootstrap_peer_id, &data)
             .await
-            .map_err(|e| format!("Failed to send join message to bootstrap: {}", e))?;
+            .map_err(|e| format!("Failed to send join message to bootstrap: {e}"))?;
 
         Ok(bootstrap_peer_id)
     }
@@ -100,7 +99,7 @@ impl ChatNode {
         self.node
             .send_to_peer(&peer_id, &data)
             .await
-            .map_err(|e| format!("Failed to send join message: {}", e))?;
+            .map_err(|e| format!("Failed to send join message: {e}"))?;
 
         Ok(())
     }
@@ -166,7 +165,7 @@ impl ChatNode {
                 self.peers.lock().await.remove(&peer_id);
             }
             ChatMessage::Text { nickname, text, .. } => {
-                println!("[{}]: {}", nickname, text);
+                println!("[{nickname}]: {text}");
             }
             ChatMessage::Status {
                 nickname, status, ..
@@ -181,7 +180,7 @@ impl ChatNode {
                 text,
                 ..
             } => {
-                println!("[DM from {}]: {}", from_nickname, text);
+                println!("[DM from {from_nickname}]: {text}");
             }
             ChatMessage::Typing {
                 nickname,
@@ -261,7 +260,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             format!("Client-{}", rand::random::<u16>()),
         ),
         _ => {
-            eprintln!("Invalid mode: {}. Use 'coordinator' or 'client'", mode);
+            eprintln!("Invalid mode: {mode}. Use 'coordinator' or 'client'");
             std::process::exit(1);
         }
     };
@@ -285,7 +284,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                         bootstrap_peer_id,
                         PeerInfo {
                             peer_id: bootstrap_peer_id.0, // Use the inner byte array
-                            nickname: format!("Bootstrap-{}", bootstrap_addr),
+                            nickname: format!("Bootstrap-{bootstrap_addr}"),
                             status: "connected".to_string(),
                             joined_at: std::time::SystemTime::now(),
                         },

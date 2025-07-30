@@ -178,7 +178,7 @@ async fn test_multiple_node_creation() {
 
         let node = QuicP2PNode::new(config)
             .await
-            .expect(&format!("Failed to create client node {}", i));
+            .expect(&format!("Failed to create client node {i}"));
 
         nodes.push(node);
     }

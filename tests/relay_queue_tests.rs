@@ -321,7 +321,7 @@ mod error_handling_tests {
 
         // Verify all errors implement Display properly
         for error in errors {
-            let error_string = format!("{}", error);
+            let error_string = format!("{error}");
             assert!(!error_string.is_empty());
             assert!(!error_string.starts_with("NatTraversalError")); // Should be user-friendly
         }
@@ -439,7 +439,7 @@ mod performance_tests {
         }
 
         let duration = start.elapsed();
-        println!("Created and looked up peer IDs in {:?}", duration);
+        println!("Created and looked up peer IDs in {duration:?}");
         assert!(duration < Duration::from_millis(100));
     }
 
@@ -473,7 +473,7 @@ mod performance_tests {
         }
 
         let duration = start.elapsed();
-        println!("Created configurations in {:?}", duration);
+        println!("Created configurations in {duration:?}");
         assert!(duration < Duration::from_millis(50));
     }
 }

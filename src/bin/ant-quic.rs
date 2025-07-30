@@ -149,7 +149,7 @@ impl QuicDemoNode {
         // Create the QUIC P2P node
         let quic_node = Arc::new(QuicP2PNode::new(config).await.map_err(
             |e| -> Box<dyn std::error::Error + Send + Sync> {
-                format!("Failed to create QUIC node: {}", e).into()
+                format!("Failed to create QUIC node: {e}").into()
             },
         )?);
 
@@ -228,7 +228,7 @@ impl QuicDemoNode {
                         self.connected_peers
                             .lock()
                             .await
-                            .insert(peer_id, format!("bootstrap-{}", bootstrap_addr));
+                            .insert(peer_id, format!("bootstrap-{bootstrap_addr}"));
 
                         // TEMPORARY: Simulate receiving OBSERVED_ADDRESS frame
                         // In production, this would come from actual OBSERVED_ADDRESS frames
@@ -343,7 +343,7 @@ impl QuicDemoNode {
 
                         // Render dashboard
                         let output = dashboard_clone.render().await;
-                        print!("{}", output);
+                        print!("{output}");
                     }
                 });
             }
@@ -380,7 +380,7 @@ impl QuicDemoNode {
                                             peers
                                                 .lock()
                                                 .await
-                                                .insert(peer_id, format!("peer-{}", addr));
+                                                .insert(peer_id, format!("peer-{addr}"));
                                         }
                                         Err(e) => {
                                             error!("Failed to connect: {}", e);
@@ -440,7 +440,7 @@ impl QuicDemoNode {
                                     target_peer_id,
                                     text.clone(),
                                 );
-                                println!("[DM to {}]: {}", target_nickname, text);
+                                println!("[DM to {target_nickname}]: {text}");
 
                                 match message.serialize() {
                                     Ok(data) => {
@@ -455,7 +455,7 @@ impl QuicDemoNode {
                                     }
                                 }
                             } else {
-                                println!("No peer found matching '{}'", target_hex);
+                                println!("No peer found matching '{target_hex}'");
                             }
                         } else {
                             println!("Usage: /dm <peer_id_prefix> <message>");
@@ -466,13 +466,13 @@ impl QuicDemoNode {
                         if !new_nick.is_empty() {
                             let old_nick = nickname.clone();
                             nickname = new_nick.clone();
-                            println!("Nickname changed from '{}' to '{}'", old_nick, new_nick);
+                            println!("Nickname changed from '{old_nick}' to '{new_nick}'");
 
                             // Notify all peers
                             let status_msg = ChatMessage::status(
                                 new_nick.clone(),
                                 my_peer_id,
-                                format!("changed nickname from {}", old_nick),
+                                format!("changed nickname from {old_nick}"),
                             );
                             let peers_snapshot = peers.lock().await.clone();
                             for (peer_id, _) in peers_snapshot {
@@ -533,7 +533,7 @@ impl QuicDemoNode {
                     match accept_result {
                         Ok((addr, peer_id)) => {
                             info!("Accepted connection from peer {:?} at {}", peer_id, addr);
-                            self.connected_peers.lock().await.insert(peer_id, format!("peer-{}", addr));
+                            self.connected_peers.lock().await.insert(peer_id, format!("peer-{addr}"));
 
                             // Update dashboard if enabled
                             if let Some(dashboard) = &self.dashboard {
@@ -590,7 +590,7 @@ impl QuicDemoNode {
                 self.connected_peers.lock().await.remove(&peer_id);
             }
             ChatMessage::Text { nickname, text, .. } => {
-                println!("[{}]: {}", nickname, text);
+                println!("[{nickname}]: {text}");
             }
             ChatMessage::Status {
                 nickname, status, ..
@@ -602,7 +602,7 @@ impl QuicDemoNode {
                 text,
                 ..
             } => {
-                println!("[DM from {}]: {}", from_nickname, text);
+                println!("[DM from {from_nickname}]: {text}");
             }
             ChatMessage::Typing {
                 nickname,
