@@ -136,7 +136,9 @@ async fn run_server_phase(phase: MigrationPhase) -> Result<(), Box<dyn Error + S
     Ok(())
 }
 
-async fn test_client_compatibility(server_phase: MigrationPhase) -> Result<(), Box<dyn Error + Send + Sync>> {
+async fn test_client_compatibility(
+    server_phase: MigrationPhase,
+) -> Result<(), Box<dyn Error + Send + Sync>> {
     // Read server address
     let addr_str = std::fs::read_to_string("server_addr.tmp")?;
     let server_addr: SocketAddr = addr_str.trim().parse()?;
@@ -202,7 +204,9 @@ async fn connect_with_config(
     Ok(())
 }
 
-async fn handle_connection(connection: ant_quic::Connection) -> Result<(), Box<dyn Error + Send + Sync>> {
+async fn handle_connection(
+    connection: ant_quic::Connection,
+) -> Result<(), Box<dyn Error + Send + Sync>> {
     // Simple echo handler
     while let Ok((mut send, mut recv)) = connection.accept_bi().await {
         let data = recv.read_to_end(1024).await?;
