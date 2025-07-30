@@ -144,8 +144,7 @@ async fn test_nat_traversal_with_address_discovery() {
         if expected_success {
             assert!(
                 success,
-                "Connection should succeed with {:?} <-> {:?}",
-                client_nat, peer_nat
+                "Connection should succeed with {client_nat:?} <-> {peer_nat:?}"
             );
         } else {
             // Even difficult scenarios should have improved success with address discovery

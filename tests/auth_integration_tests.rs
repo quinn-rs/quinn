@@ -293,8 +293,8 @@ async fn test_multiple_authenticated_peers() {
     sleep(Duration::from_millis(500)).await;
 
     // Connect clients 1 and 2 to client 0
-    for i in 1..3 {
-        match clients[i]
+    for (i, client) in clients.iter().enumerate().skip(1).take(2) {
+        match client
             .connect_to_peer(peer_ids[0], bootstrap_addr)
             .await
         {
