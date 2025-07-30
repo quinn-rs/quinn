@@ -1,7 +1,6 @@
 //! Demonstration of the zero-cost tracing system
 
 use ant_quic::tracing::{EventLog, TraceId};
-use std::sync::Arc;
 
 fn main() {
     println!("ANT-QUIC Zero-Cost Tracing Demo");

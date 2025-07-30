@@ -268,10 +268,9 @@ fn bench_alternatives(c: &mut Criterion) {
 
         b.iter(|| {
             let mut map = IndexMap::new();
-            let mut counter = 0u64;
 
             // Add items
-            for _i in 0..1000 {
+            for counter in 0..1000 {
                 let mut peer_id_bytes = [0u8; 32];
                 let uuid = Uuid::new_v4();
                 let uuid_bytes = uuid.as_bytes();
@@ -279,7 +278,6 @@ fn bench_alternatives(c: &mut Criterion) {
                 let peer_id = PeerId(peer_id_bytes);
                 let item = RelayQueueItem::new(peer_id, 256);
                 map.insert(counter, item);
-                counter += 1;
             }
 
             // Remove items in FIFO order
