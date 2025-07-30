@@ -17,8 +17,8 @@ use tracing::{debug, error, info, trace, trace_span, warn};
 
 use crate::{
     Dir, Duration, EndpointConfig, Frame, INITIAL_MTU, Instant, MAX_CID_SIZE, MAX_STREAM_COUNT,
-    MIN_INITIAL_SIZE, Side, StreamId, TIMER_GRANULARITY, TokenStore, Transmit, TransportError,
-    TransportErrorCode, VarInt,
+    MIN_INITIAL_SIZE, MtuDiscoveryConfig, Side, StreamId, TIMER_GRANULARITY, TokenStore, Transmit,
+    TransportError, TransportErrorCode, VarInt,
     cid_generator::ConnectionIdGenerator,
     cid_queue::CidQueue,
     coding::BufMutExt,
@@ -57,6 +57,8 @@ use datagrams::DatagramState;
 pub use datagrams::{Datagrams, SendDatagramError};
 
 mod mtud;
+use mtud::MtuDiscovery;
+
 mod pacing;
 
 mod packet_builder;
@@ -911,6 +913,15 @@ impl Connection {
                 self,
             )?);
             coalesce = coalesce && !builder.short_header;
+
+            // Check if we should adjust coalescing for PQC
+            if self
+                .pqc_state
+                .should_adjust_coalescing(buf.len() - datagram_start, space_id)
+            {
+                coalesce = false;
+                trace!("Disabling coalescing for PQC handshake in {:?}", space_id);
+            }
 
             // https://tools.ietf.org/html/draft-ietf-quic-transport-34#section-14.1
             pad_datagram |=
@@ -2526,6 +2537,18 @@ impl Connection {
             ));
         }
 
+        // Detect PQC usage from CRYPTO frame data before processing
+        self.pqc_state.detect_pqc_from_crypto(&crypto.data, space);
+
+        // Check if we should trigger MTU discovery for PQC
+        if self.pqc_state.should_trigger_mtu_discovery() {
+            // Request larger MTU for PQC handshakes
+            self.path
+                .mtud
+                .reset(self.pqc_state.min_initial_size(), self.config.min_mtu);
+            trace!("Triggered MTU discovery for PQC handshake");
+        }
+
         let space = &mut self.spaces[space];
         let max = end.saturating_sub(space.crypto_stream.bytes_read());
         if max > self.config.crypto_buffer_size as u64 {
@@ -2577,10 +2600,25 @@ impl Connection {
             }
             self.spaces[space].crypto_offset += outgoing.len() as u64;
             trace!("wrote {} {:?} CRYPTO bytes", outgoing.len(), space);
-            self.spaces[space].pending.crypto.push_back(frame::Crypto {
-                offset,
-                data: outgoing,
-            });
+
+            // Use PQC-aware fragmentation for large CRYPTO data
+            if self.pqc_state.using_pqc && outgoing.len() > 1200 {
+                // Fragment large CRYPTO data for PQC handshakes
+                let frames = self.pqc_state.packet_handler.fragment_crypto_data(
+                    &outgoing,
+                    offset,
+                    self.pqc_state.min_initial_size() as usize,
+                );
+                for frame in frames {
+                    self.spaces[space].pending.crypto.push_back(frame);
+                }
+            } else {
+                // Normal CRYPTO frame for non-PQC or small data
+                self.spaces[space].pending.crypto.push_back(frame::Crypto {
+                    offset,
+                    data: outgoing,
+                });
+            }
         }
     }
 
@@ -3834,11 +3872,19 @@ impl Connection {
                 - VarInt::size(unsafe { VarInt::from_u64_unchecked(frame.offset) })
                 - 2; // Maximum encoded length for frame size, given we send less than 2^14 bytes
 
+            // Use PQC-aware sizing for CRYPTO frames
+            let available_space = max_size - buf.len();
+            let remaining_data = frame.data.len();
+            let optimal_size = self
+                .pqc_state
+                .calculate_crypto_frame_size(available_space, remaining_data);
+
             let len = frame
                 .data
                 .len()
                 .min(2usize.pow(14) - 1)
-                .min(max_crypto_data_size);
+                .min(max_crypto_data_size)
+                .min(optimal_size);
 
             let data = frame.data.split_to(len);
             let truncated = frame::Crypto {
@@ -5964,7 +6010,7 @@ fn negotiate_max_idle_timeout(x: Option<VarInt>, y: Option<VarInt>) -> Option<Du
 }
 
 /// State for tracking PQC support in the connection
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub(crate) struct PqcState {
     /// Whether the peer supports PQC algorithms
     enabled: bool,
@@ -5974,6 +6020,8 @@ pub(crate) struct PqcState {
     handshake_mtu: u16,
     /// Whether we're currently using PQC algorithms
     using_pqc: bool,
+    /// PQC packet handler for managing larger handshakes
+    packet_handler: crate::crypto::pqc::packet_handler::PqcPacketHandler,
 }
 
 impl PqcState {
@@ -5983,6 +6031,7 @@ impl PqcState {
             algorithms: None,
             handshake_mtu: MIN_INITIAL_SIZE,
             using_pqc: false,
+            packet_handler: crate::crypto::pqc::packet_handler::PqcPacketHandler::new(),
         }
     }
 
@@ -6011,6 +6060,57 @@ impl PqcState {
                 self.handshake_mtu = 4096; // Default PQC handshake MTU
             }
         }
+    }
+
+    /// Detect PQC from CRYPTO frame data
+    fn detect_pqc_from_crypto(&mut self, crypto_data: &[u8], space: SpaceId) {
+        if self.packet_handler.detect_pqc_handshake(crypto_data, space) {
+            self.using_pqc = true;
+            // Update handshake MTU based on PQC detection
+            self.handshake_mtu = self.packet_handler.get_min_packet_size(space);
+        }
+    }
+
+    /// Check if MTU discovery should be triggered for PQC
+    fn should_trigger_mtu_discovery(&mut self) -> bool {
+        self.packet_handler.should_trigger_mtu_discovery()
+    }
+
+    /// Get PQC-aware MTU configuration
+    fn get_mtu_config(&self) -> MtuDiscoveryConfig {
+        self.packet_handler.get_pqc_mtu_config()
+    }
+
+    /// Calculate optimal CRYPTO frame size
+    fn calculate_crypto_frame_size(&self, available_space: usize, remaining_data: usize) -> usize {
+        self.packet_handler
+            .calculate_crypto_frame_size(available_space, remaining_data)
+    }
+
+    /// Check if packet coalescing should be adjusted
+    fn should_adjust_coalescing(&self, current_size: usize, space: SpaceId) -> bool {
+        self.packet_handler
+            .adjust_coalescing_for_pqc(current_size, space)
+    }
+
+    /// Handle packet sent event
+    fn on_packet_sent(&mut self, space: SpaceId, size: u16) {
+        self.packet_handler.on_packet_sent(space, size);
+    }
+
+    /// Reset PQC state (e.g., on retry)
+    fn reset(&mut self) {
+        self.enabled = false;
+        self.algorithms = None;
+        self.handshake_mtu = MIN_INITIAL_SIZE;
+        self.using_pqc = false;
+        self.packet_handler.reset();
+    }
+}
+
+impl Default for PqcState {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

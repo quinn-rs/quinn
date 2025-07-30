@@ -68,8 +68,7 @@ async fn test_constant_time_operations() {
 
     assert!(
         time_diff < Duration::from_nanos(100),
-        "Address type detection should be constant time: diff={:?}",
-        time_diff
+        "Address type detection should be constant time: diff={time_diff:?}"
     );
 }
 
@@ -98,8 +97,7 @@ fn test_private_address_detection() {
 
         assert_eq!(
             is_private, expected_private,
-            "Private address detection failed for {:?}",
-            octets
+            "Private address detection failed for {octets:?}"
         );
     }
 }

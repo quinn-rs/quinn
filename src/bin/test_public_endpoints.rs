@@ -197,7 +197,7 @@ async fn test_endpoint(
                 handshake_time_ms: None,
                 rtt_ms: None,
                 quic_version: None,
-                error: Some(format!("DNS resolution failed: {}", e)),
+                error: Some(format!("DNS resolution failed: {e}")),
                 protocols_tested,
                 successful_protocols,
                 features_tested: vec![],
@@ -220,7 +220,7 @@ async fn test_endpoint(
                 handshake_time_ms: None,
                 rtt_ms: None,
                 quic_version: None,
-                error: Some(format!("Invalid server name: {}", e)),
+                error: Some(format!("Invalid server name: {e}")),
                 protocols_tested,
                 successful_protocols,
                 features_tested: vec![],
@@ -249,7 +249,7 @@ async fn test_endpoint(
                 handshake_time_ms: None,
                 rtt_ms: None,
                 quic_version: None,
-                error: Some(format!("Failed to create endpoint: {}", e)),
+                error: Some(format!("Failed to create endpoint: {e}")),
                 protocols_tested,
                 successful_protocols,
                 features_tested: vec![],
@@ -260,7 +260,7 @@ async fn test_endpoint(
     };
 
     // Connect with timeout
-    let connecting = match quic_endpoint.connect_with(client_config.clone(), addr, &hostname) {
+    let connecting = match quic_endpoint.connect_with(client_config.clone(), addr, hostname) {
         Ok(c) => c,
         Err(e) => {
             return TestResult {
@@ -271,7 +271,7 @@ async fn test_endpoint(
                 handshake_time_ms: None,
                 rtt_ms: None,
                 quic_version: None,
-                error: Some(format!("Failed to start connection: {}", e)),
+                error: Some(format!("Failed to start connection: {e}")),
                 protocols_tested,
                 successful_protocols,
                 features_tested: vec![],
@@ -286,7 +286,7 @@ async fn test_endpoint(
 
     let connect_result = timeout(
         Duration::from_secs(test_config.timeout_seconds),
-        async move { connecting.await },
+        connecting,
     )
     .await;
 
@@ -341,7 +341,7 @@ async fn test_endpoint(
             handshake_time_ms: None,
             rtt_ms: None,
             quic_version: None,
-            error: Some(format!("Connect failed: {}", e)),
+            error: Some(format!("Connect failed: {e}")),
             protocols_tested,
             successful_protocols,
             features_tested: vec![],
@@ -536,11 +536,11 @@ fn generate_markdown_report(results: &ValidationResults) -> String {
         };
         let handshake = result
             .handshake_time_ms
-            .map(|ms| format!("{}ms", ms))
+            .map(|ms| format!("{ms}ms"))
             .unwrap_or_else(|| "N/A".to_string());
         let rtt = result
             .rtt_ms
-            .map(|ms| format!("{}ms", ms))
+            .map(|ms| format!("{ms}ms"))
             .unwrap_or_else(|| "N/A".to_string());
         let protocols = result.successful_protocols.join(", ");
         let error = result.error.as_deref().unwrap_or("");

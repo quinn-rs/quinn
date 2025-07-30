@@ -225,6 +225,9 @@ impl PacketBuilder {
             }
             conn.set_loss_detection_timer(now);
             conn.path.pacing.on_transmit(size);
+
+            // Update PQC state for packet tracking
+            conn.pqc_state.on_packet_sent(space_id, size);
         }
     }
 

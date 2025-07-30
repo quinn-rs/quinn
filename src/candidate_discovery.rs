@@ -4412,11 +4412,9 @@ mod tests {
             manager
                 .is_valid_server_reflexive_address(&"[2001:4860:4860::8888]:8080".parse().unwrap())
         );
-        assert!(
-            manager.is_valid_server_reflexive_address(
-                &"[2400:cb00:2048::c629:d7a2]:443".parse().unwrap()
-            )
-        );
+        assert!(manager.is_valid_server_reflexive_address(
+            &"[2400:cb00:2048::c629:d7a2]:443".parse().unwrap()
+        ));
 
         // Invalid - private addresses
         assert!(!manager.is_valid_server_reflexive_address(&"192.168.1.1:8080".parse().unwrap()));

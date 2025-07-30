@@ -154,7 +154,7 @@ impl NatTestHarness {
     }
 
     /// Extract peer ID from listener logs
-    async fn get_peer_id_from_logs(&self, handle: &ListenerHandle) -> Result<String> {
+    async fn get_peer_id_from_logs(&self, _handle: &ListenerHandle) -> Result<String> {
         // In real implementation, parse logs to find peer ID
         // For now, return a placeholder
         Ok("test_peer_id".to_string())

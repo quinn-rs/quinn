@@ -4,8 +4,8 @@ fn main() {
     let mut discovery = create_platform_interface_discovery();
     
     match discovery.start_scan() {
-        Ok(()) => println\!("Scan started successfully"),
-        Err(e) => println\!("Scan failed to start: {}", e),
+        Ok(()) => println!("Scan started successfully"),
+        Err(e) => println!("Scan failed to start: {}", e),
     }
     
     // Give it a moment
@@ -13,9 +13,9 @@ fn main() {
     
     match discovery.check_scan_complete() {
         Some(interfaces) => {
-            println\!("Found {} interfaces:", interfaces.len());
+            println!("Found {} interfaces:", interfaces.len());
             for interface in interfaces {
-                println\!("  {} - {} addresses, up: {}, wireless: {}, mtu: {:?}",
+                println!("  {} - {} addresses, up: {}, wireless: {}, mtu: {:?}",
                     interface.name,
                     interface.addresses.len(),
                     interface.is_up,
@@ -23,10 +23,10 @@ fn main() {
                     interface.mtu
                 );
                 for addr in &interface.addresses {
-                    println\!("    {}", addr);
+                    println!("    {}", addr);
                 }
             }
         }
-        None => println\!("Scan not complete yet"),
+        None => println!("Scan not complete yet"),
     }
 }

@@ -63,6 +63,10 @@ pub enum PqcError {
     /// Operation not supported
     #[error("Operation not supported")]
     OperationNotSupported,
+
+    /// Negotiation failed
+    #[error("Negotiation failed: {0}")]
+    NegotiationFailed(String),
 }
 
 // ML-KEM-768 constants
@@ -85,7 +89,7 @@ impl MlKemPublicKey {
     pub fn as_bytes(&self) -> &[u8] {
         &self.0[..]
     }
-    
+
     /// Create from bytes
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, PqcError> {
         if bytes.len() != ML_KEM_768_PUBLIC_KEY_SIZE {
@@ -119,7 +123,7 @@ impl MlKemCiphertext {
     pub fn as_bytes(&self) -> &[u8] {
         &self.0[..]
     }
-    
+
     /// Create from bytes
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, PqcError> {
         if bytes.len() != ML_KEM_768_CIPHERTEXT_SIZE {
@@ -172,7 +176,7 @@ impl MlDsaSecretKey {
     pub fn as_bytes(&self) -> &[u8] {
         &self.0[..]
     }
-    
+
     /// Create from bytes
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, PqcError> {
         if bytes.len() != ML_DSA_65_SECRET_KEY_SIZE {
@@ -214,6 +218,12 @@ impl MlDsaSignature {
 /// Shared secret from key encapsulation
 #[derive(Clone)]
 pub struct SharedSecret(pub [u8; ML_KEM_768_SHARED_SECRET_SIZE]);
+
+impl std::fmt::Debug for SharedSecret {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "SharedSecret([..{}])", self.0.len())
+    }
+}
 
 impl SharedSecret {
     /// Get the shared secret as a byte slice

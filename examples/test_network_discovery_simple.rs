@@ -44,7 +44,7 @@ fn main() {
     println!("Testing CandidateDiscoveryManager (uses platform discovery internally):\n");
 
     let config = DiscoveryConfig::default();
-    let manager = CandidateDiscoveryManager::new(config);
+    let _manager = CandidateDiscoveryManager::new(config);
 
     println!("✓ CandidateDiscoveryManager created successfully");
     println!("  - Will use platform-specific network discovery");
