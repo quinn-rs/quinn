@@ -526,10 +526,10 @@ async fn test_nat_traversal_direct_connection() {
         result2.is_ok()
     );
     if let Err(e) = &result1 {
-        println!("Peer 0 connection error: {:?}", e);
+        println!("Peer 0 connection error: {e:?}");
     }
     if let Err(e) = &result2 {
-        println!("Peer 1 connection error: {:?}", e);
+        println!("Peer 1 connection error: {e:?}");
     }
 
     assert!(
