@@ -8,8 +8,9 @@ use std::fmt::{self, Debug};
 use rustls::{CertificateError, DigitallySignedStruct, Error as TlsError, SignatureScheme};
 
 use crate::crypto::pqc::{
-    ml_dsa::{MlDsa65, MlDsa65PublicKey, MlDsa65Signature},
-    types::PqcError,
+    ml_dsa::MlDsa65,
+    types::{MlDsaPublicKey as MlDsa65PublicKey, MlDsaSignature as MlDsa65Signature, PqcError},
+    MlDsaOperations,
 };
 
 use ed25519_dalek::{Signature as Ed25519Signature, VerifyingKey as Ed25519PublicKey};

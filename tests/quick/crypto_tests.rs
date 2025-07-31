@@ -7,7 +7,7 @@ fn test_basic_crypto_operations() {
     super::utils::assert_duration(Duration::from_millis(100), || {
         // Basic crypto operations are tested in unit tests
         // This is a placeholder for quick crypto tests
-        assert!(true);
+        // Placeholder test - implementation pending
     });
 }
 
@@ -17,6 +17,6 @@ fn test_key_generation_speed() {
         // Test that key generation is reasonably fast
         use ed25519_dalek::SigningKey;
         let _signing_key = SigningKey::generate(&mut rand::thread_rng());
-        assert!(true);
+        // Test completed - key generated successfully
     });
 }

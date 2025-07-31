@@ -35,8 +35,6 @@ pub use ml_dsa::MlDsa65;
 #[cfg(feature = "pqc")]
 pub use ml_kem::MlKem768;
 #[cfg(feature = "pqc")]
-pub use tls::PqcTlsExtension;
-#[cfg(feature = "pqc")]
 pub use tls_extensions::{NamedGroup, SignatureScheme};
 
 /// Post-Quantum Cryptography provider trait
@@ -154,5 +152,9 @@ mod performance_tests {
         );
     }
 }
+
+// Core algorithm implementations
 pub mod ml_dsa;
+pub mod ml_dsa_impl;
 pub mod ml_kem;
+pub mod ml_kem_impl;

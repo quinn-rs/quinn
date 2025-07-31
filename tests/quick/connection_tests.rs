@@ -6,7 +6,7 @@ use std::time::Duration;
 fn test_connection_basics() {
     super::utils::assert_duration(Duration::from_millis(10), || {
         // Connection functionality tested in unit tests
-        assert!(true);
+        // Placeholder test - implementation pending
     });
 }
 
@@ -14,6 +14,6 @@ fn test_connection_basics() {
 fn test_connection_state_machine() {
     super::utils::assert_duration(Duration::from_millis(10), || {
         // State machine tested in unit tests
-        assert!(true);
+        // Placeholder test - implementation pending
     });
 }

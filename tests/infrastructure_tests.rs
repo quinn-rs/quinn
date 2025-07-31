@@ -82,8 +82,7 @@ async fn test_peer_id_generation() {
         // Ensure this peer ID is unique
         assert!(
             !peer_ids.contains(&peer_id),
-            "Duplicate peer ID generated at iteration {}",
-            i
+            "Duplicate peer ID generated at iteration {i}"
         );
         peer_ids.push(peer_id);
     }
@@ -178,7 +177,7 @@ async fn test_multiple_node_creation() {
 
         let node = QuicP2PNode::new(config)
             .await
-            .expect(&format!("Failed to create client node {i}"));
+            .unwrap_or_else(|_| panic!("Failed to create client node {i}"));
 
         nodes.push(node);
     }

@@ -208,12 +208,16 @@ pub struct PoolGuard<T: BufferCleanup> {
 impl<T: BufferCleanup> PoolGuard<T> {
     /// Get a reference to the pooled object
     pub fn as_ref(&self) -> &T {
-        self.object.as_ref().expect("PoolGuard already consumed")
+        // SAFETY: PoolGuard is constructed with Some(object) and only consumed on drop
+        // This is a safe unwrap because the object is guaranteed to exist until drop
+        self.object.as_ref().unwrap()
     }
 
     /// Get a mutable reference to the pooled object
     pub fn as_mut(&mut self) -> &mut T {
-        self.object.as_mut().expect("PoolGuard already consumed")
+        // SAFETY: PoolGuard is constructed with Some(object) and only consumed on drop
+        // This is a safe unwrap because the object is guaranteed to exist until drop
+        self.object.as_mut().unwrap()
     }
 }
 

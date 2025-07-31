@@ -4,7 +4,7 @@
 //! to use PQC while maintaining backward compatibility.
 
 use ant_quic::crypto::pqc::{HybridPreference, PqcConfig, PqcMode};
-use ant_quic::{ClientConfig, Endpoint, EndpointConfig, ServerConfig, VarInt};
+use ant_quic::{ClientConfig, Endpoint, ServerConfig, VarInt};
 use std::error::Error;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -25,7 +25,7 @@ enum MigrationPhase {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+    // Initialize logging
 
     println!("🔄 Post-Quantum Cryptography Migration Demo");
     println!("==========================================\n");
@@ -70,14 +70,14 @@ async fn run_server_phase(phase: MigrationPhase) -> Result<(), Box<dyn Error + S
     let pqc_config = match phase {
         MigrationPhase::PreMigration => {
             println!("   🔓 PQC: Disabled");
-            PqcConfig::disabled()
+            PqcConfig::builder().mode(PqcMode::ClassicalOnly).build().unwrap()
         }
         MigrationPhase::OptionalPqc => {
             println!("   🔐 PQC: Optional (Hybrid mode, prefer classical)");
             PqcConfig::builder()
                 .mode(PqcMode::Hybrid)
                 .hybrid_preference(HybridPreference::PreferClassical)
-                .migration_period_days(30)
+                // Migration period can be tracked externally
                 .build()
         }
         MigrationPhase::PreferredPqc => {
@@ -85,21 +85,23 @@ async fn run_server_phase(phase: MigrationPhase) -> Result<(), Box<dyn Error + S
             PqcConfig::builder()
                 .mode(PqcMode::Hybrid)
                 .hybrid_preference(HybridPreference::PreferPqc)
-                .migration_period_days(15)
+                // Migration period can be tracked externally
                 .build()
         }
         MigrationPhase::RequiredPqc => {
             println!("   🔒 PQC: Required (Pure PQC mode)");
-            PqcConfig::builder().mode(PqcMode::Pure).build()
+            PqcConfig::builder().mode(PqcMode::PqcOnly).build().unwrap()
         }
     };
 
     // Generate certificate
     let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()])?;
-    let cert_der = cert.serialize_der()?;
-    let priv_key = cert.serialize_private_key_der();
-    let priv_key = rustls::PrivateKey(priv_key);
-    let cert_chain = vec![rustls::Certificate(cert_der)];
+    let cert_der = cert.cert.der().to_vec();
+    let priv_key = cert.key_pair.serialize_der();
+    
+    use rustls::pki_types::{CertificateDer, PrivateKeyDer};
+    let cert_chain = vec![CertificateDer::from(cert_der)];
+    let priv_key = PrivateKeyDer::try_from(priv_key).unwrap();
 
     // Create server configuration
     let mut server_config = ServerConfig::with_single_cert(cert_chain, priv_key)?;
@@ -147,7 +149,7 @@ async fn test_client_compatibility(
 
     // Test with legacy client (no PQC)
     println!("   - Legacy client (no PQC)...",);
-    match connect_with_config(server_addr, PqcConfig::disabled()).await {
+    match connect_with_config(server_addr, PqcConfig::builder().mode(PqcMode::ClassicalOnly).build().unwrap()).await {
         Ok(_) => println!("     ✅ Connected successfully"),
         Err(e) => println!("     ❌ Failed: {}", e),
     }
@@ -162,7 +164,7 @@ async fn test_client_compatibility(
     // Test with PQC-only client
     if !matches!(server_phase, MigrationPhase::PreMigration) {
         println!("   - PQC-only client...",);
-        let pqc_only = PqcConfig::builder().mode(PqcMode::Pure).build();
+        let pqc_only = PqcConfig::builder().mode(PqcMode::PqcOnly).build().unwrap();
         match connect_with_config(server_addr, pqc_only).await {
             Ok(_) => println!("     ✅ Connected successfully"),
             Err(e) => println!("     ❌ Failed: {}", e),
@@ -177,7 +179,7 @@ async fn connect_with_config(
     _pqc_config: PqcConfig,
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
     // Create client configuration
-    let client_config = ClientConfig::with_native_roots();
+    let client_config = ClientConfig::try_with_platform_verifier()?;
 
     // Apply PQC configuration
     // Note: In real implementation, this would be done through the crypto provider
@@ -196,7 +198,7 @@ async fn connect_with_config(
     // Test connection
     let (mut send, _recv) = connection.open_bi().await?;
     send.write_all(b"test").await?;
-    send.finish().await?;
+    send.finish()?;
 
     connection.close(0u32.into(), b"done");
     endpoint.wait_idle().await;
@@ -205,13 +207,13 @@ async fn connect_with_config(
 }
 
 async fn handle_connection(
-    connection: ant_quic::Connection,
+    connection: ant_quic::high_level::Connection,
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
     // Simple echo handler
     while let Ok((mut send, mut recv)) = connection.accept_bi().await {
         let data = recv.read_to_end(1024).await?;
         send.write_all(&data).await?;
-        send.finish().await?;
+        send.finish()?;
     }
     Ok(())
 }

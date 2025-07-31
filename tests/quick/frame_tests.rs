@@ -8,7 +8,7 @@ fn test_frame_type_identification() {
     super::utils::assert_duration(Duration::from_millis(10), || {
         // Basic frame type tests
         // Frame types are const values and tested in unit tests
-        assert!(true);
+        // Placeholder test - implementation pending
     });
 }
 

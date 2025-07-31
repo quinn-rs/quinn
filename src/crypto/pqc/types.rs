@@ -16,6 +16,10 @@ pub enum PqcError {
     #[error("Invalid ciphertext size: expected {expected}, got {actual}")]
     InvalidCiphertextSize { expected: usize, actual: usize },
 
+    /// Invalid ciphertext
+    #[error("Invalid ciphertext")]
+    InvalidCiphertext,
+
     /// Invalid signature size
     #[error("Invalid signature size: expected {expected}, got {actual}")]
     InvalidSignatureSize { expected: usize, actual: usize },
@@ -59,6 +63,14 @@ pub enum PqcError {
     /// Invalid signature
     #[error("Invalid signature")]
     InvalidSignature,
+
+    /// Invalid secret key
+    #[error("Invalid secret key")]
+    InvalidSecretKey,
+
+    /// Invalid shared secret
+    #[error("Invalid shared secret")]
+    InvalidSharedSecret,
 
     /// Operation not supported
     #[error("Operation not supported")]

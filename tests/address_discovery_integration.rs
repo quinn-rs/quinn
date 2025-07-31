@@ -350,7 +350,7 @@ async fn test_bootstrap_mode_address_discovery() {
         }
 
         // Check observation statistics
-        for (addr, conn) in &connections {
+        for (addr, _conn) in &connections {
             // Bootstrap nodes automatically send OBSERVED_ADDRESS frames
             info!("Bootstrap node observing address for {}", addr);
         }
@@ -390,7 +390,7 @@ async fn test_bootstrap_mode_address_discovery() {
     tokio::time::sleep(Duration::from_millis(200)).await;
 
     // All clients should have discovered their addresses
-    for (i, conn) in clients.iter().enumerate() {
+    for (i, _conn) in clients.iter().enumerate() {
         // Clients receive OBSERVED_ADDRESS frames from bootstrap nodes
         info!("Client {} connected to bootstrap with address discovery", i);
     }
@@ -460,7 +460,7 @@ async fn test_address_discovery_disabled() {
         ClientConfig::new(Arc::new(QuicClientConfig::try_from(client_crypto).unwrap()));
     client.set_default_client_config(client_config);
 
-    let connection = client
+    let _connection = client
         .connect(server_addr, "localhost")
         .unwrap()
         .await

@@ -39,10 +39,13 @@ struct P2PTestConfig {
     /// Number of bootstrap nodes
     num_bootstrap: usize,
     /// Enable detailed logging
+    #[allow(dead_code)]
     verbose: bool,
     /// Test timeout
+    #[allow(dead_code)]
     timeout: Duration,
     /// Network simulation parameters
+    #[allow(dead_code)]
     network_config: NetworkConfig,
 }
 
@@ -62,10 +65,13 @@ impl Default for P2PTestConfig {
 #[derive(Debug, Clone)]
 struct NetworkConfig {
     /// Simulated latency in ms
+    #[allow(dead_code)]
     latency_ms: u64,
     /// Packet loss rate (0.0 - 1.0)
+    #[allow(dead_code)]
     packet_loss: f64,
     /// Bandwidth limit in bytes/sec
+    #[allow(dead_code)]
     bandwidth_limit: Option<u64>,
 }
 
@@ -84,6 +90,7 @@ struct TestPeer {
     id: PeerId,
     node: Arc<QuicP2PNode>,
     address: SocketAddr,
+    #[allow(dead_code)]
     role: EndpointRole,
     received_messages: Arc<Mutex<Vec<ChatMessage>>>,
     connected_peers: Arc<Mutex<HashMap<PeerId, SocketAddr>>>,
@@ -804,6 +811,7 @@ async fn test_malformed_message_handling() {
 
 /// Network simulator for applying conditions between peers
 #[derive(Clone)]
+#[allow(dead_code)]
 struct NetworkSimulator {
     config: NetworkConfig,
     bytes_transferred: Arc<AtomicU64>,
