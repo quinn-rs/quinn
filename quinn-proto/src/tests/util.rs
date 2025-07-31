@@ -90,32 +90,7 @@ impl Pair {
 
     /// Returns whether the connection is not idle
     pub(super) fn step(&mut self) -> bool {
-        self.drive_client();
-        self.drive_server();
-        if self.client.is_idle() && self.server.is_idle() {
-            return false;
-        }
-
-        let client_t = self.client.next_wakeup();
-        let server_t = self.server.next_wakeup();
-        match min_opt(client_t, server_t) {
-            Some(t) if Some(t) == client_t => {
-                if t != self.time {
-                    self.time = self.time.max(t);
-                    trace!("advancing to {:?} for client", self.time - self.epoch);
-                }
-                true
-            }
-            Some(t) if Some(t) == server_t => {
-                if t != self.time {
-                    self.time = self.time.max(t);
-                    trace!("advancing to {:?} for server", self.time - self.epoch);
-                }
-                true
-            }
-            Some(_) => unreachable!(),
-            None => false,
-        }
+        self.blackhole_step(false, false)
     }
 
     /// Advance time until both connections are idle
@@ -187,6 +162,46 @@ impl Pair {
                     buffer.as_ref().into(),
                 ));
             }
+        }
+    }
+
+    /// Drive both endpoints optionally preventing them from receiving traffic
+    pub(super) fn blackhole_step(
+        &mut self,
+        server_blackhole: bool,
+        client_blackhole: bool,
+    ) -> bool {
+        self.drive_client();
+        if server_blackhole {
+            self.server.inbound.clear();
+        }
+        self.drive_server();
+        if client_blackhole {
+            self.client.inbound.clear();
+        }
+        if self.client.is_idle() && self.server.is_idle() {
+            return false;
+        }
+
+        let client_t = self.client.next_wakeup();
+        let server_t = self.server.next_wakeup();
+        match min_opt(client_t, server_t) {
+            Some(t) if Some(t) == client_t => {
+                if t != self.time {
+                    self.time = self.time.max(t);
+                    trace!("advancing to {:?} for client", self.time - self.epoch);
+                }
+                true
+            }
+            Some(t) if Some(t) == server_t => {
+                if t != self.time {
+                    self.time = self.time.max(t);
+                    trace!("advancing to {:?} for server", self.time - self.epoch);
+                }
+                true
+            }
+            Some(_) => unreachable!(),
+            None => false,
         }
     }
 
@@ -536,7 +551,11 @@ impl ::std::ops::DerefMut for TestEndpoint {
 
 pub(super) fn subscribe() -> tracing::subscriber::DefaultGuard {
     let builder = tracing_subscriber::FmtSubscriber::builder()
-        .with_max_level(tracing::Level::TRACE)
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::builder()
+                .with_default_directive(tracing::Level::TRACE.into())
+                .from_env_lossy(),
+        )
         .with_line_number(true)
         .with_writer(|| TestWriter);
     // tracing uses std::time to trace time, which panics in wasm.
