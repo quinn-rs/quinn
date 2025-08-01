@@ -2,7 +2,7 @@
 name = "ant-quic"
 version = "0.5.0"
 edition = "2021"
-rust-version = "1.74.1"
+rust-version = "1.75.0"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/dirvine/ant-quic"
 description = "QUIC transport protocol with advanced NAT traversal for P2P networks"
@@ -145,7 +145,7 @@ core-foundation = "0.9"
 
 [dev-dependencies]
 assert_matches = "1.1"
-hex-literal = "1"
+hex-literal = "0.4"
 rand_pcg = "0.3"
 rcgen = "0.14"
 tracing-subscriber = { version = "0.3.0", default-features = false, features = ["env-filter", "fmt", "ansi", "time", "local-time", "json"] }

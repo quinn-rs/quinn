@@ -108,8 +108,8 @@ jobs:
       
       - name: Generate SBOM
         run: |
-          cargo install cargo-sbom
-          cargo sbom > sbom.json
+          cargo install cargo-cyclonedx
+          cargo cyclonedx --format json > sbom.json
       
       - name: Upload SBOM
         uses: actions/upload-artifact@v4

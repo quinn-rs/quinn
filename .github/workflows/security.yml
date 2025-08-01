@@ -19,6 +19,12 @@ on:
     # Run daily at 2 AM UTC
     - cron: '0 2 * * *'
 
+permissions:
+  contents: read
+  security-events: write
+  id-token: write
+  actions: read
+
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
@@ -185,21 +191,21 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Install cargo-sbom
-        run: cargo install cargo-sbom --locked
+      - name: Install cargo-cyclonedx
+        run: cargo install cargo-cyclonedx --locked
 
       - name: Generate SBOM
         run: |
-          cargo sbom > sbom.spdx.json
-          cargo sbom --output-format cyclonedx > sbom.cyclonedx.json
+          cargo cyclonedx --format json > sbom.cyclonedx.json
+          cargo cyclonedx --format xml > sbom.cyclonedx.xml
 
       - name: Upload SBOM artifacts
         uses: actions/upload-artifact@v4
         with:
           name: sbom
           path: |
-            sbom.spdx.json
             sbom.cyclonedx.json
+            sbom.cyclonedx.xml
 
   # Security metrics and reporting
   security-report:

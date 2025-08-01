@@ -1,5 +1,5 @@
 # Test Runner for NAT Testing
-FROM rust:1.74-alpine3.19
+FROM rust:1.83-alpine3.19
 
 # Install dependencies
 RUN apk add --no-cache \

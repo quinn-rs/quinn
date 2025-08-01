@@ -202,7 +202,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.74.1
+      - uses: dtolnay/rust-toolchain@1.75.0
       - uses: Swatinem/rust-cache@v2
       - name: Check MSRV
         run: cargo check -p quinn-proto && cargo check -p quinn-udp && cargo check -p quinn
