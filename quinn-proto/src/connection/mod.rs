@@ -143,6 +143,10 @@ pub struct Connection {
     /// This is only populated for the server case, and if known
     local_ip: Option<IpAddr>,
     path: PathData,
+    /// Incremented every time we see a new path
+    ///
+    /// Stored separately from `path.generation` to account for aborted migrations
+    path_counter: u64,
     /// Whether MTU detection is supported in this environment
     allow_mtud: bool,
     prev_path: Option<(ConnectionId, PathData)>,
@@ -278,7 +282,8 @@ impl Connection {
                 now,
                 if pref_addr_cid.is_some() { 2 } else { 1 },
             ),
-            path: PathData::new(remote, allow_mtud, None, now, &config),
+            path: PathData::new(remote, allow_mtud, None, 0, now, &config),
+            path_counter: 0,
             allow_mtud,
             local_ip,
             prev_path: None,
@@ -1488,7 +1493,7 @@ impl Connection {
                 // Notify ack frequency that a packet was acked, because it might contain an ACK_FREQUENCY frame
                 self.ack_frequency.on_acked(packet);
 
-                self.on_packet_acked(now, packet, info);
+                self.on_packet_acked(now, info);
             }
         }
 
@@ -1574,8 +1579,8 @@ impl Connection {
 
     // Not timing-aware, so it's safe to call this for inferred acks, such as arise from
     // high-latency handshakes
-    fn on_packet_acked(&mut self, now: Instant, pn: u64, info: SentPacket) {
-        self.remove_in_flight(pn, &info);
+    fn on_packet_acked(&mut self, now: Instant, info: SentPacket) {
+        self.remove_in_flight(&info);
         if info.ack_eliciting && self.path.challenge.is_none() {
             // Only pass ACKs to the congestion controller if we are not validating the current
             // path, so as to ignore any ACKs from older paths still coming in.
@@ -1746,7 +1751,7 @@ impl Connection {
                     now,
                     self.orig_rem_cid,
                 );
-                self.remove_in_flight(packet, &info);
+                self.remove_in_flight(&info);
                 for frame in info.stream_frames {
                     self.streams.retransmit(frame);
                 }
@@ -1781,7 +1786,7 @@ impl Connection {
         // Handle a lost MTU probe
         if let Some(packet) = lost_mtu_probe {
             let info = self.spaces[SpaceId::Data].take(packet).unwrap(); // safe: lost_mtu_probe is omitted from lost_packets, and therefore must not have been removed yet
-            self.remove_in_flight(packet, &info);
+            self.remove_in_flight(&info);
             self.path.mtud.on_probe_lost();
             self.stats.path.lost_plpmtud_probes += 1;
         }
@@ -2185,8 +2190,8 @@ impl Connection {
         space.loss_time = None;
         space.in_flight = 0;
         let sent_packets = mem::take(&mut space.sent_packets);
-        for (pn, packet) in sent_packets.into_iter() {
-            self.remove_in_flight(pn, &packet);
+        for packet in sent_packets.into_values() {
+            self.remove_in_flight(&packet);
         }
         self.set_loss_detection_timer(now)
     }
@@ -2470,7 +2475,7 @@ impl Connection {
 
                 let space = &mut self.spaces[SpaceId::Initial];
                 if let Some(info) = space.take(0) {
-                    self.on_packet_acked(now, 0, info);
+                    self.on_packet_acked(now, info);
                 };
 
                 self.discard_space(now, SpaceId::Initial); // Make sure we clean up after any retransmitted Initials
@@ -2490,8 +2495,8 @@ impl Connection {
 
                 // Retransmit all 0-RTT data
                 let zero_rtt = mem::take(&mut self.spaces[SpaceId::Data].sent_packets);
-                for (pn, info) in zero_rtt {
-                    self.remove_in_flight(pn, &info);
+                for info in zero_rtt.into_values() {
+                    self.remove_in_flight(&info);
                     self.spaces[SpaceId::Data].pending |= info.retransmits;
                 }
                 self.streams.retransmit_all_for_0rtt();
@@ -2556,8 +2561,8 @@ impl Connection {
                             // Discard 0-RTT packets
                             let sent_packets =
                                 mem::take(&mut self.spaces[SpaceId::Data].sent_packets);
-                            for (pn, packet) in sent_packets {
-                                self.remove_in_flight(pn, &packet);
+                            for packet in sent_packets.into_values() {
+                                self.remove_in_flight(&packet);
                             }
                         } else {
                             self.accepted_0rtt = true;
@@ -3041,11 +3046,12 @@ impl Connection {
 
     fn migrate(&mut self, now: Instant, remote: SocketAddr) {
         trace!(%remote, "migration initiated");
+        self.path_counter = self.path_counter.wrapping_add(1);
         // Reset rtt/congestion state for new path unless it looks like a NAT rebinding.
         // Note that the congestion window will not grow until validation terminates. Helps mitigate
         // amplification attacks performed by spoofing source addresses.
         let mut new_path = if remote.is_ipv4() && remote.ip() == self.path.remote.ip() {
-            PathData::from_previous(remote, &self.path, now)
+            PathData::from_previous(remote, &self.path, self.path_counter, now)
         } else {
             let peer_max_udp_payload_size =
                 u16::try_from(self.peer_params.max_udp_payload_size.into_inner())
@@ -3054,6 +3060,7 @@ impl Connection {
                 remote,
                 self.allow_mtud,
                 Some(peer_max_udp_payload_size),
+                self.path_counter,
                 now,
                 &self.config,
             )
@@ -3673,13 +3680,13 @@ impl Connection {
     }
 
     /// Update counters to account for a packet becoming acknowledged, lost, or abandoned
-    fn remove_in_flight(&mut self, pn: u64, packet: &SentPacket) {
-        // Visit known paths from newest to oldest to find the one `pn` was sent on
+    fn remove_in_flight(&mut self, packet: &SentPacket) {
+        // Visit known paths from newest to oldest to find the one `packet` was sent on
         for path in [&mut self.path]
             .into_iter()
             .chain(self.prev_path.as_mut().map(|(_, data)| data))
         {
-            if path.remove_in_flight(pn, packet) {
+            if path.remove_in_flight(packet) {
                 return;
             }
         }
