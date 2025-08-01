@@ -203,6 +203,7 @@ impl PacketBuilder {
         };
 
         let packet = SentPacket {
+            path_generation: conn.path.generation(),
             largest_acked: sent.largest_acked,
             time_sent: now,
             size,
