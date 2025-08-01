@@ -8,15 +8,22 @@
 //! for defense-in-depth against both classical and quantum attacks.
 
 pub mod benchmarks;
+pub mod cipher_suites;
 pub mod combiners;
 pub mod config;
 pub mod hybrid;
 pub mod hybrid_key_exchange;
 pub mod memory_pool;
 pub mod memory_pool_optimized;
+pub mod ml_dsa;
+pub mod ml_dsa_impl;
+pub mod ml_kem;
+pub mod ml_kem_impl;
 pub mod negotiation;
 pub mod packet_handler;
 pub mod parallel;
+pub mod rustls_provider;
+pub mod tls;
 pub mod tls_extensions;
 pub mod tls_integration;
 pub mod types;
@@ -152,9 +159,3 @@ mod performance_tests {
         );
     }
 }
-
-// Core algorithm implementations
-pub mod ml_dsa;
-pub mod ml_dsa_impl;
-pub mod ml_kem;
-pub mod ml_kem_impl;

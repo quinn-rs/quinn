@@ -3,8 +3,8 @@
 //! This module provides TLS extensions for hybrid post-quantum key exchange
 //! and signature schemes, following draft-ietf-tls-hybrid-design.
 
-use crate::crypto::pqc::types::*;
 use crate::crypto::pqc::tls_extensions::{NamedGroup, SignatureScheme};
+use crate::crypto::pqc::types::*;
 
 /// TLS extension handler for PQC negotiation
 pub struct PqcTlsExtension {
@@ -45,7 +45,11 @@ impl PqcTlsExtension {
     /// Create a classical-only configuration
     pub fn classical_only() -> Self {
         Self {
-            supported_groups: vec![NamedGroup::X25519, NamedGroup::Secp256r1, NamedGroup::Secp384r1],
+            supported_groups: vec![
+                NamedGroup::X25519,
+                NamedGroup::Secp256r1,
+                NamedGroup::Secp384r1,
+            ],
             supported_signatures: vec![
                 SignatureScheme::Ed25519,
                 SignatureScheme::EcdsaSecp256r1Sha256,

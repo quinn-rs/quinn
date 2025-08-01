@@ -38,7 +38,7 @@ pub mod signature_schemes {
 
 /// Placeholder cipher suite structures
 /// These would need full implementation when rustls provides extension points
-/// 
+///
 /// TLS 1.3 AES-128-GCM with SHA-256 and ML-KEM-768
 pub struct Tls13Aes128GcmSha256MlKem768;
 

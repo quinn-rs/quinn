@@ -69,8 +69,8 @@ async fn test_address_discovery_enabled_by_default() {
         .with_env_filter("ant_quic=debug")
         .try_init();
 
-    let server = create_server_endpoint();
-    let client = create_client_endpoint();
+    let _server = create_server_endpoint();
+    let _client = create_client_endpoint();
 
     // Address discovery is enabled by default in the configuration
     info!("✓ Address discovery is enabled by default on both endpoints");
@@ -163,8 +163,8 @@ async fn test_disable_address_discovery() {
 
     // Address discovery configuration is set at endpoint creation time
     // This test verifies the default behavior
-    let server = create_server_endpoint();
-    let client = create_client_endpoint();
+    let _server = create_server_endpoint();
+    let _client = create_client_endpoint();
 
     // Address discovery is enabled by default in ant-quic
     info!("Address discovery is enabled by default in ant-quic");

@@ -1,6 +1,7 @@
 //! Type definitions for Post-Quantum Cryptography
 
 use thiserror::Error;
+use zeroize::{Zeroize, ZeroizeOnDrop};
 
 /// Result type for PQC operations
 pub type PqcResult<T> = Result<T, PqcError>;
@@ -79,6 +80,10 @@ pub enum PqcError {
     /// Negotiation failed
     #[error("Negotiation failed: {0}")]
     NegotiationFailed(String),
+
+    /// Key exchange failed
+    #[error("Key exchange failed")]
+    KeyExchangeFailed,
 }
 
 // ML-KEM-768 constants
@@ -117,7 +122,14 @@ impl MlKemPublicKey {
 }
 
 /// ML-KEM-768 secret key
+#[derive(ZeroizeOnDrop)]
 pub struct MlKemSecretKey(pub Box<[u8; ML_KEM_768_SECRET_KEY_SIZE]>);
+
+impl Zeroize for MlKemSecretKey {
+    fn zeroize(&mut self) {
+        self.0.as_mut().zeroize();
+    }
+}
 
 impl MlKemSecretKey {
     /// Get the secret key as bytes
@@ -181,7 +193,14 @@ impl MlDsaPublicKey {
 }
 
 /// ML-DSA-65 secret key
+#[derive(ZeroizeOnDrop)]
 pub struct MlDsaSecretKey(pub Box<[u8; ML_DSA_65_SECRET_KEY_SIZE]>);
+
+impl Zeroize for MlDsaSecretKey {
+    fn zeroize(&mut self) {
+        self.0.as_mut().zeroize();
+    }
+}
 
 impl MlDsaSecretKey {
     /// Get the secret key as bytes
@@ -228,7 +247,7 @@ impl MlDsaSignature {
 }
 
 /// Shared secret from key encapsulation
-#[derive(Clone)]
+#[derive(Clone, Zeroize, ZeroizeOnDrop)]
 pub struct SharedSecret(pub [u8; ML_KEM_768_SHARED_SECRET_SIZE]);
 
 impl std::fmt::Debug for SharedSecret {
@@ -256,11 +275,19 @@ pub struct HybridKemPublicKey {
 }
 
 /// Hybrid KEM secret key (classical + ML-KEM)
+#[derive(ZeroizeOnDrop)]
 pub struct HybridKemSecretKey {
     /// Classical ECDH private key
     pub classical: Box<[u8]>,
     /// ML-KEM-768 secret key
     pub ml_kem: MlKemSecretKey,
+}
+
+impl Zeroize for HybridKemSecretKey {
+    fn zeroize(&mut self) {
+        self.classical.as_mut().zeroize();
+        self.ml_kem.zeroize();
+    }
 }
 
 /// Hybrid KEM ciphertext (classical + ML-KEM)
@@ -282,11 +309,19 @@ pub struct HybridSignaturePublicKey {
 }
 
 /// Hybrid signature secret key (classical + ML-DSA)
+#[derive(ZeroizeOnDrop)]
 pub struct HybridSignatureSecretKey {
     /// Classical signature private key
     pub classical: Box<[u8]>,
     /// ML-DSA-65 secret key
     pub ml_dsa: MlDsaSecretKey,
+}
+
+impl Zeroize for HybridSignatureSecretKey {
+    fn zeroize(&mut self) {
+        self.classical.as_mut().zeroize();
+        self.ml_dsa.zeroize();
+    }
 }
 
 /// Hybrid signature value (classical + ML-DSA signatures)
@@ -296,44 +331,6 @@ pub struct HybridSignatureValue {
     pub classical: Box<[u8]>,
     /// ML-DSA-65 signature
     pub ml_dsa: Box<[u8]>,
-}
-
-// Implement zeroization for secret keys
-impl Drop for MlKemSecretKey {
-    fn drop(&mut self) {
-        // Zero out the secret key on drop
-        self.0.as_mut().fill(0);
-    }
-}
-
-impl Drop for MlDsaSecretKey {
-    fn drop(&mut self) {
-        // Zero out the secret key on drop
-        self.0.as_mut().fill(0);
-    }
-}
-
-impl Drop for SharedSecret {
-    fn drop(&mut self) {
-        // Zero out the shared secret on drop
-        self.0.fill(0);
-    }
-}
-
-impl Drop for HybridKemSecretKey {
-    fn drop(&mut self) {
-        // Zero out both classical and PQC secret keys
-        self.classical.fill(0);
-        // ml_kem will be zeroed by its own Drop impl
-    }
-}
-
-impl Drop for HybridSignatureSecretKey {
-    fn drop(&mut self) {
-        // Zero out both classical and PQC secret keys
-        self.classical.fill(0);
-        // ml_dsa will be zeroed by its own Drop impl
-    }
 }
 
 #[cfg(test)]

@@ -699,9 +699,16 @@ impl Connection {
             let tag_len = if let Some(ref crypto) = self.spaces[space_id].crypto {
                 crypto.packet.local.tag_len()
             } else if space_id == SpaceId::Data {
-                self.zero_rtt_crypto.as_ref().expect(
-                    "sending packets in the application data space requires known 0-RTT or 1-RTT keys",
-                ).packet.tag_len()
+                match self.zero_rtt_crypto.as_ref() {
+                    Some(crypto) => crypto.packet.tag_len(),
+                    None => {
+                        // This should never happen - log and return early
+                        error!(
+                            "sending packets in the application data space requires known 0-RTT or 1-RTT keys"
+                        );
+                        return None;
+                    }
+                }
             } else {
                 unreachable!("tried to send {:?} packet without keys", space_id)
             };
@@ -3588,7 +3595,9 @@ impl Connection {
             && number == self.spaces[SpaceId::Data].rx_packet
         {
             let ConnectionSide::Server { ref server_config } = self.side else {
-                panic!("packets from unknown remote should be dropped by clients");
+                return Err(TransportError::PROTOCOL_VIOLATION(
+                    "packets from unknown remote should be dropped by clients",
+                ));
             };
             debug_assert!(
                 server_config.migration,
@@ -3971,7 +3980,9 @@ impl Connection {
         while let Some(remote_addr) = space.pending.new_tokens.pop() {
             debug_assert_eq!(space_id, SpaceId::Data);
             let ConnectionSide::Server { server_config } = &self.side else {
-                panic!("NEW_TOKEN frames should not be enqueued by clients");
+                // This should never happen as clients don't enqueue NEW_TOKEN frames
+                debug_assert!(false, "NEW_TOKEN frames should not be enqueued by clients");
+                continue;
             };
 
             if remote_addr != self.path.remote {

@@ -255,6 +255,10 @@ mod tests {
         let provider = provider.unwrap();
         // Check that we have cipher suites (placeholder implementation returns 3)
         assert_eq!(provider.cipher_suites().len(), 3);
-        assert!(provider.cipher_suites().contains(&rustls::CipherSuite::TLS13_AES_128_GCM_SHA256));
+        assert!(
+            provider
+                .cipher_suites()
+                .contains(&rustls::CipherSuite::TLS13_AES_128_GCM_SHA256)
+        );
     }
 }

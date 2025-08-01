@@ -1,8 +1,8 @@
 //! ML-DSA-65 implementation
 
 use crate::crypto::pqc::{
-    types::{MlDsaPublicKey, MlDsaSecretKey, MlDsaSignature, PqcError, PqcResult},
     MlDsaOperations,
+    types::{MlDsaPublicKey, MlDsaSecretKey, MlDsaSignature, PqcError, PqcResult},
 };
 
 /// ML-DSA-65 implementation

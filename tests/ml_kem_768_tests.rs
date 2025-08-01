@@ -3,6 +3,7 @@
 #[cfg(all(test, feature = "pqc"))]
 mod ml_kem_768_tests {
     use ant_quic::crypto::pqc::MlKem768;
+    use ant_quic::crypto::pqc::MlKemOperations;
     use ant_quic::crypto::pqc::types::*;
 
     // Key size constants from FIPS 203
@@ -278,6 +279,7 @@ mod ml_kem_768_tests {
 #[cfg(all(test, feature = "pqc"))]
 mod ml_kem_768_api_tests {
     use ant_quic::crypto::pqc::MlKem768;
+    use ant_quic::crypto::pqc::MlKemOperations;
     use ant_quic::crypto::pqc::types::*;
 
     #[test]

@@ -1,10 +1,8 @@
 //! ML-KEM-768 implementation
 
 use crate::crypto::pqc::{
-    types::{
-        MlKemCiphertext, MlKemPublicKey, MlKemSecretKey, PqcError, PqcResult, SharedSecret,
-    },
     MlKemOperations,
+    types::{MlKemCiphertext, MlKemPublicKey, MlKemSecretKey, PqcError, PqcResult, SharedSecret},
 };
 
 /// ML-KEM-768 implementation

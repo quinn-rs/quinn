@@ -3,8 +3,9 @@
 #[cfg(feature = "pqc")]
 mod pqc_raw_public_key_tests {
     use ant_quic::crypto::pqc::{
-        ml_dsa::{MlDsa65, MlDsa65PublicKey, MlDsa65SecretKey},
-        types::PqcError,
+        MlDsaOperations,
+        ml_dsa::MlDsa65,
+        types::{MlDsaPublicKey, MlDsaSecretKey, PqcError},
     };
     use ant_quic::crypto::raw_public_keys::pqc::{ExtendedRawPublicKey, PqcRawPublicKeyVerifier};
     use ed25519_dalek::{SigningKey as Ed25519SecretKey, VerifyingKey as Ed25519PublicKey};
@@ -120,7 +121,7 @@ mod pqc_raw_public_key_tests {
             ExtendedRawPublicKey::Ed25519(Ed25519PublicKey::from_bytes(&[1u8; 32]).unwrap());
 
         let ml_dsa_key =
-            ExtendedRawPublicKey::MlDsa65(MlDsa65PublicKey::from_bytes(&vec![0u8; 1952]).unwrap());
+            ExtendedRawPublicKey::MlDsa65(MlDsaPublicKey::from_bytes(&vec![0u8; 1952]).unwrap());
 
         // Create verifier with both key types
         let mut verifier = PqcRawPublicKeyVerifier::new(vec![ed25519_key.clone()]);
@@ -197,7 +198,7 @@ mod pqc_raw_public_key_tests {
     #[test]
     fn test_large_key_serialization() {
         // Test with ML-DSA key (1952 bytes)
-        let large_key = MlDsa65PublicKey::from_bytes(&vec![0xAB; 1952]).unwrap();
+        let large_key = MlDsaPublicKey::from_bytes(&vec![0xAB; 1952]).unwrap();
         let raw_key = ExtendedRawPublicKey::MlDsa65(large_key);
 
         // Test SPKI encoding handles large keys

@@ -65,12 +65,17 @@ impl PqcPacketHandler {
         }
 
         // Look for TLS handshake messages
-        if crypto_data.len() < 4 {
+        if crypto_data.is_empty() {
             return self.pqc_detected;
         }
 
         // Check for ClientHello (type 1) or ServerHello (type 2)
         let msg_type = crypto_data[0];
+
+        // Need at least 4 bytes for a valid handshake message
+        if crypto_data.len() < 4 {
+            return self.pqc_detected;
+        }
         if msg_type == 1 || msg_type == 2 {
             // Parse for supported groups extension (0x000a) or signature algorithms (0x000d)
             if let Some(mode) = self.parse_pqc_extensions(crypto_data) {

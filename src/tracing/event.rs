@@ -3,13 +3,14 @@
 //! All events are fixed-size (128 bytes) to enable lock-free ring buffer storage.
 
 use std::net::SocketAddr;
+use std::time::Duration;
 
 /// Helper function to get current timestamp in microseconds
 pub fn timestamp_now() -> u64 {
     use std::time::{SystemTime, UNIX_EPOCH};
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .unwrap()
+        .unwrap_or(Duration::ZERO)
         .as_micros() as u64
 }
 

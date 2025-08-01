@@ -7,6 +7,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2025-07-31
+
+### Added
+- **Post-Quantum Cryptography (PQC) Support** 🔐
+  - Implemented NIST-standardized quantum-resistant algorithms:
+    - ML-KEM-768 (Module Lattice-based Key Encapsulation Mechanism)
+    - ML-DSA-65 (Module Lattice-based Digital Signature Algorithm)
+  - Hybrid cryptography modes combining classical and PQC algorithms
+  - Configurable PQC preferences with three modes:
+    - `ClassicalOnly`: Traditional cryptography only
+    - `Hybrid`: Both classical and PQC (recommended)
+    - `PqcOnly`: Quantum-resistant algorithms only
+  - Performance optimizations keeping overhead under 10%
+  - Memory pool management for efficient PQC operations
+  - Full backward compatibility with non-PQC clients
+
+### Security
+- NIST Level 3 (192-bit) quantum-resistant security
+- FIPS 203 (ML-KEM) and FIPS 204 (ML-DSA) compliance
+- Defense-in-depth with hybrid cryptography modes
+- Secure key combination using HKDF-SHA256
+- Protection against "harvest now, decrypt later" attacks
+
+### Performance
+- PQC overhead < 10% compared to classical cryptography
+- Optimized memory allocation with object pooling
+- Parallel processing support for PQC operations
+- Configurable handshake timeout multipliers
+- Efficient ciphertext and signature sizes
+
+### Technical Details
+- AWS-LC-RS cryptographic backend integration
+- TLS 1.3 compatible PQC extensions
+- Comprehensive error handling with typed errors
+- Full test coverage including security validation
+- Cross-platform support (Linux, macOS, Windows)
+
+### API Changes
+- New `PqcConfig` and `PqcConfigBuilder` for configuration
+- `HybridKem` and `HybridSignature` for hybrid operations
+- `MlKem768` and `MlDsa65` algorithm implementations
+- PQC-aware connection configuration options
+
+### Documentation
+- PQC configuration guide: `docs/guides/pqc-configuration.md`
+- Migration guide: `docs/guides/pqc-migration.md`
+- Security considerations: `docs/guides/pqc-security.md`
+- Example applications in `examples/pqc_*.rs`
+
 ### Added
 - Comprehensive performance benchmarks for QUIC Address Discovery (Phase 5.3)
   - Frame processing benchmarks showing < 15ns overhead

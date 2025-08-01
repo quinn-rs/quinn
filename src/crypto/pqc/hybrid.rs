@@ -18,11 +18,11 @@
 
 use crate::crypto::pqc::combiners::{ConcatenationCombiner, HybridCombiner};
 use crate::crypto::pqc::types::*;
-use crate::crypto::pqc::{ml_dsa::MlDsa65, ml_kem::MlKem768, MlDsaOperations, MlKemOperations};
-use ring::agreement::{self, EphemeralPrivateKey, PublicKey};
+use crate::crypto::pqc::{MlDsaOperations, MlKemOperations, ml_dsa::MlDsa65, ml_kem::MlKem768};
 use ring::rand::{self, SecureRandom};
 use ring::signature::{self, Ed25519KeyPair, KeyPair as SignatureKeyPair};
 use std::sync::Arc;
+use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret};
 
 /// Hybrid KEM combiner for classical ECDH and ML-KEM-768
 ///
@@ -63,19 +63,25 @@ impl HybridKem {
             // Generate ML-KEM keypair
             let (ml_kem_pub, ml_kem_sec) = self.ml_kem.generate_keypair()?;
 
-            // For now, we'll use placeholder classical keys since ring doesn't expose
-            // long-term ECDH key generation in the way we need
-            // In a real implementation, we'd use P-256 or X25519
-            let classical_pub = vec![0u8; 32].into_boxed_slice();
-            let classical_sec = vec![0u8; 32].into_boxed_slice();
+            // Generate X25519 keypair using proper elliptic curve operations
+            let mut rng_bytes = [0u8; 32];
+            self.rng.fill(&mut rng_bytes).map_err(|_| {
+                PqcError::KeyGenerationFailed("Random generation failed".to_string())
+            })?;
+
+            let secret = StaticSecret::from(rng_bytes);
+            let public = X25519PublicKey::from(&secret);
+
+            let classical_sec = secret.to_bytes().to_vec();
+            let classical_pub = public.to_bytes().to_vec();
 
             Ok((
                 HybridKemPublicKey {
-                    classical: classical_pub,
+                    classical: classical_pub.into_boxed_slice(),
                     ml_kem: ml_kem_pub,
                 },
                 HybridKemSecretKey {
-                    classical: classical_sec,
+                    classical: classical_sec.into_boxed_slice(),
                     ml_kem: ml_kem_sec,
                 },
             ))
@@ -98,11 +104,31 @@ impl HybridKem {
             // Perform ML-KEM encapsulation
             let (ml_kem_ct, ml_kem_ss) = self.ml_kem.encapsulate(&public_key.ml_kem)?;
 
-            // For classical, we'd normally do ECDH here
-            // For now, use a deterministic placeholder based on the public key
-            // This ensures both sides derive the same secret
-            let classical_ct = public_key.classical.clone();
-            let classical_ss = vec![42u8; 32]; // Fixed placeholder secret
+            // Generate ephemeral X25519 keypair for encapsulation
+            // We use StaticSecret for ephemeral key since x25519-dalek's EphemeralSecret
+            // doesn't allow creation from bytes
+            let mut rng_bytes = [0u8; 32];
+            self.rng.fill(&mut rng_bytes).map_err(|_| {
+                PqcError::KeyGenerationFailed("Random generation failed".to_string())
+            })?;
+            let ephemeral_secret = StaticSecret::from(rng_bytes);
+            let ephemeral_public = X25519PublicKey::from(&ephemeral_secret);
+
+            // Parse peer's public key
+            let peer_public_bytes: [u8; 32] =
+                public_key
+                    .classical
+                    .as_ref()
+                    .try_into()
+                    .map_err(|_| PqcError::InvalidKeySize {
+                        expected: 32,
+                        actual: public_key.classical.len(),
+                    })?;
+            let peer_public = X25519PublicKey::from(peer_public_bytes);
+
+            // Perform X25519 key agreement
+            let shared_secret = ephemeral_secret.diffie_hellman(&peer_public);
+            let classical_ss = shared_secret.to_bytes().to_vec();
 
             // Combine the shared secrets
             let info = b"hybrid-kem-encapsulation";
@@ -112,7 +138,7 @@ impl HybridKem {
 
             Ok((
                 HybridKemCiphertext {
-                    classical: classical_ct,
+                    classical: ephemeral_public.to_bytes().to_vec().into_boxed_slice(),
                     ml_kem: ml_kem_ct,
                 },
                 combined_ss,
@@ -140,9 +166,32 @@ impl HybridKem {
                 .ml_kem
                 .decapsulate(&secret_key.ml_kem, &ciphertext.ml_kem)?;
 
-            // For classical, we'd normally do ECDH here
-            // For now, use a deterministic placeholder
-            let classical_ss = vec![42u8; 32]; // Fixed placeholder secret
+            // Parse our secret key
+            let secret_key_bytes: [u8; 32] =
+                secret_key
+                    .classical
+                    .as_ref()
+                    .try_into()
+                    .map_err(|_| PqcError::InvalidKeySize {
+                        expected: 32,
+                        actual: secret_key.classical.len(),
+                    })?;
+            let static_secret = StaticSecret::from(secret_key_bytes);
+
+            // Parse ephemeral public key from ciphertext
+            let ephemeral_public_bytes: [u8; 32] = ciphertext
+                .classical
+                .as_ref()
+                .try_into()
+                .map_err(|_| PqcError::InvalidKeySize {
+                    expected: 32,
+                    actual: ciphertext.classical.len(),
+                })?;
+            let ephemeral_public = X25519PublicKey::from(ephemeral_public_bytes);
+
+            // Perform X25519 key agreement
+            let shared_secret = static_secret.diffie_hellman(&ephemeral_public);
+            let classical_ss = shared_secret.to_bytes().to_vec();
 
             // Combine the shared secrets
             let info = b"hybrid-kem-encapsulation";
@@ -625,7 +674,16 @@ mod tests {
             HybridKem::security_level(),
             "Classical 128-bit + Quantum 192-bit (NIST Level 3)"
         );
-        assert!(HybridKem::is_available()); // Available with temporary implementation
+
+        #[cfg(feature = "pqc")]
+        {
+            assert!(HybridKem::is_available()); // Available with temporary implementation
+        }
+
+        #[cfg(not(feature = "pqc"))]
+        {
+            assert!(!HybridKem::is_available()); // Not available without pqc feature
+        }
     }
 
     #[test]
@@ -642,7 +700,16 @@ mod tests {
             HybridSignature::signature_size(),
             64 + ML_DSA_65_SIGNATURE_SIZE
         );
-        assert!(HybridSignature::is_available()); // Available with Ed25519 + ML-DSA
+
+        #[cfg(feature = "pqc")]
+        {
+            assert!(HybridSignature::is_available()); // Available with Ed25519 + ML-DSA
+        }
+
+        #[cfg(not(feature = "pqc"))]
+        {
+            assert!(!HybridSignature::is_available()); // Not available without pqc feature
+        }
     }
 
     // Future test placeholders for when implementation is complete

@@ -70,7 +70,10 @@ async fn run_server_phase(phase: MigrationPhase) -> Result<(), Box<dyn Error + S
     let pqc_config = match phase {
         MigrationPhase::PreMigration => {
             println!("   🔓 PQC: Disabled");
-            PqcConfig::builder().mode(PqcMode::ClassicalOnly).build().unwrap()
+            PqcConfig::builder()
+                .mode(PqcMode::ClassicalOnly)
+                .build()
+                .unwrap()
         }
         MigrationPhase::OptionalPqc => {
             println!("   🔐 PQC: Optional (Hybrid mode, prefer classical)");
@@ -79,6 +82,7 @@ async fn run_server_phase(phase: MigrationPhase) -> Result<(), Box<dyn Error + S
                 .hybrid_preference(HybridPreference::PreferClassical)
                 // Migration period can be tracked externally
                 .build()
+                .unwrap()
         }
         MigrationPhase::PreferredPqc => {
             println!("   🔐 PQC: Preferred (Hybrid mode, prefer PQC)");
@@ -87,6 +91,7 @@ async fn run_server_phase(phase: MigrationPhase) -> Result<(), Box<dyn Error + S
                 .hybrid_preference(HybridPreference::PreferPqc)
                 // Migration period can be tracked externally
                 .build()
+                .unwrap()
         }
         MigrationPhase::RequiredPqc => {
             println!("   🔒 PQC: Required (Pure PQC mode)");
@@ -97,8 +102,8 @@ async fn run_server_phase(phase: MigrationPhase) -> Result<(), Box<dyn Error + S
     // Generate certificate
     let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()])?;
     let cert_der = cert.cert.der().to_vec();
-    let priv_key = cert.key_pair.serialize_der();
-    
+    let priv_key = cert.signing_key.serialize_der();
+
     use rustls::pki_types::{CertificateDer, PrivateKeyDer};
     let cert_chain = vec![CertificateDer::from(cert_der)];
     let priv_key = PrivateKeyDer::try_from(priv_key).unwrap();
@@ -149,7 +154,15 @@ async fn test_client_compatibility(
 
     // Test with legacy client (no PQC)
     println!("   - Legacy client (no PQC)...",);
-    match connect_with_config(server_addr, PqcConfig::builder().mode(PqcMode::ClassicalOnly).build().unwrap()).await {
+    match connect_with_config(
+        server_addr,
+        PqcConfig::builder()
+            .mode(PqcMode::ClassicalOnly)
+            .build()
+            .unwrap(),
+    )
+    .await
+    {
         Ok(_) => println!("     ✅ Connected successfully"),
         Err(e) => println!("     ❌ Failed: {}", e),
     }

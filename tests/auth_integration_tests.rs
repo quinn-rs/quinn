@@ -294,10 +294,7 @@ async fn test_multiple_authenticated_peers() {
 
     // Connect clients 1 and 2 to client 0
     for (i, client) in clients.iter().enumerate().skip(1).take(2) {
-        match client
-            .connect_to_peer(peer_ids[0], bootstrap_addr)
-            .await
-        {
+        match client.connect_to_peer(peer_ids[0], bootstrap_addr).await {
             Ok(addr) => {
                 info!("Client {} connected to client 0 at {}", i, addr);
             }
