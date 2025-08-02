@@ -59,7 +59,10 @@ pub(crate) enum EndpointEventInner {
     /// switches the matching reset token that can be used to abort this connection. This
     /// event provides a new reset token for the active remote CID.
     ResetToken(PathId, SocketAddr, ResetToken),
-    /// Retire the reset token for a path, without replacing it with a new one
+    /// Retire the remotely issued reset token for a path, without replacing it with a new one
+    ///
+    /// This is like `ResetToken` above, but without replacing the `ResetToken` with a new
+    /// one. See `ConnectionIndex::connection_reset_tokens`.
     RetireResetToken(PathId),
     /// The connection needs connection identifiers
     NeedIdentifiers(PathId, Instant, u64),

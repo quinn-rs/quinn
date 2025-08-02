@@ -18,8 +18,10 @@ pub(crate) enum Timer {
     Close,
     /// When keys are discarded because they should not be needed anymore
     KeyDiscard,
-    /// When to give up on validating a new path to the peer
+    /// When to give up on validating a new path from unintentional migration
     PathValidation(PathId),
+    /// When to give up on validating an intentionally created new (multi)path
+    PathOpen(PathId),
     /// When to send a `PING` frame to keep the connection alive
     KeepAlive,
     /// When to send a `PING` frame to keep the path alive
