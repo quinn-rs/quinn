@@ -27,7 +27,7 @@ use crate::{
 };
 use proto::{
     ConnectionError, ConnectionHandle, ConnectionStats, Dir, EndpointEvent, PathError, PathEvent,
-    PathId, PathStatus, StreamEvent, StreamId, congestion::Controller,
+    PathId, PathStatus, Side, StreamEvent, StreamId, congestion::Controller,
 };
 
 /// In-progress connection attempt future
@@ -488,6 +488,9 @@ impl Connection {
     /// Application datagrams are a low-level primitive. They may be lost or delivered out of order,
     /// and `data` must both fit inside a single QUIC packet and be smaller than the maximum
     /// dictated by the peer.
+    ///
+    /// Previously queued datagrams which are still unsent may be discarded to make space for this
+    /// datagram, in order of oldest to newest.
     pub fn send_datagram(&self, data: Bytes) -> Result<(), SendDatagramError> {
         let conn = &mut *self.0.state.lock("send_datagram");
         if let Some(ref x) = conn.error {
@@ -555,6 +558,11 @@ impl Connection {
             .inner
             .datagrams()
             .send_buffer_space()
+    }
+
+    /// The side of the connection (client or server)
+    pub fn side(&self) -> Side {
+        self.0.state.lock("side").inner.side()
     }
 
     /// The peer's UDP address
@@ -1124,7 +1132,7 @@ impl State {
                         Some(t) => {
                             transmits += match t.segment_size {
                                 None => 1,
-                                Some(s) => (t.size + s - 1) / s, // round up
+                                Some(s) => t.size.div_ceil(s), // round up
                             };
                             t
                         }

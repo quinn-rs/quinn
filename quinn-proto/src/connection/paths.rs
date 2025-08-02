@@ -72,6 +72,9 @@ impl<T: Into<u32>> From<T> for PathId {
     }
 }
 
+#[cfg(feature = "qlog")]
+use qlog::events::quic::MetricsUpdated;
+
 /// Description of a particular network path
 pub(super) struct PathData {
     pub(super) remote: SocketAddr,
@@ -133,6 +136,10 @@ pub(super) struct PathData {
     ///
     /// [`TransportParameters`]: crate::transport_parameters::TransportParameters
     pub(super) keep_alive: Option<Duration>,
+
+    /// Snapshot of the qlog recovery metrics
+    #[cfg(feature = "qlog")]
+    recovery_metrics: RecoveryMetrics,
 }
 
 impl PathData {
@@ -188,6 +195,8 @@ impl PathData {
             pto_count: 0,
             idle_timeout: None,
             keep_alive: None,
+            #[cfg(feature = "qlog")]
+            recovery_metrics: RecoveryMetrics::default(),
         }
     }
 
@@ -219,6 +228,8 @@ impl PathData {
             pto_count: 0,
             idle_timeout: prev.idle_timeout,
             keep_alive: prev.keep_alive,
+            #[cfg(feature = "qlog")]
+            recovery_metrics: prev.recovery_metrics.clone(),
         }
     }
 
@@ -281,6 +292,29 @@ impl PathData {
         self.total_recvd = self.total_recvd.saturating_add(inc);
     }
 
+    #[cfg(feature = "qlog")]
+    pub(super) fn qlog_recovery_metrics(&mut self, pto_count: u32) -> Option<MetricsUpdated> {
+        let controller_metrics = self.congestion.metrics();
+
+        let metrics = RecoveryMetrics {
+            min_rtt: Some(self.rtt.min),
+            smoothed_rtt: Some(self.rtt.get()),
+            latest_rtt: Some(self.rtt.latest),
+            rtt_variance: Some(self.rtt.var),
+            pto_count: Some(pto_count),
+            bytes_in_flight: Some(self.in_flight.bytes),
+            packets_in_flight: Some(self.in_flight.ack_eliciting),
+
+            congestion_window: Some(controller_metrics.congestion_window),
+            ssthresh: controller_metrics.ssthresh,
+            pacing_rate: controller_metrics.pacing_rate,
+        };
+
+        let event = metrics.to_qlog_event(&self.recovery_metrics);
+        self.recovery_metrics = metrics;
+        event
+    }
+
     /// Return how long we need to wait before sending `bytes_to_send`
     ///
     /// See [`Pacer::delay`].
@@ -332,6 +366,78 @@ impl PathData {
 
     pub(crate) fn local_status(&self) -> PathStatus {
         self.status.local_status
+    }
+}
+
+/// Congestion metrics as described in [`recovery_metrics_updated`].
+///
+/// [`recovery_metrics_updated`]: https://datatracker.ietf.org/doc/html/draft-ietf-quic-qlog-quic-events.html#name-recovery_metrics_updated
+#[cfg(feature = "qlog")]
+#[derive(Default, Clone, PartialEq)]
+#[non_exhaustive]
+struct RecoveryMetrics {
+    pub min_rtt: Option<Duration>,
+    pub smoothed_rtt: Option<Duration>,
+    pub latest_rtt: Option<Duration>,
+    pub rtt_variance: Option<Duration>,
+    pub pto_count: Option<u32>,
+    pub bytes_in_flight: Option<u64>,
+    pub packets_in_flight: Option<u64>,
+    pub congestion_window: Option<u64>,
+    pub ssthresh: Option<u64>,
+    pub pacing_rate: Option<u64>,
+}
+
+#[cfg(feature = "qlog")]
+impl RecoveryMetrics {
+    /// Retain only values that have been updated since the last snapshot.
+    fn retain_updated(&self, previous: &Self) -> Self {
+        macro_rules! keep_if_changed {
+            ($name:ident) => {
+                if previous.$name == self.$name {
+                    None
+                } else {
+                    self.$name
+                }
+            };
+        }
+
+        Self {
+            min_rtt: keep_if_changed!(min_rtt),
+            smoothed_rtt: keep_if_changed!(smoothed_rtt),
+            latest_rtt: keep_if_changed!(latest_rtt),
+            rtt_variance: keep_if_changed!(rtt_variance),
+            pto_count: keep_if_changed!(pto_count),
+            bytes_in_flight: keep_if_changed!(bytes_in_flight),
+            packets_in_flight: keep_if_changed!(packets_in_flight),
+            congestion_window: keep_if_changed!(congestion_window),
+            ssthresh: keep_if_changed!(ssthresh),
+            pacing_rate: keep_if_changed!(pacing_rate),
+        }
+    }
+
+    /// Emit a `MetricsUpdated` event containing only updated values
+    fn to_qlog_event(&self, previous: &Self) -> Option<MetricsUpdated> {
+        let updated = self.retain_updated(previous);
+
+        if updated == Self::default() {
+            return None;
+        }
+
+        Some(MetricsUpdated {
+            min_rtt: updated.min_rtt.map(|rtt| rtt.as_secs_f32()),
+            smoothed_rtt: updated.smoothed_rtt.map(|rtt| rtt.as_secs_f32()),
+            latest_rtt: updated.latest_rtt.map(|rtt| rtt.as_secs_f32()),
+            rtt_variance: updated.rtt_variance.map(|rtt| rtt.as_secs_f32()),
+            pto_count: updated
+                .pto_count
+                .map(|count| count.try_into().unwrap_or(u16::MAX)),
+            bytes_in_flight: updated.bytes_in_flight,
+            packets_in_flight: updated.packets_in_flight,
+            congestion_window: updated.congestion_window,
+            ssthresh: updated.ssthresh,
+            pacing_rate: updated.pacing_rate,
+        })
     }
 }
 

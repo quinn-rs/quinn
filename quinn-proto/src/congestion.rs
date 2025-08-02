@@ -65,6 +65,15 @@ pub trait Controller: Send + Sync {
     /// Number of ack-eliciting bytes that may be in flight
     fn window(&self) -> u64;
 
+    /// Retrieve implementation-specific metrics used to populate `qlog` traces when they are enabled
+    fn metrics(&self) -> ControllerMetrics {
+        ControllerMetrics {
+            congestion_window: self.window(),
+            ssthresh: None,
+            pacing_rate: None,
+        }
+    }
+
     /// Duplicate the controller's state
     fn clone_box(&self) -> Box<dyn Controller>;
 
@@ -73,6 +82,18 @@ pub trait Controller: Send + Sync {
 
     /// Returns Self for use in down-casting to extract implementation details
     fn into_any(self: Box<Self>) -> Box<dyn Any>;
+}
+
+/// Common congestion controller metrics
+#[derive(Default)]
+#[non_exhaustive]
+pub struct ControllerMetrics {
+    /// Congestion window (bytes)
+    pub congestion_window: u64,
+    /// Slow start threshold (bytes)
+    pub ssthresh: Option<u64>,
+    /// Pacing rate (bits/s)
+    pub pacing_rate: Option<u64>,
 }
 
 /// Constructs controllers on demand

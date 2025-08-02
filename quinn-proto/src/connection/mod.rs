@@ -10,6 +10,7 @@ use std::{
 
 use bytes::{BufMut, Bytes, BytesMut};
 use frame::StreamMetaVec;
+
 use rand::{Rng, SeedableRng, rngs::StdRng};
 use rustc_hash::{FxHashMap, FxHashSet};
 use thiserror::Error;
@@ -56,7 +57,7 @@ mod mtud;
 mod pacing;
 
 mod packet_builder;
-use packet_builder::PacketBuilder;
+use packet_builder::{PacketBuilder, PadDatagram};
 
 mod packet_crypto;
 use packet_crypto::{PrevCrypto, ZeroRttCrypto};
@@ -64,6 +65,8 @@ use packet_crypto::{PrevCrypto, ZeroRttCrypto};
 mod paths;
 use paths::PathData;
 pub use paths::{ClosedPath, PathEvent, PathId, PathStatus, RttEstimator};
+
+pub(crate) mod qlog;
 
 mod send_buffer;
 
@@ -170,8 +173,6 @@ pub struct Connection {
     /// The value that the server included in the Source Connection ID field of a Retry packet, if
     /// one was received
     retry_src_cid: Option<ConnectionId>,
-    /// Total number of outgoing packets that have been deemed lost
-    lost_packets: u64,
     events: VecDeque<Event>,
     endpoint_events: VecDeque<EndpointEventInner>,
     /// Whether the spin bit is in use for this connection
@@ -382,7 +383,6 @@ impl Connection {
             orig_rem_cid: rem_cid,
             initial_dst_cid: init_cid,
             retry_src_cid: None,
-            lost_packets: 0,
             events: VecDeque::new(),
             endpoint_events: VecDeque::new(),
             spin_enabled: config.allow_spin && rng.random_ratio(7, 8),
@@ -862,7 +862,7 @@ impl Connection {
 
         // Whether the last packet in the datagram must be padded so the datagram takes up
         // to at least MIN_INITIAL_SIZE, or to the maximum segment size if this is smaller.
-        let mut pad_datagram = false;
+        let mut pad_datagram = PadDatagram::No;
 
         // Whether congestion control stopped the next packet from being sent. Further
         // packets could still be built, as e.g. tail-loss probes are not congestion
@@ -1074,7 +1074,7 @@ impl Connection {
                 }
                 trace!(count = transmit.num_datagrams(), "new datagram started");
                 coalesce = true;
-                pad_datagram = false;
+                pad_datagram = PadDatagram::No;
             }
 
             // If coalescing another packet into the existing datagram, there should
@@ -1111,9 +1111,13 @@ impl Connection {
             last_packet_number = Some(builder.exact_number);
             coalesce = coalesce && !builder.short_header;
 
-            // https://www.rfc-editor.org/rfc/rfc9000.html#section-14.1
-            pad_datagram |=
-                space_id == SpaceId::Initial && (self.side.is_client() || can_send.other);
+            if space_id == SpaceId::Initial && (self.side.is_client() || can_send.other) {
+                // https://www.rfc-editor.org/rfc/rfc9000.html#section-14.1
+                pad_datagram |= PadDatagram::ToMinMtu;
+            }
+            if space_id == SpaceId::Data && self.config.pad_to_mtu {
+                pad_datagram |= PadDatagram::ToSegmentSize;
+            }
 
             if can_send.close {
                 trace!("sending CONNECTION_CLOSE");
@@ -1209,7 +1213,6 @@ impl Connection {
                         .write(frame::FrameType::PATH_RESPONSE);
                     builder.frame_space_mut().write(token);
                     self.stats.frame_tx.path_response += 1;
-                    builder.pad_to(MIN_INITIAL_SIZE);
                     builder.finish_and_track(
                         now,
                         self,
@@ -1218,7 +1221,7 @@ impl Connection {
                             non_retransmits: true,
                             ..SentFrames::default()
                         },
-                        false,
+                        PadDatagram::ToMinMtu,
                     );
                     self.stats.udp_tx.on_sent(1, transmit.len());
                     return Some(Transmit {
@@ -1260,7 +1263,9 @@ impl Connection {
                     && self.datagrams.outgoing.is_empty()),
                 "SendableFrames was {can_send:?}, but only ACKs have been written"
             );
-            pad_datagram |= sent_frames.requires_padding;
+            if sent_frames.requires_padding {
+                pad_datagram |= PadDatagram::ToMinMtu;
+            }
 
             for (path_id, _pn) in sent_frames.largest_acked.iter() {
                 self.spaces[space_id]
@@ -1286,24 +1291,14 @@ impl Connection {
                 && self
                     .next_send_space(space_id, path_id, builder.buf, close)
                     .is_some()
-            // && (matches!(
-            //  self.space_ready_to_send(path_id, space_id, builder.buf, close, now),
-            //  SendReady::Frames(can_send) if !can_send.is_empty(),
-            // ) || matches!(
-            //     self.space_ready_to_send(path_id, space_id.next(), builder.buf, close, now),
-            //     SendReady::Frames(can_send) if !can_send.is_empty(),
-            // ) || matches!(
-            //     self.space_ready_to_send(path_id, space_id.next().next(), builder.buf, close, now),
-            //     SendReady::Frames(can_send) if !can_send.is_empty(),
-            // ))
             {
                 // We can append/coalesce the next packet into the current
                 // datagram. Finish the current packet without adding extra padding.
-                builder.finish_and_track(now, self, path_id, sent_frames, false);
+                builder.finish_and_track(now, self, path_id, sent_frames, PadDatagram::No);
             } else {
                 // We need a new datagram for the next packet.  Finish the current
                 // packet with padding.
-                if builder.buf.num_datagrams() > 1 {
+                if builder.buf.num_datagrams() > 1 && matches!(pad_datagram, PadDatagram::No) {
                     // If too many padding bytes would be required to continue the
                     // GSO batch after this packet, end the GSO batch here. Ensures
                     // that fixed-size frames with heterogeneous sizes
@@ -1311,13 +1306,6 @@ impl Connection {
                     // amounts of bandwidth. The exact threshold is a bit arbitrary
                     // and might benefit from further tuning, though there's no
                     // universally optimal value.
-                    //
-                    // Additionally, if this datagram is a loss probe and
-                    // `segment_size` is larger than `INITIAL_MTU`, then padding it
-                    // to `segment_size` to continue the GSO batch would risk
-                    // failure to recover from a reduction in path MTU. Loss probes
-                    // are the only packets for which we might grow `buf_capacity`
-                    // by less than `segment_size`.
                     const MAX_PADDING: usize = 16;
                     if builder.buf.datagram_remaining_mut()
                         > builder.predict_packet_end() + MAX_PADDING
@@ -1326,17 +1314,22 @@ impl Connection {
                             "GSO truncated by demand for {} padding bytes",
                             builder.buf.datagram_remaining_mut() - builder.predict_packet_end()
                         );
-                        builder.finish_and_track(now, self, path_id, sent_frames, pad_datagram);
+                        builder.finish_and_track(now, self, path_id, sent_frames, PadDatagram::No);
                         break;
                     }
 
                     // Pad the current datagram to GSO segment size so it can be
                     // included in the GSO batch.
-                    builder.pad_to(builder.buf.segment_size() as u16);
+                    builder.finish_and_track(
+                        now,
+                        self,
+                        path_id,
+                        sent_frames,
+                        PadDatagram::ToSegmentSize,
+                    );
+                } else {
+                    builder.finish_and_track(now, self, path_id, sent_frames, pad_datagram);
                 }
-
-                builder.finish_and_track(now, self, path_id, sent_frames, pad_datagram);
-
                 if transmit.num_datagrams() == 1 {
                     transmit.clip_datagram_size();
                 }
@@ -1352,6 +1345,13 @@ impl Connection {
                 last_packet_number,
             );
         }
+
+        self.config.qlog_sink.emit_recovery_metrics(
+            self.path_data(path_id).pto_count,
+            &mut self.paths.get_mut(&path_id).unwrap().data,
+            now,
+            self.orig_rem_cid,
+        );
 
         self.app_limited = transmit.is_empty() && !congestion_blocked;
 
@@ -1395,12 +1395,17 @@ impl Connection {
                 self.stats.frame_tx.immediate_ack += 1;
             }
 
-            builder.pad_to(probe_size);
             let sent_frames = SentFrames {
                 non_retransmits: true,
                 ..Default::default()
             };
-            builder.finish_and_track(now, self, path_id, sent_frames, false);
+            builder.finish_and_track(
+                now,
+                self,
+                path_id,
+                sent_frames,
+                PadDatagram::ToSize(probe_size),
+            );
 
             self.stats
                 .paths
@@ -1572,7 +1577,7 @@ impl Connection {
         // sending a datagram of this size
         builder.pad_to(MIN_INITIAL_SIZE);
 
-        builder.finish(self);
+        builder.finish(self, now);
         self.stats.udp_tx.on_sent(1, buf.len());
 
         Some(Transmit {
@@ -1667,6 +1672,13 @@ impl Connection {
                     self.handle_coalesced(now, remote, path_id, ecn, data);
                 }
 
+                self.config.qlog_sink.emit_recovery_metrics(
+                    self.path_data(path_id).pto_count,
+                    &mut self.paths.get_mut(&path_id).unwrap().data,
+                    now,
+                    self.orig_rem_cid,
+                );
+
                 if was_anti_amplification_blocked {
                     // A prior attempt to set the loss detection timer may have failed due to
                     // anti-amplification, so ensure it's set now. Prevents a handshake deadlock if
@@ -1729,6 +1741,12 @@ impl Connection {
                 }
                 Timer::LossDetection(path_id) => {
                     self.on_loss_detection_timeout(now, path_id);
+                    self.config.qlog_sink.emit_recovery_metrics(
+                        self.path_data(path_id).pto_count,
+                        &mut self.paths.get_mut(&path_id).unwrap().data,
+                        now,
+                        self.orig_rem_cid,
+                    );
                 }
                 Timer::KeyDiscard => {
                     self.zero_rtt_crypto = None;
@@ -1878,6 +1896,16 @@ impl Connection {
     ///
     /// This can be useful for testing key updates, as they otherwise only happen infrequently.
     pub fn force_key_update(&mut self) {
+        if !self.state.is_established() {
+            debug!("ignoring forced key update in illegal state");
+            return;
+        }
+        if self.prev_crypto.is_some() {
+            // We already just updated, or are currently updating, the keys. Concurrent key updates
+            // are illegal.
+            debug!("ignoring redundant forced key update");
+            return;
+        }
         self.update_keys(None, false);
     }
 
@@ -2461,7 +2489,6 @@ impl Connection {
             let old_bytes_in_flight = self.path_data_mut(path_id).in_flight.bytes;
             let largest_lost_sent =
                 self.spaces[pn_space].for_path(path_id).sent_packets[&largest_lost].time_sent;
-            self.lost_packets += lost_packets.len() as u64;
             let path_stats = self.stats.paths.entry(path_id).or_default();
             path_stats.lost_packets += lost_packets.len() as u64;
             path_stats.lost_bytes += size_of_lost_packets;
@@ -2475,6 +2502,14 @@ impl Connection {
                     .for_path(path_id)
                     .take(packet)
                     .unwrap(); // safe: lost_packets is populated just above
+                self.config.qlog_sink.emit_packet_lost(
+                    packet,
+                    &info,
+                    lost_send_time,
+                    pn_space,
+                    now,
+                    self.orig_rem_cid,
+                );
                 self.remove_in_flight(path_id, packet, &info);
                 for frame in info.stream_frames {
                     self.streams.retransmit(frame);
@@ -2732,6 +2767,14 @@ impl Connection {
             // Update outgoing spin bit, inverting iff we're the client
             self.spin = self.side.is_client() ^ spin;
         }
+
+        self.config.qlog_sink.emit_packet_received(
+            packet,
+            space_id,
+            !is_1rtt,
+            now,
+            self.orig_rem_cid,
+        );
     }
 
     /// Resets the idle timeout timers
@@ -2833,6 +2876,14 @@ impl Connection {
         if let Some(data) = remaining {
             self.handle_coalesced(now, remote, path_id, ecn, data);
         }
+
+        self.config.qlog_sink.emit_recovery_metrics(
+            self.path_data(path_id).pto_count,
+            &mut self.paths.get_mut(&path_id).unwrap().data,
+            now,
+            self.orig_rem_cid,
+        );
+
         Ok(())
     }
 
@@ -4222,7 +4273,13 @@ impl Connection {
         }
 
         // Subtract 1 to account for the CID we supplied while handshaking
-        let n = self.peer_params.issue_cids_limit() - 1;
+        let mut n = self.peer_params.issue_cids_limit() - 1;
+        if let ConnectionSide::Server { server_config } = &self.side {
+            if server_config.has_preferred_address() {
+                // We also sent a CID in the transport parameters
+                n -= 1;
+            }
+        }
         self.endpoint_events
             .push_back(EndpointEventInner::NeedIdentifiers(PathId(0), now, n));
     }
@@ -5056,12 +5113,6 @@ impl Connection {
             .map_or(true, |entry| entry.timer == Timer::Idle)
     }
 
-    /// Total number of outgoing packets that have been deemed lost
-    #[cfg(test)]
-    pub(crate) fn lost_packets(&self) -> u64 {
-        self.lost_packets
-    }
-
     /// Whether explicit congestion notification is in use on outgoing packets.
     #[cfg(test)]
     pub(crate) fn using_ecn(&self) -> bool {
@@ -5604,11 +5655,12 @@ const KEY_UPDATE_MARGIN: u64 = 10_000;
 #[derive(Default)]
 struct SentFrames {
     retransmits: ThinRetransmits,
-    /// The packet number of the largest acknowledged packet for each path.
+    /// The packet number of the largest acknowledged packet for each path
     largest_acked: FxHashMap<PathId, u64>,
     stream_frames: StreamMetaVec,
     /// Whether the packet contains non-retransmittable frames (like datagrams)
     non_retransmits: bool,
+    /// If the datagram containing these frames should be padded to the min MTU
     requires_padding: bool,
 }
 

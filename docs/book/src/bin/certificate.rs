@@ -18,7 +18,7 @@ fn main() {
     let (self_signed_certs, self_signed_key) = generate_self_signed_cert().unwrap();
     let (certs, key) = read_certs_from_file().unwrap();
     let server_config = quinn::ServerConfig::with_single_cert(certs, key);
-    let client_config = quinn::ClientConfig::with_platform_verifier();
+    let client_config = quinn::ClientConfig::try_with_platform_verifier().unwrap();
 }
 
 #[allow(dead_code)] // Included in `certificate.md`
@@ -91,7 +91,7 @@ fn generate_self_signed_cert()
 -> Result<(CertificateDer<'static>, PrivatePkcs8KeyDer<'static>), Box<dyn Error>> {
     let cert = rcgen::generate_simple_self_signed(vec!["localhost".to_string()])?;
     let cert_der = CertificateDer::from(cert.cert);
-    let key = PrivatePkcs8KeyDer::from(cert.key_pair.serialize_der());
+    let key = PrivatePkcs8KeyDer::from(cert.signing_key.serialize_der());
     Ok((cert_der, key))
 }
 

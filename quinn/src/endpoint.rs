@@ -77,8 +77,8 @@ impl Endpoint {
             }
         }
         socket.bind(&addr.into())?;
-        let runtime = default_runtime()
-            .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "no async runtime found"))?;
+        let runtime =
+            default_runtime().ok_or_else(|| io::Error::other("no async runtime found"))?;
         Self::new_with_abstract_socket(
             EndpointConfig::default(),
             None,
@@ -101,8 +101,8 @@ impl Endpoint {
     #[cfg(all(not(wasm_browser), any(feature = "aws-lc-rs", feature = "ring")))] // `EndpointConfig::default()` is only available with these
     pub fn server(config: ServerConfig, addr: SocketAddr) -> io::Result<Self> {
         let socket = std::net::UdpSocket::bind(addr)?;
-        let runtime = default_runtime()
-            .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "no async runtime found"))?;
+        let runtime =
+            default_runtime().ok_or_else(|| io::Error::other("no async runtime found"))?;
         Self::new_with_abstract_socket(
             EndpointConfig::default(),
             Some(config),

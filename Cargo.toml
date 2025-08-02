@@ -4,7 +4,7 @@ default-members = ["quinn", "quinn-proto", "quinn-udp", "bench", "perf"]
 resolver = "2"
 
 [workspace.package]
-rust-version = "1.71"
+rust-version = "1.74.1"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/quinn-rs/quinn"
@@ -23,30 +23,31 @@ bytes = "1"
 clap = { version = "4.5", features = ["derive"] }
 crc = "3"
 directories-next = "2"
-fastbloom = "0.9"
+fastbloom = "0.12"
 futures-io = "0.3.19"
 getrandom = { version = "0.3", default-features = false }
 hdrhistogram = { version = "7.2", default-features = false }
-hex-literal = "0.4"
+hex-literal = "1"
 lru-slab = "0.1.2"
 lazy_static = "1"
 log = "0.4.22"
 once_cell = "1.19"
 pin-project-lite = "0.2"
+qlog = "0.15.2"
 rand = "0.9"
-rcgen = "0.13"
+rcgen = "0.14"
 ring = "0.17"
 rustc-hash = "2"
 # TODO(@divma): swap with version once rustls's changes are merged and published in a release
-rustls = { git = "https://github.com/n0-computer/rustls", rev = "be02113e7837df60953d02c2bdd0f4634fef3a80", default-features = false, features = ["std"] }
+rustls = { git = "https://github.com/n0-computer/rustls", rev = "c636f89ae00aee19ddd5e6df4150cec5c031fa31", default-features = false, features = ["std"] }
 rustls-pemfile = "2"
-rustls-platform-verifier = "0.5"
+rustls-platform-verifier = "0.6"
 rustls-pki-types = "1.7"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1"
 slab = "0.4.9"
 smol = "2"
-socket2 = "0.5"
+socket2 = ">=0.5, <0.7"
 thiserror = "2.0.3"
 tinyvec = { version = "1.1", features = ["alloc"] }
 tokio = { version = "1.28.1", features = ["sync"] }
@@ -72,4 +73,4 @@ debug = true
 
 [patch.crates-io]
 # TODO(@divma): once rustls's changes are merged and published in a release, either swap or re-eval if it's needed at all by then
-rustls = { git = "https://github.com/n0-computer/rustls", rev = "be02113e7837df60953d02c2bdd0f4634fef3a80" }
+rustls = { git = "https://github.com/n0-computer/rustls", rev = "c636f89ae00aee19ddd5e6df4150cec5c031fa31" }

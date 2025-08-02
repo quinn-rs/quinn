@@ -262,7 +262,7 @@ fn multipath_cid_rotation() {
     let stats = pair.server_conn_mut(server_ch).stats();
 
     // Server sends CIDs for PathId(0) before multipath is negotiated.
-    assert_eq!(stats.frame_tx.new_connection_id, (CidQueue::LEN - 1) as _);
+    assert_eq!(stats.frame_tx.new_connection_id, (CidQueue::LEN - 1) as u64);
 
     // For the first batch the PathId(0) CIDs have already been sent.
     let initial_batch: u64 = (MAX_PATHS - 1) as u64 * CidQueue::LEN as u64;
