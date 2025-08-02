@@ -148,7 +148,7 @@ struct FilterConfig {
 /// Period filter within [`State`]
 enum Filter {
     Set(HashSet<u64, IdentityBuildHasher>),
-    Bloom(BloomFilter<512, FxBuildHasher>),
+    Bloom(BloomFilter<FxBuildHasher>),
 }
 
 impl Filter {

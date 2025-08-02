@@ -265,7 +265,7 @@ fn endpoint_with_config(transport_config: TransportConfig) -> Endpoint {
 
 /// Constructs endpoints suitable for connecting to themselves and each other
 struct EndpointFactory {
-    cert: rcgen::CertifiedKey,
+    cert: rcgen::CertifiedKey<rcgen::KeyPair>,
     endpoint_config: EndpointConfig,
 }
 
@@ -289,7 +289,7 @@ impl EndpointFactory {
         let span = info_span!("dummy");
         span.record("otel.name", name.into());
         let _guard = span.entered();
-        let key = PrivateKeyDer::Pkcs8(self.cert.key_pair.serialize_der().into());
+        let key = PrivateKeyDer::Pkcs8(self.cert.signing_key.serialize_der().into());
         let transport_config = Arc::new(transport_config);
         let mut server_config =
             crate::ServerConfig::with_single_cert(vec![self.cert.cert.der().clone()], key).unwrap();
@@ -496,7 +496,7 @@ fn run_echo(args: EchoArgs) {
         // We don't use the `endpoint` helper here because we want two different endpoints with
         // different addresses.
         let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
-        let key = PrivatePkcs8KeyDer::from(cert.key_pair.serialize_der());
+        let key = PrivatePkcs8KeyDer::from(cert.signing_key.serialize_der());
         let cert = CertificateDer::from(cert.cert);
         let mut server_config =
             crate::ServerConfig::with_single_cert(vec![cert.clone()], key.into()).unwrap();
@@ -683,7 +683,7 @@ async fn rebind_recv() {
     let _guard = subscribe();
 
     let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
-    let key = PrivatePkcs8KeyDer::from(cert.key_pair.serialize_der());
+    let key = PrivatePkcs8KeyDer::from(cert.signing_key.serialize_der());
     let cert = CertificateDer::from(cert.cert);
 
     let mut roots = rustls::RootCertStore::empty();

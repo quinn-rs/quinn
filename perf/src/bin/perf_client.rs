@@ -1,3 +1,5 @@
+#[cfg(feature = "json-output")]
+use std::{fs::File, path::PathBuf};
 use std::{
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
     sync::Arc,
@@ -12,10 +14,11 @@ use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
 use tokio::sync::Semaphore;
 use tracing::{debug, error, info};
 
-use perf::stats::{OpenStreamStats, Stats};
-use perf::{bind_socket, noprotection::NoProtectionClientConfig};
-#[cfg(feature = "json-output")]
-use std::path::PathBuf;
+use perf::{
+    CongestionAlgorithm, bind_socket,
+    noprotection::NoProtectionClientConfig,
+    stats::{OpenStreamStats, Stats},
+};
 
 /// Connects to a QUIC perf server and maintains a specified pattern of requests until interrupted
 #[derive(Parser)]
@@ -70,6 +73,19 @@ struct Opt {
     /// Disable packet encryption/decryption (for debugging purpose)
     #[clap(long = "no-protection")]
     no_protection: bool,
+    /// The initial round-trip-time (in msecs)
+    #[clap(long)]
+    initial_rtt: Option<u64>,
+    /// Ack Frequency mode
+    #[clap(long = "ack-frequency")]
+    ack_frequency: bool,
+    /// Congestion algorithm to use
+    #[clap(long = "congestion")]
+    cong_alg: Option<CongestionAlgorithm>,
+    /// qlog output file
+    #[cfg(feature = "qlog")]
+    #[clap(long = "qlog")]
+    qlog_file: Option<PathBuf>,
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -136,6 +152,26 @@ async fn run(opt: Opt) -> Result<()> {
 
     let mut transport = quinn::TransportConfig::default();
     transport.initial_mtu(opt.initial_mtu);
+
+    if let Some(initial_rtt) = opt.initial_rtt {
+        transport.initial_rtt(Duration::from_millis(initial_rtt));
+    }
+
+    if opt.ack_frequency {
+        transport.ack_frequency_config(Some(quinn::AckFrequencyConfig::default()));
+    }
+
+    if let Some(cong_alg) = opt.cong_alg {
+        transport.congestion_controller_factory(cong_alg.build());
+    }
+
+    #[cfg(feature = "qlog")]
+    if let Some(qlog_file) = &opt.qlog_file {
+        let mut qlog = quinn::QlogConfig::default();
+        qlog.writer(Box::new(File::create(qlog_file)?))
+            .title(Some("perf-client".into()));
+        transport.qlog_stream(qlog.into_stream());
+    }
 
     let crypto = Arc::new(QuicClientConfig::try_from(crypto)?);
     let mut config = quinn::ClientConfig::new(match opt.no_protection {
@@ -220,6 +256,10 @@ async fn drain_stream(
     download: u64,
     stream_stats: OpenStreamStats,
 ) -> Result<()> {
+    if download == 0 {
+        return Ok(());
+    }
+
     #[rustfmt::skip]
     let mut bufs = [
         Bytes::new(), Bytes::new(), Bytes::new(), Bytes::new(),
@@ -261,6 +301,10 @@ async fn drive_uni(
     upload: u64,
     download: u64,
 ) -> Result<()> {
+    if concurrency == 0 {
+        return Ok(());
+    }
+
     let sem = Arc::new(Semaphore::new(concurrency as usize));
 
     loop {
@@ -333,6 +377,10 @@ async fn drive_bi(
     upload: u64,
     download: u64,
 ) -> Result<()> {
+    if concurrency == 0 {
+        return Ok(());
+    }
+
     let sem = Arc::new(Semaphore::new(concurrency as usize));
 
     loop {

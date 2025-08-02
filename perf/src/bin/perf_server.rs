@@ -1,3 +1,5 @@
+#[cfg(feature = "qlog")]
+use std::fs::File;
 use std::{fs, net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
 
 use anyhow::{Context, Result};
@@ -7,7 +9,9 @@ use quinn::{TokioRuntime, crypto::rustls::QuicServerConfig};
 use rustls::pki_types::{CertificateDer, PrivatePkcs8KeyDer};
 use tracing::{debug, error, info};
 
-use perf::{PERF_CIPHER_SUITES, bind_socket, noprotection::NoProtectionServerConfig};
+use perf::{
+    CongestionAlgorithm, PERF_CIPHER_SUITES, bind_socket, noprotection::NoProtectionServerConfig,
+};
 
 #[derive(Parser)]
 #[clap(name = "server")]
@@ -39,6 +43,19 @@ struct Opt {
     /// Disable packet encryption/decryption (for debugging purpose)
     #[clap(long = "no-protection")]
     no_protection: bool,
+    /// The initial round-trip-time (in msecs)
+    #[clap(long)]
+    initial_rtt: Option<u64>,
+    /// Ack Frequency mode
+    #[clap(long = "ack-frequency")]
+    ack_frequency: bool,
+    /// Congestion algorithm to use
+    #[clap(long = "congestion")]
+    cong_alg: Option<CongestionAlgorithm>,
+    /// qlog output file
+    #[cfg(feature = "qlog")]
+    #[clap(long = "qlog")]
+    qlog_file: Option<PathBuf>,
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -67,7 +84,7 @@ async fn run(opt: Opt) -> Result<()> {
         _ => {
             let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
             (
-                PrivatePkcs8KeyDer::from(cert.key_pair.serialize_der()),
+                PrivatePkcs8KeyDer::from(cert.signing_key.serialize_der()),
                 vec![CertificateDer::from(cert.cert)],
             )
         }
@@ -93,6 +110,26 @@ async fn run(opt: Opt) -> Result<()> {
 
     let mut transport = quinn::TransportConfig::default();
     transport.initial_mtu(opt.initial_mtu);
+
+    if let Some(initial_rtt) = opt.initial_rtt {
+        transport.initial_rtt(Duration::from_millis(initial_rtt));
+    }
+
+    if opt.ack_frequency {
+        transport.ack_frequency_config(Some(quinn::AckFrequencyConfig::default()));
+    }
+
+    if let Some(cong_alg) = opt.cong_alg {
+        transport.congestion_controller_factory(cong_alg.build());
+    }
+
+    #[cfg(feature = "qlog")]
+    if let Some(qlog_file) = &opt.qlog_file {
+        let mut qlog = quinn::QlogConfig::default();
+        qlog.writer(Box::new(File::create(qlog_file)?))
+            .title(Some("perf-server".into()));
+        transport.qlog_stream(qlog.into_stream());
+    }
 
     let crypto = Arc::new(QuicServerConfig::try_from(crypto)?);
     let mut config = quinn::ServerConfig::with_crypto(match opt.no_protection {
@@ -129,6 +166,7 @@ async fn run(opt: Opt) -> Result<()> {
 
 async fn handle(handshake: quinn::Incoming, opt: Arc<Opt>) -> Result<()> {
     let connection = handshake.await.context("handshake failed")?;
+
     debug!("{} connected", connection.remote_address());
     tokio::try_join!(
         drive_uni(connection.clone()),

@@ -1,6 +1,6 @@
 use bytes::{BufMut, Bytes};
 use rand::Rng;
-use tracing::{trace, trace_span};
+use tracing::{debug, trace, trace_span};
 
 use super::{Connection, PathId, SentFrames, TransmitBuf, spaces::SentPacket};
 use crate::{
@@ -55,6 +55,7 @@ impl<'a, 'b> PacketBuilder<'a, 'b> {
         let sent_with_keys = conn.spaces[space_id].sent_with_keys();
         if space_id == SpaceId::Data {
             if sent_with_keys >= conn.key_phase_size {
+                debug!("routine key update due to phase exhaustion");
                 conn.force_key_update();
             }
         } else {
@@ -202,15 +203,18 @@ impl<'a, 'b> PacketBuilder<'a, 'b> {
         conn: &mut Connection,
         path_id: PathId,
         sent: SentFrames,
-        pad_datagram: bool,
+        pad_datagram: PadDatagram,
     ) {
-        if pad_datagram {
-            self.pad_to(MIN_INITIAL_SIZE);
+        match pad_datagram {
+            PadDatagram::No => (),
+            PadDatagram::ToSize(size) => self.pad_to(size),
+            PadDatagram::ToSegmentSize => self.pad_to(self.buf.segment_size() as u16),
+            PadDatagram::ToMinMtu => self.pad_to(MIN_INITIAL_SIZE),
         }
         let ack_eliciting = self.ack_eliciting;
         let exact_number = self.exact_number;
         let space_id = self.space;
-        let (size, padded) = self.finish(conn);
+        let (size, padded) = self.finish(conn, now);
 
         let size = match padded || ack_eliciting {
             true => size as u16,
@@ -249,7 +253,7 @@ impl<'a, 'b> PacketBuilder<'a, 'b> {
     }
 
     /// Encrypt packet, returning the length of the packet and whether padding was added
-    pub(super) fn finish(self, conn: &mut Connection) -> (usize, bool) {
+    pub(super) fn finish(self, conn: &mut Connection, now: Instant) -> (usize, bool) {
         debug_assert!(
             self.buf.len() <= self.buf.datagram_max_offset() - self.tag_len,
             "packet exceeds maximum size"
@@ -288,6 +292,14 @@ impl<'a, 'b> PacketBuilder<'a, 'b> {
 
         let packet_len = self.buf.len() - encode_start;
         trace!(size = %packet_len, short_header = %self.short_header, "wrote packet");
+        conn.config.qlog_sink.emit_packet_sent(
+            self.exact_number,
+            packet_len,
+            self.space,
+            self.space == SpaceId::Data && conn.spaces[SpaceId::Data].crypto.is_none(),
+            now,
+            conn.orig_rem_cid,
+        );
         (packet_len, pad)
     }
 
@@ -306,5 +318,45 @@ impl<'a, 'b> PacketBuilder<'a, 'b> {
     pub(super) fn frame_space_remaining(&self) -> usize {
         let max_offset = self.buf.datagram_max_offset() - self.tag_len;
         max_offset.saturating_sub(self.buf.len())
+    }
+}
+
+#[derive(Debug, Copy, Clone)]
+pub(super) enum PadDatagram {
+    /// Do not pad the datagram
+    No,
+    /// To a specific size
+    ToSize(u16),
+    /// Pad to the current MTU/segment size
+    ///
+    /// For the first datagram in a transmit the MTU is the same as the
+    /// [`TransmitBuf::segment_size`].
+    ToSegmentSize,
+    /// Pad to [`MIN_INITIAL_SIZE`], the minimal QUIC MTU of 1200 bytes
+    ToMinMtu,
+}
+
+impl std::ops::BitOrAssign for PadDatagram {
+    fn bitor_assign(&mut self, rhs: Self) {
+        *self = *self | rhs;
+    }
+}
+
+impl std::ops::BitOr for PadDatagram {
+    type Output = Self;
+
+    fn bitor(self, rhs: Self) -> Self::Output {
+        match (self, rhs) {
+            (Self::No, rhs) => rhs,
+            (Self::ToSize(size), Self::No) => Self::ToSize(size),
+            (Self::ToSize(a), Self::ToSize(b)) => Self::ToSize(a.max(b)),
+            (Self::ToSize(_), Self::ToSegmentSize) => Self::ToSegmentSize,
+            (Self::ToSize(_), Self::ToMinMtu) => Self::ToMinMtu,
+            (Self::ToSegmentSize, Self::No) => Self::ToSegmentSize,
+            (Self::ToSegmentSize, Self::ToSize(_)) => Self::ToSegmentSize,
+            (Self::ToSegmentSize, Self::ToSegmentSize) => Self::ToSegmentSize,
+            (Self::ToSegmentSize, Self::ToMinMtu) => Self::ToMinMtu,
+            (Self::ToMinMtu, _) => Self::ToMinMtu,
+        }
     }
 }

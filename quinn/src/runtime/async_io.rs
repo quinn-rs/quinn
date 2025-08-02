@@ -1,15 +1,19 @@
 use std::{
     future::Future,
-    io,
     pin::Pin,
-    sync::Arc,
-    task::{Context, Poll, ready},
+    task::{Context, Poll},
     time::Instant,
 };
+#[cfg(any(feature = "runtime-smol", feature = "runtime-async-std"))]
+use std::{io, sync::Arc, task::ready};
 
-use async_io::{Async, Timer};
+#[cfg(any(feature = "runtime-smol", feature = "runtime-async-std"))]
+use async_io::Async;
+use async_io::Timer;
 
-use super::{AsyncTimer, AsyncUdpSocket, Runtime, UdpSenderHelper};
+use super::AsyncTimer;
+#[cfg(any(feature = "runtime-smol", feature = "runtime-async-std"))]
+use super::{AsyncUdpSocket, Runtime, UdpSenderHelper};
 
 #[cfg(feature = "runtime-smol")]
 // Due to MSRV, we must specify `self::` where there's crate/module ambiguity
@@ -81,14 +85,15 @@ impl AsyncTimer for Timer {
     }
 }
 
+#[cfg(any(feature = "runtime-smol", feature = "runtime-async-std"))]
 #[derive(Debug, Clone)]
 struct UdpSocket {
     io: Arc<Async<std::net::UdpSocket>>,
     inner: Arc<udp::UdpSocketState>,
 }
 
+#[cfg(any(feature = "runtime-smol", feature = "runtime-async-std"))]
 impl UdpSocket {
-    #[cfg(any(feature = "runtime-smol", feature = "runtime-async-std"))]
     fn new(sock: std::net::UdpSocket) -> io::Result<Self> {
         Ok(Self {
             inner: Arc::new(udp::UdpSocketState::new((&sock).into())?),
@@ -97,6 +102,7 @@ impl UdpSocket {
     }
 }
 
+#[cfg(any(feature = "runtime-smol", feature = "runtime-async-std"))]
 impl super::UdpSenderHelperSocket for UdpSocket {
     fn max_transmit_segments(&self) -> usize {
         self.inner.max_gso_segments()

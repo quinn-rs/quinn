@@ -452,7 +452,7 @@ fn reject_missing_client_cert() {
     // because it's convenient.
     store.add(CERTIFIED_KEY.cert.der().clone()).unwrap();
 
-    let key = PrivatePkcs8KeyDer::from(CERTIFIED_KEY.key_pair.serialize_der());
+    let key = PrivatePkcs8KeyDer::from(CERTIFIED_KEY.signing_key.serialize_der());
     let cert = CERTIFIED_KEY.cert.der().clone();
 
     let provider = Arc::new(default_provider());
@@ -597,7 +597,15 @@ fn zero_rtt_happypath() {
         Ok(Some(chunk)) if chunk.offset == 0 && chunk.bytes == MSG
     );
     let _ = chunks.finalize();
-    assert_eq!(pair.client_conn_mut(client_ch).lost_packets(), 0);
+    assert_eq!(
+        pair.client_conn_mut(client_ch)
+            .stats()
+            .paths
+            .get(&PathId::ZERO)
+            .unwrap()
+            .lost_packets,
+        0
+    );
 }
 
 #[test]
@@ -672,7 +680,15 @@ fn zero_rtt_rejection() {
     let mut chunks = recv.read(false).unwrap();
     assert_eq!(chunks.next(usize::MAX), Err(ReadError::Blocked));
     let _ = chunks.finalize();
-    assert_eq!(pair.client_conn_mut(client_ch).lost_packets(), 0);
+    assert_eq!(
+        pair.client_conn_mut(client_ch)
+            .stats()
+            .paths
+            .get(&PathId::ZERO)
+            .unwrap()
+            .lost_packets,
+        0
+    );
 }
 
 fn test_zero_rtt_incoming_limit<F: FnOnce(&mut ServerConfig)>(configure_server: F) {
@@ -763,7 +779,12 @@ fn test_zero_rtt_incoming_limit<F: FnOnce(&mut ServerConfig)>(configure_server: 
     assert_eq!(offset, CLIENT_WRITES);
     let _ = chunks.finalize();
     assert_eq!(
-        pair.client_conn_mut(client_ch).lost_packets(),
+        pair.client_conn_mut(client_ch)
+            .stats()
+            .paths
+            .get(&PathId::ZERO)
+            .unwrap()
+            .lost_packets,
         EXPECTED_DROPPED
     );
 }
@@ -1012,8 +1033,24 @@ fn key_update_simple() {
     );
     let _ = chunks.finalize();
 
-    assert_eq!(pair.client_conn_mut(client_ch).lost_packets(), 0);
-    assert_eq!(pair.server_conn_mut(server_ch).lost_packets(), 0);
+    assert_eq!(
+        pair.client_conn_mut(client_ch)
+            .stats()
+            .paths
+            .get(&PathId::ZERO)
+            .unwrap()
+            .lost_packets,
+        0
+    );
+    assert_eq!(
+        pair.server_conn_mut(server_ch)
+            .stats()
+            .paths
+            .get(&PathId::ZERO)
+            .unwrap()
+            .lost_packets,
+        0
+    );
 }
 
 #[test]
@@ -1045,7 +1082,15 @@ fn key_update_reordered() {
     pair.client.finish_delay();
     pair.drive();
 
-    assert_eq!(pair.client_conn_mut(client_ch).lost_packets(), 0);
+    assert_eq!(
+        pair.client_conn_mut(client_ch)
+            .stats()
+            .paths
+            .get(&PathId::ZERO)
+            .unwrap()
+            .lost_packets,
+        0
+    );
     assert_matches!(
         pair.server_conn_mut(server_ch).poll(),
         Some(Event::Stream(StreamEvent::Opened { dir: Dir::Bi }))
@@ -1060,8 +1105,24 @@ fn key_update_reordered() {
     assert_eq!(buf2.bytes, MSG2);
     let _ = chunks.finalize();
 
-    assert_eq!(pair.client_conn_mut(client_ch).lost_packets(), 0);
-    assert_eq!(pair.server_conn_mut(server_ch).lost_packets(), 0);
+    assert_eq!(
+        pair.client_conn_mut(client_ch)
+            .stats()
+            .paths
+            .get(&PathId::ZERO)
+            .unwrap()
+            .lost_packets,
+        0
+    );
+    assert_eq!(
+        pair.server_conn_mut(server_ch)
+            .stats()
+            .paths
+            .get(&PathId::ZERO)
+            .unwrap()
+            .lost_packets,
+        0
+    );
 }
 
 #[test]
@@ -1701,7 +1762,15 @@ fn handshake_1rtt_handling() {
 
     pair.drive();
 
-    assert!(pair.client_conn_mut(client_ch).lost_packets() != 0);
+    assert!(
+        pair.client_conn_mut(client_ch)
+            .stats()
+            .paths
+            .get(&PathId::ZERO)
+            .unwrap()
+            .lost_packets
+            != 0
+    );
     let mut recv = pair.server_recv(server_ch, s);
     let mut chunks = recv.read(false).unwrap();
     assert_matches!(
@@ -2224,7 +2293,7 @@ fn big_cert_and_key() -> (CertificateDer<'static>, PrivateKeyDer<'static>) {
 
     (
         cert.cert.into(),
-        PrivateKeyDer::Pkcs8(cert.key_pair.serialize_der().into()),
+        PrivateKeyDer::Pkcs8(cert.signing_key.serialize_der().into()),
     )
 }
 
@@ -3229,6 +3298,72 @@ fn gso_truncation() {
     }
 }
 
+/// Verify that UDP datagrams are padded to MTU if specified in the transport config.
+#[test]
+fn pad_to_mtu() {
+    let _guard = subscribe();
+    const MTU: u16 = 1333;
+    let client_config = {
+        let mut c_config = client_config();
+        let t_config = TransportConfig {
+            initial_mtu: MTU,
+            mtu_discovery_config: None,
+            pad_to_mtu: true,
+            ..TransportConfig::default()
+        };
+        c_config.transport_config(t_config.into());
+        c_config
+    };
+    let mut pair = Pair::default();
+    let (client_ch, server_ch) = pair.connect_with(client_config);
+
+    let initial_ios = pair.client_conn_mut(client_ch).stats().udp_tx.ios;
+    pair.server.capture_inbound_packets = true;
+
+    info!("sending");
+    // Send two datagrams significantly smaller than MTU, but large enough to require two UDP datagrams.
+    const LEN_1: usize = 800;
+    const LEN_2: usize = 600;
+    pair.client_datagrams(client_ch)
+        .send(vec![0; LEN_1].into(), false)
+        .unwrap();
+    pair.client_datagrams(client_ch)
+        .send(vec![0; LEN_2].into(), false)
+        .unwrap();
+    pair.client.drive(pair.time, pair.server.addr);
+
+    // Check padding
+    assert_eq!(pair.client.outbound.len(), 2);
+    assert_eq!(pair.client.outbound[0].0.size, usize::from(MTU));
+    assert_eq!(pair.client.outbound[0].1.len(), usize::from(MTU));
+    assert_eq!(pair.client.outbound[1].0.size, usize::from(MTU));
+    assert_eq!(pair.client.outbound[1].1.len(), usize::from(MTU));
+    pair.drive_client();
+    assert_eq!(pair.server.inbound.len(), 2);
+    assert_eq!(pair.server.inbound[0].2.len(), usize::from(MTU));
+    assert_eq!(pair.server.inbound[1].2.len(), usize::from(MTU));
+    pair.drive();
+
+    // Check that both datagrams ended up in the same GSO batch
+    let final_ios = pair.client_conn_mut(client_ch).stats().udp_tx.ios;
+    assert_eq!(final_ios - initial_ios, 1);
+
+    assert_eq!(
+        pair.server_datagrams(server_ch)
+            .recv()
+            .expect("datagram lost")
+            .len(),
+        LEN_1
+    );
+    assert_eq!(
+        pair.server_datagrams(server_ch)
+            .recv()
+            .expect("datagram lost")
+            .len(),
+        LEN_2
+    );
+}
+
 /// Verify that a large application datagram is sent successfully when an ACK frame too large to fit
 /// alongside it is also queued, in exactly 2 UDP datagrams.
 #[test]
@@ -3409,7 +3544,15 @@ fn address_discovery_zero_rtt_accepted() {
         Ok(Some(chunk)) if chunk.offset == 0 && chunk.bytes == MSG
     );
     let _ = chunks.finalize();
-    assert_eq!(pair.client_conn_mut(client_ch).lost_packets(), 0);
+    assert_eq!(
+        pair.client_conn_mut(client_ch)
+            .stats()
+            .paths
+            .get(&PathId::ZERO)
+            .unwrap()
+            .lost_packets,
+        0
+    );
 }
 
 /// Test that a different address discovery configuration on 0rtt used by the server is rejected by
@@ -3581,4 +3724,16 @@ fn reject_short_idcid() {
     let Some(DatagramEvent::Response(Transmit { .. })) = event else {
         panic!("expected an initial close");
     };
+}
+
+/// Ensure that a connection can be made when a preferred address is advertised by the server,
+/// regardless of whether the address is actually used.
+#[test]
+fn preferred_address() {
+    let _guard = subscribe();
+    let mut server_config = server_config();
+    server_config.preferred_address_v6(Some("[::1]:65535".parse().unwrap()));
+
+    let mut pair = Pair::new(Arc::new(EndpointConfig::default()), server_config);
+    pair.connect();
 }

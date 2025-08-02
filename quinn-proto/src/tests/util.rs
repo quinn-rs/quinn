@@ -624,7 +624,7 @@ fn server_crypto_inner(
     let (cert, key) = identity.unwrap_or_else(|| {
         (
             CERTIFIED_KEY.cert.der().clone(),
-            PrivateKeyDer::Pkcs8(CERTIFIED_KEY.key_pair.serialize_der().into()),
+            PrivateKeyDer::Pkcs8(CERTIFIED_KEY.signing_key.serialize_der().into()),
         )
     });
 
@@ -742,7 +742,7 @@ fn set_congestion_experienced(
 lazy_static! {
     pub static ref SERVER_PORTS: Mutex<RangeFrom<u16>> = Mutex::new(4433..);
     pub static ref CLIENT_PORTS: Mutex<RangeFrom<u16>> = Mutex::new(44433..);
-    pub(crate) static ref CERTIFIED_KEY: rcgen::CertifiedKey =
+    pub(crate) static ref CERTIFIED_KEY: rcgen::CertifiedKey<rcgen::KeyPair> =
         rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
 }
 

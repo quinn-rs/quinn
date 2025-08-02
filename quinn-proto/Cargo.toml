@@ -33,6 +33,8 @@ platform-verifier = ["dep:rustls-platform-verifier"]
 log = ["tracing/log"]
 # Enable rustls logging
 rustls-log = ["rustls?/logging"]
+# Enable qlog support
+qlog = ["dep:qlog"]
 
 [dependencies]
 arbitrary = { workspace = true, optional = true }
@@ -40,6 +42,7 @@ aws-lc-rs = { workspace = true, optional = true }
 bytes = { workspace = true }
 fastbloom = { workspace = true, optional = true }
 lru-slab = { workspace = true }
+qlog = { workspace = true, optional = true }
 rustc-hash = { workspace = true }
 rand = { workspace = true }
 ring = { workspace = true, optional = true }
