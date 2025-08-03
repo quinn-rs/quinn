@@ -564,26 +564,4 @@ mod tests {
     }
 }
 
-// Benchmark tests (to be run with `cargo bench`)
-#[cfg(all(test, not(debug_assertions)))]
-mod benches {
-    use super::*;
-    use test::Bencher;
-
-    #[bench]
-    fn bench_pool_allocation(b: &mut Bencher) {
-        let pool = PqcMemoryPool::new(PoolConfig::default());
-
-        b.iter(|| {
-            let _guard = pool.acquire_ml_kem_public_key().unwrap();
-            // Guard automatically returned on drop
-        });
-    }
-
-    #[bench]
-    fn bench_direct_allocation(b: &mut Bencher) {
-        b.iter(|| {
-            let _buffer = Box::new([0u8; ML_KEM_768_PUBLIC_KEY_SIZE]);
-        });
-    }
-}
+// Benchmark tests should be implemented with criterion crate instead of unstable bench feature
