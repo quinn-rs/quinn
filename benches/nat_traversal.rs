@@ -518,6 +518,8 @@ fn bench_connection_routing(c: &mut Criterion) {
                         let success = rng.gen_bool(0.85); // 85% lookup success rate
 
                         if success {
+                            // Use the random address to prevent unused variable warning
+                            black_box(random_addr);
                             lookup_count += 1;
                         }
                     }
