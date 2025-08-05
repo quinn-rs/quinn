@@ -105,7 +105,7 @@ pub struct HashedConnectionIdGenerator {
 impl HashedConnectionIdGenerator {
     /// Create a generator with a random key
     pub fn new() -> Self {
-        Self::from_key(rand::thread_rng().gen())
+        Self::from_key(rand::thread_rng().r#gen())
     }
 
     /// Create a generator with a specific key

@@ -72,12 +72,12 @@ fn generate_socket_addresses(count: usize) -> Vec<SocketAddr> {
             let segments = [
                 0x2001,
                 0x0db8, // Global unicast prefix
-                rng.gen(),
-                rng.gen(),
-                rng.gen(),
-                rng.gen(),
-                rng.gen(),
-                rng.gen(),
+                rng.r#gen(),
+                rng.r#gen(),
+                rng.r#gen(),
+                rng.r#gen(),
+                rng.r#gen(),
+                rng.r#gen(),
             ];
             IpAddr::V6(Ipv6Addr::from(segments))
         };

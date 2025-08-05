@@ -1036,7 +1036,7 @@ impl NatTraversalEndpoint {
 
                 // Poll sessions and handle updates
                 let sessions_to_update = {
-                    if let Ok(sessions_guard) = sessions.read() {
+                    match sessions.read() { Ok(sessions_guard) => {
                         sessions_guard
                             .iter()
                             .filter_map(|(peer_id, session)| {
@@ -1099,9 +1099,9 @@ impl NatTraversalEndpoint {
                                 }
                             })
                             .collect::<Vec<_>>()
-                    } else {
+                    } _ => {
                         vec![]
-                    }
+                    }}
                 };
 
                 // Apply updates

@@ -210,7 +210,7 @@ impl RelayQueue {
 
             // Check if it's ready for retry
             if item.attempts == 0
-                || item.last_attempt.map_or(true, |last| {
+                || item.last_attempt.is_none_or(|last| {
                     now.saturating_duration_since(last) >= self.retry_interval
                 })
             {
@@ -686,7 +686,7 @@ impl Endpoint {
                 trace!("sending version negotiation");
                 // Negotiate versions
                 Header::VersionNegotiate {
-                    random: self.rng.gen::<u8>() | 0x40,
+                    random: self.rng.r#gen::<u8>() | 0x40,
                     src_cid: dst_cid,
                     dst_cid: src_cid,
                 }

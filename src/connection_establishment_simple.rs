@@ -171,11 +171,11 @@ impl SimpleConnectionEstablishmentManager {
         let mut events = Vec::new();
 
         // Process discovery events
-        let discovery_events = if let Ok(mut discovery) = self.discovery_manager.lock() {
+        let discovery_events = match self.discovery_manager.lock() { Ok(mut discovery) => {
             discovery.poll(now)
-        } else {
+        } _ => {
             Vec::new()
-        };
+        }};
 
         for discovery_event in discovery_events {
             self.handle_discovery_event(discovery_event, &mut events);
@@ -210,13 +210,13 @@ impl SimpleConnectionEstablishmentManager {
         if let Some(attempt) = self.active_attempts.get_mut(&peer_id) {
             attempt.state = SimpleAttemptState::CandidateDiscovery;
 
-            if let Ok(mut discovery) = self.discovery_manager.lock() {
+            match self.discovery_manager.lock() { Ok(mut discovery) => {
                 discovery
                     .start_discovery(peer_id, self.bootstrap_nodes.clone())
                     .map_err(|e| format!("Discovery failed: {e:?}"))?;
-            } else {
+            } _ => {
                 return Err("Failed to lock discovery manager".to_string());
-            }
+            }}
 
             self.emit_event(SimpleConnectionEvent::CandidateDiscoveryStarted { peer_id });
         }
@@ -253,14 +253,14 @@ impl SimpleConnectionEstablishmentManager {
                     attempt.state = SimpleAttemptState::CandidateDiscovery;
 
                     // Start discovery outside of the borrow
-                    let discovery_result = if let Ok(mut discovery) = self.discovery_manager.lock()
-                    {
+                    let discovery_result = match self.discovery_manager.lock()
+                    { Ok(mut discovery) => {
                         discovery.start_discovery(peer_id, self.bootstrap_nodes.clone())
-                    } else {
+                    } _ => {
                         Err(DiscoveryError::InternalError(
                             "Failed to lock discovery manager".to_string(),
                         ))
-                    };
+                    }};
 
                     if let Err(e) = discovery_result {
                         attempt.state = SimpleAttemptState::Failed;

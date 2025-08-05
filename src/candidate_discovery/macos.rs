@@ -246,7 +246,7 @@ struct SCDynamicStoreContext {
 
 // Import kCFRunLoopDefaultMode and kCFAllocatorDefault from Core Foundation
 #[link(name = "CoreFoundation", kind = "framework")]
-extern "C" {
+unsafe extern "C" {
     #[link_name = "kCFRunLoopDefaultMode"]
     static kCFRunLoopDefaultMode: CFStringRef;
 
@@ -273,7 +273,7 @@ extern "C" fn network_change_callback(
 
 // System Configuration Framework FFI declarations
 #[link(name = "SystemConfiguration", kind = "framework")]
-extern "C" {
+unsafe extern "C" {
     fn SCDynamicStoreCreate(
         allocator: CFAllocatorRef,
         name: CFStringRef,
@@ -318,7 +318,7 @@ extern "C" {
 
 // Core Foundation FFI declarations
 #[link(name = "CoreFoundation", kind = "framework")]
-extern "C" {
+unsafe extern "C" {
     fn CFRelease(cf: *mut std::ffi::c_void);
     fn CFRetain(cf: *mut std::ffi::c_void) -> *mut std::ffi::c_void;
     fn CFRunLoopGetCurrent() -> CFRunLoopRef;
@@ -355,7 +355,7 @@ const kCFStringEncodingUTF8: u32 = 0x08000100;
 const kCFTypeArrayCallBacks: *const std::ffi::c_void = std::ptr::null();
 
 // Utility functions for Core Foundation
-unsafe fn cf_string_to_rust_string(cf_str: CFStringRef) -> Option<String> {
+unsafe fn cf_string_to_rust_string(cf_str: CFStringRef) -> Option<String> { unsafe {
     if cf_str.is_null() {
         return None;
     }
@@ -380,12 +380,12 @@ unsafe fn cf_string_to_rust_string(cf_str: CFStringRef) -> Option<String> {
     } else {
         None
     }
-}
+}}
 
-unsafe fn rust_string_to_cf_string(s: &str) -> CFStringRef {
+unsafe fn rust_string_to_cf_string(s: &str) -> CFStringRef { unsafe {
     let c_str = CString::new(s).unwrap();
     CFStringCreateWithCString(kCFAllocatorDefault, c_str.as_ptr(), kCFStringEncodingUTF8)
-}
+}}
 
 impl MacOSInterfaceDiscovery {
     /// Create a new macOS interface discovery instance
@@ -1088,7 +1088,7 @@ impl MacOSInterfaceDiscovery {
     // System Configuration Framework wrapper functions
     // These would be implemented using proper system bindings
 
-    unsafe fn create_dynamic_store(&mut self, name: *const std::ffi::c_char) -> SCDynamicStoreRef {
+    unsafe fn create_dynamic_store(&mut self, name: *const std::ffi::c_char) -> SCDynamicStoreRef { unsafe {
         // Create CF string from C string
         let cf_name = CFStringCreateWithCString(kCFAllocatorDefault, name, kCFStringEncodingUTF8);
 
@@ -1118,9 +1118,9 @@ impl MacOSInterfaceDiscovery {
         CFRelease(cf_name);
 
         store
-    }
+    }}
 
-    unsafe fn create_run_loop_source(&self, store: &SCDynamicStoreRef) -> CFRunLoopSourceRef {
+    unsafe fn create_run_loop_source(&self, store: &SCDynamicStoreRef) -> CFRunLoopSourceRef { unsafe {
         // Create run loop source for the dynamic store
         let source = SCDynamicStoreCreateRunLoopSource(
             kCFAllocatorDefault,
@@ -1135,7 +1135,7 @@ impl MacOSInterfaceDiscovery {
         }
 
         source
-    }
+    }}
 }
 
 impl NetworkInterfaceDiscovery for MacOSInterfaceDiscovery {

@@ -82,7 +82,7 @@ async fn test_basic_observed_address_flow() {
 
     // Server accepts connections and logs observations
     let server_handle = tokio::spawn(async move {
-        if let Some(incoming) = server.accept().await {
+        match server.accept().await { Some(incoming) => {
             let connection = incoming.await.unwrap();
             let remote = connection.remote_address();
             info!("Server accepted connection from {}", remote);
@@ -100,9 +100,9 @@ async fn test_basic_observed_address_flow() {
                 .push(("server->client".to_string(), remote));
 
             connection
-        } else {
+        } _ => {
             panic!("No connection");
-        }
+        }}
     });
 
     // Client connects
@@ -155,7 +155,7 @@ async fn test_observed_address_with_nat() {
 
     // Bootstrap accepts and observes
     let bootstrap_handle = tokio::spawn(async move {
-        if let Some(incoming) = bootstrap.accept().await {
+        match bootstrap.accept().await { Some(incoming) => {
             let connection = incoming.await.unwrap();
             let observed = connection.remote_address();
 
@@ -166,9 +166,9 @@ async fn test_observed_address_with_nat() {
             // The client would learn its public address
 
             connection
-        } else {
+        } _ => {
             panic!("No connection");
-        }
+        }}
     });
 
     // Client connects through NAT
@@ -272,7 +272,7 @@ async fn test_observation_rate_limiting() {
 
     // Server with rate limiting simulation
     let server_handle = tokio::spawn(async move {
-        if let Some(incoming) = server.accept().await {
+        match server.accept().await { Some(incoming) => {
             let connection = incoming.await.unwrap();
 
             // Simulate multiple observation triggers
@@ -294,9 +294,9 @@ async fn test_observation_rate_limiting() {
             }
 
             connection
-        } else {
+        } _ => {
             panic!("No connection");
-        }
+        }}
     });
 
     // Client connects
@@ -335,7 +335,7 @@ async fn test_observation_during_migration() {
     let (tx, mut rx) = mpsc::channel::<String>(10);
 
     let server_handle = tokio::spawn(async move {
-        if let Some(incoming) = server.accept().await {
+        match server.accept().await { Some(incoming) => {
             let connection = incoming.await.unwrap();
             let initial = connection.remote_address();
             tx.send(format!("Initial: {initial}")).await.unwrap();
@@ -353,9 +353,9 @@ async fn test_observation_during_migration() {
             }
 
             connection
-        } else {
+        } _ => {
             panic!("No connection");
-        }
+        }}
     });
 
     // Client connects

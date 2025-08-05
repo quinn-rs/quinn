@@ -1402,7 +1402,7 @@ impl Connection {
             (candidate.address, sequence)
         };
 
-        let challenge = self.rng.gen::<u64>();
+        let challenge = self.rng.r#gen::<u64>();
 
         // Start validation for this candidate
         if let Err(e) =
@@ -1596,7 +1596,7 @@ impl Connection {
                 if self
                     .timers
                     .get(Timer::PushNewCid)
-                    .map_or(true, |x| x <= now)
+                    .is_none_or(|x| x <= now)
                 {
                     self.reset_cid_retirement();
                 }
@@ -1917,7 +1917,7 @@ impl Connection {
             let space = &mut self.spaces[space];
             if space
                 .largest_acked_packet
-                .map_or(true, |pn| ack.largest > pn)
+                .is_none_or(|pn| ack.largest > pn)
             {
                 space.largest_acked_packet = Some(ack.largest);
                 if let Some(info) = space.sent_packets.get(&ack.largest) {
@@ -2298,7 +2298,7 @@ impl Connection {
                 None => continue,
             };
             let pto = last_ack_eliciting + duration;
-            if result.map_or(true, |(earliest_pto, _)| pto < earliest_pto) {
+            if result.is_none_or(|(earliest_pto, _)| pto < earliest_pto) {
                 result = Some((pto, space));
             }
         }
@@ -3636,14 +3636,14 @@ impl Connection {
                 &self.config,
             )
         };
-        new_path.challenge = Some(self.rng.gen());
+        new_path.challenge = Some(self.rng.r#gen());
         new_path.challenge_pending = true;
         let prev_pto = self.pto(SpaceId::Data);
 
         let mut prev = mem::replace(&mut self.path, new_path);
         // Don't clobber the original path if the previous one hasn't been validated yet
         if prev.challenge.is_none() {
-            prev.challenge = Some(self.rng.gen());
+            prev.challenge = Some(self.rng.r#gen());
             prev.challenge_pending = true;
             // We haven't updated the remote CID yet, this captures the remote CID we were using on
             // the previous path.
@@ -4601,7 +4601,7 @@ impl Connection {
 
             for pair in pairs {
                 // Send PATH_CHALLENGE to validate the path
-                let challenge = self.rng.gen();
+                let challenge = self.rng.r#gen();
                 self.path.challenge = Some(challenge);
                 self.path.challenge_pending = true;
 
@@ -4827,7 +4827,7 @@ impl Connection {
             let target = nat_traversal::PunchTarget {
                 remote_addr: punch_me_now.address,
                 remote_sequence: punch_me_now.paired_with_sequence_number,
-                challenge: self.rng.gen(),
+                challenge: self.rng.r#gen(),
             };
 
             // Start coordination with this target
@@ -5091,7 +5091,7 @@ impl Connection {
         }
 
         // Generate a random challenge value
-        let challenge = self.rng.gen::<u64>();
+        let challenge = self.rng.r#gen::<u64>();
 
         // Create path validation state
         let validation_state = nat_traversal::PathValidationState {
@@ -5164,7 +5164,7 @@ impl Connection {
                 .map(|pair| nat_traversal::PunchTarget {
                     remote_addr: pair.remote_addr,
                     remote_sequence: pair.remote_sequence,
-                    challenge: self.rng.gen(),
+                    challenge: self.rng.r#gen(),
                 })
                 .collect();
 
@@ -5548,7 +5548,7 @@ impl Connection {
             .filter(|&&t| !matches!(t, Timer::KeepAlive | Timer::PushNewCid | Timer::KeyDiscard))
             .filter_map(|&t| Some((t, self.timers.get(t)?)))
             .min_by_key(|&(_, time)| time)
-            .map_or(true, |(timer, _)| timer == Timer::Idle)
+            .is_none_or(|(timer, _)| timer == Timer::Idle)
     }
 
     /// Total number of outgoing packets that have been deemed lost
@@ -5657,7 +5657,7 @@ impl Connection {
         if let Some(nat_state) = &mut self.nat_traversal {
             for (seq, address) in candidates {
                 // Generate a random challenge token
-                let challenge: u64 = self.rng.gen();
+                let challenge: u64 = self.rng.r#gen();
 
                 // Start validation for this candidate
                 if let Err(e) = nat_state.start_validation(seq, challenge, now) {

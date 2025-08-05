@@ -101,7 +101,7 @@ async fn test_address_discovery_default_enabled() {
 
     // Server accepts connections
     let server_handle = tokio::spawn(async move {
-        if let Some(incoming) = server.accept().await {
+        match server.accept().await { Some(incoming) => {
             let connection = incoming.await.unwrap();
             info!(
                 "Server accepted connection from {}",
@@ -112,9 +112,9 @@ async fn test_address_discovery_default_enabled() {
             tokio::time::sleep(Duration::from_millis(500)).await;
 
             connection
-        } else {
+        } _ => {
             panic!("No incoming connection");
-        }
+        }}
     });
 
     // Client connects
@@ -265,7 +265,7 @@ async fn test_with_data_transfer() {
 
     // Server echo service
     let server_handle = tokio::spawn(async move {
-        if let Some(incoming) = server.accept().await {
+        match server.accept().await { Some(incoming) => {
             let connection = incoming.await.unwrap();
 
             // Accept a stream and echo data
@@ -277,9 +277,9 @@ async fn test_with_data_transfer() {
             }
 
             connection
-        } else {
+        } _ => {
             panic!("No connection");
-        }
+        }}
     });
 
     // Client sends data

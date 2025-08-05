@@ -27,7 +27,7 @@ struct RelayQueueItem {
 impl RelayQueueItem {
     fn new(peer_id: PeerId, data_size: usize) -> Self {
         let mut rng = thread_rng();
-        let data = (0..data_size).map(|_| rng.gen::<u8>()).collect();
+        let data = (0..data_size).map(|_| rng.r#gen::<u8>()).collect();
 
         Self {
             peer_id,

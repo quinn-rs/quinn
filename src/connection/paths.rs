@@ -213,7 +213,7 @@ impl PathData {
     /// Remove `packet` with number `pn` from this path's congestion control counters, or return
     /// `false` if `pn` was sent before this path was established.
     pub(super) fn remove_in_flight(&mut self, pn: u64, packet: &SentPacket) -> bool {
-        if self.first_packet.map_or(true, |first| first > pn) {
+        if self.first_packet.is_none_or(|first| first > pn) {
             return false;
         }
         self.in_flight.remove(packet);
@@ -373,11 +373,7 @@ impl RttEstimator {
             } else {
                 self.latest
             };
-            let var_sample = if smoothed > adjusted_rtt {
-                smoothed - adjusted_rtt
-            } else {
-                adjusted_rtt - smoothed
-            };
+            let var_sample = smoothed.abs_diff(adjusted_rtt);
             self.var = (3 * self.var + var_sample) / 4;
             self.smoothed = Some((7 * smoothed + adjusted_rtt) / 8);
         } else {

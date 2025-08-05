@@ -206,7 +206,7 @@ impl SendStream {
     /// may introduce more latency than using an application-level response of some sort.
     pub fn stopped(
         &self,
-    ) -> impl Future<Output = Result<Option<VarInt>, StoppedError>> + Send + Sync + 'static {
+    ) -> impl Future<Output = Result<Option<VarInt>, StoppedError>> + Send + Sync + 'static + use<> {
         let conn = self.conn.clone();
         let stream = self.stream;
         let is_0rtt = self.is_0rtt;

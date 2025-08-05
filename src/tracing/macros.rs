@@ -5,7 +5,7 @@
 /// Primary trace event macro - compiles to nothing when disabled
 #[macro_export]
 macro_rules! trace_event {
-    ($log:expr, $event:expr) => {
+    ($log:expr_2021, $event:expr_2021) => {
         #[cfg(feature = "trace")]
         $log.log($event)
     };
@@ -14,7 +14,7 @@ macro_rules! trace_event {
 /// Trace a packet sent event
 #[macro_export]
 macro_rules! trace_packet_sent {
-    ($log:expr, $trace_id:expr, $size:expr, $num:expr) => {
+    ($log:expr_2021, $trace_id:expr_2021, $size:expr_2021, $num:expr_2021) => {
         $crate::trace_event!(
             $log,
             $crate::tracing::Event {
@@ -34,7 +34,7 @@ macro_rules! trace_packet_sent {
 /// Trace a packet received event
 #[macro_export]
 macro_rules! trace_packet_received {
-    ($log:expr, $trace_id:expr, $size:expr, $num:expr) => {
+    ($log:expr_2021, $trace_id:expr_2021, $size:expr_2021, $num:expr_2021) => {
         $crate::trace_event!(
             $log,
             $crate::tracing::Event {
@@ -54,7 +54,7 @@ macro_rules! trace_packet_received {
 /// Trace a stream opened event
 #[macro_export]
 macro_rules! trace_stream_opened {
-    ($log:expr, $trace_id:expr, $stream_id:expr) => {
+    ($log:expr_2021, $trace_id:expr_2021, $stream_id:expr_2021) => {
         $crate::trace_event!(
             $log,
             $crate::tracing::Event {
@@ -73,7 +73,7 @@ macro_rules! trace_stream_opened {
 /// Trace a connection established event
 #[macro_export]
 macro_rules! trace_conn_established {
-    ($log:expr, $trace_id:expr, $rtt:expr) => {
+    ($log:expr_2021, $trace_id:expr_2021, $rtt:expr_2021) => {
         $crate::trace_event!(
             $log,
             $crate::tracing::Event {
@@ -103,7 +103,7 @@ macro_rules! if_trace {
 /// Trace an observed address event
 #[macro_export]
 macro_rules! trace_observed_address_sent {
-    ($log:expr, $trace_id:expr, $addr:expr, $path_id:expr) => {
+    ($log:expr_2021, $trace_id:expr_2021, $addr:expr_2021, $path_id:expr_2021) => {
         $crate::trace_event!($log, {
             let (addr_bytes, addr_type) = $crate::tracing::socket_addr_to_bytes($addr);
             $crate::tracing::Event {
@@ -124,7 +124,7 @@ macro_rules! trace_observed_address_sent {
 /// Trace an observed address received
 #[macro_export]
 macro_rules! trace_observed_address_received {
-    ($log:expr, $trace_id:expr, $addr:expr, $path_id:expr) => {
+    ($log:expr_2021, $trace_id:expr_2021, $addr:expr_2021, $path_id:expr_2021) => {
         $crate::trace_event!($log, {
             let (addr_bytes, addr_type) = $crate::tracing::socket_addr_to_bytes($addr);
             $crate::tracing::Event {
@@ -145,7 +145,7 @@ macro_rules! trace_observed_address_received {
 /// Trace a NAT traversal candidate discovered
 #[macro_export]
 macro_rules! trace_candidate_discovered {
-    ($log:expr, $trace_id:expr, $addr:expr, $priority:expr) => {
+    ($log:expr_2021, $trace_id:expr_2021, $addr:expr_2021, $priority:expr_2021) => {
         $crate::trace_event!($log, {
             let (addr_bytes, addr_type) = $crate::tracing::socket_addr_to_bytes($addr);
             $crate::tracing::Event {
@@ -166,7 +166,7 @@ macro_rules! trace_candidate_discovered {
 /// Trace hole punching started
 #[macro_export]
 macro_rules! trace_hole_punching_started {
-    ($log:expr, $trace_id:expr, $peer:expr) => {
+    ($log:expr_2021, $trace_id:expr_2021, $peer:expr_2021) => {
         $crate::trace_event!(
             $log,
             $crate::tracing::Event {

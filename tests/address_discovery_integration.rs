@@ -94,7 +94,7 @@ async fn test_basic_address_discovery_flow() {
     let server_handle = tokio::spawn(async move {
         info!("Server listening on {}", server_addr);
 
-        if let Some(incoming) = server.accept().await {
+        match server.accept().await { Some(incoming) => {
             let connection = incoming.accept().unwrap().await.unwrap();
             info!(
                 "Server accepted connection from {}",
@@ -109,9 +109,9 @@ async fn test_basic_address_discovery_flow() {
             info!("Server accepted connection, address discovery is active");
 
             connection
-        } else {
+        } _ => {
             panic!("No incoming connection");
-        }
+        }}
     });
 
     // Client connects to server
@@ -246,7 +246,7 @@ async fn test_address_discovery_rate_limiting() {
 
     // Server that tries to trigger many observations
     let server_handle = tokio::spawn(async move {
-        if let Some(incoming) = server.accept().await {
+        match server.accept().await { Some(incoming) => {
             let connection = incoming.accept().unwrap().await.unwrap();
 
             // Try to trigger multiple observations quickly
@@ -262,9 +262,9 @@ async fn test_address_discovery_rate_limiting() {
             info!("Rate limiting is enforced by the protocol implementation");
 
             connection
-        } else {
+        } _ => {
             panic!("No connection");
-        }
+        }}
     });
 
     // Client setup
@@ -430,7 +430,7 @@ async fn test_address_discovery_disabled() {
 
     // Server accepts connection
     let server_handle = tokio::spawn(async move {
-        if let Some(incoming) = server.accept().await {
+        match server.accept().await { Some(incoming) => {
             let connection = incoming.accept().unwrap().await.unwrap();
 
             // Should not send any observations
@@ -439,9 +439,9 @@ async fn test_address_discovery_disabled() {
             info!("Address discovery disabled - no observations sent");
 
             connection
-        } else {
+        } _ => {
             panic!("No connection");
-        }
+        }}
     });
 
     // Client with address discovery disabled
@@ -493,7 +493,7 @@ async fn test_address_discovery_with_migration() {
 
     // Server accepts and monitors migration
     let server_handle = tokio::spawn(async move {
-        if let Some(incoming) = server.accept().await {
+        match server.accept().await { Some(incoming) => {
             let connection = incoming.await.unwrap();
             let initial_remote = connection.remote_address();
             info!("Server: Initial client address: {}", initial_remote);
@@ -520,9 +520,9 @@ async fn test_address_discovery_with_migration() {
             }
 
             connection
-        } else {
+        } _ => {
             panic!("No connection");
-        }
+        }}
     });
 
     // Client connects and simulates migration

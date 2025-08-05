@@ -335,7 +335,7 @@ impl NetworkSimulator {
         // Simulate packet loss
         let loss_rate = *self.packet_loss.read().await;
         if loss_rate > 0.0 {
-            let random: f64 = rand::thread_rng().gen();
+            let random: f64 = rand::thread_rng().r#gen();
             if random < loss_rate {
                 return Err("Packet lost".into());
             }

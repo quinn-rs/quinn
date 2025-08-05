@@ -60,7 +60,7 @@ pub(crate) trait FrameStruct {
 }
 
 macro_rules! frame_types {
-    {$($name:ident = $val:expr,)*} => {
+    {$($name:ident = $val:expr_2021,)*} => {
         impl FrameType {
             $(pub(crate) const $name: FrameType = FrameType($val);)*
         }
@@ -205,7 +205,7 @@ impl Frame {
             StopSending { .. } => FrameType::STOP_SENDING,
             RetireConnectionId { .. } => FrameType::RETIRE_CONNECTION_ID,
             Ack(_) => FrameType::ACK,
-            Stream(ref x) => {
+            Stream(x) => {
                 let mut ty = *STREAM_TYS.start();
                 if x.fin {
                     ty |= 0x01;

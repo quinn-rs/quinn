@@ -40,12 +40,12 @@ fn generate_ipv6_addresses(count: usize) -> Vec<IpAddr> {
         let segments = [
             0x2001,
             0x0db8, // Global unicast prefix
-            rng.gen(),
-            rng.gen(),
-            rng.gen(),
-            rng.gen(),
-            rng.gen(),
-            rng.gen(),
+            rng.r#gen(),
+            rng.r#gen(),
+            rng.r#gen(),
+            rng.r#gen(),
+            rng.r#gen(),
+            rng.r#gen(),
         ];
         addresses.push(IpAddr::V6(Ipv6Addr::from(segments)));
     }
@@ -134,7 +134,7 @@ fn bench_candidate_pairing(c: &mut Criterion) {
 
     for local_count in [10, 50, 100] {
         for remote_count in [10, 50, 100] {
-            let pair_name = format!("{}x{}", local_count, remote_count);
+            let pair_name = format!("{local_count}x{remote_count}");
             group.throughput(Throughput::Elements((local_count * remote_count) as u64));
 
             group.bench_with_input(

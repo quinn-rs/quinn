@@ -1110,7 +1110,7 @@ impl AdaptiveTimeoutState {
             }
             Some(srtt) => {
                 let rttvar = self.rttvar.unwrap_or(rtt / 2);
-                let abs_diff = if rtt > srtt { rtt - srtt } else { srtt - rtt };
+                let abs_diff = rtt.abs_diff(srtt);
 
                 self.rttvar = Some(rttvar * 3 / 4 + abs_diff / 4);
                 self.srtt = Some(srtt * 7 / 8 + rtt / 8);
@@ -1704,11 +1704,7 @@ impl NetworkConditionMonitor {
             .rtt_samples
             .iter()
             .map(|rtt| {
-                let diff = if *rtt > mean_rtt {
-                    *rtt - mean_rtt
-                } else {
-                    mean_rtt - *rtt
-                };
+                let diff = (*rtt).abs_diff(mean_rtt);
                 diff.as_millis() as f64
             })
             .map(|diff| diff * diff)
@@ -2096,12 +2092,12 @@ impl NatTraversalState {
 
             match pair.remote_addr {
                 SocketAddr::V4(_) => {
-                    if best_ipv4.map_or(true, |best| pair.priority > best.priority) {
+                    if best_ipv4.is_none_or(|best| pair.priority > best.priority) {
                         best_ipv4 = Some(pair);
                     }
                 }
                 SocketAddr::V6(_) => {
-                    if best_ipv6.map_or(true, |best| pair.priority > best.priority) {
+                    if best_ipv6.is_none_or(|best| pair.priority > best.priority) {
                         best_ipv6 = Some(pair);
                     }
                 }

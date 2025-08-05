@@ -1,7 +1,7 @@
 //! Integration tests for NAT traversal with mixed RFC and legacy endpoints
 
 use ant_quic::{
-    ClientConfig, Endpoint, EndpointConfig, ServerConfig, TransportConfig, VarInt,
+    ClientConfig, Endpoint, ServerConfig, TransportConfig, VarInt,
     crypto::{rustls::QuicClientConfig, rustls::QuicServerConfig},
     transport_parameters::NatTraversalConfig,
 };
@@ -24,7 +24,7 @@ fn init_logging() {
 /// Create a basic server configuration
 fn server_config() -> ServerConfig {
     let cert = rcgen::generate_simple_self_signed(vec!["localhost".to_string()]).unwrap();
-    let key = rustls::pki_types::PrivatePkcs8KeyDer::from(cert.key_pair.serialize_der());
+    let key = rustls::pki_types::PrivatePkcs8KeyDer::from(cert.signing_key.serialize_der());
     let cert_chain = vec![rustls::pki_types::CertificateDer::from(
         cert.cert.der().to_vec(),
     )];
@@ -105,18 +105,15 @@ impl rustls::client::danger::ServerCertVerifier for SkipVerification {
 
 /// Create a pair of connected endpoints
 async fn make_pair(
-    client_endpoint_config: EndpointConfig,
-    server_endpoint_config: EndpointConfig,
     server_config: ServerConfig,
     client_config: ClientConfig,
 ) -> (Endpoint, Endpoint) {
     let server_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0);
-    let server_endpoint =
-        Endpoint::server(server_endpoint_config, server_addr, server_config).unwrap();
+    let server_endpoint = Endpoint::server(server_config, server_addr).unwrap();
 
     let client_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0);
-    let client_endpoint =
-        Endpoint::client(client_endpoint_config, client_addr, client_config).unwrap();
+    let mut client_endpoint = Endpoint::client(client_addr).unwrap();
+    client_endpoint.set_default_client_config(client_config);
 
     (client_endpoint, server_endpoint)
 }
@@ -138,8 +135,6 @@ async fn legacy_client_rfc_server() {
     let client_config = client_config();
 
     let (client_endpoint, server_endpoint) = make_pair(
-        EndpointConfig::default(),
-        EndpointConfig::default(),
         server_config,
         client_config,
     )
@@ -156,7 +151,7 @@ async fn legacy_client_rfc_server() {
     // Send some data to verify the connection
     let mut send = conn.open_uni().await.unwrap();
     send.write_all(b"hello from server").await.unwrap();
-    send.finish().await.unwrap();
+    send.finish().unwrap();
 
     info!("Legacy client successfully connected to RFC server");
 }
@@ -176,8 +171,6 @@ async fn rfc_client_legacy_server() {
     client_config.transport_config(Arc::new(transport));
 
     let (client_endpoint, server_endpoint) = make_pair(
-        EndpointConfig::default(),
-        EndpointConfig::default(),
         server_config,
         client_config,
     )
@@ -194,7 +187,7 @@ async fn rfc_client_legacy_server() {
     // Send some data
     let mut send = conn.open_uni().await.unwrap();
     send.write_all(b"hello from client").await.unwrap();
-    send.finish().await.unwrap();
+    send.finish().unwrap();
 
     info!("RFC client successfully connected to legacy server");
 }
@@ -219,8 +212,6 @@ async fn rfc_to_rfc_negotiation() {
     client_config.transport_config(Arc::new(transport));
 
     let (client_endpoint, server_endpoint) = make_pair(
-        EndpointConfig::default(),
-        EndpointConfig::default(),
         server_config,
         client_config,
     )
@@ -240,7 +231,7 @@ async fn rfc_to_rfc_negotiation() {
 
     let mut send = conn.open_uni().await.unwrap();
     send.write_all(b"RFC negotiation test").await.unwrap();
-    send.finish().await.unwrap();
+    send.finish().unwrap();
 
     info!("RFC endpoints successfully negotiated format");
 }
@@ -266,8 +257,6 @@ async fn nat_traversal_frame_compatibility() {
     client_config.transport_config(Arc::new(transport));
 
     let (client_endpoint, server_endpoint) = make_pair(
-        EndpointConfig::default(),
-        EndpointConfig::default(),
         server_config,
         client_config,
     )
@@ -294,11 +283,11 @@ async fn nat_traversal_frame_compatibility() {
     // Exchange data on both connections
     let mut send1 = conn1.open_uni().await.unwrap();
     send1.write_all(b"client to server").await.unwrap();
-    send1.finish().await.unwrap();
+    send1.finish().unwrap();
 
     let mut send2 = conn2.open_uni().await.unwrap();
     send2.write_all(b"server to client").await.unwrap();
-    send2.finish().await.unwrap();
+    send2.finish().unwrap();
 
     info!("Bidirectional NAT traversal frame exchange successful");
 }
@@ -321,8 +310,6 @@ async fn malformed_frame_handling() {
     let client_config = client_config();
 
     let (client_endpoint, server_endpoint) = make_pair(
-        EndpointConfig::default(),
-        EndpointConfig::default(),
         server_config,
         client_config,
     )
@@ -342,11 +329,12 @@ async fn malformed_frame_handling() {
     // Verify connection is still alive
     let mut send = conn.open_uni().await.unwrap();
     send.write_all(b"connection still alive").await.unwrap();
-    send.finish().await.unwrap();
+    send.finish().unwrap();
 
     // Wait a bit to ensure no delayed errors
     tokio::time::sleep(Duration::from_millis(100)).await;
 
-    assert!(!conn.is_closed());
+    // Verify connection is still active by checking if we can open a stream
+    let _ = conn.open_uni().await.unwrap();
     info!("Connection remained stable with mixed frame formats");
 }

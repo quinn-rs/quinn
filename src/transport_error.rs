@@ -70,7 +70,7 @@ impl From<Code> for u64 {
 }
 
 macro_rules! errors {
-    {$($name:ident($val:expr) $desc:expr;)*} => {
+    {$($name:ident($val:expr_2021) $desc:expr_2021;)*} => {
         #[allow(non_snake_case, unused)]
         impl Error {
             $(

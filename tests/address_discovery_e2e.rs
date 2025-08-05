@@ -261,7 +261,7 @@ async fn test_address_discovery_during_migration() {
 
     // Server monitors for migrations
     let server_handle = tokio::spawn(async move {
-        if let Some(incoming) = server.accept().await {
+        match server.accept().await { Some(incoming) => {
             let connection = incoming.await.unwrap();
             let initial_addr = connection.remote_address();
             info!("Server: Initial client address: {}", initial_addr);
@@ -279,9 +279,9 @@ async fn test_address_discovery_during_migration() {
             }
 
             connection
-        } else {
+        } _ => {
             panic!("No connection");
-        }
+        }}
     });
 
     // Client connects and potentially migrates
@@ -327,7 +327,7 @@ async fn test_address_discovery_with_data_transfer() {
 
     // Server echo service
     let server_handle = tokio::spawn(async move {
-        if let Some(incoming) = server.accept().await {
+        match server.accept().await { Some(incoming) => {
             let connection = incoming.await.unwrap();
 
             // Accept a bidirectional stream
@@ -340,9 +340,9 @@ async fn test_address_discovery_with_data_transfer() {
             }
 
             connection
-        } else {
+        } _ => {
             panic!("No connection");
-        }
+        }}
     });
 
     // Client sends data

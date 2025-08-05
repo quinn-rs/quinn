@@ -207,7 +207,7 @@ impl Token {
     /// Construct with newly sampled randomness
     pub(crate) fn new(payload: TokenPayload, rng: &mut impl Rng) -> Self {
         Self {
-            nonce: rng.gen(),
+            nonce: rng.r#gen(),
             payload,
         }
     }

@@ -90,7 +90,7 @@ pub(super) fn decrypt_packet_body(
         &spaces[space].crypto.as_ref().unwrap().packet.remote
     } else if let Some(prev) = prev_crypto.and_then(|crypto| {
         // If this packet comes prior to acknowledgment of the key update by the peer,
-        if crypto.end_packet.map_or(true, |(pn, _)| number < pn) {
+        if crypto.end_packet.is_none_or(|(pn, _)| number < pn) {
             // use the previous keys.
             Some(crypto)
         } else {

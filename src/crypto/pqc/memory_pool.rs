@@ -169,10 +169,10 @@ impl<T: BufferCleanup> ObjectPool<T> {
 
         self.stats.allocations.fetch_add(1, Ordering::Relaxed);
 
-        let object = if let Some(obj) = available.pop() {
+        let object = match available.pop() { Some(obj) => {
             self.stats.hits.fetch_add(1, Ordering::Relaxed);
             obj
-        } else {
+        } _ => {
             self.stats.misses.fetch_add(1, Ordering::Relaxed);
 
             // Check if we can grow the pool
@@ -184,7 +184,7 @@ impl<T: BufferCleanup> ObjectPool<T> {
             // Allocate new object
             self.stats.current_size.fetch_add(1, Ordering::Relaxed);
             (self.factory)()
-        };
+        }};
 
         Ok(PoolGuard {
             object: Some(object),

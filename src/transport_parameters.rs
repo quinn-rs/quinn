@@ -73,7 +73,7 @@ macro_rules! apply_params {
 }
 
 macro_rules! make_struct {
-    {$($(#[$doc:meta])* $name:ident ($id:ident) = $default:expr,)*} => {
+    {$($(#[$doc:meta])* $name:ident ($id:ident) = $default:expr_2021,)*} => {
         /// Transport parameters used to negotiate connection-level preferences between peers
         #[derive(Debug, Clone, Eq, PartialEq)]
         pub struct TransportParameters {
@@ -641,7 +641,7 @@ impl TransportParameters {
                 }
                 id => {
                     macro_rules! write_params {
-                        {$($(#[$doc:meta])* $name:ident ($id:ident) = $default:expr,)*} => {
+                        {$($(#[$doc:meta])* $name:ident ($id:ident) = $default:expr_2021,)*} => {
                             match id {
                                 $(TransportParameterId::$id => {
                                     if self.$name.0 != $default {
@@ -671,7 +671,7 @@ impl TransportParameters {
 
         // State to check for duplicate transport parameters.
         macro_rules! param_state {
-            {$($(#[$doc:meta])* $name:ident ($id:ident) = $default:expr,)*} => {{
+            {$($(#[$doc:meta])* $name:ident ($id:ident) = $default:expr_2021,)*} => {{
                 struct ParamState {
                     $($name: bool,)*
                 }
@@ -803,7 +803,7 @@ impl TransportParameters {
                 }
                 _ => {
                     macro_rules! parse {
-                        {$($(#[$doc:meta])* $name:ident ($id:ident) = $default:expr,)*} => {
+                        {$($(#[$doc:meta])* $name:ident ($id:ident) = $default:expr_2021,)*} => {
                             match id {
                                 $(TransportParameterId::$id => {
                                     let value = r.get::<VarInt>()?;

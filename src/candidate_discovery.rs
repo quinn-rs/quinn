@@ -2824,7 +2824,7 @@ impl SymmetricNatPredictor {
 
         let (most_common_diff, count) = diff_counts
             .iter()
-            .max_by_key(|(_, &count)| count)
+            .max_by_key(|&(_, &count)| count)
             .map(|(&diff, &count)| (diff, count))?;
 
         let consistency_ratio = count as f64 / diffs.len() as f64;
@@ -2921,11 +2921,7 @@ impl SymmetricNatPredictor {
 
         let mut consistency_score = 0.0;
         for interval in &time_intervals {
-            let diff = if *interval > avg_interval {
-                *interval - avg_interval
-            } else {
-                avg_interval - *interval
-            };
+            let diff = (*interval).abs_diff(avg_interval);
 
             let normalized_diff = diff.as_millis() as f64 / avg_interval.as_millis() as f64;
             consistency_score += 1.0 - normalized_diff.min(1.0);
