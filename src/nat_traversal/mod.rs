@@ -22,5 +22,6 @@ pub use crate::connection::nat_traversal::{CandidateSource, CandidateState, NatT
 // Submodules
 pub mod bootstrap;
 pub mod hole_punching;
+pub mod rfc_migration;
 
 // Module-private imports

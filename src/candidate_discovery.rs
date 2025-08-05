@@ -81,7 +81,7 @@ impl DiscoveryCandidate {
 
 /// Per-peer discovery session containing all state for a single peer's discovery
 #[derive(Debug)]
-#[allow(dead_code)]
+
 pub struct DiscoverySession {
     /// Peer ID for this discovery session
     peer_id: PeerId,
@@ -102,7 +102,6 @@ pub struct DiscoverySession {
 }
 
 /// Main candidate discovery manager coordinating all discovery phases
-#[allow(dead_code)]
 pub struct CandidateDiscoveryManager {
     /// Configuration for discovery behavior
     config: DiscoveryConfig,
@@ -267,7 +266,6 @@ pub enum DiscoveryEvent {
 pub struct BootstrapNodeId(pub u64);
 
 /// Pending path validation state
-#[allow(dead_code)]
 struct PendingValidation {
     /// Address being validated
     candidate_address: SocketAddr,
@@ -392,7 +390,7 @@ impl ValidatedCandidate {
 
 /// Discovery session state tracking
 #[derive(Debug)]
-#[allow(dead_code)]
+
 pub(crate) struct DiscoverySessionState {
     pub peer_id: PeerId,
     pub session_id: u64,
@@ -480,7 +478,6 @@ impl DiscoverySession {
     }
 }
 
-#[allow(dead_code)]
 impl CandidateDiscoveryManager {
     /// Create a new candidate discovery manager
     pub fn new(config: DiscoveryConfig) -> Self {
@@ -1973,7 +1970,7 @@ pub struct NetworkInterface {
 
 /// Active connection state to a bootstrap node (production builds)
 #[derive(Debug)]
-#[allow(dead_code)]
+
 struct BootstrapConnection {
     /// Quinn connection to the bootstrap node
     connection: crate::Connection,
@@ -1987,7 +1984,7 @@ struct BootstrapConnection {
 
 /// Discovery request message sent to bootstrap nodes
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
+
 struct AddressObservationRequest {
     /// Unique request ID for correlation
     request_id: u64,
@@ -2013,7 +2010,6 @@ pub(crate) struct ServerReflexiveDiscovery {
     runtime_handle: Option<tokio::runtime::Handle>,
 }
 
-#[allow(dead_code)]
 impl ServerReflexiveDiscovery {
     pub(crate) fn new(config: &DiscoveryConfig) -> Self {
         Self {

@@ -106,6 +106,8 @@ struct ConnectionAttempt {
     last_error: Option<ConnectionError>,
     /// Bootstrap node being used for coordination
     coordinator: Option<SocketAddr>,
+    /// Established connection (if successful)
+    established_connection: Option<QuinnConnection>,
 }
 
 /// State machine for connection attempts
@@ -358,6 +360,7 @@ impl ConnectionEstablishmentManager {
             sub_attempts: Vec::new(),
             last_error: None,
             coordinator,
+            established_connection: None,
         };
 
         self.active_attempts.insert(peer_id, attempt);
@@ -900,34 +903,64 @@ impl ConnectionEstablishmentManager {
             if sub_attempt.state == SubAttemptState::Connecting {
                 {
                     // Check actual QUIC connection status
-                    if let Some(ref handle) = sub_attempt.connection_handle {
+                    if let Some(ref mut handle) = sub_attempt.connection_handle {
                         if handle.is_finished() {
-                            // Connection attempt completed
-                            // For now, we'll mark it as successful if the task completed
-                            // In a real implementation, we'd check the actual result
-                            sub_attempt.state = SubAttemptState::Connected;
-                            let elapsed = now.duration_since(sub_attempt.started_at);
-                            
-                            events.push(ConnectionEstablishmentEvent::ConnectionMethodSucceeded {
-                                peer_id,
-                                method: sub_attempt.method,
-                                target_address: sub_attempt.target_address,
-                                establishment_time: elapsed,
-                            });
+                            // Take the handle and check the result
+                            let handle = sub_attempt.connection_handle.take().unwrap();
+                            match tokio::runtime::Handle::try_current() {
+                                Ok(runtime_handle) => {
+                                    match runtime_handle.block_on(handle) {
+                                        Ok(Ok(connection)) => {
+                                            // Connection succeeded
+                                            sub_attempt.state = SubAttemptState::Connected;
+                                            sub_attempt.established_connection = Some(connection.clone());
+                                            let elapsed = now.duration_since(sub_attempt.started_at);
+                                            
+                                            events.push(ConnectionEstablishmentEvent::ConnectionMethodSucceeded {
+                                                peer_id,
+                                                method: sub_attempt.method,
+                                                target_address: sub_attempt.target_address,
+                                                establishment_time: elapsed,
+                                            });
 
-                            // Mark attempt as connected
-                            attempt.state = AttemptState::Connected;
-                            
-                            events.push(ConnectionEstablishmentEvent::ConnectionEstablished {
-                                peer_id,
-                                final_address: sub_attempt.target_address,
-                                method: sub_attempt.method,
-                                total_time: now.duration_since(attempt.started_at),
-                                fallback_used: false,
-                            });
-                            
-                            // TODO: Store the actual connection for later use
-                            info!("QUIC connection established to {} for peer {:?}", sub_attempt.target_address, peer_id);
+                                            // Mark attempt as connected
+                                            attempt.state = AttemptState::Connected;
+                                            attempt.established_connection = Some(connection);
+                                            
+                                            events.push(ConnectionEstablishmentEvent::ConnectionEstablished {
+                                                peer_id,
+                                                final_address: sub_attempt.target_address,
+                                                method: sub_attempt.method,
+                                                total_time: now.duration_since(attempt.started_at),
+                                                fallback_used: false,
+                                            });
+                                            
+                                            info!("QUIC connection established to {} for peer {:?}", sub_attempt.target_address, peer_id);
+                                        }
+                                        Ok(Err(e)) => {
+                                            // Connection failed
+                                            sub_attempt.state = SubAttemptState::Failed;
+                                            warn!("QUIC connection to {} failed: {}", sub_attempt.target_address, e);
+                                            
+                                            events.push(ConnectionEstablishmentEvent::ConnectionMethodFailed {
+                                                peer_id,
+                                                method: sub_attempt.method,
+                                                target_address: sub_attempt.target_address,
+                                                error: e,
+                                            });
+                                        }
+                                        Err(join_error) => {
+                                            // Task panic or cancellation
+                                            sub_attempt.state = SubAttemptState::Failed;
+                                            warn!("QUIC connection task failed: {}", join_error);
+                                        }
+                                    }
+                                }
+                                Err(_) => {
+                                    // No tokio runtime available, can't check result
+                                    warn!("Unable to check connection result without tokio runtime");
+                                }
+                            }
                         }
                     }
                 }
@@ -1667,6 +1700,51 @@ impl ConnectionEstablishmentManager {
     fn emit_event(&self, event: ConnectionEstablishmentEvent) {
         if let Some(ref callback) = self.event_callback {
             callback(event);
+        }
+    }
+
+    /// Get the established connection for a peer
+    pub fn get_connection(&self, peer_id: &PeerId) -> Option<QuinnConnection> {
+        self.active_attempts
+            .get(peer_id)
+            .and_then(|attempt| attempt.established_connection.clone())
+    }
+
+    /// Take the established connection for a peer (removes it from the manager)
+    pub fn take_connection(&mut self, peer_id: &PeerId) -> Option<QuinnConnection> {
+        self.active_attempts
+            .get_mut(peer_id)
+            .and_then(|attempt| attempt.established_connection.take())
+    }
+
+    /// Check if a connection is established
+    pub fn is_connected(&self, peer_id: &PeerId) -> bool {
+        self.active_attempts
+            .get(peer_id)
+            .map(|attempt| attempt.state == AttemptState::Connected && attempt.established_connection.is_some())
+            .unwrap_or(false)
+    }
+
+    /// Get all established connections
+    pub fn get_all_connections(&self) -> HashMap<PeerId, QuinnConnection> {
+        self.active_attempts
+            .iter()
+            .filter_map(|(peer_id, attempt)| {
+                attempt.established_connection
+                    .as_ref()
+                    .map(|conn| (*peer_id, conn.clone()))
+            })
+            .collect()
+    }
+
+    /// Remove a connection (disconnect)
+    pub fn remove_connection(&mut self, peer_id: &PeerId) -> bool {
+        if let Some(attempt) = self.active_attempts.get_mut(peer_id) {
+            attempt.established_connection = None;
+            attempt.state = AttemptState::Failed;
+            true
+        } else {
+            false
         }
     }
 }

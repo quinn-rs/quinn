@@ -132,7 +132,7 @@ impl MlDsaOperations for MlDsa65Impl {
             cache
                 .get(&key_id)
                 .map(|entry| entry.key_pair.clone())
-                .ok_or_else(|| PqcError::InvalidSecretKey)?
+                .ok_or(PqcError::InvalidSecretKey)?
         };
 
         // Sign the message

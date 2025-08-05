@@ -9,9 +9,9 @@ use tracing::{debug, info};
 /// Connection attempt result
 #[derive(Debug, Clone)]
 struct ConnectionAttempt {
-    nat_type_client: &'static str,
-    nat_type_peer: &'static str,
-    with_discovery: bool,
+    _nat_type_client: &'static str,
+    _nat_type_peer: &'static str,
+    _with_discovery: bool,
     success: bool,
     time_to_connect: Duration,
     attempts_needed: u32,
@@ -115,9 +115,9 @@ async fn test_connection_success_improvement() {
             let attempts_needed = if success { 1 + (i % 3) as u32 } else { 5 };
 
             let attempt = ConnectionAttempt {
-                nat_type_client: client_nat,
-                nat_type_peer: peer_nat,
-                with_discovery: false,
+                _nat_type_client: client_nat,
+                _nat_type_peer: peer_nat,
+                _with_discovery: false,
                 success,
                 time_to_connect,
                 attempts_needed,
@@ -137,9 +137,9 @@ async fn test_connection_success_improvement() {
             let attempts_needed = if success { 1 } else { 3 };
 
             let attempt = ConnectionAttempt {
-                nat_type_client: client_nat,
-                nat_type_peer: peer_nat,
-                with_discovery: true,
+                _nat_type_client: client_nat,
+                _nat_type_peer: peer_nat,
+                _with_discovery: true,
                 success,
                 time_to_connect,
                 attempts_needed,
@@ -238,9 +238,9 @@ async fn test_success_by_nat_type() {
             for i in 0..20 {
                 let success = (i as f64 / 20.0) < success_rate;
                 let attempt = ConnectionAttempt {
-                    nat_type_client: nat_type,
-                    nat_type_peer: peer_nat,
-                    with_discovery: true,
+                    _nat_type_client: nat_type,
+                    _nat_type_peer: peer_nat,
+                    _with_discovery: true,
                     success,
                     time_to_connect: Duration::from_millis(if success { 200 } else { 5000 }),
                     attempts_needed: 1,

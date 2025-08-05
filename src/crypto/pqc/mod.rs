@@ -23,6 +23,7 @@ pub mod negotiation;
 pub mod packet_handler;
 pub mod parallel;
 pub mod rustls_provider;
+pub mod security_validation;
 pub mod tls;
 pub mod tls_extensions;
 pub mod tls_integration;

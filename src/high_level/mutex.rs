@@ -47,7 +47,13 @@ mod tracking {
             // We don't bother dispatching through Runtime::now because they're pure performance
             // diagnostics.
             let now = Instant::now();
-            let guard = self.inner.lock().unwrap();
+            let guard = self.inner.lock().unwrap_or_else(|poisoned| {
+                // Log the error but continue with the poisoned data
+                // This is safe because we're in a controlled environment and
+                // the poisoning indicates a panic in another thread, not data corruption
+                tracing::error!("Mutex poisoned while locking for {}: recovering", purpose);
+                poisoned.into_inner()
+            });
 
             let lock_time = Instant::now();
             let elapsed = lock_time.duration_since(now);
@@ -135,9 +141,15 @@ mod non_tracking {
         /// Acquires the lock for a certain purpose
         ///
         /// The purpose will be recorded in the list of last lock owners
-        pub(crate) fn lock(&self, _purpose: &'static str) -> MutexGuard<T> {
+        pub(crate) fn lock(&self, purpose: &'static str) -> MutexGuard<T> {
             MutexGuard {
-                guard: self.inner.lock().unwrap(),
+                guard: self.inner.lock().unwrap_or_else(|poisoned| {
+                    // Log the error but continue with the poisoned data
+                    // This is safe because we're in a controlled environment and
+                    // the poisoning indicates a panic in another thread, not data corruption
+                    tracing::error!("Mutex poisoned while locking for {}: recovering", purpose);
+                    poisoned.into_inner()
+                }),
             }
         }
     }

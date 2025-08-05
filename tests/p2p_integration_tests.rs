@@ -820,7 +820,7 @@ struct NetworkSimulator {
 }
 
 impl NetworkSimulator {
-    fn new(config: NetworkConfig) -> Self {
+    fn _new(config: NetworkConfig) -> Self {
         Self {
             config,
             bytes_transferred: Arc::new(AtomicU64::new(0)),
@@ -830,14 +830,14 @@ impl NetworkSimulator {
     }
 
     /// Apply latency to a packet
-    async fn apply_latency(&self) {
+    async fn _apply_latency(&self) {
         if self.config.latency_ms > 0 {
             tokio::time::sleep(Duration::from_millis(self.config.latency_ms)).await;
         }
     }
 
     /// Check if packet should be dropped
-    fn should_drop_packet(&self) -> bool {
+    fn _should_drop_packet(&self) -> bool {
         if self.config.packet_loss <= 0.0 {
             return false;
         }
@@ -852,7 +852,7 @@ impl NetworkSimulator {
     }
 
     /// Apply bandwidth limit
-    async fn apply_bandwidth_limit(&self, bytes: usize) {
+    async fn _apply_bandwidth_limit(&self, bytes: usize) {
         if let Some(limit) = self.config.bandwidth_limit {
             // Calculate delay needed to enforce bandwidth limit
             let delay_ms = (bytes as f64 * 1000.0) / limit as f64;
@@ -865,27 +865,27 @@ impl NetworkSimulator {
     }
 
     /// Simulate network conditions for a packet
-    async fn simulate_packet(&self, packet_size: usize) -> bool {
+    async fn _simulate_packet(&self, packet_size: usize) -> bool {
         if !self.active.load(Ordering::Relaxed) {
             return true;
         }
 
         // Check packet loss
-        if self.should_drop_packet() {
+        if self._should_drop_packet() {
             return false;
         }
 
         // Apply latency
-        self.apply_latency().await;
+        self._apply_latency().await;
 
         // Apply bandwidth limit
-        self.apply_bandwidth_limit(packet_size).await;
+        self._apply_bandwidth_limit(packet_size).await;
 
         true
     }
 
     /// Get simulation statistics
-    fn get_stats(&self) -> (u64, u64) {
+    fn _get_stats(&self) -> (u64, u64) {
         (
             self.bytes_transferred.load(Ordering::Relaxed),
             self.packets_dropped.load(Ordering::Relaxed),
@@ -894,7 +894,7 @@ impl NetworkSimulator {
 }
 
 /// Generate a unique test address
-fn get_test_address(base_port: u16, index: usize) -> SocketAddr {
+fn _get_test_address(base_port: u16, index: usize) -> SocketAddr {
     SocketAddr::new(
         IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
         base_port + index as u16,

@@ -104,6 +104,11 @@ macro_rules! make_struct {
             /// When present, indicates support for QUIC NAT traversal extension
             pub(crate) nat_traversal: Option<NatTraversalConfig>,
 
+            /// RFC NAT traversal format support
+            ///
+            /// When true, indicates support for RFC-compliant NAT traversal frame formats
+            pub(crate) rfc_nat_traversal: bool,
+
             /// Address discovery configuration for this connection
             ///
             /// When present, indicates support for QUIC Address Discovery extension
@@ -152,6 +157,7 @@ macro_rules! make_struct {
                     grease_quic_bit: false,
                     min_ack_delay: None,
                     nat_traversal: None,
+                    rfc_nat_traversal: false,
                     address_discovery: None,
                     pqc_algorithms: None,
 
@@ -199,9 +205,15 @@ impl TransportParameters {
                 .datagram_receive_buffer_size
                 .map(|x| (x.min(u16::MAX.into()) as u16).into()),
             grease_quic_bit: endpoint_config.grease_quic_bit,
-            min_ack_delay: Some(
-                VarInt::from_u64(u64::try_from(TIMER_GRANULARITY.as_micros()).unwrap()).unwrap(),
-            ),
+            min_ack_delay: Some({
+                let micros = TIMER_GRANULARITY.as_micros();
+                // TIMER_GRANULARITY should always fit in u64 and be less than 2^62
+                let micros_u64 = u64::try_from(micros).unwrap_or_else(|_| {
+                    tracing::error!("Timer granularity {} micros exceeds u64::MAX", micros);
+                    1_000_000 // Default to 1 second
+                });
+                VarInt::from_u64_bounded(micros_u64)
+            }),
             grease_transport_parameter: Some(ReservedTransportParameter::random(rng)),
             write_order: Some({
                 let mut order = std::array::from_fn(|i| i as u8);
@@ -209,8 +221,9 @@ impl TransportParameters {
                 order
             }),
             nat_traversal: config.nat_traversal_config.clone(),
-            address_discovery: None, // TODO: Wire up to config when needed
-            pqc_algorithms: None,    // TODO: Wire up to config when PQC is enabled
+            rfc_nat_traversal: config.nat_traversal_config.is_some(), // Enable RFC format when NAT traversal is enabled
+            address_discovery: config.address_discovery_config,
+            pqc_algorithms: config.pqc_algorithms.clone(),
             ..Self::default()
         }
     }
@@ -249,6 +262,13 @@ impl TransportParameters {
     /// examine the negotiated NAT traversal parameters.
     pub fn nat_traversal_config(&self) -> Option<&NatTraversalConfig> {
         self.nat_traversal.as_ref()
+    }
+
+    /// Check if RFC-compliant NAT traversal frames are supported
+    ///
+    /// Returns true if both endpoints support RFC NAT traversal
+    pub fn supports_rfc_nat_traversal(&self) -> bool {
+        self.rfc_nat_traversal
     }
 
     /// Get the PQC algorithms configuration for this connection
@@ -591,6 +611,13 @@ impl TransportParameters {
                         w.write_var(value.into_inner());
                     }
                 }
+                TransportParameterId::RfcNatTraversal => {
+                    if self.rfc_nat_traversal {
+                        // Send empty parameter to indicate support
+                        w.write_var(id as u64);
+                        w.write_var(0); // Empty value
+                    }
+                }
                 TransportParameterId::PqcAlgorithms => {
                     if let Some(ref algorithms) = self.pqc_algorithms {
                         w.write_var(id as u64);
@@ -748,6 +775,16 @@ impl TransportParameters {
                     let value = r.get_var()?;
                     let varint = VarInt::from_u64(value).map_err(|_| Error::Malformed)?;
                     params.address_discovery = Some(AddressDiscoveryConfig::from_value(varint)?);
+                }
+                TransportParameterId::RfcNatTraversal => {
+                    if params.rfc_nat_traversal {
+                        return Err(Error::Malformed);
+                    }
+                    if len != 0 {
+                        // Must be empty parameter
+                        return Err(Error::Malformed);
+                    }
+                    params.rfc_nat_traversal = true;
                 }
                 TransportParameterId::PqcAlgorithms => {
                     if params.pqc_algorithms.is_some() {
@@ -992,6 +1029,10 @@ pub(crate) enum TransportParameterId {
     // Transport parameter ID from the IETF draft specification
     NatTraversal = 0x3d7e9f0bca12fea6,
 
+    // RFC NAT Traversal Format Support
+    // Indicates support for RFC-compliant NAT traversal frame formats
+    RfcNatTraversal = 0x3d7e9f0bca12fea8,
+
     // Address Discovery Extension - draft-ietf-quic-address-discovery-00
     // Transport parameter ID from the specification
     AddressDiscovery = 0x9f81a176,
@@ -1002,7 +1043,7 @@ pub(crate) enum TransportParameterId {
 
 impl TransportParameterId {
     /// Array with all supported transport parameter IDs
-    const SUPPORTED: [Self; 24] = [
+    const SUPPORTED: [Self; 25] = [
         Self::MaxIdleTimeout,
         Self::MaxUdpPayloadSize,
         Self::InitialMaxData,
@@ -1025,6 +1066,7 @@ impl TransportParameterId {
         Self::GreaseQuicBit,
         Self::MinAckDelayDraft07,
         Self::NatTraversal,
+        Self::RfcNatTraversal,
         Self::AddressDiscovery,
         Self::PqcAlgorithms,
     ];
@@ -1067,6 +1109,7 @@ impl TryFrom<u64> for TransportParameterId {
             id if Self::GreaseQuicBit == id => Self::GreaseQuicBit,
             id if Self::MinAckDelayDraft07 == id => Self::MinAckDelayDraft07,
             id if Self::NatTraversal == id => Self::NatTraversal,
+            id if Self::RfcNatTraversal == id => Self::RfcNatTraversal,
             id if Self::AddressDiscovery == id => Self::AddressDiscovery,
             id if Self::PqcAlgorithms == id => Self::PqcAlgorithms,
             _ => return Err(()),

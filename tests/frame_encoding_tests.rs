@@ -150,8 +150,8 @@ impl AddAddress {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PunchMeNow {
     pub round: VarInt,
-    pub target_sequence: VarInt,
-    pub local_address: SocketAddr,
+    pub paired_with_sequence_number: VarInt,
+    pub address: SocketAddr,
     pub target_peer_id: Option<[u8; 32]>,
 }
 
@@ -159,9 +159,9 @@ impl PunchMeNow {
     pub fn encode<W: BufMut>(&self, buf: &mut W) {
         buf.put_u8(0x41); // PUNCH_ME_NOW frame type
         self.round.encode(buf);
-        self.target_sequence.encode(buf);
+        self.paired_with_sequence_number.encode(buf);
 
-        match self.local_address {
+        match self.address {
             SocketAddr::V4(addr) => {
                 buf.put_u8(4); // IPv4 indicator
                 buf.put_slice(&addr.ip().octets());
@@ -190,10 +190,10 @@ impl PunchMeNow {
 
     pub fn decode<R: Buf>(r: &mut R) -> Result<Self, &'static str> {
         let round = VarInt::decode(r)?;
-        let target_sequence = VarInt::decode(r)?;
+        let paired_with_sequence_number = VarInt::decode(r)?;
         let ip_version = r.get_u8();
 
-        let local_address = match ip_version {
+        let address = match ip_version {
             4 => {
                 if r.remaining() < 6 {
                     return Err("Unexpected end");
@@ -241,8 +241,8 @@ impl PunchMeNow {
 
         Ok(Self {
             round,
-            target_sequence,
-            local_address,
+            paired_with_sequence_number,
+            address,
             target_peer_id,
         })
     }
@@ -374,8 +374,8 @@ mod tests {
     fn test_punch_me_now_ipv4_without_peer_id() {
         let frame = PunchMeNow {
             round: VarInt::from_u32(5),
-            target_sequence: VarInt::from_u32(42),
-            local_address: SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(172, 16, 0, 1), 12345)),
+            paired_with_sequence_number: VarInt::from_u32(42),
+            address: SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(172, 16, 0, 1), 12345)),
             target_peer_id: None,
         };
 
@@ -400,8 +400,8 @@ mod tests {
         let peer_id = [0x42; 32]; // Test peer ID
         let frame = PunchMeNow {
             round: VarInt::from_u32(10),
-            target_sequence: VarInt::from_u32(99),
-            local_address: SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 54321)),
+            paired_with_sequence_number: VarInt::from_u32(99),
+            address: SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 54321)),
             target_peer_id: Some(peer_id),
         };
 

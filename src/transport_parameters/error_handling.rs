@@ -7,7 +7,6 @@ use tracing::error;
 /// Enhanced error handling for transport parameter validation
 pub(crate) struct TransportParameterErrorHandler;
 
-#[allow(dead_code)]
 impl TransportParameterErrorHandler {
     /// Log transport parameter error with compliance context
     pub(super) fn log_error(
@@ -158,7 +157,6 @@ pub(crate) fn validate_max_udp_payload_size(value: VarInt) -> Result<(), Transpo
     Ok(())
 }
 
-#[allow(dead_code)]
 pub(crate) fn validate_min_ack_delay(
     min_delay: Option<VarInt>,
     max_delay: VarInt,
@@ -180,7 +178,6 @@ pub(crate) fn validate_min_ack_delay(
     Ok(())
 }
 
-#[allow(dead_code)]
 pub(crate) fn validate_server_only_params(
     side: Side,
     params: &TransportParameters,

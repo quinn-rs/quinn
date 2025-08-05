@@ -10,7 +10,7 @@ use thiserror::Error;
 
 /// Configuration validation errors with detailed context
 #[derive(Error, Debug)]
-#[allow(dead_code)]
+
 pub(crate) enum ConfigValidationError {
     #[error("Invalid bootstrap node configuration: {0}")]
     InvalidBootstrapNode(String),

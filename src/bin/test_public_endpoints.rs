@@ -63,38 +63,38 @@ struct EndpointDatabase {
 }
 
 #[derive(Debug, Clone, Deserialize)]
-#[allow(dead_code)]
+
 struct EndpointEntry {
     name: String,
     host: String,
     port: u16,
     protocols: Vec<String>,
     #[serde(rename = "type")]
-    endpoint_type: String,
-    category: String,
-    reliability: String,
+    _endpoint_type: String,
+    _category: String,
+    _reliability: String,
     features: Vec<String>,
-    notes: String,
+    _notes: String,
     #[serde(default)]
-    region: Option<String>,
+    _region: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
-#[allow(dead_code)]
+
 struct ValidationConfig {
     timeout_seconds: u64,
-    retry_attempts: u32,
-    retry_delay_ms: u64,
-    parallel_connections: usize,
-    tests: Vec<TestConfig>,
+    _retry_attempts: u32,
+    _retry_delay_ms: u64,
+    _parallel_connections: usize,
+    _tests: Vec<TestConfig>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
-#[allow(dead_code)]
+
 struct TestConfig {
-    name: String,
-    description: String,
-    required: bool,
+    _name: String,
+    _description: String,
+    _required: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

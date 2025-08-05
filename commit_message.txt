@@ -1,0 +1,51 @@
+feat: add configurable timeouts and improve NAT traversal reliability
+
+This commit introduces significant improvements to the NAT traversal system
+with configurable timeouts, better state management, and enhanced reliability.
+
+Key Changes:
+- Add comprehensive timeout configuration system (nat_timeouts module)
+  - Configurable timeouts for coordination, probing, retries, and discovery
+  - Support for fast, default, and conservative timeout profiles
+  - Separate timeout configs for NAT traversal, discovery, and relay operations
+
+- Improve NAT traversal session management
+  - Add SessionUpdate enum for better state tracking
+  - Implement proper session timeout handling
+  - Add migration timeout support
+  - Enhanced connection health monitoring
+
+- Enhance transport configuration
+  - Add address discovery configuration support
+  - Add PQC algorithms configuration
+  - Improve getter methods for read-only access
+
+- Code quality improvements
+  - Fix clippy warnings across the codebase
+  - Remove unnecessary clones and imports
+  - Update derive attributes to reduce boilerplate
+  - Fix formatting issues
+
+- Test improvements
+  - Add timeout configuration to all NAT traversal tests
+  - Update PQC security validation tests for better reliability
+  - Fix test compilation issues
+
+- Documentation updates
+  - Update CLAUDE.md with latest development commands
+  - Add validation scripts documentation
+  - Document new timeout configuration options
+
+Breaking Changes: None - all changes are backward compatible
+
+Performance Impact:
+- Configurable timeouts allow better tuning for different network conditions
+- Improved state management reduces unnecessary operations
+- Better connection health monitoring prevents resource waste
+
+This update significantly improves the reliability and configurability of
+the NAT traversal system, making it more suitable for production use in
+diverse network environments.
+
+Closes #189, #190, #191
+EOF < /dev/null

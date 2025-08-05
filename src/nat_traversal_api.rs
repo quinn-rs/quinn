@@ -60,6 +60,8 @@ pub struct NatTraversalEndpoint {
     connections: Arc<std::sync::RwLock<HashMap<PeerId, QuinnConnection>>>,
     /// Local peer ID
     local_peer_id: PeerId,
+    /// Timeout configuration
+    timeout_config: crate::config::nat_timeouts::TimeoutConfig,
 }
 
 /// Configuration for NAT traversal behavior
@@ -81,6 +83,11 @@ pub struct NatTraversalConfig {
     pub max_concurrent_attempts: usize,
     /// Bind address for the endpoint (None = auto-select)
     pub bind_addr: Option<SocketAddr>,
+    /// Prefer RFC-compliant NAT traversal frame format
+    /// When true, will send RFC-compliant frames if the peer supports it
+    pub prefer_rfc_nat_traversal: bool,
+    /// Timeout configuration for NAT traversal operations
+    pub timeouts: crate::config::nat_timeouts::TimeoutConfig,
 }
 
 /// Role of an endpoint in the Autonomi network
@@ -283,6 +290,25 @@ pub enum TraversalPhase {
     Connected,
     /// Failed, may retry or fallback
     Failed,
+}
+
+/// Session state update types for polling
+#[derive(Debug, Clone, Copy)]
+enum SessionUpdate {
+    /// Connection attempt timed out
+    Timeout,
+    /// Connection was disconnected
+    Disconnected,
+    /// Update connection metrics
+    UpdateMetrics,
+    /// Session is in an invalid state
+    InvalidState,
+    /// Should retry the connection
+    Retry,
+    /// Migration timeout occurred
+    MigrationTimeout,
+    /// Remove the session entirely
+    Remove,
 }
 
 /// Address candidate discovered during NAT traversal
@@ -561,6 +587,8 @@ impl Default for NatTraversalConfig {
             enable_relay_fallback: true,
             max_concurrent_attempts: 3,
             bind_addr: None,
+            prefer_rfc_nat_traversal: true, // Default to RFC format for standards compliance
+            timeouts: crate::config::nat_timeouts::TimeoutConfig::default(),
         }
     }
 }
@@ -737,6 +765,7 @@ impl NatTraversalEndpoint {
             event_tx: Some(event_tx.clone()),
             connections: Arc::new(std::sync::RwLock::new(HashMap::new())),
             local_peer_id: Self::generate_local_peer_id(),
+            timeout_config: config.timeouts.clone(),
         };
 
         // For bootstrap nodes, start accepting connections immediately
@@ -897,7 +926,12 @@ impl NatTraversalEndpoint {
                 ConnectionState::Connecting => {
                     // Check connection timeout
                     let elapsed = now.duration_since(session.session_state.last_transition);
-                    if elapsed > Duration::from_secs(30) {
+                    if elapsed
+                        > self
+                            .timeout_config
+                            .nat_traversal
+                            .connection_establishment_timeout
+                    {
                         session.session_state.state = ConnectionState::Closed;
                         session.session_state.last_transition = now;
                         state_changed = true;
@@ -988,6 +1022,7 @@ impl NatTraversalEndpoint {
     pub fn start_session_polling(&self, interval: Duration) -> tokio::task::JoinHandle<()> {
         let sessions = self.active_sessions.clone();
         let shutdown = self.shutdown.clone();
+        let timeout_config = self.timeout_config.clone();
 
         tokio::spawn(async move {
             let mut ticker = tokio::time::interval(interval);
@@ -1000,10 +1035,145 @@ impl NatTraversalEndpoint {
                 }
 
                 // Poll sessions and handle updates
-                if let Ok(sessions_guard) = sessions.read() {
-                    for (_peer_id, _session) in sessions_guard.iter() {
-                        // TODO: Implement actual polling logic
-                        // This would check connection status, update metrics, etc.
+                let sessions_to_update = {
+                    if let Ok(sessions_guard) = sessions.read() {
+                        sessions_guard
+                            .iter()
+                            .filter_map(|(peer_id, session)| {
+                                let now = std::time::Instant::now();
+                                let elapsed =
+                                    now.duration_since(session.session_state.last_transition);
+
+                                match session.session_state.state {
+                                    ConnectionState::Connecting => {
+                                        // Check for connection timeout
+                                        if elapsed
+                                            > timeout_config
+                                                .nat_traversal
+                                                .connection_establishment_timeout
+                                        {
+                                            Some((*peer_id, SessionUpdate::Timeout))
+                                        } else {
+                                            None
+                                        }
+                                    }
+                                    ConnectionState::Connected => {
+                                        // Check if connection is still alive
+                                        if let Some(ref conn) = session.session_state.connection {
+                                            if conn.close_reason().is_some() {
+                                                Some((*peer_id, SessionUpdate::Disconnected))
+                                            } else {
+                                                // Update metrics
+                                                Some((*peer_id, SessionUpdate::UpdateMetrics))
+                                            }
+                                        } else {
+                                            Some((*peer_id, SessionUpdate::InvalidState))
+                                        }
+                                    }
+                                    ConnectionState::Idle => {
+                                        // Check if we should retry
+                                        if elapsed
+                                            > timeout_config.discovery.server_reflexive_cache_ttl
+                                        {
+                                            Some((*peer_id, SessionUpdate::Retry))
+                                        } else {
+                                            None
+                                        }
+                                    }
+                                    ConnectionState::Migrating => {
+                                        // Check migration timeout
+                                        if elapsed > timeout_config.nat_traversal.probe_timeout {
+                                            Some((*peer_id, SessionUpdate::MigrationTimeout))
+                                        } else {
+                                            None
+                                        }
+                                    }
+                                    ConnectionState::Closed => {
+                                        // Clean up old closed sessions
+                                        if elapsed > timeout_config.discovery.interface_cache_ttl {
+                                            Some((*peer_id, SessionUpdate::Remove))
+                                        } else {
+                                            None
+                                        }
+                                    }
+                                }
+                            })
+                            .collect::<Vec<_>>()
+                    } else {
+                        vec![]
+                    }
+                };
+
+                // Apply updates
+                if !sessions_to_update.is_empty() {
+                    if let Ok(mut sessions_guard) = sessions.write() {
+                        for (peer_id, update) in sessions_to_update {
+                            match update {
+                                SessionUpdate::Timeout => {
+                                    if let Some(session) = sessions_guard.get_mut(&peer_id) {
+                                        session.session_state.state = ConnectionState::Closed;
+                                        session.session_state.last_transition =
+                                            std::time::Instant::now();
+                                        tracing::warn!("Connection to {:?} timed out", peer_id);
+                                    }
+                                }
+                                SessionUpdate::Disconnected => {
+                                    if let Some(session) = sessions_guard.get_mut(&peer_id) {
+                                        session.session_state.state = ConnectionState::Closed;
+                                        session.session_state.last_transition =
+                                            std::time::Instant::now();
+                                        session.session_state.connection = None;
+                                        tracing::info!("Connection to {:?} closed", peer_id);
+                                    }
+                                }
+                                SessionUpdate::UpdateMetrics => {
+                                    if let Some(session) = sessions_guard.get_mut(&peer_id) {
+                                        if let Some(ref conn) = session.session_state.connection {
+                                            // Update RTT and other metrics
+                                            let stats = conn.stats();
+                                            session.session_state.metrics.rtt =
+                                                Some(stats.path.rtt);
+                                            session.session_state.metrics.loss_rate =
+                                                stats.path.lost_packets as f64
+                                                    / stats.path.sent_packets.max(1) as f64;
+                                        }
+                                    }
+                                }
+                                SessionUpdate::InvalidState => {
+                                    if let Some(session) = sessions_guard.get_mut(&peer_id) {
+                                        session.session_state.state = ConnectionState::Closed;
+                                        session.session_state.last_transition =
+                                            std::time::Instant::now();
+                                        tracing::error!("Session {:?} in invalid state", peer_id);
+                                    }
+                                }
+                                SessionUpdate::Retry => {
+                                    if let Some(session) = sessions_guard.get_mut(&peer_id) {
+                                        session.session_state.state = ConnectionState::Connecting;
+                                        session.session_state.last_transition =
+                                            std::time::Instant::now();
+                                        session.attempt += 1;
+                                        tracing::info!(
+                                            "Retrying connection to {:?} (attempt {})",
+                                            peer_id,
+                                            session.attempt
+                                        );
+                                    }
+                                }
+                                SessionUpdate::MigrationTimeout => {
+                                    if let Some(session) = sessions_guard.get_mut(&peer_id) {
+                                        session.session_state.state = ConnectionState::Closed;
+                                        session.session_state.last_transition =
+                                            std::time::Instant::now();
+                                        tracing::warn!("Migration timeout for {:?}", peer_id);
+                                    }
+                                }
+                                SessionUpdate::Remove => {
+                                    sessions_guard.remove(&peer_id);
+                                    tracing::debug!("Removed old session for {:?}", peer_id);
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -1066,11 +1236,23 @@ impl NatTraversalEndpoint {
             .read()
             .map_err(|_| NatTraversalError::ProtocolError("Lock poisoned".to_string()))?;
 
+        // Calculate average coordination time based on bootstrap node RTTs
+        let avg_coordination_time = {
+            let rtts: Vec<Duration> = bootstrap_nodes.iter().filter_map(|b| b.rtt).collect();
+
+            if rtts.is_empty() {
+                Duration::from_millis(500) // Default if no RTT data available
+            } else {
+                let total_millis: u64 = rtts.iter().map(|d| d.as_millis() as u64).sum();
+                Duration::from_millis(total_millis / rtts.len() as u64 * 2) // Multiply by 2 for round-trip coordination
+            }
+        };
+
         Ok(NatTraversalStatistics {
             active_sessions: sessions.len(),
             total_bootstrap_nodes: bootstrap_nodes.len(),
             successful_coordinations: bootstrap_nodes.iter().map(|b| b.coordination_count).sum(),
-            average_coordination_time: Duration::from_millis(500), // TODO: Calculate real average
+            average_coordination_time: avg_coordination_time,
             total_attempts: 0,
             successful_connections: 0,
             direct_connections: 0,
@@ -1163,7 +1345,8 @@ impl NatTraversalEndpoint {
 
                 // Configure transport parameters for NAT traversal
                 let mut transport_config = TransportConfig::default();
-                transport_config.keep_alive_interval(Some(Duration::from_secs(5)));
+                transport_config
+                    .keep_alive_interval(Some(config.timeouts.nat_traversal.retry_interval));
                 transport_config.max_idle_timeout(Some(crate::VarInt::from_u32(30000).into()));
 
                 // Enable NAT traversal in transport parameters
@@ -1648,10 +1831,15 @@ impl NatTraversalEndpoint {
             NatTraversalError::ConnectionFailed(format!("Failed to initiate connection: {e}"))
         })?;
 
-        let connection = timeout(Duration::from_secs(10), connecting)
-            .await
-            .map_err(|_| NatTraversalError::Timeout)?
-            .map_err(|e| NatTraversalError::ConnectionFailed(format!("Connection failed: {e}")))?;
+        let connection = timeout(
+            self.timeout_config
+                .nat_traversal
+                .connection_establishment_timeout,
+            connecting,
+        )
+        .await
+        .map_err(|_| NatTraversalError::Timeout)?
+        .map_err(|e| NatTraversalError::ConnectionFailed(format!("Connection failed: {e}")))?;
 
         info!(
             "Successfully connected to peer {:?} at {}",
@@ -3331,10 +3519,15 @@ impl NatTraversalEndpoint {
                 NatTraversalError::ConnectionFailed(format!("Failed to initiate connection: {e}"))
             })?;
 
-        let connection = timeout(Duration::from_secs(10), connecting)
-            .await
-            .map_err(|_| NatTraversalError::Timeout)?
-            .map_err(|e| NatTraversalError::ConnectionFailed(format!("Connection failed: {e}")))?;
+        let connection = timeout(
+            self.timeout_config
+                .nat_traversal
+                .connection_establishment_timeout,
+            connecting,
+        )
+        .await
+        .map_err(|_| NatTraversalError::Timeout)?
+        .map_err(|e| NatTraversalError::ConnectionFailed(format!("Connection failed: {e}")))?;
 
         // Store the established connection
         {
@@ -3476,13 +3669,13 @@ impl NatTraversalEndpoint {
     async fn send_punch_coordination(
         &self,
         peer_id: PeerId,
-        target_sequence: u64,
-        local_address: SocketAddr,
+        paired_with_sequence_number: u64,
+        address: SocketAddr,
         round: u32,
     ) -> Result<(), NatTraversalError> {
         debug!(
             "Sending punch coordination to peer {:?}: seq={}, addr={}, round={}",
-            peer_id, target_sequence, local_address, round
+            peer_id, paired_with_sequence_number, address, round
         );
 
         let connections = self.connections.read().map_err(|_| {
@@ -3491,18 +3684,18 @@ impl NatTraversalEndpoint {
 
         if let Some(connection) = connections.get(&peer_id) {
             // Send PUNCH_ME_NOW frame using Quinn's datagram API
-            // Frame format: [0x41][round][target_sequence][address]
+            // Frame format: [0x41][round][paired_with_sequence_number][address]
             let mut frame_data = Vec::new();
             frame_data.push(0x41); // PUNCH_ME_NOW frame type
 
             // Encode round number
             frame_data.extend_from_slice(&round.to_be_bytes());
 
-            // Encode target sequence
-            frame_data.extend_from_slice(&target_sequence.to_be_bytes());
+            // Encode paired_with_sequence_number
+            frame_data.extend_from_slice(&paired_with_sequence_number.to_be_bytes());
 
-            // Encode local address
-            match local_address {
+            // Encode address
+            match address {
                 SocketAddr::V4(addr) => {
                     frame_data.push(4); // IPv4 indicator
                     frame_data.extend_from_slice(&addr.ip().octets());
@@ -3519,8 +3712,8 @@ impl NatTraversalEndpoint {
             match connection.send_datagram(frame_data.into()) {
                 Ok(()) => {
                     info!(
-                        "Sent PUNCH_ME_NOW frame to peer {:?}: target_seq={}, local_addr={}, round={}",
-                        peer_id, target_sequence, local_address, round
+                        "Sent PUNCH_ME_NOW frame to peer {:?}: paired_with_seq={}, addr={}, round={}",
+                        peer_id, paired_with_sequence_number, address, round
                     );
                     Ok(())
                 }
@@ -3549,7 +3742,7 @@ impl NatTraversalEndpoint {
             active_sessions: self.active_sessions.read().unwrap().len(),
             total_bootstrap_nodes: self.bootstrap_nodes.read().unwrap().len(),
             successful_coordinations: 7,
-            average_coordination_time: Duration::from_secs(2),
+            average_coordination_time: self.timeout_config.nat_traversal.retry_interval,
             total_attempts: 10,
             successful_connections: 7,
             direct_connections: 5,
@@ -3636,7 +3829,6 @@ impl From<[u8; 32]> for PeerId {
 struct SkipServerVerification;
 
 impl SkipServerVerification {
-    #[allow(dead_code)]
     fn new() -> Arc<Self> {
         Arc::new(Self)
     }

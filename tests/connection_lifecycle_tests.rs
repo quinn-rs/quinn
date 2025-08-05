@@ -57,7 +57,7 @@ struct ConnectionStats {
     successful_connections: Arc<AtomicU32>,
     failed_connections: Arc<AtomicU32>,
     bytes_sent: Arc<AtomicU32>,
-    bytes_received: Arc<AtomicU32>,
+    _bytes_received: Arc<AtomicU32>,
     reconnect_count: Arc<AtomicU32>,
 }
 
@@ -65,9 +65,9 @@ struct ConnectionStats {
 #[derive(Debug, Clone)]
 enum ConnectionEvent {
     StateChanged(ConnectionState),
-    DataSent(usize),
-    DataReceived(usize),
-    Error(String),
+    DataSent(()),
+    _DataReceived(usize),
+    Error(()),
     Reconnect,
 }
 
@@ -132,8 +132,7 @@ impl ConnectionLifecycleTest {
                 self.stats
                     .failed_connections
                     .fetch_add(1, Ordering::Relaxed);
-                self.add_event(ConnectionEvent::Error(err_str.clone()))
-                    .await;
+                self.add_event(ConnectionEvent::Error(())).await;
                 Err(err_str.into())
             }
         }
@@ -158,7 +157,7 @@ impl ConnectionLifecycleTest {
         self.stats
             .bytes_sent
             .fetch_add(data.len() as u32, Ordering::Relaxed);
-        self.add_event(ConnectionEvent::DataSent(data.len())).await;
+        self.add_event(ConnectionEvent::DataSent(())).await;
         Ok(())
     }
 
@@ -567,7 +566,7 @@ async fn test_state_machine_invariants() {
 // ===== Helper Functions =====
 
 /// Create a test environment with multiple nodes
-async fn create_test_cluster(
+async fn _create_test_cluster(
     num_nodes: usize,
 ) -> Result<(SocketAddr, Vec<Arc<ConnectionLifecycleTest>>), Box<dyn std::error::Error + Send + Sync>>
 {

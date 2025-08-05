@@ -248,6 +248,9 @@ pub struct Connection {
     /// NAT traversal state for establishing direct P2P connections
     nat_traversal: Option<NatTraversalState>,
 
+    /// NAT traversal frame format configuration
+    nat_traversal_frame_config: frame::nat_traversal_unified::NatTraversalFrameConfig,
+
     /// Address discovery state for tracking observed addresses
     address_discovery_state: Option<AddressDiscoveryState>,
 
@@ -384,6 +387,8 @@ impl Connection {
             stats: ConnectionStats::default(),
             version,
             nat_traversal: None, // Will be initialized when NAT traversal is negotiated
+            nat_traversal_frame_config:
+                frame::nat_traversal_unified::NatTraversalFrameConfig::default(),
             address_discovery_state: {
                 // Initialize with default config for now
                 // Will be updated when transport parameters are negotiated
@@ -4028,7 +4033,12 @@ impl Connection {
                 address = %add_address.address,
                 "ADD_ADDRESS"
             );
-            add_address.encode(buf);
+            // Use the correct encoding format based on negotiated configuration
+            if self.nat_traversal_frame_config.use_rfc_format {
+                add_address.encode_rfc(buf);
+            } else {
+                add_address.encode_legacy(buf);
+            }
             sent.retransmits
                 .get_or_create()
                 .add_addresses
@@ -4044,10 +4054,15 @@ impl Connection {
             };
             trace!(
                 round = %punch_me_now.round,
-                target_sequence = %punch_me_now.target_sequence,
+                paired_with_sequence_number = %punch_me_now.paired_with_sequence_number,
                 "PUNCH_ME_NOW"
             );
-            punch_me_now.encode(buf);
+            // Use the correct encoding format based on negotiated configuration
+            if self.nat_traversal_frame_config.use_rfc_format {
+                punch_me_now.encode_rfc(buf);
+            } else {
+                punch_me_now.encode_legacy(buf);
+            }
             sent.retransmits
                 .get_or_create()
                 .punch_me_now
@@ -4065,6 +4080,7 @@ impl Connection {
                 sequence = %remove_address.sequence,
                 "REMOVE_ADDRESS"
             );
+            // RemoveAddress has the same format in both RFC and legacy versions
             remove_address.encode(buf);
             sent.retransmits
                 .get_or_create()
@@ -4188,6 +4204,19 @@ impl Connection {
 
         // Handle NAT traversal capability negotiation
         self.negotiate_nat_traversal_capability(&params);
+
+        // Update NAT traversal frame format configuration based on negotiated parameters
+        // Check if we have NAT traversal enabled in our config
+        let local_has_nat_traversal = self.config.nat_traversal_config.is_some();
+        // For now, assume we support RFC if NAT traversal is enabled
+        // TODO: Add proper RFC support flag to TransportConfig
+        let local_supports_rfc = local_has_nat_traversal;
+        self.nat_traversal_frame_config = frame::nat_traversal_unified::NatTraversalFrameConfig {
+            // Use RFC format only if both endpoints support it
+            use_rfc_format: local_supports_rfc && params.supports_rfc_nat_traversal(),
+            // Always accept legacy for backward compatibility
+            accept_legacy: true,
+        };
 
         // Handle address discovery negotiation
         self.negotiate_address_discovery(&params);
@@ -4626,7 +4655,6 @@ impl Connection {
     ///
     /// This method is preserved for debugging and monitoring purposes.
     /// It may be used in future telemetry or diagnostic features.
-    #[allow(dead_code)]
     pub(crate) fn nat_traversal_stats(&self) -> Option<nat_traversal::NatTraversalStats> {
         self.nat_traversal.as_ref().map(|state| state.stats.clone())
     }
@@ -4723,7 +4751,7 @@ impl Connection {
     ) -> Result<(), TransportError> {
         trace!(
             "Received PunchMeNow: round={}, target_seq={}, local_addr={}",
-            punch_me_now.round, punch_me_now.target_sequence, punch_me_now.local_address
+            punch_me_now.round, punch_me_now.paired_with_sequence_number, punch_me_now.address
         );
 
         // Check if we're a bootstrap node that should coordinate this
@@ -4788,7 +4816,7 @@ impl Connection {
             trace!("Coordination synchronized for round {}", punch_me_now.round);
 
             // Create punch targets based on the received information
-            // The peer's local_address tells us where they'll be listening
+            // The peer's address tells us where they'll be listening
             let _local_addr = self
                 .local_ip
                 .map(|ip| SocketAddr::new(ip, 0))
@@ -4797,8 +4825,8 @@ impl Connection {
                 });
 
             let target = nat_traversal::PunchTarget {
-                remote_addr: punch_me_now.local_address,
-                remote_sequence: punch_me_now.target_sequence,
+                remote_addr: punch_me_now.address,
+                remote_sequence: punch_me_now.paired_with_sequence_number,
                 challenge: self.rng.gen(),
             };
 
@@ -4934,13 +4962,13 @@ impl Connection {
     pub fn queue_punch_me_now(
         &mut self,
         round: VarInt,
-        target_sequence: VarInt,
-        local_address: SocketAddr,
+        paired_with_sequence_number: VarInt,
+        address: SocketAddr,
     ) {
         let punch_me_now = frame::PunchMeNow {
             round,
-            target_sequence,
-            local_address,
+            paired_with_sequence_number,
+            address,
             target_peer_id: None, // Direct peer-to-peer communication
         };
 
@@ -4950,7 +4978,7 @@ impl Connection {
             .push(punch_me_now);
         trace!(
             "Queued PunchMeNow frame: round={}, target={}",
-            round, target_sequence
+            round, paired_with_sequence_number
         );
     }
 
@@ -5158,8 +5186,8 @@ impl Connection {
 
             let punch_me_now = frame::PunchMeNow {
                 round,
-                target_sequence: VarInt::from_u32(0), // Will be filled by bootstrap
-                local_address: local_addr,
+                paired_with_sequence_number: VarInt::from_u32(0), // Will be filled by bootstrap
+                address: local_addr,
                 target_peer_id: None, // Direct peer-to-peer communication
             };
 
@@ -5244,8 +5272,8 @@ impl Connection {
     /// This triggers synchronized hole punching for NAT traversal.
     ///
     /// # Arguments
-    /// * `target_sequence` - Sequence number of the target candidate address
-    /// * `local_address` - Our local address for the hole punching attempt
+    /// * `paired_with_sequence_number` - Sequence number of the target candidate address
+    /// * `address` - Our address for the hole punching attempt
     /// * `round` - Coordination round number for synchronization
     ///
     /// # Returns
@@ -5253,8 +5281,8 @@ impl Connection {
     /// * `Err(ConnectionError)` - If NAT traversal is not enabled
     pub fn send_nat_punch_coordination(
         &mut self,
-        target_sequence: u64,
-        local_address: SocketAddr,
+        paired_with_sequence_number: u64,
+        address: SocketAddr,
         round: u32,
     ) -> Result<(), ConnectionError> {
         // Verify NAT traversal is enabled
@@ -5267,17 +5295,17 @@ impl Connection {
         // Queue the frame for transmission
         self.queue_punch_me_now(
             VarInt::from_u32(round),
-            VarInt::from_u64(target_sequence).map_err(|_| {
+            VarInt::from_u64(paired_with_sequence_number).map_err(|_| {
                 ConnectionError::TransportError(TransportError::PROTOCOL_VIOLATION(
                     "Invalid target sequence number",
                 ))
             })?,
-            local_address,
+            address,
         );
 
         debug!(
-            "Queued PUNCH_ME_NOW frame: target_seq={}, local_addr={}, round={}",
-            target_sequence, local_address, round
+            "Queued PUNCH_ME_NOW frame: paired_with_seq={}, addr={}, round={}",
+            paired_with_sequence_number, address, round
         );
         Ok(())
     }
@@ -5324,7 +5352,6 @@ impl Connection {
     ///
     /// This method is preserved for debugging and monitoring purposes.
     /// It may be used in future telemetry or diagnostic features.
-    #[allow(dead_code)]
     pub(crate) fn get_nat_traversal_stats(&self) -> Option<&nat_traversal::NatTraversalStats> {
         self.nat_traversal.as_ref().map(|state| &state.stats)
     }
@@ -5862,7 +5889,6 @@ impl From<ConnectionError> for io::Error {
     }
 }
 
-#[allow(unreachable_pub)] // fuzzing only
 #[derive(Clone, Debug)]
 /// Connection state machine states
 pub enum State {
@@ -5905,7 +5931,6 @@ impl State {
 mod state {
     use super::*;
 
-    #[allow(unreachable_pub)] // fuzzing only
     #[derive(Clone, Debug)]
     pub struct Handshake {
         /// Whether the remote CID has been set by the peer yet
@@ -5922,7 +5947,6 @@ mod state {
         pub(super) client_hello: Option<Bytes>,
     }
 
-    #[allow(unreachable_pub)] // fuzzing only
     #[derive(Clone, Debug)]
     pub struct Closed {
         pub(super) reason: Close,

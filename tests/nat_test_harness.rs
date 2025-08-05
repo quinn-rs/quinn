@@ -147,8 +147,8 @@ impl NatTestHarness {
         tokio::time::sleep(Duration::from_secs(2)).await;
 
         Ok(ListenerHandle {
-            process: child,
-            log_rx: rx,
+            _process: child,
+            _log_rx: rx,
         })
     }
 
@@ -240,8 +240,8 @@ impl NatTestHarness {
 
 /// Handle for a running listener process
 struct ListenerHandle {
-    process: std::process::Child,
-    log_rx: mpsc::Receiver<String>,
+    _process: std::process::Child,
+    _log_rx: mpsc::Receiver<String>,
 }
 
 /// Connection metrics

@@ -144,6 +144,8 @@ impl QuicP2PNode {
             enable_relay_fallback: !matches!(config.role, EndpointRole::Bootstrap),
             max_concurrent_attempts: 5,
             bind_addr: config.bind_addr,
+            prefer_rfc_nat_traversal: true, // Default to RFC format for standards compliance
+            timeouts: crate::config::nat_timeouts::TimeoutConfig::default(),
         };
 
         // Create event callback for NAT traversal events

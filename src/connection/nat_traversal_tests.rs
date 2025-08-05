@@ -589,12 +589,12 @@ mod tests {
     #[test]
     fn test_send_nat_punch_coordination_success() {
         let mut conn = create_test_connection();
-        let target_sequence = VarInt::from_u32(5);
-        let local_address = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100)), 5000);
+        let paired_with_sequence_number = 5;
+        let address = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100)), 5000);
         let round = 1;
         
         // Should succeed with NAT traversal enabled
-        let result = conn.send_nat_punch_coordination(target_sequence, local_address, round);
+        let result = conn.send_nat_punch_coordination(paired_with_sequence_number, address, round);
         assert!(result.is_ok());
     }
 
@@ -604,24 +604,24 @@ mod tests {
         // Disable NAT traversal
         conn.nat_traversal = None;
         
-        let target_sequence = VarInt::from_u32(5);
-        let local_address = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100)), 5000);
+        let paired_with_sequence_number = 5;
+        let address = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100)), 5000);
         let round = 1;
         
         // Should fail without NAT traversal
-        let result = conn.send_nat_punch_coordination(target_sequence, local_address, round);
+        let result = conn.send_nat_punch_coordination(paired_with_sequence_number, address, round);
         assert!(result.is_err());
     }
 
     #[test]
     fn test_send_nat_punch_coordination_invalid_sequence() {
         let mut conn = create_test_connection();
-        let target_sequence = VarInt::from_u32(0); // Invalid sequence
-        let local_address = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100)), 5000);
+        let paired_with_sequence_number = 0; // Invalid sequence
+        let address = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100)), 5000);
         let round = 1;
         
         // Should handle invalid sequence gracefully
-        let result = conn.send_nat_punch_coordination(target_sequence, local_address, round);
+        let result = conn.send_nat_punch_coordination(paired_with_sequence_number, address, round);
         // This might succeed but with validation happening later
         assert!(result.is_ok() || result.is_err());
     }
@@ -646,11 +646,11 @@ mod tests {
     #[test]
     fn test_queue_punch_me_now_frame_structure() {
         let mut conn = create_test_connection();
-        let target_sequence = VarInt::from_u32(10);
-        let local_address = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100)), 5000);
+        let paired_with_sequence_number = 10;
+        let address = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100)), 5000);
         let round = 2;
         
-        let result = conn.send_nat_punch_coordination(target_sequence, local_address, round);
+        let result = conn.send_nat_punch_coordination(paired_with_sequence_number, address, round);
         assert!(result.is_ok());
         
         // Check that NAT stats were updated
@@ -675,12 +675,12 @@ mod tests {
         
         // Queue multiple PUNCH_ME_NOW frames
         for i in 1..=3 {
-            let target_sequence = VarInt::from_u32(i);
-            let local_address = SocketAddr::new(
+            let paired_with_sequence_number = i as u64;
+            let address = SocketAddr::new(
                 IpAddr::V4(Ipv4Addr::new(10, 0, 0, i as u8)),
                 6000 + i as u16,
             );
-            let result = conn.send_nat_punch_coordination(target_sequence, local_address, i as u8);
+            let result = conn.send_nat_punch_coordination(paired_with_sequence_number, address, i as u8);
             assert!(result.is_ok());
         }
         
@@ -723,8 +723,8 @@ mod tests {
         assert!(result.is_ok());
         
         // Test punch coordination with IPv6
-        let target_sequence = VarInt::from_u32(1);
-        let result = conn.send_nat_punch_coordination(target_sequence, ipv6_address, 1);
+        let paired_with_sequence_number = 1;
+        let result = conn.send_nat_punch_coordination(paired_with_sequence_number, ipv6_address, 1);
         assert!(result.is_ok());
     }
 }

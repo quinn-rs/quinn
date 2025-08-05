@@ -28,6 +28,7 @@ use crate::{
 mod transport;
 pub use transport::{AckFrequencyConfig, IdleTimeout, MtuDiscoveryConfig, TransportConfig};
 
+pub mod nat_timeouts;
 pub mod timeouts;
 
 // Production-ready configuration validation

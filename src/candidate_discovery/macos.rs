@@ -14,15 +14,15 @@ use std::{
 use nix::libc;
 
 // Interface type constants for macOS
-#[allow(dead_code)] // Used in FFI bindings
+// Used in FFI bindings
 const IFT_ETHER: u8 = 6;
 
 // macOS-specific ioctl constants
-#[allow(dead_code)] // Used in FFI bindings
+// Used in FFI bindings
 const SIOCGIFFLAGS: libc::c_ulong = 0xc0206911;
-#[allow(dead_code)] // Used in FFI bindings
+// Used in FFI bindings
 const SIOCGIFMTU: libc::c_ulong = 0xc0206933;
-#[allow(dead_code)] // Used in FFI bindings
+// Used in FFI bindings
 const SIOCGIFADDR: libc::c_ulong = 0xc0206921;
 
 use tracing::{debug, error, info, warn};
@@ -32,13 +32,13 @@ use crate::candidate_discovery::{NetworkInterface, NetworkInterfaceDiscovery};
 /// macOS-specific network interface discovery using System Configuration Framework
 pub(crate) struct MacOSInterfaceDiscovery {
     /// Cached interface data to detect changes
-    #[allow(dead_code)] // Used in caching logic
+    // Used in caching logic
     cached_interfaces: HashMap<String, MacOSInterface>,
     /// Last scan timestamp for cache validation
-    #[allow(dead_code)] // Used in cache validation
+    // Used in cache validation
     last_scan_time: Option<Instant>,
     /// Cache TTL for interface data
-    #[allow(dead_code)] // Used in cache expiry checks
+    // Used in cache expiry checks
     cache_ttl: std::time::Duration,
     /// Current scan state
     scan_state: ScanState,
@@ -47,10 +47,10 @@ pub(crate) struct MacOSInterfaceDiscovery {
     /// Run loop source for network change notifications
     run_loop_source: Option<CFRunLoopSourceRef>,
     /// Interface enumeration configuration
-    #[allow(dead_code)] // Used in interface filtering
+    // Used in interface filtering
     interface_config: InterfaceConfig,
     /// Flag to track if network changes have occurred
-    #[allow(dead_code)] // Used in network change detection
+    // Used in network change detection
     network_changed: bool,
 }
 
@@ -58,13 +58,13 @@ pub(crate) struct MacOSInterfaceDiscovery {
 #[derive(Debug, Clone)]
 struct MacOSInterface {
     /// Interface name (e.g., "en0", "en1")
-    #[allow(dead_code)] // Used in trait implementation
+    // Used in trait implementation
     name: String,
     /// Interface display name (e.g., "Wi-Fi", "Ethernet")
-    #[allow(dead_code)] // Used for user-friendly display
+    // Used for user-friendly display
     display_name: String,
     /// Hardware type (Ethernet, Wi-Fi, etc.)
-    #[allow(dead_code)] // Used in hardware type detection
+    // Used in hardware type detection
     hardware_type: HardwareType,
     /// Interface state
     state: InterfaceState,
@@ -85,38 +85,38 @@ struct MacOSInterface {
 /// Hardware types for macOS interfaces
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum HardwareType {
-    #[allow(dead_code)] // Used in interface detection
+    // Used in interface detection
     Ethernet,
-    #[allow(dead_code)] // Used in interface type detection
+    // Used in interface type detection
     WiFi,
-    #[allow(dead_code)] // Used in interface type detection
+    // Used in interface type detection
     Bluetooth,
-    #[allow(dead_code)] // Used in interface type detection
+    // Used in interface type detection
     Cellular,
-    #[allow(dead_code)] // Used in interface type detection
+    // Used in interface type detection
     Loopback,
-    #[allow(dead_code)] // Used in interface type detection
+    // Used in interface type detection
     PPP,
-    #[allow(dead_code)] // Used in interface type detection
+    // Used in interface type detection
     VPN,
-    #[allow(dead_code)] // Used in interface type detection
+    // Used in interface type detection
     Bridge,
-    #[allow(dead_code)] // Used in interface type detection
+    // Used in interface type detection
     Thunderbolt,
-    #[allow(dead_code)] // Used in interface type detection
+    // Used in interface type detection
     USB,
-    #[allow(dead_code)] // Used in interface type detection
+    // Used in interface type detection
     Unknown,
 }
 
 /// Interface state information
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum InterfaceState {
-    #[allow(dead_code)] // Used in interface state detection
+    // Used in interface state detection
     Active,
-    #[allow(dead_code)] // Used in interface state detection
+    // Used in interface state detection
     Inactive,
-    #[allow(dead_code)] // Used in interface state detection
+    // Used in interface state detection
     Unknown,
 }
 
@@ -124,25 +124,25 @@ enum InterfaceState {
 #[derive(Debug, Clone, Copy, Default)]
 struct InterfaceFlags {
     /// Interface is up
-    #[allow(dead_code)] // Used in interface filtering and conversion
+    // Used in interface filtering and conversion
     is_up: bool,
     /// Interface is active (has valid configuration)
-    #[allow(dead_code)] // Used in interface filtering
+    // Used in interface filtering
     is_active: bool,
     /// Interface is wireless
-    #[allow(dead_code)] // Used in interface filtering and conversion
+    // Used in interface filtering and conversion
     is_wireless: bool,
     /// Interface is loopback
-    #[allow(dead_code)] // Used in interface filtering
+    // Used in interface filtering
     is_loopback: bool,
     /// Interface supports IPv4
-    #[allow(dead_code)] // Used in interface filtering
+    // Used in interface filtering
     supports_ipv4: bool,
     /// Interface supports IPv6
-    #[allow(dead_code)] // Used in interface filtering
+    // Used in interface filtering
     supports_ipv6: bool,
     /// Interface is built-in (not USB/external)
-    #[allow(dead_code)] // Used in interface filtering
+    // Used in interface filtering
     is_builtin: bool,
 }
 
@@ -152,13 +152,13 @@ enum ScanState {
     /// No scan in progress
     Idle,
     /// Scan initiated, waiting for completion
-    #[allow(dead_code)] // Used in scanning state machine
+    // Used in scanning state machine
     InProgress { started_at: Instant },
     /// Scan completed, results available
-    #[allow(dead_code)] // Used in scanning state machine
+    // Used in scanning state machine
     Completed { scan_results: Vec<NetworkInterface> },
     /// Scan failed with error
-    #[allow(dead_code)] // Used in scanning state machine
+    // Used in scanning state machine
     Failed { error: String },
 }
 
@@ -166,28 +166,28 @@ enum ScanState {
 #[derive(Debug, Clone)]
 pub(crate) struct InterfaceConfig {
     /// Include inactive interfaces
-    #[allow(dead_code)] // Used in filtering logic
+    // Used in filtering logic
     include_inactive: bool,
     /// Include loopback interfaces
-    #[allow(dead_code)] // Used in filtering logic
+    // Used in filtering logic
     include_loopback: bool,
     /// Include IPv6 addresses
-    #[allow(dead_code)] // Used in filtering logic
+    // Used in filtering logic
     include_ipv6: bool,
     /// Include built-in interfaces only
-    #[allow(dead_code)] // Used in filtering logic
+    // Used in filtering logic
     builtin_only: bool,
     /// Minimum MTU size to consider
-    #[allow(dead_code)] // Used in filtering logic
+    // Used in filtering logic
     min_mtu: u32,
     /// Maximum interfaces to enumerate
-    #[allow(dead_code)] // Used in filtering logic
+    // Used in filtering logic
     max_interfaces: u32,
 }
 
 /// macOS System Configuration Framework error types
 #[derive(Debug, Clone)]
-#[allow(dead_code)] // Error types for macOS network operations
+// Error types for macOS network operations
 pub(crate) enum MacOSNetworkError {
     /// System Configuration Framework error
     SystemConfigurationError {
@@ -229,9 +229,9 @@ unsafe impl Send for CFRunLoopSourceRef {}
 
 type CFStringRef = *mut std::ffi::c_void;
 type CFRunLoopRef = *mut std::ffi::c_void;
-#[allow(dead_code)] // Core Foundation array reference
+// Core Foundation array reference
 type CFArrayRef = *mut std::ffi::c_void;
-#[allow(dead_code)] // Core Foundation allocator reference
+// Core Foundation allocator reference
 type CFAllocatorRef = *mut std::ffi::c_void;
 
 // System Configuration Framework context
@@ -295,7 +295,6 @@ extern "C" {
 
     fn SCDynamicStoreCopyKeyList(store: SCDynamicStoreRef, pattern: CFStringRef) -> CFArrayRef;
 
-    #[allow(dead_code)]
     fn SCDynamicStoreCopyValue(store: SCDynamicStoreRef, key: CFStringRef)
     -> *mut std::ffi::c_void;
 

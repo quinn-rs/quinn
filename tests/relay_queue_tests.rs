@@ -9,6 +9,7 @@ use std::time::Duration;
 
 use ant_quic::{
     VarInt,
+    config::nat_timeouts::TimeoutConfig,
     nat_traversal_api::{
         EndpointRole, NatTraversalConfig, NatTraversalEndpoint, NatTraversalError, PeerId,
     },
@@ -95,6 +96,8 @@ mod nat_traversal_api_tests {
             enable_relay_fallback: false,
             max_concurrent_attempts: 5,
             bind_addr: None,
+            prefer_rfc_nat_traversal: false,
+            timeouts: TimeoutConfig::default(),
         };
 
         assert_eq!(config.role, EndpointRole::Bootstrap);
@@ -271,6 +274,8 @@ mod functional_tests {
             enable_relay_fallback: true,
             max_concurrent_attempts: 0, // Invalid
             bind_addr: None,
+            prefer_rfc_nat_traversal: false,
+            timeouts: TimeoutConfig::default(),
         };
 
         // The validation logic might be in the endpoint creation
@@ -287,6 +292,8 @@ mod functional_tests {
             enable_relay_fallback: true,
             max_concurrent_attempts: 3,
             bind_addr: None,
+            prefer_rfc_nat_traversal: false,
+            timeouts: TimeoutConfig::default(),
         };
 
         // This might still fail due to other issues (TLS config), but should pass basic validation
@@ -466,6 +473,8 @@ mod performance_tests {
                 enable_relay_fallback: i % 3 == 0,
                 max_concurrent_attempts: i as usize % 10 + 1,
                 bind_addr: None,
+                prefer_rfc_nat_traversal: false,
+                timeouts: TimeoutConfig::default(),
             };
 
             // Use the config to prevent optimization
@@ -560,6 +569,8 @@ mod relay_functionality_tests {
             enable_relay_fallback: true,
             max_concurrent_attempts: 0, // Might be invalid
             bind_addr: None,
+            prefer_rfc_nat_traversal: false,
+            timeouts: TimeoutConfig::default(),
         };
 
         // This might be accepted or rejected depending on implementation

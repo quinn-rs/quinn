@@ -298,7 +298,6 @@ pub(super) struct SentPacket {
 }
 
 /// Retransmittable data queue
-#[allow(unreachable_pub)] // fuzzing only
 #[derive(Debug, Default, Clone)]
 pub struct Retransmits {
     pub(super) max_data: bool,

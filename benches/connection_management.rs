@@ -45,15 +45,15 @@ enum ConnectionState {
 struct MockConnectionManager {
     pub connections: Arc<RwLock<HashMap<PeerId, MockConnection>>>,
     pub active_connections: Arc<RwLock<Vec<PeerId>>>,
-    pub connection_events: Arc<RwLock<VecDeque<ConnectionEvent>>>,
+    pub _connection_events: Arc<RwLock<VecDeque<ConnectionEvent>>>,
 }
 
 #[derive(Clone, Debug)]
 enum ConnectionEvent {
-    Connected(PeerId),
-    Disconnected(PeerId),
-    DataReceived(PeerId, usize),
-    DataSent(PeerId, usize),
+    _Connected(()),
+    _Disconnected(()),
+    _DataReceived((), ()),
+    _DataSent((), ()),
 }
 
 impl MockConnectionManager {
@@ -61,7 +61,7 @@ impl MockConnectionManager {
         Self {
             connections: Arc::new(RwLock::new(HashMap::new())),
             active_connections: Arc::new(RwLock::new(Vec::new())),
-            connection_events: Arc::new(RwLock::new(VecDeque::new())),
+            _connection_events: Arc::new(RwLock::new(VecDeque::new())),
         }
     }
 }
@@ -287,12 +287,12 @@ fn bench_event_processing(c: &mut Criterion) {
                     let events = Arc::new(RwLock::new(VecDeque::new()));
 
                     for _ in 0..size {
-                        let peer_id = peer_ids[rng.gen_range(0..peer_ids.len())];
+                        let _peer_id = peer_ids[rng.gen_range(0..peer_ids.len())];
                         let event = match rng.gen_range(0..4) {
-                            0 => ConnectionEvent::Connected(peer_id),
-                            1 => ConnectionEvent::Disconnected(peer_id),
-                            2 => ConnectionEvent::DataReceived(peer_id, rng.gen_range(1..10000)),
-                            _ => ConnectionEvent::DataSent(peer_id, rng.gen_range(1..10000)),
+                            0 => ConnectionEvent::_Connected(()),
+                            1 => ConnectionEvent::_Disconnected(()),
+                            2 => ConnectionEvent::_DataReceived((), ()),
+                            _ => ConnectionEvent::_DataSent((), ()),
                         };
 
                         let mut event_queue = events.write().unwrap();
@@ -327,17 +327,12 @@ fn bench_event_processing(c: &mut Criterion) {
                         {
                             let mut event_queue = events.write().unwrap();
                             for _ in 0..size {
-                                let peer_id = peer_ids[rng.gen_range(0..peer_ids.len())];
+                                let _peer_id = peer_ids[rng.gen_range(0..peer_ids.len())];
                                 let event = match rng.gen_range(0..4) {
-                                    0 => ConnectionEvent::Connected(peer_id),
-                                    1 => ConnectionEvent::Disconnected(peer_id),
-                                    2 => ConnectionEvent::DataReceived(
-                                        peer_id,
-                                        rng.gen_range(1..10000),
-                                    ),
-                                    _ => {
-                                        ConnectionEvent::DataSent(peer_id, rng.gen_range(1..10000))
-                                    }
+                                    0 => ConnectionEvent::_Connected(()),
+                                    1 => ConnectionEvent::_Disconnected(()),
+                                    2 => ConnectionEvent::_DataReceived((), ()),
+                                    _ => ConnectionEvent::_DataSent((), ()),
                                 };
                                 event_queue.push_back(event);
                             }

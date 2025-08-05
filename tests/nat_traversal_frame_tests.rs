@@ -90,9 +90,9 @@ pub struct PunchMeNow {
     /// Round number for coordination
     pub round: VarInt,
     /// Sequence number of the address to punch to (from AddAddress)
-    pub target_sequence: VarInt,
-    /// Local address for this punch attempt
-    pub local_address: SocketAddr,
+    pub paired_with_sequence_number: VarInt,
+    /// Address for this punch attempt
+    pub address: SocketAddr,
     /// Target peer ID for relay by bootstrap nodes (optional)
     pub target_peer_id: Option<[u8; 32]>,
 }
@@ -103,9 +103,9 @@ impl PunchMeNow {
         buf.put_u8(0x7e); // Second byte
         buf.put_u8(0x91); // Third byte
         buf.write(self.round);
-        buf.write(self.target_sequence);
+        buf.write(self.paired_with_sequence_number);
 
-        match self.local_address {
+        match self.address {
             SocketAddr::V4(addr) => {
                 buf.put_u8(4); // IPv4 indicator
                 buf.put_slice(&addr.ip().octets());
@@ -134,10 +134,10 @@ impl PunchMeNow {
 
     pub fn decode<R: Buf>(r: &mut R) -> Result<Self, UnexpectedEnd> {
         let round = r.get()?;
-        let target_sequence = r.get()?;
+        let paired_with_sequence_number = r.get()?;
         let ip_version = r.get::<u8>()?;
 
-        let local_address = match ip_version {
+        let address = match ip_version {
             4 => {
                 if r.remaining() < 6 {
                     return Err(UnexpectedEnd);
@@ -185,8 +185,8 @@ impl PunchMeNow {
 
         Ok(Self {
             round,
-            target_sequence,
-            local_address,
+            paired_with_sequence_number,
+            address,
             target_peer_id,
         })
     }
@@ -330,8 +330,8 @@ mod frame_test_vectors {
     fn test_punch_me_now_ipv4_without_peer_id() {
         let frame = PunchMeNow {
             round: VarInt::from_u32(5),
-            target_sequence: VarInt::from_u32(42),
-            local_address: SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(172, 16, 0, 1), 12345)),
+            paired_with_sequence_number: VarInt::from_u32(42),
+            address: SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(172, 16, 0, 1), 12345)),
             target_peer_id: None,
         };
 
@@ -356,8 +356,8 @@ mod frame_test_vectors {
         let peer_id = [0x42; 32]; // Test peer ID
         let frame = PunchMeNow {
             round: VarInt::from_u32(10),
-            target_sequence: VarInt::from_u32(99),
-            local_address: SocketAddr::V6(SocketAddrV6::new(Ipv6Addr::LOCALHOST, 54321, 0, 0)),
+            paired_with_sequence_number: VarInt::from_u32(99),
+            address: SocketAddr::V6(SocketAddrV6::new(Ipv6Addr::LOCALHOST, 54321, 0, 0)),
             target_peer_id: Some(peer_id),
         };
 
@@ -398,9 +398,9 @@ mod frame_test_vectors {
         let frame = PunchMeNow::decode(&mut buf).expect("Failed to decode PunchMeNow");
 
         assert_eq!(frame.round, VarInt::from_u32(7));
-        assert_eq!(frame.target_sequence, VarInt::from_u32(88));
+        assert_eq!(frame.paired_with_sequence_number, VarInt::from_u32(88));
         assert_eq!(
-            frame.local_address,
+            frame.address,
             SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 10000))
         );
         assert_eq!(frame.target_peer_id, Some(peer_id));
@@ -588,8 +588,8 @@ mod frame_size_tests {
         // Test worst case: IPv6 + peer ID
         let frame = PunchMeNow {
             round: VarInt::from_u64(0x3FFFFFFF).unwrap(),
-            target_sequence: VarInt::from_u64(0x3FFFFFFF).unwrap(),
-            local_address: SocketAddr::V6(SocketAddrV6::new(
+            paired_with_sequence_number: VarInt::from_u64(0x3FFFFFFF).unwrap(),
+            address: SocketAddr::V6(SocketAddrV6::new(
                 Ipv6Addr::new(
                     0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff,
                 ),
@@ -643,8 +643,8 @@ mod frame_integration_tests {
 
         let punch_me = PunchMeNow {
             round: VarInt::from_u32(1),
-            target_sequence: VarInt::from_u32(1),
-            local_address: SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(10, 0, 0, 1), 9000)),
+            paired_with_sequence_number: VarInt::from_u32(1),
+            address: SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(10, 0, 0, 1), 9000)),
             target_peer_id: None,
         };
 
@@ -674,7 +674,10 @@ mod frame_integration_tests {
         assert_eq!(buf.get_u8(), 0x91); // Third byte
         let decoded_punch = PunchMeNow::decode(&mut buf).expect("Failed to decode PunchMeNow");
         assert_eq!(decoded_punch.round, VarInt::from_u32(1));
-        assert_eq!(decoded_punch.target_sequence, VarInt::from_u32(1));
+        assert_eq!(
+            decoded_punch.paired_with_sequence_number,
+            VarInt::from_u32(1)
+        );
 
         // Parse third frame (RemoveAddress)
         assert_eq!(buf.get_u8(), 0x3d); // First byte of REMOVE_ADDRESS frame type

@@ -61,28 +61,28 @@ struct TestAuthPeer {
 #[derive(Debug, Clone)]
 enum AuthEvent {
     AuthStarted {
-        initiator: PeerId,
-        target: PeerId,
-        timestamp: Instant,
+        _initiator: PeerId,
+        _target: PeerId,
+        _timestamp: Instant,
     },
     ChallengeIssued {
-        issuer: PeerId,
-        target: PeerId,
-        nonce: [u8; 32],
+        _issuer: PeerId,
+        _target: PeerId,
+        _nonce: [u8; 32],
     },
     ChallengeResponded {
-        responder: PeerId,
-        nonce: [u8; 32],
+        _responder: PeerId,
+        _nonce: [u8; 32],
     },
     AuthSuccess {
-        peer1: PeerId,
-        peer2: PeerId,
-        duration: Duration,
+        _peer1: PeerId,
+        _peer2: PeerId,
+        _duration: Duration,
     },
     AuthFailure {
-        peer: PeerId,
-        reason: String,
-        duration: Duration,
+        _peer: PeerId,
+        _reason: String,
+        _duration: Duration,
     },
 }
 
@@ -144,9 +144,9 @@ impl AuthTestEnvironment {
 
         let start = Instant::now();
         self.events.lock().await.push(AuthEvent::AuthStarted {
-            initiator: initiator.id,
-            target: responder.id,
-            timestamp: start,
+            _initiator: initiator.id,
+            _target: responder.id,
+            _timestamp: start,
         });
 
         initiator.auth_attempts.fetch_add(1, Ordering::Relaxed);
@@ -196,9 +196,9 @@ impl AuthTestEnvironment {
             // Track challenge
             if let AuthMessage::Challenge { nonce, .. } = &challenge {
                 self.events.lock().await.push(AuthEvent::ChallengeIssued {
-                    issuer: responder.id,
-                    target: initiator.id,
-                    nonce: *nonce,
+                    _issuer: responder.id,
+                    _target: initiator.id,
+                    _nonce: *nonce,
                 });
             }
 
@@ -226,8 +226,8 @@ impl AuthTestEnvironment {
                         .lock()
                         .await
                         .push(AuthEvent::ChallengeResponded {
-                            responder: initiator.id,
-                            nonce,
+                            _responder: initiator.id,
+                            _nonce: nonce,
                         });
                     initiator.auth_manager.create_challenge_response(nonce)?
                 }
@@ -284,18 +284,18 @@ impl AuthTestEnvironment {
 
                     let duration = start.elapsed();
                     self.events.lock().await.push(AuthEvent::AuthSuccess {
-                        peer1: initiator.id,
-                        peer2: responder.id,
-                        duration,
+                        _peer1: initiator.id,
+                        _peer2: responder.id,
+                        _duration: duration,
                     });
                     Ok(duration)
                 }
                 _ => {
                     let duration = start.elapsed();
                     self.events.lock().await.push(AuthEvent::AuthFailure {
-                        peer: initiator.id,
-                        reason: "Authentication failed".into(),
-                        duration,
+                        _peer: initiator.id,
+                        _reason: "Authentication failed".into(),
+                        _duration: duration,
                     });
                     Err(AuthError::InvalidSignature)
                 }
@@ -309,9 +309,9 @@ impl AuthTestEnvironment {
             Err(_) => {
                 let duration = start.elapsed();
                 self.events.lock().await.push(AuthEvent::AuthFailure {
-                    peer: initiator.id,
-                    reason: "Authentication timed out".into(),
-                    duration,
+                    _peer: initiator.id,
+                    _reason: "Authentication timed out".into(),
+                    _duration: duration,
                 });
                 Err(AuthError::Timeout)
             }
@@ -362,11 +362,11 @@ impl NetworkSimulator {
         self.partitioned.store(partitioned, Ordering::Relaxed);
     }
 
-    async fn isolate_peer(&self, peer_id: PeerId) {
+    async fn _isolate_peer(&self, peer_id: PeerId) {
         self.isolated_peers.write().await.push(peer_id);
     }
 
-    async fn restore_peer(&self, peer_id: PeerId) {
+    async fn _restore_peer(&self, peer_id: PeerId) {
         self.isolated_peers.write().await.retain(|p| *p != peer_id);
     }
 }

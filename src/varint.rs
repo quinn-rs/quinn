@@ -22,6 +22,22 @@ impl VarInt {
     /// The largest encoded value length
     pub const MAX_SIZE: usize = 8;
 
+    /// Create a VarInt from a value that is guaranteed to be in range
+    ///
+    /// This should only be used when the value is known at compile time or
+    /// has been validated to be less than 2^62.
+    #[inline]
+    pub(crate) fn from_u64_bounded(x: u64) -> Self {
+        debug_assert!(x < 2u64.pow(62), "VarInt value {} exceeds maximum", x);
+        if x < 2u64.pow(62) {
+            Self(x)
+        } else {
+            // In production, clamp to MAX instead of panicking
+            tracing::error!("VarInt overflow: {} exceeds maximum, clamping to MAX", x);
+            Self::MAX
+        }
+    }
+
     /// Construct a `VarInt` infallibly
     pub const fn from_u32(x: u32) -> Self {
         Self(x as u64)

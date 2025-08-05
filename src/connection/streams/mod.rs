@@ -24,7 +24,6 @@ use send::{BytesSource, Send, SendState};
 pub use send::{FinishError, WriteError, Written};
 
 mod state;
-#[allow(unreachable_pub)] // fuzzing only
 pub use state::StreamsState;
 
 /// Access to streams

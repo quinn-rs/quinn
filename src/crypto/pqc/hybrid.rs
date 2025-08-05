@@ -422,7 +422,6 @@ impl Default for HybridSignature {
 ///
 /// The combined secret is at least as strong as the stronger of the two inputs.
 /// If either algorithm is secure, the combined output remains secure.
-#[allow(dead_code)]
 fn combine_shared_secrets(classical: &[u8], pqc: &[u8], info: &[u8]) -> SharedSecret {
     use ring::digest;
 

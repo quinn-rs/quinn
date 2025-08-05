@@ -4,9 +4,6 @@
 //! combines classical ECDH with post-quantum ML-KEM-768 for quantum-resistant
 //! key exchange.
 
-use ant_quic::crypto::pqc::hybrid::HybridKem;
-use ant_quic::crypto::pqc::hybrid_key_exchange::{HybridKeyExchange, KeyExchangeRole};
-
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Hybrid Post-Quantum Key Exchange Demo ===\n");
 
@@ -15,11 +12,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     {
         println!("Error: This example requires the 'pqc' feature to be enabled.");
         println!("Run with: cargo run --example pqc_hybrid_demo --features pqc");
-        return Ok(());
+        Ok(())
     }
 
     #[cfg(feature = "pqc")]
     {
+        use ant_quic::crypto::pqc::hybrid::HybridKem;
+
         // Direct KEM usage
         direct_kem_demo()?;
 
@@ -27,13 +26,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         // Full key exchange protocol
         key_exchange_protocol_demo()?;
-    }
 
-    Ok(())
+        Ok(())
+    }
 }
 
 #[cfg(feature = "pqc")]
 fn direct_kem_demo() -> Result<(), Box<dyn std::error::Error>> {
+    use ant_quic::crypto::pqc::hybrid::HybridKem;
+
     println!("1. Direct Hybrid KEM Usage\n");
 
     // Create hybrid KEM instance
@@ -88,7 +89,9 @@ fn direct_kem_demo() -> Result<(), Box<dyn std::error::Error>> {
 
 #[cfg(feature = "pqc")]
 fn key_exchange_protocol_demo() -> Result<(), Box<dyn std::error::Error>> {
-    use ant_quic::crypto::pqc::hybrid_key_exchange::HybridKeyShare;
+    use ant_quic::crypto::pqc::hybrid_key_exchange::{
+        HybridKeyExchange, HybridKeyShare, KeyExchangeRole,
+    };
 
     println!("2. Full Key Exchange Protocol\n");
 

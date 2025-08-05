@@ -67,7 +67,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
 }
 
 async fn run_server_phase(phase: MigrationPhase) -> Result<(), Box<dyn Error + Send + Sync>> {
-    let pqc_config = match phase {
+    let _pqc_config = match phase {
         MigrationPhase::PreMigration => {
             println!("   🔓 PQC: Disabled");
             PqcConfig::builder()

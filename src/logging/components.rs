@@ -275,7 +275,7 @@ pub(crate) fn log_frame_details(frame: &Frame, direction: &str, conn_id: &Connec
             debug!(
                 target: "ant_quic::frame::punch_me_now",
                 conn_id = ?conn_id,
-                target_sequence = punch.target_sequence.0,
+                paired_with_sequence_number = punch.paired_with_sequence_number.0,
                 round = punch.round.0,
                 "PUNCH_ME_NOW frame"
             );

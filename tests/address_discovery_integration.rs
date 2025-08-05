@@ -137,7 +137,7 @@ async fn test_basic_address_discovery_flow() {
     info!("Client connection established with address discovery active");
 
     // Verify server connection
-    let server_conn = server_handle.await.unwrap();
+    let _server_conn = server_handle.await.unwrap();
 
     // Address discovery is enabled by default in ant-quic
     // The protocol handles OBSERVED_ADDRESS frames automatically
@@ -181,7 +181,7 @@ async fn test_multipath_address_discovery() {
         // Give time for address observations
         tokio::time::sleep(Duration::from_millis(300)).await;
 
-        for (i, conn) in connections.iter().enumerate() {
+        for (i, _conn) in connections.iter().enumerate() {
             // Address discovery statistics would be tracked internally
             info!("Connection {} active with address discovery", i);
         }
@@ -205,7 +205,7 @@ async fn test_multipath_address_discovery() {
     tokio::time::sleep(Duration::from_millis(500)).await;
 
     // Check discovered addresses on each path
-    for (i, conn) in client_connections.iter().enumerate() {
+    for (i, _conn) in client_connections.iter().enumerate() {
         // Address discovery happens at the protocol level
         info!("Client connection {} established with address discovery", i);
     }
@@ -282,7 +282,7 @@ async fn test_address_discovery_rate_limiting() {
         ClientConfig::new(Arc::new(QuicClientConfig::try_from(client_crypto).unwrap()));
     client.set_default_client_config(client_config);
 
-    let connection = client
+    let _connection = client
         .connect(server_addr, "localhost")
         .unwrap()
         .await

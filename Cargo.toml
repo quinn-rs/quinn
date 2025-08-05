@@ -54,6 +54,12 @@ linux-tests = ["platform-tests"]
 macos-tests = ["platform-tests"]
 windows-tests = ["platform-tests"]
 
+# Memory optimization features
+low_memory = []
+
+# Test features
+security_validation_not_yet_implemented = []
+
 [dependencies]
 # Core dependencies
 bytes = "1"
@@ -163,7 +169,7 @@ quickcheck = "1.0"
 quickcheck_macros = "1.0"
 
 [lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(fuzzing)', 'cfg(wasm_browser)', 'cfg(feature, values("arbitrary", "__qlog", "bloom"))'] }
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(fuzzing)', 'cfg(wasm_browser)', 'cfg(feature, values("arbitrary", "__qlog", "bloom", "low_memory", "security_validation_not_yet_implemented"))'] }
 
 # Main binary - unified P2P node with automatic coordinator services
 [[bin]]

@@ -48,7 +48,7 @@ impl EndpointEvent {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-#[allow(dead_code)]
+
 pub(crate) enum EndpointEventInner {
     /// The connection has been drained
     Drained,

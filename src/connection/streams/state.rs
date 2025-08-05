@@ -65,7 +65,6 @@ impl StreamRecv {
     }
 }
 
-#[allow(unreachable_pub)] // fuzzing only
 pub struct StreamsState {
     pub(super) side: Side,
     // Set of streams that are currently open, or could be immediately opened by the peer
@@ -138,7 +137,6 @@ pub struct StreamsState {
 }
 
 impl StreamsState {
-    #[allow(unreachable_pub)] // fuzzing only
     pub fn new(
         side: Side,
         max_remote_uni: VarInt,
@@ -298,7 +296,6 @@ impl StreamsState {
     /// Process incoming RESET_STREAM frame
     ///
     /// If successful, returns whether a `MAX_DATA` frame needs to be transmitted
-    #[allow(unreachable_pub)] // fuzzing only
     pub fn received_reset(
         &mut self,
         frame: frame::ResetStream,
@@ -358,7 +355,6 @@ impl StreamsState {
     }
 
     /// Process incoming `STOP_SENDING` frame
-    #[allow(unreachable_pub)] // fuzzing only
     pub fn received_stop_sending(&mut self, id: StreamId, error_code: VarInt) {
         let max_send_data = self.max_send_data(id);
         let stream = match self

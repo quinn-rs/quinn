@@ -49,9 +49,9 @@ pub struct PunchMeNow {
     /// Round number for coordination
     pub round: u64,
     /// Sequence number of the address to punch (references an ADD_ADDRESS frame)
-    pub target_sequence: u64,
-    /// Local address for this punch attempt
-    pub local_address: SocketAddr,
+    pub paired_with_sequence_number: u64,
+    /// Address for this punch attempt
+    pub address: SocketAddr,
     /// Target peer ID for relay by bootstrap nodes (optional)
     pub target_peer_id: Option<[u8; 32]>,
 }
@@ -144,7 +144,7 @@ impl Codec for PunchMeNow {
         let round = VarInt::decode(buf)?.into_inner();
         
         // Decode target sequence (VarInt)
-        let target_sequence = VarInt::decode(buf)?.into_inner();
+        let paired_with_sequence_number = VarInt::decode(buf)?.into_inner();
         
         // Decode local address
         let addr_type = buf.get_u8();
@@ -193,8 +193,8 @@ impl Codec for PunchMeNow {
         
         Ok(Self {
             round,
-            target_sequence,
-            local_address: SocketAddr::new(ip, port),
+            paired_with_sequence_number,
+            address: SocketAddr::new(ip, port),
             target_peer_id,
         })
     }
@@ -204,10 +204,10 @@ impl Codec for PunchMeNow {
         VarInt::from_u64(self.round).unwrap().encode(buf);
         
         // Encode target sequence (VarInt)
-        VarInt::from_u64(self.target_sequence).unwrap().encode(buf);
+        VarInt::from_u64(self.paired_with_sequence_number).unwrap().encode(buf);
         
         // Encode local address
-        match self.local_address.ip() {
+        match self.address.ip() {
             IpAddr::V4(ipv4) => {
                 buf.put_u8(4); // IPv4 type
                 buf.put_slice(&ipv4.octets());
@@ -219,7 +219,7 @@ impl Codec for PunchMeNow {
         }
         
         // Encode port
-        buf.put_u16(self.local_address.port());
+        buf.put_u16(self.address.port());
         
         // Encode target peer ID if present
         match &self.target_peer_id {

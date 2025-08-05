@@ -1,0 +1,10 @@
+#!/bin/bash
+# Quick script to run Claude checks on a file
+# Usage: ./.claude-check <file>
+
+if [[ -z "$1" ]]; then
+    echo "Usage: $0 <file>"
+    exit 1
+fi
+
+exec "$HOME/.claude/hooks/file-change-hook.sh" "$1"

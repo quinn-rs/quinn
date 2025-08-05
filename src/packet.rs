@@ -104,7 +104,6 @@ impl PartialDecode {
     }
 
     /// Length of QUIC packet being decoded
-    #[allow(unreachable_pub)] // fuzzing only
     pub fn len(&self) -> usize {
         self.buf.get_ref().len()
     }

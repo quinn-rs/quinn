@@ -11,6 +11,7 @@ ant-quic is a QUIC transport protocol implementation with advanced NAT traversal
 - This is not a library to integrate with Quinn, it's a fork of Quinn that we are upgrading
 - We use Quinn's high-level API patterns (Endpoint, Connection) for consistency
 - Focus on default features for compilation and testing
+- Post-Quantum Cryptography (PQC) support with ML-KEM-768 and ML-DSA-65
 
 ## Development Commands
 
@@ -84,8 +85,12 @@ cargo run --example dashboard_demo
 cargo test --no-default-features --features rustls-ring
 cargo test --no-default-features --features rustls-aws-lc-rs
 
-# WASM target testing
-cargo test --target wasm32-unknown-unknown -p quinn-proto
+# Test with PQC features
+cargo test --features "pqc aws-lc-rs"
+cargo build --features "pqc aws-lc-rs" --all-targets
+
+# WASM target testing (quinn-proto is not a separate package anymore)
+cargo test --target wasm32-unknown-unknown
 ```
 
 ## Architecture Overview
@@ -171,6 +176,17 @@ cargo test connection::nat_traversal
 
 # Integration tests only
 cargo test --test nat_traversal_comprehensive
+
+# Run security validation tests
+cargo test --test address_discovery_security
+
+# Run PQC tests
+cargo test pqc
+cargo test ml_kem
+cargo test ml_dsa
+
+# Run stress tests (normally ignored)
+cargo test -- --ignored stress
 ```
 
 ## Code Conventions
@@ -213,6 +229,8 @@ cargo test --test nat_traversal_comprehensive
 - QUIC Address Discovery Extension (draft-ietf-quic-address-discovery-00)
 - OBSERVED_ADDRESS frame (0x43) implementation
 - Transport parameter 0x1f00 for address discovery configuration
+- Post-Quantum Cryptography (v0.5.0) with ML-KEM-768 and ML-DSA-65
+- Hybrid (classical + PQC) and pure PQC modes
 
 ### In Progress 🚧
 - Session state machine polling in `nat_traversal_api.rs` (line 2022)
@@ -245,7 +263,35 @@ RUST_LOG=ant_quic::connection=trace cargo test -- --nocapture
 
 # Full debugging
 RUST_LOG=debug cargo run --example nat_simulation
+
+# PQC-specific debugging
+RUST_LOG=ant_quic::crypto::pqc=debug cargo run --bin ant-quic
 ```
 
 ### Network Simulation
 Use `examples/nat_simulation.rs` for testing different network topologies and NAT behaviors in controlled environments.
+
+### Validation Scripts
+```bash
+# Security validation
+./scripts/security-validation.sh
+
+# PQC security validation
+./scripts/pqc-security-validation.sh
+
+# PQC release validation
+./scripts/pqc-release-validation.sh
+
+# Test discovery endpoints
+./scripts/test-do-bootstrap.sh
+```
+
+## Key File Locations
+
+- **Main Library**: `src/lib.rs` - Entry point, exports all public APIs
+- **NAT Traversal API**: `src/nat_traversal_api.rs` - High-level NAT traversal endpoint
+- **QUIC Node**: `src/quic_node.rs` - P2P node implementation
+- **Connection Logic**: `src/connection_establishment.rs` - Connection orchestration
+- **PQC Implementation**: `src/crypto/pqc/` - Post-quantum crypto modules
+- **Binary**: `src/bin/ant-quic.rs` - Main executable with CLI
+- **Config**: `Cargo.toml` - Feature flags, dependencies, build configuration

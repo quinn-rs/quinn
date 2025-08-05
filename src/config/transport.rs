@@ -48,6 +48,13 @@ pub struct TransportConfig {
 
     /// NAT traversal configuration
     pub(crate) nat_traversal_config: Option<crate::transport_parameters::NatTraversalConfig>,
+
+    /// Address discovery configuration
+    pub(crate) address_discovery_config:
+        Option<crate::transport_parameters::AddressDiscoveryConfig>,
+
+    /// Post-Quantum Cryptography algorithms configuration
+    pub(crate) pqc_algorithms: Option<crate::transport_parameters::PqcAlgorithms>,
 }
 
 impl TransportConfig {
@@ -370,6 +377,84 @@ impl TransportConfig {
         }
         self
     }
+
+    /// Set the address discovery configuration
+    ///
+    /// This enables the QUIC Address Discovery extension (draft-ietf-quic-address-discovery-00)
+    /// which allows endpoints to share observed addresses with each other.
+    pub fn address_discovery_config(
+        &mut self,
+        config: Option<crate::transport_parameters::AddressDiscoveryConfig>,
+    ) -> &mut Self {
+        self.address_discovery_config = config;
+        self
+    }
+
+    /// Enable address discovery with default configuration
+    ///
+    /// This is a convenience method that enables address discovery with sensible defaults.
+    /// Use `address_discovery_config()` for more control.
+    pub fn enable_address_discovery(&mut self, enabled: bool) -> &mut Self {
+        if enabled {
+            use crate::transport_parameters::AddressDiscoveryConfig;
+            // Default configuration - willing to both send and receive address observations
+            self.address_discovery_config = Some(AddressDiscoveryConfig::SendAndReceive);
+        } else {
+            self.address_discovery_config = None;
+        }
+        self
+    }
+
+    /// Set the Post-Quantum Cryptography algorithms configuration
+    ///
+    /// This advertises which PQC algorithms are supported by this endpoint.
+    /// When both endpoints support PQC, they can negotiate the use of quantum-resistant algorithms.
+    pub fn pqc_algorithms(
+        &mut self,
+        algorithms: Option<crate::transport_parameters::PqcAlgorithms>,
+    ) -> &mut Self {
+        self.pqc_algorithms = algorithms;
+        self
+    }
+
+    /// Enable Post-Quantum Cryptography with default algorithms
+    ///
+    /// This is a convenience method that enables all standard PQC algorithms.
+    /// Use `pqc_algorithms()` for more control over which algorithms to support.
+    pub fn enable_pqc(&mut self, enabled: bool) -> &mut Self {
+        if enabled {
+            use crate::transport_parameters::PqcAlgorithms;
+            // Enable all standard algorithms
+            self.pqc_algorithms = Some(PqcAlgorithms {
+                ml_kem_768: true,
+                ml_dsa_65: true,
+                hybrid_x25519_ml_kem: true,
+                hybrid_ed25519_ml_dsa: true,
+            });
+        } else {
+            self.pqc_algorithms = None;
+        }
+        self
+    }
+
+    /// Get the address discovery configuration (read-only)
+    pub fn get_address_discovery_config(
+        &self,
+    ) -> Option<&crate::transport_parameters::AddressDiscoveryConfig> {
+        self.address_discovery_config.as_ref()
+    }
+
+    /// Get the PQC algorithms configuration (read-only)
+    pub fn get_pqc_algorithms(&self) -> Option<&crate::transport_parameters::PqcAlgorithms> {
+        self.pqc_algorithms.as_ref()
+    }
+
+    /// Get the NAT traversal configuration (read-only)
+    pub fn get_nat_traversal_config(
+        &self,
+    ) -> Option<&crate::transport_parameters::NatTraversalConfig> {
+        self.nat_traversal_config.as_ref()
+    }
 }
 
 impl Default for TransportConfig {
@@ -412,6 +497,8 @@ impl Default for TransportConfig {
 
             enable_segmentation_offload: true,
             nat_traversal_config: None,
+            address_discovery_config: None,
+            pqc_algorithms: None,
         }
     }
 }
@@ -445,6 +532,8 @@ impl fmt::Debug for TransportConfig {
             congestion_controller_factory: _,
             enable_segmentation_offload,
             nat_traversal_config,
+            address_discovery_config,
+            pqc_algorithms,
         } = self;
         fmt.debug_struct("TransportConfig")
             .field("max_concurrent_bidi_streams", max_concurrent_bidi_streams)
@@ -474,6 +563,8 @@ impl fmt::Debug for TransportConfig {
             // congestion_controller_factory not debug
             .field("enable_segmentation_offload", enable_segmentation_offload)
             .field("nat_traversal_config", nat_traversal_config)
+            .field("address_discovery_config", address_discovery_config)
+            .field("pqc_algorithms", pqc_algorithms)
             .finish_non_exhaustive()
     }
 }

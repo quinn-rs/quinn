@@ -129,8 +129,13 @@ impl Connecting {
         drop(conn);
 
         if is_ok {
-            let conn = self.conn.take().unwrap();
-            Ok((Connection(conn), ZeroRttAccepted(self.connected)))
+            match self.conn.take() {
+                Some(conn) => Ok((Connection(conn), ZeroRttAccepted(self.connected))),
+                None => {
+                    tracing::error!("Connection state missing during 0-RTT acceptance");
+                    Err(self)
+                }
+            }
         } else {
             Err(self)
         }
@@ -149,7 +154,10 @@ impl Connecting {
         if let Some(x) = self.handshake_data_ready.take() {
             let _ = x.await;
         }
-        let conn = self.conn.as_ref().unwrap();
+        let conn = self.conn.as_ref().ok_or_else(|| {
+            tracing::error!("Connection state missing while retrieving handshake data");
+            ConnectionError::LocallyClosed
+        })?;
         let inner = conn.state.lock("handshake");
         inner
             .inner
