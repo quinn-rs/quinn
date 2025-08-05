@@ -2,9 +2,9 @@ name: Comprehensive CI/CD
 
 on:
   push:
-    branches: [ master, develop ]
+    branches: [master]
   pull_request:
-    branches: [ master, develop ]
+    branches: [master]
 
 env:
   RUST_BACKTRACE: 1
