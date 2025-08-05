@@ -2,6 +2,22 @@
 
 Welcome to the ant-quic documentation. This directory contains comprehensive documentation for the project.
 
+## 📋 New Testing Infrastructure Guides
+
+These comprehensive guides cover the complete testing infrastructure implemented for ant-quic:
+
+### 🏗️ [Testing Infrastructure](./TESTING_INFRASTRUCTURE.md)
+Complete guide to the ant-quic testing ecosystem including local testing, Docker-based NAT simulation, performance benchmarking, CI/CD pipelines, and monitoring.
+
+### 🌐 [NAT Traversal Guide](./NAT_TRAVERSAL_GUIDE.md)
+Detailed NAT traversal testing and configuration guide covering Full Cone, Symmetric, Port Restricted, and CGNAT scenarios with Docker-based simulation and troubleshooting.
+
+### 🚀 [CI/CD Operations](./CI_CD_OPERATIONS.md)
+Comprehensive CI/CD operations guide covering GitHub Actions workflows, deployment procedures, monitoring, rollback strategies, and security considerations.
+
+### 📊 [Performance Benchmarking](./PERFORMANCE_BENCHMARKING.md)
+Complete performance benchmarking guide including baseline establishment, performance analysis, optimization techniques, and continuous performance testing.
+
 ## Documentation Structure
 
 ### 📚 [Architecture](./architecture/)

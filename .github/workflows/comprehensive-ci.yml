@@ -1,0 +1,276 @@
+name: Comprehensive CI/CD
+
+on:
+  push:
+    branches: [ master, develop ]
+  pull_request:
+    branches: [ master, develop ]
+
+env:
+  RUST_BACKTRACE: 1
+  RUSTFLAGS: "-D warnings"
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # Quick checks that should pass before running expensive tests
+  quick-checks:
+    name: Quick Checks
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Install Rust stable
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        components: rustfmt, clippy
+    
+    - name: Check formatting
+      run: cargo fmt --all -- --check
+    
+    - name: Run clippy
+      run: cargo clippy --all-targets --all-features -- -D warnings
+    
+    - name: Check documentation
+      run: cargo doc --no-deps --all-features
+      env:
+        RUSTDOCFLAGS: "-D warnings"
+
+  # Main test suite
+  test-matrix:
+    name: Tests - ${{ matrix.os }} / ${{ matrix.rust }}
+    needs: quick-checks
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        rust: [stable, beta]
+        exclude:
+          # Skip beta on Windows to save time
+          - os: windows-latest
+            rust: beta
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Install Rust ${{ matrix.rust }}
+      uses: dtolnay/rust-toolchain@master
+      with:
+        toolchain: ${{ matrix.rust }}
+    
+    - name: Cache cargo
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target
+        key: ${{ runner.os }}-cargo-${{ matrix.rust }}-${{ hashFiles('**/Cargo.lock') }}
+    
+    - name: Build
+      run: cargo build --all-features --verbose
+    
+    - name: Run tests
+      run: cargo test --all-features --verbose
+    
+    - name: Run ignored tests
+      if: matrix.os == 'ubuntu-latest' && matrix.rust == 'stable'
+      run: cargo test --all-features -- --ignored
+      continue-on-error: true
+
+  # Feature combination tests
+  feature-tests:
+    name: Feature Tests
+    needs: quick-checks
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        features:
+          - "--no-default-features --features rustls-ring"
+          - "--no-default-features --features rustls-aws-lc-rs"
+          - "--features pqc,aws-lc-rs"
+          - "--all-features"
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Install Rust stable
+      uses: dtolnay/rust-toolchain@stable
+    
+    - name: Test with features ${{ matrix.features }}
+      run: |
+        cargo test ${{ matrix.features }}
+        cargo build ${{ matrix.features }}
+
+  # NAT traversal specific tests
+  nat-tests:
+    name: NAT Traversal Tests
+    needs: quick-checks
+    uses: ./.github/workflows/nat_traversal_tests.yml
+
+  # Benchmarks
+  benchmarks:
+    name: Performance Benchmarks
+    needs: quick-checks
+    if: github.event_name == 'push' || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'benchmark'))
+    uses: ./.github/workflows/benchmarks.yml
+
+  # Coverage
+  coverage:
+    name: Code Coverage
+    needs: quick-checks
+    uses: ./.github/workflows/coverage.yml
+
+  # Security audit
+  security:
+    name: Security Audit
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Install Rust stable
+      uses: dtolnay/rust-toolchain@stable
+    
+    - name: Install cargo-audit
+      run: cargo install cargo-audit --locked
+    
+    - name: Run security audit
+      run: cargo audit
+    
+    - name: Run security validation script
+      run: ./scripts/security-validation.sh
+    
+    - name: Run PQC security validation
+      run: ./scripts/pqc-security-validation.sh
+
+  # MSRV check
+  msrv:
+    name: Minimum Supported Rust Version
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Install Rust 1.85.0
+      uses: dtolnay/rust-toolchain@master
+      with:
+        toolchain: "1.85.0"
+    
+    - name: Check MSRV
+      run: cargo check --all-features
+
+  # Release build check
+  release-build:
+    name: Release Build
+    needs: [test-matrix, feature-tests]
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Install Rust stable
+      uses: dtolnay/rust-toolchain@stable
+    
+    - name: Build release
+      run: cargo build --release --all-features
+    
+    - name: Test release binary
+      run: |
+        ./target/release/ant-quic --version
+        ./target/release/ant-quic --help
+    
+    - name: Upload release binary
+      uses: actions/upload-artifact@v4
+      with:
+        name: ant-quic-linux-x64
+        path: target/release/ant-quic
+        retention-days: 7
+
+  # Docker build
+  docker:
+    name: Docker Build
+    needs: quick-checks
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+    
+    - name: Build Docker images
+      run: |
+        cd docker
+        docker-compose build
+    
+    - name: Test Docker setup
+      run: |
+        cd docker
+        docker-compose up -d
+        sleep 10
+        docker-compose ps
+        docker-compose down
+
+  # DigitalOcean deployment (only on master)
+  deploy:
+    name: Deploy to DigitalOcean
+    needs: [test-matrix, security, release-build]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Deploy to DO
+      env:
+        DO_SSH_KEY: ${{ secrets.DO_SSH_KEY }}
+        DO_HOST: ${{ secrets.DO_HOST }}
+        DO_USER: ${{ secrets.DO_USER }}
+      run: |
+        # Setup SSH
+        mkdir -p ~/.ssh
+        echo "$DO_SSH_KEY" > ~/.ssh/id_rsa
+        chmod 600 ~/.ssh/id_rsa
+        ssh-keyscan -H $DO_HOST >> ~/.ssh/known_hosts
+        
+        # Deploy
+        ssh $DO_USER@$DO_HOST << 'ENDSSH'
+          set -e
+          cd ~/ant-quic || git clone https://github.com/dirvine/ant-quic ~/ant-quic
+          cd ~/ant-quic
+          git fetch origin
+          git checkout ${{ github.sha }}
+          cargo build --release --features "pqc aws-lc-rs"
+          
+          # Restart service if exists
+          if systemctl is-active --quiet ant-quic; then
+            sudo systemctl restart ant-quic
+          fi
+        ENDSSH
+
+  # Final status check
+  ci-success:
+    name: CI Success
+    needs: [test-matrix, feature-tests, nat-tests, security, msrv, release-build, docker]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+    - name: Check all job statuses
+      run: |
+        if [ "${{ contains(needs.*.result, 'failure') }}" == "true" ]; then
+          echo "One or more CI jobs failed"
+          exit 1
+        fi
+        echo "All CI jobs passed successfully"
+    
+    - name: Set commit status
+      if: github.event_name == 'pull_request'
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const allSuccess = !${{ contains(needs.*.result, 'failure') }};
+          
+          await github.rest.repos.createCommitStatus({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            sha: context.payload.pull_request.head.sha,
+            state: allSuccess ? 'success' : 'failure',
+            description: allSuccess ? 'All CI checks passed' : 'Some CI checks failed',
+            context: 'Comprehensive CI'
+          });

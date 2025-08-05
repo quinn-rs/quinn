@@ -53,13 +53,31 @@ jobs:
         run: |
           cargo install cargo-criterion --locked || true
 
-      - name: Run benchmarks
+      - name: Run throughput benchmarks
         run: |
-          cargo criterion --message-format=json > benchmark-results.json
+          cargo bench --bench throughput_benchmarks -- --save-baseline current-throughput
+          
+      - name: Run latency benchmarks  
+        run: |
+          cargo bench --bench latency_benchmarks -- --save-baseline current-latency
+          
+      - name: Run NAT traversal performance benchmarks
+        run: |
+          cargo bench --bench nat_traversal_performance -- --save-baseline current-nat
+          
+      - name: Run connection management benchmarks
+        run: |
+          cargo bench --bench connection_management -- --save-baseline current-conn
           
       - name: Generate benchmark report
         run: |
-          python3 .github/scripts/analyze-benchmarks.py benchmark-results.json > benchmark-report.md
+          echo "# Benchmark Results" > benchmark-report.md
+          echo "## Throughput" >> benchmark-report.md
+          cat target/criterion/throughput_benchmarks/*/base/estimates.json >> benchmark-report.md || true
+          echo "## Latency" >> benchmark-report.md
+          cat target/criterion/latency_benchmarks/*/base/estimates.json >> benchmark-report.md || true
+          echo "## NAT Traversal" >> benchmark-report.md
+          cat target/criterion/nat_traversal_performance/*/base/estimates.json >> benchmark-report.md || true
           
       - name: Upload benchmark results
         uses: actions/upload-artifact@v4

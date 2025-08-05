@@ -1,0 +1,326 @@
+name: Deploy to DigitalOcean
+
+on:
+  push:
+    branches: [ master ]
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Deployment environment'
+        required: true
+        default: 'production'
+        type: choice
+        options:
+          - production
+          - staging
+          - test
+
+env:
+  RUST_BACKTRACE: 1
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-and-test:
+    name: Build and Test
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Install Rust stable
+      uses: dtolnay/rust-toolchain@stable
+    
+    - name: Cache cargo dependencies
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target
+        key: ${{ runner.os }}-cargo-deploy-${{ hashFiles('**/Cargo.lock') }}
+    
+    - name: Extract version
+      id: version
+      run: |
+        VERSION=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].version')
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+        echo "Version: $VERSION"
+    
+    - name: Run tests
+      run: cargo test --release --all-features
+    
+    - name: Build release binary
+      run: cargo build --release --features "pqc aws-lc-rs" --bin ant-quic
+    
+    - name: Create deployment package
+      run: |
+        mkdir -p deploy/bin
+        mkdir -p deploy/config
+        mkdir -p deploy/scripts
+        
+        cp target/release/ant-quic deploy/bin/
+        cp scripts/deploy-do.sh deploy/scripts/
+        
+        # Create default config
+        cat > deploy/config/ant-quic.toml << EOF
+        [server]
+        listen_addr = "0.0.0.0:9000"
+        force_coordinator = true
+        dashboard_enabled = true
+        
+        [logging]
+        level = "info"
+        format = "json"
+        
+        [performance]
+        max_connections = 10000
+        max_streams_per_connection = 100
+        EOF
+        
+        tar -czf ant-quic-deploy.tar.gz deploy/
+    
+    - name: Upload deployment package
+      uses: actions/upload-artifact@v4
+      with:
+        name: deployment-package
+        path: ant-quic-deploy.tar.gz
+        retention-days: 7
+
+  deploy-staging:
+    name: Deploy to Staging
+    needs: build-and-test
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'staging'
+    environment:
+      name: staging
+      url: https://staging.ant-quic.io
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Download deployment package
+      uses: actions/download-artifact@v4
+      with:
+        name: deployment-package
+    
+    - name: Deploy to staging
+      env:
+        DO_SSH_KEY: ${{ secrets.DO_STAGING_SSH_KEY }}
+        DO_HOST: ${{ secrets.DO_STAGING_HOST }}
+        DO_USER: ${{ secrets.DO_STAGING_USER }}
+      run: |
+        # Extract deployment package
+        tar -xzf ant-quic-deploy.tar.gz
+        
+        # Deploy
+        export DO_HOST DO_USER
+        ./deploy/scripts/deploy-do.sh deploy
+
+  deploy-production:
+    name: Deploy to Production
+    needs: build-and-test
+    runs-on: ubuntu-latest
+    if: (github.ref == 'refs/heads/master' && github.event_name == 'push') || (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'production')
+    environment:
+      name: production
+      url: https://quic.saorsalabs.com
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Download deployment package
+      uses: actions/download-artifact@v4
+      with:
+        name: deployment-package
+    
+    - name: Extract package
+      run: tar -xzf ant-quic-deploy.tar.gz
+    
+    - name: Pre-deployment checks
+      env:
+        DO_SSH_KEY: ${{ secrets.DO_SSH_KEY }}
+        DO_HOST: ${{ secrets.DO_HOST }}
+        DO_USER: ${{ secrets.DO_USER }}
+      run: |
+        export DO_HOST DO_USER
+        ./deploy/scripts/deploy-do.sh health || echo "Current deployment health check failed (expected on first deploy)"
+    
+    - name: Deploy to production
+      env:
+        DO_SSH_KEY: ${{ secrets.DO_SSH_KEY }}
+        DO_HOST: ${{ secrets.DO_HOST }}
+        DO_USER: ${{ secrets.DO_USER }}
+      run: |
+        export DO_HOST DO_USER
+        ./deploy/scripts/deploy-do.sh deploy
+    
+    - name: Post-deployment verification
+      env:
+        DO_SSH_KEY: ${{ secrets.DO_SSH_KEY }}
+        DO_HOST: ${{ secrets.DO_HOST }}
+        DO_USER: ${{ secrets.DO_USER }}
+      run: |
+        export DO_HOST DO_USER
+        
+        # Wait for service to stabilize
+        sleep 30
+        
+        # Health check
+        ./deploy/scripts/deploy-do.sh health
+        
+        # Test connectivity
+        timeout 30 cargo run --release --bin ant-quic -- --bootstrap "$DO_HOST:9000" --minimal || true
+    
+    - name: Notify deployment
+      if: always()
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const status = '${{ job.status }}';
+          const version = '${{ needs.build-and-test.outputs.version }}';
+          const sha = context.sha.substring(0, 7);
+          
+          const message = status === 'success' 
+            ? `✅ Successfully deployed ant-quic v${version} (${sha}) to production`
+            : `❌ Failed to deploy ant-quic v${version} (${sha}) to production`;
+          
+          // Create deployment status
+          await github.rest.repos.createDeploymentStatus({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            deployment_id: context.payload.deployment?.id || 0,
+            state: status === 'success' ? 'success' : 'failure',
+            description: message,
+            environment: 'production',
+            environment_url: 'https://quic.saorsalabs.com'
+          });
+
+  performance-test:
+    name: Performance Testing
+    needs: [build-and-test, deploy-production]
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/master'
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Install Rust stable
+      uses: dtolnay/rust-toolchain@stable
+    
+    - name: Build test tools
+      run: |
+        cargo build --release --examples
+        cargo build --release --bin ant-quic
+    
+    - name: Run performance tests
+      env:
+        DO_SSH_KEY: ${{ secrets.DO_SSH_KEY }}
+        DO_HOST: ${{ secrets.DO_HOST }}
+        DO_USER: ${{ secrets.DO_USER }}
+        TEST_DURATION: 300
+      run: |
+        chmod +x scripts/do-performance-test.sh
+        ./scripts/do-performance-test.sh
+    
+    - name: Upload performance results
+      uses: actions/upload-artifact@v4
+      with:
+        name: performance-results-${{ github.sha }}
+        path: performance-results-*
+        retention-days: 30
+    
+    - name: Compare with baseline
+      run: |
+        # This would compare current results with baseline
+        # and fail if performance degrades significantly
+        echo "Performance comparison would run here"
+
+  rollback:
+    name: Rollback Deployment
+    runs-on: ubuntu-latest
+    if: failure() && needs.deploy-production.result == 'failure'
+    needs: [deploy-production]
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Download deployment package
+      uses: actions/download-artifact@v4
+      with:
+        name: deployment-package
+    
+    - name: Extract package
+      run: tar -xzf ant-quic-deploy.tar.gz
+    
+    - name: Rollback deployment
+      env:
+        DO_SSH_KEY: ${{ secrets.DO_SSH_KEY }}
+        DO_HOST: ${{ secrets.DO_HOST }}
+        DO_USER: ${{ secrets.DO_USER }}
+      run: |
+        export DO_HOST DO_USER
+        ./deploy/scripts/deploy-do.sh rollback
+    
+    - name: Notify rollback
+      uses: actions/github-script@v7
+      with:
+        script: |
+          await github.rest.issues.createComment({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            issue_number: context.issue.number,
+            body: '🔄 Deployment failed and was rolled back automatically.'
+          });
+
+  monitoring-setup:
+    name: Setup Monitoring
+    needs: deploy-production
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch'
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Setup monitoring
+      env:
+        DO_SSH_KEY: ${{ secrets.DO_SSH_KEY }}
+        DO_HOST: ${{ secrets.DO_HOST }}
+        DO_USER: ${{ secrets.DO_USER }}
+      run: |
+        # Setup Prometheus node exporter
+        ssh -i "$DO_SSH_KEY" "$DO_USER@$DO_HOST" << 'EOF'
+          # Install node exporter
+          wget https://github.com/prometheus/node_exporter/releases/download/v1.6.1/node_exporter-1.6.1.linux-amd64.tar.gz
+          tar xvf node_exporter-1.6.1.linux-amd64.tar.gz
+          sudo mv node_exporter-1.6.1.linux-amd64/node_exporter /usr/local/bin/
+          
+          # Create systemd service
+          sudo tee /etc/systemd/system/node_exporter.service > /dev/null << 'SERVICE'
+[Unit]
+Description=Node Exporter
+After=network.target
+
+[Service]
+Type=simple
+User=prometheus
+Group=prometheus
+ExecStart=/usr/local/bin/node_exporter
+
+[Install]
+WantedBy=multi-user.target
+SERVICE
+          
+          # Start service
+          sudo useradd -rs /bin/false prometheus || true
+          sudo systemctl daemon-reload
+          sudo systemctl enable node_exporter
+          sudo systemctl start node_exporter
+        EOF
+    
+    - name: Configure alerts
+      run: |
+        echo "Alert configuration would be set up here"
