@@ -3524,27 +3524,25 @@ impl BootstrapCoordinator {
         // Enhanced address validation with amplification protection
         self.security_validator
             .enhanced_address_validation(frame.address, source_addr, now)
-            .map_err(|e| {
+            .inspect_err(|&e| {
                 self.stats.security_rejections += 1;
                 debug!(
                     "PUNCH_ME_NOW frame address validation failed from peer {:?}: {:?}",
                     hex::encode(&from_peer[..8]),
                     e
                 );
-                e
             })?;
 
         // Comprehensive security validation
         self.security_validator
             .validate_punch_me_now_frame(frame, source_addr, from_peer, now)
-            .map_err(|e| {
+            .inspect_err(|&e| {
                 self.stats.security_rejections += 1;
                 debug!(
                     "PUNCH_ME_NOW frame validation failed from peer {:?}: {:?}",
                     hex::encode(&from_peer[..8]),
                     e
                 );
-                e
             })?;
 
         // Check if we have a target peer for this coordination

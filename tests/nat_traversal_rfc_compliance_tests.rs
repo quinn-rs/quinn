@@ -271,7 +271,7 @@ fn test_varint_edge_cases() {
 
         // Decode sequence number
         let decoded_u64: u64 = buf.get_var().unwrap();
-        assert_eq!(decoded_u64, value, "VarInt roundtrip failed for {}", value);
+        assert_eq!(decoded_u64, value, "VarInt roundtrip failed for {value}");
     }
 }
 

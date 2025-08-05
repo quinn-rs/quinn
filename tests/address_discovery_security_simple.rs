@@ -60,11 +60,7 @@ async fn test_constant_time_operations() {
     let avg_ipv6: Duration = ipv6_times.iter().sum::<Duration>() / ipv6_times.len() as u32;
 
     // Times should be similar (within 100ns)
-    let time_diff = if avg_ipv4 > avg_ipv6 {
-        avg_ipv4 - avg_ipv6
-    } else {
-        avg_ipv6 - avg_ipv4
-    };
+    let time_diff = avg_ipv4.abs_diff(avg_ipv6);
 
     assert!(
         time_diff < Duration::from_nanos(100),

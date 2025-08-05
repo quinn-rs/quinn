@@ -82,27 +82,30 @@ async fn test_basic_observed_address_flow() {
 
     // Server accepts connections and logs observations
     let server_handle = tokio::spawn(async move {
-        match server.accept().await { Some(incoming) => {
-            let connection = incoming.await.unwrap();
-            let remote = connection.remote_address();
-            info!("Server accepted connection from {}", remote);
+        match server.accept().await {
+            Some(incoming) => {
+                let connection = incoming.await.unwrap();
+                let remote = connection.remote_address();
+                info!("Server accepted connection from {}", remote);
 
-            // In a real implementation, the server would observe the client's
-            // address and potentially send OBSERVED_ADDRESS frames
+                // In a real implementation, the server would observe the client's
+                // address and potentially send OBSERVED_ADDRESS frames
 
-            // Simulate observation logic
-            tokio::time::sleep(Duration::from_millis(50)).await;
+                // Simulate observation logic
+                tokio::time::sleep(Duration::from_millis(50)).await;
 
-            // Log that we would send an observation
-            obs_clone
-                .lock()
-                .unwrap()
-                .push(("server->client".to_string(), remote));
+                // Log that we would send an observation
+                obs_clone
+                    .lock()
+                    .unwrap()
+                    .push(("server->client".to_string(), remote));
 
-            connection
-        } _ => {
-            panic!("No connection");
-        }}
+                connection
+            }
+            _ => {
+                panic!("No connection");
+            }
+        }
     });
 
     // Client connects
@@ -123,9 +126,11 @@ async fn test_basic_observed_address_flow() {
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     // Check observations
-    let obs = observations.lock().unwrap();
-    assert!(!obs.is_empty(), "Should have observations");
-    info!("Observations made: {:?}", *obs);
+    {
+        let obs = observations.lock().unwrap();
+        assert!(!obs.is_empty(), "Should have observations");
+        info!("Observations made: {:?}", *obs);
+    }
 
     server_handle.await.unwrap();
 
@@ -155,20 +160,23 @@ async fn test_observed_address_with_nat() {
 
     // Bootstrap accepts and observes
     let bootstrap_handle = tokio::spawn(async move {
-        match bootstrap.accept().await { Some(incoming) => {
-            let connection = incoming.await.unwrap();
-            let observed = connection.remote_address();
+        match bootstrap.accept().await {
+            Some(incoming) => {
+                let connection = incoming.await.unwrap();
+                let observed = connection.remote_address();
 
-            // In NAT scenario, bootstrap sees the public address
-            info!("Bootstrap observed client at: {}", observed);
+                // In NAT scenario, bootstrap sees the public address
+                info!("Bootstrap observed client at: {}", observed);
 
-            // Bootstrap would send OBSERVED_ADDRESS frame with this address
-            // The client would learn its public address
+                // Bootstrap would send OBSERVED_ADDRESS frame with this address
+                // The client would learn its public address
 
-            connection
-        } _ => {
-            panic!("No connection");
-        }}
+                connection
+            }
+            _ => {
+                panic!("No connection");
+            }
+        }
     });
 
     // Client connects through NAT
@@ -272,31 +280,34 @@ async fn test_observation_rate_limiting() {
 
     // Server with rate limiting simulation
     let server_handle = tokio::spawn(async move {
-        match server.accept().await { Some(incoming) => {
-            let connection = incoming.await.unwrap();
+        match server.accept().await {
+            Some(incoming) => {
+                let connection = incoming.await.unwrap();
 
-            // Simulate multiple observation triggers
-            for i in 0..10 {
-                // Check if we should send (rate limited)
-                {
-                    let mut count = attempts_clone.lock().unwrap();
-                    *count += 1;
+                // Simulate multiple observation triggers
+                for i in 0..10 {
+                    // Check if we should send (rate limited)
+                    {
+                        let mut count = attempts_clone.lock().unwrap();
+                        *count += 1;
 
-                    // Simulate rate limiting: only first few should succeed
-                    if i < 3 {
-                        info!("Observation {} would be sent", i);
-                    } else {
-                        debug!("Observation {} rate limited", i);
+                        // Simulate rate limiting: only first few should succeed
+                        if i < 3 {
+                            info!("Observation {} would be sent", i);
+                        } else {
+                            debug!("Observation {} rate limited", i);
+                        }
                     }
+
+                    tokio::time::sleep(Duration::from_millis(10)).await;
                 }
 
-                tokio::time::sleep(Duration::from_millis(10)).await;
+                connection
             }
-
-            connection
-        } _ => {
-            panic!("No connection");
-        }}
+            _ => {
+                panic!("No connection");
+            }
+        }
     });
 
     // Client connects
@@ -335,27 +346,30 @@ async fn test_observation_during_migration() {
     let (tx, mut rx) = mpsc::channel::<String>(10);
 
     let server_handle = tokio::spawn(async move {
-        match server.accept().await { Some(incoming) => {
-            let connection = incoming.await.unwrap();
-            let initial = connection.remote_address();
-            tx.send(format!("Initial: {initial}")).await.unwrap();
+        match server.accept().await {
+            Some(incoming) => {
+                let connection = incoming.await.unwrap();
+                let initial = connection.remote_address();
+                tx.send(format!("Initial: {initial}")).await.unwrap();
 
-            // Monitor for changes
-            for i in 0..5 {
-                tokio::time::sleep(Duration::from_millis(100)).await;
-                let current = connection.remote_address();
+                // Monitor for changes
+                for i in 0..5 {
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                    let current = connection.remote_address();
 
-                if current != initial {
-                    tx.send(format!("Migration {i}: {initial} -> {current}"))
-                        .await
-                        .unwrap();
+                    if current != initial {
+                        tx.send(format!("Migration {i}: {initial} -> {current}"))
+                            .await
+                            .unwrap();
+                    }
                 }
-            }
 
-            connection
-        } _ => {
-            panic!("No connection");
-        }}
+                connection
+            }
+            _ => {
+                panic!("No connection");
+            }
+        }
     });
 
     // Client connects

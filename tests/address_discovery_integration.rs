@@ -94,24 +94,27 @@ async fn test_basic_address_discovery_flow() {
     let server_handle = tokio::spawn(async move {
         info!("Server listening on {}", server_addr);
 
-        match server.accept().await { Some(incoming) => {
-            let connection = incoming.accept().unwrap().await.unwrap();
-            info!(
-                "Server accepted connection from {}",
-                connection.remote_address()
-            );
+        match server.accept().await {
+            Some(incoming) => {
+                let connection = incoming.accept().unwrap().await.unwrap();
+                info!(
+                    "Server accepted connection from {}",
+                    connection.remote_address()
+                );
 
-            // Server should observe client's address and may send OBSERVED_ADDRESS frames
-            tokio::time::sleep(Duration::from_millis(100)).await;
+                // Server should observe client's address and may send OBSERVED_ADDRESS frames
+                tokio::time::sleep(Duration::from_millis(100)).await;
 
-            // In ant-quic, address discovery happens automatically
-            // Stats tracking would need to be implemented at the connection level
-            info!("Server accepted connection, address discovery is active");
+                // In ant-quic, address discovery happens automatically
+                // Stats tracking would need to be implemented at the connection level
+                info!("Server accepted connection, address discovery is active");
 
-            connection
-        } _ => {
-            panic!("No incoming connection");
-        }}
+                connection
+            }
+            _ => {
+                panic!("No incoming connection");
+            }
+        }
     });
 
     // Client connects to server
@@ -246,25 +249,28 @@ async fn test_address_discovery_rate_limiting() {
 
     // Server that tries to trigger many observations
     let server_handle = tokio::spawn(async move {
-        match server.accept().await { Some(incoming) => {
-            let connection = incoming.accept().unwrap().await.unwrap();
+        match server.accept().await {
+            Some(incoming) => {
+                let connection = incoming.accept().unwrap().await.unwrap();
 
-            // Try to trigger multiple observations quickly
-            for i in 0..10 {
-                // In a real implementation, this might be triggered by
-                // path changes or other events
-                debug!("Observation trigger {}", i);
-                tokio::time::sleep(Duration::from_millis(50)).await;
+                // Try to trigger multiple observations quickly
+                for i in 0..10 {
+                    // In a real implementation, this might be triggered by
+                    // path changes or other events
+                    debug!("Observation trigger {}", i);
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                }
+
+                // Rate limiting is enforced at the protocol level
+                // With the configured rate of 2/sec, observations are automatically limited
+                info!("Rate limiting is enforced by the protocol implementation");
+
+                connection
             }
-
-            // Rate limiting is enforced at the protocol level
-            // With the configured rate of 2/sec, observations are automatically limited
-            info!("Rate limiting is enforced by the protocol implementation");
-
-            connection
-        } _ => {
-            panic!("No connection");
-        }}
+            _ => {
+                panic!("No connection");
+            }
+        }
     });
 
     // Client setup
@@ -350,7 +356,7 @@ async fn test_bootstrap_mode_address_discovery() {
         }
 
         // Check observation statistics
-        for (addr, _conn) in &connections {
+        for addr in connections.keys() {
             // Bootstrap nodes automatically send OBSERVED_ADDRESS frames
             info!("Bootstrap node observing address for {}", addr);
         }
@@ -430,18 +436,21 @@ async fn test_address_discovery_disabled() {
 
     // Server accepts connection
     let server_handle = tokio::spawn(async move {
-        match server.accept().await { Some(incoming) => {
-            let connection = incoming.accept().unwrap().await.unwrap();
+        match server.accept().await {
+            Some(incoming) => {
+                let connection = incoming.accept().unwrap().await.unwrap();
 
-            // Should not send any observations
-            tokio::time::sleep(Duration::from_millis(200)).await;
-            // When address discovery is disabled, no OBSERVED_ADDRESS frames are sent
-            info!("Address discovery disabled - no observations sent");
+                // Should not send any observations
+                tokio::time::sleep(Duration::from_millis(200)).await;
+                // When address discovery is disabled, no OBSERVED_ADDRESS frames are sent
+                info!("Address discovery disabled - no observations sent");
 
-            connection
-        } _ => {
-            panic!("No connection");
-        }}
+                connection
+            }
+            _ => {
+                panic!("No connection");
+            }
+        }
     });
 
     // Client with address discovery disabled
@@ -493,36 +502,39 @@ async fn test_address_discovery_with_migration() {
 
     // Server accepts and monitors migration
     let server_handle = tokio::spawn(async move {
-        match server.accept().await { Some(incoming) => {
-            let connection = incoming.await.unwrap();
-            let initial_remote = connection.remote_address();
-            info!("Server: Initial client address: {}", initial_remote);
+        match server.accept().await {
+            Some(incoming) => {
+                let connection = incoming.await.unwrap();
+                let initial_remote = connection.remote_address();
+                info!("Server: Initial client address: {}", initial_remote);
 
-            // Monitor for path changes
-            let mut path_changes = 0;
-            for _ in 0..10 {
-                tokio::time::sleep(Duration::from_millis(100)).await;
+                // Monitor for path changes
+                let mut path_changes = 0;
+                for _ in 0..10 {
+                    tokio::time::sleep(Duration::from_millis(100)).await;
 
-                if connection.remote_address() != initial_remote {
-                    path_changes += 1;
-                    info!(
-                        "Server: Detected path change to {}",
-                        connection.remote_address()
-                    );
+                    if connection.remote_address() != initial_remote {
+                        path_changes += 1;
+                        info!(
+                            "Server: Detected path change to {}",
+                            connection.remote_address()
+                        );
 
-                    // Address discovery should handle the new path
-                    // Address discovery handles path changes automatically
-                    info!(
-                        "Server: Detected {} path changes, observations sent as needed",
-                        path_changes
-                    );
+                        // Address discovery should handle the new path
+                        // Address discovery handles path changes automatically
+                        info!(
+                            "Server: Detected {} path changes, observations sent as needed",
+                            path_changes
+                        );
+                    }
                 }
-            }
 
-            connection
-        } _ => {
-            panic!("No connection");
-        }}
+                connection
+            }
+            _ => {
+                panic!("No connection");
+            }
+        }
     });
 
     // Client connects and simulates migration

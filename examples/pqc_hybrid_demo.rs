@@ -17,12 +17,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     #[cfg(feature = "pqc")]
     {
-        use ant_quic::crypto::pqc::hybrid::HybridKem;
-
         // Direct KEM usage
         direct_kem_demo()?;
 
-        println!("\n" + "=".repeat(50).as_str() + "\n");
+        println!("\n{}\n", "=".repeat(50));
 
         // Full key exchange protocol
         key_exchange_protocol_demo()?;

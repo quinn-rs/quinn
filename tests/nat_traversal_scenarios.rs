@@ -373,20 +373,17 @@ async fn test_restricted_cone_combinations() {
 
     for (name1, type1) in &nat_types {
         for (name2, type2) in &nat_types {
-            env.add_peer(&format!("{}1", name1), *type1).await.unwrap();
-            env.add_peer(&format!("{}2", name2), *type2).await.unwrap();
+            env.add_peer(&format!("{name1}1"), *type1).await.unwrap();
+            env.add_peer(&format!("{name2}2"), *type2).await.unwrap();
 
             let success = env
-                .test_connection(&format!("{}1", name1), &format!("{}2", name2))
+                .test_connection(&format!("{name1}1"), &format!("{name2}2"))
                 .await
                 .expect("Connection test failed");
 
             let expected = type1.success_rate_with(type2) > 0.8;
 
-            println!(
-                "{} to {} - Success: {}, Expected: {}",
-                name1, name2, success, expected
-            );
+            println!("{name1} to {name2} - Success: {success}, Expected: {expected}");
         }
     }
 }
@@ -430,7 +427,7 @@ async fn test_simultaneous_connections() {
             1 => NatType::RestrictedCone,
             _ => NatType::PortRestrictedCone,
         };
-        env.add_peer(&format!("peer{}", i), nat_type).await.unwrap();
+        env.add_peer(&format!("peer{i}"), nat_type).await.unwrap();
     }
 
     // All peers try to connect simultaneously
@@ -438,8 +435,8 @@ async fn test_simultaneous_connections() {
 
     for i in 0..4 {
         for j in i + 1..4 {
-            let peer1_name = format!("peer{}", i);
-            let peer2_name = format!("peer{}", j);
+            let peer1_name = format!("peer{i}");
+            let peer2_name = format!("peer{j}");
 
             // Clone what we need for the async block
             let bootstrap_addr = env.bootstrap_node.public_addr;
@@ -468,7 +465,7 @@ async fn test_simultaneous_connections() {
         }
     }
 
-    println!("Simultaneous connections succeeded: {}/6", successes);
+    println!("Simultaneous connections succeeded: {successes}/6");
     assert!(
         successes >= 3,
         "At least half of connections should succeed"
@@ -536,8 +533,7 @@ async fn test_hole_punching_timing() {
     let total_time = start.elapsed();
     assert!(
         total_time < Duration::from_secs(5),
-        "Hole punching took too long: {:?}",
-        total_time
+        "Hole punching took too long: {total_time:?}"
     );
 }
 

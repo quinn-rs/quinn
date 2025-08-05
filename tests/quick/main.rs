@@ -24,9 +24,7 @@ pub mod utils {
 
         assert!(
             elapsed <= max_duration,
-            "Test exceeded time limit: {:?} > {:?}",
-            elapsed,
-            max_duration
+            "Test exceeded time limit: {elapsed:?} > {max_duration:?}"
         );
 
         result

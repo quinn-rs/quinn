@@ -355,37 +355,41 @@ const kCFStringEncodingUTF8: u32 = 0x08000100;
 const kCFTypeArrayCallBacks: *const std::ffi::c_void = std::ptr::null();
 
 // Utility functions for Core Foundation
-unsafe fn cf_string_to_rust_string(cf_str: CFStringRef) -> Option<String> { unsafe {
-    if cf_str.is_null() {
-        return None;
+unsafe fn cf_string_to_rust_string(cf_str: CFStringRef) -> Option<String> {
+    unsafe {
+        if cf_str.is_null() {
+            return None;
+        }
+
+        let length = CFStringGetLength(cf_str);
+        if length == 0 {
+            return Some(String::new());
+        }
+
+        let mut buffer = vec![0u8; (length as usize + 1) * 4]; // UTF-8 can be up to 4 bytes per character
+        let success = CFStringGetCString(
+            cf_str,
+            buffer.as_mut_ptr() as *mut std::ffi::c_char,
+            buffer.len() as i64,
+            kCFStringEncodingUTF8,
+        );
+
+        if success {
+            // Find the null terminator
+            let null_pos = buffer.iter().position(|&b| b == 0).unwrap_or(buffer.len());
+            String::from_utf8(buffer[..null_pos].to_vec()).ok()
+        } else {
+            None
+        }
     }
+}
 
-    let length = CFStringGetLength(cf_str);
-    if length == 0 {
-        return Some(String::new());
+unsafe fn rust_string_to_cf_string(s: &str) -> CFStringRef {
+    unsafe {
+        let c_str = CString::new(s).unwrap();
+        CFStringCreateWithCString(kCFAllocatorDefault, c_str.as_ptr(), kCFStringEncodingUTF8)
     }
-
-    let mut buffer = vec![0u8; (length as usize + 1) * 4]; // UTF-8 can be up to 4 bytes per character
-    let success = CFStringGetCString(
-        cf_str,
-        buffer.as_mut_ptr() as *mut std::ffi::c_char,
-        buffer.len() as i64,
-        kCFStringEncodingUTF8,
-    );
-
-    if success {
-        // Find the null terminator
-        let null_pos = buffer.iter().position(|&b| b == 0).unwrap_or(buffer.len());
-        String::from_utf8(buffer[..null_pos].to_vec()).ok()
-    } else {
-        None
-    }
-}}
-
-unsafe fn rust_string_to_cf_string(s: &str) -> CFStringRef { unsafe {
-    let c_str = CString::new(s).unwrap();
-    CFStringCreateWithCString(kCFAllocatorDefault, c_str.as_ptr(), kCFStringEncodingUTF8)
-}}
+}
 
 impl MacOSInterfaceDiscovery {
     /// Create a new macOS interface discovery instance
@@ -1088,54 +1092,59 @@ impl MacOSInterfaceDiscovery {
     // System Configuration Framework wrapper functions
     // These would be implemented using proper system bindings
 
-    unsafe fn create_dynamic_store(&mut self, name: *const std::ffi::c_char) -> SCDynamicStoreRef { unsafe {
-        // Create CF string from C string
-        let cf_name = CFStringCreateWithCString(kCFAllocatorDefault, name, kCFStringEncodingUTF8);
+    unsafe fn create_dynamic_store(&mut self, name: *const std::ffi::c_char) -> SCDynamicStoreRef {
+        unsafe {
+            // Create CF string from C string
+            let cf_name =
+                CFStringCreateWithCString(kCFAllocatorDefault, name, kCFStringEncodingUTF8);
 
-        if cf_name.is_null() {
-            error!("Failed to create CFString for dynamic store name");
-            return SCDynamicStoreRef(std::ptr::null_mut());
+            if cf_name.is_null() {
+                error!("Failed to create CFString for dynamic store name");
+                return SCDynamicStoreRef(std::ptr::null_mut());
+            }
+
+            // Create context for the dynamic store with self pointer
+            let mut context = SCDynamicStoreContext {
+                version: 0,
+                info: self as *mut _ as *mut std::ffi::c_void,
+                retain: None,
+                release: None,
+                copyDescription: None,
+            };
+
+            // Create the dynamic store with callback
+            let store = SCDynamicStoreCreate(
+                kCFAllocatorDefault,
+                cf_name,
+                Some(network_change_callback),
+                &mut context,
+            );
+
+            // Clean up the CF string
+            CFRelease(cf_name);
+
+            store
         }
+    }
 
-        // Create context for the dynamic store with self pointer
-        let mut context = SCDynamicStoreContext {
-            version: 0,
-            info: self as *mut _ as *mut std::ffi::c_void,
-            retain: None,
-            release: None,
-            copyDescription: None,
-        };
+    unsafe fn create_run_loop_source(&self, store: &SCDynamicStoreRef) -> CFRunLoopSourceRef {
+        unsafe {
+            // Create run loop source for the dynamic store
+            let source = SCDynamicStoreCreateRunLoopSource(
+                kCFAllocatorDefault,
+                *store,
+                0, // Priority order
+            );
 
-        // Create the dynamic store with callback
-        let store = SCDynamicStoreCreate(
-            kCFAllocatorDefault,
-            cf_name,
-            Some(network_change_callback),
-            &mut context,
-        );
+            if !source.0.is_null() {
+                // Add the source to the current run loop
+                let current_run_loop = CFRunLoopGetCurrent();
+                CFRunLoopAddSource(current_run_loop, source, kCFRunLoopDefaultMode);
+            }
 
-        // Clean up the CF string
-        CFRelease(cf_name);
-
-        store
-    }}
-
-    unsafe fn create_run_loop_source(&self, store: &SCDynamicStoreRef) -> CFRunLoopSourceRef { unsafe {
-        // Create run loop source for the dynamic store
-        let source = SCDynamicStoreCreateRunLoopSource(
-            kCFAllocatorDefault,
-            *store,
-            0, // Priority order
-        );
-
-        if !source.0.is_null() {
-            // Add the source to the current run loop
-            let current_run_loop = CFRunLoopGetCurrent();
-            CFRunLoopAddSource(current_run_loop, source, kCFRunLoopDefaultMode);
+            source
         }
-
-        source
-    }}
+    }
 }
 
 impl NetworkInterfaceDiscovery for MacOSInterfaceDiscovery {

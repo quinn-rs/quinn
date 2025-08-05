@@ -56,30 +56,25 @@ impl SimulatedNat {
                 // Same external port for all destinations from same internal
                 let key = (internal, SocketAddr::from(([0, 0, 0, 0], 0)));
                 let port = self.port_base + mappings.len() as u16;
-                mappings
+                *mappings
                     .entry(key)
                     .or_insert(SocketAddr::new(self.external_ip, port))
-                    .clone()
             }
             NatType::RestrictedCone | NatType::PortRestrictedCone => {
                 // Same external port but track destinations
                 let key = (internal, destination);
-                mappings
-                    .entry(key)
-                    .or_insert(SocketAddr::new(
-                        self.external_ip,
-                        self.port_base + internal.port() % 1000,
-                    ))
-                    .clone()
+                *mappings.entry(key).or_insert(SocketAddr::new(
+                    self.external_ip,
+                    self.port_base + internal.port() % 1000,
+                ))
             }
             NatType::Symmetric => {
                 // Different external port for each destination
                 let key = (internal, destination);
                 let port = self.port_base + mappings.len() as u16;
-                mappings
+                *mappings
                     .entry(key)
                     .or_insert(SocketAddr::new(self.external_ip, port))
-                    .clone()
             }
         }
     }

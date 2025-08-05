@@ -37,7 +37,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
         MigrationPhase::PreferredPqc,
         MigrationPhase::RequiredPqc,
     ] {
-        println!("\n📋 Migration Phase: {:?}", phase);
+        println!("\n📋 Migration Phase: {phase:?}");
         println!("----------------------------------------");
 
         // Start server with current phase configuration
@@ -119,7 +119,7 @@ async fn run_server_phase(phase: MigrationPhase) -> Result<(), Box<dyn Error + S
     // Create endpoint
     let endpoint = Endpoint::server(server_config, "127.0.0.1:0".parse()?)?;
     let addr = endpoint.local_addr()?;
-    println!("   📡 Server listening on {}", addr);
+    println!("   📡 Server listening on {addr}");
 
     // Store address for clients
     std::fs::write("server_addr.tmp", addr.to_string())?;
@@ -135,7 +135,7 @@ async fn run_server_phase(phase: MigrationPhase) -> Result<(), Box<dyn Error + S
                 tokio::spawn(handle_connection(connection));
             }
             Err(e) => {
-                println!("   ❌ Connection failed: {}", e);
+                println!("   ❌ Connection failed: {e}");
             }
         }
     }
@@ -164,14 +164,14 @@ async fn test_client_compatibility(
     .await
     {
         Ok(_) => println!("     ✅ Connected successfully"),
-        Err(e) => println!("     ❌ Failed: {}", e),
+        Err(e) => println!("     ❌ Failed: {e}"),
     }
 
     // Test with hybrid client
     println!("   - Hybrid client (PQC optional)...",);
     match connect_with_config(server_addr, PqcConfig::default()).await {
         Ok(_) => println!("     ✅ Connected successfully"),
-        Err(e) => println!("     ❌ Failed: {}", e),
+        Err(e) => println!("     ❌ Failed: {e}"),
     }
 
     // Test with PQC-only client
@@ -180,7 +180,7 @@ async fn test_client_compatibility(
         let pqc_only = PqcConfig::builder().mode(PqcMode::PqcOnly).build().unwrap();
         match connect_with_config(server_addr, pqc_only).await {
             Ok(_) => println!("     ✅ Connected successfully"),
-            Err(e) => println!("     ❌ Failed: {}", e),
+            Err(e) => println!("     ❌ Failed: {e}"),
         }
     }
 

@@ -1036,72 +1036,81 @@ impl NatTraversalEndpoint {
 
                 // Poll sessions and handle updates
                 let sessions_to_update = {
-                    match sessions.read() { Ok(sessions_guard) => {
-                        sessions_guard
-                            .iter()
-                            .filter_map(|(peer_id, session)| {
-                                let now = std::time::Instant::now();
-                                let elapsed =
-                                    now.duration_since(session.session_state.last_transition);
+                    match sessions.read() {
+                        Ok(sessions_guard) => {
+                            sessions_guard
+                                .iter()
+                                .filter_map(|(peer_id, session)| {
+                                    let now = std::time::Instant::now();
+                                    let elapsed =
+                                        now.duration_since(session.session_state.last_transition);
 
-                                match session.session_state.state {
-                                    ConnectionState::Connecting => {
-                                        // Check for connection timeout
-                                        if elapsed
-                                            > timeout_config
-                                                .nat_traversal
-                                                .connection_establishment_timeout
-                                        {
-                                            Some((*peer_id, SessionUpdate::Timeout))
-                                        } else {
-                                            None
-                                        }
-                                    }
-                                    ConnectionState::Connected => {
-                                        // Check if connection is still alive
-                                        if let Some(ref conn) = session.session_state.connection {
-                                            if conn.close_reason().is_some() {
-                                                Some((*peer_id, SessionUpdate::Disconnected))
+                                    match session.session_state.state {
+                                        ConnectionState::Connecting => {
+                                            // Check for connection timeout
+                                            if elapsed
+                                                > timeout_config
+                                                    .nat_traversal
+                                                    .connection_establishment_timeout
+                                            {
+                                                Some((*peer_id, SessionUpdate::Timeout))
                                             } else {
-                                                // Update metrics
-                                                Some((*peer_id, SessionUpdate::UpdateMetrics))
+                                                None
                                             }
-                                        } else {
-                                            Some((*peer_id, SessionUpdate::InvalidState))
+                                        }
+                                        ConnectionState::Connected => {
+                                            // Check if connection is still alive
+                                            if let Some(ref conn) = session.session_state.connection
+                                            {
+                                                if conn.close_reason().is_some() {
+                                                    Some((*peer_id, SessionUpdate::Disconnected))
+                                                } else {
+                                                    // Update metrics
+                                                    Some((*peer_id, SessionUpdate::UpdateMetrics))
+                                                }
+                                            } else {
+                                                Some((*peer_id, SessionUpdate::InvalidState))
+                                            }
+                                        }
+                                        ConnectionState::Idle => {
+                                            // Check if we should retry
+                                            if elapsed
+                                                > timeout_config
+                                                    .discovery
+                                                    .server_reflexive_cache_ttl
+                                            {
+                                                Some((*peer_id, SessionUpdate::Retry))
+                                            } else {
+                                                None
+                                            }
+                                        }
+                                        ConnectionState::Migrating => {
+                                            // Check migration timeout
+                                            if elapsed > timeout_config.nat_traversal.probe_timeout
+                                            {
+                                                Some((*peer_id, SessionUpdate::MigrationTimeout))
+                                            } else {
+                                                None
+                                            }
+                                        }
+                                        ConnectionState::Closed => {
+                                            // Clean up old closed sessions
+                                            if elapsed
+                                                > timeout_config.discovery.interface_cache_ttl
+                                            {
+                                                Some((*peer_id, SessionUpdate::Remove))
+                                            } else {
+                                                None
+                                            }
                                         }
                                     }
-                                    ConnectionState::Idle => {
-                                        // Check if we should retry
-                                        if elapsed
-                                            > timeout_config.discovery.server_reflexive_cache_ttl
-                                        {
-                                            Some((*peer_id, SessionUpdate::Retry))
-                                        } else {
-                                            None
-                                        }
-                                    }
-                                    ConnectionState::Migrating => {
-                                        // Check migration timeout
-                                        if elapsed > timeout_config.nat_traversal.probe_timeout {
-                                            Some((*peer_id, SessionUpdate::MigrationTimeout))
-                                        } else {
-                                            None
-                                        }
-                                    }
-                                    ConnectionState::Closed => {
-                                        // Clean up old closed sessions
-                                        if elapsed > timeout_config.discovery.interface_cache_ttl {
-                                            Some((*peer_id, SessionUpdate::Remove))
-                                        } else {
-                                            None
-                                        }
-                                    }
-                                }
-                            })
-                            .collect::<Vec<_>>()
-                    } _ => {
-                        vec![]
-                    }}
+                                })
+                                .collect::<Vec<_>>()
+                        }
+                        _ => {
+                            vec![]
+                        }
+                    }
                 };
 
                 // Apply updates

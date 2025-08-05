@@ -730,11 +730,7 @@ async fn test_timing_attack_resistance() {
     let invalid_avg = invalid_times.iter().sum::<Duration>() / invalid_times.len() as u32;
 
     // Times should be similar (within 20% tolerance)
-    let diff = if valid_avg > invalid_avg {
-        valid_avg - invalid_avg
-    } else {
-        invalid_avg - valid_avg
-    };
+    let diff = valid_avg.abs_diff(invalid_avg);
 
     let tolerance = valid_avg / 5; // 20% tolerance
     assert!(

@@ -6,8 +6,6 @@
 #[cfg(all(test, feature = "docker-tests", not(target_os = "windows")))]
 mod docker_nat_tests {
     use std::process::Command;
-    use std::thread;
-    use std::time::Duration;
 
     fn docker_compose_available() -> bool {
         Command::new("docker")

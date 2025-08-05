@@ -54,7 +54,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             run_client(server_addr).await
         }
         _ => {
-            eprintln!("Error: Unknown mode '{}'. Use 'server' or 'client'", mode);
+            eprintln!("Error: Unknown mode '{mode}'. Use 'server' or 'client'");
             Ok(())
         }
     }
@@ -66,7 +66,7 @@ async fn run_server() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // Generate identity
     let (_private_key, public_key) = generate_ed25519_keypair();
     let peer_id = derive_peer_id_from_public_key(&public_key);
-    println!("📋 Server PeerID: {:?}", peer_id);
+    println!("📋 Server PeerID: {peer_id:?}");
 
     // Create PQC configuration (configured in the auth layer)
     let pqc_config = PqcConfig::builder().mode(PqcMode::Hybrid).build().unwrap();
@@ -95,10 +95,10 @@ async fn run_server() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         match node.receive().await {
             Ok((peer_id, data)) => {
                 let message = String::from_utf8_lossy(&data);
-                println!("📩 Message from {:?}: {}", peer_id, message);
+                println!("📩 Message from {peer_id:?}: {message}");
 
                 // Echo the message back
-                let response = format!("Server received: {}", message);
+                let response = format!("Server received: {message}");
                 if let Err(e) = node.send_to_peer(&peer_id, response.as_bytes()).await {
                     warn!("Failed to send response: {}", e);
                 }
@@ -119,7 +119,7 @@ async fn run_client(
     // Generate identity
     let (_private_key, public_key) = generate_ed25519_keypair();
     let peer_id = derive_peer_id_from_public_key(&public_key);
-    println!("📋 Client PeerID: {:?}", peer_id);
+    println!("📋 Client PeerID: {peer_id:?}");
 
     // Create PQC configuration
     let pqc_config = PqcConfig::builder().mode(PqcMode::Hybrid).build().unwrap();
@@ -138,12 +138,12 @@ async fn run_client(
     };
 
     let node = Arc::new(QuicP2PNode::new(config).await?);
-    println!("🔗 Connecting to {} with PQC...", server_addr);
+    println!("🔗 Connecting to {server_addr} with PQC...");
 
     // Connect to server (bootstrap node)
     let server_peer_id = node.connect_to_bootstrap(server_addr).await?;
     println!("✅ Connected to server with PQC protection!");
-    println!("   Server PeerID: {:?}", server_peer_id);
+    println!("   Server PeerID: {server_peer_id:?}");
 
     // Send a test message
     let message = "Hello from PQC-protected client!";
@@ -158,7 +158,7 @@ async fn run_client(
                 Ok((peer_id, data)) => {
                     if peer_id == server_peer_id {
                         let response = String::from_utf8_lossy(&data);
-                        println!("📨 Response: {}", response);
+                        println!("📨 Response: {response}");
                         return Ok::<(), Box<dyn std::error::Error + Send + Sync>>(());
                     }
                 }

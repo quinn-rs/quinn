@@ -210,9 +210,9 @@ impl RelayQueue {
 
             // Check if it's ready for retry
             if item.attempts == 0
-                || item.last_attempt.is_none_or(|last| {
-                    now.saturating_duration_since(last) >= self.retry_interval
-                })
+                || item
+                    .last_attempt
+                    .is_none_or(|last| now.saturating_duration_since(last) >= self.retry_interval)
             {
                 ready_key = Some(*seq);
                 break;

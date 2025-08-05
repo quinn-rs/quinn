@@ -140,7 +140,7 @@ mod ml_dsa_65_tests {
         // This test documents the behavior - adjust based on implementation
         // For now, we'll test that both signatures are valid
         let ml_dsa2 = MlDsa65::new();
-        let (public_key, _) = ml_dsa2
+        let (_public_key, _) = ml_dsa2
             .generate_keypair()
             .expect("Failed to generate verification keypair");
 

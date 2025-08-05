@@ -54,33 +54,31 @@ fn main() {
                         println!("  Deserialized successfully");
 
                         // Verify fields match
-                        match (&msg, &deserialized) {
-                            (
-                                ChatMessage::Text {
-                                    nickname: n1,
-                                    text: t1,
-                                    ..
-                                },
-                                ChatMessage::Text {
-                                    nickname: n2,
-                                    text: t2,
-                                    ..
-                                },
-                            ) => {
-                                assert_eq!(n1, n2);
-                                assert_eq!(t1, t2);
-                                println!("  Verified: text message intact");
-                            }
-                            _ => {}
+                        if let (
+                            ChatMessage::Text {
+                                nickname: n1,
+                                text: t1,
+                                ..
+                            },
+                            ChatMessage::Text {
+                                nickname: n2,
+                                text: t2,
+                                ..
+                            },
+                        ) = (&msg, &deserialized)
+                        {
+                            assert_eq!(n1, n2);
+                            assert_eq!(t1, t2);
+                            println!("  Verified: text message intact");
                         }
                     }
                     Err(e) => {
-                        eprintln!("  Failed to deserialize: {}", e);
+                        eprintln!("  Failed to deserialize: {e}");
                     }
                 }
             }
             Err(e) => {
-                eprintln!("  Failed to serialize: {}", e);
+                eprintln!("  Failed to serialize: {e}");
             }
         }
         println!();
@@ -125,7 +123,7 @@ fn main() {
                 _ => eprintln!("Unexpected message type"),
             }
         }
-        Err(e) => eprintln!("Failed to serialize peer list: {}", e),
+        Err(e) => eprintln!("Failed to serialize peer list: {e}"),
     }
 
     println!("\n=== Message Metadata ===\n");
@@ -136,7 +134,7 @@ fn main() {
             println!("Peer ID: {}", hex::encode(&peer_id.0[..8]));
         }
         if let Some(nickname) = msg.nickname() {
-            println!("Nickname: {}", nickname);
+            println!("Nickname: {nickname}");
         }
         println!();
     }

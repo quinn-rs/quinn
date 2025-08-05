@@ -196,7 +196,7 @@ mod ml_kem_768_tests {
     fn test_ml_kem_768_invalid_ciphertext_size() {
         // Test that decapsulation rejects invalid ciphertext sizes
         let ml_kem = MlKem768::new();
-        let (_, secret_key) = ml_kem
+        let (_, _secret_key) = ml_kem
             .generate_keypair()
             .expect("Failed to generate keypair");
 

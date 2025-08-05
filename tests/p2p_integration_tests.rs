@@ -974,10 +974,9 @@ async fn test_resource_exhaustion() {
     let mut connection_count = 0;
     for i in 0..50 {
         for j in i + 1..50 {
-            match timeout(Duration::from_secs(1), env.connect_peers(i, j)).await {
-                Ok(Ok(_)) => connection_count += 1,
-                _ => {} // Some connections may fail under load
-            }
+            if let Ok(Ok(_)) = timeout(Duration::from_secs(1), env.connect_peers(i, j)).await {
+                connection_count += 1
+            } // Some connections may fail under load
         }
     }
 

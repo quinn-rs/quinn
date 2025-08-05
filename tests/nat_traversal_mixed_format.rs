@@ -134,11 +134,7 @@ async fn legacy_client_rfc_server() {
     // Create a legacy client (default config doesn't advertise RFC support)
     let client_config = client_config();
 
-    let (client_endpoint, server_endpoint) = make_pair(
-        server_config,
-        client_config,
-    )
-    .await;
+    let (client_endpoint, server_endpoint) = make_pair(server_config, client_config).await;
 
     // Connect and verify the connection works
     let client_addr = client_endpoint.local_addr().unwrap();
@@ -170,11 +166,7 @@ async fn rfc_client_legacy_server() {
     transport.nat_traversal_config(Some(NatTraversalConfig::ClientSupport));
     client_config.transport_config(Arc::new(transport));
 
-    let (client_endpoint, server_endpoint) = make_pair(
-        server_config,
-        client_config,
-    )
-    .await;
+    let (client_endpoint, server_endpoint) = make_pair(server_config, client_config).await;
 
     // Connect and verify
     let server_addr = server_endpoint.local_addr().unwrap();
@@ -211,11 +203,7 @@ async fn rfc_to_rfc_negotiation() {
     transport.nat_traversal_config(Some(NatTraversalConfig::ClientSupport));
     client_config.transport_config(Arc::new(transport));
 
-    let (client_endpoint, server_endpoint) = make_pair(
-        server_config,
-        client_config,
-    )
-    .await;
+    let (client_endpoint, server_endpoint) = make_pair(server_config, client_config).await;
 
     // Connect
     let server_addr = server_endpoint.local_addr().unwrap();
@@ -256,11 +244,7 @@ async fn nat_traversal_frame_compatibility() {
     transport.nat_traversal_config(Some(NatTraversalConfig::ClientSupport));
     client_config.transport_config(Arc::new(transport));
 
-    let (client_endpoint, server_endpoint) = make_pair(
-        server_config,
-        client_config,
-    )
-    .await;
+    let (client_endpoint, server_endpoint) = make_pair(server_config, client_config).await;
 
     // Connect both ways to test bidirectional compatibility
     let server_addr = server_endpoint.local_addr().unwrap();
@@ -309,11 +293,7 @@ async fn malformed_frame_handling() {
 
     let client_config = client_config();
 
-    let (client_endpoint, server_endpoint) = make_pair(
-        server_config,
-        client_config,
-    )
-    .await;
+    let (client_endpoint, server_endpoint) = make_pair(server_config, client_config).await;
 
     // Establish connection
     let server_addr = server_endpoint.local_addr().unwrap();

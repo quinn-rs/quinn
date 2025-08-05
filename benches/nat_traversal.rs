@@ -570,11 +570,11 @@ fn bench_pair_generation(c: &mut Criterion) {
                             let cache_key = (local.address, remote.address);
                             let compatible =
                                 *compatibility_cache.entry(cache_key).or_insert_with(|| {
-                                    match (local.address, remote.address) {
-                                        (SocketAddr::V4(_), SocketAddr::V4(_)) => true,
-                                        (SocketAddr::V6(_), SocketAddr::V6(_)) => true,
-                                        _ => false,
-                                    }
+                                    matches!(
+                                        (local.address, remote.address),
+                                        (SocketAddr::V4(_), SocketAddr::V4(_))
+                                            | (SocketAddr::V6(_), SocketAddr::V6(_))
+                                    )
                                 });
 
                             if compatible {

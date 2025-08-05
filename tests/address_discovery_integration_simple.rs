@@ -101,20 +101,23 @@ async fn test_address_discovery_default_enabled() {
 
     // Server accepts connections
     let server_handle = tokio::spawn(async move {
-        match server.accept().await { Some(incoming) => {
-            let connection = incoming.await.unwrap();
-            info!(
-                "Server accepted connection from {}",
-                connection.remote_address()
-            );
+        match server.accept().await {
+            Some(incoming) => {
+                let connection = incoming.await.unwrap();
+                info!(
+                    "Server accepted connection from {}",
+                    connection.remote_address()
+                );
 
-            // Keep connection alive for testing
-            tokio::time::sleep(Duration::from_millis(500)).await;
+                // Keep connection alive for testing
+                tokio::time::sleep(Duration::from_millis(500)).await;
 
-            connection
-        } _ => {
-            panic!("No incoming connection");
-        }}
+                connection
+            }
+            _ => {
+                panic!("No incoming connection");
+            }
+        }
     });
 
     // Client connects
@@ -265,21 +268,24 @@ async fn test_with_data_transfer() {
 
     // Server echo service
     let server_handle = tokio::spawn(async move {
-        match server.accept().await { Some(incoming) => {
-            let connection = incoming.await.unwrap();
+        match server.accept().await {
+            Some(incoming) => {
+                let connection = incoming.await.unwrap();
 
-            // Accept a stream and echo data
-            if let Ok((mut send, mut recv)) = connection.accept_bi().await {
-                let data = recv.read_to_end(1024).await.unwrap();
-                send.write_all(&data).await.unwrap();
-                send.finish().unwrap();
-                info!("Server echoed {} bytes", data.len());
+                // Accept a stream and echo data
+                if let Ok((mut send, mut recv)) = connection.accept_bi().await {
+                    let data = recv.read_to_end(1024).await.unwrap();
+                    send.write_all(&data).await.unwrap();
+                    send.finish().unwrap();
+                    info!("Server echoed {} bytes", data.len());
+                }
+
+                connection
             }
-
-            connection
-        } _ => {
-            panic!("No connection");
-        }}
+            _ => {
+                panic!("No connection");
+            }
+        }
     });
 
     // Client sends data

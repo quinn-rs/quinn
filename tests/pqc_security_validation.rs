@@ -48,7 +48,7 @@ fn test_timing_side_channel_ml_kem() {
 
     // Timing should be relatively consistent (< 100% CV for robustness)
     // Note: Real constant-time implementations would have much lower variance
-    assert!(cv < 100.0, "ML-KEM timing variance too high: {:.2}%", cv);
+    assert!(cv < 100.0, "ML-KEM timing variance too high: {cv:.2}%");
 }
 
 #[test]
@@ -102,7 +102,7 @@ fn test_timing_side_channel_ml_dsa() {
         let cv = (variance.sqrt() / mean) * 100.0;
 
         // Timing should be relatively consistent (< 50% CV for more robustness)
-        assert!(cv < 50.0, "ML-DSA timing variance too high: {:.2}%", cv);
+        assert!(cv < 50.0, "ML-DSA timing variance too high: {cv:.2}%");
     }
 }
 
@@ -241,8 +241,7 @@ fn test_invalid_ciphertext_handling() {
     let ratio = invalid_time.as_nanos() as f64 / valid_time.as_nanos() as f64;
     assert!(
         ratio > 0.5 && ratio < 1.5,
-        "Timing difference too large for invalid ciphertext: {:.2}x",
-        ratio
+        "Timing difference too large for invalid ciphertext: {ratio:.2}x"
     );
 }
 
@@ -391,8 +390,7 @@ fn test_statistical_randomness() {
     // Should be close to 0.5 (within 1%)
     assert!(
         (ratio - 0.5).abs() < 0.01,
-        "Bit frequency test failed: {:.4} (expected ~0.5)",
-        ratio
+        "Bit frequency test failed: {ratio:.4} (expected ~0.5)"
     );
 
     // Basic byte distribution test
@@ -412,8 +410,7 @@ fn test_statistical_randomness() {
     // Critical value at 0.05 significance is ~293
     assert!(
         chi_square < 293.0,
-        "Byte distribution test failed: chi-square = {:.2}",
-        chi_square
+        "Byte distribution test failed: chi-square = {chi_square:.2}"
     );
 }
 

@@ -818,11 +818,16 @@ impl Future for ReadDatagram<'_> {
         let mut state = this.conn.state.lock("ReadDatagram::poll");
         // Check for buffered datagrams before checking `state.error` so that already-received
         // datagrams, which are necessarily finite, can be drained from a closed connection.
-        match state.inner.datagrams().recv() { Some(x) => {
-            return Poll::Ready(Ok(x));
-        } _ => if let Some(ref e) = state.error {
-            return Poll::Ready(Err(e.clone()));
-        }}
+        match state.inner.datagrams().recv() {
+            Some(x) => {
+                return Poll::Ready(Ok(x));
+            }
+            _ => {
+                if let Some(ref e) = state.error {
+                    return Poll::Ready(Err(e.clone()));
+                }
+            }
+        }
         loop {
             match this.notify.as_mut().poll(ctx) {
                 // `state` lock ensures we didn't race with readiness

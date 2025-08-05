@@ -96,8 +96,17 @@ impl MlDsaOperations for MlDsa65Impl {
                 PqcError::KeyGenerationFailed("Failed to acquire key cache lock".to_string())
             })?;
 
+            // Use first ML_DSA_65_PUBLIC_KEY_SIZE bytes as the key for consistency
+            let key_id = if public_key_bytes.len() >= ML_DSA_65_PUBLIC_KEY_SIZE {
+                public_key_bytes[..ML_DSA_65_PUBLIC_KEY_SIZE].to_vec()
+            } else {
+                let mut padded = vec![0u8; ML_DSA_65_PUBLIC_KEY_SIZE];
+                padded[..public_key_bytes.len()].copy_from_slice(&public_key_bytes);
+                padded
+            };
+
             cache.insert(
-                public_key_bytes.clone(),
+                key_id,
                 CachedDsaKey {
                     key_pair: Arc::new(key_pair),
                     public_key_der: public_key_bytes.clone(),
@@ -161,28 +170,28 @@ impl MlDsaOperations for MlDsa65Impl {
         message: &[u8],
         signature: &MlDsaSignature,
     ) -> PqcResult<bool> {
-        // Extract the actual public key bytes (may be DER-encoded)
-        let public_key_bytes = &public_key.0[..];
+        // The public key identifier is stored in the public key
+        let key_id = public_key.0[..ML_DSA_65_PUBLIC_KEY_SIZE].to_vec();
 
-        // Find the actual length of the public key (non-zero bytes)
-        let mut pub_key_len = 0;
-        for i in (0..ML_DSA_65_PUBLIC_KEY_SIZE).rev() {
-            if public_key_bytes[i] != 0 {
-                pub_key_len = i + 1;
-                break;
-            }
-        }
+        // Find the cached entry to get the original DER-encoded public key
+        let public_key_der = {
+            let cache = self.key_cache.lock().map_err(|_| {
+                PqcError::VerificationFailed("Failed to acquire key cache lock".to_string())
+            })?;
 
-        if pub_key_len == 0 {
-            return Ok(false);
-        }
+            cache
+                .get(&key_id)
+                .map(|entry| entry.public_key_der.clone())
+                .ok_or(PqcError::VerificationFailed(
+                    "Public key not found in cache".to_string(),
+                ))?
+        };
 
         // Create unparsed public key for verification
-        let unparsed_public_key =
-            UnparsedPublicKey::new(self.verification_alg, &public_key_bytes[..pub_key_len]);
+        let unparsed_public_key = UnparsedPublicKey::new(self.verification_alg, &public_key_der);
 
-        // Find actual signature length
-        let mut sig_len = 0;
+        // Find the actual signature length (non-zero bytes from the end)
+        let mut sig_len = ML_DSA_65_SIGNATURE_SIZE;
         for i in (0..ML_DSA_65_SIGNATURE_SIZE).rev() {
             if signature.0[i] != 0 {
                 sig_len = i + 1;

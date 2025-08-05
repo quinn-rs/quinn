@@ -169,22 +169,25 @@ impl<T: BufferCleanup> ObjectPool<T> {
 
         self.stats.allocations.fetch_add(1, Ordering::Relaxed);
 
-        let object = match available.pop() { Some(obj) => {
-            self.stats.hits.fetch_add(1, Ordering::Relaxed);
-            obj
-        } _ => {
-            self.stats.misses.fetch_add(1, Ordering::Relaxed);
-
-            // Check if we can grow the pool
-            let current_size = self.stats.current_size.load(Ordering::Relaxed);
-            if current_size >= self.config.max_size {
-                return Err(PqcError::PoolError("Pool at maximum capacity".to_string()));
+        let object = match available.pop() {
+            Some(obj) => {
+                self.stats.hits.fetch_add(1, Ordering::Relaxed);
+                obj
             }
+            _ => {
+                self.stats.misses.fetch_add(1, Ordering::Relaxed);
 
-            // Allocate new object
-            self.stats.current_size.fetch_add(1, Ordering::Relaxed);
-            (self.factory)()
-        }};
+                // Check if we can grow the pool
+                let current_size = self.stats.current_size.load(Ordering::Relaxed);
+                if current_size >= self.config.max_size {
+                    return Err(PqcError::PoolError("Pool at maximum capacity".to_string()));
+                }
+
+                // Allocate new object
+                self.stats.current_size.fetch_add(1, Ordering::Relaxed);
+                (self.factory)()
+            }
+        };
 
         Ok(PoolGuard {
             object: Some(object),

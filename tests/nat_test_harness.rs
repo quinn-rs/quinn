@@ -136,10 +136,8 @@ impl NatTestHarness {
         // Spawn log reader
         tokio::spawn(async move {
             let reader = BufReader::new(stdout);
-            for line in reader.lines() {
-                if let Ok(line) = line {
-                    let _ = tx.send(line).await;
-                }
+            for line in reader.lines().map_while(Result::ok) {
+                let _ = tx.send(line).await;
             }
         });
 

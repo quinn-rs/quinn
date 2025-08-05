@@ -6,4 +6,5 @@ mod platform_specific;
 
 // Re-export tests when platform-tests feature is enabled
 #[cfg(feature = "platform-tests")]
+#[allow(unused_imports)]
 pub use platform_specific::*;

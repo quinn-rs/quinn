@@ -234,11 +234,7 @@ async fn test_no_information_leaks() {
     let ipv6_time = start_ipv6.elapsed();
 
     // Times should be similar (within noise margin)
-    let time_diff = if ipv4_time > ipv6_time {
-        ipv4_time - ipv6_time
-    } else {
-        ipv6_time - ipv4_time
-    };
+    let time_diff = ipv4_time.abs_diff(ipv6_time);
 
     assert!(
         time_diff < Duration::from_nanos(1000),

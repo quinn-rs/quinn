@@ -260,7 +260,7 @@ async fn test_signature_malleability() {
             assert_eq!(signature.len(), 64);
 
             // Try various malleation attempts
-            let malleation_attempts = vec![
+            let malleation_attempts = [
                 // Flip bits in R component
                 {
                     let mut mal_sig = signature.clone();
@@ -277,8 +277,8 @@ async fn test_signature_malleability() {
                 {
                     let mut mal_sig = signature.clone();
                     // This is a simplified test - proper negation would require field arithmetic
-                    for i in 32..64 {
-                        mal_sig[i] = !mal_sig[i];
+                    for item in mal_sig.iter_mut().take(64).skip(32) {
+                        *item = !*item;
                     }
                     mal_sig
                 },
@@ -484,11 +484,7 @@ async fn test_timing_side_channel_auth_request() {
     let valid_avg = valid_times.iter().sum::<Duration>() / valid_times.len() as u32;
     let invalid_avg = invalid_times.iter().sum::<Duration>() / invalid_times.len() as u32;
 
-    let diff = if valid_avg > invalid_avg {
-        valid_avg - invalid_avg
-    } else {
-        invalid_avg - valid_avg
-    };
+    let diff = valid_avg.abs_diff(invalid_avg);
 
     info!(
         "Auth request timing - Valid: {:?}, Invalid: {:?}, Diff: {:?}",

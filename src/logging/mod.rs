@@ -139,11 +139,10 @@ impl Logger {
 
     /// Get recent events for analysis
     pub fn recent_events(&self, count: usize) -> Vec<LogEvent> {
-        match self.event_buffer.lock() { Ok(buffer) => {
-            buffer.iter().rev().take(count).cloned().collect()
-        } _ => {
-            Vec::new()
-        }}
+        match self.event_buffer.lock() {
+            Ok(buffer) => buffer.iter().rev().take(count).cloned().collect(),
+            _ => Vec::new(),
+        }
     }
 
     /// Get metrics summary
