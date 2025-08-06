@@ -1,7 +1,7 @@
 # Multi-stage build for ant-quic
 
 # Build stage
-FROM rust:1.74-slim AS builder
+FROM rust:1.85-slim AS builder
 
 # Install dependencies
 RUN apt-get update && apt-get install -y \
@@ -17,7 +17,6 @@ COPY Cargo.toml Cargo.lock ./
 
 # Copy source code
 COPY src ./src
-COPY build.rs ./
 
 # Build the application
 RUN cargo build --release --bin ant-quic
