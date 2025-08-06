@@ -110,14 +110,13 @@ mod transport_parameter_error_integration_tests {
     }
 
     #[test]
-    #[ignore = "server-only parameter validation not yet implemented"]
     fn test_server_only_parameters_from_client() {
         // Test that server-only parameters from client are rejected
         let mut buf = Vec::new();
 
         // Write preferred_address (server-only)
         buf.write_var(0x0d); // preferred_address ID
-        buf.write_var(36); // minimal valid length
+        buf.write_var(49); // correct length: 4+2+16+2+1+8+16
 
         // Minimal preferred address content
         buf.extend_from_slice(&[127, 0, 0, 1]); // IPv4

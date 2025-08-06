@@ -855,14 +855,11 @@ impl TransportParameters {
         }
 
         // Min/max ack delay validation
-        // TODO: Implement min_ack_delay validation
-        // validate_min_ack_delay(params.min_ack_delay, params.max_ack_delay)
-        //     .map_err(|_| Error::IllegalValue)?;
+        validate_min_ack_delay(params.min_ack_delay, params.max_ack_delay)
+            .map_err(|_| Error::IllegalValue)?;
 
         // Server-only parameter validation
-        // TODO: Implement server-only parameter validation
-        // validate_server_only_params(side, &params)
-        //     .map_err(|_| Error::IllegalValue)?;
+        validate_server_only_params(side, &params).map_err(|_| Error::IllegalValue)?;
 
         // Preferred address validation
         if let Some(ref pref_addr) = params.preferred_address {
@@ -1620,7 +1617,6 @@ mod test {
     }
 
     #[test]
-    #[ignore = "min_ack_delay and server-only parameter validation not yet implemented"]
     fn read_semantic_validation() {
         #[allow(clippy::type_complexity)]
         let illegal_params_builders: Vec<Box<dyn FnMut(&mut TransportParameters)>> = vec![

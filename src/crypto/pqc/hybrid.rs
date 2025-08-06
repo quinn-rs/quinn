@@ -606,7 +606,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "ML-DSA implementation currently generates new keypair for signing"]
+    #[cfg(feature = "pqc")]
     fn test_hybrid_signature_verification() {
         let hybrid_sig = HybridSignature::new();
 
@@ -714,7 +714,7 @@ mod tests {
     // Future test placeholders for when implementation is complete
 
     #[test]
-    #[ignore]
+    #[cfg(feature = "pqc")]
     fn test_hybrid_kem_roundtrip() {
         let hybrid_kem = HybridKem::new();
 
@@ -738,7 +738,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
+    #[cfg(feature = "pqc")]
     fn test_hybrid_signature_roundtrip() {
         let hybrid_sig = HybridSignature::new();
 
@@ -768,10 +768,11 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
+    #[ignore = "Placeholder for future security property tests"]
     fn test_hybrid_security_properties() {
         // Test that hybrid remains secure if one algorithm fails
         // This would involve simulating algorithm compromise
         // and verifying the hybrid construction still provides security
+        // TODO: Implement when we have formal security property verification
     }
 }

@@ -89,7 +89,6 @@ mod transport_parameter_error_tests {
     }
 
     #[test]
-    #[ignore = "min_ack_delay validation not yet implemented"]
     fn test_min_ack_delay_validation() {
         // min_ack_delay must be <= max_ack_delay * 1000 (converting ms to us)
         let mut params = TransportParameters::default();
@@ -99,7 +98,7 @@ mod transport_parameter_error_tests {
         params.write(&mut buf);
 
         // Append min_ack_delay parameter
-        buf.write_var(0xde1b); // min_ack_delay ID (temporary draft ID)
+        buf.write_var(0xFF04DE1B); // min_ack_delay ID (draft-ietf-quic-ack-frequency)
         buf.write_var(4); // length
         buf.write_var(26000); // 26ms in microseconds, which is > max_ack_delay
 
@@ -111,12 +110,11 @@ mod transport_parameter_error_tests {
     }
 
     #[test]
-    #[ignore = "server-only parameter validation not yet implemented"]
     fn test_preferred_address_server_only() {
         // preferred_address can only be sent by servers
         let mut buf = Vec::new();
         buf.write_var(0x0d); // preferred_address ID
-        buf.write_var(36); // minimal length
+        buf.write_var(49); // correct length: 4+2+16+2+1+8+16
 
         // Write a minimal preferred address
         buf.extend_from_slice(&[127, 0, 0, 1]); // IPv4
