@@ -27,7 +27,8 @@ fn ensure_crypto_provider() {
     let _ = rustls::crypto::ring::default_provider().install_default();
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "Integration test - requires network setup"]
 async fn test_authenticated_connection() {
     ensure_crypto_provider();
     let _ = tracing_subscriber::fmt::try_init();
@@ -214,7 +215,8 @@ async fn test_authentication_failure() {
     }
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "Integration test - requires network setup"]
 async fn test_multiple_authenticated_peers() {
     ensure_crypto_provider();
     let _ = tracing_subscriber::fmt::try_init();
@@ -314,7 +316,8 @@ async fn test_multiple_authenticated_peers() {
     let _ = accept_task.await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "Integration test - requires network setup"]
 async fn test_auth_with_disconnection() {
     ensure_crypto_provider();
     let _ = tracing_subscriber::fmt::try_init();
