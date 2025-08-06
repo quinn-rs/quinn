@@ -37,7 +37,7 @@ async fn create_test_node(
 #[tokio::test]
 async fn test_chat_message_exchange() {
     let _ = tracing_subscriber::fmt::try_init();
-    
+
     // Ensure crypto provider is installed
     #[cfg(feature = "rustls-aws-lc-rs")]
     let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();

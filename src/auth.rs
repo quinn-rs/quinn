@@ -136,6 +136,7 @@ pub struct AuthenticatedPeer {
 }
 
 /// Authentication manager for handling peer authentication
+#[derive(Debug)]
 pub struct AuthManager {
     /// Our Ed25519 secret key
     secret_key: Ed25519SecretKey,

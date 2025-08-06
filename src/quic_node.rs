@@ -24,7 +24,7 @@ use crate::{
 };
 
 /// QUIC-based P2P node with NAT traversal
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct QuicP2PNode {
     /// NAT traversal endpoint
     nat_endpoint: Arc<NatTraversalEndpoint>,
@@ -76,7 +76,6 @@ impl Default for QuicNodeConfig {
     }
 }
 
-/// Connection metrics for a specific peer
 #[derive(Debug, Clone)]
 pub struct ConnectionMetrics {
     /// Bytes sent to this peer
@@ -89,7 +88,6 @@ pub struct ConnectionMetrics {
     pub packet_loss: f64,
 }
 
-/// Node statistics
 #[derive(Debug, Clone)]
 pub struct NodeStats {
     /// Number of active connections
