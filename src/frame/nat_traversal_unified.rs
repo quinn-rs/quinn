@@ -306,10 +306,15 @@ impl PunchMeNow {
     }
 
     /// Try to decode, detecting format automatically
-    pub fn decode_auto<R: Buf>(r: &mut R, _is_ipv6: bool) -> Result<Self, UnexpectedEnd> {
-        // For now, we only support legacy format in decoding
-        // In the future, we can peek at the data to detect format
-        Self::decode_legacy(r)
+    pub fn decode_auto<R: Buf>(r: &mut R, is_ipv6: bool) -> Result<Self, UnexpectedEnd> {
+        // Try RFC format first, then fall back to legacy
+        match Self::decode_rfc(r, is_ipv6) {
+            Ok(frame) => Ok(frame),
+            Err(_) => {
+                // Fall back to legacy format
+                Self::decode_legacy(r)
+            }
+        }
     }
 
     /// Decode from legacy format
