@@ -1,4 +1,3 @@
-#\![edition = "2024"]
 //! Integration tests for the chat protocol
 //!
 //! This module tests the chat messaging system over QUIC streams.

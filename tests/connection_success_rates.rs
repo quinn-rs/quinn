@@ -1,4 +1,3 @@
-#\![edition = "2024"]
 //! Tests to verify improved connection success rates with QUIC Address Discovery
 //!
 //! These tests measure the improvement in connection establishment success

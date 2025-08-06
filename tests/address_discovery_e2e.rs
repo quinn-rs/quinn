@@ -1,4 +1,3 @@
-#\![edition = "2024"]
 //! End-to-end integration tests for QUIC Address Discovery
 //!
 //! These tests verify the complete address discovery flow using

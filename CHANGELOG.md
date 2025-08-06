@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2025-08-06
+
+### Changed
+- **Rust Edition 2024 Migration** 🦀
+  - Migrated entire codebase to Rust Edition 2024 for improved async syntax and performance
+  - Updated minimum Rust version requirement to 1.85.0
+  - Enhanced CI/CD workflows to support Edition 2024 requirements
+  - Improved test infrastructure with edition-aware configuration
+  - All integration tests now fully compatible with Edition 2024 features
+
+### Fixed
+- Connection lifecycle test bootstrap configuration issues
+- CI/CD MSRV checks updated to match actual requirements
+- Resolved test compilation issues with async syntax
+- Fixed integration test configurations for new edition
+
 ## [Unreleased]
 
 ## [0.5.0] - 2025-07-31

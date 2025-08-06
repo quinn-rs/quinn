@@ -1,4 +1,3 @@
-#\![edition = "2024"]
 /// Integration test for QUIC interoperability framework
 ///
 /// This test validates the interoperability test infrastructure

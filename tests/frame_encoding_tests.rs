@@ -1,4 +1,3 @@
-#\![edition = "2024"]
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 /// Standalone NAT traversal frame encoding/decoding tests
 /// This test file is independent of the main codebase compilation issues

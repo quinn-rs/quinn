@@ -1,4 +1,3 @@
-#\![edition = "2024"]
 //! Comprehensive tests for ML-DSA-65 implementation
 
 #[cfg(all(test, feature = "pqc"))]

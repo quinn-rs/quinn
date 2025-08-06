@@ -1,4 +1,3 @@
-#\![edition = "2024"]
 //! Simple integration tests for QUIC Address Discovery Extension
 //!
 //! These tests verify basic address discovery functionality.

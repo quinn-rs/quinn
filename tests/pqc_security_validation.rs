@@ -1,4 +1,3 @@
-#\![edition = "2024"]
 //! Comprehensive security validation tests for PQC implementation
 
 use ant_quic::crypto::pqc::{

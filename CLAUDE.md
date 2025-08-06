@@ -245,7 +245,8 @@ cargo test -- --ignored stress
 
 ## Development Notes
 
-- **Minimum Rust Version**: 1.74.1
+- **Minimum Rust Version**: 1.85.0
+- **Rust Edition**: 2024 (enhanced async syntax and performance)
 - **Primary Dependencies**: Quinn, tokio, rustls, ring/aws-lc-rs
 - **License**: Dual MIT/Apache-2.0
 - **Target**: P2P networking for Autonomi ecosystem

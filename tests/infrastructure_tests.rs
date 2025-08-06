@@ -1,4 +1,3 @@
-#\![edition = "2024"]
 //! Infrastructure tests to validate test setup without full connectivity
 
 use ant_quic::{

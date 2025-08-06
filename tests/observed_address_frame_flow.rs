@@ -1,4 +1,3 @@
-#\![edition = "2024"]
 //! Integration tests for OBSERVED_ADDRESS frame flow
 //!
 //! These tests verify that OBSERVED_ADDRESS frames are properly

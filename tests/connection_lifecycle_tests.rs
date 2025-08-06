@@ -1,4 +1,3 @@
-#\![edition = "2024"]
 //! Connection lifecycle integration tests
 //!
 //! This test suite validates connection establishment, maintenance, and teardown

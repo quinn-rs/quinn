@@ -1,4 +1,3 @@
-#\![edition = "2024"]
 //! IPv4/IPv6 NAT Traversal Verification Tests
 //!
 //! These tests verify that NAT traversal works correctly with both

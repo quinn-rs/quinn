@@ -862,6 +862,19 @@ Contributions are welcome! Please see our [contributing guidelines](CONTRIBUTING
 
 ### Development Setup
 
+#### Prerequisites
+
+- **Rust**: 1.85.0 or later (required for Rust Edition 2024)
+- **Features**: This crate uses Rust Edition 2024 for improved async syntax and performance
+- **Platform**: See System Requirements above
+
+To verify your Rust version:
+```bash
+rustc --version  # Should be 1.85.0 or newer
+cargo --version
+```
+
+
 ```bash
 git clone https://github.com/autonomi/ant-quic
 cd ant-quic

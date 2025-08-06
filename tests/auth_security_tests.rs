@@ -1,4 +1,3 @@
-#\![edition = "2024"]
 //! Security-focused test suite for authentication module
 //!
 //! This test suite specifically targets security vulnerabilities and attack scenarios:

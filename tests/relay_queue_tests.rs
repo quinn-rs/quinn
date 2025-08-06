@@ -1,4 +1,3 @@
-#\![edition = "2024"]
 //! Integration tests for NAT traversal functionality
 //!
 //! This module tests the NAT traversal functionality through the public API,

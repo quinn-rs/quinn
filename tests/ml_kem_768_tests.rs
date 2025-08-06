@@ -1,4 +1,3 @@
-#\![edition = "2024"]
 //! Comprehensive tests for ML-KEM-768 implementation
 
 #[cfg(all(test, feature = "pqc"))]

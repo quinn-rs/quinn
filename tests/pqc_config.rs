@@ -1,4 +1,3 @@
-#\![edition = "2024"]
 //! Tests for Post-Quantum Cryptography configuration API
 
 use ant_quic::crypto::pqc::{HybridPreference, PqcConfig, PqcMode};

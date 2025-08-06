@@ -1,4 +1,3 @@
-#\![edition = "2024"]
 //! Security tests for QUIC Address Discovery
 //!
 //! This module tests security aspects including:

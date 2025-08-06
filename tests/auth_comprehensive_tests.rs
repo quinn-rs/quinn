@@ -1,4 +1,3 @@
-#\![edition = "2024"]
 //! Comprehensive test suite for authentication module
 //!
 //! This test suite applies the UltraThink framework to thoroughly test:

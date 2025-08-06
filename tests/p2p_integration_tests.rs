@@ -1,4 +1,3 @@
-#\![edition = "2024"]
 //! Comprehensive integration tests for full P2P scenarios
 //!
 //! This test suite validates the entire P2P stack including:
