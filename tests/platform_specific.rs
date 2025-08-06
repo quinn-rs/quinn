@@ -1,3 +1,4 @@
+#\![edition = "2024"]
 //! Platform-specific test harness
 
 #[cfg(feature = "platform-tests")]

@@ -1,3 +1,4 @@
+#\![edition = "2024"]
 //! Stress tests for NAT traversal and connection management
 //!
 //! Run these tests with: cargo test --release --test stress_tests -- --ignored

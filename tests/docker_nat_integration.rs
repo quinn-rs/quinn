@@ -1,3 +1,4 @@
+#\![edition = "2024"]
 //! Docker NAT Integration Tests
 //!
 //! These tests verify NAT traversal functionality using Docker containers

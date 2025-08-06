@@ -1,3 +1,4 @@
+#\![edition = "2024"]
 //! Integration tests for NAT traversal with mixed RFC and legacy endpoints
 
 use ant_quic::{

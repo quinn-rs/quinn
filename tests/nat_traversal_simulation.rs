@@ -1,3 +1,4 @@
+#\![edition = "2024"]
 //! Simulated NAT environment tests for QUIC Address Discovery
 //!
 //! These tests create simulated NAT environments to verify that the

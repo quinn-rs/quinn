@@ -1,3 +1,4 @@
+#\![edition = "2024"]
 //! Integration tests for PQC raw public key support
 
 #[cfg(feature = "pqc")]

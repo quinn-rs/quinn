@@ -1,3 +1,4 @@
+#\![edition = "2024"]
 //! Simplified security tests for QUIC Address Discovery
 //!
 //! These tests validate security properties of the address discovery implementation

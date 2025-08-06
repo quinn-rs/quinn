@@ -1,3 +1,4 @@
+#\![edition = "2024"]
 //! Integration tests for the chat protocol
 //!
 //! This module tests the chat messaging system over QUIC streams.
@@ -37,6 +38,12 @@ async fn create_test_node(
 #[tokio::test]
 async fn test_chat_message_exchange() {
     let _ = tracing_subscriber::fmt::try_init();
+    
+    // Ensure crypto provider is installed
+    #[cfg(feature = "rustls-aws-lc-rs")]
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+    #[cfg(feature = "rustls-ring")]
+    let _ = rustls::crypto::ring::default_provider().install_default();
 
     // Create coordinator node with a bootstrap address (required for Server role)
     let bootstrap_addr = "127.0.0.1:9999".parse().unwrap();

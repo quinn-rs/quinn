@@ -1,3 +1,4 @@
+#\![edition = "2024"]
 //! RFC Compliance Tests for NAT Traversal Frames
 //!
 //! These tests verify exact compliance with draft-seemann-quic-nat-traversal-02.

@@ -1,4 +1,4 @@
-//! Docker-based integration tests for ant-quic
+#![allow(dead_code, unused_imports)]//! Docker-based integration tests for ant-quic
 //!
 //! These tests use Docker containers to simulate realistic network conditions
 //! including various NAT types, network partitions, and latency scenarios.
@@ -104,7 +104,7 @@ async fn test_docker_network_partitions() {
     info!("Creating network partition between containers");
 
     let partition_cmd = Command::new("docker")
-        .args(&[
+        .args([
             "exec",
             "nat-gateway-1",
             "iptables",
@@ -134,7 +134,7 @@ async fn test_docker_network_partitions() {
     info!("Healing network partition");
 
     let heal_cmd = Command::new("docker")
-        .args(&[
+        .args([
             "exec",
             "nat-gateway-1",
             "iptables",
@@ -189,7 +189,7 @@ async fn test_docker_latency_scenarios() {
 
         // Apply network latency
         let tc_cmd = Command::new("docker")
-            .args(&[
+            .args([
                 "exec", "client-1", "tc", "qdisc", "add", "dev", "eth0", "root", "netem", "delay",
                 delay, jitter,
             ])
@@ -209,7 +209,7 @@ async fn test_docker_latency_scenarios() {
 
         // Remove latency
         let _ = Command::new("docker")
-            .args(&[
+            .args([
                 "exec", "client-1", "tc", "qdisc", "del", "dev", "eth0", "root",
             ])
             .output();
@@ -234,13 +234,13 @@ async fn test_docker_scale_scenario() {
         info!("Scaling to {} client nodes", scale);
 
         let scale_cmd = Command::new("docker-compose")
-            .args(&[
+            .args([
                 "-f",
                 "docker/docker-compose.yml",
                 "up",
                 "-d",
                 "--scale",
-                &format!("client={}", scale),
+                                &format!("client={}", scale)format!("client={scale}")format!("client={scale}"),format!("client={scale}"),
             ])
             .output()
             .expect("Failed to scale containers");
@@ -273,7 +273,7 @@ async fn test_docker_scale_scenario() {
 fn init_docker_tests() {
     // Ensure Docker is available
     let docker_check = Command::new("docker")
-        .args(&["version"])
+        .args(["version"])
         .output()
         .expect("Docker not found. Please install Docker to run these tests.");
 
@@ -283,7 +283,7 @@ fn init_docker_tests() {
 
     // Ensure docker-compose is available
     let compose_check = Command::new("docker-compose")
-        .args(&["version"])
+        .args(["version"])
         .output()
         .expect("docker-compose not found. Please install docker-compose.");
 
@@ -300,7 +300,7 @@ async fn run_docker_test(config: &DockerTestConfig) -> DockerTestResult {
 
     // Run the specific test
     let test_output = Command::new("docker")
-        .args(&["exec", "test-runner", "/app/run-test.sh", &config.test_name])
+        .args(["exec", "test-runner", "/app/run-test.sh", &config.test_name])
         .output()
         .expect("Failed to run test in Docker");
 
@@ -340,7 +340,7 @@ async fn docker_compose_up(compose_file: &str) {
     info!("Starting Docker containers from {}", compose_file);
 
     let output = Command::new("docker-compose")
-        .args(&["-f", compose_file, "up", "-d"])
+        .args(["-f", compose_file, "up", "-d"])
         .output()
         .expect("Failed to start Docker containers");
 
@@ -356,7 +356,7 @@ async fn docker_compose_down(compose_file: &str) {
     info!("Stopping Docker containers");
 
     let output = Command::new("docker-compose")
-        .args(&["-f", compose_file, "down", "-v"])
+        .args(["-f", compose_file, "down", "-v"])
         .output()
         .expect("Failed to stop Docker containers");
 
@@ -370,7 +370,7 @@ async fn docker_compose_down(compose_file: &str) {
 
 async fn get_docker_logs(container: &str) -> String {
     let output = Command::new("docker")
-        .args(&["logs", container])
+        .args(["logs", container])
         .output()
         .expect("Failed to get Docker logs");
 
@@ -387,17 +387,17 @@ fn parse_metric(output: &str, metric: &str) -> Option<usize> {
 async fn run_latency_test(name: &str) -> DockerTestResult {
     // Simplified latency test
     let output = Command::new("docker")
-        .args(&[
+        .args([
             "exec",
             "test-runner",
             "/app/run-test.sh",
-            &format!("latency_{}", name),
+                        &format!("latency_{name}")format!("latency_{name}")format!("latency_{name}")format!("latency_{name}"),format!("latency_{name}"),
         ])
         .output()
         .expect("Failed to run latency test");
 
     DockerTestResult {
-        test_name: format!("latency_{}", name),
+        test_name: format!("latency_{name}"),
         success: output.status.success(),
         duration_secs: 30.0,
         connections_established: 1,
@@ -416,7 +416,7 @@ struct NetworkHealth {
 
 async fn check_network_health() -> NetworkHealth {
     let output = Command::new("docker")
-        .args(&["ps", "--format", "{{.Names}}\t{{.Status}}"])
+        .args(["ps", "--format", "{{.Names}}\t{{.Status}}"])
         .output()
         .expect("Failed to check container status");
 

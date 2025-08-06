@@ -1,3 +1,4 @@
+#\![edition = "2024"]
 //! Tests for NAT traversal API functionality
 //!
 //! These tests verify the NAT traversal endpoint API using the actual public interfaces.

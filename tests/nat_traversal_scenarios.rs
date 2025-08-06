@@ -1,3 +1,4 @@
+#\![edition = "2024"]
 //! NAT traversal scenario tests
 //!
 //! Tests various NAT type combinations and hole-punching scenarios

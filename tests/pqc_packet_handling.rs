@@ -1,3 +1,4 @@
+#\![edition = "2024"]
 //! Tests for QUIC packet handling with PQC support
 
 #[cfg(all(test, feature = "pqc"))]

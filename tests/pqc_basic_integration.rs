@@ -1,3 +1,4 @@
+#\![edition = "2024"]
 //! Basic integration tests for PQC implementation
 //!
 //! This test suite performs basic validation of PQC functionality

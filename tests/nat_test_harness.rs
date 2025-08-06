@@ -1,3 +1,4 @@
+#\![edition = "2024"]
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::io::{BufRead, BufReader};

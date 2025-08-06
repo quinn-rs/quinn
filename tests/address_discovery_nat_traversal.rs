@@ -1,3 +1,4 @@
+#\![edition = "2024"]
 //! End-to-end integration tests for QUIC Address Discovery with NAT traversal
 //!
 //! These tests verify that the OBSERVED_ADDRESS frame implementation properly

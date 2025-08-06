@@ -1,3 +1,4 @@
+#\![edition = "2024"]
 //! Focused tests for Raw Public Key implementation
 //!
 //! This test file validates the Phase 1-3 Raw Public Key functionality

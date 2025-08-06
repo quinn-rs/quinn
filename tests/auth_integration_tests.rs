@@ -1,3 +1,4 @@
+#\![edition = "2024"]
 //! Integration tests for authenticated P2P connections
 
 use ant_quic::{

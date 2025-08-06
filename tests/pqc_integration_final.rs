@@ -1,3 +1,4 @@
+#\![edition = "2024"]
 //! Final integration tests for PQC implementation in ant-quic
 //!
 //! This test suite verifies that all PQC components are properly integrated
