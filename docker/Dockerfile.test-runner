@@ -1,5 +1,5 @@
 # Test Runner for NAT Testing
-FROM rust:1.85-alpine3.19
+FROM rust:1.85.1-alpine3.20
 
 # Install dependencies
 RUN apk add --no-cache \
@@ -30,7 +30,7 @@ RUN cargo install cargo-nextest
 RUN mkdir -p /test-results /scripts
 
 # Copy test scripts
-COPY docker/scripts/run-nat-tests.sh /scripts/
+COPY docker/scripts/ /scripts/
 RUN chmod +x /scripts/*.sh
 
 # Default environment
@@ -38,4 +38,4 @@ ENV RUST_LOG=info \
     RUST_BACKTRACE=1 \
     TEST_THREADS=1
 
-ENTRYPOINT ["/scripts/run-nat-tests.sh"]
+ENTRYPOINT ["/scripts/run-enhanced-nat-tests.sh"]

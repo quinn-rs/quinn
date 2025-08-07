@@ -1,5 +1,5 @@
 # Base Dockerfile for ant-quic testing
-FROM rust:1.85.1-alpine AS builder
+FROM rust:1.85.1-alpine3.20 AS builder
 
 # Install build dependencies
 RUN apk add --no-cache musl-dev openssl-dev perl make
