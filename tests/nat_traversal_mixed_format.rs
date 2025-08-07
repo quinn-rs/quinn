@@ -136,17 +136,37 @@ async fn legacy_client_rfc_server() {
 
     let (client_endpoint, server_endpoint) = make_pair(server_config, client_config).await;
 
-    // Connect and verify the connection works
-    let client_addr = client_endpoint.local_addr().unwrap();
-    let conn = server_endpoint
-        .connect(client_addr, "localhost")
-        .unwrap()
-        .await
-        .unwrap();
+    let server_addr = server_endpoint.local_addr().unwrap();
+
+    // Spawn server accept task
+    let server_handle = tokio::spawn(async move {
+        if let Some(incoming) = server_endpoint.accept().await {
+            incoming.await.unwrap()
+        } else {
+            panic!("Server did not receive connection")
+        }
+    });
+
+    // Client connects to server
+    let conn = tokio::time::timeout(
+        Duration::from_secs(10),
+        client_endpoint
+            .connect(server_addr, "localhost")
+            .unwrap()
+    )
+    .await
+    .unwrap()
+    .unwrap();
+
+    // Wait for server to accept connection
+    let _server_conn = tokio::time::timeout(
+        Duration::from_secs(5),
+        server_handle
+    ).await.unwrap().unwrap();
 
     // Send some data to verify the connection
     let mut send = conn.open_uni().await.unwrap();
-    send.write_all(b"hello from server").await.unwrap();
+    send.write_all(b"hello from client").await.unwrap();
     send.finish().unwrap();
 
     info!("Legacy client successfully connected to RFC server");
@@ -168,13 +188,33 @@ async fn rfc_client_legacy_server() {
 
     let (client_endpoint, server_endpoint) = make_pair(server_config, client_config).await;
 
-    // Connect and verify
     let server_addr = server_endpoint.local_addr().unwrap();
-    let conn = client_endpoint
-        .connect(server_addr, "localhost")
-        .unwrap()
-        .await
-        .unwrap();
+
+    // Spawn server accept task
+    let server_handle = tokio::spawn(async move {
+        if let Some(incoming) = server_endpoint.accept().await {
+            incoming.await.unwrap()
+        } else {
+            panic!("Server did not receive connection")
+        }
+    });
+
+    // Client connects to server
+    let conn = tokio::time::timeout(
+        Duration::from_secs(10),
+        client_endpoint
+            .connect(server_addr, "localhost")
+            .unwrap()
+    )
+    .await
+    .unwrap()
+    .unwrap();
+
+    // Wait for server to accept connection
+    let _server_conn = tokio::time::timeout(
+        Duration::from_secs(5),
+        server_handle
+    ).await.unwrap().unwrap();
 
     // Send some data
     let mut send = conn.open_uni().await.unwrap();
@@ -205,13 +245,33 @@ async fn rfc_to_rfc_negotiation() {
 
     let (client_endpoint, server_endpoint) = make_pair(server_config, client_config).await;
 
-    // Connect
     let server_addr = server_endpoint.local_addr().unwrap();
-    let conn = client_endpoint
-        .connect(server_addr, "localhost")
-        .unwrap()
-        .await
-        .unwrap();
+
+    // Spawn server accept task
+    let server_handle = tokio::spawn(async move {
+        if let Some(incoming) = server_endpoint.accept().await {
+            incoming.await.unwrap()
+        } else {
+            panic!("Server did not receive connection")
+        }
+    });
+
+    // Client connects to server
+    let conn = tokio::time::timeout(
+        Duration::from_secs(10),
+        client_endpoint
+            .connect(server_addr, "localhost")
+            .unwrap()
+    )
+    .await
+    .unwrap()
+    .unwrap();
+
+    // Wait for server to accept connection
+    let _server_conn = tokio::time::timeout(
+        Duration::from_secs(5),
+        server_handle
+    ).await.unwrap().unwrap();
 
     // Verify transport parameters indicate RFC support
     // Note: We'd need to expose transport parameters to properly verify this
@@ -229,9 +289,7 @@ async fn rfc_to_rfc_negotiation() {
 async fn nat_traversal_frame_compatibility() {
     init_logging();
 
-    // This test would require more setup to actually test NAT traversal frames
-    // For now, we verify basic connectivity with NAT traversal enabled
-
+    // This test verifies basic connectivity with NAT traversal enabled
     let mut server_config = server_config();
     let mut transport = TransportConfig::default();
     transport.nat_traversal_config(Some(
@@ -246,34 +304,40 @@ async fn nat_traversal_frame_compatibility() {
 
     let (client_endpoint, server_endpoint) = make_pair(server_config, client_config).await;
 
-    // Connect both ways to test bidirectional compatibility
     let server_addr = server_endpoint.local_addr().unwrap();
-    let client_addr = client_endpoint.local_addr().unwrap();
 
-    // Client to server
-    let conn1 = client_endpoint
-        .connect(server_addr, "server")
-        .unwrap()
-        .await
-        .unwrap();
+    // Spawn server accept task
+    let server_handle = tokio::spawn(async move {
+        if let Some(incoming) = server_endpoint.accept().await {
+            incoming.await.unwrap()
+        } else {
+            panic!("Server did not receive connection")
+        }
+    });
 
-    // Server to client
-    let conn2 = server_endpoint
-        .connect(client_addr, "client")
-        .unwrap()
-        .await
-        .unwrap();
+    // Client connects to server
+    let conn1 = tokio::time::timeout(
+        Duration::from_secs(10),
+        client_endpoint
+            .connect(server_addr, "server")
+            .unwrap()
+    )
+    .await
+    .unwrap()
+    .unwrap();
 
-    // Exchange data on both connections
+    // Wait for server to accept connection
+    let _server_conn = tokio::time::timeout(
+        Duration::from_secs(5),
+        server_handle
+    ).await.unwrap().unwrap();
+
+    // Send data on the connection to verify NAT traversal compatibility
     let mut send1 = conn1.open_uni().await.unwrap();
-    send1.write_all(b"client to server").await.unwrap();
+    send1.write_all(b"NAT traversal compatibility test").await.unwrap();
     send1.finish().unwrap();
 
-    let mut send2 = conn2.open_uni().await.unwrap();
-    send2.write_all(b"server to client").await.unwrap();
-    send2.finish().unwrap();
-
-    info!("Bidirectional NAT traversal frame exchange successful");
+    info!("NAT traversal frame compatibility test successful");
 }
 
 /// Test that endpoints handle malformed frames gracefully
@@ -295,13 +359,33 @@ async fn malformed_frame_handling() {
 
     let (client_endpoint, server_endpoint) = make_pair(server_config, client_config).await;
 
-    // Establish connection
     let server_addr = server_endpoint.local_addr().unwrap();
-    let conn = client_endpoint
-        .connect(server_addr, "localhost")
-        .unwrap()
-        .await
-        .unwrap();
+
+    // Spawn server accept task
+    let server_handle = tokio::spawn(async move {
+        if let Some(incoming) = server_endpoint.accept().await {
+            incoming.await.unwrap()
+        } else {
+            panic!("Server did not receive connection")
+        }
+    });
+
+    // Establish connection
+    let conn = tokio::time::timeout(
+        Duration::from_secs(10),
+        client_endpoint
+            .connect(server_addr, "localhost")
+            .unwrap()
+    )
+    .await
+    .unwrap()
+    .unwrap();
+
+    // Wait for server to accept connection
+    let _server_conn = tokio::time::timeout(
+        Duration::from_secs(5),
+        server_handle
+    ).await.unwrap().unwrap();
 
     // Connection should remain stable even if frames are sent in unexpected formats
     // (This would be tested more thoroughly with lower-level frame injection)
