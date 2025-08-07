@@ -11,17 +11,26 @@ RUN apt-get update && apt-get install -y \
 # Create app directory
 WORKDIR /usr/src/ant-quic
 
-# Copy source files
+# Copy manifest files first for better layer caching
 COPY Cargo.toml Cargo.lock ./
+
+# Create dummy main.rs to build dependencies first
+RUN mkdir src && echo "fn main() {}" > src/main.rs
+
+# Build dependencies first (this layer will be cached)
+RUN cargo build --release --bin ant-quic
+RUN rm -f target/release/deps/ant_quic*
+
+# Copy source files
 COPY src ./src/
 COPY benches ./benches/
 COPY examples ./examples/
 
-# Build the project in release mode
+# Build the actual project (only this rebuilds when source changes)
 RUN cargo build --release --bin ant-quic --examples
 
 # Runtime image
-FROM debian:bookworm-slim
+FROM debian:bookworm-slim AS runtime
 
 # Install runtime dependencies and network tools
 RUN apt-get update && apt-get install -y \

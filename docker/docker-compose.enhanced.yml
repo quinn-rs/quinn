@@ -69,6 +69,9 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile.ant-quic
+      cache_from:
+        - ant-quic:cache
+      target: runtime
     container_name: ant-quic-bootstrap
     hostname: bootstrap
     networks:
@@ -180,6 +183,9 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile.ant-quic
+      cache_from:
+        - ant-quic:cache
+      target: runtime
     container_name: ant-quic-client1
     hostname: client1
     networks:
@@ -201,6 +207,9 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile.ant-quic
+      cache_from:
+        - ant-quic:cache
+      target: runtime
     container_name: ant-quic-client2
     hostname: client2
     networks:
@@ -222,6 +231,9 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile.ant-quic
+      cache_from:
+        - ant-quic:cache
+      target: runtime
     container_name: ant-quic-client3
     hostname: client3
     networks:
@@ -243,6 +255,9 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile.ant-quic
+      cache_from:
+        - ant-quic:cache
+      target: runtime
     container_name: ant-quic-client4
     hostname: client4
     networks:
@@ -263,6 +278,9 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile.ant-quic
+      cache_from:
+        - ant-quic:cache
+      target: runtime
     container_name: ant-quic-client5
     hostname: client5
     networks:

@@ -9,6 +9,7 @@ use super::{LogEvent, logger};
 use crate::{Duration, Instant};
 
 /// Metrics collector for performance tracking
+#[derive(Debug)]
 pub struct MetricsCollector {
     /// Event counts by level and component
     event_counts: Arc<Mutex<HashMap<(tracing::Level, String), u64>>>,
@@ -63,6 +64,7 @@ impl MetricsCollector {
 }
 
 /// Throughput tracking
+#[derive(Debug)]
 pub struct ThroughputTracker {
     bytes_sent: AtomicU64,
     bytes_received: AtomicU64,
@@ -118,6 +120,7 @@ impl ThroughputTracker {
 }
 
 /// Latency tracking
+#[derive(Debug)]
 pub struct LatencyTracker {
     samples: Arc<Mutex<Vec<Duration>>>,
     min_rtt: AtomicU64, // microseconds
@@ -208,6 +211,7 @@ impl LatencyTracker {
 }
 
 /// Connection metrics
+#[derive(Debug)]
 pub struct ConnectionMetrics {
     active_connections: AtomicUsize,
     total_connections: AtomicU64,

@@ -62,10 +62,25 @@ jobs:
         chmod +x scripts/*.sh
         mkdir -p logs results
         
+    - name: Pre-build Rust dependencies (for caching)
+      run: |
+        cd docker
+        # Build just the dependencies layer first
+        DOCKER_BUILDKIT=1 docker build \
+          --target builder \
+          --cache-from ant-quic:deps-cache \
+          --tag ant-quic:deps-cache \
+          --file Dockerfile.ant-quic \
+          --build-arg BUILDKIT_INLINE_CACHE=1 \
+          ..
+        
     - name: Build base images
       run: |
         cd docker
-        docker compose -f docker-compose.enhanced.yml build --parallel
+        # Build with timeout and better caching
+        timeout 15m docker compose -f docker-compose.enhanced.yml build --parallel \
+          || (echo "Build timed out after 15 minutes, trying sequential build..." && \
+              timeout 20m docker compose -f docker-compose.enhanced.yml build)
         
     - name: Run NAT test suite - ${{ matrix.test-suite }}
       run: |
