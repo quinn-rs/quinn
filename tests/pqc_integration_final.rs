@@ -108,9 +108,9 @@ async fn test_ml_kem_operations() {
 
     // Log performance metrics
     println!("ML-KEM-768 Performance:");
-    println!("  Key generation: {:?}", keygen_time);
-    println!("  Encapsulation: {:?}", encap_time);
-    println!("  Decapsulation: {:?}", decap_time);
+    println!("  Key generation: {keygen_time:?}");
+    println!("  Encapsulation: {encap_time:?}");
+    println!("  Decapsulation: {decap_time:?}");
 
     // Verify performance is reasonable
     assert!(
@@ -171,9 +171,9 @@ async fn test_ml_dsa_operations() {
 
     // Log performance metrics
     println!("ML-DSA-65 Performance:");
-    println!("  Key generation: {:?}", keygen_time);
-    println!("  Signing: {:?}", sign_time);
-    println!("  Verification: {:?}", verify_time);
+    println!("  Key generation: {keygen_time:?}");
+    println!("  Signing: {sign_time:?}");
+    println!("  Verification: {verify_time:?}");
 
     // Verify performance is reasonable
     assert!(
@@ -239,7 +239,7 @@ async fn test_pqc_performance_overhead() {
 
     // PQC: Hybrid mode
     let pqc_start = Instant::now();
-    let pqc_config = PqcConfigBuilder::default()
+    let _pqc_config = PqcConfigBuilder::default()
         .mode(PqcMode::Hybrid)
         .build()
         .expect("Failed to build PQC config");
@@ -262,16 +262,14 @@ async fn test_pqc_performance_overhead() {
     let overhead_percent = ((pqc_time.as_secs_f64() / classic_time.as_secs_f64()) - 1.0) * 100.0;
 
     println!("Performance Comparison:");
-    println!("  Classic crypto: {:?}", classic_time);
-    println!("  PQC hybrid mode: {:?}", pqc_time);
-    println!("  Overhead: {:.1}%", overhead_percent);
+    println!("  Classic crypto: {classic_time:?}");
+    println!("  PQC hybrid mode: {pqc_time:?}");
+    println!("  Overhead: {overhead_percent:.1}%");
 
     // Verify we meet performance target
     assert!(
         overhead_percent < MAX_PQC_OVERHEAD_PERCENT,
-        "PQC overhead {:.1}% exceeds target of {}%",
-        overhead_percent,
-        MAX_PQC_OVERHEAD_PERCENT
+        "PQC overhead {overhead_percent:.1}% exceeds target of {MAX_PQC_OVERHEAD_PERCENT}%"
     );
 }
 
@@ -309,7 +307,7 @@ async fn test_backward_compatibility() {
         .connect(server_addr, "localhost")
         .expect("Failed to start connection");
 
-    let connect_result = timeout(Duration::from_secs(5), connecting).await;
+    let _connect_result = timeout(Duration::from_secs(5), connecting).await;
 
     // Note: This would succeed in a full integration test with proper certs
     // For now, we verify the endpoint was created successfully
@@ -320,7 +318,7 @@ async fn test_backward_compatibility() {
 async fn test_cross_platform_compatibility() {
     // Verify PQC works on different platforms
     let platform = std::env::consts::OS;
-    println!("Testing PQC on platform: {}", platform);
+    println!("Testing PQC on platform: {platform}");
 
     // All PQC operations should work regardless of platform
     let ml_kem = MlKem768::new();
@@ -391,7 +389,7 @@ async fn test_memory_safety() {
 
     // Get a pointer to the secret key data
     let key_bytes = sec_key.as_bytes();
-    let key_ptr = key_bytes.as_ptr();
+    let _key_ptr = key_bytes.as_ptr();
     let key_len = key_bytes.len();
 
     // Make a copy to verify the original data
