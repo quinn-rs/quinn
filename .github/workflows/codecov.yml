@@ -28,11 +28,10 @@ jobs:
         #       | grep -vFx -e 'default' -e 'aws-lc-rs-fips' -e 'rustls-aws-lc-rs-fips' \
         #       | paste -sd ',' -
         run: |
-          # Run coverage with reduced feature set and ignore stress tests
+          # Run coverage with reduced feature set
           cargo llvm-cov \
             --features="rustls-ring" \
-            --workspace --lcov --output-path lcov.info \
-            -- --skip stress
+            --workspace --lcov --output-path lcov.info
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
         with:
