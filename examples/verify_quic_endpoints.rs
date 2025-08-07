@@ -2,7 +2,8 @@
 ///
 /// This example verifies which public QUIC endpoints are accessible
 /// and documents their capabilities.
-use ant_quic::{ClientConfig, VarInt, high_level::Endpoint};
+use ant_quic::{ClientConfig, VarInt, high_level::Endpoint, EndpointConfig};
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::timeout;
 use tracing::{info, warn};
@@ -31,7 +32,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("Starting QUIC endpoint verification...");
 
     // Create client endpoint
-    let endpoint = Endpoint::client("0.0.0.0:0".parse()?)?;
+    let socket = std::net::UdpSocket::bind("0.0.0.0:0")?;
+    let runtime = ant_quic::high_level::default_runtime().ok_or("No compatible async runtime found")?;
+    let endpoint = Endpoint::new(EndpointConfig::default(), None, socket, runtime)?;
 
     let mut results = Vec::new();
 
@@ -99,17 +102,14 @@ async fn test_endpoint(
         let mut roots = rustls::RootCertStore::empty();
 
         // Add system roots
-        match rustls_native_certs::load_native_certs() {
-            Ok(certs) => {
-                for cert in certs {
-                    roots
-                        .add(rustls::pki_types::CertificateDer::from(cert.0))
-                        .ok();
-                }
-            }
-            Err(e) => {
-                warn!("Failed to load native certs: {}", e);
-            }
+        let certs_result = rustls_native_certs::load_native_certs();
+        for cert in certs_result.certs {
+            roots
+                .add(rustls::pki_types::CertificateDer::from(cert))
+                .ok();
+        }
+        if !certs_result.errors.is_empty() {
+            warn!("Some native certs failed to load: {:?}", certs_result.errors);
         }
 
         let crypto = rustls::ClientConfig::builder()

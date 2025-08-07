@@ -243,7 +243,7 @@ async fn test_endpoint(
         Err(e) => {
             return TestResult {
                 endpoint: address.clone(),
-                endpoint_name: "".to_string(),
+                endpoint_name: endpoint.name.clone(),
                 address: address.clone(),
                 success: false,
                 handshake_time_ms: None,
@@ -263,7 +263,7 @@ async fn test_endpoint(
         None => {
             return TestResult {
                 endpoint: address.clone(),
-                endpoint_name: "".to_string(),
+                endpoint_name: endpoint.name.clone(),
                 address: address.clone(),
                 success: false,
                 handshake_time_ms: None,

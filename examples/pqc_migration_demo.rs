@@ -23,7 +23,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 #[cfg(feature = "pqc")]
 use ant_quic::crypto::pqc::{HybridPreference, PqcConfig, PqcMode};
 #[cfg(feature = "pqc")]
-use ant_quic::{ClientConfig, Endpoint, ServerConfig, VarInt};
+use ant_quic::{ClientConfig, Endpoint, EndpointConfig, ServerConfig, VarInt};
 #[cfg(feature = "pqc")]
 use std::error::Error;
 #[cfg(feature = "pqc")]
@@ -35,7 +35,6 @@ use std::time::Duration;
 #[cfg(feature = "pqc")]
 use tokio::time::{sleep, timeout};
 
-#[cfg(feature = "pqc")]
 #[derive(Debug, Clone, Copy)]
 enum MigrationPhase {
     /// Phase 1: PQC disabled (baseline)
@@ -92,6 +91,7 @@ async fn tokio_main() -> Result<(), Box<dyn Error + Send + Sync>> {
     Ok(())
 }
 
+#[cfg(feature = "pqc")]
 async fn run_server_phase(phase: MigrationPhase) -> Result<(), Box<dyn Error + Send + Sync>> {
     let _pqc_config = match phase {
         MigrationPhase::PreMigration => {
@@ -169,6 +169,7 @@ async fn run_server_phase(phase: MigrationPhase) -> Result<(), Box<dyn Error + S
     Ok(())
 }
 
+#[cfg(feature = "pqc")]
 async fn test_client_compatibility(
     server_phase: MigrationPhase,
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
@@ -213,6 +214,7 @@ async fn test_client_compatibility(
     Ok(())
 }
 
+#[cfg(feature = "pqc")]
 async fn connect_with_config(
     server_addr: SocketAddr,
     _pqc_config: PqcConfig,
@@ -224,13 +226,14 @@ async fn connect_with_config(
     // Note: In real implementation, this would be done through the crypto provider
 
     // Create endpoint
-    let mut endpoint = Endpoint::client("0.0.0.0:0".parse()?)?;
-    endpoint.set_default_client_config(client_config);
+    let socket = std::net::UdpSocket::bind("0.0.0.0:0")?;
+    let runtime = ant_quic::high_level::default_runtime().ok_or("No compatible async runtime found")?;
+    let endpoint = Endpoint::new(EndpointConfig::default(), None, socket, runtime)?;
 
     // Connect with timeout
     let connection = timeout(
         Duration::from_secs(2),
-        endpoint.connect(server_addr, "localhost")?,
+        endpoint.connect_with(client_config, server_addr, "localhost")?,
     )
     .await??;
 
@@ -245,6 +248,7 @@ async fn connect_with_config(
     Ok(())
 }
 
+#[cfg(feature = "pqc")]
 async fn handle_connection(
     connection: ant_quic::high_level::Connection,
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
