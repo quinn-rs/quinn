@@ -156,9 +156,6 @@ pub fn verifying_key_from_spki(spki_der: &[u8]) -> Result<VerifyingKey, RawKeyEr
 /// using a secure hash function to ensure uniform distribution and prevent
 /// direct key exposure.
 pub fn derive_peer_id_from_public_key(public_key: &VerifyingKey) -> [u8; 32] {
-    // Use SHA-256 to hash the public key with a domain separator
-    use ring::digest::{SHA256, digest};
-
     let key_bytes = public_key.as_bytes();
 
     // Create the input data with domain separator
@@ -166,14 +163,46 @@ pub fn derive_peer_id_from_public_key(public_key: &VerifyingKey) -> [u8; 32] {
     input.extend_from_slice(b"AUTONOMI_PEER_ID_V1:");
     input.extend_from_slice(key_bytes);
 
-    // Hash the input
-    let hash = digest(&SHA256, &input);
-    let hash_bytes = hash.as_ref();
+    #[cfg(feature = "ring")]
+    {
+        // Use SHA-256 to hash the public key with a domain separator
+        use ring::digest::{SHA256, digest};
+        
+        // Hash the input
+        let hash = digest(&SHA256, &input);
+        let hash_bytes = hash.as_ref();
 
-    let mut peer_id_bytes = [0u8; 32];
-    peer_id_bytes.copy_from_slice(hash_bytes);
+        let mut peer_id_bytes = [0u8; 32];
+        peer_id_bytes.copy_from_slice(hash_bytes);
+        peer_id_bytes
+    }
+    
+    #[cfg(feature = "aws-lc-rs")]
+    {
+        use aws_lc_rs::digest;
+        
+        // Hash the input
+        let hash = digest::digest(&digest::SHA256, &input);
+        let hash_bytes = hash.as_ref();
 
-    peer_id_bytes
+        let mut peer_id_bytes = [0u8; 32];
+        peer_id_bytes.copy_from_slice(hash_bytes);
+        peer_id_bytes
+    }
+    
+    #[cfg(not(any(feature = "ring", feature = "aws-lc-rs")))]
+    {
+        // Use SHA2 crate as fallback
+        use sha2::{Digest, Sha256};
+        
+        let mut hasher = Sha256::new();
+        hasher.update(&input);
+        let result = hasher.finalize();
+        
+        let mut peer_id_bytes = [0u8; 32];
+        peer_id_bytes.copy_from_slice(&result);
+        peer_id_bytes
+    }
 }
 
 /// Verify that a peer ID was correctly derived from a public key

@@ -25,15 +25,18 @@ pub(crate) mod ring_like;
 pub mod rustls;
 
 /// Certificate management
+#[cfg(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring"))]
 pub mod certificate_manager;
 
 /// RFC 7250 Raw Public Keys support
+#[cfg(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring"))]
 pub mod raw_public_keys;
 
 /// Ed25519 key pair implementation
 pub mod raw_keys;
 
 /// Post-Quantum Cryptography support
+#[cfg(feature = "pqc")]
 pub mod pqc;
 
 // NOTE: The following modules were removed because they were written as external

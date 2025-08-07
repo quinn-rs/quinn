@@ -23,22 +23,22 @@ use crate::{
 };
 
 // Platform-specific implementations
-#[cfg(target_os = "windows")]
+#[cfg(all(target_os = "windows", feature = "network-discovery"))]
 pub mod windows;
 
-#[cfg(target_os = "windows")]
+#[cfg(all(target_os = "windows", feature = "network-discovery"))]
 pub use windows::WindowsInterfaceDiscovery;
 
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", feature = "network-discovery"))]
 pub mod linux;
 
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", feature = "network-discovery"))]
 pub use linux::LinuxInterfaceDiscovery;
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", feature = "network-discovery"))]
 pub(crate) mod macos;
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", feature = "network-discovery"))]
 pub(crate) use macos::MacOSInterfaceDiscovery;
 
 /// Convert discovery source type to NAT traversal source type

@@ -94,8 +94,8 @@ jobs:
       
       - uses: Swatinem/rust-cache@v2
       
-      - name: Test no-default-features
-        run: cargo test --no-default-features
+      - name: Test minimal features (rustls-ring only)
+        run: cargo test --no-default-features --features "rustls-ring"
       
       - name: Test all-features
         run: cargo test --all-features

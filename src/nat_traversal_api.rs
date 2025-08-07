@@ -51,13 +51,18 @@ use crate::{
 
 use crate::{
     ClientConfig, ConnectionError, EndpointConfig, ServerConfig, TransportConfig,
+    high_level::{Connection as QuinnConnection, Endpoint as QuinnEndpoint},
+};
+
+#[cfg(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring"))]
+use crate::{
     crypto::rustls::QuicClientConfig,
     crypto::rustls::QuicServerConfig,
-    high_level::{Connection as QuinnConnection, Endpoint as QuinnEndpoint},
 };
 
 use crate::config::validation::{ConfigValidator, ValidationResult};
 
+#[cfg(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring"))]
 use crate::crypto::certificate_manager::{CertificateConfig, CertificateManager};
 
 /// High-level NAT traversal endpoint for Autonomi P2P networks
