@@ -1,10 +1,15 @@
 //! Benchmarks for PQC memory pool
 
+#[cfg(feature = "pqc")]
 use ant_quic::crypto::pqc::memory_pool::{PoolConfig, PqcMemoryPool};
+#[cfg(feature = "pqc")]
 use ant_quic::crypto::pqc::types::*;
+#[cfg(feature = "pqc")]
 use criterion::{Criterion, black_box, criterion_group, criterion_main};
+#[cfg(feature = "pqc")]
 use std::time::Duration;
 
+#[cfg(feature = "pqc")]
 fn bench_pool_allocation(c: &mut Criterion) {
     let pool = PqcMemoryPool::new(PoolConfig {
         initial_size: 10,
@@ -22,6 +27,7 @@ fn bench_pool_allocation(c: &mut Criterion) {
     });
 }
 
+#[cfg(feature = "pqc")]
 fn bench_direct_allocation(c: &mut Criterion) {
     c.bench_function("direct_ml_kem_public_key", |b| {
         b.iter(|| {
@@ -31,6 +37,7 @@ fn bench_direct_allocation(c: &mut Criterion) {
     });
 }
 
+#[cfg(feature = "pqc")]
 fn bench_pool_secret_key(c: &mut Criterion) {
     let pool = PqcMemoryPool::new(PoolConfig::default());
 
@@ -45,6 +52,7 @@ fn bench_pool_secret_key(c: &mut Criterion) {
     });
 }
 
+#[cfg(feature = "pqc")]
 fn bench_concurrent_pool_access(c: &mut Criterion) {
     use std::sync::Arc;
     use std::thread;
@@ -79,6 +87,7 @@ fn bench_concurrent_pool_access(c: &mut Criterion) {
     });
 }
 
+#[cfg(feature = "pqc")]
 criterion_group!(
     benches,
     bench_pool_allocation,
@@ -86,4 +95,11 @@ criterion_group!(
     bench_pool_secret_key,
     bench_concurrent_pool_access
 );
+
+#[cfg(feature = "pqc")]
 criterion_main!(benches);
+
+#[cfg(not(feature = "pqc"))]
+fn main() {
+    println!("PQC memory pool benchmarks require the 'pqc' feature to be enabled.");
+}

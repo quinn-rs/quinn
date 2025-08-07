@@ -14,17 +14,9 @@ use ant_quic::{
     quic_node::{QuicNodeConfig, QuicP2PNode},
 };
 
-#[cfg(not(feature = "pqc"))]
-use ant_quic::{
-    auth::AuthConfig,
-    crypto::raw_public_keys::key_utils::{
-        derive_peer_id_from_public_key, generate_ed25519_keypair,
-    },
-    nat_traversal_api::EndpointRole,
-    quic_node::{QuicNodeConfig, QuicP2PNode},
-};
-
+#[cfg(feature = "pqc")]
 use std::{net::SocketAddr, sync::Arc, time::Duration};
+#[cfg(feature = "pqc")]
 use tracing::{info, warn};
 
 #[tokio::main]

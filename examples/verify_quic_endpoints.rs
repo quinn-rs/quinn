@@ -3,6 +3,7 @@
 /// This example verifies which public QUIC endpoints are accessible
 /// and documents their capabilities.
 use ant_quic::{ClientConfig, VarInt, high_level::Endpoint, EndpointConfig};
+#[cfg(not(feature = "platform-verifier"))]
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::timeout;

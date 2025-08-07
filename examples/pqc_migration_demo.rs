@@ -36,6 +36,7 @@ use std::time::Duration;
 use tokio::time::{sleep, timeout};
 
 #[derive(Debug, Clone, Copy)]
+#[allow(dead_code)]
 enum MigrationPhase {
     /// Phase 1: PQC disabled (baseline)
     PreMigration,
