@@ -255,6 +255,7 @@ pub struct Connection {
     address_discovery_state: Option<AddressDiscoveryState>,
 
     /// PQC state for tracking post-quantum cryptography support
+    #[cfg(feature = "pqc")]
     pqc_state: PqcState,
 
     /// Trace context for this connection
@@ -397,6 +398,7 @@ impl Connection {
                     now,
                 ))
             },
+            #[cfg(feature = "pqc")]
             pqc_state: PqcState::new(),
 
             #[cfg(feature = "trace")]
@@ -782,7 +784,11 @@ impl Connection {
                 // Finish current packet
                 if let Some(mut builder) = builder_storage.take() {
                     if pad_datagram {
-                        builder.pad_to(self.pqc_state.min_initial_size());
+                        #[cfg(feature = "pqc")]
+                        let min_size = self.pqc_state.min_initial_size();
+                        #[cfg(not(feature = "pqc"))]
+                        let min_size = MIN_INITIAL_SIZE;
+                        builder.pad_to(min_size);
                     }
 
                     if num_datagrams > 1 || pad_datagram_to_mtu {
@@ -1014,7 +1020,11 @@ impl Connection {
                     buf.write(frame::FrameType::PATH_RESPONSE);
                     buf.write(token);
                     self.stats.frame_tx.path_response += 1;
-                    builder.pad_to(self.pqc_state.min_initial_size());
+                    #[cfg(feature = "pqc")]
+                    let min_size = self.pqc_state.min_initial_size();
+                    #[cfg(not(feature = "pqc"))]
+                    let min_size = MIN_INITIAL_SIZE;
+                    builder.pad_to(min_size);
                     builder.finish_and_track(
                         now,
                         self,
@@ -1096,7 +1106,11 @@ impl Connection {
         // Finish the last packet
         if let Some(mut builder) = builder_storage {
             if pad_datagram {
-                builder.pad_to(self.pqc_state.min_initial_size());
+                #[cfg(feature = "pqc")]
+                let min_size = self.pqc_state.min_initial_size();
+                #[cfg(not(feature = "pqc"))]
+                let min_size = MIN_INITIAL_SIZE;
+                builder.pad_to(min_size);
             }
 
             // If this datagram is a loss probe and `segment_size` is larger than `INITIAL_MTU`,
@@ -1232,7 +1246,10 @@ impl Connection {
             "PUNCH_ME_NOW queued without 1-RTT keys"
         );
 
+        #[cfg(feature = "pqc")]
         buf.reserve(self.pqc_state.min_initial_size() as usize);
+        #[cfg(not(feature = "pqc"))]
+        buf.reserve(MIN_INITIAL_SIZE as usize);
         let buf_capacity = buf.capacity();
 
         let mut builder = PacketBuilder::new(
@@ -1274,7 +1291,11 @@ impl Connection {
 
         self.stats.frame_tx.ping += 1; // Use ping counter for now
 
-        builder.pad_to(self.pqc_state.min_initial_size());
+        #[cfg(feature = "pqc")]
+        let min_size = self.pqc_state.min_initial_size();
+        #[cfg(not(feature = "pqc"))]
+        let min_size = MIN_INITIAL_SIZE;
+        builder.pad_to(min_size);
         builder.finish_and_track(now, self, None, buf);
 
         // Mark request sent after packet is built
@@ -1331,7 +1352,10 @@ impl Connection {
             "PATH_CHALLENGE queued without 1-RTT keys"
         );
 
+        #[cfg(feature = "pqc")]
         buf.reserve(self.pqc_state.min_initial_size() as usize);
+        #[cfg(not(feature = "pqc"))]
+        buf.reserve(MIN_INITIAL_SIZE as usize);
         let buf_capacity = buf.capacity();
 
         let mut builder = PacketBuilder::new(
@@ -1353,7 +1377,11 @@ impl Connection {
         buf.write(challenge);
         self.stats.frame_tx.path_challenge += 1;
 
-        builder.pad_to(self.pqc_state.min_initial_size());
+        #[cfg(feature = "pqc")]
+        let min_size = self.pqc_state.min_initial_size();
+        #[cfg(not(feature = "pqc"))]
+        let min_size = MIN_INITIAL_SIZE;
+        builder.pad_to(min_size);
         builder.finish_and_track(now, self, None, buf);
 
         // Mark coordination as validating after packet is built
@@ -1420,7 +1448,10 @@ impl Connection {
             "PATH_CHALLENGE queued without 1-RTT keys"
         );
 
+        #[cfg(feature = "pqc")]
         buf.reserve(self.pqc_state.min_initial_size() as usize);
+        #[cfg(not(feature = "pqc"))]
+        buf.reserve(MIN_INITIAL_SIZE as usize);
         let buf_capacity = buf.capacity();
 
         // Use current connection ID for NAT traversal PATH_CHALLENGE
@@ -1444,7 +1475,11 @@ impl Connection {
         self.stats.frame_tx.path_challenge += 1;
 
         // PATH_CHALLENGE frames must be padded to at least 1200 bytes
-        builder.pad_to(self.pqc_state.min_initial_size());
+        #[cfg(feature = "pqc")]
+        let min_size = self.pqc_state.min_initial_size();
+        #[cfg(not(feature = "pqc"))]
+        let min_size = MIN_INITIAL_SIZE;
+        builder.pad_to(min_size);
 
         builder.finish_and_track(now, self, None, buf);
 
@@ -1477,7 +1512,10 @@ impl Connection {
             SpaceId::Data,
             "PATH_CHALLENGE queued without 1-RTT keys"
         );
+        #[cfg(feature = "pqc")]
         buf.reserve(self.pqc_state.min_initial_size() as usize);
+        #[cfg(not(feature = "pqc"))]
+        buf.reserve(MIN_INITIAL_SIZE as usize);
 
         let buf_capacity = buf.capacity();
 
@@ -1505,7 +1543,11 @@ impl Connection {
         // to at least the smallest allowed maximum datagram size of 1200 bytes,
         // unless the anti-amplification limit for the path does not permit
         // sending a datagram of this size
-        builder.pad_to(self.pqc_state.min_initial_size());
+        #[cfg(feature = "pqc")]
+        let min_size = self.pqc_state.min_initial_size();
+        #[cfg(not(feature = "pqc"))]
+        let min_size = MIN_INITIAL_SIZE;
+        builder.pad_to(min_size);
 
         builder.finish(self, buf);
         self.stats.udp_tx.on_sent(1, buf.len());
@@ -2543,15 +2585,18 @@ impl Connection {
         }
 
         // Detect PQC usage from CRYPTO frame data before processing
-        self.pqc_state.detect_pqc_from_crypto(&crypto.data, space);
+        #[cfg(feature = "pqc")]
+        {
+            self.pqc_state.detect_pqc_from_crypto(&crypto.data, space);
 
-        // Check if we should trigger MTU discovery for PQC
-        if self.pqc_state.should_trigger_mtu_discovery() {
-            // Request larger MTU for PQC handshakes
-            self.path
-                .mtud
-                .reset(self.pqc_state.min_initial_size(), self.config.min_mtu);
-            trace!("Triggered MTU discovery for PQC handshake");
+            // Check if we should trigger MTU discovery for PQC
+            if self.pqc_state.should_trigger_mtu_discovery() {
+                // Request larger MTU for PQC handshakes
+                self.path
+                    .mtud
+                    .reset(self.pqc_state.min_initial_size(), self.config.min_mtu);
+                trace!("Triggered MTU discovery for PQC handshake");
+            }
         }
 
         let space = &mut self.spaces[space];
@@ -2607,15 +2652,23 @@ impl Connection {
             trace!("wrote {} {:?} CRYPTO bytes", outgoing.len(), space);
 
             // Use PQC-aware fragmentation for large CRYPTO data
-            if self.pqc_state.using_pqc && outgoing.len() > 1200 {
+            #[cfg(feature = "pqc")]
+            let use_pqc_fragmentation = self.pqc_state.using_pqc && outgoing.len() > 1200;
+            #[cfg(not(feature = "pqc"))]
+            let use_pqc_fragmentation = false;
+            
+            if use_pqc_fragmentation {
                 // Fragment large CRYPTO data for PQC handshakes
-                let frames = self.pqc_state.packet_handler.fragment_crypto_data(
-                    &outgoing,
-                    offset,
-                    self.pqc_state.min_initial_size() as usize,
-                );
-                for frame in frames {
-                    self.spaces[space].pending.crypto.push_back(frame);
+                #[cfg(feature = "pqc")]
+                {
+                    let frames = self.pqc_state.packet_handler.fragment_crypto_data(
+                        &outgoing,
+                        offset,
+                        self.pqc_state.min_initial_size() as usize,
+                    );
+                    for frame in frames {
+                        self.spaces[space].pending.crypto.push_back(frame);
+                    }
                 }
             } else {
                 // Normal CRYPTO frame for non-PQC or small data
@@ -4215,20 +4268,23 @@ impl Connection {
         self.negotiate_address_discovery(&params);
 
         // Update PQC state based on peer parameters
-        self.pqc_state.update_from_peer_params(&params);
+        #[cfg(feature = "pqc")]
+        {
+            self.pqc_state.update_from_peer_params(&params);
 
-        // If PQC is enabled, adjust MTU discovery configuration
-        if self.pqc_state.enabled && self.pqc_state.using_pqc {
-            trace!("PQC enabled, adjusting MTU discovery for larger handshake packets");
-            // When PQC is enabled, we need to handle larger packets during handshake
-            // The actual MTU discovery will probe up to the peer's max_udp_payload_size
-            // or the PQC handshake MTU, whichever is smaller
-            let current_mtu = self.path.mtud.current_mtu();
-            if current_mtu < self.pqc_state.handshake_mtu {
-                trace!(
-                    "Current MTU {} is less than PQC handshake MTU {}, will rely on MTU discovery",
-                    current_mtu, self.pqc_state.handshake_mtu
-                );
+            // If PQC is enabled, adjust MTU discovery configuration
+            if self.pqc_state.enabled && self.pqc_state.using_pqc {
+                trace!("PQC enabled, adjusting MTU discovery for larger handshake packets");
+                // When PQC is enabled, we need to handle larger packets during handshake
+                // The actual MTU discovery will probe up to the peer's max_udp_payload_size
+                // or the PQC handshake MTU, whichever is smaller
+                let current_mtu = self.path.mtud.current_mtu();
+                if current_mtu < self.pqc_state.handshake_mtu {
+                    trace!(
+                        "Current MTU {} is less than PQC handshake MTU {}, will rely on MTU discovery",
+                        current_mtu, self.pqc_state.handshake_mtu
+                    );
+                }
             }
         }
 
@@ -6038,6 +6094,7 @@ fn negotiate_max_idle_timeout(x: Option<VarInt>, y: Option<VarInt>) -> Option<Du
 }
 
 /// State for tracking PQC support in the connection
+#[cfg(feature = "pqc")]
 #[derive(Debug, Clone)]
 pub(crate) struct PqcState {
     /// Whether the peer supports PQC algorithms
@@ -6052,6 +6109,7 @@ pub(crate) struct PqcState {
     packet_handler: crate::crypto::pqc::packet_handler::PqcPacketHandler,
 }
 
+#[cfg(feature = "pqc")]
 impl PqcState {
     fn new() -> Self {
         Self {
@@ -6136,6 +6194,7 @@ impl PqcState {
     }
 }
 
+#[cfg(feature = "pqc")]
 impl Default for PqcState {
     fn default() -> Self {
         Self::new()
