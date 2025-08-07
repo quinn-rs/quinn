@@ -125,13 +125,10 @@ jobs:
       - run: cargo build --locked --all-targets
       - run: cargo test --locked
       # Fast apple datapath tests removed - ant-quic integrated package
-        if: ${{ runner.os }} == "macOS"
       - run: cargo test --locked -- --ignored stress
       - run: cargo test --locked --manifest-path fuzz/Cargo.toml
         if: ${{ matrix.rust }} == "stable"
       # Benchmark tests removed - ant-quic integrated package
-      # Fast-apple-datapath benchmark removed - ant-quic integrated package
-        if: ${{ runner.os }} == "macOS"
 
   test-aws-lc-rs:
     runs-on: ubuntu-latest
