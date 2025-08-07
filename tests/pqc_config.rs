@@ -1,5 +1,7 @@
 //! Tests for Post-Quantum Cryptography configuration API
 
+#![cfg(feature = "pqc")]
+
 use ant_quic::crypto::pqc::{HybridPreference, PqcConfig, PqcMode};
 use ant_quic::{
     EndpointConfig,
