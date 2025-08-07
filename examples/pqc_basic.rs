@@ -3,6 +3,7 @@
 //! This example demonstrates the simplest way to enable PQC in ant-quic
 //! using the QuicP2PNode high-level API.
 
+#[cfg(feature = "pqc")]
 use ant_quic::{
     auth::AuthConfig,
     crypto::pqc::{PqcConfig, PqcMode},
@@ -12,6 +13,17 @@ use ant_quic::{
     nat_traversal_api::EndpointRole,
     quic_node::{QuicNodeConfig, QuicP2PNode},
 };
+
+#[cfg(not(feature = "pqc"))]
+use ant_quic::{
+    auth::AuthConfig,
+    crypto::raw_public_keys::key_utils::{
+        derive_peer_id_from_public_key, generate_ed25519_keypair,
+    },
+    nat_traversal_api::EndpointRole,
+    quic_node::{QuicNodeConfig, QuicP2PNode},
+};
+
 use std::{net::SocketAddr, sync::Arc, time::Duration};
 use tracing::{info, warn};
 
@@ -24,6 +36,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 .add_directive("info".parse().unwrap()),
         )
         .init();
+
+    // Check if PQC features are enabled
+    #[cfg(not(feature = "pqc"))]
+    {
+        println!("Error: This example requires the 'pqc' feature to be enabled.");
+        println!("Run with: cargo run --example pqc_basic --features pqc -- <server|client>");
+        return Ok(());
+    }
 
     // Parse command line arguments
     let args: Vec<String> = std::env::args().collect();
@@ -69,8 +89,12 @@ async fn run_server() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     println!("📋 Server PeerID: {peer_id:?}");
 
     // Create PQC configuration (configured in the auth layer)
+    #[cfg(feature = "pqc")]
     let pqc_config = PqcConfig::builder().mode(PqcMode::Hybrid).build().unwrap();
+    #[cfg(feature = "pqc")]
     println!("🔐 PQC Mode: {:?}", pqc_config.mode);
+    #[cfg(not(feature = "pqc"))]
+    println!("🔐 PQC disabled - using classical cryptography only");
 
     // Create server configuration
     let config = QuicNodeConfig {
@@ -122,8 +146,12 @@ async fn run_client(
     println!("📋 Client PeerID: {peer_id:?}");
 
     // Create PQC configuration
+    #[cfg(feature = "pqc")]
     let pqc_config = PqcConfig::builder().mode(PqcMode::Hybrid).build().unwrap();
+    #[cfg(feature = "pqc")]
     println!("🔐 PQC Mode: {:?}", pqc_config.mode);
+    #[cfg(not(feature = "pqc"))]
+    println!("🔐 PQC disabled - using classical cryptography only");
 
     // Create client configuration
     let config = QuicNodeConfig {

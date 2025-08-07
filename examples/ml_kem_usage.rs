@@ -3,9 +3,28 @@
 //! This example shows how the ML-KEM implementation works around the lack of
 //! direct private key serialization in aws-lc-rs by using an in-memory cache.
 
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    println!("=== ML-KEM-768 Usage Example ===\n");
+
+    // Check if PQC features are enabled
+    #[cfg(not(feature = "pqc"))]
+    {
+        println!("Error: This example requires the 'pqc' feature to be enabled.");
+        println!("Run with: cargo run --example ml_kem_usage --features pqc");
+        return Ok(());
+    }
+
+    #[cfg(feature = "pqc")]
+    {
+        run_ml_kem_demo()
+    }
+}
+
+#[cfg(feature = "pqc")]
 use ant_quic::crypto::pqc::{MlKemOperations, ml_kem_impl::MlKem768Impl};
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+#[cfg(feature = "pqc")]
+fn run_ml_kem_demo() -> Result<(), Box<dyn std::error::Error>> {
     println!("ML-KEM-768 Example\n");
 
     // Create ML-KEM instance

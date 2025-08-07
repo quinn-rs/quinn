@@ -163,7 +163,7 @@ pub fn derive_peer_id_from_public_key(public_key: &VerifyingKey) -> [u8; 32] {
     input.extend_from_slice(b"AUTONOMI_PEER_ID_V1:");
     input.extend_from_slice(key_bytes);
 
-    #[cfg(feature = "ring")]
+    #[cfg(all(feature = "ring", not(feature = "aws-lc-rs")))]
     {
         // Use SHA-256 to hash the public key with a domain separator
         use ring::digest::{SHA256, digest};
@@ -174,7 +174,7 @@ pub fn derive_peer_id_from_public_key(public_key: &VerifyingKey) -> [u8; 32] {
 
         let mut peer_id_bytes = [0u8; 32];
         peer_id_bytes.copy_from_slice(hash_bytes);
-        peer_id_bytes
+        return peer_id_bytes;
     }
     
     #[cfg(feature = "aws-lc-rs")]
@@ -187,7 +187,7 @@ pub fn derive_peer_id_from_public_key(public_key: &VerifyingKey) -> [u8; 32] {
 
         let mut peer_id_bytes = [0u8; 32];
         peer_id_bytes.copy_from_slice(hash_bytes);
-        peer_id_bytes
+        return peer_id_bytes;
     }
     
     #[cfg(not(any(feature = "ring", feature = "aws-lc-rs")))]

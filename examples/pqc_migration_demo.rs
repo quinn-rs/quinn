@@ -3,14 +3,39 @@
 //! This example demonstrates how to migrate an existing QUIC application
 //! to use PQC while maintaining backward compatibility.
 
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    println!("=== Post-Quantum Cryptography Migration Demo ===\n");
+
+    // Check if PQC features are enabled
+    #[cfg(not(feature = "pqc"))]
+    {
+        println!("Error: This example requires the 'pqc' feature to be enabled.");
+        println!("Run with: cargo run --example pqc_migration_demo --features pqc");
+        return Ok(());
+    }
+
+    #[cfg(feature = "pqc")]
+    {
+        tokio_main()
+    }
+}
+
+#[cfg(feature = "pqc")]
 use ant_quic::crypto::pqc::{HybridPreference, PqcConfig, PqcMode};
+#[cfg(feature = "pqc")]
 use ant_quic::{ClientConfig, Endpoint, ServerConfig, VarInt};
+#[cfg(feature = "pqc")]
 use std::error::Error;
+#[cfg(feature = "pqc")]
 use std::net::SocketAddr;
+#[cfg(feature = "pqc")]
 use std::sync::Arc;
+#[cfg(feature = "pqc")]
 use std::time::Duration;
+#[cfg(feature = "pqc")]
 use tokio::time::{sleep, timeout};
 
+#[cfg(feature = "pqc")]
 #[derive(Debug, Clone, Copy)]
 enum MigrationPhase {
     /// Phase 1: PQC disabled (baseline)
@@ -23,8 +48,9 @@ enum MigrationPhase {
     RequiredPqc,
 }
 
+#[cfg(feature = "pqc")]
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
+async fn tokio_main() -> Result<(), Box<dyn Error + Send + Sync>> {
     // Initialize logging
 
     println!("🔄 Post-Quantum Cryptography Migration Demo");
