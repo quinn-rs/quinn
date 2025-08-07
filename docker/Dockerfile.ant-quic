@@ -15,8 +15,8 @@ WORKDIR /usr/src/ant-quic
 COPY Cargo.toml Cargo.lock ./
 COPY benches ./benches/
 
-# Create dummy main.rs to build dependencies first
-RUN mkdir src && echo "fn main() {}" > src/main.rs
+# Create dummy ant-quic.rs to build dependencies first
+RUN mkdir -p src/bin && echo "fn main() {}" > src/bin/ant-quic.rs
 
 # Build dependencies first (this layer will be cached)
 RUN cargo build --release --bin ant-quic

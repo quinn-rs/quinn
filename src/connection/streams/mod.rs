@@ -110,7 +110,7 @@ impl RecvStream<'_> {
     ///
     /// Unordered reads can improve performance when packet loss occurs, but ordered reads
     /// on streams that have seen previous unordered reads will return `ReadError::IllegalOrderedRead`.
-    pub fn read(&mut self, ordered: bool) -> Result<Chunks, ReadableError> {
+    pub fn read(&mut self, ordered: bool) -> Result<Chunks<'_>, ReadableError> {
         if self.state.conn_closed() {
             return Err(ReadableError::ConnectionClosed);
         }
