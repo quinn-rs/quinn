@@ -336,6 +336,9 @@ mod tests {
         assert_eq!(matrix.entries.len(), 1);
         assert_eq!(matrix.entries[0].attempts, 3);
         assert_eq!(matrix.entries[0].successes, 2);
-        assert_eq!(matrix.entries[0].success_rate, 66.66666666666667);
+        // Use approximate comparison for floating point
+        let expected = 66.66666666666667;
+        let actual = matrix.entries[0].success_rate;
+        assert!((actual - expected).abs() < 0.00001, "Success rate mismatch: expected {}, got {}", expected, actual);
     }
 }
