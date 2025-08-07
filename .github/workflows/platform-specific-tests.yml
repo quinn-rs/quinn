@@ -57,7 +57,6 @@ jobs:
       - name: Run Windows-specific tests
         run: |
           cargo test --features "windows-tests" -- --test-threads=1 windows
-          cargo test --test platform_compatibility_tests windows_interface_discovery
       
       - name: Run Windows IP Helper tests
         run: cargo test --lib candidate_discovery::windows::tests
@@ -119,7 +118,6 @@ jobs:
       - name: Run Linux-specific tests
         run: |
           cargo test --features "linux-tests" -- --test-threads=1 linux
-          cargo test --test platform_compatibility_tests linux_interface_discovery
       
       - name: Run Linux Netlink tests
         run: cargo test --lib candidate_discovery::linux::tests
@@ -188,7 +186,6 @@ jobs:
       - name: Run macOS-specific tests
         run: |
           cargo test --features "macos-tests" -- --test-threads=1 macos
-          cargo test --test platform_compatibility_tests macos_interface_discovery
       
       - name: Run macOS System Configuration tests
         run: cargo test --lib candidate_discovery::macos::tests
