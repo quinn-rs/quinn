@@ -16,7 +16,7 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy NAT configuration scripts
-COPY scripts/nat-types /opt/nat-gateway/scripts
+COPY docker/scripts/nat-types /opt/nat-gateway/scripts
 
 # Make scripts executable
 RUN chmod +x /opt/nat-gateway/scripts/*.sh
@@ -39,7 +39,7 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
     CMD iptables -L -n || exit 1
 
 # Entry point script
-COPY scripts/nat-gateway-entrypoint.sh /entrypoint.sh
+COPY docker/scripts/nat-gateway-entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
 ENTRYPOINT ["/entrypoint.sh"]
