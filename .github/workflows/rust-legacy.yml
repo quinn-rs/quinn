@@ -180,7 +180,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       # Note that we must also update the README when changing the MSRV
-      - uses: dtolnay/rust-toolchain@1.74.1
+      - uses: dtolnay/rust-toolchain@1.85.0
       - uses: Swatinem/rust-cache@v2
       - run: cargo check --locked --lib --all-features -p quinn-udp -p quinn-proto -p quinn
 

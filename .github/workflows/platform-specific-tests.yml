@@ -25,7 +25,7 @@ jobs:
     strategy:
       matrix:
         os: [windows-2019, windows-2022, windows-latest]
-        rust: [stable, 1.75.0]
+        rust: [stable, 1.85.0]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -82,7 +82,7 @@ jobs:
           - os: ubuntu-latest
             rust: stable
           - os: ubuntu-latest
-            rust: 1.75.0
+            rust: 1.85.0
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -156,7 +156,7 @@ jobs:
           - os: macos-latest
             rust: stable
           - os: macos-latest
-            rust: 1.75.0
+            rust: 1.85.0
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4

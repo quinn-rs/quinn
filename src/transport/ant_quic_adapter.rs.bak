@@ -1,0 +1,17 @@
+
+/// Convert from our PeerId (String) to ant_quic PeerId
+pub fn string_to_ant_peer_id(peer_id: &str) -> ant_quic::nat_traversal_api::PeerId {
+    use sha2::{Sha256, Digest};
+    let mut hasher = Sha256::new();
+    hasher.update(peer_id.as_bytes());
+    let hash = hasher.finalize();
+    let mut bytes = [0u8; 32];
+    bytes.copy_from_slice(&hash[..32]);
+    ant_quic::nat_traversal_api::PeerId(bytes)
+}
+
+/// Convert from ant_quic PeerId to our PeerId (String)
+pub fn ant_peer_id_to_string(peer_id: &ant_quic::nat_traversal_api::PeerId) -> String {
+    hex::encode(peer_id.0)
+}
+EOF < /dev/null

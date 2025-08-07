@@ -101,7 +101,7 @@ jobs:
 
       - name: Check minimum supported Rust version
         run: |
-          # Verify MSRV is maintained (1.74.1 for ant-quic)
+          # Verify MSRV is maintained (1.85.0 for ant-quic)
           cargo check --all-targets || echo "::warning::MSRV check needs attention"
 
   license-check:
