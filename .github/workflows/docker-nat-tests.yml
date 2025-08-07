@@ -68,7 +68,6 @@ jobs:
         # Build just the dependencies layer first
         DOCKER_BUILDKIT=1 docker build \
           --target builder \
-          --cache-from ant-quic:deps-cache \
           --tag ant-quic:deps-cache \
           --file Dockerfile.ant-quic \
           --build-arg BUILDKIT_INLINE_CACHE=1 \
