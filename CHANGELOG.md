@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.6.1] - 2025-08-07
 
+### Security
+- **Enhanced Protocol Obfuscation** (commit 6e633cd9)
+  - Replaced static bind addresses with randomized port selection for improved security
+  - Implemented `create_random_port_bind_addr()` function to prevent port fingerprinting
+  - Random port binding reduces attack surface by making protocol detection harder
+- **Robust Error Handling** (commit a7d1de11)
+  - Eliminated production panic risks by replacing `.unwrap()` calls with proper error handling
+  - Enhanced mutex safety with graceful error recovery instead of panics
+  - Improved security boundary validation for malformed inputs
+
+### Added
+- Comprehensive security regression tests covering recent security improvements
+- Input validation tests for edge cases and malformed configurations
+- Concurrent access safety tests for NAT traversal operations
+
 ### Fixed
 - Added `Debug` derive to `QuicP2PNode` and `AuthManager` for improved debugging capabilities
 - Fixed minor formatting issues in test files

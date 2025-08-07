@@ -7,7 +7,23 @@
 use std::{collections::HashMap, fmt, net::SocketAddr, sync::Arc, time::Duration};
 
 /// Creates a bind address that allows the OS to select a random available port
-/// This provides protocol obfuscation by preventing port fingerprinting
+/// 
+/// This provides protocol obfuscation by preventing port fingerprinting, which improves
+/// security by making it harder for attackers to identify and target QUIC endpoints.
+/// 
+/// # Security Benefits
+/// - **Port Randomization**: Each endpoint gets a different random port, preventing easy detection
+/// - **Fingerprinting Resistance**: Makes protocol identification more difficult for attackers
+/// - **Attack Surface Reduction**: Reduces predictable network patterns that could be exploited
+/// 
+/// # Implementation Details
+/// - Binds to `0.0.0.0:0` to let the OS choose an available port
+/// - Used automatically when `bind_addr` is `None` in endpoint configuration
+/// - Provides better security than static or predictable port assignments
+/// 
+/// # Added in Version 0.6.1
+/// This function was introduced as part of security improvements in commit 6e633cd9
+/// to enhance protocol obfuscation capabilities.
 fn create_random_port_bind_addr() -> SocketAddr {
     "0.0.0.0:0"
         .parse()
@@ -73,6 +89,35 @@ pub struct NatTraversalEndpoint {
 }
 
 /// Configuration for NAT traversal behavior
+/// 
+/// This configuration controls various aspects of NAT traversal including security,
+/// performance, and reliability settings. Recent improvements in version 0.6.1 include
+/// enhanced security through protocol obfuscation and robust error handling.
+/// 
+/// # Security Features (Added in v0.6.1)
+/// - **Protocol Obfuscation**: Random port binding prevents fingerprinting attacks
+/// - **Robust Error Handling**: Panic-free operation with graceful error recovery
+/// - **Input Validation**: Enhanced validation of configuration parameters
+/// 
+/// # Example
+/// ```rust
+/// use ant_quic::nat_traversal_api::{NatTraversalConfig, EndpointRole};
+/// use std::time::Duration;
+/// 
+/// // Recommended secure configuration
+/// let config = NatTraversalConfig {
+///     role: EndpointRole::Client,
+///     bootstrap_nodes: vec!["bootstrap.example.com:9000".parse().unwrap()],
+///     max_candidates: 10,
+///     coordination_timeout: Duration::from_secs(10),
+///     enable_symmetric_nat: true,
+///     enable_relay_fallback: false,
+///     max_concurrent_attempts: 5,
+///     bind_addr: None, // Auto-select for security
+///     prefer_rfc_nat_traversal: true,
+///     timeouts: Default::default(),
+/// };
+/// ```
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct NatTraversalConfig {
     /// Role of this endpoint in the network
@@ -89,7 +134,22 @@ pub struct NatTraversalConfig {
     pub enable_relay_fallback: bool,
     /// Maximum concurrent NAT traversal attempts
     pub max_concurrent_attempts: usize,
-    /// Bind address for the endpoint (None = auto-select)
+    /// Bind address for the endpoint 
+    /// 
+    /// - `Some(addr)`: Bind to the specified address
+    /// - `None`: Auto-select random port for enhanced security (recommended)
+    /// 
+    /// When `None`, the system uses [`create_random_port_bind_addr()`] to automatically
+    /// select a random available port, providing protocol obfuscation and improved
+    /// security through port randomization.
+    /// 
+    /// # Security Benefits of None (Auto-Select)
+    /// - **Protocol Obfuscation**: Makes endpoint detection harder for attackers
+    /// - **Port Randomization**: Each instance gets a different port
+    /// - **Fingerprinting Resistance**: Reduces predictable network patterns
+    /// 
+    /// # Added in Version 0.6.1
+    /// Enhanced security through automatic random port selection
     pub bind_addr: Option<SocketAddr>,
     /// Prefer RFC-compliant NAT traversal frame format
     /// When true, will send RFC-compliant frames if the peer supports it

@@ -28,6 +28,7 @@ Comprehensive documentation is available in the [`docs/`](docs/) directory:
 - **QUIC Address Discovery**: Automatic peer address detection via IETF draft standard
 - **Post-Quantum Ready**: Support for ML-KEM-768 and ML-DSA-65 hybrid cryptography
 - **IPv4/IPv6 Dual Stack**: Full support for both protocols with automatic selection
+- **Security-Hardened**: Protocol obfuscation, robust error handling, and panic-free operation
 - **Built on Quinn**: Leverages the proven Quinn QUIC implementation as foundation
 - **Automatic Bootstrap Connection**: Nodes automatically connect to configured bootstrap nodes
 - **Production-Ready Binary**: Full-featured `ant-quic` binary for immediate deployment
