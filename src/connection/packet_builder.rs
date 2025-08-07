@@ -227,6 +227,7 @@ impl PacketBuilder {
             conn.path.pacing.on_transmit(size);
 
             // Update PQC state for packet tracking
+            #[cfg(feature = "pqc")]
             conn.pqc_state.on_packet_sent(space_id, size);
         }
     }

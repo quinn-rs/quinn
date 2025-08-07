@@ -933,10 +933,14 @@ impl Connection {
             coalesce = coalesce && !builder.short_header;
 
             // Check if we should adjust coalescing for PQC
-            if self
+            #[cfg(feature = "pqc")]
+            let should_adjust_coalescing = self
                 .pqc_state
-                .should_adjust_coalescing(buf.len() - datagram_start, space_id)
-            {
+                .should_adjust_coalescing(buf.len() - datagram_start, space_id);
+            #[cfg(not(feature = "pqc"))]
+            let should_adjust_coalescing = false;
+            
+            if should_adjust_coalescing {
                 coalesce = false;
                 trace!("Disabling coalescing for PQC handshake in {:?}", space_id);
             }
@@ -3935,9 +3939,12 @@ impl Connection {
             // Use PQC-aware sizing for CRYPTO frames
             let available_space = max_size - buf.len();
             let remaining_data = frame.data.len();
+            #[cfg(feature = "pqc")]
             let optimal_size = self
                 .pqc_state
                 .calculate_crypto_frame_size(available_space, remaining_data);
+            #[cfg(not(feature = "pqc"))]
+            let optimal_size = available_space.min(remaining_data);
 
             let len = frame
                 .data
