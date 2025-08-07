@@ -771,6 +771,9 @@ impl Connection {
 
         data.validated = validated;
 
+        let pto = self.ack_frequency.max_ack_delay_for_pto() + data.rtt.pto_base();
+        self.timers.set(Timer::PathOpen(path_id), now + 3 * pto);
+
         // for the path to be opened we need to send a packet on the path. Sending a challenge
         // guarantees this
         data.challenge = Some(self.rng.random());
@@ -3881,8 +3884,11 @@ impl Connection {
                         .get_mut(&path_id)
                         .expect("payload is processed only after the path becomes known");
                     if path.data.challenge == Some(token) && remote == path.data.remote {
-                        trace!("new path validated");
                         self.timers.stop(Timer::PathValidation(path_id));
+                        if !path.data.validated {
+                            trace!("new path validated");
+                        }
+                        self.timers.stop(Timer::PathOpen(path_id));
                         path.data.challenge = None;
                         path.data.validated = true;
                         self.events
@@ -4586,9 +4592,6 @@ impl Connection {
                 buf.write(token);
 
                 if is_multipath_negotiated && !path.validated && path.challenge_pending {
-                    let pto = self.ack_frequency.max_ack_delay_for_pto() + path.rtt.pto_base();
-                    self.timers.set(Timer::PathOpen(path_id), now + 3 * pto);
-
                     // queue informing the path status along with the challenge
                     space.pending.path_status.insert(path_id);
                 }

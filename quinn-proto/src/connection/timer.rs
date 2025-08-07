@@ -18,9 +18,9 @@ pub(crate) enum Timer {
     Close,
     /// When keys are discarded because they should not be needed anymore
     KeyDiscard,
-    /// When to give up on validating a new path from unintentional migration
+    /// When to give up on validating a new path from RFC9000 migration
     PathValidation(PathId),
-    /// When to give up on validating an intentionally created new (multi)path
+    /// When to give up on validating a new (multi)path
     PathOpen(PathId),
     /// When to send a `PING` frame to keep the connection alive
     KeepAlive,
