@@ -13,6 +13,7 @@ WORKDIR /usr/src/ant-quic
 
 # Copy manifest files first for better layer caching
 COPY Cargo.toml Cargo.lock ./
+COPY benches ./benches/
 
 # Create dummy main.rs to build dependencies first
 RUN mkdir src && echo "fn main() {}" > src/main.rs
@@ -23,7 +24,6 @@ RUN rm -f target/release/deps/ant_quic*
 
 # Copy source files
 COPY src ./src/
-COPY benches ./benches/
 COPY examples ./examples/
 
 # Build the actual project (only this rebuilds when source changes)
