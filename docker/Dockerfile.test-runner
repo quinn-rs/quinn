@@ -30,7 +30,7 @@ RUN cargo install cargo-nextest
 RUN mkdir -p /test-results /scripts
 
 # Copy test scripts
-COPY docker/scripts/ /scripts/
+COPY scripts/ /scripts/
 RUN chmod +x /scripts/*.sh
 
 # Default environment

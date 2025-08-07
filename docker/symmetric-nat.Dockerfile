@@ -5,7 +5,7 @@ FROM ant-quic-base:latest
 RUN apk add --no-cache iptables
 
 # Set up NAT rules (symmetric NAT)
-COPY docker/setup-symmetric-nat.sh /setup-nat.sh
+COPY setup-symmetric-nat.sh /setup-nat.sh
 RUN chmod +x /setup-nat.sh
 
 # Entry point that sets up NAT and runs ant-quic

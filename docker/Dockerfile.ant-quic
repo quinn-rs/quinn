@@ -12,8 +12,8 @@ RUN apt-get update && apt-get install -y \
 WORKDIR /usr/src/ant-quic
 
 # Copy manifest files first for better layer caching
-COPY Cargo.toml Cargo.lock ./
-COPY benches ./benches/
+COPY ../Cargo.toml ../Cargo.lock ./
+COPY ../benches ./benches/
 
 # Create dummy ant-quic.rs to build dependencies first
 RUN mkdir -p src/bin && echo "fn main() {}" > src/bin/ant-quic.rs
@@ -23,8 +23,8 @@ RUN cargo build --release --bin ant-quic
 RUN rm -f target/release/deps/ant_quic*
 
 # Copy source files
-COPY src ./src/
-COPY examples ./examples/
+COPY ../src ./src/
+COPY ../examples ./examples/
 
 # Build the actual project (only this rebuilds when source changes)
 RUN cargo build --release --bin ant-quic --examples
@@ -51,8 +51,8 @@ COPY --from=builder /usr/src/ant-quic/target/release/ant-quic /usr/local/bin/
 COPY --from=builder /usr/src/ant-quic/target/release/examples/* /usr/local/bin/
 
 # Copy test scripts and configurations
-COPY docker/scripts /opt/ant-quic/scripts
-COPY docker/configs /opt/ant-quic/configs
+COPY scripts /opt/ant-quic/scripts
+COPY configs /opt/ant-quic/configs
 
 # Create a non-root user for running tests
 RUN useradd -m -u 1000 antquic && \
