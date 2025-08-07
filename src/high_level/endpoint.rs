@@ -27,7 +27,7 @@ use bytes::{Bytes, BytesMut};
 use pin_project_lite::pin_project;
 use quinn_udp::{BATCH_SIZE, RecvMeta};
 use rustc_hash::FxHashMap;
-#[cfg(all(not(wasm_browser), any(feature = "aws-lc-rs", feature = "ring")))]
+#[cfg(all(not(wasm_browser), feature = "network-discovery"))]
 use socket2::{Domain, Protocol, Socket, Type};
 use tokio::sync::{Notify, futures::Notified, mpsc};
 use tracing::{Instrument, Span};
@@ -76,7 +76,7 @@ impl Endpoint {
     ///
     /// Some environments may not allow creation of dual-stack sockets, in which case an IPv6
     /// client will only be able to connect to IPv6 servers. An IPv4 client is never dual-stack.
-    #[cfg(all(not(wasm_browser), any(feature = "aws-lc-rs", feature = "ring")))] // `EndpointConfig::default()` is only available with these
+    #[cfg(all(not(wasm_browser), feature = "network-discovery"))]
     pub fn client(addr: SocketAddr) -> io::Result<Self> {
         let socket = Socket::new(Domain::for_address(addr), Type::DGRAM, Some(Protocol::UDP))?;
         if addr.is_ipv6() {

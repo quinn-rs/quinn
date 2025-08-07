@@ -3673,8 +3673,11 @@ pub(crate) fn create_platform_interface_discovery() -> Box<dyn NetworkInterfaceD
     #[cfg(target_os = "linux")]
     return Box::new(LinuxInterfaceDiscovery::new());
 
-    #[cfg(target_os = "macos")]
+    #[cfg(all(target_os = "macos", feature = "network-discovery"))]
     return Box::new(MacOSInterfaceDiscovery::new());
+
+    #[cfg(all(target_os = "macos", not(feature = "network-discovery")))]
+    return Box::new(GenericInterfaceDiscovery::new());
 
     #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
     return Box::new(GenericInterfaceDiscovery::new());

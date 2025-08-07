@@ -3,7 +3,7 @@
 /// Tests QUIC implementation against real-world endpoints
 use super::{EndpointResult, EndpointValidationReport, ValidationError};
 use crate::{
-    ClientConfig, VarInt,
+    ClientConfig, VarInt, EndpointConfig,
     high_level::{Connection, Endpoint},
     transport_parameters::TransportParameters,
 };
@@ -76,7 +76,18 @@ impl EndpointTester {
     /// Initialize the local endpoint
     async fn init_endpoint(&mut self) -> Result<(), ValidationError> {
         if self.endpoint.is_none() {
-            let endpoint = Endpoint::client("0.0.0.0:0".parse().unwrap()).map_err(|e| {
+            let socket = std::net::UdpSocket::bind("0.0.0.0:0").map_err(|e| {
+                ValidationError::ValidationError(format!("Failed to bind socket: {e}"))
+            })?;
+            let runtime = crate::high_level::default_runtime().ok_or_else(|| {
+                ValidationError::ValidationError("No compatible async runtime found".to_string())
+            })?;
+            let endpoint = Endpoint::new(
+                EndpointConfig::default(),
+                None, // No server config for client
+                socket,
+                runtime,
+            ).map_err(|e| {
                 ValidationError::ValidationError(format!("Failed to create endpoint: {e}"))
             })?;
 
@@ -336,17 +347,14 @@ fn create_test_client_config(_server_name: &str) -> Result<ClientConfig, Validat
         let mut roots = rustls::RootCertStore::empty();
 
         // Add system roots
-        match rustls_native_certs::load_native_certs() {
-            Ok(certs) => {
-                for cert in certs {
-                    roots
-                        .add(rustls::pki_types::CertificateDer::from(cert.0))
-                        .ok();
-                }
-            }
-            Err(e) => {
-                warn!("Failed to load native certs: {}", e);
-            }
+        let cert_result = rustls_native_certs::load_native_certs();
+        for cert in cert_result.certs {
+            roots
+                .add(cert.into())
+                .ok();
+        }
+        if !cert_result.errors.is_empty() {
+            warn!("Failed to load some native certs: {:?}", cert_result.errors);
         }
 
         // Create rustls config

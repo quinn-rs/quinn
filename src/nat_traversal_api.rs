@@ -40,8 +40,7 @@ use tokio::{
     time::{sleep, timeout},
 };
 
-#[cfg(feature = "runtime-tokio")]
-use crate::high_level::TokioRuntime;
+use crate::high_level::default_runtime;
 
 use crate::{
     VarInt,
@@ -1525,11 +1524,15 @@ impl NatTraversalEndpoint {
         })?;
 
         // Create Quinn endpoint
+        let runtime = default_runtime().ok_or_else(|| {
+            NatTraversalError::ConfigError("No compatible async runtime found".to_string())
+        })?;
+        
         let mut endpoint = QuinnEndpoint::new(
             EndpointConfig::default(),
             server_config,
             std_socket,
-            Arc::new(TokioRuntime),
+            runtime,
         )
         .map_err(|e| {
             NatTraversalError::ConfigError(format!("Failed to create Quinn endpoint: {e}"))
