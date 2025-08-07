@@ -8,7 +8,7 @@
 use ant_quic::crypto::{
     certificate_negotiation::{CertificateNegotiationManager, NegotiationConfig},
     raw_public_keys::{RawPublicKeyConfigBuilder, key_utils},
-    tls_extensions::{CertificateType, CertificateTypePreferences},
+    tls_extensions::{CertificateType, CertificateTypeList, CertificateTypePreferences},
 };
 
 use std::time::Duration;
@@ -42,7 +42,7 @@ fn test_certificate_type_negotiation() {
 
     // Start a negotiation
     let preferences = CertificateTypePreferences::raw_public_key_only();
-    let id = manager.start_negotiation(preferences);
+    let id = manager.start_negotiation(preferences).unwrap();
 
     // Simulate remote preferences
     let remote_client_types = Some(
@@ -92,7 +92,7 @@ fn test_negotiation_caching() {
 
     // Perform first negotiation
     let preferences = CertificateTypePreferences::prefer_raw_public_key();
-    let id1 = manager.start_negotiation(preferences.clone());
+    let id1 = manager.start_negotiation(preferences.clone()).unwrap();
 
     let remote_types = Some(CertificateTypeList::raw_public_key_only());
     let result1 = manager.complete_negotiation(id1, remote_types.clone(), remote_types.clone());
@@ -103,7 +103,7 @@ fn test_negotiation_caching() {
     let initial_cache_misses = stats.cache_misses;
 
     // Perform second negotiation with same parameters
-    let id2 = manager.start_negotiation(preferences);
+    let id2 = manager.start_negotiation(preferences).unwrap();
     let result2 = manager.complete_negotiation(id2, remote_types.clone(), remote_types);
     assert!(result2.is_ok());
 
@@ -133,8 +133,6 @@ fn test_raw_public_key_config_builder() {
     let server_result = server_builder.build_server_config();
     assert!(server_result.is_ok());
 }
-
-use ant_quic::crypto::tls_extensions::CertificateTypeList;
 
 #[test]
 fn test_certificate_type_list() {

@@ -5,7 +5,7 @@ mod pqc_raw_public_key_tests {
     use ant_quic::crypto::pqc::{
         MlDsaOperations,
         ml_dsa::MlDsa65,
-        types::{MlDsaPublicKey, MlDsaSecretKey, PqcError},
+        types::{MlDsaPublicKey, PqcError},
     };
     use ant_quic::crypto::raw_public_keys::pqc::{ExtendedRawPublicKey, PqcRawPublicKeyVerifier};
     use ed25519_dalek::{SigningKey as Ed25519SecretKey, VerifyingKey as Ed25519PublicKey};

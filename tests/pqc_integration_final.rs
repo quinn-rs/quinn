@@ -337,7 +337,7 @@ async fn test_cross_platform_compatibility() {
         .unwrap();
     assert!(valid);
 
-    println!("✓ PQC operations successful on {}", platform);
+    println!("✓ PQC operations successful on {platform}");
 }
 
 #[tokio::test]

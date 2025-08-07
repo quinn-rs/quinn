@@ -2,10 +2,7 @@
 
 #[cfg(all(test, feature = "pqc"))]
 mod pqc_packet_tests {
-    use ant_quic::transport_parameters::TransportParameters;
-    use ant_quic::{ConnectionId, TransportConfig};
-    use std::net::SocketAddr;
-    use std::sync::Arc;
+    // Removed unused imports - they will be added back when functionality is implemented
 
     /// Test PQC detection from transport parameters
     #[test]

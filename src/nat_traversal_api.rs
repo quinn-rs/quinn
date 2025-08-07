@@ -6,6 +6,9 @@
 
 use std::{collections::HashMap, fmt, net::SocketAddr, sync::Arc, time::Duration};
 
+/// Default bind address when none is specified
+const DEFAULT_BIND_ADDR: &str = "0.0.0.0:0";
+
 use tracing::{debug, error, info, warn};
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -1436,7 +1439,9 @@ impl NatTraversalEndpoint {
         };
 
         // Create UDP socket
-        let bind_addr = config.bind_addr.unwrap_or("0.0.0.0:0".parse().unwrap());
+        let bind_addr = config.bind_addr.unwrap_or_else(|| {
+            DEFAULT_BIND_ADDR.parse().expect("Default bind address should always be valid")
+        });
         let socket = UdpSocket::bind(bind_addr).await.map_err(|e| {
             NatTraversalError::NetworkError(format!("Failed to bind UDP socket: {e}"))
         })?;
@@ -2814,7 +2819,7 @@ impl NatTraversalEndpoint {
                                     .candidates
                                     .first()
                                     .map(|c| c.address)
-                                    .unwrap_or_else(|| "0.0.0.0:0".parse().unwrap()),
+                                    .unwrap_or_else(|| DEFAULT_BIND_ADDR.parse().expect("Default bind address should always be valid")),
                                 total_time: elapsed,
                             };
                             events.push(event.clone());

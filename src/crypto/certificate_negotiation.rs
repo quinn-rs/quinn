@@ -227,21 +227,25 @@ impl CertificateNegotiationManager {
     }
 
     /// Start a new certificate type negotiation
-    pub fn start_negotiation(&self, preferences: CertificateTypePreferences) -> NegotiationId {
+    pub fn start_negotiation(&self, preferences: CertificateTypePreferences) -> Result<NegotiationId, TlsExtensionError> {
         let id = NegotiationId::new();
         let state = NegotiationState::Waiting {
             sent_at: Instant::now(),
             our_preferences: preferences,
         };
 
-        let mut sessions = self.sessions.write().unwrap();
+        let mut sessions = self.sessions.write().map_err(|e| {
+            TlsExtensionError::InvalidExtensionData(format!("Session lock poisoned: {}", e))
+        })?;
         sessions.insert(id, state);
 
-        let mut stats = self.stats.lock().unwrap();
+        let mut stats = self.stats.lock().map_err(|e| {
+            TlsExtensionError::InvalidExtensionData(format!("Stats lock poisoned: {}", e))
+        })?;
         stats.total_attempts += 1;
 
         debug!("Started certificate type negotiation: {:?}", id);
-        id
+        Ok(id)
     }
 
     /// Complete a negotiation with remote preferences
@@ -253,7 +257,9 @@ impl CertificateNegotiationManager {
     ) -> Result<NegotiationResult, TlsExtensionError> {
         let _span = span!(Level::DEBUG, "complete_negotiation", id = id.as_u64()).entered();
 
-        let mut sessions = self.sessions.write().unwrap();
+        let mut sessions = self.sessions.write().map_err(|e| {
+            TlsExtensionError::InvalidExtensionData(format!("Session lock poisoned: {}", e))
+        })?;
         let state = sessions.get(&id).ok_or_else(|| {
             TlsExtensionError::InvalidExtensionData(format!("Unknown negotiation ID: {id:?}"))
         })?;
@@ -277,12 +283,16 @@ impl CertificateNegotiationManager {
                 remote_server_types.as_ref(),
             );
 
-            let mut cache = self.cache.lock().unwrap();
+            let mut cache = self.cache.lock().map_err(|e| {
+                TlsExtensionError::InvalidExtensionData(format!("Cache lock poisoned: {}", e))
+            })?;
             if let Some((cached_result, cached_at)) = cache.get(&cache_key) {
                 // Check if cache entry is still valid (not expired)
                 if cached_at.elapsed() < Duration::from_secs(300) {
                     // 5 minute cache
-                    let mut stats = self.stats.lock().unwrap();
+                    let mut stats = self.stats.lock().map_err(|e| {
+                        TlsExtensionError::InvalidExtensionData(format!("Stats lock poisoned: {}", e))
+                    })?;
                     stats.cache_hits += 1;
 
                     // Update session state
@@ -302,7 +312,9 @@ impl CertificateNegotiationManager {
                 }
             }
 
-            let mut stats = self.stats.lock().unwrap();
+            let mut stats = self.stats.lock().map_err(|e| {
+                TlsExtensionError::InvalidExtensionData(format!("Stats lock poisoned: {}", e))
+            })?;
             stats.cache_misses += 1;
         }
 
@@ -326,7 +338,9 @@ impl CertificateNegotiationManager {
                 );
 
                 // Update statistics
-                let mut stats = self.stats.lock().unwrap();
+                let mut stats = self.stats.lock().map_err(|e| {
+                    TlsExtensionError::InvalidExtensionData(format!("Stats lock poisoned: {}", e))
+                })?;
                 stats.successful += 1;
 
                 // Update average negotiation time (simple moving average)
@@ -349,7 +363,9 @@ impl CertificateNegotiationManager {
                         remote_server_types.as_ref(),
                     );
 
-                    let mut cache = self.cache.lock().unwrap();
+                    let mut cache = self.cache.lock().map_err(|e| {
+                        TlsExtensionError::InvalidExtensionData(format!("Cache lock poisoned: {}", e))
+                    })?;
 
                     // Evict old entries if cache is full
                     if cache.len() >= self.config.max_cache_size {
@@ -391,7 +407,9 @@ impl CertificateNegotiationManager {
                 );
 
                 // Update statistics
-                let mut stats = self.stats.lock().unwrap();
+                let mut stats = self.stats.lock().map_err(|e| {
+                    TlsExtensionError::InvalidExtensionData(format!("Stats lock poisoned: {}", e))
+                })?;
                 stats.failed += 1;
 
                 warn!("Certificate type negotiation failed: {:?} -> {}", id, error);
@@ -402,7 +420,7 @@ impl CertificateNegotiationManager {
 
     /// Fail a negotiation with an error
     pub fn fail_negotiation(&self, id: NegotiationId, error: String) {
-        let mut sessions = self.sessions.write().unwrap();
+        let mut sessions = self.sessions.write().expect("Session lock should not be poisoned");
         sessions.insert(
             id,
             NegotiationState::Failed {
@@ -411,7 +429,7 @@ impl CertificateNegotiationManager {
             },
         );
 
-        let mut stats = self.stats.lock().unwrap();
+        let mut stats = self.stats.lock().expect("Stats lock should not be poisoned");
         stats.failed += 1;
 
         warn!("Certificate type negotiation failed: {:?}", id);
@@ -419,13 +437,13 @@ impl CertificateNegotiationManager {
 
     /// Get the current state of a negotiation
     pub fn get_negotiation_state(&self, id: NegotiationId) -> Option<NegotiationState> {
-        let sessions = self.sessions.read().unwrap();
+        let sessions = self.sessions.read().expect("Session lock should not be poisoned");
         sessions.get(&id).cloned()
     }
 
     /// Check for and handle timed out negotiations
     pub fn handle_timeouts(&self) {
-        let mut sessions = self.sessions.write().unwrap();
+        let mut sessions = self.sessions.write().expect("Session lock should not be poisoned");
         let mut timed_out_ids = Vec::new();
 
         for (id, state) in sessions.iter() {
@@ -444,7 +462,7 @@ impl CertificateNegotiationManager {
                 },
             );
 
-            let mut stats = self.stats.lock().unwrap();
+            let mut stats = self.stats.lock().expect("Stats lock should not be poisoned");
             stats.timed_out += 1;
 
             warn!("Certificate type negotiation timed out: {:?}", id);
@@ -453,7 +471,7 @@ impl CertificateNegotiationManager {
 
     /// Clean up completed negotiations older than the specified duration
     pub fn cleanup_old_sessions(&self, max_age: Duration) {
-        let mut sessions = self.sessions.write().unwrap();
+        let mut sessions = self.sessions.write().expect("Session lock should not be poisoned");
         let cutoff = Instant::now() - max_age;
 
         sessions.retain(|id, state| {
@@ -474,19 +492,19 @@ impl CertificateNegotiationManager {
 
     /// Get current negotiation statistics
     pub fn get_stats(&self) -> NegotiationStats {
-        self.stats.lock().unwrap().clone()
+        self.stats.lock().expect("Stats lock should not be poisoned").clone()
     }
 
     /// Clear all cached results
     pub fn clear_cache(&self) {
-        let mut cache = self.cache.lock().unwrap();
+        let mut cache = self.cache.lock().expect("Cache lock should not be poisoned");
         cache.clear();
         debug!("Cleared certificate type negotiation cache");
     }
 
     /// Get cache statistics
     pub fn get_cache_stats(&self) -> (usize, usize) {
-        let cache = self.cache.lock().unwrap();
+        let cache = self.cache.lock().expect("Cache lock should not be poisoned");
         (cache.len(), self.config.max_cache_size)
     }
 }
@@ -541,7 +559,7 @@ mod tests {
         let preferences = CertificateTypePreferences::prefer_raw_public_key();
 
         // Start negotiation
-        let id = manager.start_negotiation(preferences);
+        let id = manager.start_negotiation(preferences).unwrap();
 
         let state = manager.get_negotiation_state(id).unwrap();
         assert!(matches!(state, NegotiationState::Waiting { .. }));
@@ -569,14 +587,14 @@ mod tests {
         let preferences = CertificateTypePreferences::prefer_raw_public_key();
 
         // First negotiation
-        let id1 = manager.start_negotiation(preferences.clone());
+        let id1 = manager.start_negotiation(preferences.clone()).unwrap();
         let remote_types = CertificateTypeList::raw_public_key_only();
         let result1 = manager
             .complete_negotiation(id1, Some(remote_types.clone()), Some(remote_types.clone()))
             .unwrap();
 
         // Second negotiation with same preferences should hit cache
-        let id2 = manager.start_negotiation(preferences);
+        let id2 = manager.start_negotiation(preferences).unwrap();
         let result2 = manager
             .complete_negotiation(id2, Some(remote_types.clone()), Some(remote_types))
             .unwrap();
@@ -597,7 +615,7 @@ mod tests {
         let manager = CertificateNegotiationManager::new(config);
         let preferences = CertificateTypePreferences::prefer_raw_public_key();
 
-        let id = manager.start_negotiation(preferences);
+        let id = manager.start_negotiation(preferences).unwrap();
 
         // Wait for timeout
         std::thread::sleep(Duration::from_millis(10));
