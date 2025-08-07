@@ -283,8 +283,8 @@ services:
   # Test Runner - Orchestrates test execution
   test-runner:
     build:
-      context: .
-      dockerfile: Dockerfile.test-runner
+      context: ..
+      dockerfile: docker/Dockerfile.test-runner
     container_name: ant-quic-test-runner
     networks:
       - internet
