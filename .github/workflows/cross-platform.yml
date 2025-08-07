@@ -155,8 +155,7 @@ jobs:
         if: matrix.wasm == true
         run: |
           cargo build --target ${{ matrix.target }} --no-default-features
-          # Test WASM build of specific packages
-          cd quinn-proto
+          # Test WASM build of ant-quic
           wasm-pack build --target web
 
       # Tests
