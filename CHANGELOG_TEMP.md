@@ -4,12 +4,12 @@
 
 ### Security Improvements
 - **CRITICAL: Fixed mutex lock safety in certificate negotiation** - Replaced all `.lock().unwrap()` calls with proper error handling using `map_err()` to prevent production panics
-- **Enhanced parsing safety in NAT traversal API** - Added `DEFAULT_BIND_ADDR` constant and eliminated unsafe parsing patterns
+- **Enhanced protocol obfuscation in NAT traversal** - Replaced static bind address constant with `create_random_port_bind_addr()` function to ensure random port selection for protocol fingerprinting prevention
 - **Improved error propagation** - Changed `start_negotiation()` to return `Result<NegotiationId, TlsExtensionError>` for better error handling
 
 ### API Changes
 - **BREAKING:** `CertificateNegotiationManager::start_negotiation()` now returns `Result<NegotiationId, TlsExtensionError>` instead of `NegotiationId`
-- **Added:** `DEFAULT_BIND_ADDR` constant for safer address parsing in NAT traversal
+- **Added:** `create_random_port_bind_addr()` function to generate random port bind addresses for security
 - **Enhanced:** All mutex operations now use proper error handling with descriptive error messages
 
 ### Bug Fixes
@@ -20,8 +20,9 @@
 
 ### Code Quality
 - Eliminated all production `.unwrap()` calls that could cause panics
-- Replaced unsafe parsing patterns with safer constant-based defaults
+- Replaced unsafe parsing patterns with security-focused random port selection
 - Improved error context with detailed error messages for debugging
+- Enhanced protocol security by preventing port-based protocol fingerprinting
 - All tests now compile cleanly with zero clippy warnings
 
 ### Testing

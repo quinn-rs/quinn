@@ -6,8 +6,13 @@
 
 use std::{collections::HashMap, fmt, net::SocketAddr, sync::Arc, time::Duration};
 
-/// Default bind address when none is specified
-const DEFAULT_BIND_ADDR: &str = "0.0.0.0:0";
+/// Creates a bind address that allows the OS to select a random available port
+/// This provides protocol obfuscation by preventing port fingerprinting
+fn create_random_port_bind_addr() -> SocketAddr {
+    "0.0.0.0:0"
+        .parse()
+        .expect("Random port bind address format is always valid")
+}
 
 use tracing::{debug, error, info, warn};
 
@@ -1439,9 +1444,9 @@ impl NatTraversalEndpoint {
         };
 
         // Create UDP socket
-        let bind_addr = config.bind_addr.unwrap_or_else(|| {
-            DEFAULT_BIND_ADDR.parse().expect("Default bind address should always be valid")
-        });
+        let bind_addr = config
+            .bind_addr
+            .unwrap_or_else(create_random_port_bind_addr);
         let socket = UdpSocket::bind(bind_addr).await.map_err(|e| {
             NatTraversalError::NetworkError(format!("Failed to bind UDP socket: {e}"))
         })?;
@@ -2819,7 +2824,7 @@ impl NatTraversalEndpoint {
                                     .candidates
                                     .first()
                                     .map(|c| c.address)
-                                    .unwrap_or_else(|| DEFAULT_BIND_ADDR.parse().expect("Default bind address should always be valid")),
+                                    .unwrap_or_else(create_random_port_bind_addr),
                                 total_time: elapsed,
                             };
                             events.push(event.clone());
