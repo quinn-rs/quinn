@@ -103,11 +103,12 @@ pub struct NatTraversalEndpoint {
 /// ```rust
 /// use ant_quic::nat_traversal_api::{NatTraversalConfig, EndpointRole};
 /// use std::time::Duration;
+/// use std::net::SocketAddr;
 /// 
-/// // Recommended secure configuration
+/// // Recommended secure configuration  
 /// let config = NatTraversalConfig {
 ///     role: EndpointRole::Client,
-///     bootstrap_nodes: vec!["bootstrap.example.com:9000".parse().unwrap()],
+///     bootstrap_nodes: vec!["127.0.0.1:9000".parse::<SocketAddr>().unwrap()],
 ///     max_candidates: 10,
 ///     coordination_timeout: Duration::from_secs(10),
 ///     enable_symmetric_nat: true,

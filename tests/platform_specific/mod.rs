@@ -70,15 +70,15 @@ mod platform_linux {
 
         // Test Linux-specific socket options
         unsafe {
-            let mut value: libc::c_int = 0;
-            let mut len = std::mem::size_of::<libc::c_int>() as libc::socklen_t;
+            let mut value: nix::libc::c_int = 0;
+            let mut len = std::mem::size_of::<nix::libc::c_int>() as nix::libc::socklen_t;
 
             // Get SO_REUSEADDR
-            let ret = libc::getsockopt(
+            let ret = nix::libc::getsockopt(
                 fd,
-                libc::SOL_SOCKET,
-                libc::SO_REUSEADDR,
-                &mut value as *mut _ as *mut libc::c_void,
+                nix::libc::SOL_SOCKET,
+                nix::libc::SO_REUSEADDR,
+                &mut value as *mut _ as *mut nix::libc::c_void,
                 &mut len,
             );
             assert_eq!(ret, 0);
@@ -196,10 +196,12 @@ mod platform_windows {
     fn test_windows_socket_options() {
         use std::net::UdpSocket;
         use std::os::windows::io::AsRawSocket;
-        use winapi::um::winsock2::{SO_REUSEADDR, SOCKET, SOL_SOCKET, getsockopt};
+        use windows::Win32::Networking::WinSock::{
+            getsockopt, SO_REUSEADDR, SOCKET, SOL_SOCKET, SOCKET_ERROR,
+        };
 
         let socket = UdpSocket::bind("127.0.0.1:0").expect("Failed to bind socket");
-        let raw_socket = socket.as_raw_socket() as SOCKET;
+        let raw_socket = SOCKET(socket.as_raw_socket() as usize);
 
         unsafe {
             let mut value: i32 = 0;
@@ -207,13 +209,13 @@ mod platform_windows {
 
             let ret = getsockopt(
                 raw_socket,
-                SOL_SOCKET,
-                SO_REUSEADDR,
+                SOL_SOCKET as i32,
+                SO_REUSEADDR as i32,
                 &mut value as *mut _ as *mut i8,
                 &mut len,
             );
 
-            assert_eq!(ret, 0);
+            assert_ne!(ret, SOCKET_ERROR);
         }
     }
 }
