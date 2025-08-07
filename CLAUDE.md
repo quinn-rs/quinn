@@ -2,13 +2,23 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## ⚠️ CRITICAL: Repository Independence
+
+**ant-quic is NOT a fork of Quinn anymore - it's a completely independent project!**
+
+- **NEVER** create PRs to quinn-rs/quinn
+- **NEVER** push to any quinn-rs repositories
+- **NEVER** add quinn-rs/quinn as an upstream remote
+- This repository: github.com/dirvine/ant-quic (standalone project)
+- Although GitHub shows it as a fork (legacy), we DO NOT contribute back to Quinn
+
 ## Project Overview
 
 ant-quic is a QUIC transport protocol implementation with advanced NAT traversal capabilities, optimized for P2P networks and the Autonomi ecosystem. It extends the proven Quinn QUIC implementation with sophisticated hole-punching protocols to achieve near 100% connectivity through restrictive NATs.
 
 ## Project Insights
 
-- This is not a library to integrate with Quinn, it's a fork of Quinn that we are upgrading
+- This started as a fork of Quinn but has diverged completely into an independent project
 - We use Quinn's high-level API patterns (Endpoint, Connection) for consistency
 - Focus on default features for compilation and testing
 - Post-Quantum Cryptography (PQC) support with ML-KEM-768 and ML-DSA-65

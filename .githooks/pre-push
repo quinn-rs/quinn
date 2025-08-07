@@ -1,0 +1,34 @@
+#!/bin/bash
+# Pre-push hook to prevent accidental pushes to quinn-rs/quinn
+
+# Get the remote URL
+remote="$1"
+url="$2"
+
+# Check if trying to push to quinn-rs/quinn
+if [[ "$url" == *"quinn-rs/quinn"* ]] || [[ "$url" == *"github.com/quinn-rs"* ]]; then
+    echo "❌ ERROR: Attempting to push to quinn-rs/quinn repository!"
+    echo ""
+    echo "ant-quic is NOT a fork of Quinn - it's an independent project."
+    echo "This repository should never push to quinn-rs/quinn."
+    echo ""
+    echo "If you're trying to contribute to ant-quic, use:"
+    echo "  git push origin <branch-name>"
+    echo ""
+    echo "Repository: github.com/dirvine/ant-quic"
+    exit 1
+fi
+
+# Check remote name
+if [[ "$remote" == "upstream" ]]; then
+    echo "⚠️  WARNING: Pushing to 'upstream' remote."
+    echo "ant-quic doesn't have an upstream - it's not a fork."
+    echo "Did you mean to push to 'origin'?"
+    read -p "Continue anyway? (y/N): " -n 1 -r
+    echo
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        exit 1
+    fi
+fi
+
+exit 0

@@ -1,0 +1,45 @@
+name: Prevent Upstream PRs
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize]
+  pull_request_target:
+    types: [opened]
+
+jobs:
+  check-pr-target:
+    runs-on: ubuntu-latest
+    if: github.repository == 'dirvine/ant-quic'
+    steps:
+      - name: Check PR Target
+        run: |
+          echo "Repository: ${{ github.repository }}"
+          echo "PR Base Repo: ${{ github.event.pull_request.base.repo.full_name }}"
+
+          # Fail if someone tries to PR to quinn-rs/quinn
+          if [[ "${{ github.event.pull_request.base.repo.full_name }}" == "quinn-rs/quinn" ]]; then
+            echo "❌ ERROR: This PR targets quinn-rs/quinn!"
+            echo ""
+            echo "ant-quic is NOT a fork of Quinn - it's an independent project."
+            echo "PRs should target dirvine/ant-quic only."
+            echo ""
+            echo "Please close this PR and create a new one targeting:"
+            echo "  https://github.com/dirvine/ant-quic"
+            exit 1
+          fi
+
+          echo "✅ PR correctly targets ant-quic repository"
+
+      - name: Add Warning Comment
+        if: |
+          contains(github.event.pull_request.title, 'quinn') ||
+          contains(github.event.pull_request.body, 'upstream')
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: '⚠️ **Reminder**: ant-quic is an independent project, not a fork of Quinn. We do not contribute changes back to quinn-rs/quinn.'
+            })
