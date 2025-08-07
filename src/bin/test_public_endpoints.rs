@@ -6,6 +6,7 @@
 use ant_quic::{
     ClientConfig, Endpoint, EndpointConfig, TransportConfig, VarInt,
     crypto::rustls::QuicClientConfig,
+    high_level,
 };
 use clap::Parser;
 use rustls::pki_types::ServerName;
@@ -231,14 +232,58 @@ async fn test_endpoint(
     };
 
     // Create endpoint (use appropriate bind address based on target)
-    let bind_addr = if addr.is_ipv4() {
+    let bind_addr: std::net::SocketAddr = if addr.is_ipv4() {
         "0.0.0.0:0".parse().unwrap()
     } else {
         "[::]:0".parse().unwrap()
     };
 
-    let _endpoint_config = EndpointConfig::default();
-    let quic_endpoint = match Endpoint::client(bind_addr) {
+    let socket = match std::net::UdpSocket::bind(bind_addr) {
+        Ok(s) => s,
+        Err(e) => {
+            return TestResult {
+                endpoint: address.clone(),
+                endpoint_name: "".to_string(),
+                address: address.clone(),
+                success: false,
+                handshake_time_ms: None,
+                rtt_ms: None,
+                quic_version: None,
+                error: Some(format!("Failed to bind socket: {}", e)),
+                protocols_tested: vec![],
+                successful_protocols: vec![],
+                features_tested: vec![],
+                timestamp: chrono::Utc::now().to_rfc3339(),
+                metrics: None,
+            };
+        }
+    };
+    let runtime = match high_level::default_runtime() {
+        Some(r) => r,
+        None => {
+            return TestResult {
+                endpoint: address.clone(),
+                endpoint_name: "".to_string(),
+                address: address.clone(),
+                success: false,
+                handshake_time_ms: None,
+                rtt_ms: None,
+                quic_version: None,
+                error: Some("No compatible async runtime found".to_string()),
+                protocols_tested: vec![],
+                successful_protocols: vec![],
+                features_tested: vec![],
+                timestamp: chrono::Utc::now().to_rfc3339(),
+                metrics: None,
+            };
+        }
+    };
+    let quic_endpoint = match Endpoint::new(
+        EndpointConfig::default(),
+        None,
+        socket,
+        runtime,
+    ) {
         Ok(ep) => ep,
         Err(e) => {
             return TestResult {

@@ -3,17 +3,40 @@
 //! This example shows various ways to configure PQC support in ant-quic,
 //! from conservative migration strategies to aggressive PQC-only deployments.
 
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    println!("=== Post-Quantum Cryptography Configuration Demo ===\n");
+
+    // Check if PQC features are enabled
+    #[cfg(not(feature = "pqc"))]
+    {
+        println!("Error: This example requires the 'pqc' feature to be enabled.");
+        println!("Run with: cargo run --example pqc_config_demo --features pqc");
+        return Ok(());
+    }
+
+    #[cfg(feature = "pqc")]
+    {
+        run_pqc_config_demo()
+    }
+}
+
+#[cfg(feature = "pqc")]
 use ant_quic::crypto::pqc::{HybridPreference, PqcConfig, PqcMode};
+#[cfg(feature = "pqc")]
 use ant_quic::{
     EndpointConfig,
     crypto::{CryptoError, HmacKey},
 };
+#[cfg(feature = "pqc")]
 use std::error::Error;
+#[cfg(feature = "pqc")]
 use std::sync::Arc;
 
+#[cfg(feature = "pqc")]
 /// Dummy HMAC key for example
 struct ExampleHmacKey;
 
+#[cfg(feature = "pqc")]
 impl HmacKey for ExampleHmacKey {
     fn sign(&self, data: &[u8], out: &mut [u8]) {
         let len = out.len().min(data.len());
@@ -34,7 +57,8 @@ impl HmacKey for ExampleHmacKey {
     }
 }
 
-fn main() -> Result<(), Box<dyn Error>> {
+#[cfg(feature = "pqc")]
+fn run_pqc_config_demo() -> Result<(), Box<dyn Error>> {
     println!("=== Post-Quantum Cryptography Configuration Examples ===\n");
 
     // Example 1: Default configuration (recommended for most users)
@@ -58,6 +82,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+#[cfg(feature = "pqc")]
 fn default_configuration() -> Result<(), Box<dyn Error>> {
     println!("1. Default Configuration (Recommended)");
     println!("   - Hybrid mode with balanced preferences");
@@ -76,6 +101,7 @@ fn default_configuration() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+#[cfg(feature = "pqc")]
 fn conservative_migration() -> Result<(), Box<dyn Error>> {
     println!("2. Conservative Migration");
     println!("   - Hybrid mode preferring classical algorithms");
@@ -101,6 +127,7 @@ fn conservative_migration() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+#[cfg(feature = "pqc")]
 fn aggressive_pqc() -> Result<(), Box<dyn Error>> {
     println!("3. Aggressive PQC Adoption");
     println!("   - Hybrid mode preferring PQC algorithms");
@@ -124,6 +151,7 @@ fn aggressive_pqc() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+#[cfg(feature = "pqc")]
 fn pqc_only_testing() -> Result<(), Box<dyn Error>> {
     println!("4. PQC-Only Testing Configuration");
     println!("   - Requires PQC algorithms only");
@@ -149,6 +177,7 @@ fn pqc_only_testing() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+#[cfg(feature = "pqc")]
 fn performance_optimized() -> Result<(), Box<dyn Error>> {
     println!("5. Performance-Optimized Configuration");
     println!("   - Tuned for high-throughput environments");
@@ -178,6 +207,7 @@ fn performance_optimized() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+#[cfg(feature = "pqc")]
 fn custom_hybrid_preferences() -> Result<(), Box<dyn Error>> {
     println!("6. Custom Hybrid Preferences");
     println!("   - Fine-grained control over algorithm selection\n");
@@ -201,7 +231,7 @@ fn custom_hybrid_preferences() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "pqc"))]
 mod tests {
     use super::*;
 

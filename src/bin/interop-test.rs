@@ -157,9 +157,18 @@ async fn test_endpoint(
     let start = Instant::now();
 
     // Create client endpoint
-    let endpoint = Endpoint::client("0.0.0.0:0".parse()?)?;
+    let socket = std::net::UdpSocket::bind("0.0.0.0:0")?;
+    let runtime = ant_quic::high_level::default_runtime()
+        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::Other, "No compatible async runtime found"))?;
+    let endpoint = Endpoint::new(
+        ant_quic::EndpointConfig::default(),
+        None,
+        socket,
+        runtime,
+    )?;
 
-    // Create client config using platform verifier
+    // Create client config
+    #[cfg(feature = "platform-verifier")]
     let client_config = ant_quic::ClientConfig::try_with_platform_verifier().unwrap_or_else(|_| {
         // Fallback to empty roots if platform verifier not available
         let roots = rustls::RootCertStore::empty();
@@ -170,6 +179,18 @@ async fn test_endpoint(
             ant_quic::crypto::rustls::QuicClientConfig::try_from(crypto).unwrap(),
         ))
     });
+
+    #[cfg(not(feature = "platform-verifier"))]
+    let client_config = {
+        // Use empty roots when platform verifier not available
+        let roots = rustls::RootCertStore::empty();
+        let crypto = rustls::ClientConfig::builder()
+            .with_root_certificates(roots)
+            .with_no_client_auth();
+        ant_quic::ClientConfig::new(Arc::new(
+            ant_quic::crypto::rustls::QuicClientConfig::try_from(crypto).unwrap(),
+        ))
+    };
 
     // Extract server name from endpoint
     let server_name = endpoint_str.split(':').next().unwrap_or("unknown");
