@@ -101,8 +101,8 @@ services:
   # NAT Gateway 1 - Full Cone (dual-stack)
   nat1_gateway:
     build:
-      context: .
-      dockerfile: Dockerfile.nat-gateway
+      context: ..
+      dockerfile: docker/Dockerfile.nat-gateway
     container_name: nat1-gateway
     networks:
       internet:
@@ -121,8 +121,8 @@ services:
   # NAT Gateway 2 - Symmetric (dual-stack)
   nat2_gateway:
     build:
-      context: .
-      dockerfile: Dockerfile.nat-gateway
+      context: ..
+      dockerfile: docker/Dockerfile.nat-gateway
     container_name: nat2-gateway
     networks:
       internet:
@@ -141,8 +141,8 @@ services:
   # NAT Gateway 3 - Port Restricted (dual-stack)
   nat3_gateway:
     build:
-      context: .
-      dockerfile: Dockerfile.nat-gateway
+      context: ..
+      dockerfile: docker/Dockerfile.nat-gateway
     container_name: nat3-gateway
     networks:
       internet:
@@ -161,8 +161,8 @@ services:
   # NAT Gateway 4 - CGNAT (IPv4 only)
   nat4_gateway:
     build:
-      context: .
-      dockerfile: Dockerfile.nat-gateway
+      context: ..
+      dockerfile: docker/Dockerfile.nat-gateway
     container_name: nat4-gateway
     networks:
       internet:
