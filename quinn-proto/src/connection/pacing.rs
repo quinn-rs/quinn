@@ -18,18 +18,21 @@ pub(super) struct Pacer {
     last_mtu: u16,
     tokens: u64,
     prev: Instant,
+    burst_mode: bool,
 }
 
 impl Pacer {
     /// Obtains a new [`Pacer`].
     pub(super) fn new(smoothed_rtt: Duration, window: u64, mtu: u16, now: Instant) -> Self {
-        let capacity = optimal_capacity(smoothed_rtt, window, mtu);
+        // burst mode is the default for quick handshake
+        let capacity = optimal_capacity(smoothed_rtt, window, mtu, true);
         Self {
             capacity,
             last_window: window,
             last_mtu: mtu,
             tokens: capacity,
             prev: now,
+            burst_mode: true,
         }
     }
 
@@ -42,6 +45,8 @@ impl Pacer {
     ///
     /// If we can send a packet right away, this returns `None`. Otherwise, returns `Some(d)`,
     /// where `d` is the time before this function should be called again.
+    ///
+    /// In slow mode, it fills the bucket progressively by yielding at a maximum of 10 ms.
     ///
     /// The 5/4 ratio used here comes from the suggestion that N = 1.25 in the draft IETF RFC for
     /// QUIC.
@@ -59,10 +64,13 @@ impl Pacer {
         );
 
         if window != self.last_window || mtu != self.last_mtu {
-            self.capacity = optimal_capacity(smoothed_rtt, window, mtu);
+            self.burst_mode = is_burst_mode(smoothed_rtt, window, mtu);
+            self.capacity = optimal_capacity(smoothed_rtt, window, mtu, self.burst_mode);
 
-            // Clamp the tokens
-            self.tokens = self.capacity.min(self.tokens);
+            // clamp the tokens in burst mode
+            if self.burst_mode {
+                self.tokens = self.capacity.min(self.tokens);
+            }
             self.last_window = window;
             self.last_mtu = mtu;
         }
@@ -90,10 +98,16 @@ impl Pacer {
 
         let elapsed_rtts = time_elapsed.as_secs_f64() / smoothed_rtt.as_secs_f64();
         let new_tokens = window as f64 * 1.25 * elapsed_rtts;
-        self.tokens = self
-            .tokens
-            .saturating_add(new_tokens as _)
-            .min(self.capacity);
+
+        self.tokens = self.tokens.saturating_add(new_tokens as _);
+
+        self.tokens = self.tokens.min(if self.burst_mode {
+            // in burst mode, tokens must not be higher than the burst capacity
+            self.capacity
+        } else {
+            // in slow mode, send a single packet per interval only
+            mtu as u64
+        });
 
         self.prev = now;
 
@@ -102,10 +116,27 @@ impl Pacer {
             return None;
         }
 
-        let unscaled_delay = smoothed_rtt
-            .checked_mul((bytes_to_send.max(self.capacity) - self.tokens) as _)
-            .unwrap_or(Duration::MAX)
-            / window;
+        let unscaled_delay = if self.burst_mode {
+            smoothed_rtt
+                .checked_mul((bytes_to_send.max(self.capacity) - self.tokens) as _)
+                .unwrap_or(Duration::MAX)
+                / window
+        } else {
+            // it is preferable to yield at a maximum of MAX_INTERVAL_MS repetitively instead
+            // of waiting only once. Moreover, the extended delay of
+            // MAX_INTERVAL_MS + BURST_INTERVAL_NANOS is authorized to avoid delay inferior to
+            // BURST_INTERVAL_NANOS at the next round
+            let mut delay = smoothed_rtt
+                .checked_mul((bytes_to_send - self.tokens) as _)
+                .unwrap_or(Duration::MAX)
+                / window;
+            let interval = Duration::from_millis(MAX_INTERVAL_MS);
+            let extended_interval = interval + Duration::from_nanos(BURST_INTERVAL_NANOS as _);
+            if delay > extended_interval {
+                delay = interval;
+            }
+            delay
+        };
 
         // divisions come before multiplications to prevent overflow
         // this is the time at which the pacing window becomes empty
@@ -126,20 +157,39 @@ impl Pacer {
 /// tokens for the extra-elapsed time can be stored.
 ///
 /// Too long burst intervals make pacing less effective.
-fn optimal_capacity(smoothed_rtt: Duration, window: u64, mtu: u16) -> u64 {
+fn optimal_capacity(smoothed_rtt: Duration, window: u64, mtu: u16, burst_mode: bool) -> u64 {
     let rtt = smoothed_rtt.as_nanos().max(1);
 
-    let capacity = ((window as u128 * BURST_INTERVAL_NANOS) / rtt) as u64;
+    let mut capacity = ((window as u128 * BURST_INTERVAL_NANOS) / rtt) as u64;
 
-    // Small bursts are less efficient (no GSO), could increase latency and don't effectively
-    // use the channel's buffer capacity. Large bursts might block the connection on sending.
-    capacity.clamp(MIN_BURST_SIZE * mtu as u64, MAX_BURST_SIZE * mtu as u64)
+    if burst_mode {
+        // Small bursts are less efficient (no GSO), could increase latency and don't effectively
+        // use the channel's buffer capacity. Large bursts might block the connection on sending.
+        capacity = capacity.clamp(MIN_BURST_SIZE * mtu as u64, MAX_BURST_SIZE * mtu as u64);
+    }
+    capacity
+}
+
+/// Determine if pacer must stay in burst mode (original behavior) or switch to slow mode
+///
+/// On very slow network link, we must avoid sending packets by burst. This could lead to issues
+/// such as packet drop. Instead, we would prefer to space each packet by the appropriate amount
+/// of time.
+///
+/// We determine if the pacer must switch to slow mode depending on the packet spacing computed
+/// as follows:
+///
+/// `packet_spacing = RTT * MTU / cwnd`
+///
+/// Slow mode is detected if packet_spacing is higher than `SLOW_MODE_PACKET_SPACING_THRESHOLD_MS`
+fn is_burst_mode(smoothed_rtt: Duration, window: u64, mtu: u16) -> bool {
+    smoothed_rtt.as_millis() as u64 * mtu as u64 / window < SLOW_MODE_PACKET_SPACING_THRESHOLD_MS
 }
 
 /// The burst interval
 ///
-/// The capacity will we refilled in 4/5 of that time.
-/// 2ms is chosen here since framework timers might have 1ms precision.
+/// The capacity will be refilled in 4/5 of that time.
+/// 2ms is chosen here since framework timers might have 1 ms precision.
 /// If kernel-level pacing is supported later a higher time here might be
 /// more applicable.
 const BURST_INTERVAL_NANOS: u128 = 2_000_000; // 2ms
@@ -147,8 +197,15 @@ const BURST_INTERVAL_NANOS: u128 = 2_000_000; // 2ms
 /// Allows some usage of GSO, and doesn't slow down the handshake.
 const MIN_BURST_SIZE: u64 = 10;
 
-/// Creating 256 packets took 1ms in a benchmark, so larger bursts don't make sense.
+/// Creating 256 packets took 1 ms in a benchmark, so larger bursts don't make sense.
 const MAX_BURST_SIZE: u64 = 256;
+
+/// Packet spacing threshold in ms computed from the congestion window and the RTT.
+/// Above this threshold, we consider the network as slow and adapt the pacer accordingly
+const SLOW_MODE_PACKET_SPACING_THRESHOLD_MS: u64 = 10;
+
+/// Maximum amount of time the pacer can wait while in slow mode
+const MAX_INTERVAL_MS: u64 = 10;
 
 #[cfg(test)]
 mod tests {
