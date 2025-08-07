@@ -1,4 +1,4 @@
-name: CI
+name: Extended Platform Tests
 
 on:
   push:

@@ -1,4 +1,4 @@
-name: CI
+name: CI Backup (Disabled)
 
 on:
   push:
