@@ -64,8 +64,6 @@ pub(super) struct PacketSpace {
     pub(super) loss_probes: u32,
     pub(super) ping_pending: bool,
     pub(super) immediate_ack_pending: bool,
-    /// Number of congestion control "in flight" bytes
-    pub(super) in_flight: u64,
     /// Number of packets sent in the current key phase
     pub(super) sent_with_keys: u64,
 }
@@ -97,7 +95,6 @@ impl PacketSpace {
             loss_probes: 0,
             ping_pending: false,
             immediate_ack_pending: false,
-            in_flight: 0,
             sent_with_keys: 0,
         }
     }
@@ -209,7 +206,6 @@ impl PacketSpace {
     /// Stop tracking sent packet `number`, and return what we knew about it
     pub(super) fn take(&mut self, number: u64) -> Option<SentPacket> {
         let packet = self.sent_packets.remove(&number)?;
-        self.in_flight -= u64::from(packet.size);
         if !packet.ack_eliciting && number > self.largest_ack_eliciting_sent {
             self.unacked_non_ack_eliciting_tail =
                 self.unacked_non_ack_eliciting_tail.checked_sub(1).unwrap();
@@ -250,14 +246,20 @@ impl PacketSpace {
                 .remove(&oldest_after_ack_eliciting)
                 .unwrap();
             forgotten_bytes = u64::from(packet.size);
-            self.in_flight -= forgotten_bytes;
         } else {
             self.unacked_non_ack_eliciting_tail += 1;
         }
 
-        self.in_flight += u64::from(packet.size);
         self.sent_packets.insert(number, packet);
         forgotten_bytes
+    }
+
+    /// Whether any congestion-controlled packets in this space are not yet acknowledged or lost
+    pub(super) fn has_in_flight(&self) -> bool {
+        // The number of non-congestion-controlled (i.e. size == 0) packets in flight at a time
+        // should be small, since otherwise congestion control wouldn't be effective. Therefore,
+        // this shouldn't need to visit many packets before finishing one way or another.
+        self.sent_packets.values().any(|x| x.size != 0)
     }
 }
 

@@ -1808,7 +1808,7 @@ impl Connection {
 
         let mut result = None;
         for space in SpaceId::iter() {
-            if self.spaces[space].in_flight == 0 {
+            if !self.spaces[space].has_in_flight() {
                 continue;
             }
             if space == SpaceId::Data {
@@ -2183,7 +2183,6 @@ impl Connection {
         space.crypto = None;
         space.time_of_last_ack_eliciting_packet = None;
         space.loss_time = None;
-        space.in_flight = 0;
         let sent_packets = mem::take(&mut space.sent_packets);
         for (pn, packet) in sent_packets.into_iter() {
             self.remove_in_flight(pn, &packet);
