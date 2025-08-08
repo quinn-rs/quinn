@@ -3,7 +3,7 @@
 //! This example demonstrates how to migrate an existing QUIC application
 //! to use PQC while maintaining backward compatibility.
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     println!("=== Post-Quantum Cryptography Migration Demo ===\n");
 
     // Check if PQC features are enabled

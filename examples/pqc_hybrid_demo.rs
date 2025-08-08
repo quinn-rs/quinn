@@ -187,12 +187,12 @@ fn demonstrate_hybrid_signatures() -> Result<(), Box<dyn std::error::Error>> {
     // Verify signature
     println!("\nVerifying signature...");
     let is_valid = signer.verify(&public_key, message, &signature)?;
-    println!("✓ Signature is valid: {}", is_valid);
+    println!("✓ Signature is valid: {is_valid}");
 
     // Test with wrong message
     let wrong_message = b"This is a different message";
     let is_valid = signer.verify(&public_key, wrong_message, &signature)?;
-    println!("✓ Wrong message verification: {}", is_valid);
+    println!("✓ Wrong message verification: {is_valid}");
 
     Ok(())
 }

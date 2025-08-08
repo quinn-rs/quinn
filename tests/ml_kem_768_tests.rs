@@ -201,7 +201,7 @@ mod ml_kem_768_tests {
             .expect("Failed to generate keypair");
 
         // Try to create ciphertext with wrong size - should fail
-        let result = MlKemCiphertext::from_bytes(&vec![0u8; 100]);
+        let result = MlKemCiphertext::from_bytes(&[0u8; 100]);
         assert!(
             result.is_err(),
             "Should fail to create ciphertext with wrong size"
@@ -251,16 +251,16 @@ mod ml_kem_768_tests {
         for i in 0..10 {
             let (public_key, secret_key) = ml_kem
                 .generate_keypair()
-                .expect(&format!("Failed to generate keypair {}", i));
+                .unwrap_or_else(|_| panic!("Failed to generate keypair {i}"));
 
             for j in 0..5 {
                 let (ciphertext, ss1) = ml_kem
                     .encapsulate(&public_key)
-                    .expect(&format!("Failed encapsulation {} for keypair {}", j, i));
+                    .unwrap_or_else(|_| panic!("Failed encapsulation {j} for keypair {i}"));
 
                 let ss2 = ml_kem
                     .decapsulate(&secret_key, &ciphertext)
-                    .expect(&format!("Failed decapsulation {} for keypair {}", j, i));
+                    .unwrap_or_else(|_| panic!("Failed decapsulation {j} for keypair {i}"));
 
                 assert_eq!(ss1.as_bytes().len(), ss2.as_bytes().len());
             }
@@ -299,11 +299,11 @@ mod ml_kem_768_api_tests {
         // Test various error conditions
 
         // Invalid key size
-        let result = MlKemPublicKey::from_bytes(&vec![0; 100]);
+        let result = MlKemPublicKey::from_bytes(&[0; 100]);
         assert!(result.is_err());
 
         // Invalid ciphertext size
-        let result = MlKemCiphertext::from_bytes(&vec![0; 100]);
+        let result = MlKemCiphertext::from_bytes(&[0; 100]);
         assert!(result.is_err());
     }
 }
