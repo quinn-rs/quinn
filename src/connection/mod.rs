@@ -1226,98 +1226,41 @@ impl Connection {
     }
 
     /// Send PUNCH_ME_NOW for coordination if necessary
-    fn send_coordination_request(&mut self, now: Instant, buf: &mut Vec<u8>) -> Option<Transmit> {
+    fn send_coordination_request(&mut self, _now: Instant, _buf: &mut Vec<u8>) -> Option<Transmit> {
         // Get coordination info without borrowing mutably
-        let should_send = self.nat_traversal.as_ref()?.should_send_punch_request();
-        if !should_send {
+        let nat = self.nat_traversal.as_mut()?;
+        if !nat.should_send_punch_request() {
             return None;
         }
 
-        let (round, target_addrs, coordinator_addr) = {
-            let nat_traversal = self.nat_traversal.as_ref()?;
-            let coord = nat_traversal.coordination.as_ref()?;
-            let addrs: Vec<_> = coord.punch_targets.iter().map(|t| t.remote_addr).collect();
-            (coord.round, addrs, self.path.remote) // Placeholder - should be bootstrap node
-        };
-
-        if target_addrs.is_empty() {
+        let coord = nat.coordination.as_ref()?;
+        let round = coord.round;
+        if coord.punch_targets.is_empty() {
             return None;
         }
-
-        debug_assert_eq!(
-            self.highest_space,
-            SpaceId::Data,
-            "PUNCH_ME_NOW queued without 1-RTT keys"
-        );
-
-        #[cfg(feature = "pqc")]
-        buf.reserve(self.pqc_state.min_initial_size() as usize);
-        #[cfg(not(feature = "pqc"))]
-        buf.reserve(MIN_INITIAL_SIZE as usize);
-        let buf_capacity = buf.capacity();
-
-        let mut builder = PacketBuilder::new(
-            now,
-            SpaceId::Data,
-            self.rem_cids.active(),
-            buf,
-            buf_capacity,
-            0,
-            false,
-            self,
-        )?;
 
         trace!(
-            "sending PUNCH_ME_NOW round {} with {} targets",
+            "queuing PUNCH_ME_NOW round {} with {} targets",
             round,
-            target_addrs.len()
+            coord.punch_targets.len()
         );
 
-        // Write PUNCH_ME_NOW frame - TODO: This doesn't match spec, which expects single address per frame
-        // For now, use IPv4 variant as default
-        buf.write(frame::FrameType::PUNCH_ME_NOW_IPV4);
-        buf.write(round);
-        buf.write(target_addrs.len() as u8);
-        for addr in target_addrs {
-            match addr {
-                SocketAddr::V4(v4) => {
-                    buf.write(4u8); // IPv4
-                    buf.write(u32::from(*v4.ip()));
-                    buf.write(v4.port());
-                }
-                SocketAddr::V6(v6) => {
-                    buf.write(6u8); // IPv6  
-                    buf.write(*v6.ip());
-                    buf.write(v6.port());
-                }
-            }
+        // Enqueue one PunchMeNow frame per target (spec-compliant); normal send loop will encode
+        for target in &coord.punch_targets {
+            let punch = frame::PunchMeNow {
+                round,
+                paired_with_sequence_number: target.remote_sequence,
+                address: target.remote_addr,
+                target_peer_id: None,
+            };
+            self.spaces[SpaceId::Data].pending.punch_me_now.push(punch);
         }
 
-        self.stats.frame_tx.ping += 1; // Use ping counter for now
+        // Mark request sent
+        nat.mark_punch_request_sent();
 
-        #[cfg(feature = "pqc")]
-        let min_size = self.pqc_state.min_initial_size();
-        #[cfg(not(feature = "pqc"))]
-        let min_size = MIN_INITIAL_SIZE;
-        builder.pad_to(min_size);
-        builder.finish_and_track(now, self, None, buf);
-
-        // Mark request sent after packet is built
-        if let Some(nat_traversal) = &mut self.nat_traversal {
-            nat_traversal.mark_punch_request_sent();
-        }
-
-        Some(Transmit {
-            destination: coordinator_addr,
-            size: buf.len(),
-            ecn: if self.path.sending_ecn {
-                Some(EcnCodepoint::Ect0)
-            } else {
-                None
-            },
-            segment_size: None,
-            src_ip: self.local_ip,
-        })
+        // We don't need to craft a transmit here; frames will be sent by the normal writer
+        None
     }
 
     /// Send coordinated PATH_CHALLENGE for hole punching
@@ -1642,6 +1585,14 @@ impl Connection {
                 if self.timers.get(Timer::PushNewCid).is_none_or(|x| x <= now) {
                     self.reset_cid_retirement();
                 }
+            }
+            QueueAddAddress(add) => {
+                // Enqueue AddAddress frame for transmission
+                self.spaces[SpaceId::Data].pending.add_addresses.push(add);
+            }
+            QueuePunchMeNow(punch) => {
+                // Enqueue PunchMeNow frame for transmission
+                self.spaces[SpaceId::Data].pending.punch_me_now.push(punch);
             }
         }
     }

@@ -14,6 +14,10 @@ pub(crate) enum ConnectionEventInner {
     Datagram(DatagramConnectionEvent),
     /// New connection identifiers have been issued for the Connection
     NewIdentifiers(Vec<IssuedCid>, Instant),
+    /// Queue an ADD_ADDRESS frame for transmission
+    QueueAddAddress(crate::frame::AddAddress),
+    /// Queue a PUNCH_ME_NOW frame for transmission
+    QueuePunchMeNow(crate::frame::PunchMeNow),
 }
 
 /// Variant of [`ConnectionEventInner`].
