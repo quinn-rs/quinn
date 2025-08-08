@@ -41,7 +41,7 @@ mod tracking {
         /// Acquires the lock for a certain purpose
         ///
         /// The purpose will be recorded in the list of last lock owners
-        pub(crate) fn lock(&self, purpose: &'static str) -> MutexGuard<T> {
+        pub(crate) fn lock(&self, purpose: &'static str) -> MutexGuard<'_, T> {
             // We don't bother dispatching through Runtime::now because they're pure performance
             // diagnostics.
             let now = Instant::now();
@@ -133,7 +133,7 @@ mod non_tracking {
         /// Acquires the lock for a certain purpose
         ///
         /// The purpose will be recorded in the list of last lock owners
-        pub(crate) fn lock(&self, _purpose: &'static str) -> MutexGuard<T> {
+        pub(crate) fn lock(&self, _purpose: &'static str) -> MutexGuard<'_, T> {
             MutexGuard {
                 guard: self.inner.lock().unwrap(),
             }
