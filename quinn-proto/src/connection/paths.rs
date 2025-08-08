@@ -165,7 +165,9 @@ impl PathData {
         if self.first_packet.is_none() {
             self.first_packet = Some(pn);
         }
-        self.in_flight.bytes -= space.sent(pn, packet);
+        if let Some(forgotten) = space.sent(pn, packet) {
+            self.remove_in_flight(&forgotten);
+        }
     }
 
     /// Remove `packet` with number `pn` from this path's congestion control counters, or return
