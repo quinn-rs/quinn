@@ -43,8 +43,9 @@ services:
   
   # Double NAT scenario - client behind two NAT layers
   double-nat-gateway:
-    extends:
-      service: nat1_gateway
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.nat-gateway
     container_name: double-nat-outer
     networks:
       internet:
@@ -55,10 +56,16 @@ services:
       - NAT_TYPE=symmetric
       - WAN_INTERFACE=eth0
       - LAN_INTERFACE=eth1
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    sysctls:
+      - net.ipv4.ip_forward=1
 
   double-nat-inner:
-    extends:
-      service: nat1_gateway
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.nat-gateway
     container_name: double-nat-inner
     networks:
       double_nat_middle:
@@ -69,25 +76,44 @@ services:
       - NAT_TYPE=port_restricted
       - WAN_INTERFACE=eth0
       - LAN_INTERFACE=eth1
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    sysctls:
+      - net.ipv4.ip_forward=1
     depends_on:
       - double-nat-gateway
 
   client-double-nat:
-    extends:
-      service: client1
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.ant-quic
     container_name: ant-quic-client-double-nat
     hostname: client-double-nat
     networks:
       double_nat_lan:
         ipv4_address: 192.168.100.10
+    environment:
+      - NODE_TYPE=client
+      - BOOTSTRAP_NODES=203.0.113.10:9000
+      - LOG_LEVEL=debug
+    command: >
+      ant-quic
+      --bootstrap 203.0.113.10:9000
+      --log-level debug
+    volumes:
+      - ./logs/client-double-nat:/opt/ant-quic/logs
+    cap_add:
+      - NET_ADMIN
     depends_on:
       - double-nat-inner
       - bootstrap
 
   # Hairpin NAT test scenario
   hairpin-nat:
-    extends:
-      service: nat1_gateway
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.nat-gateway
     container_name: hairpin-nat
     networks:
       internet:
@@ -99,22 +125,61 @@ services:
       - ENABLE_HAIRPIN=true
       - WAN_INTERFACE=eth0
       - LAN_INTERFACE=eth1
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    sysctls:
+      - net.ipv4.ip_forward=1
 
   client-hairpin-1:
-    extends:
-      service: client1
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.ant-quic
     container_name: ant-quic-hairpin-1
+    hostname: client-hairpin-1
     networks:
       hairpin_lan:
         ipv4_address: 192.168.200.10
+    environment:
+      - NODE_TYPE=client
+      - BOOTSTRAP_NODES=203.0.113.10:9000
+      - LOG_LEVEL=debug
+    command: >
+      ant-quic
+      --bootstrap 203.0.113.10:9000
+      --log-level debug
+    volumes:
+      - ./logs/client-hairpin-1:/opt/ant-quic/logs
+    cap_add:
+      - NET_ADMIN
+    depends_on:
+      - hairpin-nat
+      - bootstrap
 
   client-hairpin-2:
-    extends:
-      service: client1
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.ant-quic
     container_name: ant-quic-hairpin-2
+    hostname: client-hairpin-2
     networks:
       hairpin_lan:
         ipv4_address: 192.168.200.11
+    environment:
+      - NODE_TYPE=client
+      - BOOTSTRAP_NODES=203.0.113.10:9000
+      - LOG_LEVEL=debug
+    command: >
+      ant-quic
+      --bootstrap 203.0.113.10:9000
+      --log-level debug
+    volumes:
+      - ./logs/client-hairpin-2:/opt/ant-quic/logs
+    cap_add:
+      - NET_ADMIN
+    depends_on:
+      - hairpin-nat
+      - bootstrap
 
   # Performance monitoring
   prometheus:
