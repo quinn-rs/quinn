@@ -55,8 +55,10 @@ jobs:
       - name: Build test images
         run: |
           cd docker
-          # Build with both compose files so services can extend properly
-          docker compose -f docker-compose.yml -f docker-compose.nat-tests.yml build --parallel
+          # Build base services first
+          docker compose -f docker-compose.yml build --parallel
+          # Then build extended services with both compose files
+          docker compose -f docker-compose.yml -f docker-compose.nat-tests.yml build test-runner
       
       - name: Run NAT tests
         run: |
