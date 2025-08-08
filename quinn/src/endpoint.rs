@@ -258,6 +258,10 @@ impl Endpoint {
             // Ignoring errors from dropped connections
             let _ = sender.send(ConnectionEvent::Rebind(inner.socket.clone()));
         }
+        if let Some(driver) = inner.driver.take() {
+            // Ensure the driver can register for wake-ups from the new socket
+            driver.wake();
+        }
 
         Ok(())
     }
