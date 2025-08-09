@@ -19,7 +19,9 @@ COPY benches ./benches/
 RUN mkdir -p src/bin && echo "fn main() {}" > src/bin/ant-quic.rs
 
 # Build dependencies first (this layer will be cached)
-RUN cargo build --release --bin ant-quic
+# Use limited parallelism to avoid resource exhaustion on CI
+ARG CARGO_BUILD_JOBS=2
+RUN CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS} cargo build --release --bin ant-quic
 RUN rm -f target/release/deps/ant_quic*
 
 # Copy source files
@@ -27,7 +29,7 @@ COPY src ./src/
 COPY examples ./examples/
 
 # Build the actual project (only this rebuilds when source changes)
-RUN cargo build --release --bin ant-quic --examples
+RUN CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS} cargo build --release --bin ant-quic --examples
 
 # Runtime image
 FROM debian:bookworm-slim AS runtime
