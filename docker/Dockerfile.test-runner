@@ -23,8 +23,7 @@ COPY . .
 # Build test binaries
 RUN cargo test --no-run --release
 
-# Install test utilities (use older version compatible with Rust 1.85)
-RUN cargo install cargo-nextest --version 0.9.100
+# Note: cargo-nextest is not used by our test scripts, so we don't install it
 
 # Create directories for test results
 RUN mkdir -p /test-results /scripts
