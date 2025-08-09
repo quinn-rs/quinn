@@ -1,10 +1,7 @@
 name: CI Backup (Disabled)
 
 on:
-  push:
-    branches: [ master ]
-  pull_request:
-    branches: [ master ]
+  workflow_dispatch:  # Only run manually, not on push/PR
 
 env:
   CARGO_TERM_COLOR: always
