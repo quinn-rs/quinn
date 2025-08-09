@@ -55,16 +55,15 @@ jobs:
       - name: Build test images
         run: |
           cd docker
-          # Build base services first
-          docker compose -f docker-compose.yml build --parallel
-          # Then build extended services with both compose files
-          docker compose -f docker-compose.yml -f docker-compose.nat-tests.yml build test-runner
+          # Build enhanced NAT test services (includes bootstrap and all dependencies)
+          docker compose -f docker-compose.enhanced.yml build --parallel
       
       - name: Run NAT tests
         run: |
           cd docker
-          ./scripts/run-nat-tests.sh
+          ./scripts/run-enhanced-nat-tests.sh
         env:
+          COMPOSE_FILE: docker-compose.enhanced.yml
           TEST_DURATION: 600  # 10 minutes for thorough testing
       
       - name: Upload test results
@@ -91,8 +90,7 @@ jobs:
         if: always()
         run: |
           cd docker
-          docker compose -f docker-compose.yml down -v || true
-          docker compose -f docker-compose.nat-tests.yml down -v || true
+          docker compose -f docker-compose.enhanced.yml down -v || true
 
   connectivity-matrix:
     name: NAT Connectivity Matrix
@@ -107,7 +105,7 @@ jobs:
       - name: Set up environment
         run: |
           cd docker
-          docker compose -f docker-compose.yml up -d
+          docker compose -f docker-compose.enhanced.yml up -d
           sleep 30  # Wait for all services
       
       - name: Run connectivity matrix tests
@@ -155,12 +153,12 @@ jobs:
       - name: Run stress tests
         run: |
           cd docker
-          # Start environment with more clients
-          docker compose -f docker-compose.yml up -d --scale client1=10
+          # Start environment with more clients (using enhanced compose file)
+          docker compose -f docker-compose.enhanced.yml up -d --scale client1=10
           sleep 30
           
           # Run concurrent connection tests
-          ./scripts/run-nat-stress-tests.sh
+          ./scripts/run-enhanced-nat-tests.sh test_network_stress
       
       - name: Collect performance metrics
         run: |
