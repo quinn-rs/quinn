@@ -2,16 +2,18 @@ name: CI
 
 on:
   push:
-    branches: ['main', '0.8.x']
+    branches: ["main", "0.8.x"]
   pull_request:
   merge_group:
   schedule:
     - cron: "21 3 * * 5"
 
+permissions: {}
+
 jobs:
   test-freebsd:
-  # see https://github.com/actions/runner/issues/385
-  # use https://github.com/vmactions/freebsd-vm for now
+    # see https://github.com/actions/runner/issues/385
+    # use https://github.com/vmactions/freebsd-vm for now
     name: test on freebsd
     runs-on: ubuntu-latest
     steps:
@@ -125,13 +127,13 @@ jobs:
       - run: cargo build --locked --all-targets
       - run: cargo test --locked
       - run: cargo test --locked -p quinn-udp --features fast-apple-datapath
-        if: ${{ runner.os }} == "macOS"
+        if: ${{ runner.os == 'macOS' }}
       - run: cargo test --locked -- --ignored stress
       - run: cargo test --locked --manifest-path fuzz/Cargo.toml
-        if: ${{ matrix.rust }} == "stable"
+        if: ${{ matrix.rust == 'stable' }}
       - run: cargo test --locked -p quinn-udp --benches
       - run: cargo test --locked -p quinn-udp --benches --features fast-apple-datapath
-        if: ${{ runner.os }} == "macOS"
+        if: ${{ runner.os == 'macOS' }}
 
   test-aws-lc-rs:
     runs-on: ubuntu-latest
@@ -210,8 +212,10 @@ jobs:
   audit:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
-    - uses: EmbarkStudios/cargo-deny-action@v2
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: EmbarkStudios/cargo-deny-action@v2
 
   test-android:
     runs-on: ubuntu-latest
@@ -228,52 +232,54 @@ jobs:
             emulator-arch: x86_64
 
     steps:
-    - name: Set API level environment variable
-      run: echo "API_LEVEL=${{ matrix.api-level }}" >> $GITHUB_ENV
+      - name: Set API level environment variable
+        run: echo "API_LEVEL=\"${{ matrix.api-level }}\"" >> $GITHUB_ENV
 
-    - name: Checkout code
-      uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
-    - name: Install JDK
-      uses: actions/setup-java@v4
-      with:
-        distribution: 'zulu'
-        java-version: '21'
+      - name: Install JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: "zulu"
+          java-version: "21"
 
-    - name: Install Android SDK
-      uses: android-actions/setup-android@v3
+      - name: Install Android SDK
+        uses: android-actions/setup-android@v3
 
-    - name: Install Android NDK
-      run: sdkmanager --install "ndk;25.2.9519653"
+      - name: Install Android NDK
+        run: sdkmanager --install "ndk;25.2.9519653"
 
-    - name: Install Rust
-      uses: dtolnay/rust-toolchain@stable
-      with:
-        toolchain: stable
-        target: ${{ matrix.target }}
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          target: ${{ matrix.target }}
 
-    - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@v2
 
-    - name: Install cargo-ndk
-      run: cargo install cargo-ndk
+      - name: Install cargo-ndk
+        run: cargo install cargo-ndk
 
-    - name: Build unit tests for Android
-      run: cargo ndk -t ${{ matrix.target }} test --no-run
+      - name: Build unit tests for Android
+        run: cargo ndk -t ${{ matrix.target }} test --no-run
 
-    - name: Enable KVM group perms
-      run: |
-        echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
-        sudo udevadm control --reload-rules
-        sudo udevadm trigger --name-match=kvm
+      - name: Enable KVM group perms
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
 
-    - name: Set up Android Emulator and run tests
-      env:
-        TARGET: ${{ matrix.target }}
-      uses: reactivecircus/android-emulator-runner@v2
-      with:
-        api-level: ${{ matrix.api-level }}
-        arch: ${{ matrix.emulator-arch }}
-        script: .github/workflows/rust-android-run-tests-on-emulator.sh
+      - name: Set up Android Emulator and run tests
+        env:
+          TARGET: ${{ matrix.target }}
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: ${{ matrix.api-level }}
+          arch: ${{ matrix.emulator-arch }}
+          script: .github/workflows/rust-android-run-tests-on-emulator.sh
 
   features:
     strategy:
@@ -289,3 +295,32 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: taiki-e/install-action@cargo-hack
       - run: cargo hack check --feature-powerset --depth 3 --optional-deps --no-dev-deps --ignore-private --skip "${{env.SKIP_FEATURES}}"
+
+  actionlint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Download actionlint
+        id: get_actionlint
+        run: bash <(curl https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash)
+        shell: bash
+      - name: Check workflow files
+        env:
+          ACTIONLINT: ${{ steps.get_actionlint.outputs.executable }}
+        run: $ACTIONLINT -color
+        shell: bash
+
+  zizmor:
+    name: Run zizmor 🌈
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Run zizmor 🌈
+        uses: zizmorcore/zizmor-action@f52a838cfabf134edcbaa7c8b3677dde20045018 # v0.1.1
