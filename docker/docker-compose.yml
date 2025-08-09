@@ -1,5 +1,3 @@
-version: '3.8'
-
 # Define custom networks for NAT simulation
 networks:
   internet:
