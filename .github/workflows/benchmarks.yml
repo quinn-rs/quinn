@@ -81,6 +81,14 @@ jobs:
           echo "## NAT Traversal" >> benchmark-report.md
           cat target/criterion/nat_traversal_performance/*/base/estimates.json >> benchmark-report.md || true
           
+          # Create benchmark results JSON for tracking
+          echo '{"timestamp": "'$(date -u +%Y-%m-%dT%H:%M:%SZ)'", "commit": "'${{ github.sha }}'", "results": []}' > benchmark-results.json
+          if [ -d "target/criterion/nat_traversal_performance" ]; then
+            find target/criterion/nat_traversal_performance -name "estimates.json" -exec cat {} \; | jq -s '.' > temp-results.json 2>/dev/null || echo "[]" > temp-results.json
+            jq --argjson results "$(cat temp-results.json)" '.results = $results' benchmark-results.json > benchmark-results-final.json
+            mv benchmark-results-final.json benchmark-results.json
+          fi
+          
       - name: Upload benchmark results
         uses: actions/upload-artifact@v4
         with:
