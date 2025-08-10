@@ -72,9 +72,9 @@ start_containers() {
     log "Waiting for services to initialize (30s)..."
     sleep 30
     
-    # Health check
-    local services=("bootstrap" "nat1_gateway" "nat2_gateway" "nat3_gateway" "nat4_gateway" 
-                   "client1" "client2" "client3" "client4" "client5")
+    # Health check - using actual container names
+    local services=("ant-quic-bootstrap" "nat1-gateway" "nat2-gateway" "nat3-gateway" "nat4-gateway" 
+                   "ant-quic-client1" "ant-quic-client2" "ant-quic-client3" "ant-quic-client4" "ant-quic-client5")
     
     for service in "${services[@]}"; do
         if $COMPOSE_CMD -f "$COMPOSE_FILE" ps | grep -q "${service}.*Up"; then
