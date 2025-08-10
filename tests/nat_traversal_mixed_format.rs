@@ -150,19 +150,17 @@ async fn legacy_client_rfc_server() {
     // Client connects to server
     let conn = tokio::time::timeout(
         Duration::from_secs(10),
-        client_endpoint
-            .connect(server_addr, "localhost")
-            .unwrap()
+        client_endpoint.connect(server_addr, "localhost").unwrap(),
     )
     .await
     .unwrap()
     .unwrap();
 
     // Wait for server to accept connection
-    let _server_conn = tokio::time::timeout(
-        Duration::from_secs(5),
-        server_handle
-    ).await.unwrap().unwrap();
+    let _server_conn = tokio::time::timeout(Duration::from_secs(5), server_handle)
+        .await
+        .unwrap()
+        .unwrap();
 
     // Send some data to verify the connection
     let mut send = conn.open_uni().await.unwrap();
@@ -202,19 +200,17 @@ async fn rfc_client_legacy_server() {
     // Client connects to server
     let conn = tokio::time::timeout(
         Duration::from_secs(10),
-        client_endpoint
-            .connect(server_addr, "localhost")
-            .unwrap()
+        client_endpoint.connect(server_addr, "localhost").unwrap(),
     )
     .await
     .unwrap()
     .unwrap();
 
     // Wait for server to accept connection
-    let _server_conn = tokio::time::timeout(
-        Duration::from_secs(5),
-        server_handle
-    ).await.unwrap().unwrap();
+    let _server_conn = tokio::time::timeout(Duration::from_secs(5), server_handle)
+        .await
+        .unwrap()
+        .unwrap();
 
     // Send some data
     let mut send = conn.open_uni().await.unwrap();
@@ -259,19 +255,17 @@ async fn rfc_to_rfc_negotiation() {
     // Client connects to server
     let conn = tokio::time::timeout(
         Duration::from_secs(10),
-        client_endpoint
-            .connect(server_addr, "localhost")
-            .unwrap()
+        client_endpoint.connect(server_addr, "localhost").unwrap(),
     )
     .await
     .unwrap()
     .unwrap();
 
     // Wait for server to accept connection
-    let _server_conn = tokio::time::timeout(
-        Duration::from_secs(5),
-        server_handle
-    ).await.unwrap().unwrap();
+    let _server_conn = tokio::time::timeout(Duration::from_secs(5), server_handle)
+        .await
+        .unwrap()
+        .unwrap();
 
     // Verify transport parameters indicate RFC support
     // Note: We'd need to expose transport parameters to properly verify this
@@ -318,23 +312,24 @@ async fn nat_traversal_frame_compatibility() {
     // Client connects to server
     let conn1 = tokio::time::timeout(
         Duration::from_secs(10),
-        client_endpoint
-            .connect(server_addr, "server")
-            .unwrap()
+        client_endpoint.connect(server_addr, "server").unwrap(),
     )
     .await
     .unwrap()
     .unwrap();
 
     // Wait for server to accept connection
-    let _server_conn = tokio::time::timeout(
-        Duration::from_secs(5),
-        server_handle
-    ).await.unwrap().unwrap();
+    let _server_conn = tokio::time::timeout(Duration::from_secs(5), server_handle)
+        .await
+        .unwrap()
+        .unwrap();
 
     // Send data on the connection to verify NAT traversal compatibility
     let mut send1 = conn1.open_uni().await.unwrap();
-    send1.write_all(b"NAT traversal compatibility test").await.unwrap();
+    send1
+        .write_all(b"NAT traversal compatibility test")
+        .await
+        .unwrap();
     send1.finish().unwrap();
 
     info!("NAT traversal frame compatibility test successful");
@@ -373,19 +368,17 @@ async fn malformed_frame_handling() {
     // Establish connection
     let conn = tokio::time::timeout(
         Duration::from_secs(10),
-        client_endpoint
-            .connect(server_addr, "localhost")
-            .unwrap()
+        client_endpoint.connect(server_addr, "localhost").unwrap(),
     )
     .await
     .unwrap()
     .unwrap();
 
     // Wait for server to accept connection
-    let _server_conn = tokio::time::timeout(
-        Duration::from_secs(5),
-        server_handle
-    ).await.unwrap().unwrap();
+    let _server_conn = tokio::time::timeout(Duration::from_secs(5), server_handle)
+        .await
+        .unwrap()
+        .unwrap();
 
     // Connection should remain stable even if frames are sent in unexpected formats
     // (This would be tested more thoroughly with lower-level frame injection)

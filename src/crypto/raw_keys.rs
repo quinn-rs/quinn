@@ -167,7 +167,7 @@ pub fn derive_peer_id_from_public_key(public_key: &VerifyingKey) -> [u8; 32] {
     {
         // Use SHA-256 to hash the public key with a domain separator
         use ring::digest::{SHA256, digest};
-        
+
         // Hash the input
         let hash = digest(&SHA256, &input);
         let hash_bytes = hash.as_ref();
@@ -176,11 +176,11 @@ pub fn derive_peer_id_from_public_key(public_key: &VerifyingKey) -> [u8; 32] {
         peer_id_bytes.copy_from_slice(hash_bytes);
         peer_id_bytes
     }
-    
+
     #[cfg(feature = "aws-lc-rs")]
     {
         use aws_lc_rs::digest;
-        
+
         // Hash the input
         let hash = digest::digest(&digest::SHA256, &input);
         let hash_bytes = hash.as_ref();
@@ -189,16 +189,16 @@ pub fn derive_peer_id_from_public_key(public_key: &VerifyingKey) -> [u8; 32] {
         peer_id_bytes.copy_from_slice(hash_bytes);
         peer_id_bytes
     }
-    
+
     #[cfg(not(any(feature = "ring", feature = "aws-lc-rs")))]
     {
         // Use SHA2 crate as fallback
         use sha2::{Digest, Sha256};
-        
+
         let mut hasher = Sha256::new();
         hasher.update(&input);
         let result = hasher.finalize();
-        
+
         let mut peer_id_bytes = [0u8; 32];
         peer_id_bytes.copy_from_slice(&result);
         peer_id_bytes

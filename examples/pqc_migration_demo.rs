@@ -228,7 +228,8 @@ async fn connect_with_config(
 
     // Create endpoint
     let socket = std::net::UdpSocket::bind("0.0.0.0:0")?;
-    let runtime = ant_quic::high_level::default_runtime().ok_or("No compatible async runtime found")?;
+    let runtime =
+        ant_quic::high_level::default_runtime().ok_or("No compatible async runtime found")?;
     let endpoint = Endpoint::new(EndpointConfig::default(), None, socket, runtime)?;
 
     // Connect with timeout

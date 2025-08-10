@@ -939,7 +939,7 @@ impl Connection {
                 .should_adjust_coalescing(buf.len() - datagram_start, space_id);
             #[cfg(not(feature = "pqc"))]
             let should_adjust_coalescing = false;
-            
+
             if should_adjust_coalescing {
                 coalesce = false;
                 trace!("Disabling coalescing for PQC handshake in {:?}", space_id);
@@ -2611,7 +2611,7 @@ impl Connection {
             let use_pqc_fragmentation = self.pqc_state.using_pqc && outgoing.len() > 1200;
             #[cfg(not(feature = "pqc"))]
             let use_pqc_fragmentation = false;
-            
+
             if use_pqc_fragmentation {
                 // Fragment large CRYPTO data for PQC handshakes
                 #[cfg(feature = "pqc")]

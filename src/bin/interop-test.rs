@@ -160,12 +160,7 @@ async fn test_endpoint(
     let socket = std::net::UdpSocket::bind("0.0.0.0:0")?;
     let runtime = ant_quic::high_level::default_runtime()
         .ok_or_else(|| std::io::Error::other("No compatible async runtime found"))?;
-    let endpoint = Endpoint::new(
-        ant_quic::EndpointConfig::default(),
-        None,
-        socket,
-        runtime,
-    )?;
+    let endpoint = Endpoint::new(ant_quic::EndpointConfig::default(), None, socket, runtime)?;
 
     // Create client config
     #[cfg(feature = "platform-verifier")]

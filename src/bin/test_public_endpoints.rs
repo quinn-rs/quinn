@@ -5,8 +5,7 @@
 
 use ant_quic::{
     ClientConfig, Endpoint, EndpointConfig, TransportConfig, VarInt,
-    crypto::rustls::QuicClientConfig,
-    high_level,
+    crypto::rustls::QuicClientConfig, high_level,
 };
 use clap::Parser;
 use rustls::pki_types::ServerName;
@@ -281,12 +280,7 @@ async fn test_endpoint(
             };
         }
     };
-    let quic_endpoint = match Endpoint::new(
-        EndpointConfig::default(),
-        None,
-        socket,
-        runtime,
-    ) {
+    let quic_endpoint = match Endpoint::new(EndpointConfig::default(), None, socket, runtime) {
         Ok(ep) => ep,
         Err(e) => {
             return TestResult {

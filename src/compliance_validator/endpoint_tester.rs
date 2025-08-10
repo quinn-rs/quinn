@@ -3,7 +3,7 @@
 /// Tests QUIC implementation against real-world endpoints
 use super::{EndpointResult, EndpointValidationReport, ValidationError};
 use crate::{
-    ClientConfig, VarInt, EndpointConfig,
+    ClientConfig, EndpointConfig, VarInt,
     high_level::{Connection, Endpoint},
     transport_parameters::TransportParameters,
 };
@@ -87,7 +87,8 @@ impl EndpointTester {
                 None, // No server config for client
                 socket,
                 runtime,
-            ).map_err(|e| {
+            )
+            .map_err(|e| {
                 ValidationError::ValidationError(format!("Failed to create endpoint: {e}"))
             })?;
 
@@ -349,9 +350,7 @@ fn create_test_client_config(_server_name: &str) -> Result<ClientConfig, Validat
         // Add system roots
         let cert_result = rustls_native_certs::load_native_certs();
         for cert in cert_result.certs {
-            roots
-                .add(cert.into())
-                .ok();
+            roots.add(cert.into()).ok();
         }
         if !cert_result.errors.is_empty() {
             warn!("Failed to load some native certs: {:?}", cert_result.errors);

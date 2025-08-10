@@ -197,7 +197,7 @@ mod platform_windows {
         use std::net::UdpSocket;
         use std::os::windows::io::AsRawSocket;
         use windows::Win32::Networking::WinSock::{
-            getsockopt, SO_REUSEADDR, SOCKET, SOL_SOCKET, SOCKET_ERROR,
+            SO_REUSEADDR, SOCKET, SOCKET_ERROR, SOL_SOCKET, getsockopt,
         };
 
         let socket = UdpSocket::bind("127.0.0.1:0").expect("Failed to bind socket");

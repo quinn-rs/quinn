@@ -2,7 +2,7 @@
 ///
 /// This example verifies which public QUIC endpoints are accessible
 /// and documents their capabilities.
-use ant_quic::{ClientConfig, VarInt, high_level::Endpoint, EndpointConfig};
+use ant_quic::{ClientConfig, EndpointConfig, VarInt, high_level::Endpoint};
 #[cfg(not(feature = "platform-verifier"))]
 use std::sync::Arc;
 use std::time::Duration;
@@ -34,7 +34,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Create client endpoint
     let socket = std::net::UdpSocket::bind("0.0.0.0:0")?;
-    let runtime = ant_quic::high_level::default_runtime().ok_or("No compatible async runtime found")?;
+    let runtime =
+        ant_quic::high_level::default_runtime().ok_or("No compatible async runtime found")?;
     let endpoint = Endpoint::new(EndpointConfig::default(), None, socket, runtime)?;
 
     let mut results = Vec::new();
@@ -110,7 +111,10 @@ async fn test_endpoint(
                 .ok();
         }
         if !certs_result.errors.is_empty() {
-            warn!("Some native certs failed to load: {:?}", certs_result.errors);
+            warn!(
+                "Some native certs failed to load: {:?}",
+                certs_result.errors
+            );
         }
 
         let crypto = rustls::ClientConfig::builder()

@@ -17,13 +17,13 @@ fn test_matrix_yaml_parsing() {
 
 #[tokio::test]
 async fn test_endpoint_creation() {
-    use ant_quic::{high_level::Endpoint, EndpointConfig};
+    use ant_quic::{EndpointConfig, high_level::Endpoint};
     use std::net::UdpSocket;
 
     // Test that we can create an endpoint
     let socket = UdpSocket::bind("0.0.0.0:0").expect("Failed to bind socket");
-    let runtime = ant_quic::high_level::default_runtime()
-        .expect("No compatible async runtime found");
+    let runtime =
+        ant_quic::high_level::default_runtime().expect("No compatible async runtime found");
     let endpoint = Endpoint::new(EndpointConfig::default(), None, socket, runtime);
     assert!(endpoint.is_ok());
 }
