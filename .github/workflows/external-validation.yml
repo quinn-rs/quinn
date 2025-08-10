@@ -65,7 +65,7 @@ jobs:
 
       - name: Build validation tool
         run: |
-          cargo build --release --bin test_public_endpoints
+          cargo build --release --bin test-public-endpoints
           cargo build --release --bin ant-quic
 
       - name: Run endpoint validation
@@ -78,13 +78,13 @@ jobs:
           
           # Run validation
           if [ "${{ inputs.endpoints }}" = "all" ]; then
-            ./target/release/test_public_endpoints \
+            ./target/release/test-public-endpoints \
               --config docs/public-quic-endpoints.yaml \
               --output validation-results/results.json \
               --timeout 10 \
               --parallel 5
           else
-            ./target/release/test_public_endpoints \
+            ./target/release/test-public-endpoints \
               --config docs/public-quic-endpoints.yaml \
               --endpoints "${{ inputs.endpoints }}" \
               --output validation-results/results.json \
@@ -92,11 +92,11 @@ jobs:
           fi
           
           # Generate reports
-          ./target/release/test_public_endpoints \
+          ./target/release/test-public-endpoints \
             --analyze validation-results/results.json \
             --format markdown > validation-results/report.md
           
-          ./target/release/test_public_endpoints \
+          ./target/release/test-public-endpoints \
             --analyze validation-results/results.json \
             --format json > validation-results/summary.json
 
