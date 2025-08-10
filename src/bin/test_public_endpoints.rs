@@ -252,7 +252,7 @@ async fn test_endpoint(
                 handshake_time_ms: None,
                 rtt_ms: None,
                 quic_version: None,
-                error: Some(format!("Failed to bind socket: {}", e)),
+                error: Some(format!("Failed to bind socket: {e}")),
                 protocols_tested: vec![],
                 successful_protocols: vec![],
                 features_tested: vec![],

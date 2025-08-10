@@ -22,7 +22,7 @@ mod docker_nat_tests {
 
         // Change to docker directory
         let output = Command::new("sh")
-            .args(&[
+            .args([
                 "-c",
                 &format!(
                     "cd docker && ./scripts/run-nat-tests.sh --test {}",
@@ -65,7 +65,7 @@ mod docker_nat_tests {
     fn test_nat_stress() {
         // Run a shorter stress test
         let output = Command::new("sh")
-            .args(&[
+            .args([
                 "-c",
                 "cd docker && TEST_DURATION=60 ./scripts/run-nat-stress-tests.sh",
             ])
