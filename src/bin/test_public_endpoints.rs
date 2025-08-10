@@ -72,9 +72,12 @@ struct EndpointEntry {
     protocols: Vec<String>,
     #[serde(rename = "type")]
     _endpoint_type: String,
+    #[serde(rename = "category")]
     _category: String,
+    #[serde(rename = "reliability")]
     _reliability: String,
     features: Vec<String>,
+    #[serde(rename = "notes")]
     _notes: String,
     #[serde(default)]
     _region: Option<String>,
