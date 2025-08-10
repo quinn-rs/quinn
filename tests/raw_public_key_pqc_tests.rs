@@ -41,7 +41,7 @@ mod pqc_raw_public_key_tests {
                                 // Expected for now
                             }
                             Err(e) => {
-                                println!("ML-DSA not yet available: {:?}", e);
+                                println!("ML-DSA not yet available: {e:?}");
                                 // This is expected until aws-lc-rs supports ML-DSA
                             }
                         }
@@ -50,7 +50,7 @@ mod pqc_raw_public_key_tests {
                         // Expected until implementation is complete
                     }
                     Err(e) => {
-                        println!("ML-DSA not yet available: {:?}", e);
+                        println!("ML-DSA not yet available: {e:?}");
                         // This is expected until aws-lc-rs supports ML-DSA
                     }
                 }
@@ -59,7 +59,7 @@ mod pqc_raw_public_key_tests {
                 // Expected until aws-lc-rs support
             }
             Err(e) => {
-                println!("ML-DSA not yet available: {:?}", e);
+                println!("ML-DSA not yet available: {e:?}");
                 // This is expected until aws-lc-rs supports ML-DSA
             }
         }
@@ -99,7 +99,7 @@ mod pqc_raw_public_key_tests {
                         // Expected for now
                     }
                     Err(e) => {
-                        println!("ML-DSA not yet available: {:?}", e);
+                        println!("ML-DSA not yet available: {e:?}");
                         // This is expected until aws-lc-rs supports ML-DSA
                     }
                 }
@@ -108,7 +108,7 @@ mod pqc_raw_public_key_tests {
                 // Expected until aws-lc-rs support
             }
             Err(e) => {
-                println!("ML-DSA not yet available: {:?}", e);
+                println!("ML-DSA not yet available: {e:?}");
                 // This is expected until aws-lc-rs supports ML-DSA
             }
         }
@@ -147,7 +147,7 @@ mod pqc_raw_public_key_tests {
                 // Expected for now
             }
             Err(e) => {
-                println!("ML-DSA not yet available: {:?}", e);
+                println!("ML-DSA not yet available: {e:?}");
                 // This is expected until aws-lc-rs supports ML-DSA
             }
         }
@@ -219,7 +219,7 @@ mod pqc_raw_public_key_tests {
                 // Expected for now
             }
             Err(e) => {
-                println!("ML-DSA not yet available: {:?}", e);
+                println!("ML-DSA not yet available: {e:?}");
                 // This is expected until aws-lc-rs supports ML-DSA
             }
         }
