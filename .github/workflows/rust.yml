@@ -15,7 +15,7 @@ jobs:
     name: test on freebsd
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: test on freebsd
         uses: vmactions/freebsd-vm@v1
         with:
@@ -39,7 +39,7 @@ jobs:
     name: test on netbsd
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: test on netbsd
         uses: vmactions/netbsd-vm@v1
         with:
@@ -64,7 +64,7 @@ jobs:
     name: test on solaris
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: test on Solaris
         uses: vmactions/solaris-vm@v1
         with:
@@ -89,7 +89,7 @@ jobs:
     name: test on illumos
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: test on Illumos
         uses: vmactions/omnios-vm@v1
         with:
@@ -117,7 +117,7 @@ jobs:
     runs-on: ${{ matrix.os }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ matrix.rust }}
@@ -136,7 +136,7 @@ jobs:
   test-aws-lc-rs:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       # Prevent feature unification from selecting *ring* as the crypto provider
@@ -150,7 +150,7 @@ jobs:
     name: test wasm32-unknown-unknown
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - run: rustup target add wasm32-unknown-unknown
       - uses: actions/setup-node@v4
@@ -178,7 +178,7 @@ jobs:
   msrv:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       # Note that we must also update the README when changing the MSRV
       - uses: dtolnay/rust-toolchain@1.74.1
       - uses: Swatinem/rust-cache@v2
@@ -187,7 +187,7 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
@@ -210,7 +210,7 @@ jobs:
   audit:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v5
     - uses: EmbarkStudios/cargo-deny-action@v2
 
   test-android:
@@ -232,7 +232,7 @@ jobs:
       run: echo "API_LEVEL=${{ matrix.api-level }}" >> $GITHUB_ENV
 
     - name: Checkout code
-      uses: actions/checkout@v4
+      uses: actions/checkout@v5
 
     - name: Install JDK
       uses: actions/setup-java@v4
@@ -285,7 +285,7 @@ jobs:
       # skip FIPS features outside of Linux
       SKIP_FEATURES: ${{ matrix.os != 'ubuntu-latest' && 'rustls-aws-lc-rs-fips,aws-lc-rs-fips' || '' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - uses: taiki-e/install-action@cargo-hack
       - run: cargo hack check --feature-powerset --depth 3 --optional-deps --no-dev-deps --ignore-private --skip "${{env.SKIP_FEATURES}}"
