@@ -55,7 +55,7 @@ async fn test_random_port_binding_no_panic() {
     // Either success or failure is fine - the key is no panic
     match result {
         Ok(_) => println!("✓ Random port binding succeeded"),
-        Err(e) => println!("✓ Random port binding failed gracefully: {}", e),
+        Err(e) => println!("✓ Random port binding failed gracefully: {e}"),
     }
 }
 
@@ -83,7 +83,7 @@ async fn test_error_handling_no_panic() {
     // Should either succeed or fail gracefully
     match result1 {
         Ok(_) => println!("✓ Zero timeout handled successfully"),
-        Err(e) => println!("✓ Zero timeout rejected safely: {}", e),
+        Err(e) => println!("✓ Zero timeout rejected safely: {e}"),
     }
 
     // Test 2: Zero max candidates
@@ -103,7 +103,7 @@ async fn test_error_handling_no_panic() {
     let result2 = NatTraversalEndpoint::new(config2, None).await;
     match result2 {
         Ok(_) => println!("✓ Zero candidates handled successfully"),
-        Err(e) => println!("✓ Zero candidates rejected safely: {}", e),
+        Err(e) => println!("✓ Zero candidates rejected safely: {e}"),
     }
 }
 
@@ -138,10 +138,7 @@ async fn test_concurrent_creation_safety() {
     assert_eq!(results.len(), NUM_CONCURRENT, "All tasks should complete");
 
     let successful = results.iter().filter(|(_, success)| *success).count();
-    println!(
-        "✓ Concurrent creation test: {}/{} succeeded",
-        successful, NUM_CONCURRENT
-    );
+    println!("✓ Concurrent creation test: {successful}/{NUM_CONCURRENT} succeeded");
 }
 
 /// Test statistics access doesn't panic with concurrent access
@@ -163,7 +160,7 @@ async fn test_statistics_concurrent_access() {
 
         // Check that no statistics call panicked
         for (i, result) in handles.into_iter().enumerate() {
-            assert!(result.is_ok(), "Statistics call {} should not panic", i);
+            assert!(result.is_ok(), "Statistics call {i} should not panic");
         }
 
         println!("✓ Concurrent statistics access completed safely");
@@ -192,7 +189,7 @@ async fn test_malformed_config_handling() {
     // Should handle contradiction gracefully
     match result {
         Ok(_) => println!("✓ Bootstrap with no nodes accepted (implementation choice)"),
-        Err(e) => println!("✓ Bootstrap with no nodes rejected safely: {}", e),
+        Err(e) => println!("✓ Bootstrap with no nodes rejected safely: {e}"),
     }
 
     // Test extremely large values that could cause overflow
@@ -213,7 +210,7 @@ async fn test_malformed_config_handling() {
 
     match result2 {
         Ok(_) => println!("✓ Extreme values handled successfully"),
-        Err(e) => println!("✓ Extreme values rejected safely: {}", e),
+        Err(e) => println!("✓ Extreme values rejected safely: {e}"),
     }
 }
 
@@ -222,7 +219,7 @@ async fn test_malformed_config_handling() {
 async fn test_input_sanitization() {
     // Test with many bootstrap nodes (potential DoS vector)
     let many_bootstraps: Vec<_> = (9000..9200)
-        .map(|port| format!("127.0.0.1:{}", port).parse().unwrap())
+        .map(|port| format!("127.0.0.1:{port}").parse().unwrap())
         .collect();
 
     let large_bootstrap_config = NatTraversalConfig {
@@ -250,14 +247,8 @@ async fn test_input_sanitization() {
     );
 
     match result {
-        Ok(_) => println!(
-            "✓ Large bootstrap list handled successfully in {:?}",
-            duration
-        ),
-        Err(e) => println!(
-            "✓ Large bootstrap list rejected safely in {:?}: {}",
-            duration, e
-        ),
+        Ok(_) => println!("✓ Large bootstrap list handled successfully in {duration:?}"),
+        Err(e) => println!("✓ Large bootstrap list rejected safely in {duration:?}: {e}"),
     }
 }
 
@@ -322,13 +313,13 @@ mod specific_regression_tests {
                             "0.0.0.0",
                             "Should bind to all interfaces"
                         );
-                        println!("✓ Random port binding successful: {}", addr);
+                        println!("✓ Random port binding successful: {addr}");
                     }
                 }
             }
             Err(e) => {
                 // Error is acceptable in test environment
-                println!("✓ Random port binding handled error safely: {}", e);
+                println!("✓ Random port binding handled error safely: {e}");
             }
         }
     }
@@ -359,7 +350,7 @@ mod specific_regression_tests {
 
         match result {
             Ok(_) => println!("✓ Problematic config handled successfully"),
-            Err(e) => println!("✓ Problematic config rejected with proper error: {}", e),
+            Err(e) => println!("✓ Problematic config rejected with proper error: {e}"),
         }
 
         // The key test is that we didn't panic
@@ -367,5 +358,3 @@ mod specific_regression_tests {
     }
 }
 
-// Re-export futures_util for the test
-use futures_util;
