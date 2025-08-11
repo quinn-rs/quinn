@@ -177,31 +177,31 @@ endpoints:
 # Validation Configuration
 validation:
   timeout_seconds: 10
-  retry_attempts: 3
-  retry_delay_ms: 1000
-  parallel_connections: 5
+  _retry_attempts: 3
+  _retry_delay_ms: 1000
+  _parallel_connections: 5
   
   # Test categories
-  tests:
-    - name: basic_connectivity
-      description: Test basic QUIC connection establishment
-      required: true
+  _tests:
+    - _name: basic_connectivity
+      _description: Test basic QUIC connection establishment
+      _required: true
       
-    - name: protocol_negotiation
-      description: Verify ALPN protocol negotiation
-      required: true
+    - _name: protocol_negotiation
+      _description: Verify ALPN protocol negotiation
+      _required: true
       
-    - name: zero_rtt
-      description: Test 0-RTT resumption
-      required: false
+    - _name: zero_rtt
+      _description: Test 0-RTT resumption
+      _required: false
       
-    - name: connection_migration
-      description: Test connection migration
-      required: false
+    - _name: connection_migration
+      _description: Test connection migration
+      _required: false
       
-    - name: performance_metrics
-      description: Collect RTT and throughput metrics
-      required: false
+    - _name: performance_metrics
+      _description: Collect RTT and throughput metrics
+      _required: false
 
 # Reporting Configuration
 reporting:
