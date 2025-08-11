@@ -197,7 +197,7 @@ mod ml_dsa_65_tests {
     #[test]
     fn test_ml_dsa_65_invalid_signature_size() {
         // Test that invalid signature sizes are rejected
-        let result = MlDsaSignature::from_bytes(&vec![0u8; 100]);
+        let result = MlDsaSignature::from_bytes(&[0u8; 100]);
         assert!(result.is_err(), "Should fail with invalid signature size");
 
         let result = MlDsaSignature::from_bytes(&vec![0u8; 5000]);
@@ -281,11 +281,11 @@ mod ml_dsa_65_tests {
             let message = format!("Test message number {}", i);
             let signature = ml_dsa
                 .sign(&secret_key, message.as_bytes())
-                .expect(&format!("Failed to sign message {}", i));
+                .unwrap_or_else(|_| panic!("Failed to sign message {}", i));
 
             let is_valid = ml_dsa
                 .verify(&public_key, message.as_bytes(), &signature)
-                .expect(&format!("Failed to verify message {}", i));
+                .unwrap_or_else(|_| panic!("Failed to verify message {}", i));
 
             assert!(is_valid, "Signature {} should be valid", i);
         }
@@ -324,11 +324,11 @@ mod ml_dsa_65_api_tests {
         // Test various error conditions
 
         // Invalid public key size
-        let result = MlDsaPublicKey::from_bytes(&vec![0; 100]);
+        let result = MlDsaPublicKey::from_bytes(&[0; 100]);
         assert!(result.is_err());
 
         // Invalid signature size
-        let result = MlDsaSignature::from_bytes(&vec![0; 100]);
+        let result = MlDsaSignature::from_bytes(&[0; 100]);
         assert!(result.is_err());
     }
 }

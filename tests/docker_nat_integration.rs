@@ -9,7 +9,7 @@ mod docker_nat_tests {
 
     fn docker_compose_available() -> bool {
         Command::new("docker")
-            .args(&["compose", "version"])
+            .args(["compose", "version"])
             .output()
             .map(|o| o.status.success())
             .unwrap_or(false)

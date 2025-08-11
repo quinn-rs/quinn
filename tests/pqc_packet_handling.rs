@@ -146,7 +146,7 @@ mod pqc_packet_tests {
 
             fn assemble(&self) -> Vec<u8> {
                 let mut result = Vec::new();
-                for (_offset, data) in &self.fragments {
+                for data in self.fragments.values() {
                     result.extend_from_slice(data);
                 }
                 result
@@ -317,9 +317,7 @@ mod pqc_packet_tests {
 
             fn on_probe_lost(&mut self, size: u16) {
                 self.probe_failures += 1;
-                if size == 4096 {
-                    self.current_mtu = 1500;
-                } else if size == 2048 {
+                if size == 4096 || size == 2048 {
                     self.current_mtu = 1500;
                 } else if size == 1500 {
                     self.current_mtu = 1280; // IPv6 minimum

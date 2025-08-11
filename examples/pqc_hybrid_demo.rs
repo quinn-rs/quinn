@@ -25,6 +25,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Full key exchange protocol
         key_exchange_protocol_demo()?;
 
+        println!("\n{}\n", "=".repeat(50));
+
+        // Hybrid signatures demo
+        demonstrate_hybrid_signatures()?;
+
         Ok(())
     }
 }
