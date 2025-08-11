@@ -56,7 +56,7 @@ tracing-subscriber = { version = "0.3.0", default-features = false, features = [
 url = "2"
 wasm-bindgen-test = { version = "0.3.45" }
 web-time = "1"
-windows-sys = { version = ">=0.52, <=0.59", features = ["Win32_Foundation", "Win32_System_IO", "Win32_Networking_WinSock"] }
+windows-sys = { version = ">=0.52, <=0.60", features = ["Win32_Foundation", "Win32_System_IO", "Win32_Networking_WinSock"] }
 cfg_aliases = "0.2"
 
 [profile.bench]
