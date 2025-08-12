@@ -737,7 +737,7 @@ fn decode_recv(
                 dst_ip = Some(IpAddr::V4(Ipv4Addr::from(
                     pktinfo.ipi_addr.s_addr.to_ne_bytes(),
                 )));
-                interface_index = Some(pktinfo.ipi_ifindex);
+                interface_index = Some(pktinfo.ipi_ifindex as u32);
             }
             #[cfg(any(bsd, apple))]
             (libc::IPPROTO_IP, libc::IP_RECVDSTADDR) => {
@@ -747,7 +747,7 @@ fn decode_recv(
             (libc::IPPROTO_IPV6, libc::IPV6_PKTINFO) => {
                 let pktinfo = unsafe { cmsg::decode::<libc::in6_pktinfo, libc::cmsghdr>(cmsg) };
                 dst_ip = Some(IpAddr::V6(Ipv6Addr::from(pktinfo.ipi6_addr.s6_addr)));
-                interface_index = Some(pktinfo.ipi6_ifindex);
+                interface_index = Some(pktinfo.ipi6_ifindex as u32);
             }
             #[cfg(any(target_os = "linux", target_os = "android"))]
             (libc::SOL_UDP, gro::UDP_GRO) => unsafe {
@@ -787,7 +787,7 @@ fn decode_recv(
         addr,
         ecn: EcnCodepoint::from_bits(ecn_bits),
         dst_ip,
-        interface_index
+        interface_index,
     }
 }
 
