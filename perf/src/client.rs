@@ -416,22 +416,104 @@ async fn request(
 
     let send_stream_stats = stream_stats.new_sender(&send, upload);
 
-    static DATA: [u8; 1024 * 1024] = [42; 1024 * 1024];
+    static DATA: [u8; 1024 * 1024] = [42; 1024 * 1024]; // 1MB of data
+    let unrolled = true;
+
     let mut remaining = upload;
     let upload_start = Instant::now();
     while remaining > 0 {
-        let chunk_len = remaining.min(DATA.len() as u64);
+        if unrolled {
+            #[rustfmt::skip]
+            let mut data_chunks = [ // 32 MB of data
+                Bytes::from_static(&DATA), Bytes::from_static(&DATA),
+                Bytes::from_static(&DATA), Bytes::from_static(&DATA),
+                Bytes::from_static(&DATA), Bytes::from_static(&DATA),
+                Bytes::from_static(&DATA), Bytes::from_static(&DATA),
+                Bytes::from_static(&DATA), Bytes::from_static(&DATA),
+                Bytes::from_static(&DATA), Bytes::from_static(&DATA),
+                Bytes::from_static(&DATA), Bytes::from_static(&DATA),
+                Bytes::from_static(&DATA), Bytes::from_static(&DATA),
+                Bytes::from_static(&DATA), Bytes::from_static(&DATA),
+                Bytes::from_static(&DATA), Bytes::from_static(&DATA),
+                Bytes::from_static(&DATA), Bytes::from_static(&DATA),
+                Bytes::from_static(&DATA), Bytes::from_static(&DATA),
+                Bytes::from_static(&DATA), Bytes::from_static(&DATA),
+                Bytes::from_static(&DATA), Bytes::from_static(&DATA),
+                Bytes::from_static(&DATA), Bytes::from_static(&DATA),
+                Bytes::from_static(&DATA), Bytes::from_static(&DATA),
+            ];
+            let one_data_chunks_len = data_chunks[0].len() as u64;
+            let all_data_chunks_len = data_chunks[..data_chunks.len()]
+                .iter()
+                .map(|b| b.len() as u64)
+                .sum::<u64>();
 
-        tokio::select! {
-            biased;
-            _ = shutdown.cancelled() => {
-                break;
-            },
-            res = send.write_chunk(Bytes::from_static(&DATA[..chunk_len as usize])) => {
-                res.context("sending response")?;
+            if remaining > all_data_chunks_len {
+                // send all chunks at the same time
+                tokio::select! {
+                    biased;
+                    _ = shutdown.cancelled() => {
+                        break;
+                    },
+                    res = send.write_chunks(&mut data_chunks) => {
+                        let res = res.context("sending all chunks")?;
 
-                send_stream_stats.on_bytes(chunk_len as usize);
-                remaining -= chunk_len;
+                        info!("sent {} chunks for {} bytes remaining {remaining}", res.chunks, res.bytes);
+
+                        send_stream_stats.on_bytes(res.bytes);
+                        remaining -= res.bytes as u64;
+                    }
+                }
+            } else if remaining <= one_data_chunks_len {
+                // manually send remaining data
+                let chunk_len = remaining.min(DATA.len() as u64);
+
+                tokio::select! {
+                    biased;
+                    _ = shutdown.cancelled() => {
+                        break;
+                    },
+                    res = send.write_chunk(Bytes::from_static(&DATA[..chunk_len as usize])) => {
+                        res.context("sending response")?;
+
+                        info!("sent {chunk_len} bytes remaining {remaining}");
+
+                        send_stream_stats.on_bytes(chunk_len as usize);
+                        remaining -= chunk_len;
+                    }
+                }
+            } else {
+                // send a bunch of chunks but not all
+                let chunk_count = remaining / one_data_chunks_len;
+                tokio::select! {
+                    biased;
+                    _ = shutdown.cancelled() => {
+                        break;
+                    },
+                    res = send.write_chunks(&mut data_chunks[..chunk_count as usize]) => {
+                        let res = res.context("sending some chunks")?;
+
+                        info!("sent {} chunks for {} bytes remaining {remaining}", res.chunks, res.bytes);
+
+                        send_stream_stats.on_bytes(res.bytes);
+                        remaining -= res.bytes as u64;
+                    }
+                }
+            }
+        } else {
+            let chunk_len = remaining.min(DATA.len() as u64);
+
+            tokio::select! {
+                biased;
+                _ = shutdown.cancelled() => {
+                    break;
+                },
+                res = send.write_chunk(Bytes::from_static(&DATA[..chunk_len as usize])) => {
+                    res.context("sending response")?;
+
+                    send_stream_stats.on_bytes(chunk_len as usize);
+                    remaining -= chunk_len;
+                }
             }
         }
     }
