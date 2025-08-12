@@ -115,6 +115,8 @@ pub struct RecvMeta {
     /// Populated on platforms: Windows, Linux, Android (API level > 25),
     /// FreeBSD, OpenBSD, NetBSD, macOS, and iOS.
     pub dst_ip: Option<IpAddr>,
+    /// The interface index of the interface on which the datagram was received
+    pub interface_index: Option<u32>,
 }
 
 impl Default for RecvMeta {
@@ -126,6 +128,7 @@ impl Default for RecvMeta {
             stride: 0,
             ecn: None,
             dst_ip: None,
+            interface_index: None,
         }
     }
 }
