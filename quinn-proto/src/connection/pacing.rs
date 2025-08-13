@@ -210,6 +210,7 @@ const MAX_INTERVAL_MS: u64 = 10;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::ops::{Mul, Sub};
 
     #[test]
     fn does_not_panic_on_bad_instant() {
@@ -361,5 +362,160 @@ mod tests {
             None
         );
         assert_eq!(pacer.tokens, pacer.capacity);
+    }
+    #[test]
+    fn slow_mode_two_long_delays() {
+        let mut window = 50_000u64;
+        let mtu = 1400;
+        let rtt = Duration::from_millis(800);
+        let mut old_instant = Instant::now();
+
+        let mut pacer = Pacer::new(rtt, window, mtu, old_instant);
+        let packet_capacity = pacer.capacity / mtu as u64;
+
+        // by default capa 10
+        for _ in 0..packet_capacity {
+            assert_eq!(
+                pacer.delay(rtt, mtu as u64, mtu, window, old_instant),
+                None,
+                "When capacity is available packets should be sent immediately"
+            );
+
+            pacer.on_transmit(mtu);
+        }
+
+        // change cwnd for mode refresh
+        window = 60_000;
+
+        // the next sent should be in 18,6 ms. 1st delay 10 ms and 2nd 8,6 ms
+        let total_delay = rtt.mul(mtu as u32) / window as u32;
+
+        let mut pace_duration = Duration::from_millis(MAX_INTERVAL_MS * 4 / 5);
+
+        assert_eq!(
+            pacer
+                .delay(rtt, mtu as u64, mtu, window, old_instant)
+                .expect("Send must be delayed")
+                .duration_since(old_instant),
+            pace_duration,
+            "should be MAX_INTERVAL_MS"
+        );
+
+        old_instant += pace_duration;
+
+        pace_duration = total_delay.sub(Duration::from_millis(MAX_INTERVAL_MS)) * 4 / 5;
+
+        assert_eq!(
+            pacer
+                .delay(rtt, mtu as u64, mtu, window, old_instant)
+                .expect("Send must be delayed")
+                .duration_since(old_instant),
+            pace_duration,
+            "should return the remaining period"
+        );
+    }
+
+    #[test]
+    fn slow_mode_extended_interval_delay() {
+        let mut window = 50_000u64;
+        let mtu = 1400;
+        let rtt = Duration::from_millis(910);
+        let mut old_instant = Instant::now();
+
+        let mut pacer = Pacer::new(rtt, window, mtu, old_instant);
+        let packet_capacity = pacer.capacity / mtu as u64;
+
+        // by default capa 10
+        for _ in 0..packet_capacity {
+            assert_eq!(
+                pacer.delay(rtt, mtu as u64, mtu, window, old_instant),
+                None,
+                "When capacity is available packets should be sent immediately"
+            );
+
+            pacer.on_transmit(mtu);
+        }
+
+        window = 60_000;
+
+        // the next sent should be in 21,23 ms. 1st delay 10 ms and 2nd 11,23 ms (without scaling)
+        let total_delay = rtt.mul(mtu as u32) / window as u32;
+
+        let mut pace_duration = Duration::from_millis(MAX_INTERVAL_MS * 4 / 5);
+
+        assert_eq!(
+            pacer
+                .delay(rtt, mtu as u64, mtu, window, old_instant)
+                .expect("Send must be delayed")
+                .duration_since(old_instant),
+            pace_duration,
+            "should be MAX_INTERVAL_MS"
+        );
+
+        old_instant += pace_duration;
+
+        pace_duration = total_delay.sub(Duration::from_millis(MAX_INTERVAL_MS)) * 4 / 5;
+
+        // as_millis to avoid unprecise duration
+        assert_eq!(
+            pacer
+                .delay(rtt, mtu as u64, mtu, window, old_instant)
+                .expect("Send must be delayed")
+                .duration_since(old_instant)
+                .as_millis(),
+            pace_duration.as_millis(),
+            "should return the remaining period"
+        );
+    }
+
+    #[test]
+    fn slow_mode_resume_sending_after_long_period() {
+        let mut window = 50_000u64;
+        let mtu = 1400;
+        let rtt = Duration::from_millis(600);
+        let mut old_instant = Instant::now();
+
+        let mut pacer = Pacer::new(rtt, window, mtu, old_instant);
+        let packet_capacity = pacer.capacity / mtu as u64;
+
+        // by default capa 10
+        for _ in 0..packet_capacity {
+            assert_eq!(
+                pacer.delay(rtt, mtu as u64, mtu, window, old_instant),
+                None,
+                "When capacity is available packets should be sent immediately"
+            );
+
+            pacer.on_transmit(mtu);
+        }
+
+        window = 60_000;
+
+        // the next sent should be in 14 ms. 1st delay 10 ms and 2nd 4 ms (without scaling)
+        let pace_duration = Duration::from_millis(MAX_INTERVAL_MS * 4 / 5);
+
+        assert_eq!(
+            pacer
+                .delay(rtt, mtu as u64, mtu, window, old_instant)
+                .expect("Send must be delayed")
+                .duration_since(old_instant),
+            pace_duration,
+            "should be MAX_INTERVAL_MS"
+        );
+
+        // wait a long period
+        old_instant += Duration::from_millis(500);
+
+        assert!(
+            pacer
+                .delay(rtt, mtu as u64, mtu, window, old_instant)
+                .is_none(),
+            "should be ready to send"
+        );
+
+        assert_eq!(
+            pacer.tokens, mtu as u64,
+            "should not have more than MTU tokens"
+        );
     }
 }
