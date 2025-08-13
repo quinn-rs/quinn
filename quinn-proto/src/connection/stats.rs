@@ -3,6 +3,9 @@
 use crate::{Dir, Duration, frame::Frame};
 
 /// Statistics about UDP datagrams transmitted or received on a connection
+///
+/// All information is regarding global UDP activity and is not specific to any higher level QUIC
+/// operations
 #[derive(Default, Debug, Copy, Clone)]
 #[non_exhaustive]
 pub struct UdpStats {
@@ -24,7 +27,7 @@ impl UdpStats {
     }
 }
 
-/// Number of frames transmitted of each frame type
+/// Number of frames transmitted or received of each frame type
 #[derive(Default, Copy, Clone)]
 #[non_exhaustive]
 #[allow(missing_docs)]
