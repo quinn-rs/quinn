@@ -4,8 +4,7 @@ use crate::{Dir, Duration, frame::Frame};
 
 /// Statistics about UDP datagrams transmitted or received on a connection
 ///
-/// All information is regarding global UDP activity and is not specific to any higher level QUIC
-/// operations
+/// All QUIC packets are carried by UDP datagrams. Hence, these statistics cover all traffic on a connection.
 #[derive(Default, Debug, Copy, Clone)]
 #[non_exhaustive]
 pub struct UdpStats {
