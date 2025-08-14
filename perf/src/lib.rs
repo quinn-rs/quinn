@@ -1,5 +1,5 @@
 #[cfg(feature = "qlog")]
-use std::{fs::File, path::PathBuf};
+use std::{fs::File, io::BufWriter, path::PathBuf};
 use std::{io, net::SocketAddr, sync::Arc, time::Duration};
 
 use anyhow::{Context, Result};
@@ -79,8 +79,9 @@ impl CommonOpt {
         #[cfg(feature = "qlog")]
         if let Some(qlog_file) = &self.qlog_file {
             let mut qlog = QlogConfig::default();
-            qlog.writer(Box::new(File::create(qlog_file)?))
-                .title(Some(name.into()));
+            let file = File::create(qlog_file)?;
+            let writer = BufWriter::new(file);
+            qlog.writer(Box::new(writer)).title(Some(name.into()));
             transport.qlog_stream(qlog.into_stream());
         }
 
