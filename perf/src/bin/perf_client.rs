@@ -1,5 +1,5 @@
 #[cfg(feature = "json-output")]
-use std::{fs::File, path::PathBuf};
+use std::path::PathBuf;
 use std::{
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
     sync::Arc,
@@ -15,7 +15,7 @@ use tokio::sync::Semaphore;
 use tracing::{debug, error, info};
 
 use perf::{
-    CongestionAlgorithm, bind_socket,
+    CommonOpt, bind_socket,
     noprotection::NoProtectionClientConfig,
     stats::{OpenStreamStats, Stats},
 };
@@ -30,6 +30,9 @@ struct Opt {
     /// Override DNS resolution for host
     #[clap(long)]
     ip: Option<IpAddr>,
+    /// Specify the local socket address
+    #[clap(long)]
+    local_addr: Option<SocketAddr>,
     /// Number of unidirectional requests to maintain concurrently
     #[clap(long, default_value = "0")]
     uni_requests: u64,
@@ -48,44 +51,13 @@ struct Opt {
     /// The interval in seconds at which stats are reported
     #[clap(long, default_value = "1")]
     interval: u64,
-    /// Send buffer size in bytes
-    #[clap(long, default_value = "2097152")]
-    send_buffer_size: usize,
-    /// Receive buffer size in bytes
-    #[clap(long, default_value = "2097152")]
-    recv_buffer_size: usize,
-    /// Specify the local socket address
-    #[clap(long)]
-    local_addr: Option<SocketAddr>,
-    /// Whether to print connection statistics
-    #[clap(long)]
-    conn_stats: bool,
     /// File path to output JSON statistics to. If the file is '-', stdout will be used
     #[cfg(feature = "json-output")]
     #[clap(long)]
     json: Option<PathBuf>,
-    /// Perform NSS-compatible TLS key logging to the file specified in `SSLKEYLOGFILE`.
-    #[clap(long = "keylog")]
-    keylog: bool,
-    /// UDP payload size that the network must be capable of carrying
-    #[clap(long, default_value = "1200")]
-    initial_mtu: u16,
-    /// Disable packet encryption/decryption (for debugging purpose)
-    #[clap(long = "no-protection")]
-    no_protection: bool,
-    /// The initial round-trip-time (in msecs)
-    #[clap(long)]
-    initial_rtt: Option<u64>,
-    /// Ack Frequency mode
-    #[clap(long = "ack-frequency")]
-    ack_frequency: bool,
-    /// Congestion algorithm to use
-    #[clap(long = "congestion")]
-    cong_alg: Option<CongestionAlgorithm>,
-    /// qlog output file
-    #[cfg(feature = "qlog")]
-    #[clap(long = "qlog")]
-    qlog_file: Option<PathBuf>,
+    /// Common options
+    #[command(flatten)]
+    common: CommonOpt,
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -128,7 +100,11 @@ async fn run(opt: Opt) -> Result<()> {
 
     info!("local addr {:?}", bind_addr);
 
-    let socket = bind_socket(bind_addr, opt.send_buffer_size, opt.recv_buffer_size)?;
+    let socket = bind_socket(
+        bind_addr,
+        opt.common.send_buffer_size,
+        opt.common.recv_buffer_size,
+    )?;
 
     let endpoint = quinn::Endpoint::new(Default::default(), None, socket, Arc::new(TokioRuntime))?;
 
@@ -146,35 +122,17 @@ async fn run(opt: Opt) -> Result<()> {
         .with_no_client_auth();
     crypto.alpn_protocols = vec![b"perf".to_vec()];
 
-    if opt.keylog {
+    if opt.common.keylog {
         crypto.key_log = Arc::new(rustls::KeyLogFile::new());
     }
 
-    let mut transport = quinn::TransportConfig::default();
-    transport.initial_mtu(opt.initial_mtu);
-
-    if let Some(initial_rtt) = opt.initial_rtt {
-        transport.initial_rtt(Duration::from_millis(initial_rtt));
-    }
-
-    if opt.ack_frequency {
-        transport.ack_frequency_config(Some(quinn::AckFrequencyConfig::default()));
-    }
-
-    if let Some(cong_alg) = opt.cong_alg {
-        transport.congestion_controller_factory(cong_alg.build());
-    }
-
-    #[cfg(feature = "qlog")]
-    if let Some(qlog_file) = &opt.qlog_file {
-        let mut qlog = quinn::QlogConfig::default();
-        qlog.writer(Box::new(File::create(qlog_file)?))
-            .title(Some("perf-client".into()));
-        transport.qlog_stream(qlog.into_stream());
-    }
+    let transport = opt.common.build_transport_config(
+        #[cfg(feature = "qlog")]
+        "perf-client",
+    )?;
 
     let crypto = Arc::new(QuicClientConfig::try_from(crypto)?);
-    let mut config = quinn::ClientConfig::new(match opt.no_protection {
+    let mut config = quinn::ClientConfig::new(match opt.common.no_protection {
         true => Arc::new(NoProtectionClientConfig::new(crypto)),
         false => crypto,
     });
@@ -220,7 +178,7 @@ async fn run(opt: Opt) -> Result<()> {
                 stats.on_interval(start, &stream_stats);
 
                 stats.print();
-                if opt.conn_stats {
+                if opt.common.conn_stats {
                     println!("{:?}\n", connection.stats());
                 }
             }

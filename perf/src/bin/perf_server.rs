@@ -1,5 +1,3 @@
-#[cfg(feature = "qlog")]
-use std::fs::File;
 use std::{fs, net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
 
 use anyhow::{Context, Result};
@@ -9,9 +7,7 @@ use quinn::{TokioRuntime, crypto::rustls::QuicServerConfig};
 use rustls::pki_types::{CertificateDer, PrivatePkcs8KeyDer};
 use tracing::{debug, error, info};
 
-use perf::{
-    CongestionAlgorithm, PERF_CIPHER_SUITES, bind_socket, noprotection::NoProtectionServerConfig,
-};
+use perf::{CommonOpt, PERF_CIPHER_SUITES, bind_socket, noprotection::NoProtectionServerConfig};
 
 #[derive(Parser)]
 #[clap(name = "server")]
@@ -25,37 +21,9 @@ struct Opt {
     /// TLS certificate in PEM format
     #[clap(short = 'c', long = "cert", requires = "key")]
     cert: Option<PathBuf>,
-    /// Send buffer size in bytes
-    #[clap(long, default_value = "2097152")]
-    send_buffer_size: usize,
-    /// Receive buffer size in bytes
-    #[clap(long, default_value = "2097152")]
-    recv_buffer_size: usize,
-    /// Whether to print connection statistics
-    #[clap(long)]
-    conn_stats: bool,
-    /// Perform NSS-compatible TLS key logging to the file specified in `SSLKEYLOGFILE`.
-    #[clap(long = "keylog")]
-    keylog: bool,
-    /// UDP payload size that the network must be capable of carrying
-    #[clap(long, default_value = "1200")]
-    initial_mtu: u16,
-    /// Disable packet encryption/decryption (for debugging purpose)
-    #[clap(long = "no-protection")]
-    no_protection: bool,
-    /// The initial round-trip-time (in msecs)
-    #[clap(long)]
-    initial_rtt: Option<u64>,
-    /// Ack Frequency mode
-    #[clap(long = "ack-frequency")]
-    ack_frequency: bool,
-    /// Congestion algorithm to use
-    #[clap(long = "congestion")]
-    cong_alg: Option<CongestionAlgorithm>,
-    /// qlog output file
-    #[cfg(feature = "qlog")]
-    #[clap(long = "qlog")]
-    qlog_file: Option<PathBuf>,
+    /// Common options
+    #[command(flatten)]
+    common: CommonOpt,
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -104,41 +72,27 @@ async fn run(opt: Opt) -> Result<()> {
         .unwrap();
     crypto.alpn_protocols = vec![b"perf".to_vec()];
 
-    if opt.keylog {
+    if opt.common.keylog {
         crypto.key_log = Arc::new(rustls::KeyLogFile::new());
     }
 
-    let mut transport = quinn::TransportConfig::default();
-    transport.initial_mtu(opt.initial_mtu);
-
-    if let Some(initial_rtt) = opt.initial_rtt {
-        transport.initial_rtt(Duration::from_millis(initial_rtt));
-    }
-
-    if opt.ack_frequency {
-        transport.ack_frequency_config(Some(quinn::AckFrequencyConfig::default()));
-    }
-
-    if let Some(cong_alg) = opt.cong_alg {
-        transport.congestion_controller_factory(cong_alg.build());
-    }
-
-    #[cfg(feature = "qlog")]
-    if let Some(qlog_file) = &opt.qlog_file {
-        let mut qlog = quinn::QlogConfig::default();
-        qlog.writer(Box::new(File::create(qlog_file)?))
-            .title(Some("perf-server".into()));
-        transport.qlog_stream(qlog.into_stream());
-    }
+    let transport = opt.common.build_transport_config(
+        #[cfg(feature = "qlog")]
+        "perf-server",
+    )?;
 
     let crypto = Arc::new(QuicServerConfig::try_from(crypto)?);
-    let mut config = quinn::ServerConfig::with_crypto(match opt.no_protection {
+    let mut config = quinn::ServerConfig::with_crypto(match opt.common.no_protection {
         true => Arc::new(NoProtectionServerConfig::new(crypto)),
         false => crypto,
     });
     config.transport_config(Arc::new(transport));
 
-    let socket = bind_socket(opt.listen, opt.send_buffer_size, opt.recv_buffer_size)?;
+    let socket = bind_socket(
+        opt.listen,
+        opt.common.send_buffer_size,
+        opt.common.recv_buffer_size,
+    )?;
 
     let endpoint = quinn::Endpoint::new(
         Default::default(),
@@ -177,7 +131,7 @@ async fn handle(handshake: quinn::Incoming, opt: Arc<Opt>) -> Result<()> {
 }
 
 async fn conn_stats(connection: quinn::Connection, opt: Arc<Opt>) -> Result<()> {
-    if opt.conn_stats {
+    if opt.common.conn_stats {
         loop {
             tokio::time::sleep(Duration::from_secs(2)).await;
             println!("{:?}\n", connection.stats());
