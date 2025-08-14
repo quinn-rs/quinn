@@ -14,6 +14,7 @@ use quinn::{
 use rustls::crypto::ring::cipher_suite;
 use socket2::{Domain, Protocol, Socket, Type};
 use tracing::warn;
+use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
 
 #[cfg_attr(not(feature = "json-output"), allow(dead_code))]
 pub mod stats;
@@ -147,6 +148,17 @@ impl CongestionAlgorithm {
             CongestionAlgorithm::NewReno => Arc::new(congestion::NewRenoConfig::default()),
         }
     }
+}
+
+pub fn init_tracing() {
+    tracing_subscriber::registry()
+        .with(
+            EnvFilter::try_from_default_env()
+                .or_else(|_| EnvFilter::try_new("warn"))
+                .unwrap(),
+        )
+        .with(fmt::layer())
+        .init();
 }
 
 pub static PERF_CIPHER_SUITES: &[rustls::SupportedCipherSuite] = &[
