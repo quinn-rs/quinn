@@ -15,7 +15,7 @@ use tokio::sync::Semaphore;
 use tracing::{debug, error, info};
 
 use perf::{
-    CommonOpt,
+    CommonOpt, init_tracing,
     noprotection::NoProtectionClientConfig,
     stats::{OpenStreamStats, Stats},
 };
@@ -64,7 +64,7 @@ struct Opt {
 async fn main() {
     let opt = Opt::parse();
 
-    tracing_subscriber::fmt::init();
+    init_tracing();
 
     if let Err(e) = run(opt).await {
         error!("{:#}", e);

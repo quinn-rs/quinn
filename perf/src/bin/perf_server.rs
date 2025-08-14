@@ -7,7 +7,7 @@ use quinn::{TokioRuntime, crypto::rustls::QuicServerConfig};
 use rustls::pki_types::{CertificateDer, PrivatePkcs8KeyDer};
 use tracing::{debug, error, info};
 
-use perf::{CommonOpt, PERF_CIPHER_SUITES, noprotection::NoProtectionServerConfig};
+use perf::{CommonOpt, PERF_CIPHER_SUITES, init_tracing, noprotection::NoProtectionServerConfig};
 
 #[derive(Parser)]
 #[clap(name = "server")]
@@ -30,7 +30,7 @@ struct Opt {
 async fn main() {
     let opt = Opt::parse();
 
-    tracing_subscriber::fmt::init();
+    init_tracing();
 
     if let Err(e) = run(opt).await {
         error!("{:#}", e);
