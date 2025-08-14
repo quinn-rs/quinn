@@ -1,19 +1,62 @@
-use std::{net::SocketAddr, sync::Arc};
+#[cfg(feature = "qlog")]
+use std::path::PathBuf;
+use std::{io, net::SocketAddr, sync::Arc, time::Duration};
 
 use anyhow::{Context, Result};
-use clap::ValueEnum;
+use clap::{Parser, ValueEnum};
 use quinn::{
+    TransportConfig,
     congestion::{self, ControllerFactory},
     udp::UdpSocketState,
 };
 use rustls::crypto::ring::cipher_suite;
 use socket2::{Domain, Protocol, Socket, Type};
 use tracing::warn;
+use tracing_subscriber::prelude::*;
 
 #[cfg_attr(not(feature = "json-output"), allow(dead_code))]
 pub mod stats;
 
 pub mod noprotection;
+
+// Common options between client and server binary
+#[derive(Parser)]
+pub struct CommonOpt {
+    /// Send buffer size in bytes
+    #[clap(long, default_value = "2097152")]
+    pub send_buffer_size: usize,
+    /// Receive buffer size in bytes
+    #[clap(long, default_value = "2097152")]
+    pub recv_buffer_size: usize,
+    /// Whether to print connection statistics
+    #[clap(long)]
+    pub conn_stats: bool,
+    /// Perform NSS-compatible TLS key logging to the file specified in `SSLKEYLOGFILE`.
+    #[clap(long = "keylog")]
+    pub keylog: bool,
+    /// UDP payload size that the network must be capable of carrying
+    #[clap(long, default_value = "1200")]
+    pub initial_mtu: u16,
+    /// Disable packet encryption/decryption (for debugging purpose)
+    #[clap(long = "no-protection")]
+    pub no_protection: bool,
+    /// The initial round-trip-time (in msecs)
+    #[clap(long, group = "common")]
+    pub initial_rtt: Option<u64>,
+    /// Ack Frequency mode
+    #[clap(long = "ack-frequency")]
+    pub ack_frequency: bool,
+    /// Congestion algorithm to use
+    #[clap(long = "congestion")]
+    pub cong_alg: Option<CongestionAlgorithm>,
+    /// qlog output file
+    #[cfg(feature = "qlog")]
+    #[clap(long = "qlog")]
+    pub qlog_file: Option<PathBuf>,
+    /// disable ansi colors in logs
+    #[clap(long)]
+    pub no_color: bool,
+}
 
 #[derive(Clone, Copy, ValueEnum)]
 pub enum CongestionAlgorithm {
@@ -30,6 +73,49 @@ impl CongestionAlgorithm {
             CongestionAlgorithm::NewReno => Arc::new(congestion::NewRenoConfig::default()),
         }
     }
+}
+
+pub fn build_transport_config(
+    common: &CommonOpt,
+    #[cfg(feature = "qlog")] name: &str,
+) -> io::Result<TransportConfig> {
+    let mut transport = quinn::TransportConfig::default();
+    transport.initial_mtu(common.initial_mtu);
+
+    if let Some(initial_rtt) = common.initial_rtt {
+        transport.initial_rtt(Duration::from_millis(initial_rtt));
+    }
+
+    if common.ack_frequency {
+        transport.ack_frequency_config(Some(quinn::AckFrequencyConfig::default()));
+    }
+
+    if let Some(cong_alg) = common.cong_alg {
+        transport.congestion_controller_factory(cong_alg.build());
+    }
+
+    #[cfg(feature = "qlog")]
+    if let Some(qlog_file) = &common.qlog_file {
+        let mut qlog = quinn::QlogConfig::default();
+        let file = std::fs::File::create(qlog_file)?;
+        let writer = std::io::BufWriter::new(file);
+        qlog.writer(Box::new(writer)).title(Some(name.into()));
+        transport.qlog_stream(qlog.into_stream());
+    }
+
+    Ok(transport)
+}
+
+pub fn init_tracing(common: &CommonOpt) {
+    let fmt_layer = tracing_subscriber::fmt::layer().with_ansi(!common.no_color);
+    let filter_layer = tracing_subscriber::EnvFilter::try_from_default_env()
+        .or_else(|_| tracing_subscriber::EnvFilter::try_new("warn"))
+        .unwrap();
+
+    tracing_subscriber::registry()
+        .with(filter_layer)
+        .with(fmt_layer)
+        .init();
 }
 
 pub fn bind_socket(
