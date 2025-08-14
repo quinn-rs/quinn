@@ -8,7 +8,7 @@ use rustls::pki_types::{CertificateDer, PrivatePkcs8KeyDer};
 use tracing::{debug, error, info};
 
 use perf::{
-    CommonOpt, PERF_CIPHER_SUITES, bind_socket, build_transport_config,
+    CommonOpt, PERF_CIPHER_SUITES, bind_socket, build_transport_config, init_tracing,
     noprotection::NoProtectionServerConfig,
 };
 
@@ -33,7 +33,7 @@ struct Opt {
 async fn main() {
     let opt = Opt::parse();
 
-    tracing_subscriber::fmt::init();
+    init_tracing(&opt.common);
 
     if let Err(e) = run(opt).await {
         error!("{:#}", e);

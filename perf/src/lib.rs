@@ -12,6 +12,7 @@ use quinn::{
 use rustls::crypto::ring::cipher_suite;
 use socket2::{Domain, Protocol, Socket, Type};
 use tracing::warn;
+use tracing_subscriber::prelude::*;
 
 #[cfg_attr(not(feature = "json-output"), allow(dead_code))]
 pub mod stats;
@@ -52,6 +53,9 @@ pub struct CommonOpt {
     #[cfg(feature = "qlog")]
     #[clap(long = "qlog")]
     pub qlog_file: Option<PathBuf>,
+    /// disable ansi colors in logs
+    #[clap(long)]
+    pub no_color: bool,
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -100,6 +104,18 @@ pub fn build_transport_config(
     }
 
     Ok(transport)
+}
+
+pub fn init_tracing(common: &CommonOpt) {
+    let fmt_layer = tracing_subscriber::fmt::layer().with_ansi(!common.no_color);
+    let filter_layer = tracing_subscriber::EnvFilter::try_from_default_env()
+        .or_else(|_| tracing_subscriber::EnvFilter::try_new("warn"))
+        .unwrap();
+
+    tracing_subscriber::registry()
+        .with(filter_layer)
+        .with(fmt_layer)
+        .init();
 }
 
 pub fn bind_socket(
