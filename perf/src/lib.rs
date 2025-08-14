@@ -93,8 +93,9 @@ pub fn build_transport_config(
     #[cfg(feature = "qlog")]
     if let Some(qlog_file) = &common.qlog_file {
         let mut qlog = quinn::QlogConfig::default();
-        qlog.writer(Box::new(std::fs::File::create(qlog_file)?))
-            .title(Some(name.into()));
+        let file = std::fs::File::create(qlog_file)?;
+        let writer = std::io::BufWriter::new(file);
+        qlog.writer(Box::new(writer)).title(Some(name.into()));
         transport.qlog_stream(qlog.into_stream());
     }
 
