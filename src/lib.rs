@@ -429,6 +429,12 @@ pub use config::{
     AckFrequencyConfig, ClientConfig, EndpointConfig, MtuDiscoveryConfig, ServerConfig,
     TransportConfig,
 };
+
+// Post-Quantum Cryptography (PQC) re-exports - always available
+pub use crypto::pqc::{
+    HybridKem, HybridPreference, HybridSignature, MlDsa65, MlKem768, PqcConfig, PqcConfigBuilder,
+    PqcError, PqcMode, PqcResult,
+};
 pub(crate) use frame::Frame;
 pub(crate) use token::{NoneTokenLog, ResetToken, TokenLog, TokenStore};
 pub(crate) use token_memory_cache::TokenMemoryCache;

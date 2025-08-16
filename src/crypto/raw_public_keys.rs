@@ -4,8 +4,7 @@
 //! allowing P2P connections to authenticate using Ed25519 public keys directly
 //! without the overhead of X.509 certificates.
 
-// PQC extensions for raw public keys
-#[cfg(feature = "pqc")]
+// PQC extensions for raw public keys - always available
 pub mod pqc;
 
 use std::{collections::HashSet, fmt::Debug, sync::Arc};

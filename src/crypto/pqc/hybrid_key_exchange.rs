@@ -331,50 +331,38 @@ mod tests {
     fn test_hybrid_key_exchange_flow() {
         // Create initiator and responder
         let mut initiator = HybridKeyExchange::new(KeyExchangeRole::Initiator);
-        #[cfg(feature = "pqc")]
         let mut responder = HybridKeyExchange::new(KeyExchangeRole::Responder);
 
         // Initiator starts
         let initiator_share = initiator.start();
 
-        #[cfg(feature = "pqc")]
-        {
-            assert!(initiator_share.is_ok());
-            let initiator_share = initiator_share.unwrap();
-            assert!(initiator_share.ciphertext.is_none());
+        assert!(initiator_share.is_ok());
+        let initiator_share = initiator_share.unwrap();
+        assert!(initiator_share.ciphertext.is_none());
 
-            // Responder processes initiator's share
-            let responder_response = responder.process_peer_key_share(&initiator_share);
-            assert!(responder_response.is_ok());
-            let responder_share = responder_response.unwrap();
-            assert!(responder_share.is_some());
-            let responder_share = responder_share.unwrap();
-            assert!(responder_share.ciphertext.is_some());
+        // Responder processes initiator's share
+        let responder_response = responder.process_peer_key_share(&initiator_share);
+        assert!(responder_response.is_ok());
+        let responder_share = responder_response.unwrap();
+        assert!(responder_share.is_some());
+        let responder_share = responder_share.unwrap();
+        assert!(responder_share.ciphertext.is_some());
 
-            // Check responder is complete
-            assert!(responder.is_complete());
+        // Check responder is complete
+        assert!(responder.is_complete());
 
-            // Initiator processes responder's share
-            let initiator_response = initiator.process_peer_key_share(&responder_share);
-            assert!(initiator_response.is_ok());
-            assert!(initiator_response.unwrap().is_none()); // No response from initiator
+        // Initiator processes responder's share
+        let initiator_response = initiator.process_peer_key_share(&responder_share);
+        assert!(initiator_response.is_ok());
+        assert!(initiator_response.unwrap().is_none()); // No response from initiator
 
-            // Check initiator is complete
-            assert!(initiator.is_complete());
+        // Check initiator is complete
+        assert!(initiator.is_complete());
 
-            // Both should have the same shared secret
-            let initiator_secret = initiator.get_shared_secret().unwrap();
-            let responder_secret = responder.get_shared_secret().unwrap();
-            assert_eq!(initiator_secret.as_bytes(), responder_secret.as_bytes());
-        }
-
-        #[cfg(not(feature = "pqc"))]
-        {
-            assert!(matches!(
-                initiator_share,
-                Err(PqcError::FeatureNotAvailable)
-            ));
-        }
+        // Both should have the same shared secret
+        let initiator_secret = initiator.get_shared_secret().unwrap();
+        let responder_secret = responder.get_shared_secret().unwrap();
+        assert_eq!(initiator_secret.as_bytes(), responder_secret.as_bytes());
     }
 
     #[test]
@@ -429,18 +417,7 @@ mod tests {
         let mut kex = HybridKeyExchange::new(KeyExchangeRole::Initiator);
         assert_eq!(kex.state_name(), "Initial");
 
-        #[cfg(feature = "pqc")]
-        {
-            let _ = kex.start().unwrap();
-            assert_eq!(kex.state_name(), "WaitingForPeerKey");
-        }
-
-        #[cfg(not(feature = "pqc"))]
-        {
-            let result = kex.start();
-            assert!(matches!(result, Err(PqcError::FeatureNotAvailable)));
-            // State should remain Initial on failure
-            assert_eq!(kex.state_name(), "Initial");
-        }
+        let _ = kex.start().unwrap();
+        assert_eq!(kex.state_name(), "WaitingForPeerKey");
     }
 }

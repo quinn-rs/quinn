@@ -57,8 +57,7 @@ pub struct EndpointConfig {
     pub(crate) address_discovery_enabled: bool,
     pub(crate) address_discovery_max_rate: u8,
     pub(crate) address_discovery_observe_all: bool,
-    /// Post-Quantum Cryptography configuration
-    #[cfg(feature = "pqc")]
+    /// Post-Quantum Cryptography configuration (always available)
     pub(crate) pqc_config: Option<crate::crypto::pqc::PqcConfig>,
 }
 
@@ -78,8 +77,7 @@ impl EndpointConfig {
             address_discovery_enabled: true,
             address_discovery_max_rate: 10,
             address_discovery_observe_all: false,
-            #[cfg(feature = "pqc")]
-            pqc_config: None,
+            pqc_config: Some(crate::crypto::pqc::PqcConfig::default()), // Enable PQC by default
         }
     }
 
@@ -252,8 +250,7 @@ impl EndpointConfig {
     /// Set Post-Quantum Cryptography configuration
     ///
     /// This configures PQC behavior including algorithm selection, operation modes,
-    /// and performance tuning parameters.
-    #[cfg(feature = "pqc")]
+    /// and performance tuning parameters. PQC is enabled by default.
     pub fn pqc_config(&mut self, config: crate::crypto::pqc::PqcConfig) -> &mut Self {
         self.pqc_config = Some(config);
         self

@@ -96,7 +96,7 @@ impl Default for PqcConfig {
             mode: PqcMode::Hybrid,
             ml_kem_enabled: true,
             ml_dsa_enabled: true,
-            hybrid_preference: HybridPreference::Balanced,
+            hybrid_preference: HybridPreference::PreferPqc, // Prefer PQC by default
             memory_pool_size: 10,
             handshake_timeout_multiplier: 2.0,
         }
@@ -230,7 +230,7 @@ mod tests {
         assert_eq!(config.mode, PqcMode::Hybrid);
         assert!(config.ml_kem_enabled);
         assert!(config.ml_dsa_enabled);
-        assert_eq!(config.hybrid_preference, HybridPreference::Balanced);
+        assert_eq!(config.hybrid_preference, HybridPreference::PreferPqc);
         assert_eq!(config.memory_pool_size, 10);
         assert_eq!(config.handshake_timeout_multiplier, 2.0);
         assert!(config.validate().is_ok());

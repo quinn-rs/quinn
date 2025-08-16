@@ -255,7 +255,6 @@ pub struct Connection {
     address_discovery_state: Option<AddressDiscoveryState>,
 
     /// PQC state for tracking post-quantum cryptography support
-    #[cfg(feature = "pqc")]
     pqc_state: PqcState,
 
     /// Trace context for this connection
@@ -398,7 +397,6 @@ impl Connection {
                     now,
                 ))
             },
-            #[cfg(feature = "pqc")]
             pqc_state: PqcState::new(),
 
             #[cfg(feature = "trace")]
@@ -784,10 +782,7 @@ impl Connection {
                 // Finish current packet
                 if let Some(mut builder) = builder_storage.take() {
                     if pad_datagram {
-                        #[cfg(feature = "pqc")]
                         let min_size = self.pqc_state.min_initial_size();
-                        #[cfg(not(feature = "pqc"))]
-                        let min_size = MIN_INITIAL_SIZE;
                         builder.pad_to(min_size);
                     }
 
@@ -933,12 +928,9 @@ impl Connection {
             coalesce = coalesce && !builder.short_header;
 
             // Check if we should adjust coalescing for PQC
-            #[cfg(feature = "pqc")]
             let should_adjust_coalescing = self
                 .pqc_state
                 .should_adjust_coalescing(buf.len() - datagram_start, space_id);
-            #[cfg(not(feature = "pqc"))]
-            let should_adjust_coalescing = false;
 
             if should_adjust_coalescing {
                 coalesce = false;
@@ -1024,10 +1016,7 @@ impl Connection {
                     buf.write(frame::FrameType::PATH_RESPONSE);
                     buf.write(token);
                     self.stats.frame_tx.path_response += 1;
-                    #[cfg(feature = "pqc")]
                     let min_size = self.pqc_state.min_initial_size();
-                    #[cfg(not(feature = "pqc"))]
-                    let min_size = MIN_INITIAL_SIZE;
                     builder.pad_to(min_size);
                     builder.finish_and_track(
                         now,
@@ -1110,10 +1099,7 @@ impl Connection {
         // Finish the last packet
         if let Some(mut builder) = builder_storage {
             if pad_datagram {
-                #[cfg(feature = "pqc")]
                 let min_size = self.pqc_state.min_initial_size();
-                #[cfg(not(feature = "pqc"))]
-                let min_size = MIN_INITIAL_SIZE;
                 builder.pad_to(min_size);
             }
 
@@ -6052,7 +6038,6 @@ fn negotiate_max_idle_timeout(x: Option<VarInt>, y: Option<VarInt>) -> Option<Du
 }
 
 /// State for tracking PQC support in the connection
-#[cfg(feature = "pqc")]
 #[derive(Debug, Clone)]
 pub(crate) struct PqcState {
     /// Whether the peer supports PQC algorithms
@@ -6067,7 +6052,6 @@ pub(crate) struct PqcState {
     packet_handler: crate::crypto::pqc::packet_handler::PqcPacketHandler,
 }
 
-#[cfg(feature = "pqc")]
 impl PqcState {
     fn new() -> Self {
         Self {

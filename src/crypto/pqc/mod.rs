@@ -29,20 +29,15 @@ pub mod tls_extensions;
 pub mod tls_integration;
 pub mod types;
 
-/// rustls crypto provider for PQC
-#[cfg(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring"))]
+/// Post-Quantum Cryptography exports - always available
 pub use config::{HybridPreference, PqcConfig, PqcConfigBuilder, PqcMode};
 pub use types::{PqcError, PqcResult};
 
-#[cfg(feature = "pqc")]
+// PQC algorithm implementations - always available
 pub use hybrid::{HybridKem, HybridSignature};
-#[cfg(feature = "pqc")]
 pub use memory_pool::{PoolConfig, PqcMemoryPool};
-#[cfg(feature = "pqc")]
 pub use ml_dsa::MlDsa65;
-#[cfg(feature = "pqc")]
 pub use ml_kem::MlKem768;
-#[cfg(feature = "pqc")]
 pub use tls_extensions::{NamedGroup, SignatureScheme};
 
 /// Post-Quantum Cryptography provider trait
@@ -115,9 +110,8 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "pqc")]
     fn test_aws_lc_pqc_available() {
-        // Verify aws-lc-rs PQC APIs can be imported when feature is enabled
+        // Verify aws-lc-rs PQC APIs are always available
         // Note: aws-lc-rs may not export these directly, we'll verify in implementation
     }
 }

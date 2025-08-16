@@ -36,8 +36,7 @@ pub mod raw_public_keys;
 /// Ed25519 key pair implementation
 pub mod raw_keys;
 
-/// Post-Quantum Cryptography support
-#[cfg(feature = "pqc")]
+/// Post-Quantum Cryptography support - always available
 pub mod pqc;
 
 // NOTE: The following modules were removed because they were written as external
