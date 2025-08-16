@@ -11,7 +11,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     {
         println!("Error: This example requires the 'pqc' feature to be enabled.");
         println!("Run with: cargo run --example pqc_migration_demo --features pqc");
-        return Ok(());
+        Ok(())
     }
 
     #[cfg(feature = "pqc")]
