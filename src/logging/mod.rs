@@ -23,7 +23,7 @@ mod components;
 mod filters;
 mod formatters;
 mod lifecycle;
-mod metrics;
+pub mod metrics;
 mod structured;
 
 pub use components::*;

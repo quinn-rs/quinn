@@ -185,6 +185,9 @@ pub mod compliance_validator;
 /// Structured logging and diagnostics
 pub mod logging;
 
+/// Metrics collection and export system
+pub mod metrics;
+
 // High-level async API modules (ported from quinn crate)
 pub mod high_level;
 
