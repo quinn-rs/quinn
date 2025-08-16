@@ -8,6 +8,16 @@ repository = "https://github.com/dirvine/ant-quic"
 description = "QUIC transport protocol with advanced NAT traversal for P2P networks"
 keywords = ["quic", "nat-traversal", "p2p", "autonomi", "networking"]
 categories = ["network-programming", "asynchronous"]
+exclude = [
+    "release-build/",
+    ".serena/",
+    "rfcs/*.pdf",
+    "docs/diagrams/",
+    "target/",
+    ".github/workflows/",
+    "scripts/",
+    "tests/data/large_files/",
+]
 
 [features]
 # Default features include only essential functionality
