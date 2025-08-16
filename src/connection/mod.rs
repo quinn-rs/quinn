@@ -1810,7 +1810,7 @@ impl Connection {
     /// the endpoint is bound to a wildcard address like `0.0.0.0` or `::`.
     ///
     /// This will return `None` for clients, or when no `local_ip` was passed to
-    /// [`Endpoint::handle()`](crate::Endpoint::handle) for the datagrams establishing this
+    /// the endpoint's handle method for the datagrams establishing this
     /// connection.
     pub fn local_ip(&self) -> Option<IpAddr> {
         self.local_ip

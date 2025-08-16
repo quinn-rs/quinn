@@ -172,7 +172,7 @@ impl Endpoint {
 
     /// Get the next incoming connection attempt from a client
     ///
-    /// Yields [`Incoming`]s, or `None` if the endpoint is [`close`](Self::close)d. [`Incoming`]
+    /// Yields `Incoming`s, or `None` if the endpoint is [`close`](Self::close)d. `Incoming`
     /// can be `await`ed to obtain the final [`Connection`](crate::Connection), or used to e.g.
     /// filter connection attempts or force address validation, or converted into an intermediate
     /// `Connecting` future which can be used to e.g. send 0.5-RTT data.

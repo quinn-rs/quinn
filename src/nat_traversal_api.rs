@@ -141,7 +141,7 @@ pub struct NatTraversalConfig {
     /// - `Some(addr)`: Bind to the specified address
     /// - `None`: Auto-select random port for enhanced security (recommended)
     ///
-    /// When `None`, the system uses [`create_random_port_bind_addr()`] to automatically
+    /// When `None`, the system uses an internal method to automatically
     /// select a random available port, providing protocol obfuscation and improved
     /// security through port randomization.
     ///

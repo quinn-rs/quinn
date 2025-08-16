@@ -178,8 +178,8 @@ impl Connecting {
     /// the endpoint is bound to a wildcard address like `0.0.0.0` or `::`.
     ///
     /// This will return `None` for clients, or when the platform does not expose this
-    /// information. See [`quinn_udp::RecvMeta::dst_ip`](udp::RecvMeta::dst_ip) for a list of
-    /// supported platforms when using [`quinn_udp`](udp) for I/O, which is the default.
+    /// information. See quinn_udp's RecvMeta::dst_ip for a list of
+    /// supported platforms when using quinn_udp for I/O, which is the default.
     ///
     /// Will panic if called after `poll` has returned `Ready`.
     pub fn local_ip(&self) -> Option<IpAddr> {
@@ -318,7 +318,7 @@ impl Connection {
     /// actually used. Calling [`open_bi()`] then waiting on the [`RecvStream`] without writing
     /// anything to [`SendStream`] will never succeed.
     ///
-    /// [`open_bi()`]: crate::Connection::open_bi
+    /// [`open_bi()`]: Self::open_bi
     /// [`SendStream`]: crate::SendStream
     /// [`RecvStream`]: crate::RecvStream
     pub fn open_bi(&self) -> OpenBi<'_> {
@@ -342,8 +342,8 @@ impl Connection {
     /// before the other `Connection` is able to `accept_bi()`. Calling [`open_bi()`] then
     /// waiting on the [`RecvStream`] without writing anything to [`SendStream`] will never succeed.
     ///
-    /// [`accept_bi()`]: crate::Connection::accept_bi
-    /// [`open_bi()`]: crate::Connection::open_bi
+    /// [`accept_bi()`]: Self::accept_bi
+    /// [`open_bi()`]: Self::open_bi
     /// [`SendStream`]: crate::SendStream
     /// [`RecvStream`]: crate::RecvStream
     pub fn accept_bi(&self) -> AcceptBi<'_> {
@@ -527,8 +527,8 @@ impl Connection {
     /// the endpoint is bound to a wildcard address like `0.0.0.0` or `::`.
     ///
     /// This will return `None` for clients, or when the platform does not expose this
-    /// information. See [`quinn_udp::RecvMeta::dst_ip`](udp::RecvMeta::dst_ip) for a list of
-    /// supported platforms when using [`quinn_udp`](udp) for I/O, which is the default.
+    /// information. See quinn_udp's RecvMeta::dst_ip for a list of
+    /// supported platforms when using quinn_udp for I/O, which is the default.
     pub fn local_ip(&self) -> Option<IpAddr> {
         self.0.state.lock("local_ip").inner.local_ip()
     }

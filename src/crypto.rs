@@ -1,4 +1,5 @@
 //! Traits and implementations for the QUIC cryptography protocol
+#![allow(rustdoc::bare_urls)]
 //!
 //! The protocol logic in Quinn is contained in types that abstract over the actual
 //! cryptographic protocol used. This module contains the traits used for this

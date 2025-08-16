@@ -604,12 +604,12 @@ impl ValidationTokenConfig {
     }
 
     #[allow(rustdoc::redundant_explicit_links)] // which links are redundant depends on features
-    /// Set a custom [`TokenLog`]
+    /// Set a custom token log
     ///
-    /// If the `bloom` feature is enabled (which it is by default), defaults to a default
-    /// [`BloomTokenLog`][crate::BloomTokenLog], which is suitable for most internet applications.
+    /// If the `bloom` feature is enabled (which it is by default), defaults to a bloom
+    /// token log, which is suitable for most internet applications.
     ///
-    /// If the `bloom` feature is disabled, defaults to [`NoneTokenLog`][crate::NoneTokenLog],
+    /// If the `bloom` feature is disabled, defaults to a none token log,
     /// which makes the server ignore all address validation tokens (that is, tokens originating
     /// from NEW_TOKEN frames--retry tokens are not affected).
     pub fn log(&mut self, log: Arc<dyn TokenLog>) -> &mut Self {
@@ -708,9 +708,9 @@ impl ClientConfig {
         self
     }
 
-    /// Set a custom [`TokenStore`]
+    /// Set a custom token store
     ///
-    /// Defaults to [`TokenMemoryCache`], which is suitable for most internet applications.
+    /// Defaults to a memory cache, which is suitable for most internet applications.
     pub fn token_store(&mut self, store: Arc<dyn TokenStore>) -> &mut Self {
         self.token_store = store;
         self

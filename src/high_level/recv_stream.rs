@@ -40,7 +40,7 @@ use crate::VarInt;
 /// Verify that the stream you are receiving is the same one that the server is sending on, e.g. by
 /// logging the [`id`] of each. Streams are always accepted in the same order as they are created,
 /// i.e. ascending order by [`StreamId`]. For example, even if a sender first transmits on
-/// bidirectional stream 1, the first stream yielded by [`Connection::accept_bi`] on the receiver
+/// bidirectional stream 1, the first stream yielded by Connection's accept_bi method on the receiver
 /// will be bidirectional stream 0.
 ///
 /// [`ReadError`]: crate::ReadError
@@ -48,7 +48,7 @@ use crate::VarInt;
 /// [`SendStream::finish`]: crate::SendStream::finish
 /// [`WriteError::Stopped`]: crate::WriteError::Stopped
 /// [`id`]: RecvStream::id
-/// [`Connection::accept_bi`]: crate::Connection::accept_bi
+/// `Connection::accept_bi`: See the Connection's accept_bi method
 #[derive(Debug)]
 pub struct RecvStream {
     conn: ConnectionRef,
@@ -257,7 +257,7 @@ impl RecvStream {
     ///
     /// This operation is *not* cancel-safe.
     ///
-    /// [`ReadToEndError::TooLong`]: crate::ReadToEndError::TooLong
+    /// `ReadToEndError::TooLong`: Error returned when size limit is exceeded
     pub async fn read_to_end(&mut self, size_limit: usize) -> Result<Vec<u8>, ReadToEndError> {
         ReadToEnd {
             stream: self,
