@@ -58,6 +58,7 @@ windows-tests = ["platform-tests"]
 low_memory = []
 
 # Metrics features
+# Note: prometheus feature is excluded from docs.rs builds due to compilation issues
 prometheus = ["dep:prometheus", "dep:warp", "dep:tokio-stream"]
 
 # Test features
@@ -241,3 +242,4 @@ harness = false  # Custom test runner for long tests
 
 [package.metadata.docs.rs]
 features = ["rustls-aws-lc-rs", "rustls-ring", "platform-verifier", "log"]
+# Note: "prometheus" feature is intentionally excluded to avoid docs.rs compilation issues

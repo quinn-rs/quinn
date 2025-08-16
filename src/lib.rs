@@ -185,8 +185,11 @@ pub mod compliance_validator;
 /// Structured logging and diagnostics
 pub mod logging;
 
-/// Metrics collection and export system
+/// Metrics collection and export system (basic metrics always available)
 pub mod metrics;
+
+/// TURN-style relay protocol for NAT traversal fallback
+pub mod relay;
 
 // High-level async API modules (ported from quinn crate)
 pub mod high_level;
@@ -226,6 +229,10 @@ pub use nat_traversal_api::{
     NatTraversalError, NatTraversalEvent, NatTraversalStatistics, PeerId,
 };
 pub use quic_node::{NodeStats as QuicNodeStats, QuicNodeConfig, QuicP2PNode};
+pub use relay::{
+    AuthToken, RelayAction, RelayAuthenticator, RelayConnection, RelayConnectionConfig,
+    RelayError, RelayEvent, RelayResult, SessionId, SessionManager, SessionState,
+};
 pub use shared::{ConnectionId, EcnCodepoint, EndpointEvent};
 pub use transport_error::{Code as TransportErrorCode, Error as TransportError};
 
