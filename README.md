@@ -52,39 +52,65 @@ Comprehensive documentation is available in the [`docs/`](docs/) directory:
 
 ## Post-Quantum Cryptography (PQC)
 
-ant-quic provides comprehensive support for post-quantum cryptography to protect against future quantum computer attacks. Our implementation follows NIST standards and supports both hybrid (classical + PQC) and pure PQC modes.
+ant-quic provides comprehensive support for post-quantum cryptography to protect against future quantum computer attacks. **PQC is enabled by default** and requires no feature flags or special configuration. Our implementation follows NIST standards and supports both hybrid (classical + PQC) and pure PQC modes.
 
-### Supported Algorithms
+### Supported Algorithms (Always Available)
 
-#### Key Exchange
+#### Key Exchange Mechanisms
 - **ML-KEM-768** (NIST FIPS 203): Module-Lattice-Based Key-Encapsulation Mechanism
-  - Security Level: NIST Level 3 (equivalent to AES-192)
-  - Public Key Size: 1184 bytes
-  - Ciphertext Size: 1088 bytes
-  - Shared Secret: 32 bytes
+  - **Purpose**: Quantum-resistant key exchange for establishing shared secrets
+  - **Security Level**: NIST Level 3 (equivalent to AES-192)
+  - **Public Key Size**: 1,184 bytes
+  - **Ciphertext Size**: 1,088 bytes
+  - **Shared Secret**: 32 bytes
+  - **Status**: Always available (no feature flags required)
 
-#### Digital Signatures  
+- **Hybrid X25519+ML-KEM-768**: Combined classical and post-quantum key exchange
+  - **Purpose**: Defense-in-depth key exchange providing both classical and quantum resistance
+  - **Components**: X25519 ECDH + ML-KEM-768
+  - **Security**: Protected even if one algorithm is compromised
+  - **Status**: Default mode for new connections
+
+#### Digital Signature Algorithms
 - **ML-DSA-65** (NIST FIPS 204): Module-Lattice-Based Digital Signature Algorithm
-  - Security Level: NIST Level 3
-  - Public Key Size: 1952 bytes
-  - Signature Size: 3309 bytes
+  - **Purpose**: Quantum-resistant digital signatures for authentication and integrity
+  - **Security Level**: NIST Level 3 (equivalent to AES-192)
+  - **Public Key Size**: 1,952 bytes
+  - **Signature Size**: 3,309 bytes
+  - **Status**: Always available for certificate-based authentication
 
-### Configuration
+- **Hybrid Ed25519+ML-DSA-65**: Combined classical and post-quantum signatures
+  - **Purpose**: Dual-algorithm signatures providing maximum compatibility and security
+  - **Components**: Ed25519 + ML-DSA-65
+  - **Verification**: Both signatures must be valid for acceptance
+  - **Status**: Available for enhanced security scenarios
 
-Enable PQC in your application:
+### Configuration (PQC Enabled by Default)
+
+PQC is automatically enabled with no additional configuration required:
 
 ```rust
-use ant_quic::{QuicP2PNode, PqcMode};
+use ant_quic::{QuicP2PNode, PqcConfig, PqcMode, HybridPreference};
 
-// Create node with hybrid PQC (recommended)
-let config = ant_quic::Config::default()
-    .with_pqc_mode(PqcMode::Hybrid);
+// Default configuration automatically uses hybrid PQC
+let node = QuicP2PNode::new("0.0.0.0:0").await?;
 
-let node = QuicP2PNode::with_config(config).await?;
+// Explicit PQC configuration
+let config = PqcConfig::default()
+    .mode(PqcMode::Hybrid)                    // Hybrid mode (default)
+    .hybrid_preference(HybridPreference::PreferPqc);  // Prefer PQC (default)
 
-// Or use pure PQC mode
-let config = ant_quic::Config::default()
-    .with_pqc_mode(PqcMode::Pure);
+let node = QuicP2PNode::with_pqc_config(config).await?;
+
+// Pure PQC mode (quantum-resistant only)
+let config = PqcConfig::default()
+    .mode(PqcMode::PqcOnly);
+
+let node = QuicP2PNode::with_pqc_config(config).await?;
+
+// Classical-only mode (for legacy compatibility)
+let config = PqcConfig::default()
+    .mode(PqcMode::ClassicalOnly);
 ```
 
 ### Operating Modes
