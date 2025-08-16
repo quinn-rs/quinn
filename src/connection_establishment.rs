@@ -233,6 +233,13 @@ pub enum ConnectionEstablishmentEvent {
         target_address: SocketAddr,
         establishment_time: Duration,
     },
+    /// Connection method failed
+    ConnectionMethodFailed {
+        peer_id: PeerId,
+        method: ConnectionMethod,
+        target_address: SocketAddr,
+        error: ConnectionError,
+    },
     /// Connection fully established
     ConnectionEstablished {
         peer_id: PeerId,
@@ -282,6 +289,10 @@ pub enum ConnectionError {
     NetworkError(String),
     /// Resource exhaustion
     ResourceExhausted,
+    /// Connection failed
+    ConnectionFailed(String),
+    /// Timed out
+    TimedOut,
 }
 
 impl Default for EstablishmentConfig {
@@ -685,19 +696,19 @@ impl ConnectionEstablishmentManager {
         sub_attempt: &mut SubAttempt,
         endpoint: Arc<QuinnEndpoint>,
     ) -> Result<(), ConnectionError> {
-        use tokio::time::timeout;
         let target_address = sub_attempt.target_address;
         let server_name = format!("peer-{:x}", peer_id.0[0] as u32);
         
         // Spawn a task to handle the connection attempt
         let handle = tokio::spawn(async move {
             let connecting = endpoint.connect(target_address, &server_name)
-                .map_err(|e| crate::ConnectionError::from(e))?;
+                .map_err(|e| ConnectionError::ConnectionFailed(format!("Failed to start connection: {}", e)))?;
                 
             // Apply a timeout to the connection attempt
-            match timeout(Duration::from_secs(10), connecting).await {
-                Ok(connection_result) => connection_result.map_err(|e| crate::ConnectionError::from(e)),
-                Err(_) => Err(crate::ConnectionError::TimedOut),
+            match tokio::time::timeout(Duration::from_secs(10), connecting).await {
+                Ok(connection_result) => connection_result
+                    .map_err(|e| ConnectionError::ConnectionFailed(format!("Connection failed: {}", e))),
+                Err(_) => Err(ConnectionError::TimedOut),
             }
         });
         
@@ -1527,36 +1538,6 @@ impl ConnectionEstablishmentManager {
         debug!("Hole punch initiated for peer {:?} to {}", peer_id, sub_attempt.target_address);
     }
 
-    /// Schedule a retry for a failed attempt
-    fn schedule_retry(
-        &mut self,
-        peer_id: PeerId,
-        attempt: &mut ConnectionAttempt,
-        events: &mut Vec<ConnectionEstablishmentEvent>,
-    ) {
-        if !self.should_retry_attempt(attempt) {
-            return;
-        }
-
-        let retry_delay = self.calculate_retry_delay(attempt).unwrap_or(Duration::from_secs(1));
-        
-        // In a real implementation, this would schedule the retry using a timer
-        // For now, we'll just increment the attempt number and reset state
-        attempt.attempt_number += 1;
-        attempt.state = AttemptState::Initializing;
-        attempt.sub_attempts.clear();
-        attempt.candidates.clear();
-        
-        events.push(ConnectionEstablishmentEvent::AttemptFailed {
-            peer_id,
-            error: attempt.last_error.clone().unwrap_or(ConnectionError::TimeoutExceeded),
-            will_retry: true,
-            next_retry_in: Some(retry_delay),
-        });
-
-        debug!("Scheduled retry #{} for peer {:?} in {:?}", 
-               attempt.attempt_number, peer_id, retry_delay);
-    }
 
     fn handle_discovery_event(
         &mut self,
@@ -1778,6 +1759,8 @@ impl std::fmt::Display for ConnectionError {
             Self::Cancelled => write!(f, "connection cancelled"),
             Self::NetworkError(msg) => write!(f, "network error: {}", msg),
             Self::ResourceExhausted => write!(f, "resource exhausted"),
+            Self::ConnectionFailed(msg) => write!(f, "connection failed: {}", msg),
+            Self::TimedOut => write!(f, "timed out"),
         }
     }
 }
@@ -1826,6 +1809,7 @@ mod tests {
             Vec::new(),
             EndpointRole::Client,
             None,
+            None, // Quinn endpoint
         );
 
         // Test with known addresses
