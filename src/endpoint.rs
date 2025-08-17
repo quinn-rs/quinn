@@ -34,6 +34,7 @@ use crate::{
         ConnectionEvent, ConnectionEventInner, ConnectionId, DatagramConnectionEvent, EcnCodepoint,
         EndpointEvent, EndpointEventInner, IssuedCid,
     },
+    relay::RelayStatisticsCollector,
     token::{IncomingToken, InvalidRetryTokenError, Token, TokenPayload},
     transport_parameters::{PreferredAddress, TransportParameters},
 };
@@ -90,22 +91,22 @@ pub struct AddressDiscoveryStats {
 }
 
 /// Relay statistics for monitoring and debugging
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct RelayStats {
     /// Total relay requests received
-    requests_received: u64,
+    pub requests_received: u64,
     /// Successfully relayed requests
-    requests_relayed: u64,
+    pub requests_relayed: u64,
     /// Failed relay requests (peer not found)
-    requests_failed: u64,
+    pub requests_failed: u64,
     /// Requests dropped due to queue full
-    requests_dropped: u64,
+    pub requests_dropped: u64,
     /// Requests timed out
-    requests_timed_out: u64,
+    pub requests_timed_out: u64,
     /// Requests dropped due to rate limiting
-    requests_rate_limited: u64,
+    pub requests_rate_limited: u64,
     /// Current queue size
-    current_queue_size: usize,
+    pub current_queue_size: usize,
 }
 
 impl RelayQueue {
@@ -320,6 +321,8 @@ pub struct Endpoint {
     relay_queue: RelayQueue,
     /// Relay statistics
     relay_stats: RelayStats,
+    /// Comprehensive relay statistics collector
+    relay_stats_collector: RelayStatisticsCollector,
     /// Whether address discovery is enabled (default: true)
     address_discovery_enabled: bool,
     /// Address change callback
@@ -358,6 +361,7 @@ impl Endpoint {
             peer_connections: HashMap::new(),
             relay_queue: RelayQueue::new(),
             relay_stats: RelayStats::default(),
+            relay_stats_collector: RelayStatisticsCollector::new(),
             address_discovery_enabled: true, // Default to enabled
             address_change_callback: None,
         }
@@ -404,6 +408,8 @@ impl Endpoint {
             // Peer is currently connected, try to relay immediately
             if self.relay_frame_to_connection(ch, frame.clone()) {
                 self.relay_stats.requests_relayed += 1;
+                // Record successful rate limiting decision
+                self.relay_stats_collector.record_rate_limit(true);
                 trace!(
                     "Immediately relayed frame to peer {:?} via connection {:?}",
                     peer_id, ch
@@ -416,14 +422,22 @@ impl Endpoint {
         let now = Instant::now();
         if self.relay_queue.enqueue(*peer_id, frame, now) {
             self.relay_stats.current_queue_size = self.relay_queue.len();
+            // Record successful rate limiting decision
+            self.relay_stats_collector.record_rate_limit(true);
             trace!("Queued relay request for peer {:?}", peer_id);
             true
         } else {
             // Check if it was rate limited or queue full
             if !self.relay_queue.check_rate_limit(*peer_id, now) {
                 self.relay_stats.requests_rate_limited += 1;
+                // Record rate limiting rejection
+                self.relay_stats_collector.record_rate_limit(false);
+                // Record error
+                self.relay_stats_collector.record_error("rate_limited");
             } else {
                 self.relay_stats.requests_dropped += 1;
+                // Record error for queue full
+                self.relay_stats_collector.record_error("resource_exhausted");
             }
             false
         }
@@ -529,11 +543,15 @@ impl Endpoint {
                     // Failed to relay, requeue for retry
                     self.relay_queue.requeue_failed(item);
                     self.relay_stats.requests_failed += 1;
+                    // Record connection failure error
+                    self.relay_stats_collector.record_error("connection_failure");
                     failed += 1;
                 }
             } else {
                 // Peer not connected, requeue for later
                 self.relay_queue.requeue_failed(item);
+                // Record peer not found error
+                self.relay_stats_collector.record_error("peer_not_found");
                 failed += 1;
             }
         }
@@ -542,6 +560,10 @@ impl Endpoint {
         let expired = self.relay_queue.cleanup_expired(now);
         if expired > 0 {
             self.relay_stats.requests_timed_out += expired as u64;
+            // Record timeout errors for each expired request
+            for _ in 0..expired {
+                self.relay_stats_collector.record_error("request_timeout");
+            }
             debug!("Cleaned up {} expired relay requests", expired);
         }
 
@@ -560,6 +582,18 @@ impl Endpoint {
     /// Get relay statistics for monitoring
     pub fn relay_stats(&self) -> &RelayStats {
         &self.relay_stats
+    }
+
+    /// Get comprehensive relay statistics for monitoring and analysis
+    pub fn comprehensive_relay_stats(&self) -> crate::relay::RelayStatistics {
+        // Update the collector with current queue stats before collecting
+        self.relay_stats_collector.update_queue_stats(&self.relay_stats);
+        self.relay_stats_collector.collect_statistics()
+    }
+
+    /// Get relay statistics collector for external registration of components
+    pub fn relay_stats_collector(&self) -> &RelayStatisticsCollector {
+        &self.relay_stats_collector
     }
 
     /// Get relay queue length

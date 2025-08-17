@@ -250,7 +250,7 @@ impl SessionManager {
         let (client_addr, bandwidth_limit) = {
             let mut sessions = self.sessions.lock().unwrap();
             let session = sessions.get_mut(&session_id)
-                .ok_or_else(|| RelayError::SessionError {
+                .ok_or(RelayError::SessionError {
                     session_id: Some(session_id),
                     kind: crate::relay::error::SessionErrorKind::NotFound,
                 })?;
@@ -339,7 +339,7 @@ impl SessionManager {
         let connection = {
             let connections = self.connections.lock().unwrap();
             connections.get(&session_id).cloned()
-                .ok_or_else(|| RelayError::SessionError {
+                .ok_or(RelayError::SessionError {
                     session_id: Some(session_id),
                     kind: crate::relay::error::SessionErrorKind::NotFound,
                 })?
