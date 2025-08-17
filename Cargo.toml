@@ -1,6 +1,6 @@
 [package]
 name = "ant-quic"
-version = "0.8.2"
+version = "0.8.3"
 edition = "2024"
 rust-version = "1.85.0"
 license = "MIT OR Apache-2.0"
@@ -58,7 +58,7 @@ __qlog = ["dep:qlog"]
 bloom = []
 
 # Post-Quantum Cryptography support
-pqc = ["aws-lc-rs"]
+pqc = ["saorsa-pqc", "aws-lc-rs"]
 
 # Zero-cost tracing system
 trace = []
@@ -98,6 +98,9 @@ serde_json = "1"
 serde_yaml = "0.9"
 ed25519-dalek = { version = "2.1", features = ["rand_core"] }
 x25519-dalek = { version = "2.0", features = ["static_secrets"] }
+
+# Post-Quantum Cryptography
+saorsa-pqc = { version = "0.2.0", optional = true }
 
 # Data structures
 slab = "0.4.6"

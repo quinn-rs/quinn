@@ -136,6 +136,19 @@ impl MlKemSecretKey {
     pub fn as_bytes(&self) -> &[u8] {
         &self.0[..]
     }
+
+    /// Create from bytes
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, PqcError> {
+        if bytes.len() != ML_KEM_768_SECRET_KEY_SIZE {
+            return Err(PqcError::InvalidKeySize {
+                expected: ML_KEM_768_SECRET_KEY_SIZE,
+                actual: bytes.len(),
+            });
+        }
+        let mut key = Box::new([0u8; ML_KEM_768_SECRET_KEY_SIZE]);
+        key.copy_from_slice(bytes);
+        Ok(Self(key))
+    }
 }
 
 /// ML-KEM-768 ciphertext
@@ -260,6 +273,19 @@ impl SharedSecret {
     /// Get the shared secret as a byte slice
     pub fn as_bytes(&self) -> &[u8] {
         &self.0
+    }
+
+    /// Create from bytes
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, PqcError> {
+        if bytes.len() != ML_KEM_768_SHARED_SECRET_SIZE {
+            return Err(PqcError::InvalidKeySize {
+                expected: ML_KEM_768_SHARED_SECRET_SIZE,
+                actual: bytes.len(),
+            });
+        }
+        let mut secret = [0u8; ML_KEM_768_SHARED_SECRET_SIZE];
+        secret.copy_from_slice(bytes);
+        Ok(Self(secret))
     }
 }
 

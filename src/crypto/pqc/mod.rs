@@ -1,16 +1,19 @@
 //! Post-Quantum Cryptography module for ant-quic
 //!
-//! This module implements NIST-standardized post-quantum algorithms:
-//! - ML-KEM-768 (Module-Lattice-Based Key-Encapsulation Mechanism)
+//! This module implements NIST-standardized post-quantum algorithms using saorsa-pqc:
+//! - ML-KEM-768 (Module-Lattice-Based Key-Encapsulation Mechanism) 
 //! - ML-DSA-65 (Module-Lattice-Based Digital Signature Algorithm)
 //!
 //! The implementation provides hybrid modes combining classical and PQC algorithms
 //! for defense-in-depth against both classical and quantum attacks.
+//!
+//! Uses saorsa-pqc crate for unified PQC implementation instead of direct ml-kem/ml-dsa dependencies.
 
 pub mod benchmarks;
 pub mod cipher_suites;
 pub mod combiners;
 pub mod config;
+pub mod encryption;
 pub mod hybrid;
 pub mod hybrid_key_exchange;
 pub mod memory_pool;
@@ -34,6 +37,7 @@ pub use config::{HybridPreference, PqcConfig, PqcConfigBuilder, PqcMode};
 pub use types::{PqcError, PqcResult};
 
 // PQC algorithm implementations - always available
+pub use encryption::{EncryptedMessage, HybridPublicKeyEncryption};
 pub use hybrid::{HybridKem, HybridSignature};
 pub use memory_pool::{PoolConfig, PqcMemoryPool};
 pub use ml_dsa::MlDsa65;
