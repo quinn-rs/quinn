@@ -9,14 +9,24 @@ description = "QUIC transport protocol with advanced NAT traversal for P2P netwo
 keywords = ["quic", "nat-traversal", "p2p", "autonomi", "networking"]
 categories = ["network-programming", "asynchronous"]
 exclude = [
-    "release-build/",
+    ".github/",
+    ".githooks/",
     ".serena/",
+    ".codecov.yml",
+    ".DS_Store",
+    "*.DS_Store",
+    "release-build/",
     "rfcs/*.pdf",
     "docs/diagrams/",
+    "docs/planning/",
     "target/",
-    ".github/workflows/",
     "scripts/",
     "tests/data/large_files/",
+    "benches/",
+    "examples/chat_demo.rs",
+    "examples/dashboard_demo.rs",
+    "examples/simple_chat.rs",
+    "examples/nat_simulation.rs",
 ]
 
 [features]
