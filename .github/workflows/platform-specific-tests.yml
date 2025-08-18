@@ -24,7 +24,7 @@ jobs:
   windows-tests:
     strategy:
       matrix:
-        os: [windows-2019, windows-2022, windows-latest]
+        os: [windows-2022, windows-latest]
         rust: [stable, 1.85.0]
     runs-on: ${{ matrix.os }}
     steps:
@@ -145,8 +145,6 @@ jobs:
     strategy:
       matrix:
         include:
-          - os: macos-11
-            rust: stable
           - os: macos-12
             rust: stable
           - os: macos-13
