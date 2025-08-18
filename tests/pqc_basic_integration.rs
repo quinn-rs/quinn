@@ -17,7 +17,7 @@ fn test_pqc_config_builder() {
         .expect("Failed to build default config");
 
     assert_eq!(config.mode, PqcMode::Hybrid);
-    assert_eq!(config.hybrid_preference, HybridPreference::Balanced);
+    assert_eq!(config.hybrid_preference, HybridPreference::PreferPqc);
     assert!(config.ml_kem_enabled);
     assert!(config.ml_dsa_enabled);
 

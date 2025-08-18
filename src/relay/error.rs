@@ -9,14 +9,10 @@ pub type RelayResult<T> = Result<T, RelayError>;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RelayError {
     /// Authentication failed due to invalid token or signature
-    AuthenticationFailed {
-        reason: String,
-    },
+    AuthenticationFailed { reason: String },
 
     /// Rate limiting triggered - too many requests
-    RateLimitExceeded {
-        retry_after_ms: u64,
-    },
+    RateLimitExceeded { retry_after_ms: u64 },
 
     /// Session-related errors
     SessionError {
@@ -25,16 +21,10 @@ pub enum RelayError {
     },
 
     /// Network connectivity issues
-    NetworkError {
-        operation: String,
-        source: String,
-    },
+    NetworkError { operation: String, source: String },
 
     /// Protocol-level errors
-    ProtocolError {
-        frame_type: u8,
-        reason: String,
-    },
+    ProtocolError { frame_type: u8, reason: String },
 
     /// Resource exhaustion (memory, bandwidth, etc.)
     ResourceExhausted {
@@ -44,10 +34,7 @@ pub enum RelayError {
     },
 
     /// Configuration or setup errors
-    ConfigurationError {
-        parameter: String,
-        reason: String,
-    },
+    ConfigurationError { parameter: String, reason: String },
 }
 
 /// Specific session error types
@@ -67,10 +54,7 @@ pub enum SessionErrorKind {
         expected_state: String,
     },
     /// Bandwidth limit exceeded for session
-    BandwidthExceeded {
-        used: u64,
-        limit: u64,
-    },
+    BandwidthExceeded { used: u64, limit: u64 },
 }
 
 impl fmt::Display for RelayError {
@@ -82,17 +66,19 @@ impl fmt::Display for RelayError {
             RelayError::RateLimitExceeded { retry_after_ms } => {
                 write!(f, "Rate limit exceeded, retry after {} ms", retry_after_ms)
             }
-            RelayError::SessionError { session_id, kind } => {
-                match session_id {
-                    Some(id) => write!(f, "Session {} error: {}", id, kind),
-                    None => write!(f, "Session error: {}", kind),
-                }
-            }
+            RelayError::SessionError { session_id, kind } => match session_id {
+                Some(id) => write!(f, "Session {} error: {}", id, kind),
+                None => write!(f, "Session error: {}", kind),
+            },
             RelayError::NetworkError { operation, source } => {
                 write!(f, "Network error during {}: {}", operation, source)
             }
             RelayError::ProtocolError { frame_type, reason } => {
-                write!(f, "Protocol error in frame 0x{:02x}: {}", frame_type, reason)
+                write!(
+                    f,
+                    "Protocol error in frame 0x{:02x}: {}",
+                    frame_type, reason
+                )
             }
             RelayError::ResourceExhausted {
                 resource_type,
@@ -158,7 +144,9 @@ mod tests {
         };
         assert!(auth_error.to_string().contains("Authentication failed"));
 
-        let rate_limit_error = RelayError::RateLimitExceeded { retry_after_ms: 1000 };
+        let rate_limit_error = RelayError::RateLimitExceeded {
+            retry_after_ms: 1000,
+        };
         assert!(rate_limit_error.to_string().contains("Rate limit exceeded"));
 
         let session_error = RelayError::SessionError {
@@ -181,9 +169,10 @@ mod tests {
 
     #[test]
     fn test_error_conversion() {
-        let io_error = std::io::Error::new(std::io::ErrorKind::ConnectionRefused, "Connection refused");
+        let io_error =
+            std::io::Error::new(std::io::ErrorKind::ConnectionRefused, "Connection refused");
         let relay_error: RelayError = io_error.into();
-        
+
         match relay_error {
             RelayError::NetworkError { operation, source } => {
                 assert_eq!(operation, "I/O operation");

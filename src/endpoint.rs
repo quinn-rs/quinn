@@ -30,11 +30,11 @@ use crate::{
         FixedLengthConnectionIdParser, Header, InitialHeader, InitialPacket, PacketDecodeError,
         PacketNumber, PartialDecode, ProtectedInitialHeader,
     },
+    relay::RelayStatisticsCollector,
     shared::{
         ConnectionEvent, ConnectionEventInner, ConnectionId, DatagramConnectionEvent, EcnCodepoint,
         EndpointEvent, EndpointEventInner, IssuedCid,
     },
-    relay::RelayStatisticsCollector,
     token::{IncomingToken, InvalidRetryTokenError, Token, TokenPayload},
     transport_parameters::{PreferredAddress, TransportParameters},
 };
@@ -437,7 +437,8 @@ impl Endpoint {
             } else {
                 self.relay_stats.requests_dropped += 1;
                 // Record error for queue full
-                self.relay_stats_collector.record_error("resource_exhausted");
+                self.relay_stats_collector
+                    .record_error("resource_exhausted");
             }
             false
         }
@@ -544,7 +545,8 @@ impl Endpoint {
                     self.relay_queue.requeue_failed(item);
                     self.relay_stats.requests_failed += 1;
                     // Record connection failure error
-                    self.relay_stats_collector.record_error("connection_failure");
+                    self.relay_stats_collector
+                        .record_error("connection_failure");
                     failed += 1;
                 }
             } else {
@@ -587,7 +589,8 @@ impl Endpoint {
     /// Get comprehensive relay statistics for monitoring and analysis
     pub fn comprehensive_relay_stats(&self) -> crate::relay::RelayStatistics {
         // Update the collector with current queue stats before collecting
-        self.relay_stats_collector.update_queue_stats(&self.relay_stats);
+        self.relay_stats_collector
+            .update_queue_stats(&self.relay_stats);
         self.relay_stats_collector.collect_statistics()
     }
 

@@ -63,9 +63,9 @@ impl HybridKem {
 
         // Generate X25519 keypair using proper elliptic curve operations
         let mut rng_bytes = [0u8; 32];
-        self.rng.fill(&mut rng_bytes).map_err(|_| {
-            PqcError::KeyGenerationFailed("Random generation failed".to_string())
-        })?;
+        self.rng
+            .fill(&mut rng_bytes)
+            .map_err(|_| PqcError::KeyGenerationFailed("Random generation failed".to_string()))?;
 
         let secret = StaticSecret::from(rng_bytes);
         let public = X25519PublicKey::from(&secret);
@@ -99,9 +99,9 @@ impl HybridKem {
         // We use StaticSecret for ephemeral key since x25519-dalek's EphemeralSecret
         // doesn't allow creation from bytes
         let mut rng_bytes = [0u8; 32];
-        self.rng.fill(&mut rng_bytes).map_err(|_| {
-            PqcError::KeyGenerationFailed("Random generation failed".to_string())
-        })?;
+        self.rng
+            .fill(&mut rng_bytes)
+            .map_err(|_| PqcError::KeyGenerationFailed("Random generation failed".to_string()))?;
         let ephemeral_secret = StaticSecret::from(rng_bytes);
         let ephemeral_public = X25519PublicKey::from(&ephemeral_secret);
 
@@ -162,14 +162,15 @@ impl HybridKem {
         let static_secret = StaticSecret::from(secret_key_bytes);
 
         // Parse ephemeral public key from ciphertext
-        let ephemeral_public_bytes: [u8; 32] = ciphertext
-            .classical
-            .as_ref()
-            .try_into()
-            .map_err(|_| PqcError::InvalidKeySize {
-                expected: 32,
-                actual: ciphertext.classical.len(),
-            })?;
+        let ephemeral_public_bytes: [u8; 32] =
+            ciphertext
+                .classical
+                .as_ref()
+                .try_into()
+                .map_err(|_| PqcError::InvalidKeySize {
+                    expected: 32,
+                    actual: ciphertext.classical.len(),
+                })?;
         let ephemeral_public = X25519PublicKey::from(ephemeral_public_bytes);
 
         // Perform X25519 key agreement
@@ -239,13 +240,10 @@ impl HybridSignature {
 
         // Generate Ed25519 keypair
         let pkcs8_bytes = signature::Ed25519KeyPair::generate_pkcs8(self.rng.as_ref())
-            .map_err(|_| {
-                PqcError::KeyGenerationFailed("Ed25519 generation failed".to_string())
-            })?;
+            .map_err(|_| PqcError::KeyGenerationFailed("Ed25519 generation failed".to_string()))?;
 
-        let key_pair = Ed25519KeyPair::from_pkcs8(pkcs8_bytes.as_ref()).map_err(|_| {
-            PqcError::KeyGenerationFailed("Ed25519 from PKCS8 failed".to_string())
-        })?;
+        let key_pair = Ed25519KeyPair::from_pkcs8(pkcs8_bytes.as_ref())
+            .map_err(|_| PqcError::KeyGenerationFailed("Ed25519 from PKCS8 failed".to_string()))?;
 
         let classical_pub = key_pair.public_key().as_ref().to_vec().into_boxed_slice();
         let classical_sec = pkcs8_bytes.as_ref().to_vec().into_boxed_slice();

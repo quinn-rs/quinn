@@ -863,7 +863,9 @@ impl QuicP2PNode {
     }
 
     /// Get the metrics collector for Prometheus export
-    pub fn get_metrics_collector(&self) -> Result<Arc<crate::logging::MetricsCollector>, &'static str> {
+    pub fn get_metrics_collector(
+        &self,
+    ) -> Result<Arc<crate::logging::MetricsCollector>, &'static str> {
         // For now, create a new metrics collector
         // In a full implementation, this would be a field in the struct
         // and properly wired up to collect actual metrics

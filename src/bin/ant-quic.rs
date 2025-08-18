@@ -204,13 +204,14 @@ impl QuicDemoNode {
                 bind_address: args.metrics_bind,
                 update_interval: Duration::from_secs(30),
             };
-            
-            info!("Metrics export enabled on {}:{}", args.metrics_bind, args.metrics_port);
-            
+
+            info!(
+                "Metrics export enabled on {}:{}",
+                args.metrics_bind, args.metrics_port
+            );
+
             // We'll initialize this later after the node is created
-            Some(Arc::new(Mutex::new(
-                MetricsServer::new(metrics_config)
-            )))
+            Some(Arc::new(Mutex::new(MetricsServer::new(metrics_config))))
         } else {
             None
         };
@@ -253,14 +254,16 @@ impl QuicDemoNode {
             if let Ok(collector) = self.quic_node.get_metrics_collector() {
                 let exporter = Arc::new(
                     PrometheusExporter::new(collector)
-                        .map_err(|e| format!("Failed to create Prometheus exporter: {}", e))?
+                        .map_err(|e| format!("Failed to create Prometheus exporter: {}", e))?,
                 );
-                
+
                 let mut metrics_server = metrics_server_arc.lock().await;
                 metrics_server.set_exporter(exporter).await;
-                metrics_server.start().await
+                metrics_server
+                    .start()
+                    .await
                     .map_err(|e| format!("Failed to start metrics server: {}", e))?;
-                    
+
                 info!("Metrics server started successfully");
             } else {
                 warn!("Failed to get metrics collector from QUIC node, metrics server not started");

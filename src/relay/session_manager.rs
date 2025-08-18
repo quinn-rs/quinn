@@ -1,8 +1,7 @@
 //! Session management for relay connections with complete state machine.
 
 use crate::relay::{
-    RelayConnection, RelayConnectionConfig, RelayError, RelayResult,
-    AuthToken, RelayAuthenticator,
+    AuthToken, RelayAuthenticator, RelayConnection, RelayConnectionConfig, RelayError, RelayResult,
 };
 use ed25519_dalek::VerifyingKey;
 use std::collections::HashMap;
@@ -33,7 +32,7 @@ impl Default for SessionConfig {
             max_sessions: 100,
             default_timeout: Duration::from_secs(300), // 5 minutes
             cleanup_interval: Duration::from_secs(30), // 30 seconds
-            default_bandwidth_limit: 1048576, // 1 MB/s
+            default_bandwidth_limit: 1048576,          // 1 MB/s
         }
     }
 }
@@ -144,7 +143,7 @@ impl SessionManager {
     /// Create a new session manager
     pub fn new(config: SessionConfig) -> (Self, mpsc::UnboundedReceiver<SessionEvent>) {
         let (event_sender, event_receiver) = mpsc::unbounded_channel();
-        
+
         let manager = Self {
             config,
             sessions: Arc::new(Mutex::new(HashMap::new())),
@@ -155,7 +154,7 @@ impl SessionManager {
             event_sender,
             last_cleanup: Arc::new(Mutex::new(Instant::now())),
         };
-        
+
         (manager, event_receiver)
     }
 
@@ -203,10 +202,12 @@ impl SessionManager {
 
         // Verify authentication token
         let trusted_keys = self.trusted_keys.lock().unwrap();
-        let peer_key = trusted_keys.get(&client_addr)
-            .ok_or_else(|| RelayError::AuthenticationFailed {
-                reason: format!("No trusted key for address {}", client_addr),
-            })?;
+        let peer_key =
+            trusted_keys
+                .get(&client_addr)
+                .ok_or_else(|| RelayError::AuthenticationFailed {
+                    reason: format!("No trusted key for address {}", client_addr),
+                })?;
 
         self.authenticator.verify_token(&auth_token, peer_key)?;
 
@@ -249,7 +250,8 @@ impl SessionManager {
     pub fn establish_session(&self, session_id: SessionId) -> RelayResult<()> {
         let (client_addr, bandwidth_limit) = {
             let mut sessions = self.sessions.lock().unwrap();
-            let session = sessions.get_mut(&session_id)
+            let session = sessions
+                .get_mut(&session_id)
                 .ok_or(RelayError::SessionError {
                     session_id: Some(session_id),
                     kind: crate::relay::error::SessionErrorKind::NotFound,
@@ -267,17 +269,17 @@ impl SessionManager {
 
             session.state = SessionState::Active;
             session.last_activity = Instant::now();
-            
+
             (session.client_addr, session.bandwidth_limit)
         };
 
         // Create relay connection
         let (event_tx, _event_rx) = mpsc::unbounded_channel();
         let (_action_tx, action_rx) = mpsc::unbounded_channel();
-        
+
         let mut connection_config = RelayConnectionConfig::default();
         connection_config.bandwidth_limit = bandwidth_limit;
-        
+
         let connection = RelayConnection::new(
             session_id,
             client_addr,
@@ -321,10 +323,9 @@ impl SessionManager {
         }
 
         // Send event
-        let _ = self.event_sender.send(SessionEvent::SessionTerminated {
-            session_id,
-            reason,
-        });
+        let _ = self
+            .event_sender
+            .send(SessionEvent::SessionTerminated { session_id, reason });
 
         Ok(())
     }
@@ -338,7 +339,9 @@ impl SessionManager {
     ) -> RelayResult<()> {
         let connection = {
             let connections = self.connections.lock().unwrap();
-            connections.get(&session_id).cloned()
+            connections
+                .get(&session_id)
+                .cloned()
                 .ok_or(RelayError::SessionError {
                     session_id: Some(session_id),
                     kind: crate::relay::error::SessionErrorKind::NotFound,
@@ -403,17 +406,17 @@ impl SessionManager {
     pub fn cleanup_expired_sessions(&self) -> RelayResult<usize> {
         let mut last_cleanup = self.last_cleanup.lock().unwrap();
         let now = Instant::now();
-        
+
         // Only cleanup if enough time has passed
         if now.duration_since(*last_cleanup) < self.config.cleanup_interval {
             return Ok(0);
         }
-        
+
         *last_cleanup = now;
         drop(last_cleanup);
 
         let mut expired_sessions = Vec::new();
-        
+
         // Find expired sessions
         {
             let sessions = self.sessions.lock().unwrap();
@@ -429,7 +432,7 @@ impl SessionManager {
         let cleanup_count = expired_sessions.len();
         for session_id in expired_sessions {
             let _ = self.terminate_session(session_id, "Session expired".to_string());
-            
+
             // Remove from sessions map
             let mut sessions = self.sessions.lock().unwrap();
             sessions.remove(&session_id);
@@ -442,12 +445,12 @@ impl SessionManager {
     pub fn get_statistics(&self) -> SessionManagerStats {
         let sessions = self.sessions.lock().unwrap();
         let connections = self.connections.lock().unwrap();
-        
+
         let mut active_count = 0;
         let mut pending_count = 0;
         let mut total_bytes_sent = 0;
         let mut total_bytes_received = 0;
-        
+
         for session in sessions.values() {
             match session.state {
                 SessionState::Active => active_count += 1,
@@ -457,7 +460,7 @@ impl SessionManager {
             total_bytes_sent += session.bytes_sent;
             total_bytes_received += session.bytes_received;
         }
-        
+
         SessionManagerStats {
             total_sessions: sessions.len(),
             active_sessions: active_count,
@@ -496,7 +499,7 @@ mod tests {
     fn test_session_manager_creation() {
         let config = SessionConfig::default();
         let (manager, _event_rx) = SessionManager::new(config);
-        
+
         let stats = manager.get_statistics();
         assert_eq!(stats.total_sessions, 0);
         assert_eq!(stats.active_sessions, 0);
@@ -506,21 +509,21 @@ mod tests {
     fn test_trusted_key_management() {
         let config = SessionConfig::default();
         let (manager, _event_rx) = SessionManager::new(config);
-        
+
         let signing_key = SigningKey::generate(&mut OsRng);
         let verifying_key = signing_key.verifying_key();
         let addr = test_addr();
-        
+
         manager.add_trusted_key(addr, verifying_key);
-        
+
         // Should be able to create a session with trusted key
         let auth_token = AuthToken::new(1024, 300, &signing_key).unwrap();
         let result = manager.request_session(addr, vec![1, 2, 3], auth_token);
         assert!(result.is_ok());
-        
+
         // Remove trusted key
         manager.remove_trusted_key(&addr);
-        
+
         // Should fail without trusted key
         let auth_token2 = AuthToken::new(1024, 300, &signing_key).unwrap();
         let result2 = manager.request_session(addr, vec![4, 5, 6], auth_token2);
@@ -531,25 +534,27 @@ mod tests {
     fn test_session_request_and_establishment() {
         let config = SessionConfig::default();
         let (manager, mut event_rx) = SessionManager::new(config);
-        
+
         let signing_key = SigningKey::generate(&mut OsRng);
         let verifying_key = signing_key.verifying_key();
         let addr = test_addr();
-        
+
         manager.add_trusted_key(addr, verifying_key);
-        
+
         // Request session
         let auth_token = AuthToken::new(1024, 300, &signing_key).unwrap();
-        let session_id = manager.request_session(addr, vec![1, 2, 3], auth_token).unwrap();
-        
+        let session_id = manager
+            .request_session(addr, vec![1, 2, 3], auth_token)
+            .unwrap();
+
         // Check session exists and is pending
         let session = manager.get_session(session_id).unwrap();
         assert_eq!(session.state, SessionState::Pending);
         assert_eq!(session.client_addr, addr);
-        
+
         // Establish session
         assert!(manager.establish_session(session_id).is_ok());
-        
+
         // Check session is now active
         let session = manager.get_session(session_id).unwrap();
         assert_eq!(session.state, SessionState::Active);
@@ -560,20 +565,20 @@ mod tests {
         let mut config = SessionConfig::default();
         config.max_sessions = 2;
         let (manager, _event_rx) = SessionManager::new(config);
-        
+
         let signing_key = SigningKey::generate(&mut OsRng);
         let verifying_key = signing_key.verifying_key();
         let addr = test_addr();
-        
+
         manager.add_trusted_key(addr, verifying_key);
-        
+
         // Create maximum sessions
         for i in 0..2 {
             let auth_token = AuthToken::new(1024, 300, &signing_key).unwrap();
             let result = manager.request_session(addr, vec![i], auth_token);
             assert!(result.is_ok());
         }
-        
+
         // Third session should fail
         let auth_token = AuthToken::new(1024, 300, &signing_key).unwrap();
         let result = manager.request_session(addr, vec![3], auth_token);
@@ -584,22 +589,24 @@ mod tests {
     fn test_session_termination() {
         let config = SessionConfig::default();
         let (manager, mut event_rx) = SessionManager::new(config);
-        
+
         let signing_key = SigningKey::generate(&mut OsRng);
         let verifying_key = signing_key.verifying_key();
         let addr = test_addr();
-        
+
         manager.add_trusted_key(addr, verifying_key);
-        
+
         // Create and establish session
         let auth_token = AuthToken::new(1024, 300, &signing_key).unwrap();
-        let session_id = manager.request_session(addr, vec![1, 2, 3], auth_token).unwrap();
+        let session_id = manager
+            .request_session(addr, vec![1, 2, 3], auth_token)
+            .unwrap();
         manager.establish_session(session_id).unwrap();
-        
+
         // Terminate session
         let reason = "Test termination".to_string();
         assert!(manager.terminate_session(session_id, reason).is_ok());
-        
+
         // Check session is terminated
         let session = manager.get_session(session_id).unwrap();
         assert_eq!(session.state, SessionState::Terminated);
@@ -609,23 +616,33 @@ mod tests {
     fn test_data_forwarding() {
         let config = SessionConfig::default();
         let (manager, _event_rx) = SessionManager::new(config);
-        
+
         let signing_key = SigningKey::generate(&mut OsRng);
         let verifying_key = signing_key.verifying_key();
         let addr = test_addr();
-        
+
         manager.add_trusted_key(addr, verifying_key);
-        
+
         // Create and establish session
         let auth_token = AuthToken::new(1024, 300, &signing_key).unwrap();
-        let session_id = manager.request_session(addr, vec![1, 2, 3], auth_token).unwrap();
+        let session_id = manager
+            .request_session(addr, vec![1, 2, 3], auth_token)
+            .unwrap();
         manager.establish_session(session_id).unwrap();
-        
+
         // Forward data
         let data = vec![1, 2, 3, 4, 5];
-        assert!(manager.forward_data(session_id, data.clone(), ForwardDirection::ClientToPeer).is_ok());
-        assert!(manager.forward_data(session_id, data, ForwardDirection::PeerToClient).is_ok());
-        
+        assert!(
+            manager
+                .forward_data(session_id, data.clone(), ForwardDirection::ClientToPeer)
+                .is_ok()
+        );
+        assert!(
+            manager
+                .forward_data(session_id, data, ForwardDirection::PeerToClient)
+                .is_ok()
+        );
+
         // Check statistics updated
         let session = manager.get_session(session_id).unwrap();
         assert_eq!(session.bytes_sent, 5);
@@ -637,22 +654,24 @@ mod tests {
         let mut config = SessionConfig::default();
         config.cleanup_interval = Duration::from_millis(1);
         let (manager, _event_rx) = SessionManager::new(config);
-        
+
         let signing_key = SigningKey::generate(&mut OsRng);
         let verifying_key = signing_key.verifying_key();
         let addr = test_addr();
-        
+
         manager.add_trusted_key(addr, verifying_key);
-        
+
         // Create session with very short timeout
         let mut auth_token = AuthToken::new(1024, 1, &signing_key).unwrap(); // 1 second timeout
-        let session_id = manager.request_session(addr, vec![1, 2, 3], auth_token).unwrap();
-        
+        let session_id = manager
+            .request_session(addr, vec![1, 2, 3], auth_token)
+            .unwrap();
+
         assert_eq!(manager.session_count(), 1);
-        
+
         // Wait for session to expire
         std::thread::sleep(Duration::from_millis(2));
-        
+
         // Cleanup should remove expired session
         let cleanup_count = manager.cleanup_expired_sessions().unwrap();
         assert!(cleanup_count > 0);
@@ -662,13 +681,13 @@ mod tests {
     fn test_session_id_generation() {
         let config = SessionConfig::default();
         let (manager, _event_rx) = SessionManager::new(config);
-        
+
         let signing_key = SigningKey::generate(&mut OsRng);
         let verifying_key = signing_key.verifying_key();
         let addr = test_addr();
-        
+
         manager.add_trusted_key(addr, verifying_key);
-        
+
         // Generate multiple session IDs
         let mut session_ids = Vec::new();
         for i in 0..10 {
@@ -676,12 +695,12 @@ mod tests {
             let session_id = manager.request_session(addr, vec![i], auth_token).unwrap();
             session_ids.push(session_id);
         }
-        
+
         // All IDs should be unique and non-zero
         for id in &session_ids {
             assert!(*id != 0);
         }
-        
+
         let mut unique_ids: std::collections::HashSet<_> = session_ids.iter().collect();
         assert_eq!(unique_ids.len(), session_ids.len());
     }

@@ -46,7 +46,7 @@ impl AuthToken {
     ) -> RelayResult<Self> {
         let nonce = Self::generate_nonce();
         let timestamp = Self::current_timestamp()?;
-        
+
         let mut token = Self {
             nonce,
             timestamp,
@@ -54,11 +54,11 @@ impl AuthToken {
             timeout_seconds,
             signature: [0; 64],
         };
-        
+
         // Sign the token
         let signature_bytes = signing_key.sign(&token.signable_data()).to_bytes();
         token.signature = signature_bytes;
-        
+
         Ok(token)
     }
 
@@ -111,7 +111,7 @@ impl RelayAuthenticator {
     pub fn new() -> Self {
         let signing_key = SigningKey::generate(&mut OsRng);
         let verifying_key = signing_key.verifying_key();
-        
+
         Self {
             signing_key,
             verifying_key,
@@ -124,7 +124,7 @@ impl RelayAuthenticator {
     /// Create an authenticator with a specific signing key
     pub fn with_key(signing_key: SigningKey) -> Self {
         let verifying_key = signing_key.verifying_key();
-        
+
         Self {
             signing_key,
             verifying_key,
@@ -166,7 +166,7 @@ impl RelayAuthenticator {
 
         // Check for replay attack
         let mut used_nonces = self.used_nonces.lock().unwrap();
-        
+
         if used_nonces.contains(&token.nonce) {
             return Err(RelayError::AuthenticationFailed {
                 reason: "Token replay detected".to_string(),
@@ -181,9 +181,9 @@ impl RelayAuthenticator {
                 used_nonces.remove(&nonce);
             }
         }
-        
+
         used_nonces.insert(token.nonce);
-        
+
         Ok(())
     }
 
@@ -221,12 +221,12 @@ mod tests {
     fn test_auth_token_creation_and_verification() {
         let authenticator = RelayAuthenticator::new();
         let token = authenticator.create_token(1024, 300).unwrap();
-        
+
         assert!(token.bandwidth_limit == 1024);
         assert!(token.timeout_seconds == 300);
         assert!(token.nonce != 0);
         assert!(token.timestamp > 0);
-        
+
         // Verify token
         assert!(token.verify(authenticator.verifying_key()).is_ok());
     }
@@ -235,9 +235,9 @@ mod tests {
     fn test_token_verification_with_wrong_key() {
         let authenticator1 = RelayAuthenticator::new();
         let authenticator2 = RelayAuthenticator::new();
-        
+
         let token = authenticator1.create_token(1024, 300).unwrap();
-        
+
         // Should fail with wrong key
         assert!(token.verify(authenticator2.verifying_key()).is_err());
     }
@@ -246,15 +246,15 @@ mod tests {
     fn test_token_expiration() {
         let mut authenticator = RelayAuthenticator::new();
         authenticator.set_max_token_age(1); // 1 second
-        
+
         let token = authenticator.create_token(1024, 300).unwrap();
-        
+
         // Should not be expired immediately
         assert!(!token.is_expired(1).unwrap());
-        
+
         // Wait for expiration
         thread::sleep(Duration::from_millis(1100));
-        
+
         // Should be expired now
         assert!(token.is_expired(1).unwrap());
     }
@@ -263,19 +263,27 @@ mod tests {
     fn test_anti_replay_protection() {
         let authenticator = RelayAuthenticator::new();
         let token = authenticator.create_token(1024, 300).unwrap();
-        
+
         // First verification should succeed
-        assert!(authenticator.verify_token(&token, authenticator.verifying_key()).is_ok());
-        
+        assert!(
+            authenticator
+                .verify_token(&token, authenticator.verifying_key())
+                .is_ok()
+        );
+
         // Second verification should fail (replay)
-        assert!(authenticator.verify_token(&token, authenticator.verifying_key()).is_err());
+        assert!(
+            authenticator
+                .verify_token(&token, authenticator.verifying_key())
+                .is_err()
+        );
     }
 
     #[test]
     fn test_nonce_uniqueness() {
         let authenticator = RelayAuthenticator::new();
         let mut nonces = HashSet::new();
-        
+
         // Generate many tokens and check nonce uniqueness
         for _ in 0..1000 {
             let token = authenticator.create_token(1024, 300).unwrap();
@@ -289,7 +297,7 @@ mod tests {
         let authenticator = RelayAuthenticator::new();
         let token1 = authenticator.create_token(1024, 300).unwrap();
         let token2 = authenticator.create_token(1024, 300).unwrap();
-        
+
         // Different tokens should have different signable data (due to nonce/timestamp)
         assert_ne!(token1.signable_data(), token2.signable_data());
     }
@@ -297,19 +305,19 @@ mod tests {
     #[test]
     fn test_nonce_window_management() {
         let authenticator = RelayAuthenticator::new();
-        
+
         // Fill up the nonce window
         for _ in 0..1000 {
             let token = authenticator.create_token(1024, 300).unwrap();
             let _ = authenticator.verify_token(&token, authenticator.verifying_key());
         }
-        
+
         assert_eq!(authenticator.nonce_count(), 1000);
-        
+
         // Add one more token (should trigger cleanup)
         let token = authenticator.create_token(1024, 300).unwrap();
         let _ = authenticator.verify_token(&token, authenticator.verifying_key());
-        
+
         // Window should be maintained at reasonable size
         assert!(authenticator.nonce_count() <= 1000);
     }
@@ -318,24 +326,28 @@ mod tests {
     fn test_clear_nonces() {
         let authenticator = RelayAuthenticator::new();
         let token = authenticator.create_token(1024, 300).unwrap();
-        
+
         // Use token
         let _ = authenticator.verify_token(&token, authenticator.verifying_key());
         assert!(authenticator.nonce_count() > 0);
-        
+
         // Clear nonces
         authenticator.clear_nonces();
         assert_eq!(authenticator.nonce_count(), 0);
-        
+
         // Should be able to use the same token again
-        assert!(authenticator.verify_token(&token, authenticator.verifying_key()).is_ok());
+        assert!(
+            authenticator
+                .verify_token(&token, authenticator.verifying_key())
+                .is_ok()
+        );
     }
 
     #[test]
     fn test_with_specific_key() {
         let signing_key = SigningKey::generate(&mut OsRng);
         let authenticator = RelayAuthenticator::with_key(signing_key);
-        
+
         let token = authenticator.create_token(1024, 300).unwrap();
         assert!(token.verify(authenticator.verifying_key()).is_ok());
     }

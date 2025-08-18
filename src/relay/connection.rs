@@ -25,11 +25,11 @@ pub struct RelayConnectionConfig {
 impl Default for RelayConnectionConfig {
     fn default() -> Self {
         Self {
-            max_frame_size: 65536,     // 64 KB
-            buffer_size: 1048576,      // 1 MB
+            max_frame_size: 65536,                        // 64 KB
+            buffer_size: 1048576,                         // 1 MB
             connection_timeout: Duration::from_secs(300), // 5 minutes
             keep_alive_interval: Duration::from_secs(30), // 30 seconds
-            bandwidth_limit: 1048576,  // 1 MB/s
+            bandwidth_limit: 1048576,                     // 1 MB/s
         }
     }
 }
@@ -43,15 +43,9 @@ pub enum RelayEvent {
         peer_addr: SocketAddr,
     },
     /// Data received from peer
-    DataReceived {
-        session_id: u32,
-        data: Vec<u8>,
-    },
+    DataReceived { session_id: u32, data: Vec<u8> },
     /// Connection terminated
-    ConnectionTerminated {
-        session_id: u32,
-        reason: String,
-    },
+    ConnectionTerminated { session_id: u32, reason: String },
     /// Error occurred during relay operation
     Error {
         session_id: Option<u32>,
@@ -64,33 +58,20 @@ pub enum RelayEvent {
         limit: u64,
     },
     /// Keep-alive signal
-    KeepAlive {
-        session_id: u32,
-    },
+    KeepAlive { session_id: u32 },
 }
 
 /// Actions that can be taken in response to relay events
 #[derive(Debug, Clone)]
 pub enum RelayAction {
     /// Send data to peer
-    SendData {
-        session_id: u32,
-        data: Vec<u8>,
-    },
+    SendData { session_id: u32, data: Vec<u8> },
     /// Terminate connection
-    TerminateConnection {
-        session_id: u32,
-        reason: String,
-    },
+    TerminateConnection { session_id: u32, reason: String },
     /// Update bandwidth limit
-    UpdateBandwidthLimit {
-        session_id: u32,
-        new_limit: u64,
-    },
+    UpdateBandwidthLimit { session_id: u32, new_limit: u64 },
     /// Send keep-alive
-    SendKeepAlive {
-        session_id: u32,
-    },
+    SendKeepAlive { session_id: u32 },
 }
 
 /// Relay connection for bidirectional data forwarding
@@ -236,12 +217,16 @@ impl RelayConnection {
         if data.len() > self.config.max_frame_size {
             return Err(RelayError::ProtocolError {
                 frame_type: 0x46, // RELAY_DATA
-                reason: format!("Data size {} exceeds maximum {}", data.len(), self.config.max_frame_size),
+                reason: format!(
+                    "Data size {} exceeds maximum {}",
+                    data.len(),
+                    self.config.max_frame_size
+                ),
             });
         }
 
         let mut state = self.state.lock().unwrap();
-        
+
         if !state.is_active {
             return Err(RelayError::SessionError {
                 session_id: Some(self.session_id),
@@ -288,7 +273,7 @@ impl RelayConnection {
     /// Receive data from the relay
     pub fn receive_data(&self, data: Vec<u8>) -> RelayResult<()> {
         let mut state = self.state.lock().unwrap();
-        
+
         if !state.is_active {
             return Err(RelayError::SessionError {
                 session_id: Some(self.session_id),
@@ -346,14 +331,14 @@ impl RelayConnection {
     pub fn check_timeout(&self) -> RelayResult<()> {
         let state = self.state.lock().unwrap();
         let now = Instant::now();
-        
+
         if now.duration_since(state.last_activity) > self.config.connection_timeout {
             return Err(RelayError::SessionError {
                 session_id: Some(self.session_id),
                 kind: crate::relay::error::SessionErrorKind::Expired,
             });
         }
-        
+
         Ok(())
     }
 
@@ -367,11 +352,11 @@ impl RelayConnection {
     pub fn send_keep_alive(&self) -> RelayResult<()> {
         let mut state = self.state.lock().unwrap();
         state.next_keep_alive = Instant::now() + self.config.keep_alive_interval;
-        
+
         let _ = self.event_sender.send(RelayEvent::KeepAlive {
             session_id: self.session_id,
         });
-        
+
         Ok(())
     }
 
@@ -379,12 +364,12 @@ impl RelayConnection {
     pub fn terminate(&self, reason: String) -> RelayResult<()> {
         let mut state = self.state.lock().unwrap();
         state.is_active = false;
-        
+
         let _ = self.event_sender.send(RelayEvent::ConnectionTerminated {
             session_id: self.session_id,
             reason: reason.clone(),
         });
-        
+
         Ok(())
     }
 
@@ -433,7 +418,7 @@ mod tests {
     fn test_relay_connection_creation() {
         let (event_tx, _event_rx) = mpsc::unbounded_channel();
         let (_action_tx, action_rx) = mpsc::unbounded_channel();
-        
+
         let connection = RelayConnection::new(
             123,
             test_addr(),
@@ -441,7 +426,7 @@ mod tests {
             event_tx,
             action_rx,
         );
-        
+
         assert_eq!(connection.session_id(), 123);
         assert_eq!(connection.peer_addr(), test_addr());
         assert!(connection.is_active());
@@ -451,7 +436,7 @@ mod tests {
     fn test_send_data_within_limits() {
         let (event_tx, mut event_rx) = mpsc::unbounded_channel();
         let (_action_tx, action_rx) = mpsc::unbounded_channel();
-        
+
         let connection = RelayConnection::new(
             123,
             test_addr(),
@@ -459,10 +444,10 @@ mod tests {
             event_tx,
             action_rx,
         );
-        
+
         let data = vec![1, 2, 3, 4];
         assert!(connection.send_data(data.clone()).is_ok());
-        
+
         // Check that data is queued
         assert_eq!(connection.next_outgoing(), Some(data));
     }
@@ -471,18 +456,12 @@ mod tests {
     fn test_send_data_exceeds_frame_size() {
         let (event_tx, _event_rx) = mpsc::unbounded_channel();
         let (_action_tx, action_rx) = mpsc::unbounded_channel();
-        
+
         let mut config = RelayConnectionConfig::default();
         config.max_frame_size = 10;
-        
-        let connection = RelayConnection::new(
-            123,
-            test_addr(),
-            config,
-            event_tx,
-            action_rx,
-        );
-        
+
+        let connection = RelayConnection::new(123, test_addr(), config, event_tx, action_rx);
+
         let large_data = vec![0; 20];
         assert!(connection.send_data(large_data).is_err());
     }
@@ -491,21 +470,15 @@ mod tests {
     fn test_bandwidth_limiting() {
         let (event_tx, _event_rx) = mpsc::unbounded_channel();
         let (_action_tx, action_rx) = mpsc::unbounded_channel();
-        
+
         let mut config = RelayConnectionConfig::default();
         config.bandwidth_limit = 100; // Very low limit
-        
-        let connection = RelayConnection::new(
-            123,
-            test_addr(),
-            config,
-            event_tx,
-            action_rx,
-        );
-        
+
+        let connection = RelayConnection::new(123, test_addr(), config, event_tx, action_rx);
+
         // First small packet should succeed
         assert!(connection.send_data(vec![0; 50]).is_ok());
-        
+
         // Second packet should exceed bandwidth limit
         assert!(connection.send_data(vec![0; 60]).is_err());
     }
@@ -514,21 +487,15 @@ mod tests {
     fn test_buffer_size_limiting() {
         let (event_tx, _event_rx) = mpsc::unbounded_channel();
         let (_action_tx, action_rx) = mpsc::unbounded_channel();
-        
+
         let mut config = RelayConnectionConfig::default();
         config.buffer_size = 100; // Very small buffer
-        
-        let connection = RelayConnection::new(
-            123,
-            test_addr(),
-            config,
-            event_tx,
-            action_rx,
-        );
-        
+
+        let connection = RelayConnection::new(123, test_addr(), config, event_tx, action_rx);
+
         // Fill buffer
         assert!(connection.send_data(vec![0; 80]).is_ok());
-        
+
         // Should fail to add more data
         assert!(connection.send_data(vec![0; 30]).is_err());
     }
@@ -537,7 +504,7 @@ mod tests {
     fn test_connection_termination() {
         let (event_tx, mut event_rx) = mpsc::unbounded_channel();
         let (_action_tx, action_rx) = mpsc::unbounded_channel();
-        
+
         let connection = RelayConnection::new(
             123,
             test_addr(),
@@ -545,14 +512,14 @@ mod tests {
             event_tx,
             action_rx,
         );
-        
+
         assert!(connection.is_active());
-        
+
         let reason = "Test termination".to_string();
         assert!(connection.terminate(reason.clone()).is_ok());
-        
+
         assert!(!connection.is_active());
-        
+
         // Should not be able to send data after termination
         assert!(connection.send_data(vec![1, 2, 3]).is_err());
     }
@@ -561,30 +528,24 @@ mod tests {
     fn test_keep_alive() {
         let (event_tx, mut event_rx) = mpsc::unbounded_channel();
         let (_action_tx, action_rx) = mpsc::unbounded_channel();
-        
+
         let mut config = RelayConnectionConfig::default();
         config.keep_alive_interval = Duration::from_millis(1);
-        
-        let connection = RelayConnection::new(
-            123,
-            test_addr(),
-            config,
-            event_tx,
-            action_rx,
-        );
-        
+
+        let connection = RelayConnection::new(123, test_addr(), config, event_tx, action_rx);
+
         // Initially should not need keep-alive
         assert!(!connection.should_send_keep_alive());
-        
+
         // Wait for keep-alive interval
         std::thread::sleep(Duration::from_millis(2));
-        
+
         // Should need keep-alive now
         assert!(connection.should_send_keep_alive());
-        
+
         // Send keep-alive
         assert!(connection.send_keep_alive().is_ok());
-        
+
         // Should not need keep-alive immediately after sending
         assert!(!connection.should_send_keep_alive());
     }
@@ -593,7 +554,7 @@ mod tests {
     fn test_connection_stats() {
         let (event_tx, _event_rx) = mpsc::unbounded_channel();
         let (_action_tx, action_rx) = mpsc::unbounded_channel();
-        
+
         let connection = RelayConnection::new(
             123,
             test_addr(),
@@ -601,11 +562,11 @@ mod tests {
             event_tx,
             action_rx,
         );
-        
+
         // Send some data
         connection.send_data(vec![1, 2, 3]).unwrap();
         connection.receive_data(vec![4, 5, 6, 7]).unwrap();
-        
+
         let stats = connection.get_stats();
         assert_eq!(stats.session_id, 123);
         assert_eq!(stats.peer_addr, test_addr());

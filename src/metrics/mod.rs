@@ -72,7 +72,10 @@ mod tests {
         let config = MetricsConfig::default();
         assert!(!config.enabled);
         assert_eq!(config.port, 9090);
-        assert_eq!(config.bind_address, std::net::IpAddr::V4(std::net::Ipv4Addr::new(0, 0, 0, 0)));
+        assert_eq!(
+            config.bind_address,
+            std::net::IpAddr::V4(std::net::Ipv4Addr::new(0, 0, 0, 0))
+        );
         assert_eq!(config.update_interval, std::time::Duration::from_secs(30));
     }
 }

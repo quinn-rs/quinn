@@ -230,8 +230,8 @@ pub use nat_traversal_api::{
 };
 pub use quic_node::{NodeStats as QuicNodeStats, QuicNodeConfig, QuicP2PNode};
 pub use relay::{
-    AuthToken, RelayAction, RelayAuthenticator, RelayConnection, RelayConnectionConfig,
-    RelayError, RelayEvent, RelayResult, SessionId, SessionManager, SessionState,
+    AuthToken, RelayAction, RelayAuthenticator, RelayConnection, RelayConnectionConfig, RelayError,
+    RelayEvent, RelayResult, SessionId, SessionManager, SessionState,
 };
 pub use shared::{ConnectionId, EcnCodepoint, EndpointEvent};
 pub use transport_error::{Code as TransportErrorCode, Error as TransportError};

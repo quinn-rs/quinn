@@ -55,7 +55,7 @@ impl EncryptedMessage {
         self.aes_ciphertext.len() + // aes_ciphertext
         12 + // nonce
         32 + // associated_data_hash
-        1    // version
+        1 // version
     }
 
     /// Serialize to bytes for transmission
@@ -106,7 +106,10 @@ impl EncryptedMessage {
         let version = bytes[offset];
 
         if version != 1 {
-            return Err(PqcError::CryptoError(format!("Unsupported version: {}", version)));
+            return Err(PqcError::CryptoError(format!(
+                "Unsupported version: {}",
+                version
+            )));
         }
 
         Ok(Self {
@@ -172,12 +175,13 @@ impl HybridPublicKeyEncryption {
 
         // Step 3: Generate random nonce for AES-GCM
         let mut nonce_bytes = [0u8; 12];
-        self.rng.fill(&mut nonce_bytes).map_err(|_| {
-            PqcError::CryptoError("Failed to generate nonce".to_string())
-        })?;
+        self.rng
+            .fill(&mut nonce_bytes)
+            .map_err(|_| PqcError::CryptoError("Failed to generate nonce".to_string()))?;
 
         // Step 4: Encrypt with AES-256-GCM
-        let aes_ciphertext = self.aes_encrypt(&aes_key, &nonce_bytes, plaintext, associated_data)?;
+        let aes_ciphertext =
+            self.aes_encrypt(&aes_key, &nonce_bytes, plaintext, associated_data)?;
 
         // Step 5: Hash associated data for integrity verification
         let associated_data_hash = self.hash_associated_data(associated_data);
@@ -226,7 +230,9 @@ impl HybridPublicKeyEncryption {
         // Step 2: Verify associated data integrity
         let expected_hash = self.hash_associated_data(associated_data);
         if expected_hash != encrypted_message.associated_data_hash {
-            return Err(PqcError::VerificationFailed("Associated data mismatch".to_string()));
+            return Err(PqcError::VerificationFailed(
+                "Associated data mismatch".to_string(),
+            ));
         }
 
         // Step 3: ML-KEM decapsulation to recover shared secret
@@ -251,21 +257,25 @@ impl HybridPublicKeyEncryption {
     ///
     /// Uses a simplified but secure key derivation function based on SHA256.
     /// This follows the general principles of NIST SP 800-56C Rev. 2.
-    fn derive_aes_key(&self, shared_secret: &SharedSecret, associated_data: &[u8]) -> PqcResult<[u8; 32]> {
+    fn derive_aes_key(
+        &self,
+        shared_secret: &SharedSecret,
+        associated_data: &[u8],
+    ) -> PqcResult<[u8; 32]> {
         // Create a domain-separated key derivation using SHA256
         let mut ctx = digest::Context::new(&digest::SHA256);
-        
+
         // Add salt for extraction phase (equivalent to HKDF-Extract)
         ctx.update(b"ant-quic-ml-kem-aes-v1-salt");
         ctx.update(shared_secret.as_bytes());
-        
+
         // Add context for expansion phase (equivalent to HKDF-Expand)
         ctx.update(b"ant-quic-aes256-gcm-expand");
         ctx.update(&self.hash_associated_data(associated_data));
-        
+
         // Add length encoding for proper domain separation
         ctx.update(&[0, 0, 1, 0]); // 256 bits = 32 bytes in big-endian
-        
+
         let digest = ctx.finish();
 
         let mut aes_key = [0u8; 32];
@@ -281,15 +291,15 @@ impl HybridPublicKeyEncryption {
         plaintext: &[u8],
         associated_data: &[u8],
     ) -> PqcResult<Vec<u8>> {
-        let unbound_key = UnboundKey::new(&AES_256_GCM, key).map_err(|_| {
-            PqcError::CryptoError("Failed to create AES key".to_string())
-        })?;
+        let unbound_key = UnboundKey::new(&AES_256_GCM, key)
+            .map_err(|_| PqcError::CryptoError("Failed to create AES key".to_string()))?;
 
         let aes_key = LessSafeKey::new(unbound_key);
         let nonce_obj = Nonce::assume_unique_for_key(*nonce);
 
         let mut ciphertext = plaintext.to_vec();
-        aes_key.seal_in_place_append_tag(nonce_obj, aead::Aad::from(associated_data), &mut ciphertext)
+        aes_key
+            .seal_in_place_append_tag(nonce_obj, aead::Aad::from(associated_data), &mut ciphertext)
             .map_err(|_| PqcError::EncapsulationFailed("AES encryption failed".to_string()))?;
 
         Ok(ciphertext)
@@ -303,19 +313,20 @@ impl HybridPublicKeyEncryption {
         ciphertext: &[u8],
         associated_data: &[u8],
     ) -> PqcResult<Vec<u8>> {
-        let unbound_key = UnboundKey::new(&AES_256_GCM, key).map_err(|_| {
-            PqcError::CryptoError("Failed to create AES key".to_string())
-        })?;
+        let unbound_key = UnboundKey::new(&AES_256_GCM, key)
+            .map_err(|_| PqcError::CryptoError("Failed to create AES key".to_string()))?;
 
         let aes_key = LessSafeKey::new(unbound_key);
         let nonce_obj = Nonce::assume_unique_for_key(*nonce);
 
-        let mut plaintext = ciphertext.to_vec();
-        let plaintext_and_tag = aes_key.open_in_place(nonce_obj, aead::Aad::from(associated_data), &mut plaintext)
+        // The ciphertext includes the authentication tag at the end
+        // open_in_place will verify the tag and return the plaintext without it
+        let mut in_out = ciphertext.to_vec();
+        let plaintext = aes_key
+            .open_in_place(nonce_obj, aead::Aad::from(associated_data), &mut in_out)
             .map_err(|_| PqcError::DecapsulationFailed("AES decryption failed".to_string()))?;
 
-        // Ring's open_in_place returns a slice that excludes the tag
-        Ok(plaintext_and_tag.to_vec())
+        Ok(plaintext.to_vec())
     }
 
     /// Hash associated data for integrity verification
@@ -363,7 +374,10 @@ mod tests {
     #[test]
     fn test_hybrid_pke_creation() {
         let pke = HybridPublicKeyEncryption::new();
-        assert_eq!(HybridPublicKeyEncryption::algorithm_name(), "ML-KEM-768-AES-256-GCM");
+        assert_eq!(
+            HybridPublicKeyEncryption::algorithm_name(),
+            "ML-KEM-768-AES-256-GCM"
+        );
         assert_eq!(
             HybridPublicKeyEncryption::security_level(),
             "Quantum-resistant (NIST Level 3) with 256-bit symmetric security"
@@ -377,25 +391,32 @@ mod tests {
         let pke = HybridPublicKeyEncryption::new();
 
         // Generate keypair for testing
-        let (public_key, secret_key) = pke.ml_kem.generate_keypair()
+        let (public_key, secret_key) = pke
+            .ml_kem
+            .generate_keypair()
             .expect("Key generation should succeed");
 
         let plaintext = b"Hello, quantum-resistant world!";
         let associated_data = b"test-context";
 
         // Encrypt
-        let encrypted = pke.encrypt(&public_key, plaintext, associated_data)
+        let encrypted = pke
+            .encrypt(&public_key, plaintext, associated_data)
             .expect("Encryption should succeed");
 
         // Verify encrypted message structure
         assert_eq!(encrypted.version, 1);
-        assert_eq!(encrypted.ml_kem_ciphertext.len(), ML_KEM_768_CIPHERTEXT_SIZE);
-        assert!(encrypted.aes_ciphertext.len() > plaintext.len()); // Should include auth tag
+        assert_eq!(
+            encrypted.ml_kem_ciphertext.len(),
+            ML_KEM_768_CIPHERTEXT_SIZE
+        );
+        assert!(encrypted.aes_ciphertext.len() >= plaintext.len() + 16); // Should include 16-byte auth tag
         assert_eq!(encrypted.nonce.len(), 12);
         assert_eq!(encrypted.associated_data_hash.len(), 32);
 
         // Decrypt
-        let decrypted = pke.decrypt(&secret_key, &encrypted, associated_data)
+        let decrypted = pke
+            .decrypt(&secret_key, &encrypted, associated_data)
             .expect("Decryption should succeed");
 
         // Verify roundtrip
@@ -413,7 +434,9 @@ mod tests {
         let associated_data_2 = b"context-2";
 
         // Encrypt with one context
-        let encrypted = pke.encrypt(&public_key, plaintext, associated_data_1).unwrap();
+        let encrypted = pke
+            .encrypt(&public_key, plaintext, associated_data_1)
+            .unwrap();
 
         // Try to decrypt with different context - should fail
         let result = pke.decrypt(&secret_key, &encrypted, associated_data_2);
@@ -438,20 +461,23 @@ mod tests {
         assert_eq!(encrypted.total_size(), expected_size);
 
         // Test deserialization
-        let deserialized = EncryptedMessage::from_bytes(&bytes)
-            .expect("Deserialization should succeed");
+        let deserialized =
+            EncryptedMessage::from_bytes(&bytes).expect("Deserialization should succeed");
 
         assert_eq!(deserialized.ml_kem_ciphertext, encrypted.ml_kem_ciphertext);
         assert_eq!(deserialized.aes_ciphertext, encrypted.aes_ciphertext);
         assert_eq!(deserialized.nonce, encrypted.nonce);
-        assert_eq!(deserialized.associated_data_hash, encrypted.associated_data_hash);
+        assert_eq!(
+            deserialized.associated_data_hash,
+            encrypted.associated_data_hash
+        );
         assert_eq!(deserialized.version, encrypted.version);
     }
 
     #[test]
     fn test_invalid_message_version() {
         let mut bytes = vec![0u8; ML_KEM_768_CIPHERTEXT_SIZE + 1 + 12 + 32 + 1];
-        // Set invalid version  
+        // Set invalid version
         let len = bytes.len();
         bytes[len - 1] = 99;
 
@@ -478,8 +504,12 @@ mod tests {
         let associated_data = b"empty-test";
 
         // Should handle empty plaintext
-        let encrypted = pke.encrypt(&public_key, plaintext, associated_data).unwrap();
-        let decrypted = pke.decrypt(&secret_key, &encrypted, associated_data).unwrap();
+        let encrypted = pke
+            .encrypt(&public_key, plaintext, associated_data)
+            .unwrap();
+        let decrypted = pke
+            .decrypt(&secret_key, &encrypted, associated_data)
+            .unwrap();
 
         assert_eq!(decrypted, plaintext);
         assert!(decrypted.is_empty());
@@ -495,8 +525,12 @@ mod tests {
         let plaintext = vec![42u8; 1024 * 1024];
         let associated_data = b"large-test";
 
-        let encrypted = pke.encrypt(&public_key, &plaintext, associated_data).unwrap();
-        let decrypted = pke.decrypt(&secret_key, &encrypted, associated_data).unwrap();
+        let encrypted = pke
+            .encrypt(&public_key, &plaintext, associated_data)
+            .unwrap();
+        let decrypted = pke
+            .decrypt(&secret_key, &encrypted, associated_data)
+            .unwrap();
 
         assert_eq!(decrypted, plaintext);
     }

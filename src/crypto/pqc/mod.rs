@@ -1,7 +1,7 @@
 //! Post-Quantum Cryptography module for ant-quic
 //!
 //! This module implements NIST-standardized post-quantum algorithms using saorsa-pqc:
-//! - ML-KEM-768 (Module-Lattice-Based Key-Encapsulation Mechanism) 
+//! - ML-KEM-768 (Module-Lattice-Based Key-Encapsulation Mechanism)
 //! - ML-DSA-65 (Module-Lattice-Based Digital Signature Algorithm)
 //!
 //! The implementation provides hybrid modes combining classical and PQC algorithms

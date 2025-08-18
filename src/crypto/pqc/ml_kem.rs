@@ -2,12 +2,10 @@
 
 #[cfg(feature = "pqc")]
 use saorsa_pqc::{
-    MlKem768 as SaorsaMlKem768, MlKemOperations as SaorsaMlKemOperations,
-    MlKemPublicKey as SaorsaMlKemPublicKey, 
-    MlKemSecretKey as SaorsaMlKemSecretKey,
-    MlKemCiphertext as SaorsaMlKemCiphertext,
+    MlKem768 as SaorsaMlKem768, MlKemCiphertext as SaorsaMlKemCiphertext,
+    MlKemOperations as SaorsaMlKemOperations, MlKemPublicKey as SaorsaMlKemPublicKey,
+    MlKemSecretKey as SaorsaMlKemSecretKey, PqcError as SaorsaPqcError,
     SharedSecret as SaorsaSharedSecret,
-    PqcError as SaorsaPqcError,
 };
 
 use crate::crypto::pqc::{
@@ -41,15 +39,16 @@ impl MlKemOperations for MlKem768 {
     fn generate_keypair(&self) -> PqcResult<(MlKemPublicKey, MlKemSecretKey)> {
         #[cfg(feature = "pqc")]
         {
-            let (pub_key, sec_key) = self.inner.generate_keypair()
-                .map_err(|e| PqcError::KeyGenerationFailed(format!("Key generation failed: {}", e)))?;
-            
+            let (pub_key, sec_key) = self.inner.generate_keypair().map_err(|e| {
+                PqcError::KeyGenerationFailed(format!("Key generation failed: {}", e))
+            })?;
+
             // Convert saorsa-pqc types to ant-quic types
             let ant_pub_key = MlKemPublicKey::from_bytes(pub_key.as_bytes())
-                .map_err(|e| PqcError::InvalidPublicKey)?;
+                .map_err(|_e| PqcError::InvalidPublicKey)?;
             let ant_sec_key = MlKemSecretKey::from_bytes(sec_key.as_bytes())
-                .map_err(|e| PqcError::InvalidSecretKey)?;
-            
+                .map_err(|_e| PqcError::InvalidSecretKey)?;
+
             Ok((ant_pub_key, ant_sec_key))
         }
         #[cfg(not(feature = "pqc"))]
@@ -67,16 +66,18 @@ impl MlKemOperations for MlKem768 {
             // Convert ant-quic types to saorsa-pqc types
             let saorsa_pub_key = SaorsaMlKemPublicKey::from_bytes(public_key.as_bytes())
                 .map_err(|_| PqcError::InvalidPublicKey)?;
-            
-            let (ciphertext, shared_secret) = self.inner.encapsulate(&saorsa_pub_key)
-                .map_err(|e| PqcError::EncapsulationFailed(format!("Encapsulation failed: {}", e)))?;
-            
+
+            let (ciphertext, shared_secret) =
+                self.inner.encapsulate(&saorsa_pub_key).map_err(|e| {
+                    PqcError::EncapsulationFailed(format!("Encapsulation failed: {}", e))
+                })?;
+
             // Convert back to ant-quic types
             let ant_ciphertext = MlKemCiphertext::from_bytes(ciphertext.as_bytes())
                 .map_err(|_| PqcError::InvalidCiphertext)?;
             let ant_shared_secret = SharedSecret::from_bytes(shared_secret.as_bytes())
                 .map_err(|_| PqcError::InvalidSharedSecret)?;
-            
+
             Ok((ant_ciphertext, ant_shared_secret))
         }
         #[cfg(not(feature = "pqc"))]
@@ -98,14 +99,18 @@ impl MlKemOperations for MlKem768 {
                 .map_err(|_| PqcError::InvalidSecretKey)?;
             let saorsa_ciphertext = SaorsaMlKemCiphertext::from_bytes(ciphertext.as_bytes())
                 .map_err(|_| PqcError::InvalidCiphertext)?;
-            
-            let shared_secret = self.inner.decapsulate(&saorsa_secret_key, &saorsa_ciphertext)
-                .map_err(|e| PqcError::DecapsulationFailed(format!("Decapsulation failed: {}", e)))?;
-            
+
+            let shared_secret = self
+                .inner
+                .decapsulate(&saorsa_secret_key, &saorsa_ciphertext)
+                .map_err(|e| {
+                    PqcError::DecapsulationFailed(format!("Decapsulation failed: {}", e))
+                })?;
+
             // Convert back to ant-quic types
             let ant_shared_secret = SharedSecret::from_bytes(shared_secret.as_bytes())
                 .map_err(|_| PqcError::InvalidSharedSecret)?;
-            
+
             Ok(ant_shared_secret)
         }
         #[cfg(not(feature = "pqc"))]

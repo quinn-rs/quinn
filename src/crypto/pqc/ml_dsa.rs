@@ -3,10 +3,8 @@
 #[cfg(feature = "pqc")]
 use saorsa_pqc::{
     MlDsa65 as SaorsaMlDsa65, MlDsaOperations as SaorsaMlDsaOperations,
-    MlDsaPublicKey as SaorsaMlDsaPublicKey, 
-    MlDsaSecretKey as SaorsaMlDsaSecretKey,
-    MlDsaSignature as SaorsaMlDsaSignature,
-    PqcError as SaorsaPqcError,
+    MlDsaPublicKey as SaorsaMlDsaPublicKey, MlDsaSecretKey as SaorsaMlDsaSecretKey,
+    MlDsaSignature as SaorsaMlDsaSignature, PqcError as SaorsaPqcError,
 };
 
 use crate::crypto::pqc::{
@@ -40,15 +38,16 @@ impl MlDsaOperations for MlDsa65 {
     fn generate_keypair(&self) -> PqcResult<(MlDsaPublicKey, MlDsaSecretKey)> {
         #[cfg(feature = "pqc")]
         {
-            let (pub_key, sec_key) = self.inner.generate_keypair()
-                .map_err(|e| PqcError::KeyGenerationFailed(format!("Key generation failed: {}", e)))?;
-            
+            let (pub_key, sec_key) = self.inner.generate_keypair().map_err(|e| {
+                PqcError::KeyGenerationFailed(format!("Key generation failed: {}", e))
+            })?;
+
             // Convert saorsa-pqc types to ant-quic types
             let ant_pub_key = MlDsaPublicKey::from_bytes(pub_key.as_bytes())
                 .map_err(|_| PqcError::InvalidPublicKey)?;
             let ant_sec_key = MlDsaSecretKey::from_bytes(sec_key.as_bytes())
                 .map_err(|_| PqcError::InvalidSecretKey)?;
-            
+
             Ok((ant_pub_key, ant_sec_key))
         }
         #[cfg(not(feature = "pqc"))]
@@ -63,14 +62,16 @@ impl MlDsaOperations for MlDsa65 {
             // Convert ant-quic types to saorsa-pqc types
             let saorsa_secret_key = SaorsaMlDsaSecretKey::from_bytes(secret_key.as_bytes())
                 .map_err(|_| PqcError::InvalidSecretKey)?;
-            
-            let signature = self.inner.sign(&saorsa_secret_key, message)
+
+            let signature = self
+                .inner
+                .sign(&saorsa_secret_key, message)
                 .map_err(|e| PqcError::SigningFailed(format!("Signing failed: {}", e)))?;
-            
+
             // Convert back to ant-quic types
             let ant_signature = MlDsaSignature::from_bytes(signature.as_bytes())
                 .map_err(|_| PqcError::InvalidSignature)?;
-            
+
             Ok(ant_signature)
         }
         #[cfg(not(feature = "pqc"))]
@@ -93,10 +94,12 @@ impl MlDsaOperations for MlDsa65 {
                 .map_err(|_| PqcError::InvalidPublicKey)?;
             let saorsa_signature = SaorsaMlDsaSignature::from_bytes(signature.as_bytes())
                 .map_err(|_| PqcError::InvalidSignature)?;
-            
-            let is_valid = self.inner.verify(&saorsa_public_key, message, &saorsa_signature)
+
+            let is_valid = self
+                .inner
+                .verify(&saorsa_public_key, message, &saorsa_signature)
                 .map_err(|e| PqcError::VerificationFailed(format!("Verification failed: {}", e)))?;
-            
+
             Ok(is_valid)
         }
         #[cfg(not(feature = "pqc"))]
