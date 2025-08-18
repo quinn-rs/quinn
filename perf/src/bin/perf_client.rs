@@ -15,7 +15,7 @@ use tokio::sync::Semaphore;
 use tracing::{debug, error, info};
 
 use perf::{
-    CommonOpt, bind_socket,
+    CommonOpt,
     noprotection::NoProtectionClientConfig,
     stats::{OpenStreamStats, Stats},
 };
@@ -100,11 +100,7 @@ async fn run(opt: Opt) -> Result<()> {
 
     info!("local addr {:?}", bind_addr);
 
-    let socket = bind_socket(
-        bind_addr,
-        opt.common.send_buffer_size,
-        opt.common.recv_buffer_size,
-    )?;
+    let socket = opt.common.bind_socket(bind_addr)?;
 
     let endpoint = quinn::Endpoint::new(Default::default(), None, socket, Arc::new(TokioRuntime))?;
 
