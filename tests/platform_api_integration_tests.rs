@@ -289,13 +289,13 @@ mod macos_tests {
         let mut discovery = MacOSInterfaceDiscovery::new();
 
         // Test creating dynamic store
-        match discovery.create_dynamic_store() {
+        match discovery.initialize_dynamic_store() {
             Ok(_) => {
                 println!("macOS SCDynamicStore created successfully");
 
                 // The store should be initialized
                 assert!(
-                    discovery.dynamic_store.is_some(),
+                    discovery.sc_store.is_some(),
                     "Dynamic store should be initialized"
                 );
             }
@@ -331,12 +331,12 @@ mod macos_tests {
         let mut discovery = MacOSInterfaceDiscovery::new();
 
         // Try to set up monitoring
-        match discovery.setup_network_monitoring() {
+        match discovery.enable_change_monitoring() {
             Ok(_) => {
                 println!("macOS network monitoring initialized");
 
                 // Check if monitoring detects changes
-                let changed = discovery.check_network_changed();
+                let changed = discovery.check_network_changes();
                 println!("Network changes detected: {}", changed);
             }
             Err(e) => {

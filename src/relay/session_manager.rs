@@ -533,7 +533,7 @@ mod tests {
     #[test]
     fn test_session_request_and_establishment() {
         let config = SessionConfig::default();
-        let (manager, mut event_rx) = SessionManager::new(config);
+        let (manager, _event_rx) = SessionManager::new(config);
 
         let signing_key = SigningKey::generate(&mut OsRng);
         let verifying_key = signing_key.verifying_key();
@@ -588,7 +588,7 @@ mod tests {
     #[test]
     fn test_session_termination() {
         let config = SessionConfig::default();
-        let (manager, mut event_rx) = SessionManager::new(config);
+        let (manager, _event_rx) = SessionManager::new(config);
 
         let signing_key = SigningKey::generate(&mut OsRng);
         let verifying_key = signing_key.verifying_key();
@@ -662,8 +662,8 @@ mod tests {
         manager.add_trusted_key(addr, verifying_key);
 
         // Create session with very short timeout
-        let mut auth_token = AuthToken::new(1024, 1, &signing_key).unwrap(); // 1 second timeout
-        let session_id = manager
+        let auth_token = AuthToken::new(1024, 1, &signing_key).unwrap(); // 1 second timeout
+        let _session_id = manager
             .request_session(addr, vec![1, 2, 3], auth_token)
             .unwrap();
 
@@ -701,7 +701,7 @@ mod tests {
             assert!(*id != 0);
         }
 
-        let mut unique_ids: std::collections::HashSet<_> = session_ids.iter().collect();
+        let unique_ids: std::collections::HashSet<_> = session_ids.iter().collect();
         assert_eq!(unique_ids.len(), session_ids.len());
     }
 }

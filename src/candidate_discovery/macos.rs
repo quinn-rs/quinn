@@ -30,7 +30,7 @@ use tracing::{debug, error, info, warn};
 use crate::candidate_discovery::{NetworkInterface, NetworkInterfaceDiscovery};
 
 /// macOS-specific network interface discovery using System Configuration Framework
-pub(crate) struct MacOSInterfaceDiscovery {
+pub struct MacOSInterfaceDiscovery {
     /// Cached interface data to detect changes
     // Used in caching logic
     cached_interfaces: HashMap<String, MacOSInterface>,
@@ -43,7 +43,7 @@ pub(crate) struct MacOSInterfaceDiscovery {
     /// Current scan state
     scan_state: ScanState,
     /// System Configuration dynamic store
-    sc_store: Option<SCDynamicStoreRef>,
+    pub sc_store: Option<SCDynamicStoreRef>,
     /// Run loop source for network change notifications
     run_loop_source: Option<CFRunLoopSourceRef>,
     /// Interface enumeration configuration
@@ -188,7 +188,7 @@ pub(crate) struct InterfaceConfig {
 /// macOS System Configuration Framework error types
 #[derive(Debug, Clone)]
 // Error types for macOS network operations
-pub(crate) enum MacOSNetworkError {
+pub enum MacOSNetworkError {
     /// System Configuration Framework error
     SystemConfigurationError {
         function: &'static str,
@@ -219,7 +219,7 @@ pub(crate) enum MacOSNetworkError {
 // System Configuration Framework types and constants
 #[repr(transparent)]
 #[derive(Debug, Clone, Copy)]
-struct SCDynamicStoreRef(*mut std::ffi::c_void);
+pub struct SCDynamicStoreRef(*mut std::ffi::c_void);
 unsafe impl Send for SCDynamicStoreRef {}
 
 #[repr(transparent)]
@@ -393,7 +393,7 @@ unsafe fn rust_string_to_cf_string(s: &str) -> CFStringRef {
 
 impl MacOSInterfaceDiscovery {
     /// Create a new macOS interface discovery instance
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             cached_interfaces: HashMap::new(),
             last_scan_time: None,
@@ -419,7 +419,7 @@ impl MacOSInterfaceDiscovery {
     }
 
     /// Initialize System Configuration Framework dynamic store
-    pub(crate) fn initialize_dynamic_store(&mut self) -> Result<(), MacOSNetworkError> {
+    pub fn initialize_dynamic_store(&mut self) -> Result<(), MacOSNetworkError> {
         if self.sc_store.is_some() {
             return Ok(());
         }
@@ -443,7 +443,7 @@ impl MacOSInterfaceDiscovery {
     }
 
     /// Enable network change monitoring
-    pub(crate) fn enable_change_monitoring(&mut self) -> Result<(), MacOSNetworkError> {
+    pub fn enable_change_monitoring(&mut self) -> Result<(), MacOSNetworkError> {
         if self.run_loop_source.is_some() {
             return Ok(());
         }
@@ -519,7 +519,7 @@ impl MacOSInterfaceDiscovery {
     }
 
     /// Check if network changes have occurred
-    pub(crate) fn check_network_changes(&mut self) -> bool {
+    pub fn check_network_changes(&mut self) -> bool {
         if self.network_changed {
             debug!("Network change detected, resetting flag");
             self.network_changed = false;

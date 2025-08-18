@@ -258,7 +258,7 @@ mod tests {
         match bucket.check_rate_limit(&addr) {
             Err(RelayError::RateLimitExceeded { retry_after_ms }) => {
                 // Should be approximately 500ms (1 token / 2 tokens per second)
-                assert!(retry_after_ms >= 400 && retry_after_ms <= 600);
+                assert!((400..=600).contains(&retry_after_ms));
             }
             _ => panic!("Expected RateLimitExceeded error"),
         }

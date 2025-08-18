@@ -36,10 +36,10 @@ pub mod linux;
 pub use linux::LinuxInterfaceDiscovery;
 
 #[cfg(all(target_os = "macos", feature = "network-discovery"))]
-pub(crate) mod macos;
+pub mod macos;
 
 #[cfg(all(target_os = "macos", feature = "network-discovery"))]
-pub(crate) use macos::MacOSInterfaceDiscovery;
+pub use macos::MacOSInterfaceDiscovery;
 
 /// Convert discovery source type to NAT traversal source type
 fn convert_to_nat_source(discovery_source: DiscoverySourceType) -> CandidateSource {

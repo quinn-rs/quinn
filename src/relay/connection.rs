@@ -434,7 +434,7 @@ mod tests {
 
     #[test]
     fn test_send_data_within_limits() {
-        let (event_tx, mut event_rx) = mpsc::unbounded_channel();
+        let (event_tx, _event_rx) = mpsc::unbounded_channel();
         let (_action_tx, action_rx) = mpsc::unbounded_channel();
 
         let connection = RelayConnection::new(
@@ -502,7 +502,7 @@ mod tests {
 
     #[test]
     fn test_connection_termination() {
-        let (event_tx, mut event_rx) = mpsc::unbounded_channel();
+        let (event_tx, _event_rx) = mpsc::unbounded_channel();
         let (_action_tx, action_rx) = mpsc::unbounded_channel();
 
         let connection = RelayConnection::new(
@@ -526,7 +526,7 @@ mod tests {
 
     #[test]
     fn test_keep_alive() {
-        let (event_tx, mut event_rx) = mpsc::unbounded_channel();
+        let (event_tx, _event_rx) = mpsc::unbounded_channel();
         let (_action_tx, action_rx) = mpsc::unbounded_channel();
 
         let mut config = RelayConnectionConfig::default();
