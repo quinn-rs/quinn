@@ -9,7 +9,7 @@ edition = "2021"
 cargo-fuzz = true
 
 [dependencies]
-arbitrary = { version = "1.0.1", features = ["derive"] }
+arbitrary = { version = "1.4.2", features = ["derive"] }
 libfuzzer-sys = "0.4.2"
 
 [dependencies.proto]

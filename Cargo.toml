@@ -13,7 +13,7 @@ categories = ["network-programming", "asynchronous"]
 
 [workspace.dependencies]
 anyhow = "1.0.22"
-arbitrary = { version = "1.0.1", features = ["derive"] }
+arbitrary = { version = "1.4.2", features = ["derive"] }
 async-io = "2"
 async-std = "1.11"
 assert_matches = "1.1"
