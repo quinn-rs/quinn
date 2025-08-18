@@ -7,7 +7,7 @@ use quinn::{TokioRuntime, crypto::rustls::QuicServerConfig};
 use rustls::pki_types::{CertificateDer, PrivatePkcs8KeyDer};
 use tracing::{debug, error, info};
 
-use perf::{CommonOpt, PERF_CIPHER_SUITES, bind_socket, noprotection::NoProtectionServerConfig};
+use perf::{CommonOpt, PERF_CIPHER_SUITES, noprotection::NoProtectionServerConfig};
 
 #[derive(Parser)]
 #[clap(name = "server")]
@@ -88,11 +88,7 @@ async fn run(opt: Opt) -> Result<()> {
     });
     config.transport_config(Arc::new(transport));
 
-    let socket = bind_socket(
-        opt.listen,
-        opt.common.send_buffer_size,
-        opt.common.recv_buffer_size,
-    )?;
+    let socket = opt.common.bind_socket(opt.listen)?;
 
     let endpoint = quinn::Endpoint::new(
         Default::default(),
