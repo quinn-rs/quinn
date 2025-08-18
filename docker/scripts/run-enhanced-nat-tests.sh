@@ -20,7 +20,8 @@ CYAN='\033[0;36m'
 NC='\033[0m'
 
 # Test tracking
-declare -A TEST_RESULTS
+# Note: Using regular arrays for compatibility with bash 3.x
+TEST_RESULTS=""
 TOTAL_TESTS=0
 PASSED_TESTS=0
 FAILED_TESTS=0
@@ -273,7 +274,8 @@ record_test_result() {
     local status=$2
     local message=$3
     
-    TEST_RESULTS["$test_name"]="$status:$message"
+    # Append to results string for compatibility with bash 3.x
+    TEST_RESULTS="${TEST_RESULTS}${test_name}:${status}:${message}\n"
     
     if [ "$status" = "PASSED" ]; then
         ((PASSED_TESTS++))
@@ -331,11 +333,14 @@ Tests basic QUIC connectivity from clients to bootstrap node.
 
 EOF
 
-    # Add test results by category
-    for test_name in "${!TEST_RESULTS[@]}"; do
-        IFS=':' read -r status message <<< "${TEST_RESULTS[$test_name]}"
-        echo "- **$test_name**: $status - $message" >> "$report_file"
-    done
+    # Add test results by category (compatible with bash 3.x)
+    if [ -n "$TEST_RESULTS" ]; then
+        echo -e "$TEST_RESULTS" | while IFS=':' read -r test_name status message; do
+            if [ -n "$test_name" ]; then
+                echo "- **$test_name**: $status - $message" >> "$report_file"
+            fi
+        done
+    fi
     
     # Add performance metrics if available
     if [ -f "$RESULTS_DIR/metrics/nat_success_rate.json" ]; then

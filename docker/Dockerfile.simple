@@ -1,5 +1,5 @@
 # Simple runtime image for pre-built ant-quic
-FROM --platform=linux/arm64 debian:bookworm-slim
+FROM debian:bookworm-slim
 
 # Install runtime dependencies
 RUN apt-get update && apt-get install -y \
