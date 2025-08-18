@@ -166,7 +166,7 @@ struct InterfaceConfig {
 
 /// Linux netlink error types
 #[derive(Debug, Clone)]
-enum LinuxNetworkError {
+pub enum LinuxNetworkError {
     /// Netlink socket creation failed
     SocketCreationFailed { error: String },
     /// Failed to bind netlink socket
