@@ -1,4 +1,4 @@
-version: '3.8'
+# Docker Compose for Enhanced NAT Testing
 
 # Enhanced NAT Testing with IPv4/IPv6 dual-stack support
 networks:
@@ -81,19 +81,14 @@ services:
       - "9000:9000/tcp"
     environment:
       - RUST_LOG=ant_quic=debug,ant_quic::nat_traversal=trace
-      - ANT_QUIC_ROLE=bootstrap
-      - ANT_QUIC_LISTEN=[::]:9000
-      - ANT_QUIC_ENABLE_IPV6=true
     volumes:
       - ./logs/bootstrap:/app/logs
     command: >
       ant-quic
-      --role bootstrap
+      --force-coordinator
       --listen [::]:9000
-      --enable-metrics
-      --metrics-port 9090
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9090/metrics"]
+      test: ["CMD", "netcat", "-z", "localhost", "9000"]
       interval: 30s
       timeout: 10s
       retries: 3
