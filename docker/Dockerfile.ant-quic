@@ -1,40 +1,54 @@
-# Base image for ant-quic testing
+# Multi-stage build for ant-quic with optimized caching
 FROM rust:1.85-slim AS builder
 
-# Install build dependencies
+# Install build dependencies (cached layer)
 RUN apt-get update && apt-get install -y \
     pkg-config \
     libssl-dev \
     protobuf-compiler \
     && rm -rf /var/lib/apt/lists/*
 
+# Set build arguments for resource-constrained environments
+ARG CARGO_BUILD_JOBS=2
+ARG CARGO_INCREMENTAL=0
+ARG CARGO_NET_RETRY=10
+
+ENV CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS} \
+    CARGO_INCREMENTAL=${CARGO_INCREMENTAL} \
+    CARGO_NET_RETRY=${CARGO_NET_RETRY}
+
 # Create app directory
 WORKDIR /usr/src/ant-quic
 
-# Copy manifest files first for better layer caching
+# Copy only dependency files first for better caching
 COPY Cargo.toml Cargo.lock ./
+
+# Create dummy source structure to build dependencies
+RUN mkdir -p src/bin && \
+    echo "fn main() {}" > src/bin/ant-quic.rs && \
+    echo "pub fn lib() {}" > src/lib.rs
+
+# Build dependencies only (this layer gets cached)
+RUN cargo build --release --bin ant-quic && \
+    rm -rf src target/release/ant-quic* target/release/deps/ant_quic*
+
+# Copy bench files if they exist (for dependency resolution)
 COPY benches ./benches/
 
-# Create dummy ant-quic.rs to build dependencies first
-RUN mkdir -p src/bin && echo "fn main() {}" > src/bin/ant-quic.rs
-
-# Build dependencies first (this layer will be cached)
-# Use limited parallelism to avoid resource exhaustion on CI
-ARG CARGO_BUILD_JOBS=2
-RUN CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS} cargo build --release --bin ant-quic
-RUN rm -f target/release/deps/ant_quic*
-
-# Copy source files
+# Copy the actual source code
 COPY src ./src/
 COPY examples ./examples/
 
-# Build the actual project (only this rebuilds when source changes)
-RUN CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS} cargo build --release --bin ant-quic --examples
+# Touch the main files to ensure rebuild
+RUN touch src/main.rs src/lib.rs src/bin/ant-quic.rs 2>/dev/null || true
 
-# Runtime image
+# Build the actual project with limited parallelism
+RUN cargo build --release --bin ant-quic --examples
+
+# Runtime stage - smaller final image
 FROM debian:bookworm-slim AS runtime
 
-# Install runtime dependencies and network tools
+# Install runtime dependencies and debugging tools
 RUN apt-get update && apt-get install -y \
     libssl3 \
     ca-certificates \
@@ -46,30 +60,28 @@ RUN apt-get update && apt-get install -y \
     dnsutils \
     netcat-traditional \
     iperf3 \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy built binaries from builder
+# Create non-root user for running the application
+RUN useradd -m -u 1000 antquic
+
+# Copy binary from builder
 COPY --from=builder /usr/src/ant-quic/target/release/ant-quic /usr/local/bin/
 COPY --from=builder /usr/src/ant-quic/target/release/examples/* /usr/local/bin/
 
-# Copy test scripts and configurations
-COPY docker/scripts /opt/ant-quic/scripts
-COPY docker/configs /opt/ant-quic/configs
+# Set up directories
+RUN mkdir -p /app/logs /app/data && \
+    chown -R antquic:antquic /app
 
-# Create a non-root user for running tests
-RUN useradd -m -u 1000 antquic && \
-    mkdir -p /opt/ant-quic/logs && \
-    chown -R antquic:antquic /opt/ant-quic
+WORKDIR /app
 
-# Set working directory
-WORKDIR /opt/ant-quic
-
-# Default to running as non-root (can be overridden for NAT setup)
+# Switch to non-root user
 USER antquic
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-    CMD ant-quic --version || exit 1
-
-# Default command (can be overridden)
+# Default command
 CMD ["ant-quic", "--help"]
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD netcat -z localhost 9000 || exit 1
