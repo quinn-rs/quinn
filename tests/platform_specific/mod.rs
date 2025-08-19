@@ -196,6 +196,7 @@ mod platform_windows {
     fn test_windows_socket_options() {
         use std::net::UdpSocket;
         use std::os::windows::io::AsRawSocket;
+        use windows::Win32::Foundation::PSTR;
         use windows::Win32::Networking::WinSock::{
             SO_REUSEADDR, SOCKET, SOCKET_ERROR, SOL_SOCKET, getsockopt,
         };
@@ -211,7 +212,7 @@ mod platform_windows {
                 raw_socket,
                 SOL_SOCKET as i32,
                 SO_REUSEADDR as i32,
-                &mut value as *mut _ as *mut i8,
+                PSTR(&mut value as *mut _ as *mut u8),
                 &mut len,
             );
 
