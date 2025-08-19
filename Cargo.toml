@@ -174,8 +174,8 @@ windows = { version = "0.58", features = [
 ] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-netlink-packet-route = "0.20"
-netlink-sys = "0.8"
+# Note: Using raw libc netlink sockets instead of netlink-packet crates
+# to avoid transitive dependency on unmaintained 'paste' crate
 hex = "0.4"
 sha2 = "0.10"
 [target.'cfg(target_os = "macos")'.dependencies]

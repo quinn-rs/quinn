@@ -3,9 +3,8 @@
 //! This module implements network interface discovery for Linux using the
 //! Netlink API. It provides comprehensive error handling and interface caching.
 
-use netlink_packet_route::address::AddressMessage;
-use netlink_packet_route::link::LinkMessage;
-use netlink_sys::Socket;
+// Note: Future netlink implementation could use netlink-packet-route crates
+// For now, using libc netlink sockets directly in candidate_discovery/linux.rs
 use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
 use std::time::{Duration, Instant};
