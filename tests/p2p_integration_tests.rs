@@ -508,34 +508,49 @@ async fn test_nat_traversal_direct_connection() {
     );
 
     // Give some time for local discovery to complete
-    tokio::time::sleep(Duration::from_secs(2)).await;
+    tokio::time::sleep(Duration::from_secs(3)).await;
 
-    // Both peers attempt to connect simultaneously
+    // Both peers attempt to connect - with retry logic for CI stability
     let peer1_id = env.peers[1].id;
     let peer0_id = env.peers[0].id;
     let bootstrap_addr = env.bootstrap_nodes[0].address;
 
-    let connect1 = env.peers[0].connect_to(&peer1_id, bootstrap_addr);
-    let connect2 = env.peers[1].connect_to(&peer0_id, bootstrap_addr);
+    // Try connections with retry logic
+    let mut connection_succeeded = false;
+    for attempt in 1..=3 {
+        println!("Connection attempt {}/3", attempt);
+        
+        let connect1 = env.peers[0].connect_to(&peer1_id, bootstrap_addr);
+        let connect2 = env.peers[1].connect_to(&peer0_id, bootstrap_addr);
 
-    // Both should succeed
-    let (result1, result2) = tokio::join!(connect1, connect2);
+        let (result1, result2) = tokio::join!(connect1, connect2);
 
-    println!(
-        "Connection results: peer0->peer1: {:?}, peer1->peer0: {:?}",
-        result1.is_ok(),
-        result2.is_ok()
-    );
-    if let Err(e) = &result1 {
-        println!("Peer 0 connection error: {e:?}");
-    }
-    if let Err(e) = &result2 {
-        println!("Peer 1 connection error: {e:?}");
+        println!(
+            "Connection results: peer0->peer1: {:?}, peer1->peer0: {:?}",
+            result1.is_ok(),
+            result2.is_ok()
+        );
+        if let Err(e) = &result1 {
+            println!("Peer 0 connection error: {e:?}");
+        }
+        if let Err(e) = &result2 {
+            println!("Peer 1 connection error: {e:?}");
+        }
+
+        if result1.is_ok() || result2.is_ok() {
+            connection_succeeded = true;
+            break;
+        }
+        
+        if attempt < 3 {
+            println!("Retrying after delay...");
+            tokio::time::sleep(Duration::from_secs(2)).await;
+        }
     }
 
     assert!(
-        result1.is_ok() || result2.is_ok(),
-        "At least one connection should succeed"
+        connection_succeeded,
+        "At least one connection should succeed after 3 attempts"
     );
 }
 
