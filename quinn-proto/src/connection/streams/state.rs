@@ -1942,4 +1942,161 @@ mod tests {
         assert_eq!(server.local_max_data, expected_local_max_data);
         assert!(should_transmit.should_transmit());
     }
+
+    #[test]
+    fn expand_send_window() {
+        let mut server = make(Side::Server);
+
+        let initial_send_window = server.send_window;
+        let larger_send_window = initial_send_window * 2;
+
+        // Set `initial_max_data` larger than `send_window` so we're limited by local flow control
+        server.set_params(&TransportParameters {
+            initial_max_data: VarInt::MAX,
+            initial_max_stream_data_uni: VarInt::MAX,
+            initial_max_streams_uni: VarInt::from_u32(100),
+            ..TransportParameters::default()
+        });
+
+        assert_eq!(server.write_limit(), initial_send_window);
+        assert_eq!(server.poll(), None);
+
+        let mut retransmits = Retransmits::default();
+        let conn_state = ConnState::Established;
+
+        let stream_id = Streams {
+            state: &mut server,
+            conn_state: &conn_state,
+        }
+        .open(Dir::Uni)
+        .expect("should be able to open a stream");
+
+        let mut stream = SendStream {
+            id: stream_id,
+            state: &mut server,
+            pending: &mut retransmits,
+            conn_state: &conn_state,
+        };
+
+        // Check that the stream accepts `initial_send_window` bytes
+        let initial_send_len = initial_send_window as usize;
+        let data = vec![0xFFu8; initial_send_len];
+
+        assert_eq!(stream.write(&data), Ok(initial_send_len));
+
+        // Try to write the same data again, observe that it's blocked
+        assert_eq!(stream.write(&data), Err(WriteError::Blocked));
+
+        // Check that we get a `Writable` event after increasing the send window
+        stream.state.set_send_window(larger_send_window);
+        assert_eq!(
+            stream.state.poll(),
+            Some(StreamEvent::Writable { id: stream_id })
+        );
+
+        // Check that the stream accepts the exact same amount of data again
+        assert_eq!(stream.write(&data), Ok(initial_send_len));
+        assert_eq!(stream.write(&data), Err(WriteError::Blocked));
+
+        assert_eq!(stream.state.poll(), None);
+
+        // Ack the data
+        stream.state.received_ack_of(frame::StreamMeta {
+            id: stream_id,
+            offsets: 0..larger_send_window,
+            fin: false,
+        });
+
+        assert_eq!(
+            stream.state.poll(),
+            Some(StreamEvent::Writable { id: stream_id })
+        );
+
+        // Check that our full send window is available again
+        assert_eq!(stream.write(&data), Ok(initial_send_len));
+        assert_eq!(stream.write(&data), Ok(initial_send_len));
+        assert_eq!(stream.write(&data), Err(WriteError::Blocked));
+    }
+
+    #[test]
+    fn shrink_send_window() {
+        let mut server = make(Side::Server);
+
+        let initial_send_window = server.send_window;
+        let smaller_send_window = server.send_window / 2;
+
+        // Set `initial_max_data` larger than `send_window` so we're limited by local flow control
+        server.set_params(&TransportParameters {
+            initial_max_data: VarInt::MAX,
+            initial_max_stream_data_uni: VarInt::MAX,
+            initial_max_streams_uni: VarInt::from_u32(100),
+            ..TransportParameters::default()
+        });
+
+        assert_eq!(server.write_limit(), initial_send_window);
+        assert_eq!(server.poll(), None);
+
+        let mut retransmits = Retransmits::default();
+        let conn_state = ConnState::Established;
+
+        let stream_id = Streams {
+            state: &mut server,
+            conn_state: &conn_state,
+        }
+        .open(Dir::Uni)
+        .expect("should be able to open a stream");
+
+        let mut stream = SendStream {
+            id: stream_id,
+            state: &mut server,
+            pending: &mut retransmits,
+            conn_state: &conn_state,
+        };
+
+        let initial_send_len = initial_send_window as usize;
+
+        let data = vec![0xFFu8; initial_send_len];
+
+        // Assert that the full send window is accepted
+        assert_eq!(stream.write(&data), Ok(initial_send_len));
+        assert_eq!(stream.write(&data), Err(WriteError::Blocked));
+
+        assert_eq!(stream.state.write_limit(), 0);
+        assert_eq!(stream.state.poll(), None);
+
+        // Shrink our send window, assert that it's still not writable
+        stream.state.set_send_window(smaller_send_window);
+        assert_eq!(stream.state.write_limit(), 0);
+        assert_eq!(stream.state.poll(), None);
+
+        // Assert that data is still not accepted
+        assert_eq!(stream.write(&data), Err(WriteError::Blocked));
+
+        // Ack some data, assert that writes are still not accepted due to outstanding sends
+        stream.state.received_ack_of(frame::StreamMeta {
+            id: stream_id,
+            offsets: 0..smaller_send_window,
+            fin: false,
+        });
+
+        assert_eq!(stream.write(&data), Err(WriteError::Blocked));
+
+        // Ack the rest of the data
+        stream.state.received_ack_of(frame::StreamMeta {
+            id: stream_id,
+            offsets: smaller_send_window..initial_send_window,
+            fin: false,
+        });
+
+        // This should generate a `Writable` event
+        assert_eq!(
+            stream.state.poll(),
+            Some(StreamEvent::Writable { id: stream_id })
+        );
+        assert_eq!(stream.state.write_limit(), smaller_send_window);
+
+        // Assert that only `smaller_send_window` bytes are accepted
+        assert_eq!(stream.write(&data), Ok(smaller_send_window as usize));
+        assert_eq!(stream.write(&data), Err(WriteError::Blocked));
+    }
 }
