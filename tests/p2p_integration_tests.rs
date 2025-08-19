@@ -519,7 +519,7 @@ async fn test_nat_traversal_direct_connection() {
     let mut connection_succeeded = false;
     for attempt in 1..=3 {
         println!("Connection attempt {}/3", attempt);
-        
+
         let connect1 = env.peers[0].connect_to(&peer1_id, bootstrap_addr);
         let connect2 = env.peers[1].connect_to(&peer0_id, bootstrap_addr);
 
@@ -541,7 +541,7 @@ async fn test_nat_traversal_direct_connection() {
             connection_succeeded = true;
             break;
         }
-        
+
         if attempt < 3 {
             println!("Retrying after delay...");
             tokio::time::sleep(Duration::from_secs(2)).await;

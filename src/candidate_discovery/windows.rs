@@ -224,10 +224,7 @@ impl WindowsInterfaceDiscovery {
         let mut overlapped = unsafe { mem::zeroed() };
 
         let result = unsafe {
-            windows::Win32::NetworkManagement::IpHelper::NotifyAddrChange(
-                &mut handle,
-                &overlapped,
-            )
+            windows::Win32::NetworkManagement::IpHelper::NotifyAddrChange(&mut handle, &overlapped)
         };
 
         if result != windows::Win32::Foundation::ERROR_IO_PENDING.0 && result != 0 {

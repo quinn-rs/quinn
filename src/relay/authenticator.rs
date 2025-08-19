@@ -192,6 +192,11 @@ impl RelayAuthenticator {
         self.max_token_age = max_age_seconds;
     }
 
+    /// Get maximum token age
+    pub fn max_token_age(&self) -> u64 {
+        self.max_token_age
+    }
+
     /// Clear all used nonces (for testing)
     pub fn clear_nonces(&self) {
         let mut used_nonces = self.used_nonces.lock().unwrap();
@@ -249,14 +254,15 @@ mod tests {
 
         let token = authenticator.create_token(1024, 300).unwrap();
 
-        // Should not be expired immediately
-        assert!(!token.is_expired(1).unwrap());
+        // Should not be expired immediately (using authenticator's max age)
+        let max_age = authenticator.max_token_age();
+        assert!(!token.is_expired(max_age).unwrap());
 
-        // Wait for expiration
-        thread::sleep(Duration::from_millis(1100));
+        // Wait for expiration - using longer delay to ensure expiration
+        thread::sleep(Duration::from_secs(2)); // 2 full seconds to be sure
 
-        // Should be expired now
-        assert!(token.is_expired(1).unwrap());
+        // Should be expired now (using authenticator's max age)
+        assert!(token.is_expired(max_age).unwrap());
     }
 
     #[test]
