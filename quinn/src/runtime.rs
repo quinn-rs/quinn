@@ -116,11 +116,7 @@ impl<MakeFut, Fut> UdpPollHelper<MakeFut, Fut> {
     /// Construct a [`UdpPoller`] that calls `make_fut` to get the future to poll, storing it until
     /// it yields [`Poll::Ready`], then creating a new one on the next
     /// [`poll_writable`](UdpPoller::poll_writable)
-    #[cfg(any(
-        feature = "runtime-async-std",
-        feature = "runtime-smol",
-        feature = "runtime-tokio",
-    ))]
+    #[cfg(any(feature = "runtime-smol", feature = "runtime-tokio",))]
     fn new(make_fut: MakeFut) -> Self {
         Self {
             make_fut,
@@ -174,17 +170,12 @@ pub fn default_runtime() -> Option<Arc<dyn Runtime>> {
         }
     }
 
-    #[cfg(feature = "runtime-async-std")]
-    {
-        return Some(Arc::new(AsyncStdRuntime));
-    }
-
-    #[cfg(all(feature = "runtime-smol", not(feature = "runtime-async-std")))]
+    #[cfg(feature = "runtime-smol")]
     {
         return Some(Arc::new(SmolRuntime));
     }
 
-    #[cfg(not(any(feature = "runtime-async-std", feature = "runtime-smol")))]
+    #[cfg(not(feature = "runtime-smol"))]
     None
 }
 
@@ -197,5 +188,5 @@ pub use self::tokio::TokioRuntime;
 #[cfg(feature = "async-io")]
 mod async_io;
 // Due to MSRV, we must specify `self::` where there's crate/module ambiguity
-#[cfg(any(feature = "runtime-smol", feature = "runtime-async-std"))]
+#[cfg(feature = "runtime-smol")]
 pub use self::async_io::*;
