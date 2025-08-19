@@ -20,8 +20,8 @@ pub use crate::nat_traversal_api::{
 pub use crate::connection::nat_traversal::{CandidateSource, CandidateState, NatTraversalRole};
 
 // Submodules
-pub mod bootstrap;
-pub mod hole_punching;
 pub mod rfc_migration;
 
 // Module-private imports
+// Note: The actual NAT traversal implementation is in src/connection/nat_traversal.rs
+// This module only contains protocol-level types and RFC migration utilities
