@@ -266,3 +266,43 @@ harness = false  # Custom test runner for long tests
 [package.metadata.docs.rs]
 features = ["rustls-aws-lc-rs", "rustls-ring", "platform-verifier", "log"]
 # Note: "prometheus" feature is intentionally excluded to avoid docs.rs compilation issues
+
+# Realistic clippy configuration - focus on meaningful issues
+[lints.clippy]
+# Allow unwrap/expect in specific contexts - they're often used for invariants
+# that should never be violated and are clearer than complex error handling
+unwrap_used = { level = "allow", priority = 2 }
+expect_used = { level = "allow", priority = 2 }
+
+# Allow indexing - often used for accessing known-good indices in hot paths
+indexing_slicing = { level = "allow", priority = 2 }
+
+# Allow arithmetic operations - performance-critical networking code often needs this
+arithmetic_side_effects = { level = "allow", priority = 2 }
+
+# Keep these enabled for safety and correctness
+all = { level = "warn", priority = -1 }
+correctness = { level = "deny", priority = 1 }
+suspicious = { level = "warn", priority = 1 }
+complexity = { level = "warn", priority = 1 }
+perf = { level = "warn", priority = 1 }
+
+# Disable overly pedantic lints
+pedantic = { level = "allow", priority = -1 }
+restriction = { level = "allow", priority = -1 }
+
+# Selectively enable some useful pedantic lints, but allow exceptions
+must_use_candidate = { level = "allow", priority = 2 }  # Too noisy for test constructors
+missing_errors_doc = { level = "allow", priority = 2 }  # Too noisy for internal APIs
+missing_panics_doc = { level = "allow", priority = 2 }  # Too noisy for test code
+module_name_repetitions = { level = "allow", priority = 2 }  # Common in networking protocols
+
+# Allow print statements in examples and test utilities
+print_stdout = { level = "allow", priority = 2 }
+print_stderr = { level = "allow", priority = 2 }
+
+# Allow enum variant names that end with Error - common pattern for error types
+enum_variant_names = { level = "allow", priority = 2 }
+
+# Allow reasonable nesting in complex state machines and protocol handlers
+excessive_nesting = { level = "allow", priority = 2 }

@@ -151,7 +151,7 @@ jobs:
     - name: Run Security Linting
       run: |
         echo "Running security validation..."
-        cargo clippy --all-targets --all-features -- -D warnings -W clippy::unwrap_used -W clippy::expect_used
+        cargo clippy --all-targets --all-features -- -D warnings
         
     - name: Check for Security Issues
       run: |

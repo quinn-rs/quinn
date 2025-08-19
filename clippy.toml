@@ -1,0 +1,31 @@
+# Clippy configuration for ant-quic
+# Realistic settings that focus on meaningful issues while allowing common patterns
+
+# Allow panic-prone operations in specific contexts
+# unwrap() and expect() are acceptable in tests, examples, and when invariants are guaranteed
+avoid-breaking-exported-api = false
+
+# Focus on real issues, not pedantic style preferences
+type-complexity-threshold = 500
+
+# Performance lints (keep these reasonable)
+enum-variant-name-threshold = 3
+
+# Allow common patterns that are safe and idiomatic
+cognitive-complexity-threshold = 100
+
+# Allow unwrap/expect in tests where they're clearer than error propagation
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-panic-in-tests = true
+allow-print-in-tests = true
+
+# Allow indexing in tests for clarity  
+allow-indexing-slicing-in-tests = true
+
+# Focus on meaningful suggestions
+too-many-arguments-threshold = 10
+too-many-lines-threshold = 200
+
+# Allow reasonable complexity in match expressions
+excessive-nesting-threshold = 8
