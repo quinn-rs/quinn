@@ -1,0 +1,40 @@
+# Workflow Controller Configuration
+# This file helps manage the numerous workflows to prevent queue congestion
+
+concurrency_limits:
+  # Global concurrency limit across all workflows
+  max_concurrent_workflows: 10
+  
+  # Per-workflow-type limits
+  test_workflows: 5
+  build_workflows: 3
+  release_workflows: 2
+
+priority_order:
+  # Higher priority workflows run first
+  1: "Quick Checks"
+  2: "Security Audit"  
+  3: "Standard Tests"
+  4: "Build book"
+  5: "Coverage"
+  6: "Release"
+  7: "Enhanced Release"
+  8: "Docker NAT Tests"
+  9: "Extended Platform Tests"
+  10: "Comprehensive NAT Traversal Testing"
+
+disabled_on_push:
+  # These workflows should only run on PR or schedule
+  - "Performance Benchmarks"
+  - "Extended Cross-Platform Tests"
+  - "Property Tests"
+  - "Dependency Review"
+
+merge_candidates:
+  # Workflows that could be merged into others
+  - merge: ["Test Coverage", "Coverage"]
+    into: "Coverage Report"
+  - merge: ["NAT Testing", "NAT Traversal Tests", "Comprehensive NAT Traversal Testing"]
+    into: "NAT Test Suite"
+  - merge: ["Extended Platform Tests", "Extended Cross-Platform Tests", "Platform-Specific Network Tests"]
+    into: "Platform Tests"
