@@ -226,7 +226,7 @@ impl WindowsInterfaceDiscovery {
         let result = unsafe {
             windows::Win32::NetworkManagement::IpHelper::NotifyAddrChange(
                 &mut handle,
-                &mut overlapped,
+                &overlapped,
             )
         };
 
@@ -768,7 +768,7 @@ mod tests {
         };
 
         discovery.set_adapter_config(config.clone());
-        assert_eq!(discovery.adapter_config.include_loopback, true);
+        assert!(discovery.adapter_config.include_loopback);
         assert_eq!(discovery.adapter_config.min_mtu, 1000);
     }
 
