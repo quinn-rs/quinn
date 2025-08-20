@@ -27,6 +27,7 @@ use bytes::{Bytes, BytesMut};
 use pin_project_lite::pin_project;
 use quinn_udp::{BATCH_SIZE, RecvMeta};
 use rustc_hash::FxHashMap;
+use tracing::error;
 #[cfg(all(not(wasm_browser), feature = "network-discovery"))]
 use socket2::{Domain, Protocol, Socket, Type};
 use tokio::sync::{Notify, futures::Notified, mpsc};
@@ -97,7 +98,12 @@ impl Endpoint {
 
     /// Returns relevant stats from this Endpoint
     pub fn stats(&self) -> EndpointStats {
-        self.inner.state.lock().unwrap().stats
+        self.inner.state.lock()
+            .map(|state| state.stats)
+            .unwrap_or_else(|_| {
+                error!("Endpoint state mutex poisoned");
+                EndpointStats::default()
+            })
     }
 
     /// Helper to construct an endpoint for use with both incoming and outgoing connections
@@ -216,7 +222,8 @@ impl Endpoint {
         addr: SocketAddr,
         server_name: &str,
     ) -> Result<Connecting, ConnectError> {
-        let mut endpoint = self.inner.state.lock().unwrap();
+        let mut endpoint = self.inner.state.lock()
+            .map_err(|_| ConnectError::EndpointStopping)?;
         if endpoint.driver_lost || endpoint.recv_state.connections.close.is_some() {
             return Err(ConnectError::EndpointStopping);
         }
@@ -257,7 +264,8 @@ impl Endpoint {
     /// On error, the old UDP socket is retained.
     pub fn rebind_abstract(&self, socket: Arc<dyn AsyncUdpSocket>) -> io::Result<()> {
         let addr = socket.local_addr()?;
-        let mut inner = self.inner.state.lock().unwrap();
+        let mut inner = self.inner.state.lock()
+            .map_err(|_| io::Error::new(io::ErrorKind::Other, "Endpoint state mutex poisoned"))?;
         inner.prev_socket = Some(mem::replace(&mut inner.socket, socket));
         inner.ipv6 = addr.is_ipv6();
 
@@ -274,22 +282,25 @@ impl Endpoint {
     ///
     /// Useful for e.g. refreshing TLS certificates without disrupting existing connections.
     pub fn set_server_config(&self, server_config: Option<ServerConfig>) {
-        self.inner
-            .state
-            .lock()
-            .unwrap()
-            .inner
-            .set_server_config(server_config.map(Arc::new))
+        if let Ok(mut state) = self.inner.state.lock() {
+            state.inner.set_server_config(server_config.map(Arc::new));
+        } else {
+            error!("Failed to set server config: endpoint state mutex poisoned");
+        }
     }
 
     /// Get the local `SocketAddr` the underlying socket is bound to
     pub fn local_addr(&self) -> io::Result<SocketAddr> {
-        self.inner.state.lock().unwrap().socket.local_addr()
+        self.inner.state.lock()
+            .map_err(|_| io::Error::new(io::ErrorKind::Other, "Endpoint state mutex poisoned"))?
+            .socket.local_addr()
     }
 
     /// Get the number of connections that are currently open
     pub fn open_connections(&self) -> usize {
-        self.inner.state.lock().unwrap().inner.open_connections()
+        self.inner.state.lock()
+            .map(|state| state.inner.open_connections())
+            .unwrap_or(0)
     }
 
     /// Close all of this endpoint's connections immediately and cease accepting new connections.
@@ -299,7 +310,13 @@ impl Endpoint {
     /// [`Connection::close()`]: crate::Connection::close
     pub fn close(&self, error_code: VarInt, reason: &[u8]) {
         let reason = Bytes::copy_from_slice(reason);
-        let mut endpoint = self.inner.state.lock().unwrap();
+        let mut endpoint = match self.inner.state.lock() {
+            Ok(endpoint) => endpoint,
+            Err(_) => {
+                error!("Failed to close endpoint: state mutex poisoned");
+                return;
+            }
+        };
         endpoint.recv_state.connections.close = Some((error_code, reason.clone()));
         for sender in endpoint.recv_state.connections.senders.values() {
             // Ignoring errors from dropped connections
@@ -324,7 +341,13 @@ impl Endpoint {
     pub async fn wait_idle(&self) {
         loop {
             {
-                let endpoint = &mut *self.inner.state.lock().unwrap();
+                let endpoint = match self.inner.state.lock() {
+                    Ok(endpoint) => endpoint,
+                    Err(_) => {
+                        error!("Failed to wait for idle: state mutex poisoned");
+                        break;
+                    }
+                };
                 if endpoint.recv_state.connections.is_empty() {
                     break;
                 }
@@ -791,7 +814,10 @@ impl RecvState {
             // expect() safe as self.recv_buf is chunked into BATCH_SIZE items
             // and iovs will be of size BATCH_SIZE, thus from_fn is called
             // exactly BATCH_SIZE times.
-            std::array::from_fn(|_| bufs.next().expect("BATCH_SIZE elements"))
+            std::array::from_fn(|_| bufs.next().unwrap_or_else(|| {
+                error!("Insufficient buffers for BATCH_SIZE");
+                IoSliceMut::new(&mut [])
+            }))
         };
         loop {
             match socket.poll_recv(cx, &mut iovs, &mut metas) {

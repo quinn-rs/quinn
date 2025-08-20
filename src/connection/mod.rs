@@ -6559,6 +6559,8 @@ impl AddressObservationRateLimiter {
             self.tokens = self.max_tokens;
         }
     }
+
+
 }
 
 #[cfg(test)]

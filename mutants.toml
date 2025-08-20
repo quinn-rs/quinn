@@ -1,0 +1,111 @@
+# Mutation testing configuration for ant-quic
+# This configuration optimizes mutation testing for a QUIC implementation
+
+[mutants]
+# Files and directories to exclude from mutation testing
+exclude = [
+    "src/bin/*",                    # Binary files
+    "tests/*",                      # Test files
+    "benches/*",                    # Benchmark files
+    "examples/*",                   # Example files
+    "src/candidate_discovery/*",    # Platform-specific network code
+    "src/discovery/*",              # Platform-specific discovery
+    "src/logging/*",                # Logging infrastructure
+    "src/stats_dashboard.rs",       # UI/dashboard code
+    "src/terminal_ui.rs",           # Terminal UI code
+]
+
+# Files to include (if not specified, all non-excluded files are included)
+# include = ["src/**/*.rs"]
+
+# Timeout for each mutant test (in seconds)
+timeout = 300
+
+# Minimum test timeout multiplier
+timeout_multiplier = 2.0
+
+# Cargo features to use during testing
+features = ["pqc", "rustls-ring", "network-discovery"]
+
+# Additional cargo arguments
+cargo_args = ["--release"]
+
+# Test command to run
+test_command = "cargo test --quiet --no-run && cargo test --quiet"
+
+# Number of threads to use (0 = auto-detect)
+threads = 0
+
+# Output directory for mutation testing results
+output_dir = "mutation-test-results"
+
+# Generate HTML report
+html_report = true
+
+# Generate JSON report
+json_report = true
+
+# Show diff for each mutant
+show_diff = true
+
+# Show logs for failed tests
+show_logs = true
+
+# Stop on first error
+fail_fast = false
+
+# Minimum mutation score required (0.0 to 1.0)
+minimum_score = 0.85
+
+# Exclude mutations that are likely to be false positives
+exclude_mutations = [
+    "DeleteStmt",           # Deleting statements often breaks compilation
+    "DeleteExpr",           # Deleting expressions often breaks compilation
+    "ReplaceExpr",          # Complex expression replacements
+    "SwapBinOp",            # Binary operator swaps can be noisy
+]
+
+# Focus on specific types of mutations that are most valuable
+include_mutations = [
+    "ReplaceTrue",          # Boolean logic errors
+    "ReplaceFalse",         # Boolean logic errors
+    "ReplaceZero",          # Numeric edge cases
+    "ReplaceOne",           # Numeric edge cases
+    "ReplaceMinusOne",      # Numeric edge cases
+    "ReplacePlus",          # Arithmetic operator errors
+    "ReplaceMinus",         # Arithmetic operator errors
+    "ReplaceMultiply",      # Arithmetic operator errors
+    "ReplaceDivide",        # Arithmetic operator errors
+    "ReplaceEqual",         # Comparison operator errors
+    "ReplaceNotEqual",      # Comparison operator errors
+    "ReplaceLess",          # Comparison operator errors
+    "ReplaceLessEqual",     # Comparison operator errors
+    "ReplaceGreater",       # Comparison operator errors
+    "ReplaceGreaterEqual",  # Comparison operator errors
+    "ReplaceAnd",           # Logical operator errors
+    "ReplaceOr",            # Logical operator errors
+    "ReplaceNot",           # Logical operator errors
+    "ReturnDefault",        # Return value errors
+    "ReplaceLiteral",       # Literal value errors
+    "ReplaceFunctionCall",  # Function call errors
+]
+
+# Specific functions to focus on (critical networking and crypto functions)
+focus_on = [
+    "src/connection/mod.rs",           # Core connection logic
+    "src/crypto/pqc/mod.rs",           # Post-quantum crypto
+    "src/nat_traversal_api.rs",        # NAT traversal API
+    "src/transport_parameters.rs",     # Transport parameters
+    "src/frame.rs",                    # Frame handling
+    "src/packet.rs",                   # Packet processing
+]
+
+# Functions to ignore (too complex or platform-specific)
+ignore = [
+    "src/candidate_discovery/linux.rs",  # Platform-specific
+    "src/candidate_discovery/windows.rs", # Platform-specific
+    "src/candidate_discovery/macos.rs",   # Platform-specific
+    "src/discovery/linux.rs",             # Platform-specific
+    "src/discovery/windows.rs",           # Platform-specific
+    "src/discovery/macos.rs",             # Platform-specific
+]

@@ -255,6 +255,12 @@ impl LinuxInterfaceDiscovery {
         }
 
         // Create netlink socket
+        // SAFETY: This unsafe block calls the libc socket() function to create a netlink socket.
+        // - All parameters are valid constants from libc (AF_NETLINK, SOCK_RAW, SOCK_CLOEXEC, NETLINK_ROUTE)
+        // - The socket() function is a standard POSIX system call with well-defined behavior
+        // - Return value is checked for errors (negative values indicate failure)
+        // - The file descriptor is properly managed and closed in the Drop implementation
+        // - SOCK_CLOEXEC flag ensures the socket is closed on exec() for security
         let socket_fd = unsafe {
             libc::socket(
                 libc::AF_NETLINK,

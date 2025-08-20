@@ -13,21 +13,14 @@
 //! - `crypto`: Raw public key authentication
 //! - `api`: High-level P2P networking API
 
-// TODO: Re-enable after fixing all missing documentation
-// #![cfg_attr(not(fuzzing), warn(missing_docs))]
-#![allow(missing_docs)]
+// Documentation warnings enabled - all public APIs must be documented
+#![cfg_attr(not(fuzzing), warn(missing_docs))]
 #![allow(unreachable_pub)]
 #![allow(clippy::cognitive_complexity)]
 #![allow(clippy::too_many_arguments)]
 #![allow(clippy::use_self)]
-// FIXME: Temporary allows to get CI passing quickly
-// These should be gradually removed as the codebase is cleaned up
-// Priority items to fix:
-// 1. Re-enable missing_docs and document all public items
-// 2. Fix dead_code warnings by removing unused code
-// 3. Fix clippy style issues (field names, formatting, etc)
-// 4. Enable proper error handling instead of allowing unused_must_use
-#![allow(dead_code)]
+// Dead code warnings enabled - remove unused code
+#![warn(dead_code)]
 #![allow(clippy::field_reassign_with_default)]
 #![allow(clippy::module_inception)]
 #![allow(clippy::useless_vec)]
@@ -83,7 +76,7 @@
 #![allow(clippy::match_ref_pats)]
 #![allow(clippy::should_implement_trait)]
 #![allow(clippy::wildcard_imports)]
-#![allow(unused_must_use)]
+#![warn(unused_must_use)]
 #![allow(improper_ctypes)]
 #![allow(improper_ctypes_definitions)]
 #![allow(non_upper_case_globals)]

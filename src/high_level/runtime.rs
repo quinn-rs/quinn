@@ -9,6 +9,7 @@ use std::{
 };
 
 use quinn_udp::{RecvMeta, Transmit};
+use tracing::error;
 
 use crate::Instant;
 
@@ -138,11 +139,20 @@ where
         if this.fut.is_none() {
             this.fut.set(Some((this.make_fut)()));
         }
-        // We're forced to `unwrap` here because `Fut` may be `!Unpin`, which means we can't safely
+        // We're forced to use expect here because `Fut` may be `!Unpin`, which means we can't safely
         // obtain an `&mut Fut` after storing it in `self.fut` when `self` is already behind `Pin`,
         // and if we didn't store it then we wouldn't be able to keep it alive between
         // `poll_writable` calls.
-        let result = this.fut.as_mut().as_pin_mut().unwrap().poll(cx);
+        let result = match this.fut.as_mut().as_pin_mut() {
+            Some(fut) => fut.poll(cx),
+            None => {
+                error!("Future not set when UdpPollHelper is polled");
+                Poll::Ready(Err(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    "Future not set"
+                )))
+            }
+        };
         if result.is_ready() {
             // Polling an arbitrary `Future` after it becomes ready is a logic error, so arrange for
             // a new `Future` to be created on the next call.

@@ -8,85 +8,53 @@ use tracing::error;
 pub(crate) struct TransportParameterErrorHandler;
 
 impl TransportParameterErrorHandler {
-    /// Log transport parameter error with compliance context
-    pub(super) fn log_error(
-        side: Side,
-        param_id: Option<TransportParameterId>,
-        error_type: &str,
-        details: &str,
-    ) {
-        error!(
-            side = ?side,
-            param_id = ?param_id,
-            error_type = error_type,
-            details = details,
-            compliance = "RFC 9000 Section 18.2",
-            "Transport parameter validation failed"
-        );
-    }
-
     /// Log specific validation failures with RFC references
     pub(super) fn log_validation_failure(
         param_name: &str,
         value: u64,
-        constraint: &str,
+        expected: &str,
         rfc_ref: &str,
     ) {
         error!(
-            parameter = param_name,
+            param_name = param_name,
             value = value,
-            constraint = constraint,
-            rfc_reference = rfc_ref,
-            "Transport parameter constraint violation"
-        );
-    }
-
-    /// Log semantic validation errors
-    pub(super) fn log_semantic_error(error_desc: &str, context: &str) {
-        error!(
-            error = error_desc,
-            context = context,
-            compliance = "RFC 9000 Section 18",
-            "Transport parameter semantic validation failed"
-        );
-    }
-
-    /// Log NAT traversal parameter errors
-    pub(super) fn log_nat_traversal_error(side: Side, received_variant: &str, expected: &str) {
-        error!(
-            side = ?side,
-            received = received_variant,
             expected = expected,
-            compliance = "draft-seemann-quic-nat-traversal-02",
-            "NAT traversal parameter role mismatch"
+            rfc_ref = rfc_ref,
+            "Transport parameter validation failed"
         );
     }
 
-    /// Create a properly formatted CONNECTION_CLOSE frame for parameter errors
-    pub(super) fn create_close_frame(error_msg: &str) -> frame::Close {
-        let connection_close = frame::ConnectionClose {
-            error_code: crate::transport_error::Code::TRANSPORT_PARAMETER_ERROR,
-            frame_type: None,
-            reason: error_msg.as_bytes().to_vec().into(),
-        };
-        frame::Close::Connection(connection_close)
-    }
+	    /// Create a properly formatted CONNECTION_CLOSE frame for parameter errors
+	    pub(super) fn create_close_frame(error_msg: &str) -> frame::Close {
+	        let connection_close = frame::ConnectionClose {
+	            error_code: crate::transport_error::Code::TRANSPORT_PARAMETER_ERROR,
+	            frame_type: None,
+	            reason: error_msg.as_bytes().to_vec().into(),
+	        };
+	        frame::Close::Connection(connection_close)
+	    }
 
-    /// Handle validation errors during parameter negotiation
-    pub(super) fn handle_validation_error(
-        error: TransportError,
-        param_context: &str,
-    ) -> TransportError {
-        if error.code == crate::transport_error::Code::TRANSPORT_PARAMETER_ERROR {
-            error!(
-                error = %error.reason,
-                context = param_context,
-                "Transport parameter error during negotiation"
-            );
-        }
-        error
-    }
-}
+	    /// Log semantic validation errors
+	    pub(super) fn log_semantic_error(error_desc: &str, context: &str) {
+	        error!(
+	            error = error_desc,
+	            context = context,
+	            compliance = "RFC 9000 Section 18",
+	            "Transport parameter semantic validation failed"
+	        );
+	    }
+
+	    /// Log NAT traversal parameter errors
+	    pub(super) fn log_nat_traversal_error(side: Side, received_variant: &str, expected: &str) {
+	        error!(
+	            side = ?side,
+	            received = received_variant,
+	            expected = expected,
+	            compliance = "draft-seemann-quic-nat-traversal-02",
+	            "NAT traversal parameter role mismatch"
+	        );
+	    }
+	}
 
 /// Validation helper functions with detailed error reporting
 pub(crate) fn validate_ack_delay_exponent(value: u8) -> Result<(), TransportError> {

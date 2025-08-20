@@ -1,4 +1,5 @@
 use crate::{Duration, Instant};
+use tracing::error;
 
 /// Limits the amount of time spent on a certain type of work in a cycle
 ///
@@ -59,7 +60,14 @@ impl WorkLimiter {
     /// Requires that previous work was tracked using `record_work`.
     pub(crate) fn allow_work(&mut self, now: impl Fn() -> Instant) -> bool {
         match self.mode {
-            Mode::Measure => (now() - self.start_time.unwrap()) < self.desired_cycle_time,
+            Mode::Measure => {
+                let start_time = self.start_time
+                    .unwrap_or_else(|| {
+                        error!("start_time not set in Measure mode");
+                        now()
+                    });
+                (now() - start_time) < self.desired_cycle_time
+            }
             Mode::HistoricData => self.completed < self.allowed,
         }
     }
@@ -85,7 +93,12 @@ impl WorkLimiter {
         }
 
         if let Mode::Measure = self.mode {
-            let elapsed = now() - self.start_time.unwrap();
+            let start_time = self.start_time
+                .unwrap_or_else(|| {
+                    error!("start_time not set in Measure mode");
+                    now()
+                });
+            let elapsed = now() - start_time;
 
             let time_per_work_item_nanos = (elapsed.as_nanos()) as f64 / self.completed as f64;
 

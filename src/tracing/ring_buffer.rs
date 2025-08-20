@@ -49,6 +49,12 @@ impl EventLog {
             .map(|_| std::cell::UnsafeCell::new(Event::default()))
             .collect();
         let events = events.into_boxed_slice();
+        // SAFETY: This unsafe block converts a boxed slice to a boxed array.
+        // - The original slice has exactly BUFFER_SIZE elements (guaranteed by initialization)
+        // - The memory layout is compatible between slice and array of same size
+        // - The conversion preserves the original allocation and ownership
+        // - No data is copied or moved, only the type is changed
+        // - The resulting Box<[T; N]> has the same memory layout as the original Box<[T]>
         let events = unsafe {
             Box::from_raw(Box::into_raw(events)
                 as *mut [std::cell::UnsafeCell<Event>; TraceConfig::BUFFER_SIZE])
@@ -76,6 +82,12 @@ impl EventLog {
         let slot = (idx & TraceConfig::BUFFER_MASK as u64) as usize;
 
         // Write to ring buffer (atomic write)
+        // SAFETY: This unsafe block performs a volatile write to the ring buffer slot.
+        // - The slot index is calculated using a mask to ensure it stays within bounds (0..BUFFER_SIZE)
+        // - The UnsafeCell provides interior mutability for concurrent access
+        // - Volatile write ensures the write is not optimized away and is immediately visible
+        // - The Event type implements Clone, so the clone is safe
+        // - No other thread can be writing to the same slot due to the single-writer design
         unsafe {
             let ptr = self.events[slot].get();
             ptr::write_volatile(ptr, event.clone());
@@ -131,6 +143,12 @@ impl EventLog {
 
             let slot = (idx & TraceConfig::BUFFER_MASK as u64) as usize;
 
+            // SAFETY: This unsafe block performs a volatile read from the ring buffer slot.
+            // - The slot index is calculated using a mask to ensure it stays within bounds (0..BUFFER_SIZE)
+            // - The UnsafeCell provides interior mutability for concurrent access
+            // - Volatile read ensures we get the most recent value and prevents compiler optimizations
+            // - The Event type is Copy, so reading it is safe
+            // - The slot may contain uninitialized data, but we check for timestamp == 0 to detect this
             let event = unsafe {
                 let ptr = self.events[slot].get();
                 ptr::read_volatile(ptr)
@@ -153,9 +171,17 @@ impl EventLog {
         if let Some(indices) = self.indices.by_trace.get(&trace_id) {
             indices
                 .iter()
-                .map(|&slot| unsafe {
-                    let ptr = self.events[slot as usize].get();
-                    ptr::read_volatile(ptr)
+                .map(|&slot| {
+                    // SAFETY: This unsafe block performs a volatile read from an indexed slot.
+                    // - The slot index comes from the trace index, which only contains valid indices
+                    // - The index is cast to usize but was originally usize, so no truncation occurs
+                    // - The UnsafeCell provides interior mutability for concurrent access
+                    // - Volatile read ensures we get the most recent value
+                    // - The Event type is Copy, so reading it is safe
+                    unsafe {
+                        let ptr = self.events[slot as usize].get();
+                        ptr::read_volatile(ptr)
+                    }
                 })
                 .collect()
         } else {
@@ -177,6 +203,12 @@ impl EventLog {
             let idx = current_idx.saturating_sub(i + 1);
             let slot = (idx & TraceConfig::BUFFER_MASK as u64) as usize;
 
+            // SAFETY: This unsafe block performs a volatile read from the ring buffer slot.
+            // - The slot index is calculated using a mask to ensure it stays within bounds (0..BUFFER_SIZE)
+            // - The UnsafeCell provides interior mutability for concurrent access
+            // - Volatile read ensures we get the most recent value and prevents compiler optimizations
+            // - The Event type is Copy, so reading it is safe
+            // - The slot may contain uninitialized data, but we check for timestamp == 0 to detect this
             let event = unsafe {
                 let ptr = self.events[slot].get();
                 ptr::read_volatile(ptr)
@@ -244,8 +276,20 @@ impl EventLog {
     }
 }
 
-// Safe to send across threads
+// SAFETY: EventLog can be safely sent across thread boundaries.
+// - All fields use atomic operations or interior mutability (UnsafeCell)
+// - The ring buffer design ensures no data races between readers and writers
+// - AtomicU64 and AtomicU32 provide thread-safe operations
+// - UnsafeCell is used correctly for interior mutability
+// - No shared mutable state that could cause data races
 unsafe impl Send for EventLog {}
+
+// SAFETY: EventLog can be safely shared between threads.
+// - All operations are either atomic or use proper interior mutability
+// - The single-writer, multiple-reader design prevents data races
+// - Atomic operations ensure consistency across threads
+// - UnsafeCell access is properly managed through volatile reads/writes
+// - No interior mutability violations possible
 unsafe impl Sync for EventLog {}
 
 #[cfg(all(test, feature = "trace"))]

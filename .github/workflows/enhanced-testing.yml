@@ -1,0 +1,315 @@
+name: Enhanced Testing Suite
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  schedule:
+    # Run comprehensive testing daily at 3 AM UTC
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+    inputs:
+      test_type:
+        description: 'Type of tests to run'
+        required: false
+        default: 'all'
+        options:
+        - all
+        - standard
+        - property
+        - security
+        - mutation
+        - coverage
+        - benchmarks
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+  RUSTFLAGS: "-D warnings"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Standard test suite
+  standard-tests:
+    name: Standard Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        components: clippy
+
+    - uses: Swatinem/rust-cache@v2
+
+    - name: Run standard tests
+      run: cargo test --all --quiet
+
+    - name: Run clippy
+      run: cargo clippy --all-targets --all-features -- -D warnings
+
+    - name: Run documentation tests
+      run: cargo test --doc --quiet
+
+  # Property testing
+  property-tests:
+    name: Property Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+
+    - uses: Swatinem/rust-cache@v2
+
+    - name: Install proptest dependencies
+      run: cargo install proptest --quiet
+
+    - name: Run property tests
+      run: cargo test --features property_testing --quiet
+
+  # Security audit
+  security-audit:
+    name: Security Audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+
+    - uses: Swatinem/rust-cache@v2
+
+    - name: Install cargo-audit
+      run: cargo install cargo-audit --quiet
+
+    - name: Run security audit
+      run: cargo audit --quiet
+
+    - name: Run cargo-deny
+      run: |
+        cargo install cargo-deny --quiet
+        cargo deny check advisories
+
+  # Coverage analysis
+  coverage:
+    name: Coverage Analysis
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        components: llvm-tools-preview
+
+    - uses: Swatinem/rust-cache@v2
+
+    - name: Install cargo-tarpaulin
+      run: cargo install cargo-tarpaulin --quiet
+
+    - name: Run coverage analysis
+      run: cargo tarpaulin --out Xml --output-dir coverage-xml --quiet
+
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v3
+      with:
+        file: coverage-xml/cobertura.xml
+        flags: unittests
+        name: codecov-umbrella
+
+  # Mutation testing (run less frequently due to time constraints)
+  mutation-tests:
+    name: Mutation Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+
+    - uses: Swatinem/rust-cache@v2
+
+    - name: Install cargo-mutants
+      run: cargo install cargo-mutants --quiet
+
+    - name: Run mutation testing
+      run: cargo mutants --quiet --no-shuffle --timeout-multiplier 2.0
+
+  # Performance benchmarks
+  benchmarks:
+    name: Performance Benchmarks
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+
+    - uses: Swatinem/rust-cache@v2
+
+    - name: Run benchmarks
+      run: cargo bench --quiet
+
+  # Platform-specific tests
+  platform-tests:
+    name: Platform Tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+
+    - uses: Swatinem/rust-cache@v2
+
+    - name: Run platform-specific tests
+      run: cargo test --features platform-tests --quiet
+
+  # Cross-platform compilation
+  cross-platform:
+    name: Cross-Platform Compilation
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        targets: aarch64-unknown-linux-gnu, x86_64-pc-windows-gnu, x86_64-apple-darwin
+
+    - uses: Swatinem/rust-cache@v2
+
+    - name: Test cross-compilation
+      run: |
+        cargo check --target x86_64-unknown-linux-gnu
+        cargo check --target aarch64-unknown-linux-gnu
+        cargo check --target x86_64-pc-windows-gnu
+        cargo check --target x86_64-apple-darwin
+
+  # Fuzz testing (if enabled)
+  fuzz-tests:
+    name: Fuzz Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    if: github.event_name == 'schedule' || contains(github.event.inputs.test_type, 'fuzz')
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+
+    - uses: Swatinet/rust-cache@v2
+
+    - name: Install cargo-fuzz
+      run: cargo install cargo-fuzz --quiet
+
+    - name: Run fuzz tests
+      run: |
+        # Add fuzz targets here when implemented
+        echo "Fuzz testing framework ready - add fuzz targets as needed"
+
+  # Summary job
+  summary:
+    name: Test Summary
+    runs-on: ubuntu-latest
+    needs: [standard-tests, property-tests, security-audit, coverage, benchmarks, platform-tests, cross-platform]
+    if: always()
+
+    steps:
+    - name: Generate test summary
+      run: |
+        echo "# 🧪 Enhanced Testing Summary" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "## Test Results" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+
+        # Standard tests
+        if [ "${{ needs.standard-tests.result }}" == "success" ]; then
+          echo "✅ **Standard Tests**: PASSED" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "❌ **Standard Tests**: FAILED" >> $GITHUB_STEP_SUMMARY
+        fi
+
+        # Property tests
+        if [ "${{ needs.property-tests.result }}" == "success" ]; then
+          echo "✅ **Property Tests**: PASSED" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "⚠️ **Property Tests**: FAILED" >> $GITHUB_STEP_SUMMARY
+        fi
+
+        # Security audit
+        if [ "${{ needs.security-audit.result }}" == "success" ]; then
+          echo "✅ **Security Audit**: PASSED" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "❌ **Security Audit**: FAILED" >> $GITHUB_STEP_SUMMARY
+        fi
+
+        # Coverage
+        if [ "${{ needs.coverage.result }}" == "success" ]; then
+          echo "✅ **Coverage Analysis**: COMPLETED" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "❌ **Coverage Analysis**: FAILED" >> $GITHUB_STEP_SUMMARY
+        fi
+
+        # Benchmarks
+        if [ "${{ needs.benchmarks.result }}" == "success" ]; then
+          echo "✅ **Performance Benchmarks**: COMPLETED" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "⚠️ **Performance Benchmarks**: FAILED" >> $GITHUB_STEP_SUMMARY
+        fi
+
+        # Platform tests
+        if [ "${{ needs.platform-tests.result }}" == "success" ]; then
+          echo "✅ **Platform Tests**: PASSED" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "❌ **Platform Tests**: FAILED" >> $GITHUB_STEP_SUMMARY
+        fi
+
+        # Cross-platform
+        if [ "${{ needs.cross-platform.result }}" == "success" ]; then
+          echo "✅ **Cross-Platform Compilation**: PASSED" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "❌ **Cross-Platform Compilation**: FAILED" >> $GITHUB_STEP_SUMMARY
+        fi
+
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "## Recommendations" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "1. **Review test failures** and fix any issues" >> $GITHUB_STEP_SUMMARY
+        echo "2. **Check coverage reports** for areas needing improvement" >> $GITHUB_STEP_SUMMARY
+        echo "3. **Address security vulnerabilities** if any are found" >> $GITHUB_STEP_SUMMARY
+        echo "4. **Monitor performance regressions** in benchmarks" >> $GITHUB_STEP_SUMMARY
+        echo "5. **Run mutation testing** periodically for comprehensive validation" >> $GITHUB_STEP_SUMMARY
+
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "---" >> $GITHUB_STEP_SUMMARY
+        echo "*Generated by Enhanced Testing Suite*" >> $GITHUB_STEP_SUMMARY

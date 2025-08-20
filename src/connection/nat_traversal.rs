@@ -250,6 +250,7 @@ pub(super) enum CandidateType {
     /// Peer reflexive - address learned from incoming packets
     PeerReflexive,
 }
+
 /// Calculate ICE-like priority for an address candidate
 /// Based on RFC 8445 Section 5.1.2.1
 fn calculate_candidate_priority(

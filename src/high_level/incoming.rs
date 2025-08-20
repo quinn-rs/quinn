@@ -8,6 +8,7 @@ use std::{
 
 use crate::{ConnectionError, ConnectionId, ServerConfig};
 use thiserror::Error;
+use tracing::error;
 
 use super::{
     connection::{Connecting, Connection},
@@ -25,7 +26,11 @@ impl Incoming {
 
     /// Attempt to accept this incoming connection (an error may still occur)
     pub fn accept(mut self) -> Result<Connecting, ConnectionError> {
-        let state = self.0.take().unwrap();
+        let state = self.0.take()
+            .ok_or_else(|| {
+                error!("Incoming connection state already consumed");
+                ConnectionError::LocallyClosed
+            })?;
         state.endpoint.accept(state.inner, None)
     }
 
@@ -36,21 +41,37 @@ impl Incoming {
         mut self,
         server_config: Arc<ServerConfig>,
     ) -> Result<Connecting, ConnectionError> {
-        let state = self.0.take().unwrap();
+        let state = self.0.take()
+            .ok_or_else(|| {
+                error!("Incoming connection state already consumed");
+                ConnectionError::LocallyClosed
+            })?;
         state.endpoint.accept(state.inner, Some(server_config))
     }
 
     /// Reject this incoming connection attempt
     pub fn refuse(mut self) {
-        let state = self.0.take().unwrap();
-        state.endpoint.refuse(state.inner);
+        if let Some(state) = self.0.take() {
+            state.endpoint.refuse(state.inner);
+        } else {
+            error!("Incoming connection state already consumed");
+        }
     }
 
     /// Respond with a retry packet, requiring the client to retry with address validation
     ///
     /// Errors if `may_retry()` is false.
     pub fn retry(mut self) -> Result<(), RetryError> {
-        let state = self.0.take().unwrap();
+        let state = match self.0.take() {
+            Some(state) => state,
+            None => {
+                error!("Incoming connection state already consumed");
+                // This is a programming error - the connection has already been consumed
+                // In a production system, this should be handled more gracefully
+                // For now, we'll panic since this indicates a bug in the calling code
+                panic!("Incoming connection state already consumed - this is a programming error");
+            }
+        };
         state.endpoint.retry(state.inner).map_err(|e| {
             RetryError(Box::new(Self(Some(State {
                 inner: e.into_incoming(),
@@ -61,18 +82,25 @@ impl Incoming {
 
     /// Ignore this incoming connection attempt, not sending any packet in response
     pub fn ignore(mut self) {
-        let state = self.0.take().unwrap();
-        state.endpoint.ignore(state.inner);
+        if let Some(state) = self.0.take() {
+            state.endpoint.ignore(state.inner);
+        } else {
+            error!("Incoming connection state already consumed");
+        }
     }
 
     /// The local IP address which was used when the peer established the connection
     pub fn local_ip(&self) -> Option<IpAddr> {
-        self.0.as_ref().unwrap().inner.local_ip()
+        self.0.as_ref()?.inner.local_ip()
     }
 
     /// The peer's UDP address
     pub fn remote_address(&self) -> SocketAddr {
-        self.0.as_ref().unwrap().inner.remote_address()
+        self.0.as_ref()
+            .map(|state| state.inner.remote_address())
+            .unwrap_or_else(|| "0.0.0.0:0".parse().unwrap_or_else(|_| {
+                panic!("Failed to parse fallback address");
+            }))
     }
 
     /// Whether the socket address that is initiating this connection has been validated
@@ -83,7 +111,9 @@ impl Incoming {
     /// If `self.remote_address_validated()` is false, `self.may_retry()` is guaranteed to be true.
     /// The inverse is not guaranteed.
     pub fn remote_address_validated(&self) -> bool {
-        self.0.as_ref().unwrap().inner.remote_address_validated()
+        self.0.as_ref()
+            .map(|state| state.inner.remote_address_validated())
+            .unwrap_or(false)
     }
 
     /// Whether it is legal to respond with a retry packet
@@ -91,12 +121,16 @@ impl Incoming {
     /// If `self.remote_address_validated()` is false, `self.may_retry()` is guaranteed to be true.
     /// The inverse is not guaranteed.
     pub fn may_retry(&self) -> bool {
-        self.0.as_ref().unwrap().inner.may_retry()
+        self.0.as_ref()
+            .map(|state| state.inner.may_retry())
+            .unwrap_or(false)
     }
 
     /// The original destination CID when initiating the connection
     pub fn orig_dst_cid(&self) -> ConnectionId {
-        *self.0.as_ref().unwrap().inner.orig_dst_cid()
+        self.0.as_ref()
+            .map(|state| *state.inner.orig_dst_cid())
+            .unwrap_or_else(|| ConnectionId::new(&[0]))
     }
 }
 

@@ -15,20 +15,8 @@ pub(crate) enum ConfigValidationError {
     #[error("Invalid bootstrap node configuration: {0}")]
     InvalidBootstrapNode(String),
 
-    #[error("Invalid network configuration: {0}")]
-    InvalidNetwork(String),
-
-    #[error("Invalid timeout configuration: {0}")]
-    InvalidTimeout(String),
-
     #[error("Invalid role configuration: {0}")]
     InvalidRole(String),
-
-    #[error("Invalid candidate configuration: {0}")]
-    InvalidCandidate(String),
-
-    #[error("Invalid certificate configuration: {0}")]
-    InvalidCertificate(String),
 
     #[error("Incompatible configuration combination: {0}")]
     IncompatibleConfiguration(String),
@@ -42,8 +30,7 @@ pub(crate) enum ConfigValidationError {
     #[error("Invalid address format: {0}")]
     InvalidAddress(String),
 
-    #[error("Platform-specific configuration error: {0}")]
-    PlatformSpecific(String),
+
 }
 
 /// Configuration validation result

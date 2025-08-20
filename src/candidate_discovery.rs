@@ -50,11 +50,28 @@ fn convert_to_nat_source(discovery_source: DiscoverySourceType) -> CandidateSour
     }
 }
 
-/// Source type used during discovery process
+/// Source type used during the NAT traversal discovery process
+///
+/// This enum identifies how a network address candidate was discovered,
+/// which affects its priority and reliability in the connection establishment process.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DiscoverySourceType {
+    /// Locally discovered network interface addresses
+    ///
+    /// These are addresses assigned to the local machine's network interfaces
+    /// and are typically the most reliable for direct connections.
     Local,
+
+    /// Server reflexive addresses discovered via STUN/TURN-like servers
+    ///
+    /// These are the public addresses that peers see when communicating with
+    /// the local endpoint, as observed by bootstrap/coordinator nodes.
     ServerReflexive,
+
+    /// Predicted addresses based on NAT behavior patterns
+    ///
+    /// These are algorithmically predicted addresses that might work based on
+    /// observed NAT traversal patterns and port prediction algorithms.
     Predicted,
 }
 
@@ -413,18 +430,45 @@ pub struct DiscoveryStatistics {
     pub invalid_addresses_rejected: u32,
 }
 
-/// Errors that can occur during discovery
+/// Errors that can occur during the NAT traversal discovery process
+///
+/// These errors represent various failure modes that can occur while
+/// discovering network address candidates for NAT traversal.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DiscoveryError {
-    /// No local interfaces found
+    /// No local network interfaces could be discovered
+    ///
+    /// This typically indicates a network configuration issue or
+    /// insufficient permissions to enumerate network interfaces.
     NoLocalInterfaces,
+
     /// All bootstrap node queries failed
+    ///
+    /// This means the endpoint could not reach any bootstrap nodes
+    /// to discover its public address or coordinate with other peers.
     AllBootstrapsFailed,
-    /// Discovery timeout exceeded
+
+    /// Discovery process exceeded the configured timeout
+    ///
+    /// The discovery process took longer than the configured
+    /// `total_timeout` duration and was terminated.
     DiscoveryTimeout,
-    /// Insufficient candidates discovered
-    InsufficientCandidates { found: usize, required: usize },
-    /// Platform-specific network error
+
+    /// Insufficient candidates were discovered for reliable connectivity
+    ///
+    /// The discovery process found fewer candidates than required
+    /// for establishing reliable peer-to-peer connections.
+    InsufficientCandidates {
+        /// Number of candidates actually found
+        found: usize,
+        /// Minimum number of candidates required
+        required: usize
+    },
+
+    /// Platform-specific network error occurred
+    ///
+    /// This wraps lower-level network errors that are specific to
+    /// the operating system or platform being used.
     NetworkError(String),
     /// Configuration error
     ConfigurationError(String),
@@ -512,10 +556,12 @@ impl CandidateDiscoveryManager {
     /// Discover local network interface candidates synchronously
     pub fn discover_local_candidates(&mut self) -> Result<Vec<ValidatedCandidate>, DiscoveryError> {
         // Start interface scan
-        self.interface_discovery
+        let mut interface_discovery = self.interface_discovery
             .lock()
-            .unwrap()
-            .start_scan()
+            .map_err(|e| {
+                DiscoveryError::NetworkError(format!("Mutex poisoned: {e}"))
+            })?;
+        interface_discovery.start_scan()
             .map_err(|e| {
                 DiscoveryError::NetworkError(format!("Failed to start interface scan: {e}"))
             })?;
@@ -793,7 +839,13 @@ impl CandidateDiscoveryManager {
         // Start the scan if not already started
         // We check if the scan is at the very beginning (within first 10ms) to avoid repeated start_scan calls
         if started_at.elapsed().as_millis() < 10 {
-            let scan_result = self.interface_discovery.lock().unwrap().start_scan();
+            let scan_result = match self.interface_discovery.lock() {
+                Ok(mut interface_discovery) => interface_discovery.start_scan(),
+                Err(e) => {
+                    error!("Interface discovery mutex poisoned: {}", e);
+                    return;
+                }
+            };
             match scan_result {
                 Ok(()) => {
                     debug!(
@@ -804,7 +856,6 @@ impl CandidateDiscoveryManager {
                 }
                 Err(e) => {
                     error!("Failed to start interface scan: {}", e);
-                    self.handle_session_local_scan_timeout(session, events, now);
                     return;
                 }
             }
@@ -1111,12 +1162,21 @@ impl CandidateDiscoveryManager {
         session.discovered_candidates.push(candidate.clone());
         session.statistics.server_reflexive_candidates_found += 1;
 
+        let bootstrap_node = self
+            .bootstrap_manager
+            .get_bootstrap_address(response.bootstrap_node)
+            .or_else(|| "unknown".parse().ok())
+            .or_else(|| "0.0.0.0:0".parse().ok())
+            .unwrap_or_else(|| {
+                error!("Failed to parse fallback bootstrap address");
+                "0.0.0.0:0".parse().unwrap_or_else(|_| {
+                    panic!("Failed to parse hardcoded fallback address - this should never happen");
+                })
+            });
+
         events.push(DiscoveryEvent::ServerReflexiveCandidateDiscovered {
             candidate: candidate.to_candidate_address(),
-            bootstrap_node: self
-                .bootstrap_manager
-                .get_bootstrap_address(response.bootstrap_node)
-                .unwrap_or_else(|| "unknown".parse().unwrap()),
+            bootstrap_node,
         });
 
         events.push(DiscoveryEvent::PortAllocationDetected {
@@ -2424,9 +2484,9 @@ impl ServerReflexiveDiscovery {
     fn simulate_bootstrap_response(&mut self, node_id: BootstrapNodeId, now: Instant) {
         // Simulate network delay
         let simulated_external_addr = match node_id.0 % 3 {
-            0 => "203.0.113.1:45678".parse().unwrap(),
-            1 => "198.51.100.2:45679".parse().unwrap(),
-            _ => "192.0.2.3:45680".parse().unwrap(),
+            0 => "203.0.113.1:45678".parse().expect("Failed to parse hardcoded test address"),
+            1 => "198.51.100.2:45679".parse().expect("Failed to parse hardcoded test address"),
+            _ => "192.0.2.3:45680".parse().expect("Failed to parse hardcoded test address"),
         };
 
         let response = ServerReflexiveResponse {
@@ -2713,7 +2773,7 @@ impl SymmetricNatPredictor {
 
         DiscoveryCandidate {
             address: SocketAddr::new(
-                "0.0.0.0".parse().unwrap(), // Placeholder IP, will be filled by caller
+                "0.0.0.0".parse().expect("Failed to parse hardcoded placeholder IP"),
                 port,
             ),
             priority,
@@ -3287,10 +3347,10 @@ impl BootstrapNodeManager {
     fn check_node_health(&mut self, node_id: BootstrapNodeId, now: Instant) {
         // Get current health status and node info before mutable operations
         let node_info_opt = self.bootstrap_nodes.get(&node_id).cloned();
-        if node_info_opt.is_none() {
-            return; // Node not found
-        }
-        let node_info_for_priority = node_info_opt.unwrap();
+        let node_info_for_priority = match node_info_opt {
+            Some(node_info) => node_info,
+            None => return, // Node not found
+        };
         let current_health_status = node_info_for_priority.health_status;
 
         // Calculate metrics from stats
@@ -3327,7 +3387,13 @@ impl BootstrapNodeManager {
         };
 
         // Calculate new priority using stats snapshot
-        let stats_snapshot = self.health_stats.get(&node_id).unwrap();
+        let stats_snapshot = match self.health_stats.get(&node_id) {
+            Some(stats) => stats,
+            None => {
+                warn!("No health stats found for bootstrap node {:?}", node_id);
+                return;
+            }
+        };
         let new_priority = self.calculate_dynamic_priority(&node_info_for_priority, stats_snapshot);
 
         // Now update the node info
@@ -3716,7 +3782,7 @@ impl NetworkInterfaceDiscovery for GenericInterfaceDiscovery {
             self.scan_complete = false;
             Some(vec![NetworkInterface {
                 name: "generic".to_string(),
-                addresses: vec!["127.0.0.1:0".parse().unwrap()],
+                addresses: vec!["127.0.0.1:0".parse().expect("Failed to parse hardcoded localhost address")],
                 is_up: true,
                 is_wireless: false,
                 mtu: Some(1500),
@@ -3820,10 +3886,10 @@ mod tests {
         let peer_id = PeerId([1; 32]);
 
         // Create a discovery session
-        manager.start_discovery(peer_id, vec![]).unwrap();
+        manager.start_discovery(peer_id, vec![]).expect("Failed to start discovery in test");
 
         // Test accepting QUIC-discovered addresses
-        let discovered_addr = "192.168.1.100:5000".parse().unwrap();
+        let discovered_addr = "192.168.1.100:5000".parse().expect("Failed to parse test address");
         let result = manager.accept_quic_discovered_address(peer_id, discovered_addr);
 
         assert!(result.is_ok());
@@ -3842,7 +3908,7 @@ mod tests {
     fn test_accept_quic_discovered_addresses_no_session() {
         let mut manager = create_test_manager();
         let peer_id = PeerId([1; 32]);
-        let discovered_addr = "192.168.1.100:5000".parse().unwrap();
+        let discovered_addr = "192.168.1.100:5000".parse().expect("Failed to parse test address");
 
         // Try to add address without an active session
         let result = manager.accept_quic_discovered_address(peer_id, discovered_addr);
@@ -3862,10 +3928,10 @@ mod tests {
         let peer_id = PeerId([1; 32]);
 
         // Create a discovery session
-        manager.start_discovery(peer_id, vec![]).unwrap();
+        manager.start_discovery(peer_id, vec![]).expect("Failed to start discovery in test");
 
         // Add the same address twice
-        let discovered_addr = "192.168.1.100:5000".parse().unwrap();
+        let discovered_addr = "192.168.1.100:5000".parse().expect("Failed to parse test address");
         let result1 = manager.accept_quic_discovered_address(peer_id, discovered_addr);
         let result2 = manager.accept_quic_discovered_address(peer_id, discovered_addr);
 
@@ -3889,19 +3955,19 @@ mod tests {
         let peer_id = PeerId([1; 32]);
 
         // Create a discovery session
-        manager.start_discovery(peer_id, vec![]).unwrap();
+        manager.start_discovery(peer_id, vec![]).expect("Failed to start discovery in test");
 
         // Add different types of addresses
-        let public_addr = "8.8.8.8:5000".parse().unwrap();
-        let private_addr = "192.168.1.100:5000".parse().unwrap();
-        let ipv6_addr = "[2001:db8::1]:5000".parse().unwrap();
+        let public_addr = "8.8.8.8:5000".parse().expect("Failed to parse test address");
+        let private_addr = "192.168.1.100:5000".parse().expect("Failed to parse test address");
+        let ipv6_addr = "[2001:db8::1]:5000".parse().expect("Failed to parse test address");
 
         manager
             .accept_quic_discovered_address(peer_id, public_addr)
-            .unwrap();
+            .expect("Failed to accept public address in test");
         manager
             .accept_quic_discovered_address(peer_id, private_addr)
-            .unwrap();
+            .expect("Failed to accept private address in test");
         manager
             .accept_quic_discovered_address(peer_id, ipv6_addr)
             .unwrap();
@@ -3921,7 +3987,7 @@ mod tests {
                         .iter()
                         .find(|c| c.address == public_addr)
                         .map(|c| c.priority)
-                        .unwrap();
+                        .expect("Public address should be found in candidates");
 
                     // IPv6 should have higher or equal priority (due to boost)
                     assert!(candidate.priority >= ipv4_priority);
@@ -3936,13 +4002,13 @@ mod tests {
         let peer_id = PeerId([1; 32]);
 
         // Create a discovery session
-        manager.start_discovery(peer_id, vec![]).unwrap();
+        manager.start_discovery(peer_id, vec![]).expect("Failed to start discovery in test");
 
         // Add address and check for events
-        let discovered_addr = "192.168.1.100:5000".parse().unwrap();
+        let discovered_addr = "192.168.1.100:5000".parse().expect("Failed to parse test address");
         manager
             .accept_quic_discovered_address(peer_id, discovered_addr)
-            .unwrap();
+            .expect("Failed to accept address in test");
 
         // Poll for events
         let events = manager.poll_discovery_progress(peer_id);
@@ -3967,16 +4033,16 @@ mod tests {
         let peer_id = PeerId([1; 32]);
 
         // Start discovery
-        manager.start_discovery(peer_id, vec![]).unwrap();
+        manager.start_discovery(peer_id, vec![]).expect("Failed to start discovery in test");
 
         // Add a QUIC-discovered address
-        let discovered_addr = "192.168.1.100:5000".parse().unwrap();
+        let discovered_addr = "192.168.1.100:5000".parse().expect("Failed to parse test address");
         manager
             .accept_quic_discovered_address(peer_id, discovered_addr)
-            .unwrap();
+            .expect("Failed to accept address in test");
 
         // Poll discovery to advance state
-        let status = manager.get_discovery_status(peer_id).unwrap();
+        let status = manager.get_discovery_status(peer_id).expect("Failed to get discovery status in test");
 
         // Should not be in ServerReflexiveQuerying phase
         match &status.phase {
@@ -3993,20 +4059,20 @@ mod tests {
         let peer_id = PeerId([1; 32]);
 
         // Start discovery
-        manager.start_discovery(peer_id, vec![]).unwrap();
+        manager.start_discovery(peer_id, vec![]).expect("Failed to start discovery in test");
 
         // Immediately add QUIC-discovered addresses
-        let addr1 = "192.168.1.100:5000".parse().unwrap();
-        let addr2 = "8.8.8.8:5000".parse().unwrap();
+        let addr1 = "192.168.1.100:5000".parse().expect("Failed to parse test address");
+        let addr2 = "8.8.8.8:5000".parse().expect("Failed to parse test address");
         manager
             .accept_quic_discovered_address(peer_id, addr1)
-            .unwrap();
+            .expect("Failed to accept address in test");
         manager
             .accept_quic_discovered_address(peer_id, addr2)
-            .unwrap();
+            .expect("Failed to accept address in test");
 
         // Get status to check phase
-        let status = manager.get_discovery_status(peer_id).unwrap();
+        let status = manager.get_discovery_status(peer_id).expect("Failed to get discovery status in test");
 
         // Verify we have candidates from QUIC discovery
         assert!(status.discovered_candidates.len() >= 2);
@@ -4027,13 +4093,13 @@ mod tests {
         let peer_id = PeerId([1; 32]);
 
         // Start discovery
-        manager.start_discovery(peer_id, vec![]).unwrap();
+        manager.start_discovery(peer_id, vec![]).expect("Failed to start discovery in test");
 
         // Add QUIC-discovered address
-        let discovered_addr = "8.8.8.8:5000".parse().unwrap();
+        let discovered_addr = "8.8.8.8:5000".parse().expect("Failed to parse test address");
         manager
             .accept_quic_discovered_address(peer_id, discovered_addr)
-            .unwrap();
+            .expect("Failed to accept address in test");
 
         // Check the priority assigned
         if let Some(session) = manager.active_sessions.get(&peer_id) {
@@ -4065,7 +4131,7 @@ mod tests {
         let peer_id = PeerId([1; 32]);
 
         // Start discovery
-        manager.start_discovery(peer_id, vec![]).unwrap();
+        manager.start_discovery(peer_id, vec![]).expect("Failed to start discovery in test");
 
         // Test different types of addresses
         let test_cases = vec![
@@ -4080,17 +4146,17 @@ mod tests {
         ];
 
         for (addr_str, (min_priority, max_priority), description) in test_cases {
-            let addr: SocketAddr = addr_str.parse().unwrap();
+            let addr: SocketAddr = addr_str.parse().expect("Failed to parse test address");
             manager
                 .accept_quic_discovered_address(peer_id, addr)
-                .unwrap();
+                .expect("Failed to accept address in test");
 
-            let session = manager.active_sessions.get(&peer_id).unwrap();
+            let session = manager.active_sessions.get(&peer_id).expect("Session should exist in test");
             let candidate = session
                 .discovered_candidates
                 .iter()
                 .find(|c| c.address == addr)
-                .unwrap_or_else(|| panic!("No candidate found for {description}"));
+                .unwrap_or_else(|| panic!("No candidate found for {}", description));
 
             assert!(
                 candidate.priority >= min_priority && candidate.priority <= max_priority,
@@ -4110,7 +4176,7 @@ mod tests {
 
         // Test base priority calculation
         let base_priority =
-            manager.calculate_quic_discovered_priority(&"1.2.3.4:5678".parse().unwrap());
+            manager.calculate_quic_discovered_priority(&"1.2.3.4:5678".parse().expect("Failed to parse test address"));
         assert_eq!(
             base_priority, 255,
             "Base priority should be 255 for public IPv4"
@@ -4118,7 +4184,7 @@ mod tests {
 
         // Test IPv6 gets higher priority
         let ipv6_priority =
-            manager.calculate_quic_discovered_priority(&"[2001:db8::1]:5678".parse().unwrap());
+            manager.calculate_quic_discovered_priority(&"[2001:db8::1]:5678".parse().expect("Failed to parse test address"));
         assert!(
             ipv6_priority > base_priority,
             "IPv6 should have higher priority than IPv4"
@@ -4126,7 +4192,7 @@ mod tests {
 
         // Test private addresses get lower priority
         let private_priority =
-            manager.calculate_quic_discovered_priority(&"192.168.1.1:5678".parse().unwrap());
+            manager.calculate_quic_discovered_priority(&"192.168.1.1:5678".parse().expect("Failed to parse test address"));
         assert!(
             private_priority < base_priority,
             "Private addresses should have lower priority"
@@ -4134,7 +4200,7 @@ mod tests {
 
         // Test link-local gets even lower priority
         let link_local_priority =
-            manager.calculate_quic_discovered_priority(&"[fe80::1]:5678".parse().unwrap());
+            manager.calculate_quic_discovered_priority(&"[fe80::1]:5678".parse().expect("Failed to parse test address"));
         assert!(
             link_local_priority < private_priority,
             "Link-local should have lower priority than private"
@@ -4148,12 +4214,12 @@ mod tests {
         let peer_id = PeerId([1; 32]);
 
         // Start discovery
-        manager.start_discovery(peer_id, vec![]).unwrap();
+        manager.start_discovery(peer_id, vec![]).expect("Failed to start discovery in test");
 
         // Simulate adding an old server reflexive candidate (from placeholder STUN)
-        let session = manager.active_sessions.get_mut(&peer_id).unwrap();
+        let session = manager.active_sessions.get_mut(&peer_id).expect("Session should exist in test");
         let old_candidate = DiscoveryCandidate {
-            address: "1.2.3.4:1234".parse().unwrap(),
+            address: "1.2.3.4:1234".parse().expect("Failed to parse test address"),
             priority: 200,
             source: DiscoverySourceType::ServerReflexive,
             state: CandidateState::Validating,
@@ -4161,13 +4227,13 @@ mod tests {
         session.discovered_candidates.push(old_candidate);
 
         // Add a QUIC-discovered address for the same IP but different port
-        let new_addr = "1.2.3.4:5678".parse().unwrap();
+        let new_addr = "1.2.3.4:5678".parse().expect("Failed to parse test address");
         manager
             .accept_quic_discovered_address(peer_id, new_addr)
-            .unwrap();
+            .expect("Failed to accept address in test");
 
         // Check that we have both candidates
-        let session = manager.active_sessions.get(&peer_id).unwrap();
+        let session = manager.active_sessions.get(&peer_id).expect("Session should exist in test");
         let candidates: Vec<_> = session
             .discovered_candidates
             .iter()
@@ -4181,7 +4247,7 @@ mod tests {
         );
 
         // The new candidate should have a different priority
-        let new_candidate = candidates.iter().find(|c| c.address == new_addr).unwrap();
+        let new_candidate = candidates.iter().find(|c| c.address == new_addr).expect("New candidate should be found");
         assert_ne!(
             new_candidate.priority, 200,
             "New candidate should have recalculated priority"
@@ -4195,16 +4261,16 @@ mod tests {
         let peer_id = PeerId([1; 32]);
 
         // Start discovery
-        manager.start_discovery(peer_id, vec![]).unwrap();
+        manager.start_discovery(peer_id, vec![]).expect("Failed to start discovery in test");
 
         // Clear any startup events
         manager.poll_discovery_progress(peer_id);
 
         // Add a QUIC-discovered address
-        let discovered_addr = "8.8.8.8:5000".parse().unwrap();
+        let discovered_addr = "8.8.8.8:5000".parse().expect("Failed to parse test address");
         manager
             .accept_quic_discovered_address(peer_id, discovered_addr)
-            .unwrap();
+            .expect("Failed to accept address in test");
 
         // Poll for events
         let events = manager.poll_discovery_progress(peer_id);
@@ -4235,22 +4301,22 @@ mod tests {
         let peer_id = PeerId([1; 32]);
 
         // Start discovery
-        manager.start_discovery(peer_id, vec![]).unwrap();
+        manager.start_discovery(peer_id, vec![]).expect("Failed to start discovery in test");
 
         // Clear startup events
         manager.poll_discovery_progress(peer_id);
 
         // Add multiple QUIC-discovered addresses
         let addresses = vec![
-            "8.8.8.8:5000".parse().unwrap(),
-            "1.1.1.1:6000".parse().unwrap(),
-            "[2001:db8::1]:7000".parse().unwrap(),
+            "8.8.8.8:5000".parse().expect("Failed to parse test address"),
+            "1.1.1.1:6000".parse().expect("Failed to parse test address"),
+            "[2001:db8::1]:7000".parse().expect("Failed to parse test address"),
         ];
 
         for addr in &addresses {
             manager
                 .accept_quic_discovered_address(peer_id, *addr)
-                .unwrap();
+                .expect("Failed to accept address in test");
         }
 
         // Poll for events
@@ -4275,13 +4341,13 @@ mod tests {
         let peer_id = PeerId([1; 32]);
 
         // Start discovery
-        manager.start_discovery(peer_id, vec![]).unwrap();
+        manager.start_discovery(peer_id, vec![]).expect("Failed to start discovery in test");
 
         // Add a QUIC-discovered address
-        let discovered_addr = "8.8.8.8:5000".parse().unwrap();
+        let discovered_addr = "8.8.8.8:5000".parse().expect("Failed to parse test address");
         manager
             .accept_quic_discovered_address(peer_id, discovered_addr)
-            .unwrap();
+            .expect("Failed to accept address in test");
 
         // Poll and clear events
         manager.poll_discovery_progress(peer_id);
@@ -4289,7 +4355,7 @@ mod tests {
         // Try to add the same address again
         manager
             .accept_quic_discovered_address(peer_id, discovered_addr)
-            .unwrap();
+            .expect("Failed to accept address in test");
 
         // Poll for events
         let events = manager.poll_discovery_progress(peer_id);
@@ -4315,21 +4381,21 @@ mod tests {
         let peer_id = PeerId([1; 32]);
 
         // Start discovery
-        manager.start_discovery(peer_id, vec![]).unwrap();
+        manager.start_discovery(peer_id, vec![]).expect("Failed to start discovery in test");
 
         // Clear startup events
         manager.poll_discovery_progress(peer_id);
 
         // Add addresses without polling
-        let addr1 = "8.8.8.8:5000".parse().unwrap();
-        let addr2 = "1.1.1.1:6000".parse().unwrap();
+        let addr1 = "8.8.8.8:5000".parse().expect("Failed to parse test address");
+        let addr2 = "1.1.1.1:6000".parse().expect("Failed to parse test address");
 
         manager
             .accept_quic_discovered_address(peer_id, addr1)
-            .unwrap();
+            .expect("Failed to accept address in test");
         manager
             .accept_quic_discovered_address(peer_id, addr2)
-            .unwrap();
+            .expect("Failed to accept address in test");
 
         // Events should be queued
         // Now poll for events
@@ -4363,33 +4429,33 @@ mod tests {
         let manager = create_test_manager();
 
         // Valid IPv4 addresses
-        assert!(manager.is_valid_local_address(&"192.168.1.1:8080".parse().unwrap()));
-        assert!(manager.is_valid_local_address(&"10.0.0.1:8080".parse().unwrap()));
-        assert!(manager.is_valid_local_address(&"172.16.0.1:8080".parse().unwrap()));
+        assert!(manager.is_valid_local_address(&"192.168.1.1:8080".parse().expect("Failed to parse test address")));
+        assert!(manager.is_valid_local_address(&"10.0.0.1:8080".parse().expect("Failed to parse test address")));
+        assert!(manager.is_valid_local_address(&"172.16.0.1:8080".parse().expect("Failed to parse test address")));
 
         // Valid IPv6 addresses
-        assert!(manager.is_valid_local_address(&"[2001:4860:4860::8888]:8080".parse().unwrap()));
-        assert!(manager.is_valid_local_address(&"[fe80::1]:8080".parse().unwrap())); // Link-local is valid for local
-        assert!(manager.is_valid_local_address(&"[fc00::1]:8080".parse().unwrap())); // Unique local is valid for local
+        assert!(manager.is_valid_local_address(&"[2001:4860:4860::8888]:8080".parse().expect("Failed to parse test address")));
+        assert!(manager.is_valid_local_address(&"[fe80::1]:8080".parse().expect("Failed to parse test address"))); // Link-local is valid for local
+        assert!(manager.is_valid_local_address(&"[fc00::1]:8080".parse().expect("Failed to parse test address"))); // Unique local is valid for local
 
         // Invalid addresses
-        assert!(!manager.is_valid_local_address(&"0.0.0.0:8080".parse().unwrap()));
-        assert!(!manager.is_valid_local_address(&"255.255.255.255:8080".parse().unwrap()));
-        assert!(!manager.is_valid_local_address(&"224.0.0.1:8080".parse().unwrap())); // Multicast
-        assert!(!manager.is_valid_local_address(&"0.0.0.1:8080".parse().unwrap())); // Reserved
-        assert!(!manager.is_valid_local_address(&"240.0.0.1:8080".parse().unwrap())); // Reserved
-        assert!(!manager.is_valid_local_address(&"[::]:8080".parse().unwrap())); // Unspecified
-        assert!(!manager.is_valid_local_address(&"[ff02::1]:8080".parse().unwrap())); // Multicast
-        assert!(!manager.is_valid_local_address(&"[2001:db8::1]:8080".parse().unwrap())); // Documentation
+        assert!(!manager.is_valid_local_address(&"0.0.0.0:8080".parse().expect("Failed to parse test address")));
+        assert!(!manager.is_valid_local_address(&"255.255.255.255:8080".parse().expect("Failed to parse test address")));
+        assert!(!manager.is_valid_local_address(&"224.0.0.1:8080".parse().expect("Failed to parse test address"))); // Multicast
+        assert!(!manager.is_valid_local_address(&"0.0.0.1:8080".parse().expect("Failed to parse test address"))); // Reserved
+        assert!(!manager.is_valid_local_address(&"240.0.0.1:8080".parse().expect("Failed to parse test address"))); // Reserved
+        assert!(!manager.is_valid_local_address(&"[::]:8080".parse().expect("Failed to parse test address"))); // Unspecified
+        assert!(!manager.is_valid_local_address(&"[ff02::1]:8080".parse().expect("Failed to parse test address"))); // Multicast
+        assert!(!manager.is_valid_local_address(&"[2001:db8::1]:8080".parse().expect("Failed to parse test address"))); // Documentation
 
         // Port 0 should fail
-        assert!(!manager.is_valid_local_address(&"192.168.1.1:0".parse().unwrap()));
+        assert!(!manager.is_valid_local_address(&"192.168.1.1:0".parse().expect("Failed to parse test address")));
 
         // Test mode allows loopback
         #[cfg(test)]
         {
-            assert!(manager.is_valid_local_address(&"127.0.0.1:8080".parse().unwrap()));
-            assert!(manager.is_valid_local_address(&"[::1]:8080".parse().unwrap()));
+            assert!(manager.is_valid_local_address(&"127.0.0.1:8080".parse().expect("Failed to parse test address")));
+            assert!(manager.is_valid_local_address(&"[::1]:8080".parse().expect("Failed to parse test address")));
         }
     }
 
@@ -4398,41 +4464,41 @@ mod tests {
         let manager = create_test_manager();
 
         // Valid public IPv4 addresses
-        assert!(manager.is_valid_server_reflexive_address(&"8.8.8.8:8080".parse().unwrap()));
-        assert!(manager.is_valid_server_reflexive_address(&"1.1.1.1:53".parse().unwrap()));
-        assert!(manager.is_valid_server_reflexive_address(&"35.235.1.100:443".parse().unwrap()));
+        assert!(manager.is_valid_server_reflexive_address(&"8.8.8.8:8080".parse().expect("Failed to parse test address")));
+        assert!(manager.is_valid_server_reflexive_address(&"1.1.1.1:53".parse().expect("Failed to parse test address")));
+        assert!(manager.is_valid_server_reflexive_address(&"35.235.1.100:443".parse().expect("Failed to parse test address")));
 
         // Valid global unicast IPv6
         assert!(
             manager
-                .is_valid_server_reflexive_address(&"[2001:4860:4860::8888]:8080".parse().unwrap())
+                .is_valid_server_reflexive_address(&"[2001:4860:4860::8888]:8080".parse().expect("Failed to parse test address"))
         );
         assert!(manager.is_valid_server_reflexive_address(
-            &"[2400:cb00:2048::c629:d7a2]:443".parse().unwrap()
+            &"[2400:cb00:2048::c629:d7a2]:443".parse().expect("Failed to parse test address")
         ));
 
         // Invalid - private addresses
-        assert!(!manager.is_valid_server_reflexive_address(&"192.168.1.1:8080".parse().unwrap()));
-        assert!(!manager.is_valid_server_reflexive_address(&"10.0.0.1:8080".parse().unwrap()));
-        assert!(!manager.is_valid_server_reflexive_address(&"172.16.0.1:8080".parse().unwrap()));
+        assert!(!manager.is_valid_server_reflexive_address(&"192.168.1.1:8080".parse().expect("Failed to parse test address")));
+        assert!(!manager.is_valid_server_reflexive_address(&"10.0.0.1:8080".parse().expect("Failed to parse test address")));
+        assert!(!manager.is_valid_server_reflexive_address(&"172.16.0.1:8080".parse().expect("Failed to parse test address")));
 
         // Invalid - special addresses
-        assert!(!manager.is_valid_server_reflexive_address(&"127.0.0.1:8080".parse().unwrap()));
-        assert!(!manager.is_valid_server_reflexive_address(&"169.254.1.1:8080".parse().unwrap())); // Link-local
-        assert!(!manager.is_valid_server_reflexive_address(&"0.0.0.0:8080".parse().unwrap()));
+        assert!(!manager.is_valid_server_reflexive_address(&"127.0.0.1:8080".parse().expect("Failed to parse test address")));
+        assert!(!manager.is_valid_server_reflexive_address(&"169.254.1.1:8080".parse().expect("Failed to parse test address"))); // Link-local
+        assert!(!manager.is_valid_server_reflexive_address(&"0.0.0.0:8080".parse().expect("Failed to parse test address")));
         assert!(
-            !manager.is_valid_server_reflexive_address(&"255.255.255.255:8080".parse().unwrap())
+            !manager.is_valid_server_reflexive_address(&"255.255.255.255:8080".parse().expect("Failed to parse test address"))
         );
-        assert!(!manager.is_valid_server_reflexive_address(&"224.0.0.1:8080".parse().unwrap()));
+        assert!(!manager.is_valid_server_reflexive_address(&"224.0.0.1:8080".parse().expect("Failed to parse test address")));
 
         // Invalid - IPv6 non-global
-        assert!(!manager.is_valid_server_reflexive_address(&"[::1]:8080".parse().unwrap()));
-        assert!(!manager.is_valid_server_reflexive_address(&"[fe80::1]:8080".parse().unwrap())); // Link-local
-        assert!(!manager.is_valid_server_reflexive_address(&"[fc00::1]:8080".parse().unwrap())); // Unique local
-        assert!(!manager.is_valid_server_reflexive_address(&"[ff02::1]:8080".parse().unwrap())); // Multicast
+        assert!(!manager.is_valid_server_reflexive_address(&"[::1]:8080".parse().expect("Failed to parse test address")));
+        assert!(!manager.is_valid_server_reflexive_address(&"[fe80::1]:8080".parse().expect("Failed to parse test address"))); // Link-local
+        assert!(!manager.is_valid_server_reflexive_address(&"[fc00::1]:8080".parse().expect("Failed to parse test address"))); // Unique local
+        assert!(!manager.is_valid_server_reflexive_address(&"[ff02::1]:8080".parse().expect("Failed to parse test address"))); // Multicast
 
         // Port 0 should fail
-        assert!(!manager.is_valid_server_reflexive_address(&"8.8.8.8:0".parse().unwrap()));
+        assert!(!manager.is_valid_server_reflexive_address(&"8.8.8.8:0".parse().expect("Failed to parse test address")));
     }
 
     // Note: is_valid_port is a private method, so we test it indirectly through the validation flow

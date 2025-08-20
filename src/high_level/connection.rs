@@ -14,7 +14,7 @@ use pin_project_lite::pin_project;
 use rustc_hash::FxHashMap;
 use thiserror::Error;
 use tokio::sync::{Notify, futures::Notified, mpsc, oneshot};
-use tracing::{Instrument, Span, debug_span};
+use tracing::{error, Instrument, Span, debug_span};
 
 use super::{
     ConnectionEvent,
@@ -25,7 +25,7 @@ use super::{
     udp_transmit,
 };
 use crate::{
-    ConnectionError, ConnectionHandle, ConnectionStats, Dir, Duration, EndpointEvent, Instant,
+    ConnectError, ConnectionError, ConnectionHandle, ConnectionStats, Dir, Duration, EndpointEvent, Instant,
     Side, StreamEvent, StreamId, VarInt, congestion::Controller,
 };
 
@@ -123,7 +123,12 @@ impl Connecting {
     pub fn into_0rtt(mut self) -> Result<(Connection, ZeroRttAccepted), Self> {
         // This lock borrows `self` and would normally be dropped at the end of this scope, so we'll
         // have to release it explicitly before returning `self` by value.
-        let conn = (self.conn.as_mut().unwrap()).state.lock("into_0rtt");
+        let conn = match self.conn.as_mut() {
+            Some(conn) => conn.state.lock("into_0rtt"),
+            None => {
+                return Err(self);
+            }
+        };
 
         let is_ok = conn.inner.has_0rtt() || conn.inner.side().is_server();
         drop(conn);
@@ -167,7 +172,14 @@ impl Connecting {
                 inner
                     .error
                     .clone()
-                    .expect("spurious handshake data ready notification")
+                    .unwrap_or_else(|| {
+                        error!("Spurious handshake data ready notification with no error");
+                        ConnectionError::TransportError(
+                            crate::transport_error::Error::INTERNAL_ERROR(
+                                "Spurious handshake notification".to_string()
+                            )
+                        )
+                    })
             })
     }
 
@@ -183,7 +195,7 @@ impl Connecting {
     ///
     /// Will panic if called after `poll` has returned `Ready`.
     pub fn local_ip(&self) -> Option<IpAddr> {
-        let conn = self.conn.as_ref().unwrap();
+        let conn = self.conn.as_ref()?;
         let inner = conn.state.lock("local_ip");
 
         inner.inner.local_ip()
@@ -191,10 +203,14 @@ impl Connecting {
 
     /// The peer's UDP address
     ///
-    /// Will panic if called after `poll` has returned `Ready`.
-    pub fn remote_address(&self) -> SocketAddr {
-        let conn_ref: &ConnectionRef = self.conn.as_ref().expect("used after yielding Ready");
-        conn_ref.state.lock("remote_address").inner.remote_address()
+    /// Returns an error if called after `poll` has returned `Ready`.
+    pub fn remote_address(&self) -> Result<SocketAddr, ConnectionError> {
+        let conn_ref: &ConnectionRef = self.conn.as_ref()
+            .ok_or_else(|| {
+                error!("Connection used after yielding Ready");
+                ConnectionError::LocallyClosed
+            })?;
+        Ok(conn_ref.state.lock("remote_address").inner.remote_address())
     }
 }
 
@@ -202,7 +218,11 @@ impl Future for Connecting {
     type Output = Result<Connection, ConnectionError>;
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         Pin::new(&mut self.connected).poll(cx).map(|_| {
-            let conn = self.conn.take().unwrap();
+            let conn = self.conn.take()
+                .ok_or_else(|| {
+                    error!("Connection not available when connecting future resolves");
+                    ConnectionError::LocallyClosed
+                })?;
             let inner = conn.state.lock("connecting");
             if inner.connected {
                 drop(inner);
@@ -211,7 +231,9 @@ impl Future for Connecting {
                 Err(inner
                     .error
                     .clone()
-                    .expect("connected signaled without connection success or error"))
+                    .unwrap_or_else(|| ConnectionError::TransportError(
+                        crate::transport_error::Error::INTERNAL_ERROR("connection failed without error".to_string())
+                    )))
             }
         })
     }
@@ -383,7 +405,9 @@ impl Connection {
             .lock("closed")
             .error
             .as_ref()
-            .expect("closed without an error")
+            .unwrap_or_else(|| {
+                &crate::connection::ConnectionError::LocallyClosed
+            })
             .clone()
     }
 
@@ -863,7 +887,11 @@ impl Future for SendDatagram<'_> {
         match state
             .inner
             .datagrams()
-            .send(this.data.take().unwrap(), false)
+            .send(this.data.take()
+                .ok_or_else(|| {
+                    error!("SendDatagram future polled without data");
+                    SendDatagramError::ConnectionLost(ConnectionError::LocallyClosed)
+                })?, false)
         {
             Ok(()) => {
                 state.wake();
@@ -1205,11 +1233,13 @@ impl State {
             return false;
         }
 
-        let delay = self
-            .timer
-            .as_mut()
-            .expect("timer must exist in this state")
-            .as_mut();
+        let delay = match self.timer.as_mut() {
+            Some(timer) => timer.as_mut(),
+            None => {
+                error!("Timer missing in state where it should exist");
+                return false;
+            }
+        };
         if delay.poll(cx).is_pending() {
             // Since there wasn't a timeout event, there is nothing new
             // for the connection to do
