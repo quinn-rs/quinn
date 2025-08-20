@@ -4,9 +4,9 @@
 //! to ensure the robustness and correctness of the QUIC implementation.
 
 use proptest::prelude::*;
+use proptest::{prop_oneof, strategy::Just};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
-use std::time::{Duration, Instant};
-use ant_quic::transport_error;
+use std::time::Duration;
 
 /// Default configuration for property tests with increased coverage
 pub fn default_config() -> ProptestConfig {
@@ -74,13 +74,13 @@ pub fn arb_priority() -> impl Strategy<Value = u32> {
 }
 
 /// Strategy for generating candidate addresses with various characteristics
-pub fn arb_candidate_address() -> impl Strategy<Value = crate::candidate_discovery::CandidateAddress> {
+pub fn arb_candidate_address() -> impl Strategy<Value = ant_quic::CandidateAddress> {
     (arb_socket_addr(), arb_priority()).prop_map(|(addr, priority)| {
-        crate::candidate_discovery::CandidateAddress {
+        ant_quic::CandidateAddress {
             address: addr,
             priority,
-            source: crate::connection::nat_traversal::CandidateSource::Local,
-            state: crate::connection::nat_traversal::CandidateState::New,
+            source: ant_quic::CandidateSource::Local,
+            state: ant_quic::CandidateState::New,
         }
     })
 }
@@ -155,7 +155,7 @@ pub struct NetworkConditions {
 }
 
 /// Strategy for generating valid transport parameter values
-pub fn arb_transport_params() -> impl Strategy<Value = crate::transport_parameters::TransportParameters> {
+pub fn arb_transport_params() -> impl Strategy<Value = ant_quic::TransportParameters> {
     // Generate valid transport parameters within specification limits
     (
         any::<u32>(), // initial_max_data
@@ -179,7 +179,7 @@ pub fn arb_transport_params() -> impl Strategy<Value = crate::transport_paramete
         max_ack_delay,
         cid_limit,
     )| {
-        let mut params = crate::transport_parameters::TransportParameters::default();
+        let mut params = ant_quic::TransportParameters::default();
         params.initial_max_data = max_data;
         params.initial_max_stream_data_bidi_local = stream_data_bidi_local;
         params.initial_max_stream_data_bidi_remote = stream_data_bidi_remote;
@@ -193,8 +193,12 @@ pub fn arb_transport_params() -> impl Strategy<Value = crate::transport_paramete
     })
 }
 
+// Note: Frame and Packet types are internal to ant_quic and not exposed in the public API.
+// These strategies are commented out but kept for potential future use if the types become public.
+
+/*
 /// Strategy for generating frame sequences
-pub fn arb_frame_sequence() -> impl Strategy<Value = Vec<crate::frame::Frame>> {
+pub fn arb_frame_sequence() -> impl Strategy<Value = Vec<ant_quic::Frame>> {
     prop::collection::vec(
         prop_oneof![
             arb_stream_frame(),
@@ -208,10 +212,10 @@ pub fn arb_frame_sequence() -> impl Strategy<Value = Vec<crate::frame::Frame>> {
 }
 
 /// Strategy for generating stream frames
-pub fn arb_stream_frame() -> impl Strategy<Value = crate::frame::Frame> {
+pub fn arb_stream_frame() -> impl Strategy<Value = ant_quic::Frame> {
     (any::<u64>(), any::<u64>(), any::<Vec<u8>>()).prop_map(|(stream_id, offset, data)| {
-        crate::frame::Frame::Stream {
-            id: crate::StreamId(stream_id),
+        ant_quic::Frame::Stream {
+            id: ant_quic::StreamId(stream_id),
             offset,
             length: data.len() as u64,
             fin: false,
@@ -221,9 +225,9 @@ pub fn arb_stream_frame() -> impl Strategy<Value = crate::frame::Frame> {
 }
 
 /// Strategy for generating ACK frames
-pub fn arb_ack_frame() -> impl Strategy<Value = crate::frame::Frame> {
+pub fn arb_ack_frame() -> impl Strategy<Value = ant_quic::Frame> {
     (1..=100u64, 1..=1000u64).prop_map(|(delay, largest)| {
-        crate::frame::Frame::Ack {
+        ant_quic::Frame::Ack {
             delay,
             largest,
             ranges: vec![0..=largest],
@@ -232,20 +236,20 @@ pub fn arb_ack_frame() -> impl Strategy<Value = crate::frame::Frame> {
 }
 
 /// Strategy for generating padding frames
-pub fn arb_padding_frame() -> impl Strategy<Value = crate::frame::Frame> {
-    (1..=100usize).prop_map(crate::frame::Frame::Padding)
+pub fn arb_padding_frame() -> impl Strategy<Value = ant_quic::Frame> {
+    (1..=100usize).prop_map(ant_quic::Frame::Padding)
 }
 
 /// Strategy for generating ping frames
-pub fn arb_ping_frame() -> impl Strategy<Value = crate::frame::Frame> {
-    Just(crate::frame::Frame::Ping)
+pub fn arb_ping_frame() -> impl Strategy<Value = ant_quic::Frame> {
+    Just(ant_quic::Frame::Ping)
 }
 
 /// Strategy for generating close frames
-pub fn arb_close_frame() -> impl Strategy<Value = crate::frame::Frame> {
+pub fn arb_close_frame() -> impl Strategy<Value = ant_quic::Frame> {
     (any::<u64>(), any::<String>()).prop_map(|(code, reason)| {
-        crate::frame::Frame::Close {
-            error_code: ant_quic::transport_error::Code(code & 0xFF), // Valid code range
+        ant_quic::Frame::Close {
+            error_code: ant_quic::TransportErrorCode(code & 0xFF), // Valid code range
             frame_type: None,
             reason: reason.into_bytes().into(),
         }
@@ -253,15 +257,15 @@ pub fn arb_close_frame() -> impl Strategy<Value = crate::frame::Frame> {
 }
 
 /// Strategy for generating realistic QUIC packet sequences
-pub fn arb_packet_sequence() -> impl Strategy<Value = Vec<crate::packet::Packet>> {
+pub fn arb_packet_sequence() -> impl Strategy<Value = Vec<ant_quic::Packet>> {
     prop::collection::vec(arb_packet(), 1..=5)
 }
 
 /// Strategy for generating QUIC packets
-pub fn arb_packet() -> impl Strategy<Value = crate::packet::Packet> {
+pub fn arb_packet() -> impl Strategy<Value = ant_quic::Packet> {
     (arb_connection_id(), arb_frame_sequence()).prop_map(|(dst_cid, frames)| {
-        crate::packet::Packet {
-            header: crate::packet::Header::Short {
+        ant_quic::Packet {
+            header: ant_quic::Header::Short {
                 dst_cid,
                 number: 0,
                 spin: false,
@@ -271,3 +275,4 @@ pub fn arb_packet() -> impl Strategy<Value = crate::packet::Packet> {
         }
     })
 }
+*/
