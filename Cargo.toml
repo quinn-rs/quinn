@@ -1,6 +1,6 @@
 [package]
 name = "ant-quic"
-version = "0.8.9"
+version = "0.8.10"
 edition = "2024"
 rust-version = "1.85.0"
 license = "MIT OR Apache-2.0"
