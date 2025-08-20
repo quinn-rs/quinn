@@ -1,3 +1,11 @@
+// Copyright 2024 Saorsa Labs Ltd.
+//
+// This Saorsa Network Software is licensed under the General Public License (GPL), version 3.
+// Please see the file LICENSE-GPL, or visit <http://www.gnu.org/licenses/> for the full text.
+//
+// Full details available at https://saorsalabs.com/licenses
+
+
 //! Event structures for the tracing system
 //!
 //! All events are fixed-size (128 bytes) to enable lock-free ring buffer storage.

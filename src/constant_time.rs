@@ -1,3 +1,11 @@
+// Copyright 2024 Saorsa Labs Ltd.
+//
+// This Saorsa Network Software is licensed under the General Public License (GPL), version 3.
+// Please see the file LICENSE-GPL, or visit <http://www.gnu.org/licenses/> for the full text.
+//
+// Full details available at https://saorsalabs.com/licenses
+
+
 // This function is non-inline to prevent the optimizer from looking inside it.
 #[inline(never)]
 fn constant_time_ne(a: &[u8], b: &[u8]) -> u8 {

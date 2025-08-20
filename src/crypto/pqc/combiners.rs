@@ -1,3 +1,11 @@
+// Copyright 2024 Saorsa Labs Ltd.
+//
+// This Saorsa Network Software is licensed under the General Public License (GPL), version 3.
+// Please see the file LICENSE-GPL, or visit <http://www.gnu.org/licenses/> for the full text.
+//
+// Full details available at https://saorsalabs.com/licenses
+
+
 //! NIST SP 800-56C Rev. 2 compliant key combiners for hybrid cryptography
 //!
 //! This module implements secure key combination methods following NIST
