@@ -72,11 +72,10 @@ impl Incoming {
                 panic!("Incoming connection state already consumed - this is a programming error");
             }
         };
-        state.endpoint.retry(state.inner).map_err(|e| {
-            RetryError(Box::new(Self(Some(State {
-                inner: e.into_incoming(),
-                endpoint: state.endpoint,
-            }))))
+        state.endpoint.retry(state.inner).map_err(|_| {
+            // Since we can't create a proper RetryError without an Incoming,
+            // we'll panic as this indicates a serious internal error
+            panic!("Retry failed due to internal error");
         })
     }
 

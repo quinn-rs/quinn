@@ -391,7 +391,13 @@ impl Future for EndpointDriver {
     type Output = Result<(), io::Error>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
-        let mut endpoint = self.0.state.lock().unwrap();
+        let mut endpoint = match self.0.state.lock() {
+            Ok(endpoint) => endpoint,
+            Err(_) => return Poll::Ready(Err(io::Error::new(
+                io::ErrorKind::Other,
+                "Endpoint state mutex poisoned"
+            ))),
+        };
         if endpoint.driver.is_none() {
             endpoint.driver = Some(cx.waker().clone());
         }
@@ -422,12 +428,15 @@ impl Future for EndpointDriver {
 
 impl Drop for EndpointDriver {
     fn drop(&mut self) {
-        let mut endpoint = self.0.state.lock().unwrap();
-        endpoint.driver_lost = true;
-        self.0.shared.incoming.notify_waiters();
-        // Drop all outgoing channels, signaling the termination of the endpoint to the associated
-        // connections.
-        endpoint.recv_state.connections.senders.clear();
+        if let Ok(mut endpoint) = self.0.state.lock() {
+            endpoint.driver_lost = true;
+            self.0.shared.incoming.notify_waiters();
+            // Drop all outgoing channels, signaling the termination of the endpoint to the associated
+            // connections.
+            endpoint.recv_state.connections.senders.clear();
+        } else {
+            error!("Failed to lock endpoint state in drop - mutex poisoned");
+        }
     }
 }
 
@@ -443,7 +452,10 @@ impl EndpointInner {
         incoming: crate::Incoming,
         server_config: Option<Arc<ServerConfig>>,
     ) -> Result<Connecting, ConnectionError> {
-        let mut state = self.state.lock().unwrap();
+        let mut state = self.state.lock()
+            .map_err(|_| ConnectionError::TransportError(
+                crate::transport_error::Error::INTERNAL_ERROR("Endpoint state mutex poisoned".to_string())
+            ))?;
         let mut response_buffer = Vec::new();
         let now = state.runtime.now();
         match state
@@ -469,7 +481,13 @@ impl EndpointInner {
     }
 
     pub(crate) fn refuse(&self, incoming: crate::Incoming) {
-        let mut state = self.state.lock().unwrap();
+        let mut state = match self.state.lock() {
+            Ok(state) => state,
+            Err(_) => {
+                error!("Failed to refuse connection: endpoint state mutex poisoned");
+                return;
+            }
+        };
         state.stats.refused_handshakes += 1;
         let mut response_buffer = Vec::new();
         let transmit = state.inner.refuse(incoming, &mut response_buffer);
@@ -479,18 +497,31 @@ impl EndpointInner {
     pub(crate) fn retry(
         &self,
         incoming: crate::Incoming,
-    ) -> Result<(), crate::endpoint::RetryError> {
-        let mut state = self.state.lock().unwrap();
+    ) -> Result<(), std::io::Error> {
+        let mut state = self.state.lock()
+            .map_err(|_| std::io::Error::new(
+                std::io::ErrorKind::Other,
+                "Endpoint state mutex poisoned"
+            ))?;
         let mut response_buffer = Vec::new();
-        let transmit = state.inner.retry(incoming, &mut response_buffer)?;
+        let transmit = match state.inner.retry(incoming, &mut response_buffer) {
+            Ok(transmit) => transmit,
+            Err(_) => return Err(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                "Retry failed"
+            )),
+        };
         respond(transmit, &response_buffer, &*state.socket);
         Ok(())
     }
 
     pub(crate) fn ignore(&self, incoming: crate::Incoming) {
-        let mut state = self.state.lock().unwrap();
-        state.stats.ignored_handshakes += 1;
-        state.inner.ignore(incoming);
+        if let Ok(mut state) = self.state.lock() {
+            state.stats.ignored_handshakes += 1;
+            state.inner.ignore(incoming);
+        } else {
+            error!("Failed to ignore incoming connection: endpoint state mutex poisoned");
+        }
     }
 }
 
@@ -564,13 +595,14 @@ impl State {
                 continue;
             };
             // Ignoring errors from dropped connections that haven't yet been cleaned up
-            let _ = self
+            if let Some(sender) = self
                 .recv_state
                 .connections
                 .senders
                 .get_mut(&ch)
-                .unwrap()
-                .send(ConnectionEvent::Proto(event));
+            {
+                let _ = sender.send(ConnectionEvent::Proto(event));
+            }
         }
 
         true
@@ -638,11 +670,10 @@ impl ConnectionSet {
     ) -> Connecting {
         let (send, recv) = mpsc::unbounded_channel();
         if let Some((error_code, ref reason)) = self.close {
-            send.send(ConnectionEvent::Close {
+            let _ = send.send(ConnectionEvent::Close {
                 error_code,
                 reason: reason.clone(),
-            })
-            .unwrap();
+            });
         }
         self.senders.insert(handle, send);
         Connecting::new(handle, conn, self.sender.clone(), recv, socket, runtime)
@@ -673,7 +704,10 @@ impl Future for Accept<'_> {
     type Output = Option<super::incoming::Incoming>;
     fn poll(self: Pin<&mut Self>, ctx: &mut Context<'_>) -> Poll<Self::Output> {
         let mut this = self.project();
-        let mut endpoint = this.endpoint.inner.state.lock().unwrap();
+        let mut endpoint = match this.endpoint.inner.state.lock() {
+            Ok(endpoint) => endpoint,
+            Err(_) => return Poll::Ready(None),
+        };
         if endpoint.driver_lost {
             return Poll::Ready(None);
         }
@@ -735,23 +769,28 @@ impl EndpointRef {
 
 impl Clone for EndpointRef {
     fn clone(&self) -> Self {
-        self.0.state.lock().unwrap().ref_count += 1;
+        if let Ok(mut state) = self.0.state.lock() {
+            state.ref_count += 1;
+        }
         Self(self.0.clone())
     }
 }
 
 impl Drop for EndpointRef {
     fn drop(&mut self) {
-        let endpoint = &mut *self.0.state.lock().unwrap();
-        if let Some(x) = endpoint.ref_count.checked_sub(1) {
-            endpoint.ref_count = x;
-            if x == 0 {
-                // If the driver is about to be on its own, ensure it can shut down if the last
-                // connection is gone.
-                if let Some(task) = endpoint.driver.take() {
-                    task.wake();
+        if let Ok(mut endpoint) = self.0.state.lock() {
+            if let Some(x) = endpoint.ref_count.checked_sub(1) {
+                endpoint.ref_count = x;
+                if x == 0 {
+                    // If the driver is about to be on its own, ensure it can shut down if the last
+                    // connection is gone.
+                    if let Some(task) = endpoint.driver.take() {
+                        task.wake();
+                    }
                 }
             }
+        } else {
+            error!("Failed to drop EndpointRef: state mutex poisoned");
         }
     }
 }
@@ -848,12 +887,13 @@ impl RecvState {
                                 Some(DatagramEvent::ConnectionEvent(handle, event)) => {
                                     // Ignoring errors from dropped connections that haven't yet been cleaned up
                                     received_connection_packet = true;
-                                    let _ = self
+                                    if let Some(sender) = self
                                         .connections
                                         .senders
                                         .get_mut(&handle)
-                                        .unwrap()
-                                        .send(ConnectionEvent::Proto(event));
+                                    {
+                                        let _ = sender.send(ConnectionEvent::Proto(event));
+                                    }
                                 }
                                 Some(DatagramEvent::Response(transmit)) => {
                                     respond(transmit, &response_buffer, socket);

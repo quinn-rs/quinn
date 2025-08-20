@@ -6,6 +6,7 @@
 use proptest::prelude::*;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::time::{Duration, Instant};
+use ant_quic::transport_error;
 
 /// Default configuration for property tests with increased coverage
 pub fn default_config() -> ProptestConfig {
@@ -244,7 +245,7 @@ pub fn arb_ping_frame() -> impl Strategy<Value = crate::frame::Frame> {
 pub fn arb_close_frame() -> impl Strategy<Value = crate::frame::Frame> {
     (any::<u64>(), any::<String>()).prop_map(|(code, reason)| {
         crate::frame::Frame::Close {
-            error_code: crate::transport_error::Code(code),
+            error_code: ant_quic::transport_error::Code(code & 0xFF), // Valid code range
             frame_type: None,
             reason: reason.into_bytes().into(),
         }

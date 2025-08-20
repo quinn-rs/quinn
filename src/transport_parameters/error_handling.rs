@@ -24,15 +24,7 @@ impl TransportParameterErrorHandler {
         );
     }
 
-	    /// Create a properly formatted CONNECTION_CLOSE frame for parameter errors
-	    pub(super) fn create_close_frame(error_msg: &str) -> frame::Close {
-	        let connection_close = frame::ConnectionClose {
-	            error_code: crate::transport_error::Code::TRANSPORT_PARAMETER_ERROR,
-	            frame_type: None,
-	            reason: error_msg.as_bytes().to_vec().into(),
-	        };
-	        frame::Close::Connection(connection_close)
-	    }
+
 
 	    /// Log semantic validation errors
 	    pub(super) fn log_semantic_error(error_desc: &str, context: &str) {
@@ -44,17 +36,27 @@ impl TransportParameterErrorHandler {
 	        );
 	    }
 
-	    /// Log NAT traversal parameter errors
-	    pub(super) fn log_nat_traversal_error(side: Side, received_variant: &str, expected: &str) {
-	        error!(
-	            side = ?side,
-	            received = received_variant,
-	            expected = expected,
-	            compliance = "draft-seemann-quic-nat-traversal-02",
-	            "NAT traversal parameter role mismatch"
-	        );
-	    }
-	}
+    /// Log NAT traversal parameter errors
+    pub(super) fn log_nat_traversal_error(side: Side, received_variant: &str, expected: &str) {
+        error!(
+            side = ?side,
+            received = received_variant,
+            expected = expected,
+            compliance = "draft-seemann-quic-nat-traversal-02",
+            "NAT traversal parameter role mismatch"
+        );
+    }
+
+    /// Create a properly formatted CONNECTION_CLOSE frame for parameter errors
+    pub(super) fn create_close_frame(error_msg: &str) -> frame::Close {
+        let connection_close = frame::ConnectionClose {
+            error_code: crate::transport_error::Code::TRANSPORT_PARAMETER_ERROR,
+            frame_type: None,
+            reason: error_msg.as_bytes().to_vec().into(),
+        };
+        frame::Close::Connection(connection_close)
+    }
+}
 
 /// Validation helper functions with detailed error reporting
 pub(crate) fn validate_ack_delay_exponent(value: u8) -> Result<(), TransportError> {
