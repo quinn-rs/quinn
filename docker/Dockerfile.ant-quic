@@ -23,16 +23,23 @@ WORKDIR /usr/src/ant-quic
 # Copy only dependency files first for better caching
 COPY Cargo.toml Cargo.lock ./
 
-# Create dummy source structure to build dependencies
-RUN mkdir -p src/bin && \
+# Create dummy source structure and benches to satisfy Cargo.toml
+RUN mkdir -p src/bin benches && \
     echo "fn main() {}" > src/bin/ant-quic.rs && \
-    echo "pub fn lib() {}" > src/lib.rs
+    echo "pub fn lib() {}" > src/lib.rs && \
+    echo "fn main() {}" > benches/quic_benchmarks.rs && \
+    echo "fn main() {}" > benches/relay_queue.rs && \
+    echo "fn main() {}" > benches/candidate_discovery.rs && \
+    echo "fn main() {}" > benches/nat_traversal.rs && \
+    echo "fn main() {}" > benches/address_discovery_bench.rs && \
+    echo "fn main() {}" > benches/connection_management.rs && \
+    echo "fn main() {}" > benches/nat_traversal_performance.rs
 
 # Build dependencies only (this layer gets cached)
 RUN cargo build --release --bin ant-quic && \
     rm -rf src target/release/ant-quic* target/release/deps/ant_quic*
 
-# Copy bench files if they exist (for dependency resolution)
+# Copy actual bench files
 COPY benches ./benches/
 
 # Copy the actual source code
