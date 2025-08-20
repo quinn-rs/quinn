@@ -53,6 +53,7 @@ impl TransportParameterErrorHandler {
     }
 
     /// Create a properly formatted CONNECTION_CLOSE frame for parameter errors
+    #[allow(dead_code)]
     pub(super) fn create_close_frame(error_msg: &str) -> frame::Close {
         let connection_close = frame::ConnectionClose {
             error_code: crate::transport_error::Code::TRANSPORT_PARAMETER_ERROR,

@@ -112,6 +112,7 @@ pub enum CandidateState {
 }
 /// State of an individual path validation attempt
 #[derive(Debug)]
+#[allow(dead_code)]
 pub(super) struct PathValidationState {
     /// Challenge value sent
     pub(super) challenge: u64,
@@ -130,6 +131,7 @@ pub(super) struct PathValidationState {
 }
 /// Coordination state for simultaneous hole punching
 #[derive(Debug)]
+#[allow(dead_code)]
 pub(super) struct CoordinationState {
     /// Current coordination round number
     pub(super) round: VarInt,
@@ -158,6 +160,7 @@ pub(super) struct CoordinationState {
 }
 /// Phases of the coordination protocol
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
 pub(crate) enum CoordinationPhase {
     /// Waiting to start coordination
     Idle,
@@ -203,6 +206,7 @@ pub(super) enum TimeoutAction {
 
 /// Candidate pair for ICE-like connectivity testing
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub(super) struct CandidatePair {
     /// Sequence of remote candidate  
     pub(super) remote_sequence: VarInt,
@@ -223,6 +227,7 @@ pub(super) struct CandidatePair {
 }
 /// State of a candidate pair during validation
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
 pub(super) enum PairState {
     /// Waiting to be tested
     Waiting,
@@ -260,6 +265,7 @@ pub(super) enum CandidateType {
 
 /// Calculate ICE-like priority for an address candidate
 /// Based on RFC 8445 Section 5.1.2.1
+#[allow(dead_code)]
 fn calculate_candidate_priority(
     candidate_type: CandidateType,
     local_preference: u16,
@@ -317,6 +323,7 @@ fn are_candidates_compatible(local: &AddressCandidate, remote: &AddressCandidate
 }
 /// Statistics for NAT traversal attempts
 #[derive(Debug, Default, Clone)]
+#[allow(dead_code)]
 pub(crate) struct NatTraversalStats {
     /// Total candidates received from peer
     pub(super) remote_candidates_received: u32,
@@ -349,6 +356,7 @@ pub(crate) struct NatTraversalStats {
 }
 /// Security validation state for rate limiting and attack detection
 #[derive(Debug)]
+#[allow(dead_code)]
 pub(super) struct SecurityValidationState {
     /// Rate limiting: track candidate additions per time window
     candidate_rate_tracker: VecDeque<Instant>,
@@ -411,6 +419,7 @@ pub(super) struct AdaptiveTimeoutState {
 }
 /// Network condition monitoring for adaptive behavior
 #[derive(Debug)]
+#[allow(dead_code)]
 pub(super) struct NetworkConditionMonitor {
     /// Recent round-trip time measurements
     rtt_samples: VecDeque<Duration>,
@@ -443,6 +452,7 @@ struct TimeoutStatistics {
     /// Last update time
     last_update: Option<Instant>,
 }
+#[allow(dead_code)]
 impl SecurityValidationState {
     /// Create new security validation state with default settings
     fn new() -> Self {
@@ -1177,6 +1187,7 @@ impl AdaptiveTimeoutState {
 }
 /// Resource management limits and cleanup configuration
 #[derive(Debug)]
+#[allow(dead_code)]
 pub(super) struct ResourceManagementConfig {
     /// Maximum number of active validations
     max_active_validations: usize,
@@ -1203,6 +1214,7 @@ pub(super) struct ResourceManagementConfig {
 }
 /// Resource usage statistics and monitoring
 #[derive(Debug, Default)]
+#[allow(dead_code)]
 pub(super) struct ResourceStats {
     /// Current number of active validations
     active_validations: usize,
@@ -1274,6 +1286,7 @@ impl ResourceManagementConfig {
         }
     }
 }
+#[allow(dead_code)]
 impl ResourceCleanupCoordinator {
     /// Create new resource cleanup coordinator
     fn new() -> Self {
@@ -1616,6 +1629,7 @@ impl ResourceCleanupCoordinator {
     }
 }
 
+#[allow(dead_code)]
 impl NetworkConditionMonitor {
     /// Create new network condition monitor
     fn new() -> Self {
@@ -1781,6 +1795,7 @@ impl NetworkConditionMonitor {
     }
 }
 
+#[allow(dead_code)]
 impl NatTraversalState {
     /// Create new NAT traversal state with given role and configuration
     pub(super) fn new(
@@ -3137,6 +3152,7 @@ impl NatTraversalState {
 
 /// Errors that can occur during NAT traversal
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
 pub(crate) enum NatTraversalError {
     /// Too many candidates received
     TooManyCandidates,
@@ -3186,6 +3202,7 @@ impl std::error::Error for NatTraversalError {}
 
 /// Security statistics for monitoring and debugging
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub(crate) struct SecurityStats {
     /// Total security rejections
     pub total_security_rejections: u32,
@@ -3209,6 +3226,7 @@ pub(crate) struct SecurityStats {
 /// This manages the bootstrap node's role in observing client addresses,
 /// coordinating hole punching, and relaying coordination messages.
 #[derive(Debug)]
+#[allow(dead_code)]
 pub(crate) struct BootstrapCoordinator {
     /// Active peer registry with observed addresses
     peer_registry: HashMap<PeerId, PeerObservationRecord>,
@@ -3231,6 +3249,7 @@ type CoordinationSessionId = u64;
 type PeerId = [u8; 32];
 /// Record of observed peer information
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub(crate) struct PeerObservationRecord {
     /// The peer's unique identifier
     peer_id: PeerId,
@@ -3250,6 +3269,7 @@ pub(crate) struct PeerObservationRecord {
 
 /// Connection context for address observations
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub(crate) struct ConnectionContext {
     /// Connection ID for this observation
     connection_id: ConnectionId,

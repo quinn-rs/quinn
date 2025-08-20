@@ -1886,6 +1886,7 @@ impl Connection {
     }
 
     /// Get the address discovery state (internal use)
+    #[allow(dead_code)]
     pub(crate) fn address_discovery_state(&self) -> Option<&AddressDiscoveryState> {
         self.address_discovery_state.as_ref()
     }
@@ -4655,6 +4656,7 @@ impl Connection {
     ///
     /// This method is preserved for debugging and monitoring purposes.
     /// It may be used in future telemetry or diagnostic features.
+    #[allow(dead_code)]
     pub(crate) fn nat_traversal_stats(&self) -> Option<nat_traversal::NatTraversalStats> {
         self.nat_traversal.as_ref().map(|state| state.stats.clone())
     }
@@ -5352,6 +5354,7 @@ impl Connection {
     ///
     /// This method is preserved for debugging and monitoring purposes.
     /// It may be used in future telemetry or diagnostic features.
+    #[allow(dead_code)]
     pub(crate) fn get_nat_traversal_stats(&self) -> Option<&nat_traversal::NatTraversalStats> {
         self.nat_traversal.as_ref().map(|state| &state.stats)
     }
@@ -6050,6 +6053,7 @@ pub(crate) struct PqcState {
     /// Whether the peer supports PQC algorithms
     enabled: bool,
     /// Supported PQC algorithms advertised by peer
+    #[allow(dead_code)]
     algorithms: Option<crate::transport_parameters::PqcAlgorithms>,
     /// Target MTU for PQC handshakes
     handshake_mtu: u16,
@@ -6059,6 +6063,7 @@ pub(crate) struct PqcState {
     packet_handler: crate::crypto::pqc::packet_handler::PqcPacketHandler,
 }
 
+#[allow(dead_code)]
 impl PqcState {
     fn new() -> Self {
         Self {
@@ -6197,6 +6202,7 @@ struct AddressObservationRateLimiter {
     last_update: Instant,
 }
 
+#[allow(dead_code)]
 impl AddressDiscoveryState {
     /// Create a new address discovery state
     fn new(config: &crate::transport_parameters::AddressDiscoveryConfig, now: Instant) -> Self {
@@ -6524,6 +6530,7 @@ impl AddressDiscoveryState {
     }
 }
 
+#[allow(dead_code)]
 impl AddressObservationRateLimiter {
     /// Create a new rate limiter
     fn new(rate: u8, now: Instant) -> Self {
