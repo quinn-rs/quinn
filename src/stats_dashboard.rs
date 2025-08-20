@@ -5,7 +5,6 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
-
 //! Connection Statistics Dashboard
 //!
 //! This module provides a real-time dashboard for monitoring connection

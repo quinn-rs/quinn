@@ -5,7 +5,6 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
-
 //! Linux-specific network interface discovery using netlink sockets
 //!
 //! This module provides production-ready network interface enumeration and monitoring

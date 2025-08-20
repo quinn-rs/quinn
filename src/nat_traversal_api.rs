@@ -5,7 +5,6 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
-
 //! High-level NAT Traversal API for Autonomi P2P Networks
 //!
 //! This module provides a simple, high-level interface for establishing

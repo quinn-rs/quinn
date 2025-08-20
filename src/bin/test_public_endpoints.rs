@@ -5,7 +5,6 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
-
 //! Test connectivity to public QUIC endpoints
 //!
 //! This binary tests ant-quic's ability to connect to various public QUIC servers

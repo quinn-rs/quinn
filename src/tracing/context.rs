@@ -5,7 +5,6 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
-
 //! Trace context for propagating trace information
 
 use super::event::TraceId;

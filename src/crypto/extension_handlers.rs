@@ -5,7 +5,6 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
-
 //! Extension Handlers for RFC 7250 Raw Public Keys
 //!
 //! Note: rustls 0.23.x does not yet have full RFC 7250 Raw Public Keys support.

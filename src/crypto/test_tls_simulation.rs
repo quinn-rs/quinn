@@ -5,7 +5,6 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
-
 //! Test module for TLS extension simulation integration
 //!
 //! This module tests the integration of RFC 7250 certificate type negotiation

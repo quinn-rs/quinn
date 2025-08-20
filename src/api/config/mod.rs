@@ -5,7 +5,6 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
-
 //! Configuration module for ant-quic
 //!
 //! This module provides a clean, builder-based configuration API for the ant-quic library.

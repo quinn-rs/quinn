@@ -5,7 +5,6 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
-
 //! Post-Quantum Cryptography module for ant-quic
 //!
 //! This module implements NIST-standardized post-quantum algorithms using saorsa-pqc:

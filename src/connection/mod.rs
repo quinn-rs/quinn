@@ -5,7 +5,6 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
-
 use std::{
     cmp,
     collections::VecDeque,
@@ -6567,8 +6566,6 @@ impl AddressObservationRateLimiter {
             self.tokens = self.max_tokens;
         }
     }
-
-
 }
 
 #[cfg(test)]

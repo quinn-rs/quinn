@@ -5,7 +5,6 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
-
 /// Connection lifecycle logging
 ///
 /// Tracks and logs the complete lifecycle of QUIC connections

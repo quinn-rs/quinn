@@ -5,7 +5,6 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
-
 //! Performance optimization modules for ant-quic
 
 pub mod memory;

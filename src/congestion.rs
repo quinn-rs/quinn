@@ -5,7 +5,6 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
-
 //! Congestion Control Algorithms
 //!
 //! This module provides congestion control algorithms for QUIC connections.

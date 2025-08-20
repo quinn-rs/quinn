@@ -5,7 +5,6 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
-
 //! Error types for the relay protocol implementation.
 
 use std::fmt;

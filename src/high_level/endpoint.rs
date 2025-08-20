@@ -5,7 +5,6 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
-
 use std::{
     collections::VecDeque,
     fmt,
@@ -35,10 +34,10 @@ use bytes::{Bytes, BytesMut};
 use pin_project_lite::pin_project;
 use quinn_udp::{BATCH_SIZE, RecvMeta};
 use rustc_hash::FxHashMap;
-use tracing::error;
 #[cfg(all(not(wasm_browser), feature = "network-discovery"))]
 use socket2::{Domain, Protocol, Socket, Type};
 use tokio::sync::{Notify, futures::Notified, mpsc};
+use tracing::error;
 use tracing::{Instrument, Span};
 
 use super::{
@@ -106,7 +105,9 @@ impl Endpoint {
 
     /// Returns relevant stats from this Endpoint
     pub fn stats(&self) -> EndpointStats {
-        self.inner.state.lock()
+        self.inner
+            .state
+            .lock()
             .map(|state| state.stats)
             .unwrap_or_else(|_| {
                 error!("Endpoint state mutex poisoned");
@@ -230,7 +231,10 @@ impl Endpoint {
         addr: SocketAddr,
         server_name: &str,
     ) -> Result<Connecting, ConnectError> {
-        let mut endpoint = self.inner.state.lock()
+        let mut endpoint = self
+            .inner
+            .state
+            .lock()
             .map_err(|_| ConnectError::EndpointStopping)?;
         if endpoint.driver_lost || endpoint.recv_state.connections.close.is_some() {
             return Err(ConnectError::EndpointStopping);
@@ -272,8 +276,10 @@ impl Endpoint {
     /// On error, the old UDP socket is retained.
     pub fn rebind_abstract(&self, socket: Arc<dyn AsyncUdpSocket>) -> io::Result<()> {
         let addr = socket.local_addr()?;
-        let mut inner = self.inner.state.lock()
-            .map_err(|_| io::Error::new(io::ErrorKind::Other, "Endpoint state mutex poisoned"))?;
+        let mut inner =
+            self.inner.state.lock().map_err(|_| {
+                io::Error::new(io::ErrorKind::Other, "Endpoint state mutex poisoned")
+            })?;
         inner.prev_socket = Some(mem::replace(&mut inner.socket, socket));
         inner.ipv6 = addr.is_ipv6();
 
@@ -299,14 +305,19 @@ impl Endpoint {
 
     /// Get the local `SocketAddr` the underlying socket is bound to
     pub fn local_addr(&self) -> io::Result<SocketAddr> {
-        self.inner.state.lock()
+        self.inner
+            .state
+            .lock()
             .map_err(|_| io::Error::new(io::ErrorKind::Other, "Endpoint state mutex poisoned"))?
-            .socket.local_addr()
+            .socket
+            .local_addr()
     }
 
     /// Get the number of connections that are currently open
     pub fn open_connections(&self) -> usize {
-        self.inner.state.lock()
+        self.inner
+            .state
+            .lock()
             .map(|state| state.inner.open_connections())
             .unwrap_or(0)
     }
@@ -401,10 +412,12 @@ impl Future for EndpointDriver {
     fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         let mut endpoint = match self.0.state.lock() {
             Ok(endpoint) => endpoint,
-            Err(_) => return Poll::Ready(Err(io::Error::new(
-                io::ErrorKind::Other,
-                "Endpoint state mutex poisoned"
-            ))),
+            Err(_) => {
+                return Poll::Ready(Err(io::Error::new(
+                    io::ErrorKind::Other,
+                    "Endpoint state mutex poisoned",
+                )));
+            }
         };
         if endpoint.driver.is_none() {
             endpoint.driver = Some(cx.waker().clone());
@@ -460,10 +473,11 @@ impl EndpointInner {
         incoming: crate::Incoming,
         server_config: Option<Arc<ServerConfig>>,
     ) -> Result<Connecting, ConnectionError> {
-        let mut state = self.state.lock()
-            .map_err(|_| ConnectionError::TransportError(
-                crate::transport_error::Error::INTERNAL_ERROR("Endpoint state mutex poisoned".to_string())
-            ))?;
+        let mut state = self.state.lock().map_err(|_| {
+            ConnectionError::TransportError(crate::transport_error::Error::INTERNAL_ERROR(
+                "Endpoint state mutex poisoned".to_string(),
+            ))
+        })?;
         let mut response_buffer = Vec::new();
         let now = state.runtime.now();
         match state
@@ -502,22 +516,19 @@ impl EndpointInner {
         respond(transmit, &response_buffer, &*state.socket);
     }
 
-    pub(crate) fn retry(
-        &self,
-        incoming: crate::Incoming,
-    ) -> Result<(), std::io::Error> {
-        let mut state = self.state.lock()
-            .map_err(|_| std::io::Error::new(
-                std::io::ErrorKind::Other,
-                "Endpoint state mutex poisoned"
-            ))?;
+    pub(crate) fn retry(&self, incoming: crate::Incoming) -> Result<(), std::io::Error> {
+        let mut state = self.state.lock().map_err(|_| {
+            std::io::Error::new(std::io::ErrorKind::Other, "Endpoint state mutex poisoned")
+        })?;
         let mut response_buffer = Vec::new();
         let transmit = match state.inner.retry(incoming, &mut response_buffer) {
             Ok(transmit) => transmit,
-            Err(_) => return Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                "Retry failed"
-            )),
+            Err(_) => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    "Retry failed",
+                ));
+            }
         };
         respond(transmit, &response_buffer, &*state.socket);
         Ok(())
@@ -603,12 +614,7 @@ impl State {
                 continue;
             };
             // Ignoring errors from dropped connections that haven't yet been cleaned up
-            if let Some(sender) = self
-                .recv_state
-                .connections
-                .senders
-                .get_mut(&ch)
-            {
+            if let Some(sender) = self.recv_state.connections.senders.get_mut(&ch) {
                 let _ = sender.send(ConnectionEvent::Proto(event));
             }
         }
@@ -861,10 +867,12 @@ impl RecvState {
             // expect() safe as self.recv_buf is chunked into BATCH_SIZE items
             // and iovs will be of size BATCH_SIZE, thus from_fn is called
             // exactly BATCH_SIZE times.
-            std::array::from_fn(|_| bufs.next().unwrap_or_else(|| {
-                error!("Insufficient buffers for BATCH_SIZE");
-                IoSliceMut::new(&mut [])
-            }))
+            std::array::from_fn(|_| {
+                bufs.next().unwrap_or_else(|| {
+                    error!("Insufficient buffers for BATCH_SIZE");
+                    IoSliceMut::new(&mut [])
+                })
+            })
         };
         loop {
             match socket.poll_recv(cx, &mut iovs, &mut metas) {
@@ -895,10 +903,7 @@ impl RecvState {
                                 Some(DatagramEvent::ConnectionEvent(handle, event)) => {
                                     // Ignoring errors from dropped connections that haven't yet been cleaned up
                                     received_connection_packet = true;
-                                    if let Some(sender) = self
-                                        .connections
-                                        .senders
-                                        .get_mut(&handle)
+                                    if let Some(sender) = self.connections.senders.get_mut(&handle)
                                     {
                                         let _ = sender.send(ConnectionEvent::Proto(event));
                                     }

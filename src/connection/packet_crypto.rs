@@ -5,7 +5,6 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
-
 use tracing::{debug, trace};
 
 use crate::Instant;

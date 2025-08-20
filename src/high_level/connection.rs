@@ -5,7 +5,6 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
-
 use std::{
     any::Any,
     fmt,
@@ -22,7 +21,7 @@ use pin_project_lite::pin_project;
 use rustc_hash::FxHashMap;
 use thiserror::Error;
 use tokio::sync::{Notify, futures::Notified, mpsc, oneshot};
-use tracing::{error, Instrument, Span, debug_span};
+use tracing::{Instrument, Span, debug_span, error};
 
 use super::{
     ConnectionEvent,
@@ -33,8 +32,8 @@ use super::{
     udp_transmit,
 };
 use crate::{
-    ConnectError, ConnectionError, ConnectionHandle, ConnectionStats, Dir, Duration, EndpointEvent, Instant,
-    Side, StreamEvent, StreamId, VarInt, congestion::Controller,
+    ConnectError, ConnectionError, ConnectionHandle, ConnectionStats, Dir, Duration, EndpointEvent,
+    Instant, Side, StreamEvent, StreamId, VarInt, congestion::Controller,
 };
 
 /// In-progress connection attempt future
@@ -177,17 +176,12 @@ impl Connecting {
             .crypto_session()
             .handshake_data()
             .ok_or_else(|| {
-                inner
-                    .error
-                    .clone()
-                    .unwrap_or_else(|| {
-                        error!("Spurious handshake data ready notification with no error");
-                        ConnectionError::TransportError(
-                            crate::transport_error::Error::INTERNAL_ERROR(
-                                "Spurious handshake notification".to_string()
-                            )
-                        )
-                    })
+                inner.error.clone().unwrap_or_else(|| {
+                    error!("Spurious handshake data ready notification with no error");
+                    ConnectionError::TransportError(crate::transport_error::Error::INTERNAL_ERROR(
+                        "Spurious handshake notification".to_string(),
+                    ))
+                })
             })
     }
 
@@ -213,11 +207,10 @@ impl Connecting {
     ///
     /// Returns an error if called after `poll` has returned `Ready`.
     pub fn remote_address(&self) -> Result<SocketAddr, ConnectionError> {
-        let conn_ref: &ConnectionRef = self.conn.as_ref()
-            .ok_or_else(|| {
-                error!("Connection used after yielding Ready");
-                ConnectionError::LocallyClosed
-            })?;
+        let conn_ref: &ConnectionRef = self.conn.as_ref().ok_or_else(|| {
+            error!("Connection used after yielding Ready");
+            ConnectionError::LocallyClosed
+        })?;
         Ok(conn_ref.state.lock("remote_address").inner.remote_address())
     }
 }
@@ -226,22 +219,20 @@ impl Future for Connecting {
     type Output = Result<Connection, ConnectionError>;
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         Pin::new(&mut self.connected).poll(cx).map(|_| {
-            let conn = self.conn.take()
-                .ok_or_else(|| {
-                    error!("Connection not available when connecting future resolves");
-                    ConnectionError::LocallyClosed
-                })?;
+            let conn = self.conn.take().ok_or_else(|| {
+                error!("Connection not available when connecting future resolves");
+                ConnectionError::LocallyClosed
+            })?;
             let inner = conn.state.lock("connecting");
             if inner.connected {
                 drop(inner);
                 Ok(Connection(conn))
             } else {
-                Err(inner
-                    .error
-                    .clone()
-                    .unwrap_or_else(|| ConnectionError::TransportError(
-                        crate::transport_error::Error::INTERNAL_ERROR("connection failed without error".to_string())
-                    )))
+                Err(inner.error.clone().unwrap_or_else(|| {
+                    ConnectionError::TransportError(crate::transport_error::Error::INTERNAL_ERROR(
+                        "connection failed without error".to_string(),
+                    ))
+                }))
             }
         })
     }
@@ -413,9 +404,7 @@ impl Connection {
             .lock("closed")
             .error
             .as_ref()
-            .unwrap_or_else(|| {
-                &crate::connection::ConnectionError::LocallyClosed
-            })
+            .unwrap_or_else(|| &crate::connection::ConnectionError::LocallyClosed)
             .clone()
     }
 
@@ -892,15 +881,13 @@ impl Future for SendDatagram<'_> {
             return Poll::Ready(Err(SendDatagramError::ConnectionLost(e.clone())));
         }
         use crate::SendDatagramError::*;
-        match state
-            .inner
-            .datagrams()
-            .send(this.data.take()
-                .ok_or_else(|| {
-                    error!("SendDatagram future polled without data");
-                    SendDatagramError::ConnectionLost(ConnectionError::LocallyClosed)
-                })?, false)
-        {
+        match state.inner.datagrams().send(
+            this.data.take().ok_or_else(|| {
+                error!("SendDatagram future polled without data");
+                SendDatagramError::ConnectionLost(ConnectionError::LocallyClosed)
+            })?,
+            false,
+        ) {
             Ok(()) => {
                 state.wake();
                 Poll::Ready(Ok(()))

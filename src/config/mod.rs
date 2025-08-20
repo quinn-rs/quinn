@@ -5,7 +5,6 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
-
 use std::{
     fmt,
     net::{SocketAddrV4, SocketAddrV6},

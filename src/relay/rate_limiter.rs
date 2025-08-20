@@ -5,7 +5,6 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
-
 //! Token bucket rate limiting implementation for relay operations.
 
 use crate::relay::{RelayError, RelayResult};

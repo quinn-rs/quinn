@@ -5,7 +5,6 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
-
 //! Configurable timeouts for NAT traversal operations
 
 use crate::Duration;

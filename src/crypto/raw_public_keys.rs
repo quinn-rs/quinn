@@ -5,7 +5,6 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
-
 //! RFC 7250 Raw Public Keys Support for ant-quic
 //!
 //! This module implements Raw Public Keys (RPK) support as defined in RFC 7250,

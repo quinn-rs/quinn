@@ -5,7 +5,6 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
-
 //! Coding related traits.
 
 use std::net::{Ipv4Addr, Ipv6Addr};

@@ -5,7 +5,6 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
-
 /*
  * Based on Google code released under BSD license here:
  * https://groups.google.com/forum/#!topic/bbr-dev/3RTgkzi5ZD8

@@ -5,7 +5,6 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
-
 //! Relay connection implementation for bidirectional data forwarding.
 
 use crate::relay::{RelayError, RelayResult};

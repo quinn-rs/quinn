@@ -5,7 +5,6 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
-
 use std::hash::Hasher;
 
 use rand::{Rng, RngCore};

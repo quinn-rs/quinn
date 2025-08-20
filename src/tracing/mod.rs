@@ -5,7 +5,6 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
-
 //! Zero-cost tracing system for P2P network debugging
 //!
 //! This module provides comprehensive tracing capabilities with absolutely zero

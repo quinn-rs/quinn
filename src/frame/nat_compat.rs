@@ -5,7 +5,6 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
-
 //! Compatibility layer for migrating between old and RFC-compliant NAT traversal frames
 //!
 //! This module provides conversion functions and compatibility wrappers to enable

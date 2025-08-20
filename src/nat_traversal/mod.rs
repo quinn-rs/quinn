@@ -5,7 +5,6 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
-
 //! NAT Traversal Protocol Implementation
 //!
 //! This module implements the QUIC-native NAT traversal approach based on

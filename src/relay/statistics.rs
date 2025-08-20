@@ -5,7 +5,6 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
-
 //! Comprehensive relay statistics collection and aggregation.
 
 use super::{

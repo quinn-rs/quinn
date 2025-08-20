@@ -5,7 +5,6 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
-
 //! Configuration validation for production deployments
 //!
 //! This module provides comprehensive configuration validation to ensure
@@ -37,8 +36,6 @@ pub(crate) enum ConfigValidationError {
 
     #[error("Invalid address format: {0}")]
     InvalidAddress(String),
-
-
 }
 
 /// Configuration validation result

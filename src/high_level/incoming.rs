@@ -5,7 +5,6 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
-
 use std::{
     future::{Future, IntoFuture},
     net::{IpAddr, SocketAddr},
@@ -34,11 +33,10 @@ impl Incoming {
 
     /// Attempt to accept this incoming connection (an error may still occur)
     pub fn accept(mut self) -> Result<Connecting, ConnectionError> {
-        let state = self.0.take()
-            .ok_or_else(|| {
-                error!("Incoming connection state already consumed");
-                ConnectionError::LocallyClosed
-            })?;
+        let state = self.0.take().ok_or_else(|| {
+            error!("Incoming connection state already consumed");
+            ConnectionError::LocallyClosed
+        })?;
         state.endpoint.accept(state.inner, None)
     }
 
@@ -49,11 +47,10 @@ impl Incoming {
         mut self,
         server_config: Arc<ServerConfig>,
     ) -> Result<Connecting, ConnectionError> {
-        let state = self.0.take()
-            .ok_or_else(|| {
-                error!("Incoming connection state already consumed");
-                ConnectionError::LocallyClosed
-            })?;
+        let state = self.0.take().ok_or_else(|| {
+            error!("Incoming connection state already consumed");
+            ConnectionError::LocallyClosed
+        })?;
         state.endpoint.accept(state.inner, Some(server_config))
     }
 
@@ -103,11 +100,14 @@ impl Incoming {
 
     /// The peer's UDP address
     pub fn remote_address(&self) -> SocketAddr {
-        self.0.as_ref()
+        self.0
+            .as_ref()
             .map(|state| state.inner.remote_address())
-            .unwrap_or_else(|| "0.0.0.0:0".parse().unwrap_or_else(|_| {
-                panic!("Failed to parse fallback address");
-            }))
+            .unwrap_or_else(|| {
+                "0.0.0.0:0".parse().unwrap_or_else(|_| {
+                    panic!("Failed to parse fallback address");
+                })
+            })
     }
 
     /// Whether the socket address that is initiating this connection has been validated
@@ -118,7 +118,8 @@ impl Incoming {
     /// If `self.remote_address_validated()` is false, `self.may_retry()` is guaranteed to be true.
     /// The inverse is not guaranteed.
     pub fn remote_address_validated(&self) -> bool {
-        self.0.as_ref()
+        self.0
+            .as_ref()
             .map(|state| state.inner.remote_address_validated())
             .unwrap_or(false)
     }
@@ -128,14 +129,16 @@ impl Incoming {
     /// If `self.remote_address_validated()` is false, `self.may_retry()` is guaranteed to be true.
     /// The inverse is not guaranteed.
     pub fn may_retry(&self) -> bool {
-        self.0.as_ref()
+        self.0
+            .as_ref()
             .map(|state| state.inner.may_retry())
             .unwrap_or(false)
     }
 
     /// The original destination CID when initiating the connection
     pub fn orig_dst_cid(&self) -> ConnectionId {
-        self.0.as_ref()
+        self.0
+            .as_ref()
             .map(|state| *state.inner.orig_dst_cid())
             .unwrap_or_else(|| ConnectionId::new(&[0]))
     }

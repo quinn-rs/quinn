@@ -5,7 +5,6 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
-
 use crate::{Duration, Instant};
 use tracing::error;
 
@@ -69,11 +68,10 @@ impl WorkLimiter {
     pub(crate) fn allow_work(&mut self, now: impl Fn() -> Instant) -> bool {
         match self.mode {
             Mode::Measure => {
-                let start_time = self.start_time
-                    .unwrap_or_else(|| {
-                        error!("start_time not set in Measure mode");
-                        now()
-                    });
+                let start_time = self.start_time.unwrap_or_else(|| {
+                    error!("start_time not set in Measure mode");
+                    now()
+                });
                 (now() - start_time) < self.desired_cycle_time
             }
             Mode::HistoricData => self.completed < self.allowed,
@@ -101,11 +99,10 @@ impl WorkLimiter {
         }
 
         if let Mode::Measure = self.mode {
-            let start_time = self.start_time
-                .unwrap_or_else(|| {
-                    error!("start_time not set in Measure mode");
-                    now()
-                });
+            let start_time = self.start_time.unwrap_or_else(|| {
+                error!("start_time not set in Measure mode");
+                now()
+            });
             let elapsed = now() - start_time;
 
             let time_per_work_item_nanos = (elapsed.as_nanos()) as f64 / self.completed as f64;

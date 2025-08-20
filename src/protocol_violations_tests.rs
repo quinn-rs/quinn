@@ -5,7 +5,6 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
-
 use crate::Side;
 use crate::frame::FrameType;
 use crate::packet::SpaceId;

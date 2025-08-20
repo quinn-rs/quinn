@@ -5,7 +5,6 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
-
 use crate::TransportError;
 use crate::VarInt;
 use crate::frame;
@@ -32,17 +31,15 @@ impl TransportParameterErrorHandler {
         );
     }
 
-
-
-	    /// Log semantic validation errors
-	    pub(super) fn log_semantic_error(error_desc: &str, context: &str) {
-	        error!(
-	            error = error_desc,
-	            context = context,
-	            compliance = "RFC 9000 Section 18",
-	            "Transport parameter semantic validation failed"
-	        );
-	    }
+    /// Log semantic validation errors
+    pub(super) fn log_semantic_error(error_desc: &str, context: &str) {
+        error!(
+            error = error_desc,
+            context = context,
+            compliance = "RFC 9000 Section 18",
+            "Transport parameter semantic validation failed"
+        );
+    }
 
     /// Log NAT traversal parameter errors
     pub(super) fn log_nat_traversal_error(side: Side, received_variant: &str, expected: &str) {

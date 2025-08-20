@@ -5,7 +5,6 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
-
 //! Post-Quantum Cryptography extensions for Raw Public Keys
 //!
 //! This module extends the raw public key infrastructure to support

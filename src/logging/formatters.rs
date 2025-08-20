@@ -5,7 +5,6 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
-
 /// Log formatting utilities
 ///
 /// Provides various utility functions for formatting log data

@@ -5,7 +5,6 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
-
 //! Configuration validation module
 //!
 //! This module provides validation functions for P2P configuration options.

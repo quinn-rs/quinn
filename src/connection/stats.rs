@@ -5,7 +5,6 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
-
 //! Connection statistics
 
 use crate::{Dir, Duration, frame::Frame};

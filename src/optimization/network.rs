@@ -5,7 +5,6 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
-
 //! Network efficiency optimization components for ant-quic
 //!
 //! This module provides network-aware optimizations including:

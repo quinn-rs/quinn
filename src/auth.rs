@@ -5,7 +5,6 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
-
 //! Authentication module for P2P connections using Ed25519 keys
 //!
 //! This module provides authentication functionality for P2P connections,

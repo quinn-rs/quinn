@@ -5,7 +5,6 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
-
 //! Certificate Type Negotiation Protocol Implementation
 //!
 //! This module implements the complete certificate type negotiation protocol

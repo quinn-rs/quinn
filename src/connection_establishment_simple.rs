@@ -5,7 +5,6 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
-
 //! Simplified Connection Establishment with Automatic NAT Traversal
 //!
 //! This module provides a simplified but complete connection establishment

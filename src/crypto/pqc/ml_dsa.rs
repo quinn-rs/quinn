@@ -5,7 +5,6 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
-
 //! ML-DSA-65 implementation using saorsa-pqc
 
 #[cfg(feature = "pqc")]

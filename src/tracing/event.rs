@@ -5,7 +5,6 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
-
 //! Event structures for the tracing system
 //!
 //! All events are fixed-size (128 bytes) to enable lock-free ring buffer storage.

@@ -5,7 +5,6 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
-
 //! Memory optimization components for ant-quic
 //!
 //! This module provides memory-efficient resource management including:

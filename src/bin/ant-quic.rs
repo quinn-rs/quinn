@@ -5,7 +5,6 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
-
 //! QUIC-based P2P application with advanced NAT traversal
 //!
 //! This binary demonstrates the full capabilities of ant-quic including

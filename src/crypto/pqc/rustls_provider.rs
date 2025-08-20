@@ -5,7 +5,6 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
-
 //! Post-Quantum Cryptography provider for rustls
 //!
 //! This module provides a custom crypto provider that extends rustls with

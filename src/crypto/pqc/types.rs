@@ -5,7 +5,6 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
-
 //! Type definitions for Post-Quantum Cryptography
 
 use thiserror::Error;

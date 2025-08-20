@@ -5,7 +5,6 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
-
 //! Lock-free ring buffer for event storage
 
 use super::event::{Event, TraceId};

@@ -5,7 +5,6 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
-
 //! QUIC connection transport parameters
 //!
 //! The `TransportParameters` type is used to represent the transport parameters

@@ -5,7 +5,6 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
-
 //! Network Interface Discovery
 //!
 //! This module provides platform-specific network interface discovery implementations

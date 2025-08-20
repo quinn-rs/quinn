@@ -5,7 +5,6 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
-
 //! Terminal UI formatting and display helpers for ant-quic
 //!
 //! Provides colored output, formatting, and visual elements for better UX

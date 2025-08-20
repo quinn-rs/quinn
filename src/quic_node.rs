@@ -5,7 +5,6 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
-
 //! QUIC-based P2P node with NAT traversal
 //!
 //! This module provides a QUIC-based implementation of the P2P node

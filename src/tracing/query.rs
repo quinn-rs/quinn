@@ -5,7 +5,6 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
-
 //! Query interface for trace analysis (debug builds only)
 
 #[cfg(feature = "trace")]

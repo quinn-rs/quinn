@@ -5,7 +5,6 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
-
 /// Report Generator Module
 ///
 /// Generates compliance reports in various formats

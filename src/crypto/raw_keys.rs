@@ -5,7 +5,6 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
-
 //! Raw Public Key Support
 //!
 //! This module implements support for Ed25519 keys in SubjectPublicKeyInfo format

@@ -5,7 +5,6 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
-
 //! Pacing of packet transmissions.
 
 use crate::{Duration, Instant};

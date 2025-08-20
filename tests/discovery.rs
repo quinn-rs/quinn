@@ -24,18 +24,25 @@ async fn test_discovery_basic_functionality() {
     let mut discovery = CandidateDiscoveryManager::new(config);
     let candidates = discovery.discover_local_candidates().unwrap();
 
-    assert!(!candidates.is_empty(), "Should discover at least one candidate address");
+    assert!(
+        !candidates.is_empty(),
+        "Should discover at least one candidate address"
+    );
 
     // Debug: Print discovered addresses
     println!("Discovered {} candidates:", candidates.len());
     for candidate in &candidates {
-        println!("  {}: loopback={}", candidate.address, candidate.address.ip().is_loopback());
+        println!(
+            "  {}: loopback={}",
+            candidate.address,
+            candidate.address.ip().is_loopback()
+        );
     }
 
     // Should have localhost addresses - make this test more lenient for now
-    let has_localhost = candidates.iter().any(|candidate| {
-        candidate.address.ip().is_loopback()
-    });
+    let has_localhost = candidates
+        .iter()
+        .any(|candidate| candidate.address.ip().is_loopback());
 
     if !has_localhost {
         println!("Warning: No loopback addresses found, but continuing test");
@@ -78,7 +85,7 @@ async fn test_discovery_with_timeout() {
     };
 
     let mut discovery = CandidateDiscoveryManager::new(config);
-    
+
     // Should either succeed quickly or timeout gracefully
     match discovery.discover_local_candidates() {
         Ok(candidates) => {
@@ -112,7 +119,7 @@ mod mock_tests {
 
         let mut discovery = CandidateDiscoveryManager::new(config);
         let candidates = discovery.discover_local_candidates().unwrap();
-        
+
         // Should at least have localhost
         assert!(!candidates.is_empty());
     }
@@ -140,10 +147,15 @@ mod linux_tests {
         let mut discovery = CandidateDiscoveryManager::new(config);
         let candidates = discovery.discover_local_candidates().unwrap();
 
-        assert!(!candidates.is_empty(), "Linux should discover network interfaces");
-        
+        assert!(
+            !candidates.is_empty(),
+            "Linux should discover network interfaces"
+        );
+
         // Should have loopback
-        let has_loopback = candidates.iter().any(|candidate| candidate.address.ip().is_loopback());
+        let has_loopback = candidates
+            .iter()
+            .any(|candidate| candidate.address.ip().is_loopback());
         assert!(has_loopback, "Linux should discover loopback interfaces");
     }
 }
@@ -170,16 +182,25 @@ mod macos_tests {
         let mut discovery = CandidateDiscoveryManager::new(config);
         let candidates = discovery.discover_local_candidates().unwrap();
 
-        assert!(!candidates.is_empty(), "macOS should discover network interfaces");
-        
+        assert!(
+            !candidates.is_empty(),
+            "macOS should discover network interfaces"
+        );
+
         // Debug: Print discovered addresses
         println!("macOS discovered {} candidates:", candidates.len());
         for candidate in &candidates {
-            println!("  {}: loopback={}", candidate.address, candidate.address.ip().is_loopback());
+            println!(
+                "  {}: loopback={}",
+                candidate.address,
+                candidate.address.ip().is_loopback()
+            );
         }
-        
+
         // Should have loopback - make lenient for now
-        let has_loopback = candidates.iter().any(|candidate| candidate.address.ip().is_loopback());
+        let has_loopback = candidates
+            .iter()
+            .any(|candidate| candidate.address.ip().is_loopback());
         if !has_loopback {
             println!("Warning: macOS did not discover loopback interfaces, but continuing test");
         }
@@ -208,10 +229,15 @@ mod windows_tests {
         let mut discovery = CandidateDiscoveryManager::new(config);
         let candidates = discovery.discover_local_candidates().unwrap();
 
-        assert!(!candidates.is_empty(), "Windows should discover network interfaces");
-        
+        assert!(
+            !candidates.is_empty(),
+            "Windows should discover network interfaces"
+        );
+
         // Should have loopback
-        let has_loopback = candidates.iter().any(|candidate| candidate.address.ip().is_loopback());
+        let has_loopback = candidates
+            .iter()
+            .any(|candidate| candidate.address.ip().is_loopback());
         assert!(has_loopback, "Windows should discover loopback interfaces");
     }
 }

@@ -5,7 +5,6 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
-
 use serde::{Deserialize, Serialize};
 use tracing::Level;
 

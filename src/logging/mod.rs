@@ -5,7 +5,6 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
-
 /// Comprehensive Logging System for ant-quic
 ///
 /// This module provides structured logging capabilities for debugging,

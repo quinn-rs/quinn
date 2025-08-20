@@ -5,7 +5,6 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
-
 use std::collections::hash_map::Entry;
 use std::mem;
 

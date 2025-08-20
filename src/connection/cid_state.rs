@@ -5,7 +5,6 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
-
 //! Maintain the state of local connection IDs
 use std::collections::VecDeque;
 

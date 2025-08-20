@@ -5,7 +5,6 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
-
 use std::{
     fmt::Debug,
     future::Future,
@@ -157,7 +156,7 @@ where
                 error!("Future not set when UdpPollHelper is polled");
                 Poll::Ready(Err(std::io::Error::new(
                     std::io::ErrorKind::Other,
-                    "Future not set"
+                    "Future not set",
                 )))
             }
         };

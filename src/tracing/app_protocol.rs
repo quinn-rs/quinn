@@ -5,7 +5,6 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
-
 //! Application protocol integration for tracing
 
 use dashmap::DashMap;

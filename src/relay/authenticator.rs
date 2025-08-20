@@ -5,7 +5,6 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
-
 //! Ed25519-based authentication for relay operations with anti-replay protection.
 
 use crate::relay::{RelayError, RelayResult};

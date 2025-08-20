@@ -5,7 +5,6 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
-
 #[cfg(test)]
 mod transport_parameter_error_integration_tests {
     use crate::TransportError;

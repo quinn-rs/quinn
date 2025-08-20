@@ -5,7 +5,6 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
-
 #![allow(unexpected_cfgs)]
 
 use std::{

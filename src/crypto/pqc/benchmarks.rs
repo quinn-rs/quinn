@@ -5,7 +5,6 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
-
 //! PQC Performance Benchmarks
 
 use std::time::Duration;

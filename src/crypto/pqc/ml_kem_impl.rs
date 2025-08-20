@@ -5,7 +5,6 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
-
 //! ML-KEM-768 implementation using aws-lc-rs
 //!
 //! This module provides the implementation of Module Lattice-based Key Encapsulation

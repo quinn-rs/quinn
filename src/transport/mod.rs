@@ -5,7 +5,6 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
-
 //! Core QUIC transport layer
 //!
 //! This module contains the essential QUIC protocol functionality needed for NAT traversal.

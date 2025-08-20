@@ -5,7 +5,6 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
-
 //! Production-ready certificate management for ant-quic
 //!
 //! This module provides comprehensive certificate management functionality including:

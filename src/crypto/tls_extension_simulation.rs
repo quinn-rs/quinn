@@ -5,7 +5,6 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
-
 //! TLS Extension Simulation for RFC 7250 Raw Public Keys
 //!
 //! Since rustls 0.23.x doesn't expose APIs for custom TLS extensions,

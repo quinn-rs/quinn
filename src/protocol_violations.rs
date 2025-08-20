@@ -5,7 +5,6 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
-
 //! Protocol violation detection and handling for QUIC compliance
 //!
 //! This module implements RFC 9000 protocol violation detection, generating

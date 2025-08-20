@@ -5,7 +5,6 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
-
 //! HTTP server for exposing Prometheus metrics
 //!
 //! This module provides a lightweight HTTP server that exposes metrics in Prometheus format.

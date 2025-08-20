@@ -5,7 +5,6 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
-
 //! Windows Network Discovery Implementation
 //!
 //! This module implements network interface discovery for Windows using the

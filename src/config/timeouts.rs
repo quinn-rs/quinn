@@ -5,7 +5,6 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
-
 //! Timeout configuration constants for ant-quic
 //!
 //! This module centralizes all timeout and duration constants used throughout

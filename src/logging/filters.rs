@@ -5,7 +5,6 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
-
 /// Log filtering capabilities
 ///
 /// Provides flexible filtering of log messages by component, level, and other criteria

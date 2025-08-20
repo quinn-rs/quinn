@@ -5,7 +5,6 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
-
 // This function is non-inline to prevent the optimizer from looking inside it.
 #[inline(never)]
 fn constant_time_ne(a: &[u8], b: &[u8]) -> u8 {

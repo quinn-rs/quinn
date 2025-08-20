@@ -5,7 +5,6 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
-
 //! Prometheus metrics exporter
 //!
 //! This module provides functionality to export ant-quic metrics in Prometheus format.

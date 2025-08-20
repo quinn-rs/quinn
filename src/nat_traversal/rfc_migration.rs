@@ -5,7 +5,6 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
-
 //! RFC Migration Strategy for NAT Traversal
 //!
 //! This module provides a migration path from the current implementation

@@ -5,7 +5,6 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
-
 //! Chat protocol implementation for QUIC streams
 //!
 //! This module provides a structured chat protocol for P2P communication

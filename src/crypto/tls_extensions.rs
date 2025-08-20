@@ -5,7 +5,6 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
-
 //! TLS Extensions for RFC 7250 Raw Public Keys Certificate Type Negotiation
 //!
 //! This module implements the TLS 1.3 extensions defined in RFC 7250 Section 4.2:

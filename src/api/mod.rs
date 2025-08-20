@@ -5,7 +5,6 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
-
 //! High-Level NAT Traversal API
 //!
 //! This module provides a clean, intuitive API for developers to use the

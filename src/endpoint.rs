@@ -5,7 +5,6 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
-
 use std::{
     collections::{HashMap, VecDeque, hash_map},
     convert::TryFrom,

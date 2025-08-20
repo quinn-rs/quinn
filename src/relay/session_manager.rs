@@ -5,7 +5,6 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
-
 //! Session management for relay connections with complete state machine.
 
 use crate::relay::{

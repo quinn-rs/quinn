@@ -5,7 +5,6 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
-
 use std::{cmp, net::SocketAddr};
 
 use tracing::trace;

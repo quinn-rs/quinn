@@ -5,7 +5,6 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
-
 //! Memory pool for efficient PQC object allocation
 //!
 //! Post-quantum cryptographic operations require significantly larger buffers

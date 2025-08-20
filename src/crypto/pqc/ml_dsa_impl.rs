@@ -5,7 +5,6 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
-
 //! ML-DSA-65 implementation using aws-lc-rs
 //!
 //! This module provides the implementation of Module Lattice-based Digital Signature

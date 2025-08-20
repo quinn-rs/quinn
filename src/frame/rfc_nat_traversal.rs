@@ -5,7 +5,6 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
-
 //! RFC-compliant NAT traversal frames according to draft-seemann-quic-nat-traversal-02
 //!
 //! This module provides frame implementations that exactly match the RFC specification,

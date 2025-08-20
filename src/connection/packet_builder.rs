@@ -5,7 +5,6 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
-
 use bytes::Bytes;
 use rand::Rng;
 use tracing::{debug, trace, trace_span};

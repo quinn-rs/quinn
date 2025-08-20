@@ -5,7 +5,6 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
-
 //! Zero-cost macros for tracing
 //!
 //! These macros compile to nothing when the trace feature is disabled.

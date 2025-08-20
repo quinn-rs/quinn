@@ -5,7 +5,6 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
-
 //! High-level async API for QUIC
 //!
 //! This module provides a high-level, tokio-based async API built on top of the low-level

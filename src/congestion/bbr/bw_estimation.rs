@@ -5,7 +5,6 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
-
 use std::fmt::{Debug, Display, Formatter};
 
 use super::min_max::MinMax;

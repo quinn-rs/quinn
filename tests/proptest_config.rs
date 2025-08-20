@@ -11,7 +11,7 @@ use std::time::Duration;
 /// Default configuration for property tests with increased coverage
 pub fn default_config() -> ProptestConfig {
     ProptestConfig {
-        cases: 1000,           // Increased from default 256
+        cases: 1000, // Increased from default 256
         max_shrink_iters: 1000,
         max_shrink_time: Duration::from_secs(30),
         max_global_rejects: 10000,
@@ -75,22 +75,20 @@ pub fn arb_priority() -> impl Strategy<Value = u32> {
 
 /// Strategy for generating candidate addresses with various characteristics
 pub fn arb_candidate_address() -> impl Strategy<Value = ant_quic::CandidateAddress> {
-    (arb_socket_addr(), arb_priority()).prop_map(|(addr, priority)| {
-        ant_quic::CandidateAddress {
-            address: addr,
-            priority,
-            source: ant_quic::CandidateSource::Local,
-            state: ant_quic::CandidateState::New,
-        }
+    (arb_socket_addr(), arb_priority()).prop_map(|(addr, priority)| ant_quic::CandidateAddress {
+        address: addr,
+        priority,
+        source: ant_quic::CandidateSource::Local,
+        state: ant_quic::CandidateState::New,
     })
 }
 
 /// Strategy for generating realistic network delays
 pub fn arb_network_delay() -> impl Strategy<Value = Duration> {
     prop_oneof![
-        (1..=100u64).prop_map(Duration::from_millis),      // Fast network
-        (100..=500u64).prop_map(Duration::from_millis),   // Normal network
-        (500..=2000u64).prop_map(Duration::from_millis),  // Slow network
+        (1..=100u64).prop_map(Duration::from_millis), // Fast network
+        (100..=500u64).prop_map(Duration::from_millis), // Normal network
+        (500..=2000u64).prop_map(Duration::from_millis), // Slow network
     ]
 }
 
@@ -102,30 +100,30 @@ pub fn arb_packet_size() -> impl Strategy<Value = usize> {
 /// Strategy for generating realistic RTT values
 pub fn arb_rtt() -> impl Strategy<Value = Duration> {
     prop_oneof![
-        (1..=50u64).prop_map(Duration::from_millis),      // Excellent connection
-        (50..=100u64).prop_map(Duration::from_millis),   // Good connection
-        (100..=200u64).prop_map(Duration::from_millis),  // Fair connection
-        (200..=500u64).prop_map(Duration::from_millis),  // Poor connection
+        (1..=50u64).prop_map(Duration::from_millis), // Excellent connection
+        (50..=100u64).prop_map(Duration::from_millis), // Good connection
+        (100..=200u64).prop_map(Duration::from_millis), // Fair connection
+        (200..=500u64).prop_map(Duration::from_millis), // Poor connection
     ]
 }
 
 /// Strategy for generating realistic bandwidth values (in Mbps)
 pub fn arb_bandwidth() -> impl Strategy<Value = u32> {
     prop_oneof![
-        1..=10,      // Slow connection
-        10..=50,     // Average connection
-        50..=200,    // Fast connection
-        200..=1000,  // Very fast connection
+        1..=10,     // Slow connection
+        10..=50,    // Average connection
+        50..=200,   // Fast connection
+        200..=1000, // Very fast connection
     ]
 }
 
 /// Strategy for generating realistic packet loss rates
 pub fn arb_packet_loss_rate() -> impl Strategy<Value = f64> {
     prop_oneof![
-        0.0..=0.001,   // Excellent network
-        0.001..=0.01,  // Good network
-        0.01..=0.05,   // Fair network
-        0.05..=0.15,   // Poor network
+        0.0..=0.001,  // Excellent network
+        0.001..=0.01, // Good network
+        0.01..=0.05,  // Fair network
+        0.05..=0.15,  // Poor network
     ]
 }
 
@@ -136,7 +134,12 @@ pub fn arb_jitter() -> impl Strategy<Value = Duration> {
 
 /// Comprehensive network condition strategy
 pub fn arb_network_conditions() -> impl Strategy<Value = NetworkConditions> {
-    (arb_rtt(), arb_bandwidth(), arb_packet_loss_rate(), arb_jitter())
+    (
+        arb_rtt(),
+        arb_bandwidth(),
+        arb_packet_loss_rate(),
+        arb_jitter(),
+    )
         .prop_map(|(rtt, bandwidth, loss_rate, jitter)| NetworkConditions {
             rtt,
             bandwidth_mbps: bandwidth,
@@ -168,29 +171,31 @@ pub fn arb_transport_params() -> impl Strategy<Value = ant_quic::TransportParame
         any::<u16>(), // max_ack_delay
         any::<u8>(),  // active_connection_id_limit
     )
-    .prop_map(|(
-        max_data,
-        stream_data_bidi_local,
-        stream_data_bidi_remote,
-        stream_data_uni,
-        streams_bidi,
-        streams_uni,
-        ack_delay_exp,
-        max_ack_delay,
-        cid_limit,
-    )| {
-        let mut params = ant_quic::TransportParameters::default();
-        params.initial_max_data = max_data;
-        params.initial_max_stream_data_bidi_local = stream_data_bidi_local;
-        params.initial_max_stream_data_bidi_remote = stream_data_bidi_remote;
-        params.initial_max_stream_data_uni = stream_data_uni;
-        params.initial_max_streams_bidi = streams_bidi;
-        params.initial_max_streams_uni = streams_uni;
-        params.ack_delay_exponent = ack_delay_exp.min(20); // RFC limit
-        params.max_ack_delay = max_ack_delay;
-        params.active_connection_id_limit = cid_limit.max(2).min(8); // RFC limits
-        params
-    })
+        .prop_map(
+            |(
+                max_data,
+                stream_data_bidi_local,
+                stream_data_bidi_remote,
+                stream_data_uni,
+                streams_bidi,
+                streams_uni,
+                ack_delay_exp,
+                max_ack_delay,
+                cid_limit,
+            )| {
+                let mut params = ant_quic::TransportParameters::default();
+                params.initial_max_data = max_data;
+                params.initial_max_stream_data_bidi_local = stream_data_bidi_local;
+                params.initial_max_stream_data_bidi_remote = stream_data_bidi_remote;
+                params.initial_max_stream_data_uni = stream_data_uni;
+                params.initial_max_streams_bidi = streams_bidi;
+                params.initial_max_streams_uni = streams_uni;
+                params.ack_delay_exponent = ack_delay_exp.min(20); // RFC limit
+                params.max_ack_delay = max_ack_delay;
+                params.active_connection_id_limit = cid_limit.max(2).min(8); // RFC limits
+                params
+            },
+        )
 }
 
 // Note: Frame and Packet types are internal to ant_quic and not exposed in the public API.

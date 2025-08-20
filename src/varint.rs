@@ -5,7 +5,6 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
-
 use std::{convert::TryInto, fmt};
 
 use bytes::{Buf, BufMut};

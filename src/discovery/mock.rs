@@ -5,7 +5,6 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
-
 //! Mock Network Discovery Implementation
 //!
 //! This module provides a mock implementation of network interface discovery

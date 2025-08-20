@@ -5,7 +5,6 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
-
 //! macOS-specific network interface discovery using System Configuration Framework
 //!
 //! This module provides production-ready network interface enumeration and monitoring

@@ -5,7 +5,6 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
-
 //! Traits and implementations for the QUIC cryptography protocol
 #![allow(rustdoc::bare_urls)]
 //!
