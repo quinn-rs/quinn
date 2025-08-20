@@ -143,7 +143,6 @@ mod protocol_violations;
 mod protocol_violations_tests;
 
 // Zero-cost tracing system
-mod connection_establishment_simple;
 /// High-level NAT traversal API
 pub mod nat_traversal_api;
 mod token;
@@ -216,9 +215,6 @@ pub use connection::{
     Chunk, Chunks, ClosedStream, Connection, ConnectionError, ConnectionStats, Datagrams, Event,
     FinishError, ReadError, ReadableError, RecvStream, SendDatagramError, SendStream, StreamEvent,
     Streams, WriteError, Written,
-};
-pub use connection_establishment_simple::{
-    SimpleConnectionEstablishmentManager, SimpleConnectionEvent, SimpleEstablishmentConfig,
 };
 pub use endpoint::{
     AcceptError, ConnectError, ConnectionHandle, DatagramEvent, Endpoint as LowLevelEndpoint,

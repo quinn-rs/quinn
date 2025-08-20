@@ -114,10 +114,9 @@ ant-quic has a three-layer architecture:
 - **`src/crypto/`**: TLS and Raw Public Key (RFC 7250) implementation
 
 ### Layer 2: Integration APIs (High-Level)
-- **`src/nat_traversal_api.rs`**: `NatTraversalEndpoint` - High-level NAT traversal API
+- **`src/nat_traversal_api.rs`**: `NatTraversalEndpoint` - High-level NAT traversal API with working poll() state machine
 - **`src/quic_node.rs`**: `QuicP2PNode` - Application-friendly P2P node wrapper
-- **`src/high_level/`**: Async wrapper around low-level Quinn
-- **`src/connection_establishment.rs`**: Connection orchestration (needs wiring to actual QUIC)
+- **`src/high_level/`**: Evolved fork of Quinn's async API (NOT external Quinn - this is ant-quic's own implementation)
 
 ### Layer 3: Applications (Binaries)
 - **`src/bin/ant-quic.rs`**: Main QUIC P2P binary using `QuicP2PNode`
@@ -244,14 +243,14 @@ cargo test -- --ignored stress
 
 ### In Progress 🚧
 - Session state machine polling in `nat_traversal_api.rs` (line 2022)
-- Connection status checking in `connection_establishment.rs` (line 844)
-- Wiring `SimpleConnectionEstablishmentManager` to actual QUIC connections
 - Windows and Linux ARM builds in GitHub Actions (failing)
 
 ### Architecture Notes
 - Bootstrap "registration" happens automatically via QUIC connections (per spec)
 - No STUN/TURN servers - address observation via QUIC extension frames
 - Three-layer architecture: Protocol → Integration APIs → Applications
+- **IMPORTANT**: The `high_level` module is ant-quic's evolved fork of Quinn's async API, not an external dependency
+- NAT traversal is fully functional through the `poll()` state machine in `nat_traversal_api.rs`
 
 ## Development Notes
 
