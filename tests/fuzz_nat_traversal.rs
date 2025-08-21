@@ -35,7 +35,7 @@ pub fn fuzz_add_address_frame(data: &[u8]) {
             // Invalid frame type, should be handled gracefully
             return;
         }
-    }
+    };
 }
 
 /// Fuzz ADD_ADDRESS IPv4 frame parsing
@@ -100,7 +100,7 @@ pub fn fuzz_punch_me_now_frame(data: &[u8]) {
             // Invalid frame type, should be handled gracefully
             return;
         }
-    }
+    };
 }
 
 /// Fuzz PUNCH_ME_NOW IPv4 frame parsing
