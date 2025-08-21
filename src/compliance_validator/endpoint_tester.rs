@@ -305,6 +305,7 @@ impl EndpointTester {
     }
 
     /// Check compliance issues in transport parameters
+    #[allow(dead_code)]
     fn check_compliance(&self, params: &TransportParameters) -> Option<Vec<String>> {
         let mut issues = Vec::new();
 

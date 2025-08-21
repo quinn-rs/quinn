@@ -278,7 +278,7 @@ impl Endpoint {
         let addr = socket.local_addr()?;
         let mut inner =
             self.inner.state.lock().map_err(|_| {
-                io::Error::new(io::ErrorKind::Other, "Endpoint state mutex poisoned")
+                io::Error::other("Endpoint state mutex poisoned")
             })?;
         inner.prev_socket = Some(mem::replace(&mut inner.socket, socket));
         inner.ipv6 = addr.is_ipv6();
@@ -308,7 +308,7 @@ impl Endpoint {
         self.inner
             .state
             .lock()
-            .map_err(|_| io::Error::new(io::ErrorKind::Other, "Endpoint state mutex poisoned"))?
+            .map_err(|_| io::Error::other("Endpoint state mutex poisoned"))?
             .socket
             .local_addr()
     }
@@ -413,8 +413,7 @@ impl Future for EndpointDriver {
         let mut endpoint = match self.0.state.lock() {
             Ok(endpoint) => endpoint,
             Err(_) => {
-                return Poll::Ready(Err(io::Error::new(
-                    io::ErrorKind::Other,
+                return Poll::Ready(Err(io::Error::other(
                     "Endpoint state mutex poisoned",
                 )));
             }
@@ -517,15 +516,15 @@ impl EndpointInner {
     }
 
     pub(crate) fn retry(&self, incoming: crate::Incoming) -> Result<(), std::io::Error> {
-        let mut state = self.state.lock().map_err(|_| {
-            std::io::Error::new(std::io::ErrorKind::Other, "Endpoint state mutex poisoned")
-        })?;
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| std::io::Error::other("Endpoint state mutex poisoned"))?;
         let mut response_buffer = Vec::new();
         let transmit = match state.inner.retry(incoming, &mut response_buffer) {
             Ok(transmit) => transmit,
             Err(_) => {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::Other,
+                return Err(std::io::Error::other(
                     "Retry failed",
                 ));
             }

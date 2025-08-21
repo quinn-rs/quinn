@@ -4,6 +4,7 @@
 // Please see the file LICENSE-GPL, or visit <http://www.gnu.org/licenses/> for the full text.
 //
 // Full details available at https://saorsalabs.com/licenses
+#![allow(missing_docs)]
 
 use std::{
     fmt::{self, Write},
@@ -162,6 +163,7 @@ frame_types! {
 const STREAM_TYS: RangeInclusive<u64> = RangeInclusive::new(0x08, 0x0f);
 const DATAGRAM_TYS: RangeInclusive<u64> = RangeInclusive::new(0x30, 0x31);
 
+/// All supported QUIC frame variants handled by this implementation
 #[derive(Debug)]
 pub(crate) enum Frame {
     Padding,
@@ -253,9 +255,12 @@ impl Frame {
     }
 }
 
+/// Reason for closing a connection (transport or application)
 #[derive(Clone, Debug)]
 pub enum Close {
+    /// Transport-layer connection close
     Connection(ConnectionClose),
+    /// Application-layer connection close
     Application(ApplicationClose),
 }
 
@@ -379,10 +384,15 @@ impl ApplicationClose {
 }
 
 #[derive(Clone, Eq, PartialEq)]
+/// Contents of an ACK frame
 pub struct Ack {
+    /// Largest acknowledged packet number
     pub largest: u64,
+    /// ACK delay in microseconds
     pub delay: u64,
+    /// Additional ACK block data encoded per RFC 9000
     pub additional: Bytes,
+    /// Explicit Congestion Notification counters, if present
     pub ecn: Option<EcnCounts>,
 }
 
@@ -418,6 +428,7 @@ impl<'a> IntoIterator for &'a Ack {
 }
 
 impl Ack {
+    /// Encode an ACK frame into the provided buffer
     pub fn encode<W: BufMut>(
         delay: u64,
         ranges: &ArrayRangeSet,
@@ -449,15 +460,20 @@ impl Ack {
         }
     }
 
+    /// Iterate over acknowledged packet ranges
     pub fn iter(&self) -> AckIter<'_> {
         self.into_iter()
     }
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
+/// Explicit Congestion Notification counters
 pub struct EcnCounts {
+    /// Number of ECT(0) marked packets
     pub ect0: u64,
+    /// Number of ECT(1) marked packets
     pub ect1: u64,
+    /// Number of CE marked packets
     pub ce: u64,
 }
 

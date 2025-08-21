@@ -60,6 +60,7 @@ pub fn format_conn_id(conn_id: &ConnectionId) -> String {
 }
 
 /// Format a structured log event as JSON  
+#[allow(dead_code)]
 pub(super) fn format_as_json(event: &super::LogEvent) -> String {
     use serde_json::json;
 

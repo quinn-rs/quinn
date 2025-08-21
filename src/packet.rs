@@ -888,6 +888,7 @@ const KEY_PHASE_BIT: u8 = 0x04;
 
 /// Packet number space identifiers
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
+#[allow(missing_docs)]
 pub enum SpaceId {
     /// Unprotected packets, used to bootstrap the handshake
     Initial = 0,
@@ -897,6 +898,7 @@ pub enum SpaceId {
 }
 
 impl SpaceId {
+    #[allow(missing_docs)]
     pub fn iter() -> impl Iterator<Item = Self> {
         [Self::Initial, Self::Handshake, Self::Data].iter().cloned()
     }

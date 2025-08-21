@@ -1507,6 +1507,7 @@ impl Endpoint {
     }
 
     #[cfg(test)]
+    #[allow(dead_code)]
     pub(crate) fn known_connections(&self) -> usize {
         let x = self.connections.len();
         debug_assert_eq!(x, self.index.connection_ids_initial.len());
@@ -1519,6 +1520,7 @@ impl Endpoint {
     }
 
     #[cfg(test)]
+    #[allow(dead_code)]
     pub(crate) fn known_cids(&self) -> usize {
         self.index.connection_ids.len()
     }

@@ -113,10 +113,13 @@ pub struct ConnectionInfo {
 /// Historical data point
 #[derive(Debug, Clone)]
 struct DataPoint {
+    #[allow(dead_code)]
     timestamp: Instant,
     active_connections: usize,
     nat_success_rate: f64,
+    #[allow(dead_code)]
     bytes_per_second: u64,
+    #[allow(dead_code)]
     avg_rtt: Duration,
 }
 
@@ -130,6 +133,7 @@ pub struct StatsDashboard {
     /// Active connections
     connections: Arc<RwLock<HashMap<PeerId, ConnectionInfo>>>,
     /// Historical data
+    #[allow(dead_code)]
     history: Arc<RwLock<VecDeque<DataPoint>>>,
     /// Dashboard start time
     start_time: Instant,

@@ -309,6 +309,7 @@ impl TransportConfig {
     /// By default, packet numbers are occasionally skipped to ensure peers aren't ACKing packets
     /// before they see them.
     #[cfg(test)]
+    #[allow(dead_code)]
     pub(crate) fn deterministic_packet_numbers(&mut self, enabled: bool) -> &mut Self {
         self.deterministic_packet_numbers = enabled;
         self

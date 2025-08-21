@@ -57,6 +57,7 @@ fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
 
 /// Authentication error types
 #[derive(Debug, thiserror::Error)]
+#[allow(missing_docs)]
 pub enum AuthError {
     #[error("Invalid signature")]
     InvalidSignature,
@@ -102,6 +103,7 @@ impl Default for AuthConfig {
 
 /// Authentication message types
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[allow(missing_docs)]
 pub enum AuthMessage {
     /// Initial authentication request with public key
     AuthRequest {

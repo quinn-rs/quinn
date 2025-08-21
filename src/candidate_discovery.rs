@@ -175,6 +175,7 @@ pub struct DiscoveryConfig {
 
 /// Current phase of the discovery process
 #[derive(Debug, Clone, PartialEq)]
+#[allow(missing_docs)]
 pub enum DiscoveryPhase {
     /// Initial state, ready to begin discovery
     Idle,
@@ -2161,8 +2162,7 @@ impl SymmetricNatPredictor {
     /// that symmetric NATs will assign for new connections
     #[allow(dead_code)]
     pub(crate) fn generate_predictions(&mut self, _max_count: usize) -> Vec<DiscoveryCandidate> {
-        let predictions = Vec::new();
-        predictions
+        Vec::new()
     }
 
     /// Generate predictions based on detected allocation pattern

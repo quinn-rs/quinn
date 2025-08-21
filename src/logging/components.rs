@@ -275,6 +275,7 @@ pub fn log_error_with_context(error: &dyn std::error::Error, context: super::Err
 }
 
 /// Log detailed frame information
+#[allow(dead_code)]
 pub(crate) fn log_frame_details(frame: &Frame, direction: &str, conn_id: &ConnectionId) {
     trace!(
         target: "ant_quic::frame::details",

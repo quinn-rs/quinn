@@ -19,6 +19,7 @@ use crate::Instant;
 
 /// Runtime implementation for async-io based runtimes (async-std, smol)
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct AsyncIoRuntime;
 
 #[cfg(feature = "runtime-async-std")]

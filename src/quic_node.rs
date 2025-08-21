@@ -83,6 +83,7 @@ impl Default for QuicNodeConfig {
     }
 }
 
+/// Basic per-connection performance metrics
 #[derive(Debug, Clone)]
 pub struct ConnectionMetrics {
     /// Bytes sent to this peer
@@ -95,6 +96,7 @@ pub struct ConnectionMetrics {
     pub packet_loss: f64,
 }
 
+/// Aggregate node statistics for monitoring and telemetry
 #[derive(Debug, Clone)]
 pub struct NodeStats {
     /// Number of active connections

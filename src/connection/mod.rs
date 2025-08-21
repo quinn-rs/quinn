@@ -4653,6 +4653,7 @@ impl Connection {
 
     /// Force enable NAT traversal for testing purposes
     #[cfg(test)]
+    #[allow(dead_code)]
     pub(crate) fn force_enable_nat_traversal(&mut self, role: NatTraversalRole) {
         use crate::transport_parameters::NatTraversalConfig;
 
@@ -5482,6 +5483,7 @@ impl Connection {
 
     /// Decodes a packet, returning its decrypted payload, so it can be inspected in tests
     #[cfg(test)]
+    #[allow(dead_code)]
     pub(crate) fn decode_packet(&self, event: &ConnectionEvent) -> Option<Vec<u8>> {
         let (first_decode, remaining) = match &event.0 {
             ConnectionEventInner::Datagram(DatagramConnectionEvent {
@@ -5520,12 +5522,14 @@ impl Connection {
     /// The number of bytes of packets containing retransmittable frames that have not been
     /// acknowledged or declared lost.
     #[cfg(test)]
+    #[allow(dead_code)]
     pub(crate) fn bytes_in_flight(&self) -> u64 {
         self.path.in_flight.bytes
     }
 
     /// Number of bytes worth of non-ack-only packets that may be sent
     #[cfg(test)]
+    #[allow(dead_code)]
     pub(crate) fn congestion_window(&self) -> u64 {
         self.path
             .congestion
@@ -5535,6 +5539,7 @@ impl Connection {
 
     /// Whether no timers but keepalive, idle, rtt, pushnewcid, and key discard are running
     #[cfg(test)]
+    #[allow(dead_code)]
     pub(crate) fn is_idle(&self) -> bool {
         Timer::VALUES
             .iter()
@@ -5546,23 +5551,27 @@ impl Connection {
 
     /// Total number of outgoing packets that have been deemed lost
     #[cfg(test)]
+    #[allow(dead_code)]
     pub(crate) fn lost_packets(&self) -> u64 {
         self.lost_packets
     }
 
     /// Whether explicit congestion notification is in use on outgoing packets.
     #[cfg(test)]
+    #[allow(dead_code)]
     pub(crate) fn using_ecn(&self) -> bool {
         self.path.sending_ecn
     }
 
     /// The number of received bytes in the current path
     #[cfg(test)]
+    #[allow(dead_code)]
     pub(crate) fn total_recvd(&self) -> u64 {
         self.path.total_recvd
     }
 
     #[cfg(test)]
+    #[allow(dead_code)]
     pub(crate) fn active_local_cid_seq(&self) -> (u64, u64) {
         self.local_cid_state.active_seq()
     }
@@ -5570,6 +5579,7 @@ impl Connection {
     /// Instruct the peer to replace previously issued CIDs by sending a NEW_CONNECTION_ID frame
     /// with updated `retire_prior_to` field set to `v`
     #[cfg(test)]
+    #[allow(dead_code)]
     pub(crate) fn rotate_local_cid(&mut self, v: u64, now: Instant) {
         let n = self.local_cid_state.assign_retire_seq(v);
         self.endpoint_events
@@ -5578,12 +5588,15 @@ impl Connection {
 
     /// Check the current active remote CID sequence
     #[cfg(test)]
+    #[allow(dead_code)]
     pub(crate) fn active_rem_cid_seq(&self) -> u64 {
         self.rem_cids.active_seq()
     }
 
     /// Returns the detected maximum udp payload size for the current path
     #[cfg(test)]
+    #[cfg(test)]
+    #[allow(dead_code)]
     pub(crate) fn path_mtu(&self) -> u16 {
         self.path.current_mtu()
     }

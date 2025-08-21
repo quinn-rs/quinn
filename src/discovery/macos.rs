@@ -42,6 +42,7 @@ impl MacOSDiscovery {
     }
 
     /// Refresh the interface cache if needed
+    #[allow(dead_code)]
     fn refresh_cache_if_needed(&mut self) -> Result<(), DiscoveryError> {
         let should_refresh = match &self.cache {
             Some(cache) => cache.last_refresh.elapsed() >= self.cache_refresh_interval,

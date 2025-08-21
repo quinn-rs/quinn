@@ -90,7 +90,13 @@ pub enum CandidateSource {
     /// Local network interface
     Local,
     /// Observed by a bootstrap node
-    Observed { by_node: Option<VarInt> },
+    ///
+    /// When present, `by_node` identifies the coordinator that reported the
+    /// observation using its node identifier.
+    Observed {
+        /// Identifier of the coordinator that observed our address
+        by_node: Option<VarInt>,
+    },
     /// Received from peer via AddAddress frame
     Peer,
     /// Generated prediction for symmetric NAT

@@ -24,18 +24,23 @@ pub const MAX_MESSAGE_SIZE: usize = 1024 * 1024;
 /// Chat protocol errors
 #[derive(Error, Debug)]
 pub enum ChatError {
+    /// Message serialization failed
     #[error("Serialization error: {0}")]
     Serialization(String),
 
+    /// Message deserialization failed
     #[error("Deserialization error: {0}")]
     Deserialization(String),
 
+    /// Message exceeded the maximum allowed size
     #[error("Message too large: {0} bytes (max: {1})")]
     MessageTooLarge(usize, usize),
 
+    /// Unsupported or invalid protocol version
     #[error("Invalid protocol version: {0}")]
     InvalidProtocolVersion(u16),
 
+    /// Message failed schema validation
     #[error("Invalid message format")]
     InvalidFormat,
 }
@@ -46,69 +51,103 @@ pub enum ChatError {
 pub enum ChatMessage {
     /// User joined the chat
     Join {
+        /// Display name of the user
         nickname: String,
+        /// Sender's peer identifier
         peer_id: [u8; 32],
         #[serde(with = "timestamp_serde")]
+        /// Time the event occurred
         timestamp: SystemTime,
     },
 
     /// User left the chat
     Leave {
+        /// Display name of the user
         nickname: String,
+        /// Sender's peer identifier
         peer_id: [u8; 32],
         #[serde(with = "timestamp_serde")]
+        /// Time the event occurred
         timestamp: SystemTime,
     },
 
     /// Text message from user
     Text {
+        /// Display name of the user
         nickname: String,
+        /// Sender's peer identifier
         peer_id: [u8; 32],
+        /// UTF-8 message body
         text: String,
         #[serde(with = "timestamp_serde")]
+        /// Time the message was sent
         timestamp: SystemTime,
     },
 
     /// Status update from user
     Status {
+        /// Display name of the user
         nickname: String,
+        /// Sender's peer identifier
         peer_id: [u8; 32],
+        /// Arbitrary status string
         status: String,
         #[serde(with = "timestamp_serde")]
+        /// Time the status was set
         timestamp: SystemTime,
     },
 
     /// Direct message to specific peer
     Direct {
+        /// Sender nickname
         from_nickname: String,
+        /// Sender peer ID
         from_peer_id: [u8; 32],
+        /// Recipient peer ID
         to_peer_id: [u8; 32],
+        /// Encrypted or plain text body
         text: String,
         #[serde(with = "timestamp_serde")]
+        /// Time the message was sent
         timestamp: SystemTime,
     },
 
     /// Typing indicator
     Typing {
+        /// Display name of the user
         nickname: String,
+        /// Sender's peer identifier
         peer_id: [u8; 32],
+        /// Whether the user is currently typing
         is_typing: bool,
     },
 
     /// Request peer list
-    PeerListRequest { peer_id: [u8; 32] },
+    /// Request current peer list from the node
+    PeerListRequest {
+        /// Requestor's peer identifier
+        peer_id: [u8; 32]
+    },
 
     /// Response with peer list
-    PeerListResponse { peers: Vec<PeerInfo> },
+    /// Response containing current peers
+    PeerListResponse {
+        /// List of known peers and metadata
+        peers: Vec<PeerInfo>
+    },
 }
 
 /// Information about a connected peer
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct PeerInfo {
+    /// Unique peer identifier
     pub peer_id: [u8; 32],
+    /// Display name
     pub nickname: String,
+    /// User status string
     pub status: String,
     #[serde(with = "timestamp_serde")]
+    /// When this peer joined
     pub joined_at: SystemTime,
 }
 

@@ -46,10 +46,13 @@ impl Default for PqcConfig {
 /// A crypto provider that adds PQC support to rustls
 pub struct PqcCryptoProvider {
     /// Base provider (ring or aws-lc-rs)
+    #[allow(dead_code)]
     base_provider: Arc<CryptoProvider>,
     /// PQC configuration
+    #[allow(dead_code)]
     config: PqcConfig,
     /// Hybrid cipher suites (placeholder)
+    #[allow(dead_code)]
     cipher_suites: Vec<rustls::CipherSuite>,
 }
 
@@ -153,6 +156,7 @@ pub trait PqcConfigExt {
 pub struct CryptoInfo {
     has_pqc: bool,
     hybrid_kex: bool,
+    #[allow(dead_code)]
     hybrid_sig: bool,
 }
 

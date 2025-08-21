@@ -132,7 +132,8 @@ pub struct RelayConnection {
     state: Arc<Mutex<ConnectionState>>,
     /// Event sender
     event_sender: mpsc::UnboundedSender<RelayEvent>,
-    /// Action receiver
+    /// Action receiver (reserved for future control-plane)
+    #[allow(dead_code)]
     action_receiver: mpsc::UnboundedReceiver<RelayAction>,
 }
 

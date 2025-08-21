@@ -174,6 +174,7 @@ impl StructuredEventBuilder {
 }
 
 /// Format a structured event as JSON
+#[allow(dead_code)]
 pub(super) fn format_as_json(event: &super::LogEvent) -> String {
     let structured = StructuredLogEvent {
         timestamp: crate::tracing::timestamp_now(),

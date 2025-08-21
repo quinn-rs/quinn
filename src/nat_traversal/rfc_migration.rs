@@ -19,6 +19,7 @@ use std::net::SocketAddr;
 
 /// Migration configuration for NAT traversal
 #[derive(Debug, Clone)]
+#[allow(missing_docs)]
 pub struct NatMigrationConfig {
     /// Whether to accept old format frames
     pub accept_legacy_frames: bool,
@@ -151,6 +152,7 @@ pub struct FrameMigrator {
 }
 
 impl FrameMigrator {
+    #[allow(missing_docs)]
     pub fn new(config: NatMigrationConfig) -> Self {
         Self { config }
     }
@@ -222,6 +224,7 @@ pub struct CapabilityTracker {
 }
 
 impl CapabilityTracker {
+    #[allow(missing_docs)]
     pub fn new() -> Self {
         Self {
             peers: std::collections::HashMap::new(),

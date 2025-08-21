@@ -167,8 +167,8 @@ pub mod transport;
 pub mod auth;
 /// Secure chat protocol implementation
 pub mod chat;
-/// Performance optimization utilities
-pub mod optimization;
+// Performance optimization utilities are deprecated; remove module to eliminate dead code
+// pub mod optimization;
 /// High-level QUIC P2P node implementation
 pub mod quic_node;
 /// Real-time statistics dashboard
