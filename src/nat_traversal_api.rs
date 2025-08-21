@@ -4,6 +4,7 @@
 // Please see the file LICENSE-GPL, or visit <http://www.gnu.org/licenses/> for the full text.
 //
 // Full details available at https://saorsalabs.com/licenses
+#![allow(missing_docs)]
 
 //! High-level NAT Traversal API for Autonomi P2P Networks
 //!
@@ -557,36 +558,52 @@ pub enum CandidateValidationError {
 pub enum NatTraversalEvent {
     /// New candidate address discovered
     CandidateDiscovered {
+        /// The peer this event relates to
         peer_id: PeerId,
+        /// The discovered candidate address
         candidate: CandidateAddress,
     },
     /// Coordination request sent to bootstrap
     CoordinationRequested {
+        /// The peer this event relates to
         peer_id: PeerId,
+        /// Coordinator address used for synchronization
         coordinator: SocketAddr,
     },
     /// Peer coordination synchronized
-    CoordinationSynchronized { peer_id: PeerId, round_id: VarInt },
+    CoordinationSynchronized { /// The peer this event relates to
+        peer_id: PeerId, /// The synchronized round identifier
+        round_id: VarInt },
     /// Hole punching started
     HolePunchingStarted {
+        /// The peer this event relates to
         peer_id: PeerId,
+        /// Target addresses to punch
         targets: Vec<SocketAddr>,
     },
     /// Path validated successfully
     PathValidated {
+        /// The peer this event relates to
         peer_id: PeerId,
+        /// Validated remote address
         address: SocketAddr,
+        /// Measured round-trip time
         rtt: Duration,
     },
     /// Candidate validated successfully
     CandidateValidated {
+        /// The peer this event relates to
         peer_id: PeerId,
+        /// Validated candidate address
         candidate_address: SocketAddr,
     },
     /// NAT traversal completed successfully
     TraversalSucceeded {
+        /// The peer this event relates to
         peer_id: PeerId,
+        /// Final established address
         final_address: SocketAddr,
+        /// Total traversal time
         total_time: Duration,
     },
     /// Connection established after NAT traversal
@@ -605,16 +622,23 @@ pub enum NatTraversalEvent {
         fallback_available: bool,
     },
     /// Connection lost
-    ConnectionLost { peer_id: PeerId, reason: String },
+    ConnectionLost { /// The peer this event relates to
+        peer_id: PeerId, /// Reason for the connection loss
+        reason: String },
     /// Phase transition in NAT traversal state machine
     PhaseTransition {
+        /// The peer this event relates to
         peer_id: PeerId,
+        /// Old traversal phase
         from_phase: TraversalPhase,
+        /// New traversal phase
         to_phase: TraversalPhase,
     },
     /// Session state changed
     SessionStateChanged {
+        /// The peer this event relates to
         peer_id: PeerId,
+        /// New connection state
         new_state: ConnectionState,
     },
 }

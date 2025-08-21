@@ -21,12 +21,12 @@ pub fn default_config() -> ProptestConfig {
 
 /// Strategy for generating valid IPv4 addresses
 pub fn arb_ipv4_addr() -> impl Strategy<Value = Ipv4Addr> {
-    any::<[u8; 4]>().prop_map(|bytes| Ipv4Addr::from(bytes))
+    any::<[u8; 4]>().prop_map(Ipv4Addr::from)
 }
 
 /// Strategy for generating valid IPv6 addresses
 pub fn arb_ipv6_addr() -> impl Strategy<Value = Ipv6Addr> {
-    any::<[u8; 16]>().prop_map(|bytes| Ipv6Addr::from(bytes))
+    any::<[u8; 16]>().prop_map(Ipv6Addr::from)
 }
 
 /// Strategy for generating valid IP addresses (both v4 and v6)

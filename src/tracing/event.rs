@@ -81,37 +81,49 @@ pub struct Event {
 /// Event data variants (must fit in 64 bytes)
 #[derive(Debug, Clone)]
 #[repr(C)]
+#[allow(missing_docs)]
 pub enum EventData {
     // QUIC protocol events
     ConnInit {
+        /// Endpoint bytes (ip:port serialized)
         endpoint_bytes: [u8; 18],
+        /// Address type discriminator
         addr_type: u8,
         _padding: [u8; 45],
     },
     ConnEstablished {
+        /// Round-trip time in microseconds
         rtt: u32,
         _padding: [u8; 60],
     },
     StreamOpened {
+        /// QUIC stream identifier
         stream_id: u64,
         _padding: [u8; 56],
     },
     StreamClosed {
+        /// QUIC stream identifier
         stream_id: u64,
+        /// QUIC error code
         error_code: u32,
         _padding: [u8; 52],
     },
     PacketSent {
+        /// Size in bytes
         size: u32,
+        /// Packet number
         packet_num: u64,
         _padding: [u8; 52],
     },
     PacketReceived {
+        /// Size in bytes
         size: u32,
+        /// Packet number
         packet_num: u64,
         _padding: [u8; 52],
     },
     PacketLost {
+        /// Packet number
         packet_num: u64,
         _padding: [u8; 56],
     },

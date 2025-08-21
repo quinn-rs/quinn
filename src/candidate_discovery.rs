@@ -4,6 +4,7 @@
 // Please see the file LICENSE-GPL, or visit <http://www.gnu.org/licenses/> for the full text.
 //
 // Full details available at https://saorsalabs.com/licenses
+#![allow(missing_docs)]
 
 //! Candidate Discovery System for QUIC NAT Traversal
 //!
@@ -1772,7 +1773,8 @@ struct AddressObservationRequest {
     capabilities: u32,
 }
 
-/// Server reflexive address discovery coordinator
+/// Server reflexive address discovery coordinator (legacy; compiled out)
+#[cfg(any())]
 #[derive(Debug)]
 #[allow(dead_code)]
 pub(crate) struct ServerReflexiveDiscovery {
@@ -1789,6 +1791,7 @@ pub(crate) struct ServerReflexiveDiscovery {
     runtime_handle: Option<tokio::runtime::Handle>,
 }
 
+#[cfg(any())]
 #[allow(dead_code)]
 impl ServerReflexiveDiscovery {
     pub(crate) fn new(config: &DiscoveryConfig) -> Self {
@@ -2141,13 +2144,15 @@ impl ServerReflexiveDiscovery {
     }
 }
 
-/// Symmetric NAT port prediction engine
+/// Symmetric NAT port prediction engine (legacy; compiled out)
+#[cfg(any())]
 #[derive(Debug)]
 pub(crate) struct SymmetricNatPredictor {
     #[allow(dead_code)]
     config: DiscoveryConfig,
 }
 
+#[cfg(any())]
 impl SymmetricNatPredictor {
     #[allow(dead_code)]
     pub(crate) fn new(config: &DiscoveryConfig) -> Self {
@@ -2644,7 +2649,8 @@ impl SymmetricNatPredictor {
     pub(crate) fn update_pattern_analysis(&self, _new_event: PortAllocationEvent) {}
 }
 
-// Minimal bootstrap scaffolding retained to satisfy references (unused in minimal flow)
+// Minimal bootstrap scaffolding retained to satisfy references (legacy; compiled out)
+#[cfg(any())]
 #[allow(dead_code)]
 #[derive(Debug)]
 pub(crate) struct BootstrapNodeManager {
@@ -2658,6 +2664,7 @@ pub(crate) struct BootstrapNodeManager {
     discovery_sources: Vec<BootstrapDiscoverySource>,
 }
 
+#[cfg(any())]
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub(crate) struct BootstrapNodeInfo {
@@ -2670,6 +2677,7 @@ pub(crate) struct BootstrapNodeInfo {
     pub discovery_source: BootstrapDiscoverySource,
 }
 
+#[cfg(any())]
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum BootstrapHealthStatus {
@@ -2679,6 +2687,7 @@ pub(crate) enum BootstrapHealthStatus {
     Unknown,
 }
 
+#[cfg(any())]
 #[allow(dead_code)]
 #[derive(Debug, Clone, Default)]
 pub(crate) struct BootstrapCapabilities {
@@ -2689,6 +2698,7 @@ pub(crate) struct BootstrapCapabilities {
     pub supported_quic_versions: Vec<u32>,
 }
 
+#[cfg(any())]
 #[allow(dead_code)]
 #[derive(Debug, Clone, Default)]
 pub(crate) struct BootstrapHealthStats {
@@ -2703,6 +2713,7 @@ pub(crate) struct BootstrapHealthStats {
     pub successful_coordinations: u32,
 }
 
+#[cfg(any())]
 #[allow(dead_code)]
 #[derive(Debug, Default)]
 pub(crate) struct BootstrapPerformanceTracker {
@@ -2712,6 +2723,7 @@ pub(crate) struct BootstrapPerformanceTracker {
     pub performance_history: VecDeque<PerformanceSnapshot>,
 }
 
+#[cfg(any())]
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub(crate) struct PerformanceSnapshot {
@@ -2721,6 +2733,7 @@ pub(crate) struct PerformanceSnapshot {
     pub average_rtt: Duration,
 }
 
+#[cfg(any())]
 #[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum BootstrapDiscoverySource {
@@ -2729,6 +2742,7 @@ pub(crate) enum BootstrapDiscoverySource {
     UserProvided,
 }
 
+#[cfg(any())]
 #[allow(dead_code)]
 impl BootstrapNodeManager {
     pub(crate) fn new(config: &DiscoveryConfig) -> Self {

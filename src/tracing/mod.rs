@@ -49,6 +49,7 @@ mod implementation {
         once_cell::sync::Lazy::new(AppProtocolRegistry::new);
 
     #[cfg(feature = "trace-app")]
+    /// Get the global application protocol registry
     pub fn global_app_registry() -> &'static AppProtocolRegistry {
         &APP_REGISTRY
     }
@@ -136,6 +137,7 @@ pub use implementation::*;
 
 // Helper function to get current timestamp in microseconds
 #[cfg(feature = "trace")]
+/// Monotonic timestamp in microseconds (platform-dependent)
 pub fn timestamp_now() -> u64 {
     use std::time::{SystemTime, UNIX_EPOCH};
     SystemTime::now()

@@ -8,7 +8,8 @@ use ant_quic::frame::nat_traversal_unified::{
 mod pqc_integration {
     use super::*;
     use ant_quic::crypto::pqc::types::MlDsaPublicKey;
-    use ant_quic::crypto::pqc::{ml_dsa::MlDsa65, types::PqcError};
+    use ant_quic::crypto::pqc::types::PqcError;
+    use ant_quic::VarInt;
     use ant_quic::crypto::raw_public_keys::create_ed25519_subject_public_key_info;
     use ant_quic::crypto::raw_public_keys::pqc::{ExtendedRawPublicKey, PqcRawPublicKeyVerifier};
 
@@ -39,10 +40,10 @@ mod pqc_integration {
 
         // 2) RFC 7250 Raw Public Keys with PQC/hybrid
         // 2a) Ed25519 raw public key SPKI flow
-        let ed25519_key =
-            ant_quic::crypto::raw_public_keys::key_utils::generate_ed25519_keypair().0;
-        let ed25519_spki = create_ed25519_subject_public_key_info(&ed25519_key);
-        let mut verifier = PqcRawPublicKeyVerifier::new(vec![]);
+        let (_ed25519_signing, ed25519_verify) =
+            ant_quic::crypto::raw_public_keys::key_utils::generate_ed25519_keypair();
+        let ed25519_spki = create_ed25519_subject_public_key_info(&ed25519_verify);
+        let verifier = PqcRawPublicKeyVerifier::new(vec![]);
         // Allow-any verifier should accept any SPKI form and return the parsed ExtendedRawPublicKey
         let recovered = verifier
             .verify_cert(&ed25519_spki)
@@ -78,7 +79,7 @@ mod pqc_integration {
         )
         .expect("Failed to create ML-DSA public key (hybrid)");
         let _hybrid_key = ExtendedRawPublicKey::HybridEd25519MlDsa65 {
-            ed25519: ed25519_key,
+            ed25519: ed25519_verify,
             ml_dsa: ml_dsa_key2,
         };
         // We don’t need to fully verify hybrid here; dedicated tests cover it. Presence/size sanity is enough.

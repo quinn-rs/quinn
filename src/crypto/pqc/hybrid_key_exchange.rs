@@ -4,6 +4,7 @@
 // Please see the file LICENSE-GPL, or visit <http://www.gnu.org/licenses/> for the full text.
 //
 // Full details available at https://saorsalabs.com/licenses
+#![allow(missing_docs)]
 
 //! Hybrid key exchange implementation combining classical and PQC algorithms
 //!
