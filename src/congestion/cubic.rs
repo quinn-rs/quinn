@@ -258,6 +258,7 @@ impl CubicConfig {
     /// Default limit on the amount of outstanding data in bytes.
     ///
     /// Recommended value: `min(10 * max_datagram_size, max(2 * max_datagram_size, 14720))`
+    #[allow(dead_code)]
     pub(crate) fn initial_window(&mut self, value: u64) -> &mut Self {
         self.initial_window = value;
         self

@@ -46,39 +46,77 @@ impl Default for RelayConnectionConfig {
 pub enum RelayEvent {
     /// Connection established successfully
     ConnectionEstablished {
+        /// Unique session identifier
         session_id: u32,
+        /// Remote peer network address
         peer_addr: SocketAddr,
     },
     /// Data received from peer
-    DataReceived { session_id: u32, data: Vec<u8> },
+    DataReceived {
+        /// Session the data belongs to
+        session_id: u32,
+        /// Payload bytes received
+        data: Vec<u8>,
+    },
     /// Connection terminated
-    ConnectionTerminated { session_id: u32, reason: String },
+    ConnectionTerminated {
+        /// Identifier of the terminated session
+        session_id: u32,
+        /// Human-readable reason for termination
+        reason: String,
+    },
     /// Error occurred during relay operation
     Error {
+        /// Optional session context for the error
         session_id: Option<u32>,
+        /// Underlying error detail
         error: RelayError,
     },
     /// Bandwidth limit exceeded
     BandwidthLimitExceeded {
+        /// Identifier of the session exceeding bandwidth
         session_id: u32,
+        /// Current bandwidth usage (bytes) within the window
         current_usage: u64,
+        /// Configured limit (bytes) for the window
         limit: u64,
     },
     /// Keep-alive signal
-    KeepAlive { session_id: u32 },
+    KeepAlive {
+        /// Identifier of the session emitting keep-alive
+        session_id: u32,
+    },
 }
 
 /// Actions that can be taken in response to relay events
 #[derive(Debug, Clone)]
 pub enum RelayAction {
     /// Send data to peer
-    SendData { session_id: u32, data: Vec<u8> },
+    SendData {
+        /// Target session
+        session_id: u32,
+        /// Payload to send
+        data: Vec<u8>,
+    },
     /// Terminate connection
-    TerminateConnection { session_id: u32, reason: String },
+    TerminateConnection {
+        /// Target session to terminate
+        session_id: u32,
+        /// Reason for termination
+        reason: String,
+    },
     /// Update bandwidth limit
-    UpdateBandwidthLimit { session_id: u32, new_limit: u64 },
+    UpdateBandwidthLimit {
+        /// Target session
+        session_id: u32,
+        /// New bandwidth limit (bytes/sec)
+        new_limit: u64,
+    },
     /// Send keep-alive
-    SendKeepAlive { session_id: u32 },
+    SendKeepAlive {
+        /// Target session
+        session_id: u32,
+    },
 }
 
 /// Relay connection for bidirectional data forwarding
@@ -400,14 +438,23 @@ impl RelayConnection {
 /// Connection statistics
 #[derive(Debug, Clone)]
 pub struct ConnectionStats {
+    /// Unique session identifier
     pub session_id: u32,
+    /// Remote peer address
     pub peer_addr: SocketAddr,
+    /// Whether the connection is currently active
     pub is_active: bool,
+    /// Total bytes sent in the current window
     pub bytes_sent: u64,
+    /// Total bytes received in the current window
     pub bytes_received: u64,
+    /// Current buffer usage (bytes)
     pub buffer_usage: usize,
+    /// Number of queued outgoing packets
     pub outgoing_queue_size: usize,
+    /// Number of queued incoming packets
     pub incoming_queue_size: usize,
+    /// Timestamp of last activity
     pub last_activity: Instant,
 }
 

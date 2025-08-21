@@ -233,6 +233,7 @@ impl Default for QuicRfcParser {
 }
 
 impl QuicRfcParser {
+    /// Create a new QUIC RFC parser wrapper
     pub fn new() -> Self {
         Self {
             parser: RfcParser::new(),

@@ -26,8 +26,11 @@ use tokio::sync::RwLock;
 /// Box drawing style
 #[derive(Debug, Clone, Copy)]
 pub enum BoxStyle {
+    /// Single line borders
     Single,
+    /// Double line borders
     Double,
+    /// Rounded corners
     Rounded,
 }
 
@@ -87,14 +90,23 @@ impl Default for DashboardConfig {
 /// Connection information
 #[derive(Debug, Clone)]
 pub struct ConnectionInfo {
+    /// Peer identifier
     pub peer_id: PeerId,
+    /// Remote socket address
     pub remote_address: SocketAddr,
+    /// Timestamp when the connection was established
     pub connected_at: Instant,
+    /// Total bytes sent
     pub bytes_sent: u64,
+    /// Total bytes received
     pub bytes_received: u64,
+    /// Timestamp of last activity
     pub last_activity: Instant,
+    /// Measured round trip time
     pub rtt: Option<Duration>,
+    /// Packet loss ratio [0.0-1.0]
     pub packet_loss: f64,
+    /// NAT type inferred for the peer
     pub nat_type: String,
 }
 

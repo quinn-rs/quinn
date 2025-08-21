@@ -30,6 +30,7 @@ mod components;
 mod filters;
 mod formatters;
 mod lifecycle;
+/// Metrics collection and reporting utilities
 pub mod metrics;
 mod structured;
 
@@ -188,34 +189,48 @@ impl Default for LoggingConfig {
 /// Structured log event
 #[derive(Debug, Clone)]
 pub struct LogEvent {
+    /// Time the log was recorded
     pub timestamp: Instant,
+    /// Severity level of the log
     pub level: Level,
+    /// Target component/module of the log
     pub target: String,
+    /// Primary message content
     pub message: String,
+    /// Arbitrary structured fields
     pub fields: HashMap<String, String>,
+    /// Optional span identifier for tracing correlation
     pub span_id: Option<String>,
 }
 
 /// Connection role for logging
 #[derive(Debug, Clone, Copy)]
 pub enum ConnectionRole {
+    /// Client-side role
     Client,
+    /// Server-side role
     Server,
 }
 
 /// Connection information for logging
 #[derive(Debug, Clone)]
 pub struct ConnectionInfo {
+    /// Connection identifier
     pub id: ConnectionId,
+    /// Remote socket address
     pub remote_addr: SocketAddr,
+    /// Role of the connection
     pub role: ConnectionRole,
 }
 
 /// Frame information for logging
 #[derive(Debug)]
 pub struct FrameInfo {
+    /// QUIC frame type
     pub frame_type: FrameType,
+    /// Encoded frame size in bytes
     pub size: usize,
+    /// Optional packet number the frame was carried in
     pub packet_number: Option<u64>,
 }
 
@@ -223,73 +238,97 @@ pub struct FrameInfo {
 #[derive(Debug)]
 pub struct TransportParamInfo {
     pub(crate) param_id: TransportParameterId,
+    /// Raw value bytes, if present
     pub value: Option<Vec<u8>>,
+    /// Which side (client/server) provided the parameter
     pub side: Side,
 }
 
 /// NAT traversal information
 #[derive(Debug)]
 pub struct NatTraversalInfo {
+    /// NAT traversal role of this endpoint
     pub role: NatTraversalRole,
+    /// Remote peer address involved in NAT traversal
     pub remote_addr: SocketAddr,
+    /// Number of candidate addresses considered
     pub candidate_count: usize,
 }
 
 /// Error context for detailed logging
 #[derive(Debug, Default)]
 pub struct ErrorContext {
+    /// Component name related to the error
     pub component: &'static str,
+    /// Operation being performed when the error occurred
     pub operation: &'static str,
+    /// Optional connection identifier involved
     pub connection_id: Option<ConnectionId>,
+    /// Additional static key/value fields for context
     pub additional_fields: Vec<(&'static str, &'static str)>,
 }
 
 /// Warning context
 #[derive(Debug, Default)]
 pub struct WarningContext {
+    /// Component name related to the warning
     pub component: &'static str,
+    /// Additional static key/value fields for context
     pub details: Vec<(&'static str, &'static str)>,
 }
 
 /// Info context
 #[derive(Debug, Default)]
 pub struct InfoContext {
+    /// Component name related to the information
     pub component: &'static str,
+    /// Additional static key/value fields for context
     pub details: Vec<(&'static str, &'static str)>,
 }
 
 /// Debug context
 #[derive(Debug, Default)]
 pub struct DebugContext {
+    /// Component name related to the debug message
     pub component: &'static str,
+    /// Additional static key/value fields for context
     pub details: Vec<(&'static str, &'static str)>,
 }
 
 /// Trace context
 #[derive(Debug, Default)]
 pub struct TraceContext {
+    /// Component name related to the trace message
     pub component: &'static str,
+    /// Additional static key/value fields for context
     pub details: Vec<(&'static str, &'static str)>,
 }
 
 /// Logging errors
 #[derive(Debug, thiserror::Error)]
 pub enum LoggingError {
+    /// Attempted to initialize the logging system more than once
     #[error("Logging system already initialized")]
     AlreadyInitialized,
+    /// Error returned from tracing subscriber initialization
     #[error("Failed to initialize tracing subscriber: {0}")]
     SubscriberError(String),
 }
 
 /// Rate limiter for preventing log spam
 pub struct RateLimiter {
+    /// Maximum events allowed per window
     max_events: u64,
+    /// Length of the rate-limiting window
     window: Duration,
+    /// Number of events counted in the current window
     events_in_window: AtomicU64,
+    /// Start time of the current window
     window_start: Mutex<Instant>,
 }
 
 impl RateLimiter {
+    /// Create a new rate limiter
     pub fn new(max_events: u64, window: Duration) -> Self {
         Self {
             max_events,
@@ -299,6 +338,7 @@ impl RateLimiter {
         }
     }
 
+    /// Determine whether an event at the given level should be logged
     pub fn should_log(&self, level: Level) -> bool {
         // Always allow ERROR level
         if level == Level::ERROR {

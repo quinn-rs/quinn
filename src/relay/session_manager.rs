@@ -56,7 +56,10 @@ pub enum SessionState {
     /// Session terminated
     Terminated,
     /// Session failed due to error
-    Failed { reason: String },
+    Failed {
+        /// Terminal failure with human-readable reason
+        reason: String,
+    },
 }
 
 /// Information about a relay session
@@ -80,6 +83,7 @@ pub struct RelaySessionInfo {
     pub timeout: Duration,
     /// Bytes transferred
     pub bytes_sent: u64,
+    /// Total bytes received by the relay session
     pub bytes_received: u64,
 }
 
@@ -109,30 +113,43 @@ pub struct SessionManager {
 pub enum SessionEvent {
     /// New session requested
     SessionRequested {
+        /// Identifier of the newly requested session
         session_id: SessionId,
+        /// Address of the requesting client
         client_addr: SocketAddr,
+        /// Connection ID of the target peer
         peer_connection_id: Vec<u8>,
+        /// Authentication token used for the request
         auth_token: AuthToken,
     },
     /// Session established successfully
     SessionEstablished {
+        /// Identifier of the established session
         session_id: SessionId,
+        /// Address of the client for the session
         client_addr: SocketAddr,
     },
     /// Session terminated
     SessionTerminated {
+        /// Identifier of the terminated session
         session_id: SessionId,
+        /// Reason for termination
         reason: String,
     },
     /// Session failed
     SessionFailed {
+        /// Identifier of the failed session
         session_id: SessionId,
+        /// The error that caused the failure
         error: RelayError,
     },
     /// Data forwarded through session
     DataForwarded {
+        /// Identifier of the session that forwarded data
         session_id: SessionId,
+        /// Number of bytes forwarded
         bytes: usize,
+        /// Direction of forwarding
         direction: ForwardDirection,
     },
 }
@@ -482,11 +499,17 @@ impl SessionManager {
 /// Session manager statistics
 #[derive(Debug, Clone)]
 pub struct SessionManagerStats {
+    /// Total number of sessions tracked
     pub total_sessions: usize,
+    /// Number of active sessions
     pub active_sessions: usize,
+    /// Number of pending sessions
     pub pending_sessions: usize,
+    /// Number of active relay connections
     pub total_connections: usize,
+    /// Total bytes sent across all sessions
     pub total_bytes_sent: u64,
+    /// Total bytes received across all sessions
     pub total_bytes_received: u64,
 }
 

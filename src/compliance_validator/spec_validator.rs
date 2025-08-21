@@ -284,6 +284,7 @@ impl Default for QuicComplianceValidator {
 }
 
 impl QuicComplianceValidator {
+    /// Create a composite validator that delegates to specific spec validators
     pub fn new() -> Self {
         Self {
             rfc9000: Rfc9000Validator,

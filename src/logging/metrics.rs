@@ -87,6 +87,7 @@ impl Default for ThroughputTracker {
 }
 
 impl ThroughputTracker {
+    /// Create a new throughput tracker
     pub fn new() -> Self {
         Self {
             bytes_sent: AtomicU64::new(0),
@@ -97,16 +98,19 @@ impl ThroughputTracker {
         }
     }
 
+    /// Record bytes sent and increment packet count
     pub fn record_sent(&self, bytes: u64) {
         self.bytes_sent.fetch_add(bytes, Ordering::Relaxed);
         self.packets_sent.fetch_add(1, Ordering::Relaxed);
     }
 
+    /// Record bytes received and increment packet count
     pub fn record_received(&self, bytes: u64) {
         self.bytes_received.fetch_add(bytes, Ordering::Relaxed);
         self.packets_received.fetch_add(1, Ordering::Relaxed);
     }
 
+    /// Produce a summary snapshot of throughput metrics
     pub fn summary(&self) -> ThroughputSummary {
         let duration = self.start_time.elapsed();
         let duration_secs = duration.as_secs_f64();
@@ -143,6 +147,7 @@ impl Default for LatencyTracker {
 }
 
 impl LatencyTracker {
+    /// Create a new latency tracker
     pub fn new() -> Self {
         Self {
             samples: Arc::new(Mutex::new(Vec::with_capacity(1000))),
@@ -153,6 +158,7 @@ impl LatencyTracker {
         }
     }
 
+    /// Record a round-trip time measurement
     pub fn record_rtt(&self, rtt: Duration) {
         let micros = rtt.as_micros() as u64;
 
@@ -196,6 +202,7 @@ impl LatencyTracker {
         }
     }
 
+    /// Produce a summary snapshot of latency metrics
     pub fn summary(&self) -> LatencySummary {
         let count = self.count.load(Ordering::Relaxed);
         let min_rtt = self.min_rtt.load(Ordering::Relaxed);
@@ -233,6 +240,7 @@ impl Default for ConnectionMetrics {
 }
 
 impl ConnectionMetrics {
+    /// Create a new connection metrics tracker
     pub fn new() -> Self {
         Self {
             active_connections: AtomicUsize::new(0),
@@ -242,23 +250,28 @@ impl ConnectionMetrics {
         }
     }
 
+    /// Record that a connection was opened
     pub fn connection_opened(&self) {
         self.active_connections.fetch_add(1, Ordering::Relaxed);
         self.total_connections.fetch_add(1, Ordering::Relaxed);
     }
 
+    /// Record that a connection was closed
     pub fn connection_closed(&self) {
         self.active_connections.fetch_sub(1, Ordering::Relaxed);
     }
 
+    /// Record a connection failure
     pub fn connection_failed(&self) {
         self.failed_connections.fetch_add(1, Ordering::Relaxed);
     }
 
+    /// Record a connection path migration
     pub fn connection_migrated(&self) {
         self.migrated_connections.fetch_add(1, Ordering::Relaxed);
     }
 
+    /// Generate a snapshot summary of current connection metrics
     pub fn summary(&self) -> ConnectionMetricsSummary {
         ConnectionMetricsSummary {
             active_connections: self.active_connections.load(Ordering::Relaxed),
@@ -272,58 +285,86 @@ impl ConnectionMetrics {
 /// Metrics summary
 #[derive(Debug, Clone)]
 pub struct MetricsSummary {
+    /// Counts of log events by level and target
     pub event_counts: HashMap<(tracing::Level, String), u64>,
+    /// Aggregate throughput statistics
     pub throughput: ThroughputSummary,
+    /// Aggregate latency statistics
     pub latency: LatencySummary,
+    /// Aggregate connection lifecycle statistics
     pub connections: ConnectionMetricsSummary,
 }
 
 /// Throughput metrics
 #[derive(Debug, Clone)]
 pub struct ThroughputMetrics {
+    /// Total bytes sent
     pub bytes_sent: u64,
+    /// Total bytes received
     pub bytes_received: u64,
+    /// Measurement window duration
     pub duration: Duration,
+    /// Number of packets sent
     pub packets_sent: u64,
+    /// Number of packets received
     pub packets_received: u64,
 }
 
 /// Throughput summary
 #[derive(Debug, Clone)]
 pub struct ThroughputSummary {
+    /// Total bytes sent
     pub bytes_sent: u64,
+    /// Total bytes received
     pub bytes_received: u64,
+    /// Number of packets sent
     pub packets_sent: u64,
+    /// Number of packets received
     pub packets_received: u64,
+    /// Measurement window duration
     pub duration: Duration,
+    /// Calculated send rate in megabits per second
     pub send_rate_mbps: f64,
+    /// Calculated receive rate in megabits per second
     pub recv_rate_mbps: f64,
 }
 
 /// Latency metrics
 #[derive(Debug, Clone)]
 pub struct LatencyMetrics {
+    /// Latest round-trip time sample
     pub rtt: Duration,
+    /// Minimum observed RTT
     pub min_rtt: Duration,
+    /// Maximum observed RTT
     pub max_rtt: Duration,
+    /// Smoothed RTT estimate
     pub smoothed_rtt: Duration,
 }
 
 /// Latency summary
 #[derive(Debug, Clone)]
 pub struct LatencySummary {
+    /// Minimum observed RTT
     pub min_rtt: Duration,
+    /// Maximum observed RTT
     pub max_rtt: Duration,
+    /// Average RTT
     pub avg_rtt: Duration,
+    /// Number of samples aggregated
     pub sample_count: u64,
 }
 
 /// Connection metrics summary
 #[derive(Debug, Clone)]
 pub struct ConnectionMetricsSummary {
+    /// Number of currently active connections
     pub active_connections: usize,
+    /// Total connections observed
     pub total_connections: u64,
+    /// Number of failed connections
     pub failed_connections: u64,
+    /// Number of connections that migrated paths
     pub migrated_connections: u64,
 }
 

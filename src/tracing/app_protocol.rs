@@ -158,10 +158,12 @@ macro_rules! trace_app_command {
 }
 
 // Global app registry
+#[allow(dead_code)]
 static APP_REGISTRY: once_cell::sync::Lazy<AppRegistry> =
     once_cell::sync::Lazy::new(AppRegistry::new);
 
 /// Get the global app registry
+#[allow(dead_code)]
 pub fn global_app_registry() -> &'static AppRegistry {
     &APP_REGISTRY
 }

@@ -168,26 +168,31 @@ impl PathData {
     }
 
     /// Check if the observed address has changed from the expected remote address
+    #[allow(dead_code)]
     pub(super) fn has_address_changed(&self) -> bool {
         self.address_info.has_address_changed(&self.remote)
     }
 
     /// Mark that we've notified the application about the current address
+    #[allow(dead_code)]
     pub(super) fn mark_address_notified(&mut self) {
         self.address_info.mark_notified();
     }
 
     /// Check if we can send an observation on this path
+    #[allow(dead_code)]
     pub(super) fn can_send_observation(&mut self, now: Instant) -> bool {
         self.observation_rate_limiter.can_send(now)
     }
 
     /// Consume a token for sending an observation
+    #[allow(dead_code)]
     pub(super) fn consume_observation_token(&mut self, now: Instant) {
         self.observation_rate_limiter.consume_token(now)
     }
 
     /// Update observation tokens based on elapsed time
+    #[allow(dead_code)]
     pub(super) fn update_observation_tokens(&mut self, now: Instant) {
         self.observation_rate_limiter.update_tokens(now)
     }
@@ -228,6 +233,7 @@ impl PathData {
     }
 
     #[cfg(feature = "__qlog")]
+    #[allow(dead_code)]
     pub(super) fn qlog_congestion_metrics(&mut self, pto_count: u32) -> Option<MetricsUpdated> {
         let controller_metrics = self.congestion.metrics();
 
@@ -273,6 +279,7 @@ struct CongestionMetrics {
 #[cfg(feature = "__qlog")]
 impl CongestionMetrics {
     /// Retain only values that have been updated since the last snapshot.
+    #[allow(dead_code)]
     fn retain_updated(&self, previous: &Self) -> Self {
         macro_rules! keep_if_changed {
             ($name:ident) => {
@@ -299,6 +306,7 @@ impl CongestionMetrics {
     }
 
     /// Emit a `MetricsUpdated` event containing only updated values
+    #[allow(dead_code)]
     fn to_qlog_event(&self, previous: &Self) -> Option<MetricsUpdated> {
         let updated = self.retain_updated(previous);
 

@@ -1,0 +1,39 @@
+# Ignore heavy and unnecessary files from Docker build context
+.git
+**/.git
+
+# Build artifacts
+/target
+**/target
+
+# Local IDE/editor configs
+.vscode
+.idea
+*.swp
+.DS_Store
+
+# Logs and results
+*.log
+logs/
+/docker/logs/
+/docker/results/
+/results/
+
+# Coverage and reports
+/coverage/
+/compliance_report/
+
+# Temporary files
+/tmp/
+**/*.tmp
+**/*.temp
+
+# Cache dirs
+**/.cargo/
+**/.rustup/
+
+# Docs (not needed for building containers)
+/docs/
+
+# Node modules or similar (if present)
+node_modules/

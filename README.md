@@ -19,6 +19,7 @@ Comprehensive documentation is available in the [`docs/`](docs/) directory:
 - [Getting Started Guide](docs/guides/)
 - [API Reference](docs/api/)
 - [Development Guide](docs/development/)
+- **[RFC Compliance Review](docs/review.md)**: Detailed analysis of standards compliance including NAT traversal, raw public keys, and post-quantum cryptography
 
 ## Features
 

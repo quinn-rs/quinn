@@ -1,5 +1,5 @@
 # Test Runner for NAT Testing
-FROM rust:1.85.1-alpine3.20
+FROM alpine:3.20
 
 # Install dependencies
 RUN apk add --no-cache \
@@ -9,21 +9,10 @@ RUN apk add --no-cache \
     netcat-openbsd \
     tcpdump \
     iperf3 \
-    git \
-    musl-dev \
-    openssl-dev \
-    pkgconfig
+    git
 
 # Create workspace
 WORKDIR /workspace
-
-# Copy the entire project
-COPY . .
-
-# Build test binaries
-RUN cargo test --no-run --release
-
-# Note: cargo-nextest is not used by our test scripts, so we don't install it
 
 # Create directories for test results
 RUN mkdir -p /test-results /scripts

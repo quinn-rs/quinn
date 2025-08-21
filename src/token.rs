@@ -100,6 +100,7 @@ pub trait TokenStore: Send + Sync {
 }
 
 /// Null implementation of [`TokenStore`], which does not store any tokens
+#[allow(dead_code)]
 pub(crate) struct NoneTokenStore;
 
 impl TokenStore for NoneTokenStore {

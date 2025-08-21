@@ -467,8 +467,8 @@ pub struct NatTraversalFrameConfig {
 impl Default for NatTraversalFrameConfig {
     fn default() -> Self {
         Self {
-            use_rfc_format: false, // Default to legacy for compatibility
-            accept_legacy: true,
+            use_rfc_format: true, // Default to RFC-compliant format
+            accept_legacy: true,  // Still accept legacy for compatibility
         }
     }
 }

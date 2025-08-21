@@ -13,6 +13,7 @@ use std::net::SocketAddr;
 use std::time::Duration;
 
 /// Helper function to get current timestamp in microseconds
+#[allow(dead_code)]
 pub fn timestamp_now() -> u64 {
     use std::time::{SystemTime, UNIX_EPOCH};
     SystemTime::now()
@@ -83,11 +84,9 @@ pub struct Event {
 pub enum EventData {
     // QUIC protocol events
     ConnInit {
-        /// Encoded socket address (4 bytes for IPv4 + 2 port, 16 bytes for IPv6 + 2 port)
         endpoint_bytes: [u8; 18],
-        /// 0 = IPv4, 1 = IPv6
         addr_type: u8,
-        _padding: [u8; 45], // Pad to 64 bytes
+        _padding: [u8; 45],
     },
     ConnEstablished {
         rtt: u32,
@@ -236,22 +235,17 @@ impl Default for Event {
 
 // Helper to create Event with proper defaults
 impl Event {
+    #[allow(dead_code)]
     pub(super) fn new() -> Self {
         Self::default()
     }
 }
 
 impl Event {
-    /// Create a new event with the given trace ID
-    pub(super) fn with_trace_id(trace_id: TraceId) -> Self {
-        Self {
-            trace_id,
-            timestamp: crate::tracing::timestamp_now(),
-            ..Default::default()
-        }
-    }
+    // Removed unused with_trace_id()
 
     /// Create a connection init event
+    #[allow(dead_code)]
     pub(super) fn conn_init(endpoint: SocketAddr, trace_id: TraceId) -> Self {
         let (endpoint_bytes, addr_type) = socket_addr_to_bytes(endpoint);
         Self {
@@ -267,6 +261,7 @@ impl Event {
     }
 
     /// Create a packet sent event
+    #[allow(dead_code)]
     pub(super) fn packet_sent(size: u32, packet_num: u64, trace_id: TraceId) -> Self {
         Self {
             timestamp: crate::tracing::timestamp_now(),
@@ -281,6 +276,7 @@ impl Event {
     }
 
     /// Create a packet received event
+    #[allow(dead_code)]
     pub(super) fn packet_received(size: u32, packet_num: u64, trace_id: TraceId) -> Self {
         Self {
             timestamp: crate::tracing::timestamp_now(),

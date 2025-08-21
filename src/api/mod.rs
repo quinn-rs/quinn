@@ -25,44 +25,60 @@ pub use config::P2PConfigBuilder;
 /// High-level P2P node implementation
 pub struct P2PNode {
     // Internal NAT traversal endpoint
+    #[allow(dead_code)]
     endpoint: NatTraversalEndpoint,
     // Node configuration
+    #[allow(dead_code)]
     config: P2PConfig,
     // Active connections
+    #[allow(dead_code)]
     connections: HashMap<PeerId, P2PConnection>,
     // Event queue
+    #[allow(dead_code)]
     events: Vec<P2PEvent>,
 }
 
 /// High-level P2P connection
 pub struct P2PConnection {
     // Peer ID
+    #[allow(dead_code)]
     peer_id: PeerId,
     // Connection state
+    #[allow(dead_code)]
     state: ConnectionState,
     // Statistics
+    #[allow(dead_code)]
     stats: ConnectionStats,
 }
 
 /// Connection state
 enum ConnectionState {
+    #[allow(dead_code)]
     Connecting,
+    #[allow(dead_code)]
     Connected,
+    #[allow(dead_code)]
     Disconnecting,
+    #[allow(dead_code)]
     Disconnected,
 }
 
 /// Connection statistics
 pub struct ConnectionStats {
     // Round-trip time
+    #[allow(dead_code)]
     rtt: Duration,
     // Bytes sent
+    #[allow(dead_code)]
     bytes_sent: u64,
     // Bytes received
+    #[allow(dead_code)]
     bytes_received: u64,
     // Packets sent
+    #[allow(dead_code)]
     packets_sent: u64,
     // Packets received
+    #[allow(dead_code)]
     packets_received: u64,
 }
 

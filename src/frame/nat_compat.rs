@@ -19,6 +19,7 @@ use std::net::SocketAddr;
 
 /// Configuration for NAT traversal compatibility mode
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[allow(dead_code)]
 pub enum NatCompatMode {
     /// Use only the old frame format (current implementation)
     Legacy,
@@ -30,6 +31,7 @@ pub enum NatCompatMode {
 }
 
 /// Convert from old AddAddress to RFC-compliant format
+#[allow(dead_code)]
 pub fn add_address_to_rfc(old: &AddAddress) -> RfcAddAddress {
     RfcAddAddress {
         sequence_number: old.sequence,
@@ -40,6 +42,7 @@ pub fn add_address_to_rfc(old: &AddAddress) -> RfcAddAddress {
 
 /// Convert from RFC-compliant AddAddress to old format
 /// The priority field will be set to a default value
+#[allow(dead_code)]
 pub fn rfc_to_add_address(rfc: &RfcAddAddress, default_priority: VarInt) -> AddAddress {
     AddAddress {
         sequence: rfc.sequence_number,
@@ -49,6 +52,7 @@ pub fn rfc_to_add_address(rfc: &RfcAddAddress, default_priority: VarInt) -> AddA
 }
 
 /// Convert from old PunchMeNow to RFC-compliant format
+#[allow(dead_code)]
 pub fn punch_me_now_to_rfc(old: &PunchMeNow) -> RfcPunchMeNow {
     RfcPunchMeNow {
         round: old.round,
@@ -60,6 +64,7 @@ pub fn punch_me_now_to_rfc(old: &PunchMeNow) -> RfcPunchMeNow {
 
 /// Convert from RFC-compliant PunchMeNow to old format
 /// The address will be set to the provided address, and target_peer_id will be None
+#[allow(dead_code)]
 pub fn rfc_to_punch_me_now(rfc: &RfcPunchMeNow) -> PunchMeNow {
     PunchMeNow {
         round: rfc.round,
@@ -70,6 +75,7 @@ pub fn rfc_to_punch_me_now(rfc: &RfcPunchMeNow) -> PunchMeNow {
 }
 
 /// Convert between RemoveAddress formats (they're the same)
+#[allow(dead_code)]
 pub fn remove_address_to_rfc(old: &RemoveAddress) -> RfcRemoveAddress {
     RfcRemoveAddress {
         sequence_number: old.sequence,
@@ -77,6 +83,7 @@ pub fn remove_address_to_rfc(old: &RemoveAddress) -> RfcRemoveAddress {
 }
 
 /// Convert from RFC RemoveAddress to old format
+#[allow(dead_code)]
 pub fn rfc_to_remove_address(rfc: &RfcRemoveAddress) -> RemoveAddress {
     RemoveAddress {
         sequence: rfc.sequence_number,
@@ -84,6 +91,7 @@ pub fn rfc_to_remove_address(rfc: &RfcRemoveAddress) -> RemoveAddress {
 }
 
 /// Helper trait for determining compatibility requirements
+#[allow(dead_code)]
 pub trait NatFrameCompat {
     /// Check if this frame requires special handling for compatibility
     fn needs_compat(&self) -> bool;
@@ -93,6 +101,7 @@ pub trait NatFrameCompat {
 }
 
 /// Migration helper to determine frame format from wire data
+#[allow(dead_code)]
 pub fn detect_frame_format(frame_type: u64) -> FrameFormat {
     match frame_type {
         // RFC frame types
@@ -103,6 +112,7 @@ pub fn detect_frame_format(frame_type: u64) -> FrameFormat {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
 pub enum FrameFormat {
     Legacy,
     Rfc,
@@ -110,6 +120,7 @@ pub enum FrameFormat {
 
 /// Priority assignment strategy for migration
 #[derive(Debug, Clone, Copy)]
+#[allow(dead_code)]
 pub struct PriorityStrategy {
     /// Default priority for addresses without explicit priority
     pub default_priority: VarInt,
@@ -117,6 +128,7 @@ pub struct PriorityStrategy {
     pub use_ice_priority: bool,
 }
 
+#[allow(dead_code)]
 impl Default for PriorityStrategy {
     fn default() -> Self {
         Self {
@@ -126,6 +138,7 @@ impl Default for PriorityStrategy {
     }
 }
 
+#[allow(dead_code)]
 impl PriorityStrategy {
     /// Calculate priority for an address (for migration from RFC to old format)
     pub fn calculate_priority(&self, address: &SocketAddr) -> VarInt {

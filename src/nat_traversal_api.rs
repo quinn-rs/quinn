@@ -260,6 +260,7 @@ struct NatTraversalSession {
     /// Target peer we're trying to connect to
     peer_id: PeerId,
     /// Coordinator being used for this session
+    #[allow(dead_code)]
     coordinator: SocketAddr,
     /// Current attempt number
     attempt: u32,
@@ -1266,50 +1267,7 @@ impl NatTraversalEndpoint {
         })
     }
 
-    /// Manually inject an observed address (for testing/integration)
-    /// This method simulates receiving an OBSERVED_ADDRESS frame
-    pub fn inject_observed_address(
-        &self,
-        observed_address: SocketAddr,
-        _from_peer: PeerId,
-    ) -> Result<(), NatTraversalError> {
-        info!("Injecting observed address {}", observed_address);
-
-        // Feed the address to the discovery manager
-        let mut discovery = self.discovery_manager.lock().map_err(|_| {
-            NatTraversalError::ProtocolError("Discovery manager lock poisoned".to_string())
-        })?;
-
-        // Use a special peer ID to represent our own discovered address
-        let our_peer_id = self.local_peer_id;
-
-        // Accept the QUIC-discovered address
-        match discovery.accept_quic_discovered_address(our_peer_id, observed_address) {
-            Ok(()) => {
-                info!(
-                    "Successfully accepted observed address: {}",
-                    observed_address
-                );
-
-                // Emit event for the application
-                if let Some(ref event_tx) = self.event_tx {
-                    let _ = event_tx.send(NatTraversalEvent::CandidateValidated {
-                        peer_id: our_peer_id,
-                        candidate_address: observed_address,
-                    });
-                }
-
-                Ok(())
-            }
-            Err(e) => {
-                warn!(
-                    "Failed to accept observed address {}: {}",
-                    observed_address, e
-                );
-                Err(NatTraversalError::CandidateDiscoveryFailed(e.to_string()))
-            }
-        }
-    }
+    // OBSERVED_ADDRESS frames are now handled at the connection layer; manual injection removed
 
     /// Get current NAT traversal statistics
     pub fn get_statistics(&self) -> Result<NatTraversalStatistics, NatTraversalError> {
@@ -1707,22 +1665,7 @@ impl NatTraversalEndpoint {
                     } => {
                         debug!("Bootstrap query failed for {}: {}", bootstrap_node, error);
                     }
-                    DiscoveryEvent::SymmetricPredictionStarted { base_address } => {
-                        debug!(
-                            "Symmetric NAT prediction started from base address {}",
-                            base_address
-                        );
-                    }
-                    DiscoveryEvent::PredictedCandidateGenerated {
-                        candidate,
-                        confidence,
-                    } => {
-                        debug!(
-                            "Predicted symmetric NAT candidate {} with confidence {}",
-                            candidate.address, confidence
-                        );
-                        // Predicted candidates are stored in the discovery manager
-                    }
+                    // Prediction events removed in minimal flow
                     DiscoveryEvent::PortAllocationDetected {
                         port,
                         source_address,
@@ -2270,16 +2213,7 @@ impl NatTraversalEndpoint {
                                 debug!("Failed to send candidate advertisement: {}", e)
                             });
                     }
-                    DiscoveryEvent::PredictedCandidateGenerated { candidate, .. } => {
-                        candidates.push(candidate.clone());
-
-                        // Send ADD_ADDRESS frame to advertise this candidate to the peer
-                        self.send_candidate_advertisement(peer_id, &candidate)
-                            .await
-                            .unwrap_or_else(|e| {
-                                debug!("Failed to send candidate advertisement: {}", e)
-                            });
-                    }
+                    // Prediction events removed in minimal flow
                     DiscoveryEvent::DiscoveryCompleted { .. } => {
                         // Discovery complete, return candidates
                         return Ok(candidates);
@@ -2313,6 +2247,7 @@ impl NatTraversalEndpoint {
     }
 
     /// Create PUNCH_ME_NOW extension frame for NAT traversal coordination
+    #[allow(dead_code)]
     fn create_punch_me_now_frame(&self, peer_id: PeerId) -> Result<Vec<u8>, NatTraversalError> {
         // PUNCH_ME_NOW frame format (IETF QUIC NAT Traversal draft):
         // Frame Type: 0x41 (PUNCH_ME_NOW)
@@ -2346,6 +2281,7 @@ impl NatTraversalEndpoint {
         Ok(frame)
     }
 
+    #[allow(dead_code)]
     fn attempt_hole_punching(&self, peer_id: PeerId) -> Result<(), NatTraversalError> {
         debug!("Attempting hole punching for peer {:?}", peer_id);
 
@@ -2368,6 +2304,7 @@ impl NatTraversalEndpoint {
     }
 
     /// Generate candidate pairs for hole punching based on ICE-like algorithm
+    #[allow(dead_code)]
     fn get_candidate_pairs_for_peer(
         &self,
         peer_id: PeerId,
@@ -2419,6 +2356,7 @@ impl NatTraversalEndpoint {
     }
 
     /// Calculate candidate pair priority using ICE algorithm
+    #[allow(dead_code)]
     fn calculate_candidate_pair_priority(
         &self,
         local: &CandidateAddress,
@@ -2458,6 +2396,7 @@ impl NatTraversalEndpoint {
     }
 
     /// Real Quinn-based hole punching implementation
+    #[allow(dead_code)]
     fn attempt_quinn_hole_punching(
         &self,
         peer_id: PeerId,
@@ -3417,13 +3356,7 @@ impl NatTraversalEndpoint {
                 peer_id: current_peer_id,
                 candidate,
             }),
-            DiscoveryEvent::PredictedCandidateGenerated {
-                candidate,
-                confidence: _,
-            } => Some(NatTraversalEvent::CandidateDiscovered {
-                peer_id: current_peer_id,
-                candidate,
-            }),
+            // Prediction events removed in minimal flow
             DiscoveryEvent::DiscoveryCompleted {
                 candidate_count: _,
                 total_duration: _,
@@ -3466,6 +3399,7 @@ impl NatTraversalEndpoint {
     }
 
     /// Handle endpoint events from connection-level NAT traversal state machine
+    #[allow(dead_code)]
     pub(crate) async fn handle_endpoint_event(
         &self,
         event: crate::shared::EndpointEventInner,
@@ -3535,7 +3469,7 @@ impl NatTraversalEndpoint {
                         NatTraversalError::NetworkError(format!("Failed to send frame: {e}"))
                     })?;
 
-                    send_stream.finish();
+                    let _ = send_stream.finish();
 
                     debug!(
                         "Successfully relayed PUNCH_ME_NOW frame to peer {:?}",
@@ -3573,7 +3507,7 @@ impl NatTraversalEndpoint {
                         NatTraversalError::NetworkError(format!("Failed to send frame: {e}"))
                     })?;
 
-                    send_stream.finish();
+                    let _ = send_stream.finish();
 
                     debug!("Sent AddAddress frame to peer {:?}", peer_id);
                 }
@@ -3590,6 +3524,7 @@ impl NatTraversalEndpoint {
     }
 
     /// Establish connection to a validated candidate address
+    #[allow(dead_code)]
     async fn establish_connection_to_validated_candidate(
         &self,
         peer_id: PeerId,
@@ -3669,87 +3604,27 @@ impl NatTraversalEndpoint {
             peer_id, candidate.address
         );
 
-        // Find the connection to this peer
-        let connections = self.connections.read().map_err(|_| {
+        // Forward to the connection's NAT traversal API
+        let mut guard = self.connections.write().map_err(|_| {
             NatTraversalError::ProtocolError("Connections lock poisoned".to_string())
         })?;
 
-        if let Some(_connection) = connections.get(&peer_id) {
-            // Send ADD_ADDRESS frame using the ant-quic Connection's NAT traversal method
-            debug!(
-                "Found connection to peer {:?}, sending ADD_ADDRESS frame",
-                peer_id
-            );
-
-            // Extract connection to get a mutable reference
-            // Since we're using the ant-quic Connection directly, we can call the NAT traversal methods
-            drop(connections); // Release the read lock
-
-            // Get a mutable reference to the connection to send the frame
-            let connections = self.connections.write().map_err(|_| {
-                NatTraversalError::ProtocolError("Connections lock poisoned".to_string())
-            })?;
-
-            if let Some(connection) = connections.get(&peer_id) {
-                // Send ADD_ADDRESS frame using Quinn's datagram API
-                // Frame format: [0x40][sequence][address][priority]
-                let mut frame_data = Vec::new();
-                frame_data.push(0x40); // ADD_ADDRESS frame type
-
-                // Encode sequence number (varint)
-                let sequence = candidate.priority as u64; // Use priority as sequence for now
-                frame_data.extend_from_slice(&sequence.to_be_bytes());
-
-                // Encode address
-                match candidate.address {
-                    SocketAddr::V4(addr) => {
-                        frame_data.push(4); // IPv4 indicator
-                        frame_data.extend_from_slice(&addr.ip().octets());
-                        frame_data.extend_from_slice(&addr.port().to_be_bytes());
-                    }
-                    SocketAddr::V6(addr) => {
-                        frame_data.push(6); // IPv6 indicator
-                        frame_data.extend_from_slice(&addr.ip().octets());
-                        frame_data.extend_from_slice(&addr.port().to_be_bytes());
-                    }
+        if let Some(conn) = guard.get_mut(&peer_id) {
+            // Use the connection's API to enqueue a proper NAT traversal frame
+            match conn.send_nat_address_advertisement(candidate.address, candidate.priority) {
+                Ok(seq) => {
+                    info!(
+                        "Queued ADD_ADDRESS via connection API: peer={:?}, addr={}, priority={}, seq={}",
+                        peer_id, candidate.address, candidate.priority, seq
+                    );
+                    Ok(())
                 }
-
-                // Encode priority
-                frame_data.extend_from_slice(&candidate.priority.to_be_bytes());
-
-                // Send as datagram
-                match connection.send_datagram(frame_data.into()) {
-                    Ok(()) => {
-                        info!(
-                            "Sent ADD_ADDRESS frame to peer {:?}: addr={}, priority={}",
-                            peer_id, candidate.address, candidate.priority
-                        );
-                        Ok(())
-                    }
-                    Err(e) => {
-                        warn!(
-                            "Failed to send ADD_ADDRESS frame to peer {:?}: {}",
-                            peer_id, e
-                        );
-                        Err(NatTraversalError::ProtocolError(format!(
-                            "Failed to send ADD_ADDRESS frame: {e}"
-                        )))
-                    }
-                }
-            } else {
-                // Connection disappeared between read and write lock
-                debug!(
-                    "Connection to peer {:?} disappeared during frame sending",
-                    peer_id
-                );
-                Ok(())
+                Err(e) => Err(NatTraversalError::ProtocolError(format!(
+                    "Failed to queue ADD_ADDRESS: {e:?}"
+                ))),
             }
         } else {
-            // No connection to this peer yet - this is normal during discovery
-            debug!(
-                "No connection found for peer {:?} - candidate will be sent when connection is established",
-                peer_id
-            );
+            debug!("No active connection for peer {:?}", peer_id);
             Ok(())
         }
     }
@@ -3758,6 +3633,7 @@ impl NatTraversalEndpoint {
     ///
     /// This method sends hole punching coordination frames using the real
     /// Quinn extension frame API instead of application-level streams.
+    #[allow(dead_code)]
     async fn send_punch_coordination(
         &self,
         peer_id: PeerId,
@@ -3770,55 +3646,15 @@ impl NatTraversalEndpoint {
             peer_id, paired_with_sequence_number, address, round
         );
 
-        let connections = self.connections.read().map_err(|_| {
+        let mut guard = self.connections.write().map_err(|_| {
             NatTraversalError::ProtocolError("Connections lock poisoned".to_string())
         })?;
 
-        if let Some(connection) = connections.get(&peer_id) {
-            // Send PUNCH_ME_NOW frame using Quinn's datagram API
-            // Frame format: [0x41][round][paired_with_sequence_number][address]
-            let mut frame_data = Vec::new();
-            frame_data.push(0x41); // PUNCH_ME_NOW frame type
-
-            // Encode round number
-            frame_data.extend_from_slice(&round.to_be_bytes());
-
-            // Encode paired_with_sequence_number
-            frame_data.extend_from_slice(&paired_with_sequence_number.to_be_bytes());
-
-            // Encode address
-            match address {
-                SocketAddr::V4(addr) => {
-                    frame_data.push(4); // IPv4 indicator
-                    frame_data.extend_from_slice(&addr.ip().octets());
-                    frame_data.extend_from_slice(&addr.port().to_be_bytes());
-                }
-                SocketAddr::V6(addr) => {
-                    frame_data.push(6); // IPv6 indicator
-                    frame_data.extend_from_slice(&addr.ip().octets());
-                    frame_data.extend_from_slice(&addr.port().to_be_bytes());
-                }
-            }
-
-            // Send as datagram
-            match connection.send_datagram(frame_data.into()) {
-                Ok(()) => {
-                    info!(
-                        "Sent PUNCH_ME_NOW frame to peer {:?}: paired_with_seq={}, addr={}, round={}",
-                        peer_id, paired_with_sequence_number, address, round
-                    );
-                    Ok(())
-                }
-                Err(e) => {
-                    warn!(
-                        "Failed to send PUNCH_ME_NOW frame to peer {:?}: {}",
-                        peer_id, e
-                    );
-                    Err(NatTraversalError::ProtocolError(format!(
-                        "Failed to send PUNCH_ME_NOW frame: {e}"
-                    )))
-                }
-            }
+        if let Some(conn) = guard.get_mut(&peer_id) {
+            conn.send_nat_punch_coordination(paired_with_sequence_number, address, round)
+                .map_err(|e| {
+                    NatTraversalError::ProtocolError(format!("Failed to queue PUNCH_ME_NOW: {e:?}"))
+                })
         } else {
             Err(NatTraversalError::PeerNotConnected)
         }
@@ -3918,9 +3754,11 @@ impl From<[u8; 32]> for PeerId {
 /// Dummy certificate verifier that accepts any certificate
 /// WARNING: This is only for testing/demo purposes - use proper verification in production!
 #[derive(Debug)]
+#[allow(dead_code)]
 struct SkipServerVerification;
 
 impl SkipServerVerification {
+    #[allow(dead_code)]
     fn new() -> Arc<Self> {
         Arc::new(Self)
     }
@@ -3966,6 +3804,7 @@ impl rustls::client::danger::ServerCertVerifier for SkipServerVerification {
 }
 
 /// Default token store that accepts all tokens (for demo purposes)
+#[allow(dead_code)]
 struct DefaultTokenStore;
 
 impl crate::TokenStore for DefaultTokenStore {

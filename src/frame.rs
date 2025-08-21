@@ -40,6 +40,7 @@ impl FrameType {
     }
 
     /// Check if this is a STREAM frame type
+    #[allow(dead_code)]
     pub(crate) fn is_stream(self) -> bool {
         STREAM_TYS.contains(&self.0)
     }
@@ -2015,4 +2016,4 @@ pub(crate) mod rfc_nat_traversal;
 pub(crate) mod nat_compat;
 
 // Unified NAT traversal frames with RFC compliance and backward compatibility
-pub(crate) mod nat_traversal_unified;
+pub mod nat_traversal_unified;

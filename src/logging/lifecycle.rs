@@ -35,17 +35,29 @@ pub enum ConnectionState {
 
 /// Connection lifecycle tracker
 pub struct ConnectionLifecycle {
+    /// Identifier for the connection being tracked
     pub conn_id: ConnectionId,
+    /// Role of the connection (client or server)
     pub role: ConnectionRole,
+    /// Current lifecycle state
     pub state: ConnectionState,
+    /// Timestamp when the connection was initiated
     pub initiated_at: Instant,
+    /// Timestamp when handshake started, if applicable
     pub handshake_started_at: Option<Instant>,
+    /// Timestamp when connection was established, if applicable
     pub established_at: Option<Instant>,
+    /// Timestamp when connection was closed, if applicable
     pub closed_at: Option<Instant>,
+    /// Reason for closure, if provided
     pub close_reason: Option<String>,
+    /// Total bytes sent over the lifetime
     pub total_bytes_sent: u64,
+    /// Total bytes received over the lifetime
     pub total_bytes_received: u64,
+    /// Total packets sent over the lifetime
     pub total_packets_sent: u64,
+    /// Total packets received over the lifetime
     pub total_packets_received: u64,
 }
 
@@ -217,6 +229,7 @@ pub fn log_connection_initiated(
     );
 }
 
+/// Log when a handshake process starts for a connection
 pub fn log_handshake_started(conn_id: &ConnectionId) {
     debug!(
         target: "ant_quic::connection::lifecycle",
@@ -225,6 +238,7 @@ pub fn log_handshake_started(conn_id: &ConnectionId) {
     );
 }
 
+/// Log successful handshake completion and its duration
 pub fn log_handshake_completed(conn_id: &ConnectionId, duration: Duration) {
     info!(
         target: "ant_quic::connection::lifecycle",
@@ -234,6 +248,7 @@ pub fn log_handshake_completed(conn_id: &ConnectionId, duration: Duration) {
     );
 }
 
+/// Log connection established event including QUIC version info
 pub fn log_connection_established(conn_id: &ConnectionId, negotiated_version: u32) {
     info!(
         target: "ant_quic::connection::lifecycle",
@@ -243,6 +258,7 @@ pub fn log_connection_established(conn_id: &ConnectionId, negotiated_version: u3
     );
 }
 
+/// Log a connection migration from one path to another
 pub fn log_connection_migration(conn_id: &ConnectionId, old_path: &str, new_path: &str) {
     info!(
         target: "ant_quic::connection::lifecycle",
@@ -253,6 +269,7 @@ pub fn log_connection_migration(conn_id: &ConnectionId, old_path: &str, new_path
     );
 }
 
+/// Log a connection closure event with optional error code
 pub fn log_connection_closed(conn_id: &ConnectionId, reason: &str, error_code: Option<u64>) {
     let mut fields = HashMap::new();
     fields.insert("conn_id".to_string(), format!("{conn_id:?}"));
@@ -272,6 +289,7 @@ pub fn log_connection_closed(conn_id: &ConnectionId, reason: &str, error_code: O
     });
 }
 
+/// Log a connection lost event caused by unexpected conditions
 pub fn log_connection_lost(conn_id: &ConnectionId, reason: &str) {
     warn!(
         target: "ant_quic::connection::lifecycle",

@@ -50,9 +50,7 @@ impl MinMax {
         self.samples.fill(sample);
     }
 
-    pub(super) fn reset(&mut self) {
-        self.fill(Default::default())
-    }
+    // Removed unused reset()
 
     /// update_min is also defined in the original source, but removed here since it is not used.
     pub(super) fn update_max(&mut self, current_round: u64, measurement: u64) {

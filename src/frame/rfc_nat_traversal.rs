@@ -26,6 +26,7 @@ use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
 /// - IPv4 Address (32 bits) or IPv6 Address (128 bits)
 /// - Port (16 bits)
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(dead_code)]
 pub struct RfcAddAddress {
     /// Sequence number for this address advertisement
     pub sequence_number: VarInt,
@@ -33,6 +34,7 @@ pub struct RfcAddAddress {
     pub address: SocketAddr,
 }
 
+#[allow(dead_code)]
 impl RfcAddAddress {
     pub fn encode<W: BufMut>(&self, buf: &mut W) {
         // Frame type determines IPv4 vs IPv6
@@ -105,6 +107,7 @@ impl FrameStruct for RfcAddAddress {
 /// - IPv4 Address (32 bits) or IPv6 Address (128 bits)
 /// - Port (16 bits)
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(dead_code)]
 pub struct RfcPunchMeNow {
     /// Round number for coordination
     pub round: VarInt,
@@ -114,6 +117,7 @@ pub struct RfcPunchMeNow {
     pub address: SocketAddr,
 }
 
+#[allow(dead_code)]
 impl RfcPunchMeNow {
     pub fn encode<W: BufMut>(&self, buf: &mut W) {
         // Frame type determines IPv4 vs IPv6
@@ -180,11 +184,13 @@ impl FrameStruct for RfcPunchMeNow {
 /// - Type (i) = 0x3d7e94
 /// - Sequence Number (i)
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(dead_code)]
 pub struct RfcRemoveAddress {
     /// Sequence number of the address to remove
     pub sequence_number: VarInt,
 }
 
+#[allow(dead_code)]
 impl RfcRemoveAddress {
     pub fn encode<W: BufMut>(&self, buf: &mut W) {
         buf.write_var(FrameType::REMOVE_ADDRESS.0);

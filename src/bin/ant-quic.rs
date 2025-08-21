@@ -110,8 +110,8 @@ struct NatTraversalStatus {
     local_candidates: Vec<SocketAddr>,
     /// Server-reflexive addresses observed
     reflexive_addresses: Vec<SocketAddr>,
-    /// Active coordination sessions
-    coordination_sessions: Vec<(PeerId, String)>, // peer_id, status
+    /// Recent coordination notices (peer_id, note)
+    coordination_log: Vec<(PeerId, String)>,
     /// Last update time
     last_update: std::time::Instant,
 }
@@ -233,7 +233,7 @@ impl QuicDemoNode {
             nat_status: Arc::new(Mutex::new(NatTraversalStatus {
                 local_candidates: Vec::new(),
                 reflexive_addresses: Vec::new(),
-                coordination_sessions: Vec::new(),
+                coordination_log: Vec::new(),
                 last_update: std::time::Instant::now(),
             })),
             dashboard,
@@ -304,37 +304,7 @@ impl QuicDemoNode {
                             .await
                             .insert(peer_id, format!("bootstrap-{bootstrap_addr}"));
 
-                        // TEMPORARY: Simulate receiving OBSERVED_ADDRESS frame
-                        // In production, this would come from actual OBSERVED_ADDRESS frames
-                        // For demonstration, we'll simulate that bootstrap observes us on a public IP
-                        tokio::time::sleep(Duration::from_millis(500)).await;
-
-                        // DEMO: Simulate receiving an OBSERVED_ADDRESS frame
-                        // In production, the bootstrap node would send us our actual external address
-                        // via OBSERVED_ADDRESS frames on this connection
-
-                        // For demonstration, simulate with a public IP
-                        let simulated_external = SocketAddr::new(
-                            std::net::IpAddr::V4(std::net::Ipv4Addr::new(203, 0, 113, 42)), // Example public IP
-                            9876, // Example port
-                        );
-
-                        // Inject the "observed" address
-                        if let Err(e) = self
-                            .quic_node
-                            .inject_observed_address(simulated_external, peer_id)
-                        {
-                            warn!("Failed to inject observed address: {}", e);
-                        } else {
-                            info!(
-                                "DEMO: Simulated OBSERVED_ADDRESS reception: {}",
-                                simulated_external
-                            );
-                            info!(
-                                "In production, this would be your actual external IP:port from OBSERVED_ADDRESS frames"
-                            );
-                            // The NAT traversal system should now process this and emit events
-                        }
+                        // OBSERVED_ADDRESS frames are handled by the protocol; demo injection removed
                     }
                     Err(e) => {
                         warn!(
@@ -470,11 +440,11 @@ impl QuicDemoNode {
                         println!("Local candidates: {:?}", status.local_candidates);
                         println!("Reflexive addresses: {:?}", status.reflexive_addresses);
                         println!(
-                            "Active coordination sessions: {}",
-                            status.coordination_sessions.len()
+                            "Recent coordination events: {}",
+                            status.coordination_log.len()
                         );
-                        for (peer_id, status) in &status.coordination_sessions {
-                            println!("  - Peer {}: {}", hex::encode(&peer_id.0[..8]), status);
+                        for (peer_id, note) in &status.coordination_log {
+                            println!("  - Peer {}: {}", hex::encode(&peer_id.0[..8]), note);
                         }
                         println!("Last update: {:?} ago\n", status.last_update.elapsed());
                     } else if line == "/peers" {
@@ -771,7 +741,7 @@ impl QuicDemoNode {
                                         );
                                         let mut status = nat_status.lock().await;
                                         status
-                                            .coordination_sessions
+                                            .coordination_log
                                             .push((evt_peer, "Coordinating".to_string()));
                                         status.last_update = std::time::Instant::now();
                                     }
@@ -782,13 +752,9 @@ impl QuicDemoNode {
                                 } => {
                                     info!("[NAT] Hole punching started with peer {:?}", evt_peer);
                                     let mut status = nat_status.lock().await;
-                                    if let Some(session) = status
-                                        .coordination_sessions
-                                        .iter_mut()
-                                        .find(|(p, _)| *p == evt_peer)
-                                    {
-                                        session.1 = "Hole punching".to_string();
-                                    }
+                                    status
+                                        .coordination_log
+                                        .push((evt_peer, "Hole punching".to_string()));
                                     status.last_update = std::time::Instant::now();
                                 }
                                 NatTraversalEvent::ConnectionEstablished {
@@ -800,7 +766,10 @@ impl QuicDemoNode {
                                         evt_peer, remote_address
                                     );
                                     let mut status = nat_status.lock().await;
-                                    status.coordination_sessions.retain(|(p, _)| *p != evt_peer);
+                                    status.coordination_log.push((
+                                        evt_peer,
+                                        format!("Connected at {}", remote_address),
+                                    ));
                                     status.last_update = std::time::Instant::now();
                                 }
                                 NatTraversalEvent::TraversalFailed {
@@ -813,7 +782,9 @@ impl QuicDemoNode {
                                         evt_peer, error
                                     );
                                     let mut status = nat_status.lock().await;
-                                    status.coordination_sessions.retain(|(p, _)| *p != evt_peer);
+                                    status
+                                        .coordination_log
+                                        .push((evt_peer, format!("Failed: {}", error)));
                                     status.last_update = std::time::Instant::now();
                                 }
                                 _ => {

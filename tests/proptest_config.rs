@@ -4,7 +4,7 @@
 //! to ensure the robustness and correctness of the QUIC implementation.
 
 use proptest::prelude::*;
-use proptest::{prop_oneof, strategy::Just};
+use proptest::prop_oneof;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::time::Duration;
 
@@ -13,7 +13,6 @@ pub fn default_config() -> ProptestConfig {
     ProptestConfig {
         cases: 1000, // Increased from default 256
         max_shrink_iters: 1000,
-        max_shrink_time: Duration::from_secs(30),
         max_global_rejects: 10000,
         max_local_rejects: 1000,
         ..ProptestConfig::default()
@@ -40,7 +39,7 @@ pub fn arb_ip_addr() -> impl Strategy<Value = IpAddr> {
 
 /// Strategy for generating valid port numbers
 pub fn arb_port() -> impl Strategy<Value = u16> {
-    (1024..=65535u16) // Avoid system ports
+    1024u16..=65535u16
 }
 
 /// Strategy for generating valid socket addresses
@@ -94,7 +93,7 @@ pub fn arb_network_delay() -> impl Strategy<Value = Duration> {
 
 /// Strategy for generating packet sizes within realistic bounds
 pub fn arb_packet_size() -> impl Strategy<Value = usize> {
-    64..=65535 // Min Ethernet frame to max UDP packet
+    64usize..=65535usize
 }
 
 /// Strategy for generating realistic RTT values
@@ -110,10 +109,10 @@ pub fn arb_rtt() -> impl Strategy<Value = Duration> {
 /// Strategy for generating realistic bandwidth values (in Mbps)
 pub fn arb_bandwidth() -> impl Strategy<Value = u32> {
     prop_oneof![
-        1..=10,     // Slow connection
-        10..=50,    // Average connection
-        50..=200,   // Fast connection
-        200..=1000, // Very fast connection
+        1u32..=10u32,     // Slow connection
+        10u32..=50u32,    // Average connection
+        50u32..=200u32,   // Fast connection
+        200u32..=1000u32, // Very fast connection
     ]
 }
 
@@ -158,8 +157,10 @@ pub struct NetworkConditions {
 }
 
 /// Strategy for generating valid transport parameter values
-pub fn arb_transport_params() -> impl Strategy<Value = ant_quic::TransportParameters> {
-    // Generate valid transport parameters within specification limits
+use ant_quic::transport_parameters::TransportParameters;
+
+pub fn arb_transport_params() -> impl Strategy<Value = TransportParameters> {
+    // Generate transport parameters by decoding what we encode using the public codec APIs
     (
         any::<u32>(), // initial_max_data
         any::<u32>(), // initial_max_stream_data_bidi_local
@@ -167,7 +168,7 @@ pub fn arb_transport_params() -> impl Strategy<Value = ant_quic::TransportParame
         any::<u32>(), // initial_max_stream_data_uni
         any::<u32>(), // initial_max_streams_bidi
         any::<u32>(), // initial_max_streams_uni
-        any::<u16>(), // ack_delay_exponent
+        any::<u16>(), // ack_delay_exponent (clamped in writer)
         any::<u16>(), // max_ack_delay
         any::<u8>(),  // active_connection_id_limit
     )
@@ -183,17 +184,54 @@ pub fn arb_transport_params() -> impl Strategy<Value = ant_quic::TransportParame
                 max_ack_delay,
                 cid_limit,
             )| {
-                let mut params = ant_quic::TransportParameters::default();
-                params.initial_max_data = max_data;
-                params.initial_max_stream_data_bidi_local = stream_data_bidi_local;
-                params.initial_max_stream_data_bidi_remote = stream_data_bidi_remote;
-                params.initial_max_stream_data_uni = stream_data_uni;
-                params.initial_max_streams_bidi = streams_bidi;
-                params.initial_max_streams_uni = streams_uni;
-                params.ack_delay_exponent = ack_delay_exp.min(20); // RFC limit
-                params.max_ack_delay = max_ack_delay;
-                params.active_connection_id_limit = cid_limit.max(2).min(8); // RFC limits
-                params
+                use ant_quic::coding::Codec;
+                use bytes::BytesMut;
+
+                // Build a writer using the same encoding routine as the stack by constructing
+                // a minimal `TransportParameters` via the public constructor equivalent: decode of what we encode.
+                // We leverage the fact that TransportParameters::encode/::decode are public.
+
+                // Start from library defaults by encoding an internally created params via Connection::handshake path
+                // Since we cannot construct directly, synthesize a buffer of well-formed fields.
+
+                // Helper to write a single varint field pair (id, value)
+                fn write_kv(buf: &mut BytesMut, id: u64, val: u64) {
+                    ant_quic::VarInt::try_from(id).unwrap().encode(buf);
+                    // Values are encoded as varint with a preceding length
+                    let mut tmp = BytesMut::new();
+                    ant_quic::VarInt::try_from(val).unwrap().encode(&mut tmp);
+                    ant_quic::VarInt::from_u32(tmp.len() as u32).encode(buf);
+                    buf.extend_from_slice(&tmp);
+                }
+
+                let mut buf = BytesMut::new();
+
+                // Use the known standard IDs from the enum inside TransportParameterId
+                // We mirror minimal core parameters; decoder ignores unknowns safely.
+                // initial_max_data (0x04)
+                write_kv(&mut buf, 0x04, max_data as u64);
+                // initial_max_stream_data_bidi_local (0x05)
+                write_kv(&mut buf, 0x05, stream_data_bidi_local as u64);
+                // initial_max_stream_data_bidi_remote (0x06)
+                write_kv(&mut buf, 0x06, stream_data_bidi_remote as u64);
+                // initial_max_stream_data_uni (0x07)
+                write_kv(&mut buf, 0x07, stream_data_uni as u64);
+                // initial_max_streams_bidi (0x08)
+                write_kv(&mut buf, 0x08, streams_bidi as u64);
+                // initial_max_streams_uni (0x09)
+                write_kv(&mut buf, 0x09, streams_uni as u64);
+                // ack_delay_exponent (0x0a)
+                write_kv(&mut buf, 0x0a, (ack_delay_exp.min(20)) as u64);
+                // max_ack_delay (0x0b)
+                write_kv(&mut buf, 0x0b, max_ack_delay as u64);
+                // active_connection_id_limit (0x0e)
+                write_kv(&mut buf, 0x0e, cid_limit.max(2) as u64);
+
+                // Now decode via public API
+                let mut cursor = std::io::Cursor::new(&buf[..]);
+                // Use server side for decoding in tests (side doesn't affect these core params)
+                TransportParameters::read(ant_quic::Side::Server, &mut cursor)
+                    .expect("Failed to decode synthesized transport parameters")
             },
         )
 }

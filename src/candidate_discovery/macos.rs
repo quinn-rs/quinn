@@ -63,12 +63,14 @@ pub struct MacOSInterfaceDiscovery {
 
 /// Internal representation of a macOS network interface
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct MacOSInterface {
     /// Interface name (e.g., "en0", "en1")
     // Used in trait implementation
     name: String,
     /// Interface display name (e.g., "Wi-Fi", "Ethernet")
     // Used for user-friendly display
+    #[allow(dead_code)]
     display_name: String,
     /// Hardware type (Ethernet, Wi-Fi, etc.)
     // Used in hardware type detection
@@ -84,13 +86,16 @@ struct MacOSInterface {
     /// MTU size
     mtu: u32,
     /// Hardware address (MAC)
+    #[allow(dead_code)]
     hardware_address: Option<[u8; 6]>,
     /// Last update timestamp
+    #[allow(dead_code)]
     last_updated: Instant,
 }
 
 /// Hardware types for macOS interfaces
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
 enum HardwareType {
     // Used in interface detection
     Ethernet,
@@ -135,6 +140,7 @@ struct InterfaceFlags {
     is_up: bool,
     /// Interface is active (has valid configuration)
     // Used in interface filtering
+    #[allow(dead_code)]
     is_active: bool,
     /// Interface is wireless
     // Used in interface filtering and conversion
@@ -144,9 +150,11 @@ struct InterfaceFlags {
     is_loopback: bool,
     /// Interface supports IPv4
     // Used in interface filtering
+    #[allow(dead_code)]
     supports_ipv4: bool,
     /// Interface supports IPv6
     // Used in interface filtering
+    #[allow(dead_code)]
     supports_ipv6: bool,
     /// Interface is built-in (not USB/external)
     // Used in interface filtering
@@ -189,6 +197,7 @@ pub(crate) struct InterfaceConfig {
     min_mtu: u32,
     /// Maximum interfaces to enumerate
     // Used in filtering logic
+    #[allow(dead_code)]
     max_interfaces: u32,
 }
 
@@ -300,8 +309,10 @@ unsafe extern "C" {
         patterns: CFArrayRef,
     ) -> bool;
 
+    #[allow(dead_code)]
     fn SCDynamicStoreCopyKeyList(store: SCDynamicStoreRef, pattern: CFStringRef) -> CFArrayRef;
 
+    #[allow(dead_code)]
     fn SCDynamicStoreCopyValue(store: SCDynamicStoreRef, key: CFStringRef)
     -> *mut std::ffi::c_void;
 
@@ -327,6 +338,7 @@ unsafe extern "C" {
 #[link(name = "CoreFoundation", kind = "framework")]
 unsafe extern "C" {
     fn CFRelease(cf: *mut std::ffi::c_void);
+    #[allow(dead_code)]
     fn CFRetain(cf: *mut std::ffi::c_void) -> *mut std::ffi::c_void;
     fn CFRunLoopGetCurrent() -> CFRunLoopRef;
     fn CFRunLoopAddSource(rl: CFRunLoopRef, source: CFRunLoopSourceRef, mode: CFStringRef);
@@ -344,7 +356,9 @@ unsafe extern "C" {
         num_values: i64,
         callbacks: *const std::ffi::c_void,
     ) -> CFArrayRef;
+    #[allow(dead_code)]
     fn CFGetTypeID(cf: *mut std::ffi::c_void) -> u64;
+    #[allow(dead_code)]
     fn CFStringGetTypeID() -> u64;
     fn CFStringGetCString(
         string: CFStringRef,
@@ -421,6 +435,7 @@ impl MacOSInterfaceDiscovery {
     }
 
     /// Set interface configuration
+    #[allow(dead_code)]
     pub(crate) fn set_interface_config(&mut self, config: InterfaceConfig) {
         self.interface_config = config;
     }

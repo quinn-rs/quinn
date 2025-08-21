@@ -106,6 +106,7 @@ services:
       nat1_lan:
     cap_add:
       - NET_ADMIN
+    privileged: true
     environment:
       - NAT_TYPE=full-cone
       - ENABLE_IPV6=true
@@ -126,6 +127,7 @@ services:
       nat2_lan:
     cap_add:
       - NET_ADMIN
+    privileged: true
     environment:
       - NAT_TYPE=symmetric
       - ENABLE_IPV6=true
@@ -146,6 +148,7 @@ services:
       nat3_lan:
     cap_add:
       - NET_ADMIN
+    privileged: true
     environment:
       - NAT_TYPE=port-restricted
       - ENABLE_IPV6=true
@@ -165,6 +168,7 @@ services:
       nat4_lan:
     cap_add:
       - NET_ADMIN
+    privileged: true
     environment:
       - NAT_TYPE=cgnat
       - ENABLE_IPV6=false
@@ -192,6 +196,7 @@ services:
       - nat1_gateway
     volumes:
       - ./logs/client1:/app/logs
+    command: ["tail", "-f", "/dev/null"]
 
   # Client 2 - Behind Symmetric NAT (dual-stack)
   client2:
@@ -214,6 +219,7 @@ services:
       - nat2_gateway
     volumes:
       - ./logs/client2:/app/logs
+    command: ["tail", "-f", "/dev/null"]
 
   # Client 3 - Behind Port Restricted NAT (dual-stack)
   client3:
@@ -236,6 +242,7 @@ services:
       - nat3_gateway
     volumes:
       - ./logs/client3:/app/logs
+    command: ["tail", "-f", "/dev/null"]
 
   # Client 4 - Behind CGNAT (IPv4 only)
   client4:
@@ -257,6 +264,7 @@ services:
       - nat4_gateway
     volumes:
       - ./logs/client4:/app/logs
+    command: ["tail", "-f", "/dev/null"]
 
   # Client 5 - IPv6 only network
   client5:
@@ -280,6 +288,7 @@ services:
       - bootstrap
     volumes:
       - ./logs/client5:/app/logs
+    command: ["tail", "-f", "/dev/null"]
 
   # Test Runner - Orchestrates test execution
   test-runner:

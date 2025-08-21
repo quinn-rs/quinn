@@ -73,8 +73,10 @@ pub(crate) enum EndpointEventInner {
     /// Request to relay a PunchMeNow frame to a target peer
     RelayPunchMeNow([u8; 32], crate::frame::PunchMeNow),
     /// Request to send an AddAddress frame to the peer
+    #[allow(dead_code)]
     SendAddressFrame(crate::frame::AddAddress),
     /// NAT traversal candidate validation succeeded
+    #[allow(dead_code)]
     NatCandidateValidated { address: SocketAddr, challenge: u64 },
 }
 

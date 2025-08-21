@@ -18,46 +18,72 @@ use super::{ConnectionInfo, FrameInfo, LogEvent, NatTraversalInfo, TransportPara
 /// Connection event types
 #[derive(Debug, Clone, Copy)]
 pub enum ConnectionEventType {
+    /// Connection initialization requested
     Initiated,
+    /// TLS/QUIC handshake has begun
     HandshakeStarted,
+    /// TLS/QUIC handshake completed successfully
     HandshakeCompleted,
+    /// Connection established and ready for data
     Established,
+    /// Path migration occurred (address change)
     Migrated,
+    /// Connection closed gracefully
     Closed,
+    /// Connection lost unexpectedly
     Lost,
+    /// Progress stalled (no forward movement)
     Stalled,
 }
 
 /// Frame event types
 #[derive(Debug, Clone, Copy)]
 pub enum FrameEventType {
+    /// A frame was sent
     Sent,
+    /// A frame was received
     Received,
+    /// A frame was dropped before delivery
     Dropped,
+    /// A frame was retransmitted
     Retransmitted,
+    /// A frame was acknowledged
     Acknowledged,
 }
 
 /// Transport parameter event types
 #[derive(Debug, Clone, Copy)]
 pub enum TransportParamEventType {
+    /// Transport parameters were sent
     Sent,
+    /// Transport parameters were received
     Received,
+    /// Transport parameters were successfully negotiated
     Negotiated,
+    /// Transport parameters were rejected
     Rejected,
+    /// Transport parameters were invalid
     Invalid,
 }
 
 /// NAT traversal event types
 #[derive(Debug, Clone, Copy)]
 pub enum NatTraversalEventType {
+    /// NAT traversal initiated
     Started,
+    /// A candidate address was discovered
     CandidateDiscovered,
+    /// A candidate address was validated
     CandidateValidated,
+    /// Hole punching began
     HolePunchingStarted,
+    /// Hole punching succeeded
     HolePunchingSucceeded,
+    /// Hole punching failed
     HolePunchingFailed,
+    /// NAT traversal completed
     Completed,
+    /// NAT traversal failed
     Failed,
 }
 

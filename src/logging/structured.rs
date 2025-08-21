@@ -13,14 +13,22 @@ use crate::ConnectionId;
 /// Structured log event with full metadata
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StructuredLogEvent {
-    pub timestamp: u64, // microseconds since epoch
+    /// Timestamp in microseconds since epoch
+    pub timestamp: u64,
+    /// Log severity level
     pub level: LogLevel,
+    /// Logical target of the log (module or subsystem)
     pub target: String,
+    /// Human-readable message
     pub message: String,
+    /// Structured key/value fields attached to the record
     pub fields: Vec<(String, String)>,
+    /// Optional span identifier
     pub span_id: Option<String>,
+    /// Optional trace identifier
     #[serde(skip_serializing_if = "Option::is_none")]
     pub trace_id: Option<String>,
+    /// Optional connection identifier
     #[serde(skip_serializing_if = "Option::is_none")]
     pub connection_id: Option<String>,
 }
@@ -28,10 +36,15 @@ pub struct StructuredLogEvent {
 /// Serializable log level
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub enum LogLevel {
+    /// Error conditions
     ERROR,
+    /// Potential problems
     WARN,
+    /// Informational messages
     INFO,
+    /// Debug-level diagnostics
     DEBUG,
+    /// Verbose tracing
     TRACE,
 }
 

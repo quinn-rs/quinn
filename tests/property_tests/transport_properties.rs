@@ -2,7 +2,7 @@
 
 use super::config::*;
 use super::generators::*;
-use ant_quic::{VarInt, coding::Codec, transport_parameters::*};
+use ant_quic::{VarInt, coding::Codec, transport_parameters::TransportParameters};
 use bytes::BytesMut;
 use proptest::prelude::*;
 
@@ -45,29 +45,32 @@ proptest! {
     ) {
         let mut params = TransportParameters::default();
 
-        // Set parameters with potentially invalid values
-        if let Ok(v) = VarInt::try_from(max_data) {
-            params.initial_max_data = v.into();
+        // Re-create params by re-encoding desired values and decoding them via public API
+        use bytes::BytesMut;
+        let mut buf = BytesMut::new();
+        fn write_kv(buf: &mut BytesMut, id: u64, val: u64) {
+            ant_quic::VarInt::try_from(id).unwrap().encode(buf);
+            let mut tmp = BytesMut::new();
+            ant_quic::VarInt::try_from(val).unwrap().encode(&mut tmp);
+            ant_quic::VarInt::from_u32(tmp.len() as u32).encode(buf);
+            buf.extend_from_slice(&tmp);
         }
 
+        if let Ok(v) = VarInt::try_from(max_data) { write_kv(&mut buf, 0x04, v.into_inner()); }
         if let Ok(v) = VarInt::try_from(max_stream_data) {
-            params.initial_max_stream_data_bidi_local = v.into();
-            params.initial_max_stream_data_bidi_remote = v.into();
-            params.initial_max_stream_data_uni = v.into();
+            write_kv(&mut buf, 0x05, v.into_inner());
+            write_kv(&mut buf, 0x06, v.into_inner());
+            write_kv(&mut buf, 0x07, v.into_inner());
         }
-
         if let Ok(v) = VarInt::try_from(max_streams) {
-            params.initial_max_streams_bidi = v.into();
-            params.initial_max_streams_uni = v.into();
+            write_kv(&mut buf, 0x08, v.into_inner());
+            write_kv(&mut buf, 0x09, v.into_inner());
         }
+        if let Ok(v) = VarInt::try_from(idle_timeout) { write_kv(&mut buf, 0x01, v.into_inner()); }
+        if let Ok(v) = VarInt::try_from(payload_size) { write_kv(&mut buf, 0x03, v.into_inner()); }
 
-        if let Ok(v) = VarInt::try_from(idle_timeout) {
-            params.max_idle_timeout = Some(v.into());
-        }
-
-        if let Ok(v) = VarInt::try_from(payload_size) {
-            params.max_udp_payload_size = Some(v.into());
-        }
+        let mut cursor = std::io::Cursor::new(&buf[..]);
+        params = TransportParameters::read(ant_quic::Side::Server, &mut cursor).expect("decode");
 
         // Property: All stream data limits should be <= max data
         let max_data_val: u64 = params.initial_max_data.into();
@@ -92,7 +95,25 @@ proptest! {
     /// Property: ACK delay exponent validation
     #[test]
     fn ack_delay_exponent_validation(exponent in 0u64..50) {
-        let mut params = TransportParameters::default();
+        // Construct via encode/decode to avoid private ctor
+        use bytes::BytesMut;
+        let mut buf = BytesMut::new();
+        fn write_kv(buf: &mut BytesMut, id: u64, val: u64) {
+            ant_quic::VarInt::try_from(id).unwrap().encode(buf);
+            let mut tmp = BytesMut::new();
+            ant_quic::VarInt::try_from(val).unwrap().encode(&mut tmp);
+            ant_quic::VarInt::from_u32(tmp.len() as u32).encode(buf);
+            buf.extend_from_slice(&tmp);
+        }
+        // ack_delay_exponent id 0x0a
+        if let Ok(v) = VarInt::try_from(exponent) { write_kv(&mut buf, 0x0a, v.into_inner()); }
+        let mut cursor = std::io::Cursor::new(&buf[..]);
+        let mut params = TransportParameters::read(ant_quic::Side::Server, &mut cursor).unwrap_or_else(|_| {
+            // Fallback to an empty params set if decode fails
+            let mut b = BytesMut::new();
+            let mut c = std::io::Cursor::new(&b[..]);
+            TransportParameters::read(ant_quic::Side::Server, &mut c).unwrap_or_else(|_| panic!("decode failed"))
+        });
 
         if let Ok(v) = VarInt::try_from(exponent) {
             params.ack_delay_exponent = Some(v.into());
@@ -112,7 +133,22 @@ proptest! {
     fn stateless_reset_token_validation(
         token_bytes in prop::collection::vec(any::<u8>(), 0..20)
     ) {
-        let mut params = TransportParameters::default();
+        // Construct via encode/decode
+        use bytes::BytesMut;
+        fn write_kv(buf: &mut BytesMut, id: u64, val: u64) {
+            ant_quic::VarInt::try_from(id).unwrap().encode(buf);
+            let mut tmp = BytesMut::new();
+            ant_quic::VarInt::try_from(val).unwrap().encode(&mut tmp);
+            ant_quic::VarInt::from_u32(tmp.len() as u32).encode(buf);
+            buf.extend_from_slice(&tmp);
+        }
+        let mut buf = BytesMut::new();
+        let mut cursor = std::io::Cursor::new(&buf[..]);
+        let mut params = TransportParameters::read(ant_quic::Side::Server, &mut cursor).unwrap_or_else(|_| {
+            let mut b = BytesMut::new();
+            let mut c = std::io::Cursor::new(&b[..]);
+            TransportParameters::read(ant_quic::Side::Server, &mut c).unwrap_or_else(|_| panic!("decode failed"))
+        });
 
         if token_bytes.len() == 16 {
             // Valid token size

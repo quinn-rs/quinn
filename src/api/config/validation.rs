@@ -22,6 +22,7 @@ use crate::nat_traversal::BootstrapNode;
 /// - There is at least one bootstrap node if NAT traversal is enabled
 /// - There are no duplicate bootstrap nodes
 /// - Each bootstrap node has a valid address
+#[allow(dead_code)]
 pub(crate) fn validate_bootstrap_nodes(
     nodes: &[BootstrapNode],
     nat_traversal_enabled: bool,
@@ -63,6 +64,7 @@ pub(crate) fn validate_bootstrap_nodes(
 /// - The address is not broadcast (255.255.255.255)
 /// - The address is not multicast
 /// - The port is not 0
+#[allow(dead_code)]
 pub(crate) fn validate_socket_addr(addr: &SocketAddr, context: &str) -> Result<(), ConfigError> {
     // Check for reserved/invalid addresses
     match addr.ip() {
@@ -113,6 +115,7 @@ pub(crate) fn validate_socket_addr(addr: &SocketAddr, context: &str) -> Result<(
 /// Validate a duration value
 ///
 /// Ensures that the duration is within the specified range.
+#[allow(dead_code)]
 pub(crate) fn validate_duration(
     duration: Duration,
     min: Duration,
@@ -137,6 +140,7 @@ pub(crate) fn validate_duration(
 /// Validate a numeric value within a range
 ///
 /// Ensures that the value is within the specified range.
+#[allow(dead_code)]
 pub(crate) fn validate_range<T>(value: T, min: T, max: T, context: &str) -> Result<(), ConfigError>
 where
     T: PartialOrd + std::fmt::Display + Copy,

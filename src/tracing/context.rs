@@ -56,19 +56,18 @@ impl TraceContext {
     }
 
     /// Check if trace is being sampled
+    #[allow(dead_code)]
     pub(super) fn is_sampled(&self) -> bool {
         self.flags.sampled
     }
 
     /// Enable sampling for this trace
+    #[allow(dead_code)]
     pub(super) fn enable_sampling(&mut self) {
         self.flags.sampled = true;
     }
 
-    /// Get elapsed time since trace start
-    pub(super) fn elapsed(&self) -> u64 {
-        crate::tracing::timestamp_now() - self.start_time
-    }
+    // Removed unused elapsed()
 }
 
 impl Default for TraceContext {

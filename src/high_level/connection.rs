@@ -528,6 +528,28 @@ impl Connection {
             .send_buffer_space()
     }
 
+    /// Queue an ADD_ADDRESS NAT traversal frame via the underlying connection
+    pub fn send_nat_address_advertisement(
+        &self,
+        address: SocketAddr,
+        priority: u32,
+    ) -> Result<u64, crate::ConnectionError> {
+        let conn = &mut *self.0.state.lock("send_nat_address_advertisement");
+        conn.inner.send_nat_address_advertisement(address, priority)
+    }
+
+    /// Queue a PUNCH_ME_NOW NAT traversal frame via the underlying connection
+    pub fn send_nat_punch_coordination(
+        &self,
+        paired_with_sequence_number: u64,
+        address: SocketAddr,
+        round: u32,
+    ) -> Result<(), crate::ConnectionError> {
+        let conn = &mut *self.0.state.lock("send_nat_punch_coordination");
+        conn.inner
+            .send_nat_punch_coordination(paired_with_sequence_number, address, round)
+    }
+
     /// The side of the connection (client or server)
     pub fn side(&self) -> Side {
         self.0.state.lock("side").inner.side()

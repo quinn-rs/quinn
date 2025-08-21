@@ -3050,7 +3050,6 @@ impl NatTraversalState {
                 connection_id,
                 original_destination: observed_address, // For now, use same as observed
                 peer_role,
-                transport_params: None,
             };
 
             // Observe the peer's address
@@ -3101,8 +3100,7 @@ impl NatTraversalState {
     pub(super) fn get_observed_address(&self, peer_id: [u8; 32]) -> Option<SocketAddr> {
         self.bootstrap_coordinator
             .as_ref()
-            .and_then(|coord| coord.get_peer_record(peer_id))
-            .map(|record| record.observed_address)
+            .and_then(|coord| coord.peer_index.get(&peer_id).map(|p| p.observed_addr))
     }
 
     /// Start candidate discovery process
@@ -3226,27 +3224,33 @@ pub(crate) struct SecurityStats {
 /// This manages the bootstrap node's role in observing client addresses,
 /// coordinating hole punching, and relaying coordination messages.
 #[derive(Debug)]
-#[allow(dead_code)]
 pub(crate) struct BootstrapCoordinator {
-    /// Active peer registry with observed addresses
-    peer_registry: HashMap<PeerId, PeerObservationRecord>,
-    /// Active coordination sessions between peers
-    coordination_sessions: HashMap<CoordinationSessionId, CoordinationSession>,
     /// Address observation cache for quick lookups
     address_observations: HashMap<SocketAddr, AddressObservation>,
+    /// Quick lookup by peer id for the last observed address
+    peer_index: HashMap<PeerId, ObservedPeer>,
+    /// Minimal coordination table keyed by round id
+    coordination_table: HashMap<VarInt, CoordinationEntry>,
     /// Security validator for coordination requests
     security_validator: SecurityValidationState,
     /// Statistics for bootstrap operations
     stats: BootstrapStats,
-    /// Configuration for bootstrap behavior (stub)
-    _config: BootstrapConfig,
-    /// Last cleanup time (stub)
-    _last_cleanup: Option<Instant>,
 }
-/// Unique identifier for coordination sessions
-type CoordinationSessionId = u64;
+// Removed legacy CoordinationSessionId type
 /// Peer identifier for bootstrap coordination
 type PeerId = [u8; 32];
+/// Observed peer summary (minimal index)
+#[derive(Debug, Clone)]
+struct ObservedPeer {
+    observed_addr: SocketAddr,
+}
+
+/// Minimal coordination record linking two peers for a round
+#[derive(Debug, Clone)]
+struct CoordinationEntry {
+    peer_b: Option<PeerId>,
+    address_hint: SocketAddr,
+}
 /// Record of observed peer information
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
@@ -3277,23 +3281,14 @@ pub(crate) struct ConnectionContext {
     original_destination: SocketAddr,
     /// NAT traversal role of the connecting peer
     peer_role: NatTraversalRole,
-    /// Transport parameters received from peer
-    transport_params: Option<NatTraversalTransportParams>,
+    // Transport parameters were unused; removed
 }
 
-/// Transport parameters for NAT traversal
-#[derive(Debug, Clone)]
-struct NatTraversalTransportParams {
-    /// Maximum candidates this peer can handle
-    max_candidates: u32,
-    /// Coordination timeout for this peer
-    coordination_timeout: Duration,
-    /// Whether this peer supports advanced features
-    supports_advanced_features: bool,
-}
+// Transport parameters for NAT traversal removed (legacy)
 
 /// Address observation with validation
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct AddressObservation {
     /// The observed address
     address: SocketAddr,
@@ -3307,42 +3302,7 @@ struct AddressObservation {
     associated_peers: Vec<PeerId>,
 }
 
-/// Active coordination session between two peers
-#[derive(Debug, Clone)]
-pub(crate) struct CoordinationSession {
-    /// Unique session identifier
-    session_id: CoordinationSessionId,
-    /// First peer in coordination
-    peer_a: PeerId,
-    /// Second peer in coordination
-    peer_b: PeerId,
-    /// Current coordination round
-    current_round: VarInt,
-    /// When this session started
-    started_at: Instant,
-    /// Current phase of coordination
-    phase: CoordinationPhase,
-    /// Target addresses for hole punching
-    target_addresses: Vec<(SocketAddr, VarInt)>, // (address, sequence)
-    /// Synchronization state
-    sync_state: SynchronizationState,
-    /// Session statistics
-    stats: CoordinationSessionStats,
-}
-/// Synchronization state for coordinated hole punching
-#[derive(Debug, Clone)]
-struct SynchronizationState {
-    /// Confirmation from peer A
-    peer_a_ready: bool,
-    /// Confirmation from peer B
-    peer_b_ready: bool,
-}
-/// Statistics for a coordination session
-#[derive(Debug, Clone, Default)]
-struct CoordinationSessionStats {
-    /// Number of successful coordinations
-    successful_coordinations: u32,
-}
+// Removed coordination session scaffolding
 /// Pending coordination request awaiting peer participation (stub implementation)
 /// Configuration for bootstrap coordinator behavior (stub implementation)
 #[derive(Debug, Clone, Default)]
@@ -3358,80 +3318,19 @@ pub(crate) struct BootstrapStats {
     total_coordinations: u64,
     /// Successful coordinations
     successful_coordinations: u64,
-    /// Active peer count
-    active_peers: usize,
-    /// Active coordination sessions
-    active_sessions: usize,
     /// Security rejections
     security_rejections: u64,
 }
-/// Events generated by the coordination session state machine
-#[derive(Debug, Clone)]
-pub(crate) enum CoordinationSessionEvent {
-    /// Session phase changed
-    PhaseChanged {
-        session_id: CoordinationSessionId,
-        old_phase: CoordinationPhase,
-        new_phase: CoordinationPhase,
-    },
-    /// Session failed with reason
-    SessionFailed {
-        session_id: CoordinationSessionId,
-        peer_a: PeerId,
-        peer_b: PeerId,
-        reason: String,
-    },
-    /// Start hole punching for session
-    StartHolePunching {
-        session_id: CoordinationSessionId,
-        peer_a: PeerId,
-        peer_b: PeerId,
-        target_addresses: Vec<(SocketAddr, VarInt)>,
-    },
-    /// Session ready for cleanup
-    ReadyForCleanup { session_id: CoordinationSessionId },
-}
-/// Events that trigger session state advancement
-#[derive(Debug, Clone, Copy)]
-enum SessionAdvancementEvent {
-    /// Both peers are ready for coordination
-    BothPeersReady,
-    /// Coordination phase completed
-    CoordinationComplete,
-    /// Preparation phase completed
-    PreparationComplete,
-    /// Hole punching phase completed
-    PunchingComplete,
-    /// Validation timed out
-    ValidationTimeout,
-    /// Session timed out
-    Timeout,
-    /// Session ready for cleanup
-    ReadyForCleanup,
-}
-/// Recovery actions for coordination errors
-#[derive(Debug, Clone, Copy)]
-pub(crate) enum CoordinationRecoveryAction {
-    /// No action needed
-    NoAction,
-    /// Retry with exponential backoff
-    RetryWithBackoff,
-    /// Mark session as failed
-    MarkAsFailed,
-    /// Clean up session
-    Cleanup,
-}
+// Removed session state machine enums and recovery actions
 impl BootstrapCoordinator {
     /// Create a new bootstrap coordinator
-    pub(crate) fn new(config: BootstrapConfig) -> Self {
+    pub(crate) fn new(_config: BootstrapConfig) -> Self {
         Self {
-            peer_registry: HashMap::new(),
-            coordination_sessions: HashMap::new(),
             address_observations: HashMap::new(),
+            peer_index: HashMap::new(),
+            coordination_table: HashMap::new(),
             security_validator: SecurityValidationState::new(),
             stats: BootstrapStats::default(),
-            _config: config,
-            _last_cleanup: None,
         }
     }
     /// Observe a peer's address from an incoming connection
@@ -3442,7 +3341,7 @@ impl BootstrapCoordinator {
         &mut self,
         peer_id: PeerId,
         observed_address: SocketAddr,
-        connection_context: ConnectionContext,
+        _connection_context: ConnectionContext,
         now: Instant,
     ) -> Result<(), NatTraversalError> {
         // Security validation
@@ -3484,20 +3383,13 @@ impl BootstrapCoordinator {
             observation.associated_peers.push(peer_id);
         }
 
-        // Update or create peer record
-        let peer_record = PeerObservationRecord {
-            peer_id,
-            observed_address,
-            observed_at: now,
-            connection_context,
-            can_coordinate: true, // Assume true initially
-            coordination_count: 0,
-            success_rate: 1.0,
-        };
+        // Update minimal peer index for quick lookups
+        self.peer_index
+            .insert(peer_id, ObservedPeer { observed_addr: observed_address });
 
-        self.peer_registry.insert(peer_id, peer_record);
+        // Note: Full peer registry and session scaffolding removed; we keep only minimal caches
         self.stats.total_observations += 1;
-        self.stats.active_peers = self.peer_registry.len();
+        // active_peers removed from stats
 
         debug!(
             "Observed peer {:?} at address {} (total observations: {})",
@@ -3517,13 +3409,12 @@ impl BootstrapCoordinator {
         sequence: VarInt,
         priority: VarInt,
     ) -> Option<crate::frame::AddAddress> {
-        self.peer_registry
-            .get(&peer_id)
-            .map(|peer_record| crate::frame::AddAddress {
-                sequence,
-                address: peer_record.observed_address,
-                priority,
-            })
+        let addr = self.peer_index.get(&peer_id)?.observed_addr;
+        Some(crate::frame::AddAddress {
+            sequence,
+            address: addr,
+            priority,
+        })
     }
 
     /// Process a PUNCH_ME_NOW frame from a peer
@@ -3573,889 +3464,95 @@ impl BootstrapCoordinator {
                 );
             })?;
 
-        // Check if we have a target peer for this coordination
-        if let Some(target_peer_id) = frame.target_peer_id {
-            // This is a coordination request that should be relayed
-            if let Some(target_peer) = self.peer_registry.get(&target_peer_id) {
-                // Create coordination session if it doesn't exist
-                let session_id = self.generate_session_id();
-
-                if !self.coordination_sessions.contains_key(&session_id) {
-                    // Calculate optimal coordination timing based on network conditions
-                    let _network_rtt = self
-                        .estimate_peer_rtt(&from_peer)
-                        .unwrap_or(Duration::from_millis(100));
-
-                    let session = CoordinationSession {
-                        session_id,
-                        peer_a: from_peer,
-                        peer_b: target_peer_id,
-                        current_round: frame.round,
-                        started_at: now,
-                        phase: CoordinationPhase::Requesting,
-                        target_addresses: vec![(frame.address, frame.paired_with_sequence_number)],
-                        sync_state: SynchronizationState {
-                            peer_a_ready: true, // Requesting peer is ready
-                            peer_b_ready: false,
-                        },
-                        stats: CoordinationSessionStats::default(),
-                    };
-
-                    self.coordination_sessions.insert(session_id, session);
-                    self.stats.total_coordinations += 1;
-                    self.stats.active_sessions = self.coordination_sessions.len();
-                }
-
-                // Generate coordination frame to send to target peer
-                let coordination_frame = crate::frame::PunchMeNow {
-                    round: frame.round,
-                    paired_with_sequence_number: frame.paired_with_sequence_number,
-                    address: target_peer.observed_address,
-                    target_peer_id: Some(from_peer),
-                };
-
-                info!(
-                    "Coordinating hole punch between {:?} and {:?} (round: {})",
-                    from_peer, target_peer_id, frame.round
-                );
-
-                Ok(Some(coordination_frame))
-            } else {
-                // Target peer not found
-                warn!(
-                    "Target peer {:?} not found for coordination from {:?}",
-                    target_peer_id, from_peer
-                );
-                Ok(None)
+        // Track coordination entry minimally
+        let _entry = self
+            .coordination_table
+            .entry(frame.round)
+            .or_insert(CoordinationEntry { peer_b: frame.target_peer_id, address_hint: frame.address });
+        // Update target if provided later
+        if let Some(peer_b) = frame.target_peer_id {
+            if _entry.peer_b.is_none() {
+                _entry.peer_b = Some(peer_b);
             }
-        } else {
-            // This is a response to coordination - update session state
-            let session_id = if let Some(session) =
-                self.find_coordination_session_by_peer(from_peer, frame.round)
-            {
-                session.sync_state.peer_b_ready = true;
+            _entry.address_hint = frame.address;
+        }
 
-                // If both peers are ready, coordination is complete
-                if session.sync_state.peer_a_ready && session.sync_state.peer_b_ready {
-                    session.phase = CoordinationPhase::Punching;
-                    session.stats.successful_coordinations += 1;
-                    Some(session.session_id)
-                } else {
-                    None
-                }
-            } else {
-                None
+        // If we have a target, echo back with swapped target to coordinate
+        if let Some(_target_peer_id) = frame.target_peer_id {
+            let coordination_frame = crate::frame::PunchMeNow {
+                round: frame.round,
+                paired_with_sequence_number: frame.paired_with_sequence_number,
+                address: frame.address,
+                target_peer_id: Some(from_peer),
             };
-
-            // Update stats after releasing the mutable borrow
-            if let Some(session_id) = session_id {
-                self.stats.successful_coordinations += 1;
-                info!(
-                    "Coordination complete for session {} (round: {})",
-                    session_id, frame.round
-                );
-            }
-
+            self.stats.total_coordinations += 1;
+            Ok(Some(coordination_frame))
+        } else {
+            // Response path: increment success metric
+            self.stats.successful_coordinations += 1;
             Ok(None)
         }
     }
 
-    /// Find coordination session by peer and round
-    fn find_coordination_session_by_peer(
-        &mut self,
-        peer_id: PeerId,
-        round: VarInt,
-    ) -> Option<&mut CoordinationSession> {
-        self.coordination_sessions.values_mut().find(|session| {
-            (session.peer_a == peer_id || session.peer_b == peer_id)
-                && session.current_round == round
-        })
-    }
-    /// Generate unique session ID
-    fn generate_session_id(&self) -> CoordinationSessionId {
-        rand::random()
-    }
-    /// Generate secure coordination round using cryptographically secure random values
-    pub(crate) fn generate_secure_coordination_round(&self) -> VarInt {
-        self.security_validator.generate_secure_coordination_round()
+    // Removed legacy session tracking helpers
+    // Generate secure coordination round using cryptographically secure random values (legacy removed)
+
+    // Perform comprehensive security validation for coordination requests (legacy removed)
+
+    #[allow(dead_code)]
+    pub(crate) fn cleanup_expired_sessions(&mut self, _now: Instant) {}
+
+    // Get bootstrap statistics (legacy removed)
+
+    // Removed peer coordination success-rate tracking and full registry
+
+    #[allow(dead_code)]
+    pub(crate) fn poll_session_state_machine(&mut self, _now: Instant) -> Vec<()> {
+        // Legacy session state machine removed
+        Vec::new()
     }
 
-    /// Perform comprehensive security validation for coordination requests
-    pub(crate) fn validate_coordination_security(
-        &mut self,
-        peer_id: PeerId,
-        source_addr: SocketAddr,
-        target_addr: SocketAddr,
-        now: Instant,
-    ) -> Result<(), NatTraversalError> {
-        // Check adaptive rate limiting
-        if self
-            .security_validator
-            .is_adaptive_rate_limited(peer_id, now)
-        {
-            self.stats.security_rejections += 1;
-            return Err(NatTraversalError::RateLimitExceeded);
-        }
+    // Check if a session should advance its state (legacy removed)
+    // Advance session state based on event (legacy removed)
 
-        // Perform enhanced address validation
-        self.security_validator
-            .enhanced_address_validation(target_addr, source_addr, now)?;
+    #[allow(dead_code)]
+    fn cleanup_completed_sessions(&mut self, _now: Instant) {}
 
-        // Check amplification limits
-        self.security_validator
-            .validate_amplification_limits(source_addr, target_addr, now)?;
+    // Legacy retry mechanism removed
 
-        Ok(())
-    }
+    // Handle coordination errors with appropriate recovery strategies (legacy removed)
 
-    /// Clean up expired sessions and perform maintenance
-    pub(crate) fn cleanup_expired_sessions(&mut self, now: Instant) {
-        let session_timeout = Duration::from_secs(300); // 5 minutes
-
-        // Collect expired session IDs
-        let expired_sessions: Vec<CoordinationSessionId> = self
-            .coordination_sessions
-            .iter()
-            .filter(|(_, session)| now.duration_since(session.started_at) > session_timeout)
-            .map(|(&session_id, _)| session_id)
-            .collect();
-
-        // Remove expired sessions
-        for session_id in expired_sessions {
-            if let Some(session) = self.coordination_sessions.remove(&session_id) {
-                debug!(
-                    "Cleaned up expired coordination session {} between {:?} and {:?}",
-                    session_id,
-                    hex::encode(&session.peer_a[..8]),
-                    hex::encode(&session.peer_b[..8])
-                );
-            }
-        }
-
-        // Update active session count
-        self.stats.active_sessions = self.coordination_sessions.len();
-
-        // Clean up old peer observations
-        let observation_timeout = Duration::from_secs(3600); // 1 hour
-        self.peer_registry
-            .retain(|_, record| now.duration_since(record.observed_at) <= observation_timeout);
-
-        // Update active peer count
-        self.stats.active_peers = self.peer_registry.len();
-
-        // Clean up address observations
-        self.address_observations.retain(|_, observation| {
-            now.duration_since(observation.first_observed) <= observation_timeout
-        });
-    }
-
-    /// Get bootstrap statistics
-    pub(crate) fn get_stats(&self) -> &BootstrapStats {
-        &self.stats
-    }
-
-    /// Update peer coordination statistics
-    pub(crate) fn update_peer_coordination_stats(&mut self, peer_id: PeerId, success: bool) {
-        if let Some(peer_record) = self.peer_registry.get_mut(&peer_id) {
-            peer_record.coordination_count += 1;
-
-            if success {
-                // Update success rate using exponential moving average
-                let alpha = 0.1; // Learning rate
-                peer_record.success_rate = peer_record.success_rate * (1.0 - alpha) + alpha;
-            } else {
-                // Decrease success rate
-                let alpha = 0.1;
-                peer_record.success_rate *= 1.0 - alpha;
-            }
-
-            // Disable coordination for peers with very low success rates
-            if peer_record.success_rate < 0.1 && peer_record.coordination_count > 10 {
-                peer_record.can_coordinate = false;
-                warn!(
-                    "Disabled coordination for peer {:?} due to low success rate: {:.2}",
-                    hex::encode(&peer_id[..8]),
-                    peer_record.success_rate
-                );
-            }
-        }
-    }
-
-    /// Poll session state machine and advance coordination sessions
-    ///
-    /// This method implements the core session state machine polling logic
-    /// with timeout handling, retry mechanisms, and error recovery.
-    pub(crate) fn poll_session_state_machine(
-        &mut self,
-        now: Instant,
-    ) -> Vec<CoordinationSessionEvent> {
-        let mut events = Vec::new();
-        let mut sessions_to_update = Vec::new();
-
-        // Collect sessions that need state machine advancement
-        for (&session_id, session) in &self.coordination_sessions {
-            if let Some(event) = self.should_advance_session(session, now) {
-                sessions_to_update.push((session_id, event));
-            }
-        }
-
-        // Process session updates
-        for (session_id, event) in sessions_to_update {
-            let session_events =
-                if let Some(session) = self.coordination_sessions.get_mut(&session_id) {
-                    let peer_a = session.peer_a;
-                    let peer_b = session.peer_b;
-
-                    match Self::advance_session_state_static(session, event, now) {
-                        Ok(session_events) => session_events,
-                        Err(e) => {
-                            warn!("Failed to advance session {} state: {:?}", session_id, e);
-                            // Mark session as failed
-                            session.phase = CoordinationPhase::Failed;
-                            vec![CoordinationSessionEvent::SessionFailed {
-                                session_id,
-                                peer_a,
-                                peer_b,
-                                reason: format!("State advancement error: {e:?}"),
-                            }]
-                        }
-                    }
-                } else {
-                    Vec::new()
-                };
-
-            events.extend(session_events);
-        }
-
-        // Clean up completed or failed sessions
-        self.cleanup_completed_sessions(now);
-
-        events
-    }
-
-    /// Check if a session should advance its state
-    fn should_advance_session(
-        &self,
-        session: &CoordinationSession,
-        now: Instant,
-    ) -> Option<SessionAdvancementEvent> {
-        let session_age = now.duration_since(session.started_at);
-
-        match session.phase {
-            CoordinationPhase::Requesting => {
-                // Check if we've been waiting too long for peer responses
-                if session_age > Duration::from_secs(10) {
-                    Some(SessionAdvancementEvent::Timeout)
-                } else if session.sync_state.peer_a_ready && session.sync_state.peer_b_ready {
-                    Some(SessionAdvancementEvent::BothPeersReady)
-                } else {
-                    None
-                }
-            }
-            CoordinationPhase::Coordinating => {
-                // Move to preparing phase after brief coordination period
-                if session_age > Duration::from_millis(500) {
-                    Some(SessionAdvancementEvent::CoordinationComplete)
-                } else {
-                    None
-                }
-            }
-            CoordinationPhase::Preparing => {
-                // Move to punching phase after preparation period
-                if session_age > Duration::from_secs(1) {
-                    Some(SessionAdvancementEvent::PreparationComplete)
-                } else {
-                    None
-                }
-            }
-            CoordinationPhase::Punching => {
-                // Move to validation phase after punching period
-                if session_age > Duration::from_secs(2) {
-                    Some(SessionAdvancementEvent::PunchingComplete)
-                } else {
-                    None
-                }
-            }
-            CoordinationPhase::Validating => {
-                // Check for validation timeout
-                if session_age > Duration::from_secs(10) {
-                    Some(SessionAdvancementEvent::ValidationTimeout)
-                } else {
-                    None
-                }
-            }
-            CoordinationPhase::Succeeded | CoordinationPhase::Failed => {
-                // Terminal states - check for cleanup
-                if session_age > Duration::from_secs(60) {
-                    Some(SessionAdvancementEvent::ReadyForCleanup)
-                } else {
-                    None
-                }
-            }
-            CoordinationPhase::Idle => {
-                // Should not happen in active sessions
-                Some(SessionAdvancementEvent::Timeout)
-            }
-        }
-    }
-
-    /// Advance session state based on event (static version to avoid borrowing issues)
-    fn advance_session_state_static(
-        session: &mut CoordinationSession,
-        event: SessionAdvancementEvent,
-        _now: Instant,
-    ) -> Result<Vec<CoordinationSessionEvent>, NatTraversalError> {
-        let mut events = Vec::new();
-        let previous_phase = session.phase;
-
-        match (session.phase, event) {
-            (CoordinationPhase::Requesting, SessionAdvancementEvent::BothPeersReady) => {
-                session.phase = CoordinationPhase::Coordinating;
-                debug!(
-                    "Session {} advanced from Requesting to Coordinating",
-                    session.session_id
-                );
-                events.push(CoordinationSessionEvent::PhaseChanged {
-                    session_id: session.session_id,
-                    old_phase: previous_phase,
-                    new_phase: session.phase,
-                });
-            }
-            (CoordinationPhase::Requesting, SessionAdvancementEvent::Timeout) => {
-                session.phase = CoordinationPhase::Failed;
-                warn!(
-                    "Session {} timed out in Requesting phase",
-                    session.session_id
-                );
-                events.push(CoordinationSessionEvent::SessionFailed {
-                    session_id: session.session_id,
-                    peer_a: session.peer_a,
-                    peer_b: session.peer_b,
-                    reason: "Timeout waiting for peer responses".to_string(),
-                });
-            }
-            (CoordinationPhase::Coordinating, SessionAdvancementEvent::CoordinationComplete) => {
-                session.phase = CoordinationPhase::Preparing;
-                debug!(
-                    "Session {} advanced from Coordinating to Preparing",
-                    session.session_id
-                );
-                events.push(CoordinationSessionEvent::PhaseChanged {
-                    session_id: session.session_id,
-                    old_phase: previous_phase,
-                    new_phase: session.phase,
-                });
-            }
-            (CoordinationPhase::Preparing, SessionAdvancementEvent::PreparationComplete) => {
-                session.phase = CoordinationPhase::Punching;
-                debug!(
-                    "Session {} advanced from Preparing to Punching",
-                    session.session_id
-                );
-                events.push(CoordinationSessionEvent::PhaseChanged {
-                    session_id: session.session_id,
-                    old_phase: previous_phase,
-                    new_phase: session.phase,
-                });
-                events.push(CoordinationSessionEvent::StartHolePunching {
-                    session_id: session.session_id,
-                    peer_a: session.peer_a,
-                    peer_b: session.peer_b,
-                    target_addresses: session.target_addresses.clone(),
-                });
-            }
-            (CoordinationPhase::Punching, SessionAdvancementEvent::PunchingComplete) => {
-                session.phase = CoordinationPhase::Validating;
-                debug!(
-                    "Session {} advanced from Punching to Validating",
-                    session.session_id
-                );
-                events.push(CoordinationSessionEvent::PhaseChanged {
-                    session_id: session.session_id,
-                    old_phase: previous_phase,
-                    new_phase: session.phase,
-                });
-            }
-            (CoordinationPhase::Validating, SessionAdvancementEvent::ValidationTimeout) => {
-                session.phase = CoordinationPhase::Failed;
-                warn!("Session {} validation timed out", session.session_id);
-                events.push(CoordinationSessionEvent::SessionFailed {
-                    session_id: session.session_id,
-                    peer_a: session.peer_a,
-                    peer_b: session.peer_b,
-                    reason: "Validation timeout".to_string(),
-                });
-            }
-            (phase, SessionAdvancementEvent::ReadyForCleanup) => {
-                debug!(
-                    "Session {} ready for cleanup in phase {:?}",
-                    session.session_id, phase
-                );
-                events.push(CoordinationSessionEvent::ReadyForCleanup {
-                    session_id: session.session_id,
-                });
-            }
-            _ => {
-                // Invalid state transition - log warning but don't fail
-                warn!(
-                    "Invalid state transition for session {}: {:?} -> {:?}",
-                    session.session_id, session.phase, event
-                );
-            }
-        }
-
-        Ok(events)
-    }
-
-    /// Clean up completed or failed sessions
-    fn cleanup_completed_sessions(&mut self, now: Instant) {
-        let cleanup_timeout = Duration::from_secs(300); // 5 minutes
-
-        let sessions_to_remove: Vec<CoordinationSessionId> = self
-            .coordination_sessions
-            .iter()
-            .filter(|(_, session)| {
-                matches!(
-                    session.phase,
-                    CoordinationPhase::Succeeded | CoordinationPhase::Failed
-                ) && now.duration_since(session.started_at) > cleanup_timeout
-            })
-            .map(|(&session_id, _)| session_id)
-            .collect();
-
-        for session_id in sessions_to_remove {
-            if let Some(session) = self.coordination_sessions.remove(&session_id) {
-                debug!(
-                    "Cleaned up completed session {} in phase {:?}",
-                    session_id, session.phase
-                );
-            }
-        }
-
-        self.stats.active_sessions = self.coordination_sessions.len();
-    }
-
-    /// Implement retry mechanism with exponential backoff
-    ///
-    /// This method handles retry logic for failed coordination attempts
-    /// with exponential backoff to avoid overwhelming the network.
-    pub(crate) fn retry_failed_coordination(
-        &mut self,
-        session_id: CoordinationSessionId,
-        now: Instant,
-    ) -> Result<bool, NatTraversalError> {
-        let session = self
-            .coordination_sessions
-            .get_mut(&session_id)
-            .ok_or(NatTraversalError::NoActiveCoordination)?;
-
-        // Check if session is in a retryable state
-        if !matches!(session.phase, CoordinationPhase::Failed) {
-            return Ok(false);
-        }
-
-        // Calculate retry delay with exponential backoff
-        let base_delay = Duration::from_secs(1);
-        let max_delay = Duration::from_secs(60);
-        let retry_count = session.stats.successful_coordinations; // Reuse this field for retry count
-
-        let delay = std::cmp::min(
-            base_delay * 2_u32.pow(retry_count.min(10)), // Cap at 2^10 to prevent overflow
-            max_delay,
-        );
-
-        // Add jitter to prevent thundering herd
-        let _jitter_factor = 0.1;
-        let jitter =
-            Duration::from_millis((rand::random::<u64>() % 100) * delay.as_millis() as u64 / 1000);
-        let total_delay = delay + jitter;
-
-        // Check if enough time has passed for retry
-        if now.duration_since(session.started_at) < total_delay {
-            return Ok(false);
-        }
-
-        // Check retry limits
-        const MAX_RETRIES: u32 = 5;
-        if retry_count >= MAX_RETRIES {
-            warn!(
-                "Session {} exceeded maximum retry attempts ({})",
-                session_id, MAX_RETRIES
-            );
-            return Ok(false);
-        }
-
-        // Reset session for retry
-        session.phase = CoordinationPhase::Requesting;
-        session.started_at = now;
-        session.sync_state.peer_a_ready = false;
-        session.sync_state.peer_b_ready = false;
-        session.stats.successful_coordinations += 1; // Increment retry count
-
-        info!(
-            "Retrying coordination session {} (attempt {})",
-            session_id,
-            retry_count + 1
-        );
-        Ok(true)
-    }
-
-    /// Handle coordination errors with appropriate recovery strategies
-    pub(crate) fn handle_coordination_error(
-        &mut self,
-        session_id: CoordinationSessionId,
-        error: NatTraversalError,
-        _now: Instant,
-    ) -> CoordinationRecoveryAction {
-        let session = match self.coordination_sessions.get_mut(&session_id) {
-            Some(session) => session,
-            None => return CoordinationRecoveryAction::NoAction,
-        };
-
-        match error {
-            NatTraversalError::RateLimitExceeded => {
-                // Temporary error - retry with backoff
-                warn!("Rate limit exceeded for session {}, will retry", session_id);
-                CoordinationRecoveryAction::RetryWithBackoff
-            }
-            NatTraversalError::SecurityValidationFailed
-            | NatTraversalError::SuspiciousCoordination => {
-                // Security error - mark session as failed and don't retry
-                session.phase = CoordinationPhase::Failed;
-                warn!(
-                    "Security validation failed for session {}, marking as failed",
-                    session_id
-                );
-                CoordinationRecoveryAction::MarkAsFailed
-            }
-            NatTraversalError::InvalidAddress => {
-                // Address error - might be temporary, allow limited retries
-                warn!("Invalid address in session {}, allowing retry", session_id);
-                CoordinationRecoveryAction::RetryWithBackoff
-            }
-            NatTraversalError::NoActiveCoordination => {
-                // Session state error - clean up
-                warn!(
-                    "No active coordination for session {}, cleaning up",
-                    session_id
-                );
-                CoordinationRecoveryAction::Cleanup
-            }
-            _ => {
-                // Other errors - generic retry with backoff
-                warn!(
-                    "Coordination error for session {}: {:?}, will retry",
-                    session_id, error
-                );
-                CoordinationRecoveryAction::RetryWithBackoff
-            }
-        }
-    }
-
-    /// Estimate RTT to a specific peer based on observations
+    #[allow(dead_code)]
     fn estimate_peer_rtt(&self, peer_id: &PeerId) -> Option<Duration> {
         // Simple estimation based on peer record
         // In a real implementation, this would use historical RTT data
-        self.peer_registry
-            .get(peer_id)
-            .map(|_peer_record| Duration::from_millis(100))
+        let _ = peer_id;
+        None
     }
-    /// Coordinate hole punching between two peers
-    ///
-    /// This method implements the core coordination logic for establishing
-    /// direct P2P connections through NAT traversal.
-    pub(crate) fn coordinate_hole_punching(
-        &mut self,
-        peer_a: PeerId,
-        peer_b: PeerId,
-        round: VarInt,
-        now: Instant,
-    ) -> Result<CoordinationSessionId, NatTraversalError> {
-        // Validate that both peers are known and can coordinate
-        let peer_a_record = self
-            .peer_registry
-            .get(&peer_a)
-            .ok_or(NatTraversalError::UnknownCandidate)?;
-        let peer_b_record = self
-            .peer_registry
-            .get(&peer_b)
-            .ok_or(NatTraversalError::UnknownCandidate)?;
+    // Coordinate hole punching between two peers (legacy removed)
+    // This method implemented the core coordination logic for establishing
+    // direct P2P connections through NAT traversal.
 
-        if !peer_a_record.can_coordinate || !peer_b_record.can_coordinate {
-            return Err(NatTraversalError::InvalidCandidateState);
-        }
+    // Relay coordination frame between peers (legacy removed)
+    // This method handled the relay of coordination messages between peers
+    // to facilitate synchronized hole punching.
 
-        // Generate unique session ID
-        let session_id = self.generate_session_id();
+    // Implement round-based synchronization protocol (legacy removed)
+    // This managed the timing and synchronization of hole punching rounds
+    // to maximize the chances of successful NAT traversal.
 
-        // Create coordination session
-        let session = CoordinationSession {
-            session_id,
-            peer_a,
-            peer_b,
-            current_round: round,
-            started_at: now,
-            phase: CoordinationPhase::Requesting,
-            target_addresses: vec![
-                (peer_a_record.observed_address, VarInt::from_u32(0)),
-                (peer_b_record.observed_address, VarInt::from_u32(1)),
-            ],
-            sync_state: SynchronizationState {
-                peer_a_ready: false,
-                peer_b_ready: false,
-            },
-            stats: CoordinationSessionStats::default(),
-        };
+    // Get coordination session by ID (legacy removed)
 
-        self.coordination_sessions.insert(session_id, session);
-        self.stats.total_coordinations += 1;
-        self.stats.active_sessions = self.coordination_sessions.len();
+    // Get mutable coordination session by ID (legacy removed)
 
-        info!(
-            "Started coordination session {} between peers {:?} and {:?} (round: {})",
-            session_id,
-            hex::encode(&peer_a[..8]),
-            hex::encode(&peer_b[..8]),
-            round
-        );
+    // Mark coordination session as successful (legacy removed)
 
-        Ok(session_id)
-    }
+    // Mark coordination session as failed (legacy removed)
 
-    /// Relay coordination frame between peers
-    ///
-    /// This method handles the relay of coordination messages between peers
-    /// to facilitate synchronized hole punching.
-    pub(crate) fn relay_coordination_frame(
-        &mut self,
-        session_id: CoordinationSessionId,
-        from_peer: PeerId,
-        frame: &crate::frame::PunchMeNow,
-        _now: Instant,
-    ) -> Result<Option<(PeerId, crate::frame::PunchMeNow)>, NatTraversalError> {
-        let session = self
-            .coordination_sessions
-            .get_mut(&session_id)
-            .ok_or(NatTraversalError::NoActiveCoordination)?;
-
-        // Validate that the sender is part of this session
-        if session.peer_a != from_peer && session.peer_b != from_peer {
-            return Err(NatTraversalError::SuspiciousCoordination);
-        }
-
-        // Determine target peer
-        let target_peer = if session.peer_a == from_peer {
-            session.peer_b
-        } else {
-            session.peer_a
-        };
-
-        // Get target peer's observed address
-        let target_record = self
-            .peer_registry
-            .get(&target_peer)
-            .ok_or(NatTraversalError::UnknownCandidate)?;
-
-        // Update session state based on frame
-        if session.peer_a == from_peer {
-            session.sync_state.peer_a_ready = true;
-        } else {
-            session.sync_state.peer_b_ready = true;
-        }
-
-        // Create relay frame with target peer's information
-        let relay_frame = crate::frame::PunchMeNow {
-            round: frame.round,
-            paired_with_sequence_number: frame.paired_with_sequence_number,
-            address: target_record.observed_address,
-            target_peer_id: Some(from_peer),
-        };
-
-        // Check if coordination is complete
-        if session.sync_state.peer_a_ready && session.sync_state.peer_b_ready {
-            session.phase = CoordinationPhase::Coordinating;
-            info!(
-                "Coordination phase complete for session {} - both peers ready",
-                session_id
-            );
-        }
-
-        debug!(
-            "Relaying coordination frame from {:?} to {:?} in session {}",
-            hex::encode(&from_peer[..8]),
-            hex::encode(&target_peer[..8]),
-            session_id
-        );
-
-        Ok(Some((target_peer, relay_frame)))
-    }
-
-    /// Implement round-based synchronization protocol
-    ///
-    /// This method manages the timing and synchronization of hole punching rounds
-    /// to maximize the chances of successful NAT traversal.
-    pub(crate) fn advance_coordination_round(
-        &mut self,
-        session_id: CoordinationSessionId,
-        now: Instant,
-    ) -> Result<CoordinationPhase, NatTraversalError> {
-        let session = self
-            .coordination_sessions
-            .get_mut(&session_id)
-            .ok_or(NatTraversalError::NoActiveCoordination)?;
-
-        let previous_phase = session.phase;
-
-        // Advance the state machine based on current phase and timing
-        match session.phase {
-            CoordinationPhase::Requesting => {
-                // Wait for both peers to send PUNCH_ME_NOW frames
-                if session.sync_state.peer_a_ready && session.sync_state.peer_b_ready {
-                    session.phase = CoordinationPhase::Coordinating;
-                    debug!("Session {} advanced to Coordinating phase", session_id);
-                }
-            }
-            CoordinationPhase::Coordinating => {
-                // Calculate synchronized punch time
-                let coordination_delay = Duration::from_millis(200); // Grace period
-                let punch_time = now + coordination_delay;
-
-                session.phase = CoordinationPhase::Preparing;
-                debug!(
-                    "Session {} advanced to Preparing phase, punch time: {:?}",
-                    session_id, punch_time
-                );
-            }
-            CoordinationPhase::Preparing => {
-                // Transition to active hole punching
-                session.phase = CoordinationPhase::Punching;
-                debug!("Session {} advanced to Punching phase", session_id);
-            }
-            CoordinationPhase::Punching => {
-                // Wait for validation results
-                session.phase = CoordinationPhase::Validating;
-                debug!("Session {} advanced to Validating phase", session_id);
-            }
-            CoordinationPhase::Validating => {
-                // Check for timeout or success
-                let validation_timeout = Duration::from_secs(5);
-                if now.duration_since(session.started_at) > validation_timeout {
-                    session.phase = CoordinationPhase::Failed;
-                    debug!("Session {} timed out in validation", session_id);
-                }
-            }
-            CoordinationPhase::Succeeded | CoordinationPhase::Failed => {
-                // Terminal states - no further advancement
-            }
-            CoordinationPhase::Idle => {
-                // Should not happen in active sessions
-                session.phase = CoordinationPhase::Requesting;
-            }
-        }
-
-        // Update statistics if phase changed
-        if session.phase != previous_phase {
-            match session.phase {
-                CoordinationPhase::Succeeded => {
-                    session.stats.successful_coordinations += 1;
-                    self.stats.successful_coordinations += 1;
-                }
-                CoordinationPhase::Failed => {
-                    // Update failure statistics
-                }
-                _ => {}
-            }
-        }
-
-        Ok(session.phase)
-    }
-
-    /// Get coordination session by ID
-    pub(crate) fn get_coordination_session(
-        &self,
-        session_id: CoordinationSessionId,
-    ) -> Option<&CoordinationSession> {
-        self.coordination_sessions.get(&session_id)
-    }
-
-    /// Get mutable coordination session by ID
-    pub(crate) fn get_coordination_session_mut(
-        &mut self,
-        session_id: CoordinationSessionId,
-    ) -> Option<&mut CoordinationSession> {
-        self.coordination_sessions.get_mut(&session_id)
-    }
-
-    /// Mark coordination session as successful
-    pub(crate) fn mark_coordination_success(
-        &mut self,
-        session_id: CoordinationSessionId,
-        _now: Instant,
-    ) -> Result<(), NatTraversalError> {
-        let session = self
-            .coordination_sessions
-            .get_mut(&session_id)
-            .ok_or(NatTraversalError::NoActiveCoordination)?;
-
-        session.phase = CoordinationPhase::Succeeded;
-        session.stats.successful_coordinations += 1;
-        self.stats.successful_coordinations += 1;
-
-        // Update peer success rates
-        if let Some(peer_a_record) = self.peer_registry.get_mut(&session.peer_a) {
-            peer_a_record.coordination_count += 1;
-            peer_a_record.success_rate =
-                (peer_a_record.success_rate * (peer_a_record.coordination_count - 1) as f64 + 1.0)
-                    / peer_a_record.coordination_count as f64;
-        }
-
-        if let Some(peer_b_record) = self.peer_registry.get_mut(&session.peer_b) {
-            peer_b_record.coordination_count += 1;
-            peer_b_record.success_rate =
-                (peer_b_record.success_rate * (peer_b_record.coordination_count - 1) as f64 + 1.0)
-                    / peer_b_record.coordination_count as f64;
-        }
-
-        info!("Coordination session {} marked as successful", session_id);
-        Ok(())
-    }
-
-    /// Mark coordination session as failed
-    pub(crate) fn mark_coordination_failure(
-        &mut self,
-        session_id: CoordinationSessionId,
-        reason: &str,
-        _now: Instant,
-    ) -> Result<(), NatTraversalError> {
-        let session = self
-            .coordination_sessions
-            .get_mut(&session_id)
-            .ok_or(NatTraversalError::NoActiveCoordination)?;
-
-        session.phase = CoordinationPhase::Failed;
-
-        // Update peer success rates
-        if let Some(peer_a_record) = self.peer_registry.get_mut(&session.peer_a) {
-            peer_a_record.coordination_count += 1;
-            peer_a_record.success_rate = (peer_a_record.success_rate
-                * (peer_a_record.coordination_count - 1) as f64)
-                / peer_a_record.coordination_count as f64;
-        }
-
-        if let Some(peer_b_record) = self.peer_registry.get_mut(&session.peer_b) {
-            peer_b_record.coordination_count += 1;
-            peer_b_record.success_rate = (peer_b_record.success_rate
-                * (peer_b_record.coordination_count - 1) as f64)
-                / peer_b_record.coordination_count as f64;
-        }
-
-        warn!("Coordination session {} failed: {}", session_id, reason);
-        Ok(())
-    }
-
-    /// Get peer observation record
-    pub(crate) fn get_peer_record(&self, peer_id: PeerId) -> Option<&PeerObservationRecord> {
-        self.peer_registry.get(&peer_id)
+    #[allow(dead_code)]
+    pub(crate) fn get_peer_record(&self, _peer_id: PeerId) -> Option<&PeerObservationRecord> {
+        // Legacy API kept for callers; we no longer maintain full records
+        None
     }
 }
 

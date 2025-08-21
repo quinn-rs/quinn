@@ -27,19 +27,7 @@ mod tests {
 
     use std::sync::{Arc, Mutex};
 
-    /// Mock subscriber for testing log output
-    #[derive(Default)]
-    struct MockLogCollector {
-        events: Arc<Mutex<Vec<TestLogEvent>>>,
-    }
-
-    #[derive(Debug, Clone)]
-    struct TestLogEvent {
-        level: Level,
-        message: String,
-        fields: Vec<(String, String)>,
-        target: String,
-    }
+    // Removed unused mock collector scaffolding
 
     #[test]
     fn test_structured_logging() {

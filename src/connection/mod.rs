@@ -541,17 +541,7 @@ impl Connection {
         }
     }
 
-    /// Get the trace context for logging
-    #[cfg(feature = "trace")]
-    pub(crate) fn trace_context(&self) -> &crate::tracing::TraceContext {
-        &self.trace_context
-    }
-
-    /// Get the event log for logging
-    #[cfg(feature = "trace")]
-    pub(crate) fn event_log(&self) -> &Arc<crate::tracing::EventLog> {
-        &self.event_log
-    }
+    // Removed unused trace accessors to eliminate dead_code warnings
 
     /// Provide control over streams
     #[must_use]

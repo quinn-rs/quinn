@@ -29,6 +29,7 @@ mod min_max;
 /// of BBR <https://datatracker.ietf.org/doc/html/draft-cardwell-iccrg-bbr-congestion-control>.
 /// More discussion and links at <https://groups.google.com/g/bbr-dev>.
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub(crate) struct Bbr {
     config: Arc<BbrConfig>,
     current_mtu: u64,
@@ -380,7 +381,8 @@ impl Bbr {
         if bw >= target {
             self.bw_at_last_round = bw;
             self.round_wo_bw_gain = 0;
-            self.ack_aggregation.max_ack_height.reset();
+            // Reset not supported anymore; reinitialize the window instead
+            self.ack_aggregation.max_ack_height = Default::default();
             return;
         }
 
@@ -524,6 +526,7 @@ impl BbrConfig {
     /// Default limit on the amount of outstanding data in bytes.
     ///
     /// Recommended value: `min(10 * max_datagram_size, max(2 * max_datagram_size, 14720))`
+    #[allow(dead_code)]
     pub(crate) fn initial_window(&mut self, value: u64) -> &mut Self {
         self.initial_window = value;
         self

@@ -17,56 +17,95 @@ use unicode_width::UnicodeWidthStr;
 
 /// ANSI color codes for terminal output
 pub mod colors {
+    /// Reset all formatting
     pub const RESET: &str = "\x1b[0m";
+    /// Bold text
     pub const BOLD: &str = "\x1b[1m";
+    /// Dim text
     pub const DIM: &str = "\x1b[2m";
 
     // Regular colors
+    /// Black foreground
     pub const BLACK: &str = "\x1b[30m";
+    /// Red foreground
     pub const RED: &str = "\x1b[31m";
+    /// Green foreground
     pub const GREEN: &str = "\x1b[32m";
+    /// Yellow foreground
     pub const YELLOW: &str = "\x1b[33m";
+    /// Blue foreground
     pub const BLUE: &str = "\x1b[34m";
+    /// Magenta foreground
     pub const MAGENTA: &str = "\x1b[35m";
+    /// Cyan foreground
     pub const CYAN: &str = "\x1b[36m";
+    /// White foreground
     pub const WHITE: &str = "\x1b[37m";
 
     // Bright colors
+    /// Bright black foreground
     pub const BRIGHT_BLACK: &str = "\x1b[90m";
+    /// Bright red foreground
     pub const BRIGHT_RED: &str = "\x1b[91m";
+    /// Bright green foreground
     pub const BRIGHT_GREEN: &str = "\x1b[92m";
+    /// Bright yellow foreground
     pub const BRIGHT_YELLOW: &str = "\x1b[93m";
+    /// Bright blue foreground
     pub const BRIGHT_BLUE: &str = "\x1b[94m";
+    /// Bright magenta foreground
     pub const BRIGHT_MAGENTA: &str = "\x1b[95m";
+    /// Bright cyan foreground
     pub const BRIGHT_CYAN: &str = "\x1b[96m";
+    /// Bright white foreground
     pub const BRIGHT_WHITE: &str = "\x1b[97m";
 }
 
 /// Unicode symbols for visual indicators
 pub mod symbols {
+    /// Success indicator (check mark)
     pub const CHECK: &str = "✓";
+    /// Error indicator (cross mark)
     pub const CROSS: &str = "✗";
+    /// Information indicator (info symbol)
     pub const INFO: &str = "ℹ";
+    /// Warning indicator (warning triangle)
     pub const WARNING: &str = "⚠";
+    /// Right arrow glyph
     pub const ARROW_RIGHT: &str = "→";
+    /// Bullet point glyph
     pub const DOT: &str = "•";
+    /// Key glyph (used for authentication)
     pub const KEY: &str = "🔑";
+    /// Network antenna glyph
     pub const NETWORK: &str = "📡";
+    /// Globe glyph (used for public network)
     pub const GLOBE: &str = "🌐";
+    /// Rocket glyph (used for startup)
     pub const ROCKET: &str = "🚀";
+    /// Hourglass glyph (used for waiting)
     pub const HOURGLASS: &str = "⏳";
+    /// Circular arrows glyph (used for retry/progress)
     pub const CIRCULAR_ARROWS: &str = "⟳";
 }
 
 /// Box drawing characters for borders
 pub mod box_chars {
+    /// Top-left box corner
     pub const TOP_LEFT: &str = "╭";
+    /// Top-right box corner
     pub const TOP_RIGHT: &str = "╮";
+    /// Bottom-left box corner
     pub const BOTTOM_LEFT: &str = "╰";
+    /// Bottom-right box corner
     pub const BOTTOM_RIGHT: &str = "╯";
+    /// Horizontal line
     pub const HORIZONTAL: &str = "─";
+    /// Vertical line
     pub const VERTICAL: &str = "│";
+    /// T-junction left
     pub const T_LEFT: &str = "├";
+    /// T-junction right
     pub const T_RIGHT: &str = "┤";
 }
 
@@ -316,6 +355,7 @@ pub struct ProgressIndicator {
 }
 
 impl ProgressIndicator {
+    /// Create a new progress indicator with a message
     pub fn new(message: String) -> Self {
         Self {
             message,
@@ -324,6 +364,7 @@ impl ProgressIndicator {
         }
     }
 
+    /// Advance the spinner by one frame and redraw
     pub fn tick(&mut self) {
         print!(
             "\r{} {} {} ",
@@ -336,6 +377,7 @@ impl ProgressIndicator {
         io::stdout().flush().unwrap();
     }
 
+    /// Finish the progress indicator with a success message
     pub fn finish_success(&self, message: &str) {
         println!(
             "\r{} {}{}{} {}",
@@ -347,6 +389,7 @@ impl ProgressIndicator {
         );
     }
 
+    /// Finish the progress indicator with an error message
     pub fn finish_error(&self, message: &str) {
         println!(
             "\r{} {}{}{} {}",

@@ -103,6 +103,7 @@ pub(crate) const BASE_DATAGRAM_SIZE: u64 = 1200;
 ///
 /// This is a minimal implementation that provides basic congestion control.
 #[derive(Clone)]
+#[allow(dead_code)]
 pub(crate) struct NewReno {
     /// Current congestion window size
     window: u64,
@@ -128,6 +129,7 @@ pub(crate) struct NewReno {
 
 impl NewReno {
     /// Create a new NewReno controller
+    #[allow(dead_code)]
     pub(crate) fn new(min_window: u64, max_window: u64, now: Instant) -> Self {
         let initial_window = min_window.max(10 * BASE_DATAGRAM_SIZE);
         Self {

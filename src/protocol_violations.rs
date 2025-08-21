@@ -20,21 +20,19 @@ use tracing::error;
 
 /// Simplified packet type for protocol validation
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
 pub(crate) enum PacketType {
     /// Initial packet
     Initial,
     /// Handshake packet
     Handshake,
-    /// 0-RTT packet
-    ZeroRtt,
     /// 1-RTT short header packet
     Short,
-    /// Retry packet
-    Retry,
 }
 
 impl PacketType {
     /// Convert from Header to PacketType
+    #[allow(dead_code)]
     pub(crate) fn from_header(header: &Header) -> Self {
         match header {
             Header::Initial(_) => Self::Initial,
@@ -45,15 +43,16 @@ impl PacketType {
             Header::Long {
                 ty: LongType::ZeroRtt,
                 ..
-            } => Self::ZeroRtt,
+            } => Self::Short, // treat as short path for validation table
             Header::Short { .. } => Self::Short,
-            Header::Retry { .. } => Self::Retry,
-            Header::VersionNegotiate { .. } => Self::Retry, // Treat as special case
+            Header::Retry { .. } => Self::Initial, // treat as initial-equivalent for restrictions
+            Header::VersionNegotiate { .. } => Self::Initial, // treat as initial-equivalent
         }
     }
 }
 
 /// Protocol validator for tracking connection-wide protocol state
+#[allow(dead_code)]
 pub(crate) struct ProtocolValidator {
     /// Track if HANDSHAKE_DONE has been sent (must be exactly once)
     handshake_done_sent: bool,
@@ -65,6 +64,7 @@ pub(crate) struct ProtocolValidator {
 
 impl ProtocolValidator {
     /// Create a new protocol validator
+    #[allow(dead_code)]
     pub(crate) fn new(side: Side) -> Self {
         Self {
             handshake_done_sent: false,
@@ -74,6 +74,7 @@ impl ProtocolValidator {
     }
 
     /// Record that a HANDSHAKE_DONE frame was sent
+    #[allow(dead_code)]
     pub(crate) fn record_handshake_done(&mut self) -> Result<(), TransportError> {
         if self.handshake_done_sent {
             error!(
@@ -91,11 +92,13 @@ impl ProtocolValidator {
     }
 
     /// Record a sent PATH_CHALLENGE
+    #[allow(dead_code)]
     pub(crate) fn record_path_challenge(&mut self, data: u64) {
         self.path_challenges.insert(data);
     }
 
     /// Validate a received PATH_RESPONSE
+    #[allow(dead_code)]
     pub(crate) fn validate_path_response(&mut self, data: u64) -> Result<(), TransportError> {
         if !self.path_challenges.remove(&data) {
             error!(
@@ -113,6 +116,7 @@ impl ProtocolValidator {
 }
 
 /// Validate that a frame type is allowed in a given packet type
+#[allow(dead_code)]
 pub(crate) fn validate_frame_in_packet_type(
     frame_type: FrameType,
     packet_type: PacketType,
@@ -183,6 +187,7 @@ pub(crate) fn validate_frame_in_packet_type(
 }
 
 /// Validate ACK frame packet number space
+#[allow(dead_code)]
 pub(crate) fn validate_ack_frame_space(
     packet_space: SpaceId,
     acked_space: SpaceId,
@@ -204,16 +209,19 @@ pub(crate) fn validate_ack_frame_space(
 }
 
 /// Check if connection is in handshake state
+#[allow(dead_code)]
 pub(crate) fn is_handshake_state(conn_state: &ConnectionState) -> bool {
     matches!(conn_state, ConnectionState::Handshake(_))
 }
 
 /// Check if connection is established
+#[allow(dead_code)]
 pub(crate) fn is_established_state(conn_state: &ConnectionState) -> bool {
     matches!(conn_state, ConnectionState::Established)
 }
 
 /// Validate frame is allowed in current connection state
+#[allow(dead_code)]
 pub(crate) fn validate_frame_in_connection_state(
     frame_type: FrameType,
     conn_state: &ConnectionState,
@@ -254,6 +262,7 @@ pub(crate) fn validate_frame_in_connection_state(
 }
 
 /// Validate coalesced packet ordering
+#[allow(dead_code)]
 pub(crate) fn validate_coalesced_packet_order(
     packet_types: Vec<PacketType>,
 ) -> Result<(), TransportError> {
@@ -282,6 +291,7 @@ pub(crate) fn validate_coalesced_packet_order(
 }
 
 /// Validate version negotiation packet
+#[allow(dead_code)]
 pub(crate) fn validate_version_negotiation_packet(
     versions: &[u8],
     is_client: bool,
@@ -318,6 +328,7 @@ pub(crate) fn validate_version_negotiation_packet(
 }
 
 /// Create a PROTOCOL_VIOLATION error with proper context
+#[allow(dead_code)]
 pub(crate) fn create_protocol_violation(
     reason: &str,
     frame_type: Option<FrameType>,
@@ -330,6 +341,7 @@ pub(crate) fn create_protocol_violation(
 }
 
 /// Create a CONNECTION_CLOSE frame for protocol violations
+#[allow(dead_code)]
 pub(crate) fn create_protocol_violation_close(
     reason: &str,
     frame_type: Option<FrameType>,
@@ -343,6 +355,7 @@ pub(crate) fn create_protocol_violation_close(
 }
 
 /// Log protocol violation with RFC reference
+#[allow(dead_code)]
 pub(crate) fn log_protocol_violation(violation_type: &str, details: &str, rfc_section: &str) {
     error!(
         violation = violation_type,

@@ -14,9 +14,13 @@ use std::collections::HashMap;
 use std::fmt;
 use std::path::Path;
 
+/// Tools to run endpoint-level compliance tests
 pub mod endpoint_tester;
+/// Utilities to generate human-readable compliance reports
 pub mod report_generator;
+/// Parsers for RFC/draft specifications into structured requirements
 pub mod rfc_parser;
+/// Validation routines to check implementation against requirements
 pub mod spec_validator;
 
 #[cfg(test)]
@@ -105,23 +109,36 @@ pub struct ComplianceResult {
 pub enum Evidence {
     /// Test result
     TestResult {
+        /// Name of the test
         test_name: String,
+        /// Whether the test passed
         passed: bool,
+        /// Captured output from the test run
         output: String,
     },
     /// Packet capture showing behavior
     PacketCapture {
+        /// Human-readable description of the capture
         description: String,
+        /// Raw packet bytes
         packets: Vec<u8>,
     },
     /// Code reference
     CodeReference {
+        /// Source file path
         file: String,
+        /// Line number within the file
         line: usize,
+        /// Code snippet for context
         snippet: String,
     },
     /// External endpoint test
-    EndpointTest { endpoint: String, result: String },
+    EndpointTest {
+        /// Endpoint URL or identifier
+        endpoint: String,
+        /// Result summary for the endpoint
+        result: String,
+    },
 }
 
 /// Main compliance validator

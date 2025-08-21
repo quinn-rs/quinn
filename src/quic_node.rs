@@ -693,15 +693,7 @@ impl QuicP2PNode {
         self.nat_endpoint.get_nat_stats()
     }
 
-    /// Inject an observed address (temporary workaround for OBSERVED_ADDRESS frame integration)
-    pub fn inject_observed_address(
-        &self,
-        observed_address: SocketAddr,
-        from_peer: PeerId,
-    ) -> Result<(), NatTraversalError> {
-        self.nat_endpoint
-            .inject_observed_address(observed_address, from_peer)
-    }
+    // OBSERVED_ADDRESS integration is handled within the connection; manual injection removed
 
     /// Get connection metrics for a specific peer
     pub async fn get_connection_metrics(

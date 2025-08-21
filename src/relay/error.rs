@@ -16,32 +16,58 @@ pub type RelayResult<T> = Result<T, RelayError>;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RelayError {
     /// Authentication failed due to invalid token or signature
-    AuthenticationFailed { reason: String },
+    AuthenticationFailed {
+        /// Human-readable reason for authentication failure
+        reason: String,
+    },
 
     /// Rate limiting triggered - too many requests
-    RateLimitExceeded { retry_after_ms: u64 },
+    RateLimitExceeded {
+        /// Suggested wait time before retrying, in milliseconds
+        retry_after_ms: u64,
+    },
 
     /// Session-related errors
     SessionError {
+        /// Optional session identifier if known
         session_id: Option<u32>,
+        /// Specific category of session error
         kind: SessionErrorKind,
     },
 
     /// Network connectivity issues
-    NetworkError { operation: String, source: String },
+    NetworkError {
+        /// The operation being performed when the error occurred
+        operation: String,
+        /// The underlying error source description
+        source: String,
+    },
 
     /// Protocol-level errors
-    ProtocolError { frame_type: u8, reason: String },
+    ProtocolError {
+        /// Offending frame type identifier
+        frame_type: u8,
+        /// Human-readable explanation of the violation
+        reason: String,
+    },
 
     /// Resource exhaustion (memory, bandwidth, etc.)
     ResourceExhausted {
+        /// Type of resource that was exceeded (e.g. "buffer", "sessions")
         resource_type: String,
+        /// Current measured usage of the resource
         current_usage: u64,
+        /// Configured limit for the resource
         limit: u64,
     },
 
     /// Configuration or setup errors
-    ConfigurationError { parameter: String, reason: String },
+    ConfigurationError {
+        /// The configuration parameter that is invalid
+        parameter: String,
+        /// Explanation of why the parameter is invalid
+        reason: String,
+    },
 }
 
 /// Specific session error types
@@ -57,11 +83,18 @@ pub enum SessionErrorKind {
     Terminated,
     /// Invalid session state for operation
     InvalidState {
+        /// The current state encountered
         current_state: String,
+        /// The state that was expected
         expected_state: String,
     },
     /// Bandwidth limit exceeded for session
-    BandwidthExceeded { used: u64, limit: u64 },
+    BandwidthExceeded {
+        /// Bytes used
+        used: u64,
+        /// Configured limit in bytes
+        limit: u64,
+    },
 }
 
 impl fmt::Display for RelayError {
