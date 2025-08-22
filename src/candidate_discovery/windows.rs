@@ -687,7 +687,8 @@ impl Drop for WindowsInterfaceDiscovery {
         // Clean up network change monitoring
         if let Some(change_handle) = self.change_handle.take() {
             unsafe {
-                windows::Win32::Foundation::CloseHandle(change_handle.handle);
+                // CloseHandle returns BOOL; ignore errors intentionally
+                let _ = windows::Win32::Foundation::CloseHandle(change_handle.handle);
             }
         }
     }

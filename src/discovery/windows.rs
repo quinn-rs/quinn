@@ -88,9 +88,9 @@ impl NetworkDiscovery for WindowsDiscovery {
             }
         }
 
-        // Otherwise, refresh the cache
+        // Otherwise, refresh the cache (only if needed)
         let mut this = self.clone();
-        this.refresh_cache()?;
+        this.refresh_cache_if_needed()?;
 
         // Return the refreshed interfaces
         match &this.cache {
