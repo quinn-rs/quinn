@@ -269,8 +269,14 @@ fn test_round_cancellation_logic() {
         round1 <= round2,
         "Round cancellation should NOT trigger for lower rounds"
     );
-    assert!(round1 <= round2, "Lower round should not trigger cancellation");
-    assert!(round1 <= round3, "Equal round should not trigger cancellation");
+    assert!(
+        round1 <= round2,
+        "Lower round should not trigger cancellation"
+    );
+    assert!(
+        round1 <= round3,
+        "Equal round should not trigger cancellation"
+    );
 }
 
 /// Test round cancellation with realistic session simulation (basic)
@@ -433,9 +439,9 @@ fn test_round_number_validation() {
 
     // Test rounds that should trigger cancellation
     let should_cancel = vec![
-        VarInt::from_u32(1001),                                    // One higher
-        VarInt::from_u32(2000),                                    // Much higher
-        VarInt::from_u64(100000).expect("value within bounds"),   // Very much higher
+        VarInt::from_u32(1001),                                 // One higher
+        VarInt::from_u32(2000),                                 // Much higher
+        VarInt::from_u64(100000).expect("value within bounds"), // Very much higher
     ];
 
     for round in should_cancel {
@@ -456,12 +462,12 @@ fn test_round_number_validation() {
     ];
 
     for round in should_not_cancel {
-    assert!(
-        round <= base_round,
-        "Round {} should NOT trigger cancellation vs base {}",
-        round.into_inner(),
-        base_round.into_inner()
-    );
+        assert!(
+            round <= base_round,
+            "Round {} should NOT trigger cancellation vs base {}",
+            round.into_inner(),
+            base_round.into_inner()
+        );
     }
 }
 
@@ -501,7 +507,11 @@ fn test_add_address_ipv4_rfc_encoding() {
     let mut output = BytesMut::new();
     frame.encode(&mut output);
 
-        assert_eq!(output.freeze(), expected.freeze(), "ADD_ADDRESS IPv4 encoding mismatch");
+    assert_eq!(
+        output.freeze(),
+        expected.freeze(),
+        "ADD_ADDRESS IPv4 encoding mismatch"
+    );
 }
 
 /// Test ADD_ADDRESS frame encoding for IPv6 according to RFC
@@ -545,7 +555,11 @@ fn test_add_address_ipv6_rfc_encoding() {
     let mut output = BytesMut::new();
     frame.encode(&mut output);
 
-    assert_eq!(output.freeze(), expected, "ADD_ADDRESS IPv6 encoding mismatch");
+    assert_eq!(
+        output.freeze(),
+        expected,
+        "ADD_ADDRESS IPv6 encoding mismatch"
+    );
 }
 
 /// Test PUNCH_ME_NOW frame encoding for IPv4 according to RFC
@@ -592,7 +606,11 @@ fn test_punch_me_now_ipv4_rfc_encoding() {
     let mut output = BytesMut::new();
     frame.encode(&mut output);
 
-    assert_eq!(output.freeze(), expected, "PUNCH_ME_NOW IPv4 encoding mismatch");
+    assert_eq!(
+        output.freeze(),
+        expected,
+        "PUNCH_ME_NOW IPv4 encoding mismatch"
+    );
 }
 
 /// Test REMOVE_ADDRESS frame encoding according to RFC
@@ -623,7 +641,11 @@ fn test_remove_address_rfc_encoding() {
     let mut output = BytesMut::new();
     frame.encode(&mut output);
 
-    assert_eq!(output.freeze(), expected, "REMOVE_ADDRESS encoding mismatch");
+    assert_eq!(
+        output.freeze(),
+        expected,
+        "REMOVE_ADDRESS encoding mismatch"
+    );
 }
 
 /// Test decoding of ADD_ADDRESS IPv4 frame

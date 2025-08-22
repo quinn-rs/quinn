@@ -29,12 +29,24 @@ fn test_round_cancellation_logic() {
     );
 
     // Test that cancellation should happen for higher rounds
-    assert!(round2 > round1, "Round cancellation should trigger for higher rounds");
+    assert!(
+        round2 > round1,
+        "Round cancellation should trigger for higher rounds"
+    );
 
     // Test that cancellation should NOT happen for lower or equal rounds
-    assert!(round1 <= round2, "Round cancellation should NOT trigger for lower rounds");
-    assert!(round1 <= round2, "Lower round should not trigger cancellation");
-    assert!(round1 <= round3, "Equal round should not trigger cancellation");
+    assert!(
+        round1 <= round2,
+        "Round cancellation should NOT trigger for lower rounds"
+    );
+    assert!(
+        round1 <= round2,
+        "Lower round should not trigger cancellation"
+    );
+    assert!(
+        round1 <= round3,
+        "Equal round should not trigger cancellation"
+    );
 }
 
 /// Test sequence number validation

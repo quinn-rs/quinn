@@ -155,7 +155,9 @@ pub fn timestamp_now() -> u64 {
 
 #[cfg(not(feature = "trace"))]
 /// Zero timestamp placeholder when tracing is disabled
-pub fn timestamp_now() -> u64 { 0 }
+pub fn timestamp_now() -> u64 {
+    0
+}
 
 #[cfg(test)]
 mod tests {
