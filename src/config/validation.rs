@@ -180,6 +180,7 @@ pub(crate) fn validate_bootstrap_nodes(nodes: &[SocketAddr]) -> ValidationResult
 
 /// Validate Linux-specific network capabilities
 #[cfg(target_os = "linux")]
+#[allow(dead_code)]
 fn validate_linux_network_capabilities() -> ValidationResult<()> {
     // Check if we can access network interfaces
     // This is a placeholder - in production, you'd check netlink access

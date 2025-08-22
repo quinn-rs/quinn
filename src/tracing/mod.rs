@@ -15,6 +15,7 @@ mod context;
 mod event;
 mod macros;
 mod query;
+#[cfg(feature = "trace")]
 mod ring_buffer;
 
 #[cfg(feature = "trace-app")]
@@ -82,14 +83,8 @@ mod implementation {
     pub struct Event;
 
     /// Zero-sized event log when tracing is disabled
-    #[derive(Debug)]
+    #[derive(Debug, Default, Clone)]
     pub struct EventLog;
-
-    impl Default for EventLog {
-        fn default() -> Self {
-            Self::new()
-        }
-    }
 
     impl EventLog {
         /// Create a new no-op event log (tracing disabled)

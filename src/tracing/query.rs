@@ -22,26 +22,31 @@ mod implementation {
 
     impl TraceQuery {
         /// Create a new query interface
+        #[allow(dead_code)]
         pub fn new(log: Arc<EventLog>) -> Self {
             TraceQuery { log }
         }
 
         /// Get all events for a specific trace
+        #[allow(dead_code)]
         pub fn get_trace(&self, trace_id: TraceId) -> Vec<Event> {
             self.log.get_events_by_trace(trace_id)
         }
 
         /// Get the most recent events
+        #[allow(dead_code)]
         pub fn recent(&self, count: usize) -> Vec<Event> {
             self.log.get_recent_events(count)
         }
 
         /// Query events within a time range
+        #[allow(dead_code)]
         pub fn time_range(&self, start: u64, end: u64) -> Vec<Event> {
             self.log.get_events_in_range(start, end)
         }
 
         /// Get total event count
+        #[allow(dead_code)]
         pub fn event_count(&self) -> u64 {
             self.log.event_count()
         }
@@ -55,6 +60,7 @@ mod implementation {
         // }
 
         /// Analyze connection performance for a trace
+        #[allow(dead_code)]
         pub fn analyze_connection(&self, trace_id: TraceId) -> ConnectionAnalysis {
             let events = self.get_trace(trace_id);
             let mut analysis = ConnectionAnalysis::default();
@@ -87,6 +93,7 @@ mod implementation {
         }
 
         /// Find traces with errors or issues
+        #[allow(dead_code)]
         pub fn find_problematic_traces(&self, recent_count: usize) -> Vec<TraceId> {
             let events = self.recent(recent_count);
             let mut problematic = Vec::new();
@@ -134,33 +141,41 @@ mod implementation {
     use std::sync::Arc;
 
     /// Query interface for analyzing traces (no-op when trace is disabled)
+    #[allow(dead_code)]
     pub(super) struct TraceQuery;
 
     impl TraceQuery {
+        #[allow(dead_code)]
         pub(super) fn new(_log: Arc<EventLog>) -> Self {
             Self
         }
 
+        #[allow(dead_code)]
         pub(super) fn get_trace(&self, _trace_id: TraceId) -> Vec<Event> {
             vec![]
         }
 
+        #[allow(dead_code)]
         pub(super) fn recent(&self, _count: usize) -> Vec<Event> {
             vec![]
         }
 
+        #[allow(dead_code)]
         pub(super) fn time_range(&self, _start: u64, _end: u64) -> Vec<Event> {
             vec![]
         }
 
+        #[allow(dead_code)]
         pub(super) fn event_count(&self) -> u64 {
             0
         }
 
+        #[allow(dead_code)]
         pub(super) fn analyze_connection(&self, _trace_id: TraceId) -> ConnectionAnalysis {
             ConnectionAnalysis::default()
         }
 
+        #[allow(dead_code)]
         pub(super) fn find_problematic_traces(&self, _recent_count: usize) -> Vec<TraceId> {
             vec![]
         }
@@ -168,6 +183,7 @@ mod implementation {
 
     /// Analysis results for a connection
     #[derive(Debug, Default)]
+    #[allow(dead_code)]
     pub(super) struct ConnectionAnalysis {
         pub packets_sent: u64,
         pub packets_received: u64,

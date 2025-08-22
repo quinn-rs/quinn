@@ -13,8 +13,10 @@ use super::event::TraceId;
 #[derive(Debug, Clone)]
 pub struct TraceContext {
     /// Unique trace identifier
+    #[allow(dead_code)]
     pub trace_id: TraceId,
     /// Start time of the trace
+    #[allow(dead_code)]
     pub start_time: u64,
     /// Trace flags
     pub flags: TraceFlags,
@@ -26,8 +28,10 @@ pub struct TraceFlags {
     /// Whether this trace is being sampled
     pub sampled: bool,
     /// Debug mode for verbose tracing
+    #[allow(dead_code)]
     pub debug: bool,
     /// Whether trace was initiated by application
+    #[allow(dead_code)]
     pub app_initiated: bool,
 }
 
@@ -42,6 +46,7 @@ impl TraceContext {
     }
 
     /// Create a new trace context with flags
+    #[allow(dead_code)]
     pub fn with_flags(trace_id: TraceId, flags: TraceFlags) -> Self {
         Self {
             trace_id,
@@ -51,6 +56,7 @@ impl TraceContext {
     }
 
     /// Get the trace ID
+    #[allow(dead_code)]
     pub fn trace_id(&self) -> TraceId {
         self.trace_id
     }

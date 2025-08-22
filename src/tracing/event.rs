@@ -47,6 +47,7 @@ pub struct TraceId(pub [u8; 16]);
 
 impl TraceId {
     /// Create a new random trace ID
+    #[allow(dead_code)]
     pub fn new() -> Self {
         let mut id = [0u8; 16];
         use rand::RngCore;
@@ -55,6 +56,7 @@ impl TraceId {
     }
 
     /// Create a trace ID from bytes
+    #[allow(dead_code)]
     pub fn from_bytes(bytes: [u8; 16]) -> Self {
         Self(bytes)
     }
@@ -86,42 +88,52 @@ pub enum EventData {
     // QUIC protocol events
     ConnInit {
         /// Endpoint bytes (ip:port serialized)
+        #[allow(dead_code)]
         endpoint_bytes: [u8; 18],
         /// Address type discriminator
+        #[allow(dead_code)]
         addr_type: u8,
         _padding: [u8; 45],
     },
+    #[allow(dead_code)]
     ConnEstablished {
         /// Round-trip time in microseconds
         rtt: u32,
         _padding: [u8; 60],
     },
+    #[allow(dead_code)]
     StreamOpened {
         /// QUIC stream identifier
         stream_id: u64,
         _padding: [u8; 56],
     },
+    #[allow(dead_code)]
     StreamClosed {
         /// QUIC stream identifier
         stream_id: u64,
         /// QUIC error code
         error_code: u32,
-        _padding: [u8; 52],
+        _padding: [u8; 56],
     },
     PacketSent {
         /// Size in bytes
+        #[allow(dead_code)]
         size: u32,
         /// Packet number
+        #[allow(dead_code)]
         packet_num: u64,
-        _padding: [u8; 52],
+        _padding: [u8; 56],
     },
     PacketReceived {
         /// Size in bytes
+        #[allow(dead_code)]
         size: u32,
         /// Packet number
+        #[allow(dead_code)]
         packet_num: u64,
-        _padding: [u8; 52],
+        _padding: [u8; 56],
     },
+    #[allow(dead_code)]
     PacketLost {
         /// Packet number
         packet_num: u64,
@@ -129,16 +141,19 @@ pub enum EventData {
     },
 
     // NAT traversal events
+    #[allow(dead_code)]
     CandidateDiscovered {
         addr_bytes: [u8; 18],
         addr_type: u8,
         priority: u32,
         _padding: [u8; 41],
     },
+    #[allow(dead_code)]
     HolePunchingStarted {
         peer: [u8; 32],
         _padding: [u8; 32],
     },
+    #[allow(dead_code)]
     HolePunchingSucceeded {
         peer: [u8; 32],
         rtt: u32,
@@ -146,12 +161,14 @@ pub enum EventData {
     },
 
     // Address discovery events
+    #[allow(dead_code)]
     ObservedAddressSent {
         addr_bytes: [u8; 18],
         addr_type: u8,
         path_id: u32,
         _padding: [u8; 41],
     },
+    #[allow(dead_code)]
     ObservedAddressReceived {
         addr_bytes: [u8; 18],
         addr_type: u8,
@@ -170,8 +187,11 @@ pub enum EventData {
 
     // Generic events
     Custom {
+        #[allow(dead_code)]
         category: u16,
+        #[allow(dead_code)]
         code: u16,
+        #[allow(dead_code)]
         data: [u8; 44],
         _padding: [u8; 16],
     },
@@ -281,7 +301,7 @@ impl Event {
             event_data: EventData::PacketSent {
                 size,
                 packet_num,
-                _padding: [0u8; 52],
+                _padding: [0u8; 56],
             },
             ..Default::default()
         }
@@ -296,7 +316,7 @@ impl Event {
             event_data: EventData::PacketReceived {
                 size,
                 packet_num,
-                _padding: [0u8; 52],
+                _padding: [0u8; 56],
             },
             ..Default::default()
         }

@@ -55,10 +55,12 @@ struct LinuxInterface {
     /// IPv6 addresses with prefix length
     ipv6_addresses: Vec<(Ipv6Addr, u8)>,
     /// Hardware address (MAC)
+    #[allow(dead_code)]
     hardware_address: Option<[u8; 6]>,
     /// Interface state
     state: InterfaceState,
     /// Last update timestamp
+    #[allow(dead_code)]
     last_updated: Instant,
 }
 
@@ -99,8 +101,10 @@ struct InterfaceFlags {
     /// Interface is point-to-point
     is_point_to_point: bool,
     /// Interface supports multicast
+    #[allow(dead_code)]
     supports_multicast: bool,
     /// Interface supports broadcast
+    #[allow(dead_code)]
     supports_broadcast: bool,
     /// Interface is wireless
     is_wireless: bool,
@@ -110,16 +114,21 @@ struct InterfaceFlags {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum InterfaceState {
     /// Unknown state
+    #[allow(dead_code)]
     Unknown,
     /// Interface is not present
+    #[allow(dead_code)]
     NotPresent,
     /// Interface is down
     Down,
     /// Interface is in lower layer down
+    #[allow(dead_code)]
     LowerLayerDown,
     /// Interface is testing
+    #[allow(dead_code)]
     Testing,
     /// Interface is dormant
+    #[allow(dead_code)]
     Dormant,
     /// Interface is up
     Up,
@@ -143,8 +152,10 @@ struct NetlinkSocket {
     /// Socket file descriptor
     socket_fd: i32,
     /// Sequence number for netlink messages
+    #[allow(dead_code)]
     sequence_number: u32,
     /// Process ID for netlink messages
+    #[allow(dead_code)]
     process_id: u32,
     /// Buffer for receiving netlink messages
     receive_buffer: Vec<u8>,
@@ -200,8 +211,10 @@ pub enum LinuxNetworkError {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum NetlinkMessageType {
     /// Get link information
+    #[allow(dead_code)]
     GetLink,
     /// Get address information
+    #[allow(dead_code)]
     GetAddress,
     /// Link state change
     LinkStateChange,
@@ -217,10 +230,13 @@ struct NetlinkMessage {
     /// Message type
     message_type: NetlinkMessageType,
     /// Message flags
+    #[allow(dead_code)]
     flags: u16,
     /// Message sequence number
+    #[allow(dead_code)]
     sequence: u32,
     /// Message payload
+    #[allow(dead_code)]
     payload: Vec<u8>,
 }
 

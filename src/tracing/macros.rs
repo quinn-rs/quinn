@@ -30,7 +30,7 @@ macro_rules! trace_packet_sent {
                 event_data: $crate::tracing::EventData::PacketSent {
                     size: $size as u32,
                     packet_num: $num,
-                    _padding: [0u8; 52],
+                    _padding: [0u8; 56],
                 },
                 ..Default::default()
             }
@@ -50,7 +50,7 @@ macro_rules! trace_packet_received {
                 event_data: $crate::tracing::EventData::PacketReceived {
                     size: $size as u32,
                     packet_num: $num,
-                    _padding: [0u8; 52],
+                    _padding: [0u8; 56],
                 },
                 ..Default::default()
             }
