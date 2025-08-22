@@ -1,6 +1,6 @@
 #[cfg(feature = "qlog")]
 use std::{fs::File, io::BufWriter, path::PathBuf};
-use std::{io, net::SocketAddr, sync::Arc, time::Duration};
+use std::{io, net::SocketAddr, num::ParseIntError, str::FromStr, sync::Arc, time::Duration};
 
 use anyhow::{Context, Result};
 use clap::{Parser, ValueEnum};
@@ -25,11 +25,17 @@ pub mod noprotection;
 #[derive(Parser)]
 pub struct CommonOpt {
     /// Send buffer size in bytes
-    #[clap(long, default_value = "2097152")]
-    pub send_buffer_size: usize,
+    ///
+    /// This can use SI suffixes for sizes. For example, 1M will request
+    /// 1MiB, 10G will request 10GiB.
+    #[clap(long, default_value = "2M", value_parser = parse_byte_size)]
+    pub send_buffer_size: u64,
     /// Receive buffer size in bytes
-    #[clap(long, default_value = "2097152")]
-    pub recv_buffer_size: usize,
+    ///
+    /// This can use SI suffixes for sizes. For example, 1M will request
+    /// 1MiB, 10G will request 10GiB.
+    #[clap(long, default_value = "2M", value_parser = parse_byte_size)]
+    pub recv_buffer_size: u64,
     /// Whether to print connection statistics
     #[clap(long)]
     pub conn_stats: bool,
@@ -103,16 +109,16 @@ impl CommonOpt {
 
         let socket_state = UdpSocketState::new((&socket).into())?;
         socket_state
-            .set_send_buffer_size((&socket).into(), self.send_buffer_size)
+            .set_send_buffer_size((&socket).into(), self.send_buffer_size as usize)
             .context("send buffer size")?;
         socket_state
-            .set_recv_buffer_size((&socket).into(), self.recv_buffer_size)
+            .set_recv_buffer_size((&socket).into(), self.recv_buffer_size as usize)
             .context("recv buffer size")?;
 
         let buf_size = socket_state
             .send_buffer_size((&socket).into())
             .context("send buffer size")?;
-        if buf_size < self.send_buffer_size {
+        if buf_size < self.send_buffer_size as usize {
             warn!(
                 "Unable to set desired send buffer size. Desired: {}, Actual: {}",
                 self.send_buffer_size, buf_size
@@ -122,7 +128,7 @@ impl CommonOpt {
         let buf_size = socket_state
             .recv_buffer_size((&socket).into())
             .context("recv buffer size")?;
-        if buf_size < self.recv_buffer_size {
+        if buf_size < self.recv_buffer_size as usize {
             warn!(
                 "Unable to set desired recv buffer size. Desired: {}, Actual: {}",
                 self.recv_buffer_size, buf_size
@@ -131,6 +137,25 @@ impl CommonOpt {
 
         Ok(socket.into())
     }
+}
+
+pub fn parse_byte_size(s: &str) -> Result<u64, ParseIntError> {
+    let s = s.trim();
+
+    let multiplier = match s.chars().last() {
+        Some('T') => 1024 * 1024 * 1024 * 1024,
+        Some('G') => 1024 * 1024 * 1024,
+        Some('M') => 1024 * 1024,
+        Some('k') => 1024,
+        _ => 1,
+    };
+
+    let s = match multiplier {
+        1 => s,
+        _ => &s[..s.len() - 1],
+    };
+
+    Ok(u64::from_str(s)? * multiplier)
 }
 
 #[derive(Clone, Copy, ValueEnum)]
