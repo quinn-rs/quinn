@@ -2,7 +2,9 @@
 # Enhanced NAT Testing Script with IPv4/IPv6 Support
 # Comprehensive test suite for ant-quic NAT traversal
 
-set -e
+# Be strict on undefined variables and pipeline failures, but do not exit on
+# individual command failures inside tests; we record and continue.
+set -u -o pipefail
 
 # Configuration
 COMPOSE_FILE=${COMPOSE_FILE:-docker-compose.enhanced.yml}
@@ -385,13 +387,45 @@ main() {
     # Start containers
     start_containers
     
-    # Run test suites
-    test_basic_connectivity
-    test_address_discovery
-    test_nat_traversal
-    test_network_stress
-    test_pqc_scenarios
-    test_performance
+    # If a specific suite was requested, run only that suite
+    if [ $# -ge 1 ]; then
+        case "$1" in
+            test_basic_connectivity)
+                test_basic_connectivity ;;
+            test_nat_traversal)
+                test_nat_traversal ;;
+            test_ipv6_support)
+                # IPv6-focused subset of tests
+                info "Running IPv6 support tests..."
+                # Reuse connectivity and discovery but emphasize IPv6 paths
+                # Basic IPv6 pings
+                for i in {1..3}; do
+                    run_test "ipv6_ping_client${i}" \
+                        "docker exec ant-quic-client${i} ant-quic --ping [2001:db8:1::10]:9000 --timeout 10"
+                done
+                # IPv6-only client
+                run_test "ipv6_only_ping_client5" \
+                    "docker exec ant-quic-client5 ant-quic --ping [2001:db8:1::10]:9000 --timeout 10"
+                # Address discovery on all clients
+                test_address_discovery ;;
+            test_stress|test_network_stress)
+                test_network_stress ;;
+            test_pqc|test_pqc_scenarios)
+                test_pqc_scenarios ;;
+            test_performance)
+                test_performance ;;
+            *)
+                warn "Unknown test suite '$1'. Running full suite instead." ;;
+        esac
+    else
+        # Run full suite by default
+        test_basic_connectivity
+        test_address_discovery
+        test_nat_traversal
+        test_network_stress
+        test_pqc_scenarios
+        test_performance
+    fi
     
     # Collect results
     collect_metrics
