@@ -1,0 +1,14 @@
+CONTAINER ID   NAME                                                            CPU %     MEM USAGE / LIMIT     MEM %     NET I/O           BLOCK I/O        PIDS
+56de4311ce48   ant-quic-client4                                                0.00%     428KiB / 15.62GiB     0.00%     1.44kB / 126B     0B / 0B          1
+ddd15e5f6900   ant-quic-client2                                                0.00%     428KiB / 15.62GiB     0.00%     1.9kB / 1.26kB    0B / 0B          1
+8110ee06200a   ant-quic-client3                                                0.00%     440KiB / 15.62GiB     0.00%     1.98kB / 1.26kB   0B / 0B          1
+3e3443c06d72   ant-quic-client1                                                0.00%     432KiB / 15.62GiB     0.00%     2.13kB / 1.26kB   0B / 0B          1
+3b7a955d3981   ant-quic-client5                                                0.00%     432KiB / 15.62GiB     0.00%     9.09kB / 2.52kB   0B / 0B          1
+8caf6cdd5e61   nat4-gateway                                                    0.00%     1.012MiB / 15.62GiB   0.01%     13.1kB / 2.74kB   0B / 0B          2
+99e0470a351f   ant-quic-prometheus                                             0.00%     20.85MiB / 15.62GiB   0.13%     18kB / 9.95kB     0B / 45.1kB      9
+3a6b42fec169   nat1-gateway                                                    0.00%     1.02MiB / 15.62GiB    0.01%     15.5kB / 4.04kB   0B / 0B          2
+051f4dca8159   nat2-gateway                                                    0.00%     1.141MiB / 15.62GiB   0.01%     13.3kB / 3.74kB   131kB / 0B       2
+b0c81010446a   ant-quic-bootstrap                                              138.77%   2.352MiB / 15.62GiB   0.01%     11.8kB / 2.7kB    0B / 0B          8
+0deffb93fa54   ant-quic-grafana                                                0.10%     94.31MiB / 15.62GiB   0.59%     19.7MB / 65.9kB   0B / 79.3MB      18
+84a86f6f0a28   nat3-gateway                                                    0.00%     1.016MiB / 15.62GiB   0.01%     15.3kB / 3.99kB   0B / 0B          2
+cb28a4db2641   buildx_buildkit_builder-67138926-e91d-4b95-8653-0bfd43d38d750   0.00%     375.1MiB / 15.62GiB   2.35%     0B / 0B           725kB / 2.66GB   17
