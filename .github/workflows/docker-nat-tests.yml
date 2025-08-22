@@ -58,6 +58,7 @@ jobs:
         df -h
         
     - name: Set up Docker Buildx
+      if: ${{ !env.ACT }}
       uses: docker/setup-buildx-action@v3
       with:
         driver-opts: network=host
@@ -82,6 +83,7 @@ jobs:
           ${{ runner.os }}-cargo-
           
     - name: Enable IPv6 in Docker (optional)
+      if: ${{ !env.ACT }}
       continue-on-error: true
       run: |
         echo '{
@@ -99,6 +101,7 @@ jobs:
         mkdir -p logs results
         
     - name: Build base images with improved caching
+      if: ${{ !env.ACT }}
       run: |
         cd docker
         
@@ -135,8 +138,30 @@ jobs:
         echo "Building compose services..."
         docker compose -f docker-compose.enhanced.yml build --parallel bootstrap || \
         docker compose -f docker-compose.enhanced.yml build bootstrap
+
+    - name: Build images for ACT (no buildx cache)
+      if: ${{ env.ACT }}
+      run: |
+        cd docker
+        echo "Building base builder image (ACT)..."
+        docker build \
+          -f Dockerfile.ant-quic \
+          --target builder \
+          -t ant-quic:builder \
+          ..
+
+        echo "Building runtime image (ACT)..."
+        docker build \
+          -f Dockerfile.ant-quic \
+          --target runtime \
+          -t ant-quic:runtime \
+          ..
+
+        echo "Building compose services (ACT)..."
+        docker compose -f docker-compose.enhanced.yml build bootstrap
         
     - name: Run NAT test suite - ${{ matrix.test-suite }}
+      if: always()
       continue-on-error: true
       timeout-minutes: 30
       run: |
@@ -173,7 +198,7 @@ jobs:
         docker compose -f docker-compose.enhanced.yml logs > logs/compose_logs.txt 2>&1 || true
         
     - name: Upload test artifacts
-      if: always()
+      if: ${{ always() && !env.ACT }}
       uses: actions/upload-artifact@v4
       with:
         name: nat-test-results-${{ matrix.test-suite }}
@@ -183,7 +208,7 @@ jobs:
         if-no-files-found: warn
         
     - name: Upload metrics
-      if: always()
+      if: ${{ always() && !env.ACT }}
       uses: actions/upload-artifact@v4
       with:
         name: nat-test-metrics-${{ matrix.test-suite }}
