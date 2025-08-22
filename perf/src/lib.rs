@@ -7,7 +7,7 @@ use clap::{Parser, ValueEnum};
 #[cfg(feature = "qlog")]
 use quinn::QlogConfig;
 use quinn::{
-    AckFrequencyConfig, TransportConfig,
+    AckFrequencyConfig, TransportConfig, VarInt,
     congestion::{self, ControllerFactory},
     udp::UdpSocketState,
 };
@@ -57,6 +57,26 @@ pub struct CommonOpt {
     /// Congestion algorithm to use
     #[clap(long = "congestion")]
     pub cong_alg: Option<CongestionAlgorithm>,
+    /// Maximum number of bytes the peer may transmit without acknowledgement on any one stream
+    /// before becoming blocked.
+    ///
+    /// This can use SI suffixes for sizes. For example, 1M will limit to
+    /// 1MiB, 10G will limit to 10GiB.
+    #[clap(long, value_parser = parse_byte_size)]
+    pub stream_receive_window: Option<u64>,
+    /// Maximum number of bytes the peer may transmit across all streams of a connection before
+    /// becoming blocked.
+    ///
+    /// This can use SI suffixes for sizes. For example, 1M will limit to
+    /// 1MiB, 10G will limit to 10GiB.
+    #[clap(long, value_parser = parse_byte_size)]
+    pub receive_window: Option<u64>,
+    /// Maximum number of bytes to transmit to a peer without acknowledgment
+    ///
+    /// This can use SI suffixes for sizes. For example, 1M will limit to
+    /// 1MiB, 10G will limit to 10GiB.
+    #[clap(long, value_parser = parse_byte_size)]
+    pub send_window: Option<u64>,
     /// qlog output file
     #[cfg(feature = "qlog")]
     #[clap(long = "qlog")]
@@ -81,6 +101,20 @@ impl CommonOpt {
 
         if let Some(cong_alg) = self.cong_alg {
             transport.congestion_controller_factory(cong_alg.build());
+        }
+
+        if let Some(stream_receive_window) = self.stream_receive_window {
+            transport.stream_receive_window(
+                VarInt::from_u64(stream_receive_window).unwrap_or(VarInt::MAX),
+            );
+        }
+
+        if let Some(receive_window) = self.receive_window {
+            transport.receive_window(VarInt::from_u64(receive_window).unwrap_or(VarInt::MAX));
+        }
+
+        if let Some(send_window) = self.send_window {
+            transport.send_window(send_window);
         }
 
         #[cfg(feature = "qlog")]
