@@ -48,6 +48,7 @@ jobs:
       uses: actions/checkout@v4
       
     - name: Free up disk space
+      if: ${{ !env.ACT }}
       run: |
         # Free up space by removing unnecessary tools
         sudo rm -rf /usr/share/dotnet
@@ -167,6 +168,7 @@ jobs:
       if: always()
       run: |
         cd docker
+        mkdir -p results logs
         echo "Test suite: ${{ matrix.test-suite }}" > results/test_suite.txt
         docker compose -f docker-compose.enhanced.yml logs > logs/compose_logs.txt 2>&1 || true
         
