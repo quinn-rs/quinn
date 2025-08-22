@@ -133,7 +133,7 @@ struct Args {
     timeout: u64,
 }
 
-#[derive(Subcommand, Debug)]
+#[derive(Subcommand, Debug, Clone)]
 enum Commands {
     /// Connect to a specific peer
     Connect {
