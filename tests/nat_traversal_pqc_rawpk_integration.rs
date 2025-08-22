@@ -7,9 +7,9 @@ use ant_quic::frame::nat_traversal_unified::{
 #[cfg(feature = "pqc")]
 mod pqc_integration {
     use super::*;
+    use ant_quic::VarInt;
     use ant_quic::crypto::pqc::types::MlDsaPublicKey;
     use ant_quic::crypto::pqc::types::PqcError;
-    use ant_quic::VarInt;
     use ant_quic::crypto::raw_public_keys::create_ed25519_subject_public_key_info;
     use ant_quic::crypto::raw_public_keys::pqc::{ExtendedRawPublicKey, PqcRawPublicKeyVerifier};
 

@@ -30,7 +30,7 @@ impl TestAddAddress {
             SocketAddr::V4(_) => buf.put_u32(FRAME_TYPE_ADD_ADDRESS_IPV4 as u32),
             SocketAddr::V6(_) => buf.put_u32(FRAME_TYPE_ADD_ADDRESS_IPV6 as u32),
         }
-        buf.write_var(self.sequence_number);
+        buf.write_var(u64::from(self.sequence_number));
         match self.address {
             SocketAddr::V4(addr) => {
                 buf.put_slice(&addr.ip().octets());
@@ -57,8 +57,8 @@ impl TestPunchMeNow {
             SocketAddr::V4(_) => buf.put_u32(FRAME_TYPE_PUNCH_ME_NOW_IPV4 as u32),
             SocketAddr::V6(_) => buf.put_u32(FRAME_TYPE_PUNCH_ME_NOW_IPV6 as u32),
         }
-        buf.write_var(self.round);
-        buf.write_var(self.paired_with_sequence_number);
+        buf.write_var(u64::from(self.round));
+        buf.write_var(u64::from(self.paired_with_sequence_number));
         match self.address {
             SocketAddr::V4(addr) => {
                 buf.put_slice(&addr.ip().octets());
@@ -80,7 +80,7 @@ struct TestRemoveAddress {
 impl TestRemoveAddress {
     fn encode(&self, buf: &mut BytesMut) {
         buf.put_u32(FRAME_TYPE_REMOVE_ADDRESS as u32);
-        buf.write_var(self.sequence_number);
+        buf.write_var(u64::from(self.sequence_number));
     }
 }
 
@@ -100,7 +100,7 @@ impl RfcAddAddress {
         }
 
         // Sequence number
-        buf.write_var(self.sequence_number);
+        buf.write_var(u64::from(self.sequence_number));
 
         // Address (no IP version byte!)
         match self.address {
@@ -116,8 +116,9 @@ impl RfcAddAddress {
         }
     }
 
+    #[allow(dead_code)]
     fn decode(buf: &mut BytesMut, is_ipv6: bool) -> Result<Self, UnexpectedEnd> {
-        let sequence_number = buf.get_var()?;
+        let sequence_number: VarInt = buf.get()?;
 
         let address = if is_ipv6 {
             if buf.remaining() < 16 + 2 {
@@ -150,6 +151,7 @@ impl RfcAddAddress {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(dead_code)]
 struct RfcPunchMeNow {
     round: VarInt,
     paired_with_sequence_number: VarInt,
@@ -157,14 +159,15 @@ struct RfcPunchMeNow {
 }
 
 impl RfcPunchMeNow {
+    #[allow(dead_code)]
     fn encode(&self, buf: &mut BytesMut) {
         match self.address {
             SocketAddr::V4(_) => buf.put_u32(FRAME_TYPE_PUNCH_ME_NOW_IPV4 as u32),
             SocketAddr::V6(_) => buf.put_u32(FRAME_TYPE_PUNCH_ME_NOW_IPV6 as u32),
         }
 
-        buf.write_var(self.round);
-        buf.write_var(self.paired_with_sequence_number);
+        buf.write_var(u64::from(self.round));
+        buf.write_var(u64::from(self.paired_with_sequence_number));
 
         match self.address {
             SocketAddr::V4(addr) => {
@@ -178,9 +181,10 @@ impl RfcPunchMeNow {
         }
     }
 
+    #[allow(dead_code)]
     fn decode(buf: &mut BytesMut, is_ipv6: bool) -> Result<Self, UnexpectedEnd> {
-        let round = buf.get_var()?;
-        let paired_with_sequence_number = buf.get_var()?;
+        let round: VarInt = buf.get()?;
+        let paired_with_sequence_number: VarInt = buf.get()?;
 
         let address = if is_ipv6 {
             if buf.remaining() < 16 + 2 {
@@ -189,7 +193,12 @@ impl RfcPunchMeNow {
             let mut octets = [0u8; 16];
             buf.copy_to_slice(&mut octets);
             let port = buf.get_u16();
-            SocketAddr::V6(std::net::SocketAddrV6::new(Ipv6Addr::from(octets), port, 0, 0))
+            SocketAddr::V6(std::net::SocketAddrV6::new(
+                Ipv6Addr::from(octets),
+                port,
+                0,
+                0,
+            ))
         } else {
             if buf.remaining() < 4 + 2 {
                 return Err(UnexpectedEnd);
@@ -209,18 +218,21 @@ impl RfcPunchMeNow {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(dead_code)]
 struct RfcRemoveAddress {
     sequence_number: VarInt,
 }
 
 impl RfcRemoveAddress {
+    #[allow(dead_code)]
     fn encode(&self, buf: &mut BytesMut) {
         buf.put_u32(FRAME_TYPE_REMOVE_ADDRESS as u32);
-        buf.write_var(self.sequence_number);
+        buf.write_var(u64::from(self.sequence_number));
     }
 
+    #[allow(dead_code)]
     fn decode(buf: &mut BytesMut) -> Result<Self, UnexpectedEnd> {
-        let sequence_number = buf.get_var()?;
+        let sequence_number: VarInt = buf.get()?;
         Ok(Self { sequence_number })
     }
 }
@@ -237,16 +249,28 @@ fn test_round_cancellation_logic() {
     let round3 = VarInt::from_u32(5); // Same as round1
 
     // Test that higher round is detected correctly
-    assert!(round2 > round1, "Higher round should be greater than lower round");
-    assert!(round2 > round3, "Higher round should be greater than equal round");
+    assert!(
+        round2 > round1,
+        "Higher round should be greater than lower round"
+    );
+    assert!(
+        round2 > round3,
+        "Higher round should be greater than equal round"
+    );
 
     // Test that cancellation should happen for higher rounds
-    assert!(round2 > round1, "Round cancellation should trigger for higher rounds");
+    assert!(
+        round2 > round1,
+        "Round cancellation should trigger for higher rounds"
+    );
 
     // Test that cancellation should NOT happen for lower or equal rounds
-    assert!(round1 <= round2, "Round cancellation should NOT trigger for lower rounds");
-    assert!(!(round1 > round2), "Lower round should not trigger cancellation");
-    assert!(!(round1 > round3), "Equal round should not trigger cancellation");
+    assert!(
+        round1 <= round2,
+        "Round cancellation should NOT trigger for lower rounds"
+    );
+    assert!(round1 <= round2, "Lower round should not trigger cancellation");
+    assert!(round1 <= round3, "Equal round should not trigger cancellation");
 }
 
 /// Test round cancellation with realistic session simulation (basic)
@@ -344,16 +368,16 @@ fn test_sequence_number_validation() {
 
     // Test valid sequence numbers
     let valid_sequences = vec![
-        VarInt::from_u32(0),      // Zero is valid
-        VarInt::from_u32(1),      // Small positive
-        VarInt::from_u32(1000),   // Medium positive
-        VarInt::from_u32(u32::MAX), // Max u32
+        VarInt::from_u32(0),                                           // Zero is valid
+        VarInt::from_u32(1),                                           // Small positive
+        VarInt::from_u32(1000),                                        // Medium positive
+        VarInt::from_u32(u32::MAX),                                    // Max u32
         VarInt::from_u64(u64::MAX).expect("u64::MAX should be valid"), // Max u64
     ];
 
     for seq in valid_sequences {
-        // All these should be valid sequence numbers
-        assert!(seq.into_inner() >= 0, "Sequence numbers should be non-negative");
+        // Ensure conversion does not panic
+        let _ = seq.into_inner();
     }
 
     // Test sequence number ordering (for REMOVE_ADDRESS frames)
@@ -363,7 +387,7 @@ fn test_sequence_number_validation() {
 
     assert!(seq2 > seq1, "Higher sequence should be greater");
     assert!(seq100 > seq2, "Much higher sequence should be greater");
-    assert!(!(seq1 > seq2), "Lower sequence should not be greater");
+    assert!(seq1 <= seq2, "Lower sequence should not be greater");
 }
 
 /// Test round number validation and edge cases
@@ -396,7 +420,7 @@ fn test_round_number_validation() {
 
     assert!(round2 > round1, "Higher round should be greater");
     assert!(round100 > round2, "Much higher round should be greater");
-    assert!(!(round1 > round2), "Lower round should not be greater");
+    assert!(round1 <= round2, "Lower round should not be greater");
 
     // Test round number wrapping (if applicable)
     let max_u32 = VarInt::from_u32(u32::MAX);
@@ -409,29 +433,35 @@ fn test_round_number_validation() {
 
     // Test rounds that should trigger cancellation
     let should_cancel = vec![
-        VarInt::from_u32(1001),  // One higher
-        VarInt::from_u32(2000),  // Much higher
-        VarInt::from_u64(100000), // Very much higher
+        VarInt::from_u32(1001),                                    // One higher
+        VarInt::from_u32(2000),                                    // Much higher
+        VarInt::from_u64(100000).expect("value within bounds"),   // Very much higher
     ];
 
     for round in should_cancel {
-        assert!(round > base_round,
-               "Round {} should trigger cancellation vs base {}",
-               round.into_inner(), base_round.into_inner());
+        assert!(
+            round > base_round,
+            "Round {} should trigger cancellation vs base {}",
+            round.into_inner(),
+            base_round.into_inner()
+        );
     }
 
     // Test rounds that should NOT trigger cancellation
     let should_not_cancel = vec![
-        VarInt::from_u32(999),   // One lower
-        VarInt::from_u32(1000),  // Equal
-        VarInt::from_u32(500),   // Much lower
-        VarInt::from_u32(0),     // Zero
+        VarInt::from_u32(999),  // One lower
+        VarInt::from_u32(1000), // Equal
+        VarInt::from_u32(500),  // Much lower
+        VarInt::from_u32(0),    // Zero
     ];
 
     for round in should_not_cancel {
-        assert!(!(round > base_round),
-               "Round {} should NOT trigger cancellation vs base {}",
-               round.into_inner(), base_round.into_inner());
+    assert!(
+        round <= base_round,
+        "Round {} should NOT trigger cancellation vs base {}",
+        round.into_inner(),
+        base_round.into_inner()
+    );
     }
 }
 
@@ -471,11 +501,7 @@ fn test_add_address_ipv4_rfc_encoding() {
     let mut output = BytesMut::new();
     frame.encode(&mut output);
 
-    assert_eq!(
-        output.freeze(),
-        expected.freeze(),
-        "ADD_ADDRESS IPv4 encoding doesn't match RFC"
-    );
+        assert_eq!(output.freeze(), expected.freeze(), "ADD_ADDRESS IPv4 encoding mismatch");
 }
 
 /// Test ADD_ADDRESS frame encoding for IPv6 according to RFC
@@ -510,20 +536,16 @@ fn test_add_address_ipv6_rfc_encoding() {
 
     let expected = buf.freeze();
 
-    // Test our implementation
+    // Test our implementation (match expected)
     let frame = TestAddAddress {
-        sequence_number: VarInt::from_u32(42),
-        address: "192.168.1.100:8080".parse().unwrap(),
+        sequence_number: VarInt::from_u32(999),
+        address: "[2001:db8::1]:9000".parse().unwrap(),
     };
 
     let mut output = BytesMut::new();
     frame.encode(&mut output);
 
-    assert_eq!(
-        output.freeze(),
-        expected.freeze(),
-        "ADD_ADDRESS IPv4 encoding doesn't match RFC"
-    );
+    assert_eq!(output.freeze(), expected, "ADD_ADDRESS IPv6 encoding mismatch");
 }
 
 /// Test PUNCH_ME_NOW frame encoding for IPv4 according to RFC
@@ -570,11 +592,7 @@ fn test_punch_me_now_ipv4_rfc_encoding() {
     let mut output = BytesMut::new();
     frame.encode(&mut output);
 
-    assert_eq!(
-        output.freeze(),
-        expected.freeze(),
-        "PUNCH_ME_NOW IPv4 encoding doesn't match RFC"
-    );
+    assert_eq!(output.freeze(), expected, "PUNCH_ME_NOW IPv4 encoding mismatch");
 }
 
 /// Test REMOVE_ADDRESS frame encoding according to RFC
@@ -605,11 +623,7 @@ fn test_remove_address_rfc_encoding() {
     let mut output = BytesMut::new();
     frame.encode(&mut output);
 
-    assert_eq!(
-        output.freeze(),
-        expected.freeze(),
-        "REMOVE_ADDRESS encoding doesn't match RFC"
-    );
+    assert_eq!(output.freeze(), expected, "REMOVE_ADDRESS encoding mismatch");
 }
 
 /// Test decoding of ADD_ADDRESS IPv4 frame
@@ -766,4 +780,3 @@ fn test_frame_type_determines_ip_version() {
     assert_eq!(buf_ipv4[5], 1); // First octet of 1.2.3.4
     assert_eq!(buf_ipv6[5], 0); // First octet of ::1
 }
-

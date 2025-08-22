@@ -126,14 +126,14 @@ pub enum ChatMessage {
     /// Request current peer list from the node
     PeerListRequest {
         /// Requestor's peer identifier
-        peer_id: [u8; 32]
+        peer_id: [u8; 32],
     },
 
     /// Response with peer list
     /// Response containing current peers
     PeerListResponse {
         /// List of known peers and metadata
-        peers: Vec<PeerInfo>
+        peers: Vec<PeerInfo>,
     },
 }
 

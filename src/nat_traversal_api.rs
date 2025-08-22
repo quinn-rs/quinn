@@ -571,9 +571,12 @@ pub enum NatTraversalEvent {
         coordinator: SocketAddr,
     },
     /// Peer coordination synchronized
-    CoordinationSynchronized { /// The peer this event relates to
-        peer_id: PeerId, /// The synchronized round identifier
-        round_id: VarInt },
+    CoordinationSynchronized {
+        /// The peer this event relates to
+        peer_id: PeerId,
+        /// The synchronized round identifier
+        round_id: VarInt,
+    },
     /// Hole punching started
     HolePunchingStarted {
         /// The peer this event relates to
@@ -622,9 +625,12 @@ pub enum NatTraversalEvent {
         fallback_available: bool,
     },
     /// Connection lost
-    ConnectionLost { /// The peer this event relates to
-        peer_id: PeerId, /// Reason for the connection loss
-        reason: String },
+    ConnectionLost {
+        /// The peer this event relates to
+        peer_id: PeerId,
+        /// Reason for the connection loss
+        reason: String,
+    },
     /// Phase transition in NAT traversal state machine
     PhaseTransition {
         /// The peer this event relates to

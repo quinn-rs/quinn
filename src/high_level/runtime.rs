@@ -154,9 +154,7 @@ where
             Some(fut) => fut.poll(cx),
             None => {
                 error!("Future not set when UdpPollHelper is polled");
-                Poll::Ready(Err(std::io::Error::other(
-                    "Future not set",
-                )))
+                Poll::Ready(Err(std::io::Error::other("Future not set")))
             }
         };
         if result.is_ready() {

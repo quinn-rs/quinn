@@ -276,10 +276,11 @@ impl Endpoint {
     /// On error, the old UDP socket is retained.
     pub fn rebind_abstract(&self, socket: Arc<dyn AsyncUdpSocket>) -> io::Result<()> {
         let addr = socket.local_addr()?;
-        let mut inner =
-            self.inner.state.lock().map_err(|_| {
-                io::Error::other("Endpoint state mutex poisoned")
-            })?;
+        let mut inner = self
+            .inner
+            .state
+            .lock()
+            .map_err(|_| io::Error::other("Endpoint state mutex poisoned"))?;
         inner.prev_socket = Some(mem::replace(&mut inner.socket, socket));
         inner.ipv6 = addr.is_ipv6();
 
@@ -413,9 +414,7 @@ impl Future for EndpointDriver {
         let mut endpoint = match self.0.state.lock() {
             Ok(endpoint) => endpoint,
             Err(_) => {
-                return Poll::Ready(Err(io::Error::other(
-                    "Endpoint state mutex poisoned",
-                )));
+                return Poll::Ready(Err(io::Error::other("Endpoint state mutex poisoned")));
             }
         };
         if endpoint.driver.is_none() {
@@ -524,9 +523,7 @@ impl EndpointInner {
         let transmit = match state.inner.retry(incoming, &mut response_buffer) {
             Ok(transmit) => transmit,
             Err(_) => {
-                return Err(std::io::Error::other(
-                    "Retry failed",
-                ));
+                return Err(std::io::Error::other("Retry failed"));
             }
         };
         respond(transmit, &response_buffer, &*state.socket);

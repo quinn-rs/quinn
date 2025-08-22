@@ -3390,8 +3390,12 @@ impl BootstrapCoordinator {
         }
 
         // Update minimal peer index for quick lookups
-        self.peer_index
-            .insert(peer_id, ObservedPeer { observed_addr: observed_address });
+        self.peer_index.insert(
+            peer_id,
+            ObservedPeer {
+                observed_addr: observed_address,
+            },
+        );
 
         // Note: Full peer registry and session scaffolding removed; we keep only minimal caches
         self.stats.total_observations += 1;
@@ -3474,7 +3478,10 @@ impl BootstrapCoordinator {
         let _entry = self
             .coordination_table
             .entry(frame.round)
-            .or_insert(CoordinationEntry { peer_b: frame.target_peer_id, address_hint: frame.address });
+            .or_insert(CoordinationEntry {
+                peer_b: frame.target_peer_id,
+                address_hint: frame.address,
+            });
         // Update target if provided later
         if let Some(peer_b) = frame.target_peer_id {
             if _entry.peer_b.is_none() {

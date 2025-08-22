@@ -1747,7 +1747,6 @@ pub struct NetworkInterface {
 
 /// Active connection state to a bootstrap node (production builds)
 #[derive(Debug)]
-
 #[allow(dead_code)]
 struct BootstrapConnection {
     /// Quinn connection to the bootstrap node
@@ -1762,7 +1761,6 @@ struct BootstrapConnection {
 
 /// Discovery request message sent to bootstrap nodes
 #[derive(Debug, Clone)]
-
 #[allow(dead_code)]
 struct AddressObservationRequest {
     /// Unique request ID for correlation
@@ -2642,7 +2640,9 @@ impl SymmetricNatPredictor {
 
     /// Calculate confidence score for a prediction
     #[allow(dead_code)]
-    fn calculate_prediction_confidence(&self) -> f64 { 0.0 }
+    fn calculate_prediction_confidence(&self) -> f64 {
+        0.0
+    }
 
     /// Update pattern analysis with new allocation event
     #[allow(dead_code)]

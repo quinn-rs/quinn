@@ -3,9 +3,9 @@
 //! This module provides fuzz targets to test NAT traversal frame parsing
 //! with malformed and edge-case inputs to ensure robustness.
 
-use ant_quic::coding::{BufExt, BufMutExt};
 use ant_quic::VarInt;
-use bytes::{Buf, BytesMut};
+use ant_quic::coding::BufExt;
+use bytes::{Buf, BufMut, BytesMut};
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr};
 
 // Frame type constants from the RFC
@@ -24,7 +24,7 @@ pub fn fuzz_add_address_frame(data: &[u8]) {
     let mut buf = BytesMut::from(data);
 
     // Extract frame type
-    let frame_type = match buf.get_u32() as u64 {
+    match buf.get_u32() as u64 {
         FRAME_TYPE_ADD_ADDRESS_IPV4 => {
             fuzz_add_address_ipv4(&mut buf);
         }
@@ -33,7 +33,6 @@ pub fn fuzz_add_address_frame(data: &[u8]) {
         }
         _ => {
             // Invalid frame type, should be handled gracefully
-            return;
         }
     };
 }
@@ -53,7 +52,7 @@ fn fuzz_add_address_ipv4(buf: &mut BytesMut) {
         return; // Not enough data
     }
 
-    let _addr_bytes = buf.get_slice(4);
+    let _addr_bytes = buf.split_to(4);
     let _port = buf.get_u16();
 
     // Any remaining data should be handled gracefully
@@ -74,7 +73,7 @@ fn fuzz_add_address_ipv6(buf: &mut BytesMut) {
         return; // Not enough data
     }
 
-    let _addr_bytes = buf.get_slice(16);
+    let _addr_bytes = buf.split_to(16);
     let _port = buf.get_u16();
 
     // Any remaining data should be handled gracefully
@@ -89,7 +88,7 @@ pub fn fuzz_punch_me_now_frame(data: &[u8]) {
     let mut buf = BytesMut::from(data);
 
     // Extract frame type
-    let frame_type = match buf.get_u32() as u64 {
+    match buf.get_u32() as u64 {
         FRAME_TYPE_PUNCH_ME_NOW_IPV4 => {
             fuzz_punch_me_now_ipv4(&mut buf);
         }
@@ -98,7 +97,6 @@ pub fn fuzz_punch_me_now_frame(data: &[u8]) {
         }
         _ => {
             // Invalid frame type, should be handled gracefully
-            return;
         }
     };
 }
@@ -126,7 +124,7 @@ fn fuzz_punch_me_now_ipv4(buf: &mut BytesMut) {
         return; // Not enough data
     }
 
-    let _addr_bytes = buf.get_slice(4);
+    let _addr_bytes = buf.split_to(4);
     let _port = buf.get_u16();
 
     // Any remaining data should be handled gracefully
@@ -155,7 +153,7 @@ fn fuzz_punch_me_now_ipv6(buf: &mut BytesMut) {
         return; // Not enough data
     }
 
-    let _addr_bytes = buf.get_slice(16);
+    let _addr_bytes = buf.split_to(16);
     let _port = buf.get_u16();
 
     // Any remaining data should be handled gracefully
@@ -215,11 +213,11 @@ pub fn fuzz_frame_parsing(data: &[u8]) {
             test_buf.advance(4); // Skip frame type
 
             // Try parsing as each frame type to ensure no panics
-            let _ = fuzz_add_address_ipv4(&mut test_buf.clone());
-            let _ = fuzz_add_address_ipv6(&mut test_buf.clone());
-            let _ = fuzz_punch_me_now_ipv4(&mut test_buf.clone());
-            let _ = fuzz_punch_me_now_ipv6(&mut test_buf.clone());
-            let _ = fuzz_remove_address_frame(data);
+            fuzz_add_address_ipv4(&mut test_buf.clone());
+            fuzz_add_address_ipv6(&mut test_buf.clone());
+            fuzz_punch_me_now_ipv4(&mut test_buf.clone());
+            fuzz_punch_me_now_ipv6(&mut test_buf.clone());
+            fuzz_remove_address_frame(data);
         }
     }
 }
