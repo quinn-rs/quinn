@@ -71,6 +71,7 @@ mod implementation {
     }
 
     impl TraceId {
+        /// Create a new zero-sized trace identifier (tracing disabled)
         pub fn new() -> Self {
             Self
         }
@@ -91,13 +92,17 @@ mod implementation {
     }
 
     impl EventLog {
+        /// Create a new no-op event log (tracing disabled)
         pub fn new() -> Self {
             Self
         }
+        /// Log an event. No-op when tracing is disabled.
         pub fn log(&self, _event: Event) {}
+        /// Return most recent events. Always empty when tracing is disabled.
         pub fn recent_events(&self, _count: usize) -> Vec<Event> {
             Vec::new()
         }
+        /// Return events by trace id. Always empty when tracing is disabled.
         pub fn get_events_by_trace(&self, _trace_id: TraceId) -> Vec<Event> {
             Vec::new()
         }
@@ -108,9 +113,11 @@ mod implementation {
     pub struct TraceContext;
 
     impl TraceContext {
+        /// Create a new no-op trace context (tracing disabled)
         pub fn new(_trace_id: TraceId) -> Self {
             Self
         }
+        /// Get the no-op trace id (tracing disabled)
         pub fn trace_id(&self) -> TraceId {
             TraceId
         }
@@ -147,9 +154,8 @@ pub fn timestamp_now() -> u64 {
 }
 
 #[cfg(not(feature = "trace"))]
-pub fn timestamp_now() -> u64 {
-    0
-}
+/// Zero timestamp placeholder when tracing is disabled
+pub fn timestamp_now() -> u64 { 0 }
 
 #[cfg(test)]
 mod tests {
