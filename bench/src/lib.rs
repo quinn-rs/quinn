@@ -214,15 +214,12 @@ fn parse_byte_size(s: &str) -> Result<u64, ParseIntError> {
         _ => 1,
     };
 
-    let s = if multiplier != 1 {
-        &s[..s.len() - 1]
-    } else {
-        s
+    let s = match multiplier {
+        1 => s,
+        _ => &s[..s.len() - 1],
     };
 
-    let base: u64 = u64::from_str(s)?;
-
-    Ok(base * multiplier)
+    Ok(u64::from_str(s)? * multiplier)
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
