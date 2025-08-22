@@ -88,7 +88,7 @@ services:
       --force-coordinator
       --listen [::]:9000
     healthcheck:
-      test: ["CMD", "netcat", "-z", "localhost", "9000"]
+      test: ["CMD", "netcat", "-uzw", "1", "localhost", "9000"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -196,6 +196,7 @@ services:
       - nat1_gateway
     volumes:
       - ./logs/client1:/app/logs
+      - ./shared:/shared
     command: ["tail", "-f", "/dev/null"]
 
   # Client 2 - Behind Symmetric NAT (dual-stack)
@@ -219,6 +220,7 @@ services:
       - nat2_gateway
     volumes:
       - ./logs/client2:/app/logs
+      - ./shared:/shared
     command: ["tail", "-f", "/dev/null"]
 
   # Client 3 - Behind Port Restricted NAT (dual-stack)
@@ -242,6 +244,7 @@ services:
       - nat3_gateway
     volumes:
       - ./logs/client3:/app/logs
+      - ./shared:/shared
     command: ["tail", "-f", "/dev/null"]
 
   # Client 4 - Behind CGNAT (IPv4 only)
@@ -264,6 +267,7 @@ services:
       - nat4_gateway
     volumes:
       - ./logs/client4:/app/logs
+      - ./shared:/shared
     command: ["tail", "-f", "/dev/null"]
 
   # Client 5 - IPv6 only network
@@ -288,6 +292,7 @@ services:
       - bootstrap
     volumes:
       - ./logs/client5:/app/logs
+      - ./shared:/shared
     command: ["tail", "-f", "/dev/null"]
 
   # Test Runner - Orchestrates test execution
@@ -302,6 +307,7 @@ services:
       - ./scripts:/scripts
       - ./results:/results
       - ./logs:/logs
+      - ./shared:/shared
       - /var/run/docker.sock:/var/run/docker.sock
     environment:
       - TEST_SCENARIOS=basic,ipv6,stress,performance

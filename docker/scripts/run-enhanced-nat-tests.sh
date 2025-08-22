@@ -40,7 +40,7 @@ init_test_env() {
     log "Initializing enhanced test environment..."
     
     # Create directories
-    mkdir -p "$LOG_DIR" "$RESULTS_DIR" "$RESULTS_DIR/metrics" "$RESULTS_DIR/pcaps"
+    mkdir -p "$LOG_DIR" "$RESULTS_DIR" "$RESULTS_DIR/metrics" "$RESULTS_DIR/pcaps" ./shared
     
     # Check Docker Compose command
     if docker compose version &> /dev/null; then
@@ -68,8 +68,12 @@ start_containers() {
     # Build in parallel
     $COMPOSE_CMD -f "$COMPOSE_FILE" build --parallel
     
-    # Start services
-    $COMPOSE_CMD -f "$COMPOSE_FILE" up -d
+    # Start services. If name conflicts exist from a previous run, bring them down first.
+    if ! $COMPOSE_CMD -f "$COMPOSE_FILE" up -d; then
+        warn "Compose up failed, attempting cleanup of previous resources..."
+        $COMPOSE_CMD -f "$COMPOSE_FILE" down -v --remove-orphans || true
+        $COMPOSE_CMD -f "$COMPOSE_FILE" up -d
+    fi
     
     # Wait for services
     log "Waiting for services to initialize (30s)..."

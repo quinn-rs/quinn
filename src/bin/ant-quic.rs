@@ -158,6 +158,11 @@ enum Commands {
 /// Return a path for storing receiver address files inside the container
 fn ci_addr_file_for_id(id: &str) -> PathBuf {
     let safe = id.replace('/', "_").replace("..", "_");
+    // Prefer shared volume if present (mounted by docker-compose for test coordination)
+    let shared_dir = PathBuf::from("/shared");
+    if shared_dir.exists() {
+        return shared_dir.join(format!("ant-quic-peer-{}.addr", safe));
+    }
     PathBuf::from(format!("/tmp/ant-quic-peer-{}.addr", safe))
 }
 
