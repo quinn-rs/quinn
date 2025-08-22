@@ -30,7 +30,7 @@ use tracing::{debug, error, info, warn};
 use tracing_subscriber::EnvFilter;
 
 /// Command line arguments
-#[derive(Parser, Debug)]
+#[derive(Parser, Debug, Clone)]
 #[command(author, version, about, long_about = None)]
 struct Args {
     /// Address to listen on
@@ -167,10 +167,53 @@ fn ci_addr_file_for_id(id: &str) -> PathBuf {
 }
 
 async fn ci_ping(addr: SocketAddr, timeout_secs: u64) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    // Minimal QUIC connect attempt using high_level Endpoint
+    // Minimal QUIC connect attempt using high_level Endpoint (accept-any-cert for CI)
     use ant_quic::{ClientConfig, EndpointConfig};
     use ant_quic::crypto::rustls::QuicClientConfig;
+    use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
+    use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
+    use rustls::{DigitallySignedStruct, SignatureScheme};
     use std::sync::Arc as StdArc;
+
+    #[derive(Debug)]
+    struct AcceptAnyVerifier;
+    impl ServerCertVerifier for AcceptAnyVerifier {
+        fn verify_server_cert(
+            &self,
+            _end_entity: &CertificateDer<'_>,
+            _intermediates: &[CertificateDer<'_>],
+            _server_name: &ServerName<'_>,
+            _ocsp_response: &[u8],
+            _now: UnixTime,
+        ) -> Result<ServerCertVerified, rustls::Error> {
+            Ok(ServerCertVerified::assertion())
+        }
+
+        fn verify_tls12_signature(
+            &self,
+            _message: &[u8],
+            _cert: &CertificateDer<'_>,
+            _dss: &DigitallySignedStruct,
+        ) -> Result<HandshakeSignatureValid, rustls::Error> {
+            Ok(HandshakeSignatureValid::assertion())
+        }
+
+        fn verify_tls13_signature(
+            &self,
+            _message: &[u8],
+            _cert: &CertificateDer<'_>,
+            _dss: &DigitallySignedStruct,
+        ) -> Result<HandshakeSignatureValid, rustls::Error> {
+            Ok(HandshakeSignatureValid::assertion())
+        }
+
+        fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
+            vec![
+                SignatureScheme::ECDSA_NISTP256_SHA256,
+                SignatureScheme::RSA_PSS_SHA256,
+            ]
+        }
+    }
 
     // Bind socket according to IP family
     let bind_addr: SocketAddr = if addr.is_ipv4() { "0.0.0.0:0".parse()? } else { "[::]:0".parse()? };
@@ -178,14 +221,13 @@ async fn ci_ping(addr: SocketAddr, timeout_secs: u64) -> Result<(), Box<dyn std:
     let runtime = high_level::default_runtime().ok_or_else(|| std::io::Error::other("No async runtime"))?;
     let endpoint = high_level::Endpoint::new(EndpointConfig::default(), None, socket, runtime)?;
 
-    // Empty root store client config (for lab/internal use)
-    let roots = rustls::RootCertStore::empty();
-    let crypto = rustls::ClientConfig::builder().with_root_certificates(roots).with_no_client_auth();
+    // CI crypto: accept any cert (only for test harness)
+    let crypto = rustls::ClientConfig::builder()
+        .dangerous()
+        .with_custom_certificate_verifier(StdArc::new(AcceptAnyVerifier))
+        .with_no_client_auth();
     let client_config = ClientConfig::new(StdArc::new(QuicClientConfig::try_from(crypto)?));
-    let server_name = match addr {
-        SocketAddr::V4(_) => "localhost",
-        SocketAddr::V6(_) => "localhost",
-    };
+    let server_name = match addr { SocketAddr::V4(_) => "localhost", SocketAddr::V6(_) => "localhost" };
 
     let connecting = endpoint.connect_with(client_config, addr, server_name)?;
     let _conn = tokio::time::timeout(Duration::from_secs(timeout_secs), connecting).await??;
@@ -218,10 +260,14 @@ async fn ci_handle_flags(args: &Args) -> Result<Option<i32>, Box<dyn std::error:
         // Persist the listen address for query-peer
         fs::write(&file, args.listen.to_string())?;
         println!("RECEIVER_READY {} {}", id, args.listen);
-        // Block until killed by container stop
-        loop {
-            tokio::time::sleep(Duration::from_secs(60)).await;
-        }
+
+        // Start a full node to accept QUIC connections on the given address
+        let mut recv_args = args.clone();
+        recv_args.force_coordinator = true; // ensure server role
+        recv_args.bootstrap.clear();
+        let node = QuicDemoNode::new(recv_args).await?;
+        node.run().await?; // never returns under normal operation
+        return Ok(Some(0));
     }
 
     if let Some(peer) = &args.query_peer {
