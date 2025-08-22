@@ -61,17 +61,41 @@ init_test_env() {
     log "Test environment initialized"
 }
 
+# Best-effort cleanup of leftover resources from previous runs
+pre_cleanup() {
+    warn "Pre-cleaning any leftover containers/networks..."
+    local names=(
+        ant-quic-prometheus ant-quic-grafana ant-quic-bootstrap ant-quic-test-runner
+        nat1-gateway nat2-gateway nat3-gateway nat4-gateway
+        ant-quic-client1 ant-quic-client2 ant-quic-client3 ant-quic-client4 ant-quic-client5
+    )
+    for n in "${names[@]}"; do
+        if docker ps -a --format '{{.Names}}' | grep -qx "$n"; then
+            docker rm -f "$n" >/dev/null 2>&1 || true
+        fi
+    done
+
+    local nets=(docker_internet docker_nat1_lan docker_nat2_lan docker_nat3_lan docker_nat4_lan docker_nat5_lan)
+    for net in "${nets[@]}"; do
+        if docker network ls --format '{{.Name}}' | grep -qx "$net"; then
+            docker network rm "$net" >/dev/null 2>&1 || true
+        fi
+    done
+}
+
 # Build and start containers
 start_containers() {
     log "Building and starting containers..."
+    pre_cleanup
     
     # Build in parallel
     $COMPOSE_CMD -f "$COMPOSE_FILE" build --parallel
     
-    # Start services. If name conflicts exist from a previous run, bring them down first.
+    # Start services. If conflicts exist from a previous run, bring them down first.
     if ! $COMPOSE_CMD -f "$COMPOSE_FILE" up -d; then
         warn "Compose up failed, attempting cleanup of previous resources..."
         $COMPOSE_CMD -f "$COMPOSE_FILE" down -v --remove-orphans || true
+        pre_cleanup
         $COMPOSE_CMD -f "$COMPOSE_FILE" up -d
     fi
     
@@ -84,8 +108,19 @@ start_containers() {
                    "ant-quic-client1" "ant-quic-client2" "ant-quic-client3" "ant-quic-client4" "ant-quic-client5")
     
     for service in "${services[@]}"; do
-        if $COMPOSE_CMD -f "$COMPOSE_FILE" ps | grep -q "${service}.*Up"; then
-            log "✓ ${service} is running"
+        if docker ps -a --format '{{.Names}}\t{{.State}}' | grep -q "^${service}\s\+running$"; then
+            # If bootstrap, prefer health=healthy when available
+            if [ "$service" = "ant-quic-bootstrap" ]; then
+                local status
+                status=$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}unknown{{end}}' "$service" 2>/dev/null || echo unknown)
+                if [ "$status" = "healthy" ] || [ "$status" = "none" ] || [ "$status" = "unknown" ]; then
+                    log "✓ ${service} is running (${status})"
+                else
+                    warn "${service} is running but not healthy (${status})"
+                fi
+            else
+                log "✓ ${service} is running"
+            fi
         else
             error "✗ ${service} failed to start"
             return 1
