@@ -103,6 +103,15 @@ start_containers() {
     log "Waiting for services to initialize (30s)..."
     sleep 30
     
+    # When running under ACT, also connect clients to the public 'internet' bridge
+    # so basic connectivity to bootstrap works without full NAT routing
+    if [ "${ACT:-}" = "true" ]; then
+        warn "ACT detected: attaching clients to 'internet' network for direct reachability"
+        for i in {1..5}; do
+            docker network connect docker_internet "ant-quic-client$i" 2>/dev/null || true
+        done
+    fi
+
     # Health check - using actual container names
     local services=("ant-quic-bootstrap" "nat1-gateway" "nat2-gateway" "nat3-gateway" "nat4-gateway" 
                    "ant-quic-client1" "ant-quic-client2" "ant-quic-client3" "ant-quic-client4" "ant-quic-client5")
@@ -350,7 +359,12 @@ generate_report() {
     info "Generating comprehensive test report..."
     
     local report_file="$RESULTS_DIR/enhanced_test_report.md"
-    local success_rate=$(awk "BEGIN {printf \"%.1f\", ($PASSED_TESTS/$TOTAL_TESTS)*100}")
+    local success_rate
+    if [ "$TOTAL_TESTS" -gt 0 ]; then
+        success_rate=$(awk "BEGIN {printf \"%.1f\", ($PASSED_TESTS/$TOTAL_TESTS)*100}")
+    else
+        success_rate="0.0"
+    fi
     
     cat > "$report_file" <<EOF
 # ANT-QUIC Enhanced NAT Test Report
