@@ -88,7 +88,7 @@ services:
       --force-coordinator
       --listen [::]:9000
     healthcheck:
-      test: ["CMD", "netcat", "-uzw", "1", "localhost", "9000"]
+      test: ["CMD-SHELL", "ss -u -l | grep -q ':9000' "]
       interval: 30s
       timeout: 10s
       retries: 3
