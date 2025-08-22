@@ -17,6 +17,7 @@ use tracing::{debug, error, info};
 use perf::{
     CommonOpt, init_tracing,
     noprotection::NoProtectionClientConfig,
+    parse_byte_size,
     stats::{OpenStreamStats, Stats},
 };
 
@@ -40,10 +41,16 @@ struct Opt {
     #[clap(long, default_value = "1")]
     bi_requests: u64,
     /// Number of bytes to request
-    #[clap(long, default_value = "1048576")]
+    ///
+    /// This can use SI suffixes for sizes. For example, 1M will transfer
+    /// 1MiB, 10G will transfer 10GiB.
+    #[clap(long, default_value = "1M", value_parser = parse_byte_size)]
     download_size: u64,
     /// Number of bytes to transmit, in addition to the request header
-    #[clap(long, default_value = "1048576")]
+    ///
+    /// This can use SI suffixes for sizes. For example, 1M will transfer
+    /// 1MiB, 10G will transfer 10GiB.
+    #[clap(long, default_value = "1M", value_parser = parse_byte_size)]
     upload_size: u64,
     /// The time to run in seconds
     #[clap(long, default_value = "60")]
