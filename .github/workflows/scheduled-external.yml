@@ -25,12 +25,12 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       
       - name: Build test binary
-        run: cargo build --release --bin test_public_endpoints
+        run: cargo build --release --bin test-public-endpoints
       
       - name: Test endpoints
         id: test
         run: |
-          ./target/release/test_public_endpoints | tee endpoint-results.txt
+          ./target/release/test-public-endpoints | tee endpoint-results.txt
           
           # Extract success rate
           SUCCESS_RATE=$(grep "Success rate:" endpoint-results.txt | cut -d' ' -f3 | tr -d '%')
@@ -141,7 +141,7 @@ jobs:
       - name: Run compliance tests
         run: |
           # Run QUIC compliance validator
-          cargo test --test compliance_tests -- --nocapture || true
+          cargo test --test nat_traversal_rfc_compliance_tests -- --nocapture || true
       
       - name: Check RFC compliance
         run: |
