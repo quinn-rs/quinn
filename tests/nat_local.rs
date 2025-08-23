@@ -20,7 +20,11 @@ fn run_suite(suite: &str, max_duration: Duration) {
     }
 
     let script = script_path();
-    assert!(script.exists(), "local runner script not found: {}", script.display());
+    assert!(
+        script.exists(),
+        "local runner script not found: {}",
+        script.display()
+    );
 
     let start = Instant::now();
     let status = Command::new("bash")
@@ -32,9 +36,7 @@ fn run_suite(suite: &str, max_duration: Duration) {
     let elapsed = start.elapsed();
     eprintln!(
         "Local NAT test suite '{}' finished in {:.1?} with status {}",
-        suite,
-        elapsed,
-        status
+        suite, elapsed, status
     );
 
     assert!(

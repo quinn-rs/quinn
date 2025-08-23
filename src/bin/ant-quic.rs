@@ -121,7 +121,7 @@ struct Args {
     pqc_mode: Option<String>,
 
     /// Test PQC P2P to a named client (CI helper)
-    #[arg(long, value_name = "PEER")] 
+    #[arg(long, value_name = "PEER")]
     test_pqc_p2p: Option<String>,
 
     /// Simple benchmark selector (connection/throughput/concurrent) - placeholder
@@ -166,10 +166,13 @@ fn ci_addr_file_for_id(id: &str) -> PathBuf {
     PathBuf::from(format!("/tmp/ant-quic-peer-{}.addr", safe))
 }
 
-async fn ci_ping(addr: SocketAddr, timeout_secs: u64) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+async fn ci_ping(
+    addr: SocketAddr,
+    timeout_secs: u64,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // Minimal QUIC connect attempt using high_level Endpoint (accept-any-cert for CI)
-    use ant_quic::{ClientConfig, EndpointConfig};
     use ant_quic::crypto::rustls::QuicClientConfig;
+    use ant_quic::{ClientConfig, EndpointConfig};
     use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
     use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
     use rustls::{DigitallySignedStruct, SignatureScheme};
@@ -216,9 +219,14 @@ async fn ci_ping(addr: SocketAddr, timeout_secs: u64) -> Result<(), Box<dyn std:
     }
 
     // Bind socket according to IP family
-    let bind_addr: SocketAddr = if addr.is_ipv4() { "0.0.0.0:0".parse()? } else { "[::]:0".parse()? };
+    let bind_addr: SocketAddr = if addr.is_ipv4() {
+        "0.0.0.0:0".parse()?
+    } else {
+        "[::]:0".parse()?
+    };
     let socket = std::net::UdpSocket::bind(bind_addr)?;
-    let runtime = high_level::default_runtime().ok_or_else(|| std::io::Error::other("No async runtime"))?;
+    let runtime =
+        high_level::default_runtime().ok_or_else(|| std::io::Error::other("No async runtime"))?;
     let endpoint = high_level::Endpoint::new(EndpointConfig::default(), None, socket, runtime)?;
 
     // CI crypto: accept any cert (only for test harness)
@@ -227,14 +235,19 @@ async fn ci_ping(addr: SocketAddr, timeout_secs: u64) -> Result<(), Box<dyn std:
         .with_custom_certificate_verifier(StdArc::new(AcceptAnyVerifier))
         .with_no_client_auth();
     let client_config = ClientConfig::new(StdArc::new(QuicClientConfig::try_from(crypto)?));
-    let server_name = match addr { SocketAddr::V4(_) => "localhost", SocketAddr::V6(_) => "localhost" };
+    let server_name = match addr {
+        SocketAddr::V4(_) => "localhost",
+        SocketAddr::V6(_) => "localhost",
+    };
 
     let connecting = endpoint.connect_with(client_config, addr, server_name)?;
     let _conn = tokio::time::timeout(Duration::from_secs(timeout_secs), connecting).await??;
     Ok(())
 }
 
-async fn ci_handle_flags(args: &Args) -> Result<Option<i32>, Box<dyn std::error::Error + Send + Sync>> {
+async fn ci_handle_flags(
+    args: &Args,
+) -> Result<Option<i32>, Box<dyn std::error::Error + Send + Sync>> {
     if let Some(target) = args.ping {
         match ci_ping(target, args.timeout).await {
             Ok(()) => {

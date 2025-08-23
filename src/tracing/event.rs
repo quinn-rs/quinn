@@ -149,10 +149,7 @@ pub enum EventData {
         _padding: [u8; 41],
     },
     #[allow(dead_code)]
-    HolePunchingStarted {
-        peer: [u8; 32],
-        _padding: [u8; 32],
-    },
+    HolePunchingStarted { peer: [u8; 32], _padding: [u8; 32] },
     #[allow(dead_code)]
     HolePunchingSucceeded {
         peer: [u8; 32],

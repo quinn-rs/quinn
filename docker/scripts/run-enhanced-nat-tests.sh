@@ -194,16 +194,29 @@ test_p2p_connection() {
     local client2_name=$3
     local protocol=$4
     
+    # Count P2P tests
+    ((TOTAL_TESTS++))
+
     debug "Testing P2P: $test_name ($protocol)"
     
     # Start listener on client2 (unique port per test)
     local base_port=9001
     local recv_port=$((base_port + $(echo -n "$test_name" | cksum | awk '{print $1 % 3000}')))
+    # Avoid port already in use by probing inside the receiver container and adjusting
+    for _ in $(seq 1 20); do
+        if docker exec "ant-quic-${client2_name}" sh -c "ss -u -l | awk '{print $5}' | grep -q ':${recv_port}\\>'" 2>/dev/null; then
+            recv_port=$((recv_port + 1))
+            if [ $recv_port -ge 65500 ]; then recv_port=$base_port; fi
+        else
+            break
+        fi
+    done
     local listen_addr
     if [ "$protocol" = "ipv4" ]; then
         listen_addr="0.0.0.0:${recv_port}"
     else
-        listen_addr="[::]:${recv_port}"
+        # Prefer IPv4-mapped dual-stack binding for compatibility
+        listen_addr="0.0.0.0:${recv_port}"
     fi
     
     # Ensure no stale receiver remains from previous runs
@@ -220,6 +233,21 @@ test_p2p_connection() {
         fi
         sleep 0.5
     done
+
+    # Write direct addresses to shared file (fallback for query-peer)
+    local addr_file="./shared/ant-quic-peer-${client2_name}.addr"
+    : > "$addr_file" || true
+    local receiver_container="ant-quic-${client2_name}"
+    local v4_ip
+    v4_ip=$(docker inspect -f '{{ index .NetworkSettings.Networks "docker_internet" "IPAddress" }}' "$receiver_container" 2>/dev/null || true)
+    if [ -n "$v4_ip" ]; then
+        echo "${v4_ip}:${recv_port}" >> "$addr_file" || true
+    fi
+    local v6_ip
+    v6_ip=$(docker inspect -f '{{ index .NetworkSettings.Networks "docker_internet" "GlobalIPv6Address" }}' "$receiver_container" 2>/dev/null || true)
+    if [ -n "$v6_ip" ]; then
+        echo "[${v6_ip}]:${recv_port}" >> "$addr_file" || true
+    fi
     
     # Get peer info via bootstrap; fallback to direct shared address if needed
     local peer_info=$(docker exec "ant-quic-${client1_name}" \
@@ -228,7 +256,11 @@ test_p2p_connection() {
     if [ -z "$peer_info" ]; then
         local addr_file="./shared/ant-quic-peer-${client2_name}.addr"
         if [ -s "$addr_file" ]; then
-            peer_info=$(tail -n 1 "$addr_file")
+            # Prefer IPv4 address first for runner compatibility
+            peer_info=$(grep -m1 -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+:' "$addr_file" || true)
+            if [ -z "$peer_info" ]; then
+                peer_info=$(tail -n 1 "$addr_file")
+            fi
         fi
         if [ -z "$peer_info" ]; then
             record_test_result "$test_name" "FAILED" "Could not discover peer"
