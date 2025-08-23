@@ -204,7 +204,7 @@ test_p2p_connection() {
     local recv_port=$((base_port + $(echo -n "$test_name" | cksum | awk '{print $1 % 3000}')))
     # Avoid port already in use by probing inside the receiver container and adjusting
     for _ in $(seq 1 20); do
-        if docker exec "ant-quic-${client2_name}" sh -c "ss -u -l | awk '{print $5}' | grep -q ':${recv_port}\\>'" 2>/dev/null; then
+        if docker exec "ant-quic-${client2_name}" sh -c "ss -u -l | awk '{print \\$5}' | grep -q ':${recv_port}\\>'" 2>/dev/null; then
             recv_port=$((recv_port + 1))
             if [ $recv_port -ge 65500 ]; then recv_port=$base_port; fi
         else
