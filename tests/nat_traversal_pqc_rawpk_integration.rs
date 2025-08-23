@@ -1,12 +1,10 @@
 //! Integration test: NAT traversal RFC frame config + RFC 7250 raw public keys with PQC/hybrid
 
-use ant_quic::frame::nat_traversal_unified::{
-    NatTraversalFrameConfig, TRANSPORT_PARAM_RFC_NAT_TRAVERSAL, peer_supports_rfc_nat,
-};
-
 #[cfg(feature = "pqc")]
 mod pqc_integration {
-    use super::*;
+    use ant_quic::frame::nat_traversal_unified::{
+        NatTraversalFrameConfig, TRANSPORT_PARAM_RFC_NAT_TRAVERSAL, peer_supports_rfc_nat,
+    };
     use ant_quic::VarInt;
     use ant_quic::crypto::pqc::types::MlDsaPublicKey;
     use ant_quic::crypto::pqc::types::PqcError;
