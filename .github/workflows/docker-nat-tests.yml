@@ -189,6 +189,21 @@ jobs:
             ;;
         esac
         
+    - name: Evaluate test outcome
+      if: always()
+      run: |
+        cd docker
+        if [ ! -f results/status ]; then
+          echo "::error::No status file found; treating as failure"
+          exit 1
+        fi
+        echo "NAT test suite status: $(cat results/status)"
+        if grep -q FAIL results/status; then
+          echo "::error::One or more tests failed in suite ${{ matrix.test-suite }}"
+          exit 1
+        fi
+        echo "All tests in suite ${{ matrix.test-suite }} passed."
+
     - name: Collect test results
       if: always()
       run: |
@@ -196,6 +211,13 @@ jobs:
         mkdir -p results logs
         echo "Test suite: ${{ matrix.test-suite }}" > results/test_suite.txt
         docker compose -f docker-compose.enhanced.yml logs > logs/compose_logs.txt 2>&1 || true
+        # Evaluate machine status and set output
+        if [ -f results/status ]; then
+          STATUS=$(cat results/status)
+        else
+          STATUS=UNKNOWN
+        fi
+        echo "status=${STATUS}" >> "$GITHUB_OUTPUT"
         
     - name: Upload test artifacts
       if: ${{ always() && !env.ACT }}
@@ -226,6 +248,21 @@ jobs:
         else
           echo "## Test Results - ${{ matrix.test-suite }}" >> $GITHUB_STEP_SUMMARY
           echo "No test report generated" >> $GITHUB_STEP_SUMMARY
+        fi
+
+    - name: Fail job on test failures
+      if: always()
+      run: |
+        cd docker
+        if [ -f results/status ]; then
+          STATUS=$(cat results/status)
+          if [ "$STATUS" != "PASS" ]; then
+            echo "Detected test failures (status=$STATUS). Failing job." >&2
+            exit 1
+          fi
+        else
+          echo "No status file found; assuming failure" >&2
+          exit 1
         fi
         
     - name: Clean up Docker resources
