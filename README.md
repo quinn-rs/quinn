@@ -416,6 +416,29 @@ cargo test auth               # Test authentication
 cargo bench observed_address   # Benchmark address discovery performance
 ```
 
+### Local NAT Traversal Tests
+
+You can run an end-to-end local NAT traversal harness (Docker-based) and also invoke it via `cargo test` when needed.
+
+```bash
+# Fast local sanity (basic connectivity only)
+./scripts/run-local-nat-tests.sh smoke
+
+# Core NAT traversal matrix
+./scripts/run-local-nat-tests.sh nat
+
+# Full suite (includes optional categories)
+./scripts/run-local-nat-tests.sh all
+
+# Opt-in cargo tests that call the local harness (ignored by default)
+RUN_LOCAL_NAT=1 cargo test --test nat_local -- --ignored local_nat_smoke
+RUN_LOCAL_NAT=1 cargo test --test nat_local -- --ignored local_nat_core
+```
+
+Notes:
+- The local harness writes results to `docker/results` and `docker/logs`, and exits non-zero on failures.
+- By default, some particularly strict combinations may be temporarily disabled if flaky, tracked in issues.
+
 ### Real-World Testing Status
 
 #### Completed Tests ✅
