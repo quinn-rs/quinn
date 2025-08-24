@@ -77,6 +77,9 @@ pub struct CommonOpt {
     /// 1MiB, 10G will limit to 10GiB.
     #[clap(long, value_parser = parse_byte_size)]
     pub send_window: Option<u64>,
+    /// Max UDP payload size in bytes
+    #[clap(long, default_value = "1472")]
+    pub max_udp_payload_size: u16,
     /// qlog output file
     #[cfg(feature = "qlog")]
     #[clap(long = "qlog")]

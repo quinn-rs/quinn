@@ -90,13 +90,11 @@ async fn run(opt: Opt) -> Result<()> {
 
     let socket = opt.common.bind_socket(opt.listen)?;
 
-    let endpoint = quinn::Endpoint::new(
-        Default::default(),
-        Some(config),
-        socket,
-        Arc::new(TokioRuntime),
-    )
-    .context("creating endpoint")?;
+    let mut endpoint_cfg = quinn::EndpointConfig::default();
+    endpoint_cfg.max_udp_payload_size(opt.common.max_udp_payload_size)?;
+
+    let endpoint = quinn::Endpoint::new(endpoint_cfg, Some(config), socket, Arc::new(TokioRuntime))
+        .context("creating endpoint")?;
 
     info!("listening on {}", endpoint.local_addr().unwrap());
 
