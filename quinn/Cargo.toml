@@ -46,6 +46,11 @@ rustls-log = ["rustls?/logging"]
 # Enable qlog support
 qlog = ["proto/qlog"]
 
+# Internal (PRIVATE!) features used to aid testing.
+# Don't rely on these whatsoever. They may disappear at any time.
+
+__rustls-post-quantum-test =  ["rustls-aws-lc-rs", "proto/__rustls-post-quantum-test"]
+
 [dependencies]
 async-io = { workspace = true, optional = true }
 async-std = { workspace = true, optional = true }
@@ -104,6 +109,10 @@ required-features = ["rustls-ring"]
 [[example]]
 name = "connection"
 required-features = ["rustls-ring"]
+
+[[test]]
+name = "post_quantum"
+required-features = ["__rustls-post-quantum-test"]
 
 [[bench]]
 name = "bench"
