@@ -14,8 +14,8 @@ use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
 use tokio::sync::Semaphore;
 use tracing::{debug, error, info};
 
-use perf::{
-    CommonOpt, init_tracing,
+use crate::{
+    CommonOpt, PERF_CIPHER_SUITES,
     noprotection::NoProtectionClientConfig,
     parse_byte_size,
     stats::{OpenStreamStats, Stats},
@@ -24,7 +24,7 @@ use perf::{
 /// Connects to a QUIC perf server and maintains a specified pattern of requests until interrupted
 #[derive(Parser)]
 #[clap(name = "client")]
-struct Opt {
+pub struct Opt {
     /// Host to connect to
     #[clap(default_value = "localhost:4433")]
     host: String,
@@ -67,18 +67,7 @@ struct Opt {
     common: CommonOpt,
 }
 
-#[tokio::main(flavor = "current_thread")]
-async fn main() {
-    let opt = Opt::parse();
-
-    init_tracing();
-
-    if let Err(e) = run(opt).await {
-        error!("{:#}", e);
-    }
-}
-
-async fn run(opt: Opt) -> Result<()> {
+pub async fn run(opt: Opt) -> Result<()> {
     let mut host_parts = opt.host.split(':');
     let host_name = host_parts.next().unwrap();
     let host_port = host_parts
@@ -116,7 +105,7 @@ async fn run(opt: Opt) -> Result<()> {
 
     let default_provider = rustls::crypto::ring::default_provider();
     let provider = Arc::new(rustls::crypto::CryptoProvider {
-        cipher_suites: perf::PERF_CIPHER_SUITES.into(),
+        cipher_suites: PERF_CIPHER_SUITES.into(),
         ..default_provider
     });
 
