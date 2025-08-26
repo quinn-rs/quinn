@@ -7,11 +7,11 @@ use quinn::{TokioRuntime, crypto::rustls::QuicServerConfig};
 use rustls::pki_types::{CertificateDer, PrivatePkcs8KeyDer};
 use tracing::{debug, error, info};
 
-use perf::{CommonOpt, PERF_CIPHER_SUITES, init_tracing, noprotection::NoProtectionServerConfig};
+use crate::{CommonOpt, PERF_CIPHER_SUITES, noprotection::NoProtectionServerConfig};
 
 #[derive(Parser)]
 #[clap(name = "server")]
-struct Opt {
+pub struct Opt {
     /// Address to listen on
     #[clap(long = "listen", default_value = "[::]:4433")]
     listen: SocketAddr,
@@ -26,18 +26,7 @@ struct Opt {
     common: CommonOpt,
 }
 
-#[tokio::main(flavor = "current_thread")]
-async fn main() {
-    let opt = Opt::parse();
-
-    init_tracing();
-
-    if let Err(e) = run(opt).await {
-        error!("{:#}", e);
-    }
-}
-
-async fn run(opt: Opt) -> Result<()> {
+pub async fn run(opt: Opt) -> Result<()> {
     let (key, cert) = match (&opt.key, &opt.cert) {
         (Some(key), Some(cert)) => {
             let key = fs::read(key).context("reading key")?;
