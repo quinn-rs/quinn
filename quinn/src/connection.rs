@@ -353,6 +353,23 @@ impl Connection {
         }
     }
 
+    /// Attempts to receive an application datagram
+    ///
+    /// If there are no readable datagrams, this will return [TryReceiveDatagramError::WouldBlock]
+    pub fn try_read_datagram(&self) -> Result<Bytes, TryReceiveDatagramError> {
+        let mut state = self.0.state.lock("try_read_datagram");
+
+        if let Some(ref e) = state.error {
+            return Err(e.clone().into());
+        }
+
+        state
+            .inner
+            .datagrams()
+            .recv()
+            .ok_or(TryReceiveDatagramError::WouldBlock)
+    }
+
     /// Wait for the connection to be closed for any reason
     ///
     /// Despite the return type's name, closed connections are often not an error condition at the
@@ -446,6 +463,33 @@ impl Connection {
                 UnsupportedByPeer => SendDatagramError::UnsupportedByPeer,
                 Disabled => SendDatagramError::Disabled,
                 TooLarge => SendDatagramError::TooLarge,
+            }),
+        }
+    }
+
+    /// Transmit `data` as an unreliable, unordered application datagram
+    ///
+    /// Application datagrams are a low-level primitive. They may be lost or delivered out of order,
+    /// and `data` must both fit inside a single QUIC packet and be smaller than the maximum
+    /// dictated by the peer.
+    ///
+    /// If the send buffer doesn't have enough available space, this will return [TryIoError::WouldBlock]
+    pub fn try_send_datagram(&self, data: Bytes) -> Result<(), TrySendDatagramError> {
+        let conn = &mut *self.0.state.lock("try_send_datagram");
+        if let Some(ref x) = conn.error {
+            return Err(SendDatagramError::ConnectionLost(x.clone()).into());
+        }
+        use proto::SendDatagramError::*;
+        match conn.inner.datagrams().send(data, false) {
+            Ok(()) => {
+                conn.wake();
+                Ok(())
+            }
+            Err(e) => Err(match e {
+                Blocked(bytes) => TrySendDatagramError::WouldBlock(bytes),
+                UnsupportedByPeer => SendDatagramError::UnsupportedByPeer.into(),
+                Disabled => SendDatagramError::Disabled.into(),
+                TooLarge => SendDatagramError::TooLarge.into(),
             }),
         }
     }
@@ -1311,6 +1355,37 @@ pub enum SendDatagramError {
     /// The connection was lost
     #[error("connection lost")]
     ConnectionLost(#[from] ConnectionError),
+}
+
+/// Errors that can arise when trying to send a datagram without blocking
+#[derive(Debug, Error, Clone, Eq, PartialEq)]
+pub enum TrySendDatagramError {
+    /// Send Would Block - contains the unsent Bytes
+    #[error("send would block")]
+    WouldBlock(Bytes),
+    /// Actual Error sending the Datagram
+    #[error(transparent)]
+    SendDatagramError(#[from] SendDatagramError),
+}
+
+/// Errors that can arise when trying to receive a datagram without blocking
+#[derive(Debug, Error, Clone, PartialEq, Eq)]
+pub enum TryReceiveDatagramError {
+    /// The operation would block
+    #[error("operation would block")]
+    WouldBlock,
+    /// A Connection error has occurred
+    #[error(transparent)]
+    ConnectionError(#[from] ConnectionError),
+}
+
+impl From<TryReceiveDatagramError> for io::Error {
+    fn from(err: TryReceiveDatagramError) -> Self {
+        match err {
+            TryReceiveDatagramError::ConnectionError(err) => err.into(),
+            TryReceiveDatagramError::WouldBlock => Self::new(io::ErrorKind::WouldBlock, err),
+        }
+    }
 }
 
 /// The maximum amount of datagrams which will be produced in a single `drive_transmit` call
