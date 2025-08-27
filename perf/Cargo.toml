@@ -32,5 +32,6 @@ serde = { workspace = true, optional = true  }
 serde_json = { workspace = true, optional = true }
 socket2 = { workspace = true }
 tokio = { workspace = true, features = ["rt", "macros", "signal", "net"] }
+tokio-util = { version = "0.7.15" }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
