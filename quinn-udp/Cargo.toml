@@ -1,6 +1,6 @@
 [package]
 name = "quinn-udp"
-version = "0.5.13"
+version = "0.5.14"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
