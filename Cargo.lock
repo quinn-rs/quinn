@@ -1590,7 +1590,7 @@ dependencies = [
 
 [[package]]
 name = "quinn"
-version = "0.11.8"
+version = "0.11.9"
 dependencies = [
  "anyhow",
  "async-io",

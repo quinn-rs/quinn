@@ -1,6 +1,6 @@
 [package]
 name = "quinn"
-version = "0.11.8"
+version = "0.11.9"
 license.workspace = true
 repository.workspace = true
 description = "Versatile QUIC transport protocol implementation"
