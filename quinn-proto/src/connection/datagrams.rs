@@ -57,6 +57,11 @@ impl Datagrams<'_> {
         Ok(())
     }
 
+    /// By calling this function, next time a datagram is sent a DatagramsUnblocked event will be created
+    pub fn request_datagram_unblocked_notification(&mut self) {
+        self.conn.datagrams.send_blocked = true;
+    }
+
     /// Compute the maximum size of datagrams that may passed to `send_datagram`
     ///
     /// Returns `None` if datagrams are unsupported by the peer or disabled locally.
@@ -85,6 +90,11 @@ impl Datagrams<'_> {
     /// Receive an unreliable, unordered datagram
     pub fn recv(&mut self) -> Option<Bytes> {
         self.conn.datagrams.recv()
+    }
+
+    /// Recv Bytes currently stored in the read buffer
+    pub fn recv_buffered(&self) -> usize {
+        self.conn.datagrams.recv_buffered
     }
 
     /// Bytes available in the outgoing datagram buffer

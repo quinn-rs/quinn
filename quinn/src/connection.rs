@@ -345,6 +345,14 @@ impl Connection {
         }
     }
 
+    /// Creates a future, resolving as soon as a readable datagram is buffered
+    pub fn readable_datagram(&self) -> ReadableDatagram<'_> {
+        ReadableDatagram {
+            conn: &self.0,
+            notify: self.0.shared.datagram_received.notified(),
+        }
+    }
+
     /// Receive an application datagram
     pub fn read_datagram(&self) -> ReadDatagram<'_> {
         ReadDatagram {
@@ -437,6 +445,15 @@ impl Connection {
     pub fn close(&self, error_code: VarInt, reason: &[u8]) {
         let conn = &mut *self.0.state.lock("close");
         conn.close(error_code, Bytes::copy_from_slice(reason), &self.0.shared);
+    }
+
+    /// Creates a future, resolving as soon as a Datagram with the given size in byte can be sent
+    pub fn sendable_datagram(&self, size: usize) -> DatagramSendable<'_> {
+        DatagramSendable {
+            conn: &self.0,
+            required_space: size,
+            notify: self.0.shared.datagrams_unblocked.notified(),
+        }
     }
 
     /// Transmit `data` as an unreliable, unordered application datagram
@@ -866,6 +883,46 @@ impl Future for ReadDatagram<'_> {
 }
 
 pin_project! {
+    /// Future produced by [`Connection::datagram_readable`]
+    pub struct ReadableDatagram<'a> {
+        conn: &'a ConnectionRef,
+        #[pin]
+        notify: Notified<'a>,
+    }
+}
+
+impl Future for ReadableDatagram<'_> {
+    type Output = Result<(), ConnectionError>;
+    fn poll(self: Pin<&mut Self>, ctx: &mut Context<'_>) -> Poll<Self::Output> {
+        let mut this = self.project();
+        let mut state = this.conn.state.lock("ReadDatagram::poll");
+
+        // Check for buffered datagrams before checking `state.error` so that already-received
+        // datagrams, which are necessarily finite, can be drained from a closed connection.
+
+        if state.inner.datagrams().recv_buffered() > 0 {
+            return Poll::Ready(Ok(()));
+        }
+
+        if let Some(ref e) = state.error {
+            return Poll::Ready(Err(e.clone()));
+        }
+
+        loop {
+            // Poll next datagram received notification
+            match this.notify.as_mut().poll(ctx) {
+                // `state` lock ensures we didn't race with readiness
+                Poll::Pending => return Poll::Pending,
+                // Replace already used Notify from previous poll
+                Poll::Ready(()) => this
+                    .notify
+                    .set(this.conn.shared.datagram_received.notified()),
+            }
+        }
+    }
+}
+
+pin_project! {
     /// Future produced by [`Connection::send_datagram_wait`]
     pub struct SendDatagram<'a> {
         conn: &'a ConnectionRef,
@@ -898,6 +955,7 @@ impl Future for SendDatagram<'_> {
                     this.data.replace(data);
                     loop {
                         match this.notify.as_mut().poll(ctx) {
+                            // `state` lock ensures we didn't race with readiness
                             Poll::Pending => return Poll::Pending,
                             // Spurious wakeup, get a new future
                             Poll::Ready(()) => this
@@ -910,6 +968,50 @@ impl Future for SendDatagram<'_> {
                 Disabled => SendDatagramError::Disabled,
                 TooLarge => SendDatagramError::TooLarge,
             })),
+        }
+    }
+}
+
+pin_project! {
+    /// Future produced by [`Connection::datagram_sendable`]
+    pub struct DatagramSendable<'a> {
+        conn: &'a ConnectionRef,
+        required_space: usize,
+        #[pin]
+        notify: Notified<'a>,
+    }
+}
+
+impl Future for DatagramSendable<'_> {
+    type Output = Result<(), SendDatagramError>;
+    fn poll(self: Pin<&mut Self>, ctx: &mut Context<'_>) -> Poll<Self::Output> {
+        let mut this = self.project();
+        let mut state = this.conn.state.lock("DatagramSendable::poll");
+        if let Some(ref e) = state.error {
+            return Poll::Ready(Err(SendDatagramError::ConnectionLost(e.clone())));
+        }
+
+        if state.inner.datagrams().send_buffer_space() > *this.required_space {
+            // We currently have enough space to satisfy the requirements
+            return Poll::Ready(Ok(()));
+        }
+
+        // Otherwise - Not enough space - so we require a unblocked notification
+        state
+            .inner
+            .datagrams()
+            .request_datagram_unblocked_notification();
+
+        loop {
+            // Poll next datagram unblocked
+            match this.notify.as_mut().poll(ctx) {
+                // `state` lock ensures we didn't race with readiness
+                Poll::Pending => return Poll::Pending,
+                // Replace already used Notify
+                Poll::Ready(()) => this
+                    .notify
+                    .set(this.conn.shared.datagrams_unblocked.notified()),
+            }
         }
     }
 }
