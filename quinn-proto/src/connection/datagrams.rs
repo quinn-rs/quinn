@@ -57,7 +57,7 @@ impl Datagrams<'_> {
         Ok(())
     }
 
-    /// By calling this function, next time a datagram is sent a DatagramsUnblocked event will be created
+    /// Next time a Datagram is sent, datagram_unblocked will be notified
     pub fn request_datagram_unblocked_notification(&mut self) {
         self.conn.datagrams.send_blocked = true;
     }
