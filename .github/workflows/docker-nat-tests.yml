@@ -161,11 +161,14 @@ jobs:
           nat-traversal)
             # Run NAT traversal tests - now validated to work correctly
             # Use simplified test environment for reliability
-            ./scripts/run-simple-nat-test.sh || true
+            echo "Running NAT traversal tests..."
+            ls -la scripts/run-simple-nat-test.sh
+            ./scripts/run-simple-nat-test.sh || echo "NAT traversal test failed with status: $?"
             ;;
           basic-connectivity)
             # Run basic connectivity tests with enhanced environment
-            ./scripts/run-enhanced-nat-tests.sh test_basic_connectivity || true
+            echo "Running basic connectivity tests..."
+            ./scripts/run-enhanced-nat-tests.sh test_basic_connectivity || echo "Basic connectivity test failed with status: $?"
             ;;
           ipv6-support)
             ./scripts/run-enhanced-nat-tests.sh test_ipv6_support || true

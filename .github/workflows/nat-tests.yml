@@ -71,9 +71,12 @@ jobs:
         continue-on-error: true
         run: |
           cd docker
+          # First verify the script exists and is executable
+          ls -la scripts/run-simple-nat-test.sh
           # Run NAT tests using simplified environment for reliability
           # This avoids complex Docker networking issues
-          ./scripts/run-simple-nat-test.sh || true
+          echo "Starting simplified NAT test..."
+          ./scripts/run-simple-nat-test.sh || echo "NAT test completed with status: $?"
         env:
           TEST_DURATION: 600  # 10 minutes for thorough testing
       
