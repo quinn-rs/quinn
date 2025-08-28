@@ -163,6 +163,10 @@ jobs:
             # Use simplified test environment for reliability
             ./scripts/run-simple-nat-test.sh || true
             ;;
+          basic-connectivity)
+            # Run basic connectivity tests with enhanced environment
+            ./scripts/run-enhanced-nat-tests.sh test_basic_connectivity || true
+            ;;
           ipv6-support)
             ./scripts/run-enhanced-nat-tests.sh test_ipv6_support || true
             ;;
