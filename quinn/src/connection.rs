@@ -973,7 +973,7 @@ impl Future for SendDatagram<'_> {
 }
 
 pin_project! {
-    /// Future produced by [`Connection::datagram_sendable`]
+    /// Future produced by [`Connection::sendable_datagram`]
     pub struct DatagramSendable<'a> {
         conn: &'a ConnectionRef,
         required_space: usize,
@@ -991,16 +991,25 @@ impl Future for DatagramSendable<'_> {
             return Poll::Ready(Err(SendDatagramError::ConnectionLost(e.clone())));
         }
 
+        // Check if peer support datagrams
+        let max = state
+            .inner
+            .datagrams()
+            .max_size()
+            .ok_or(SendDatagramError::UnsupportedByPeer)?;
+
+        if *this.required_space > max {
+            return Poll::Ready(Err(SendDatagramError::TooLarge));
+        }
+
+        // Check if send can be satisfied
         if state.inner.datagrams().send_buffer_space() > *this.required_space {
             // We currently have enough space to satisfy the requirements
             return Poll::Ready(Ok(()));
         }
 
-        // Otherwise - Not enough space - so we require a unblocked notification
-        state
-            .inner
-            .datagrams()
-            .request_datagram_unblocked_notification();
+        // Otherwise - set send_blocked and wait for the unblocked notification
+        state.inner.datagrams().set_send_blocked();
 
         loop {
             // Poll next datagram unblocked

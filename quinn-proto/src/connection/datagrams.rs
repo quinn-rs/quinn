@@ -57,8 +57,10 @@ impl Datagrams<'_> {
         Ok(())
     }
 
+    /// Sets the send_blocked flag to true
+    ///
     /// Next time a Datagram is sent, datagram_unblocked will be notified
-    pub fn request_datagram_unblocked_notification(&mut self) {
+    pub fn set_send_blocked(&mut self) {
         self.conn.datagrams.send_blocked = true;
     }
 
