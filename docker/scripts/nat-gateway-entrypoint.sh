@@ -45,6 +45,34 @@ sysctl -w net.ipv4.conf.default.rp_filter=0 || true
 sysctl -w net.ipv4.conf.$WAN_INTERFACE.rp_filter=0 || true
 sysctl -w net.ipv4.conf.$LAN_INTERFACE.rp_filter=0 || true
 
+# Set up routing between networks
+# Get IP addresses of interfaces
+WAN_IP=$(ip -4 addr show $WAN_INTERFACE | grep -oP '(?<=inet\s)\d+(\.\d+){3}')
+LAN_IP=$(ip -4 addr show $LAN_INTERFACE | grep -oP '(?<=inet\s)\d+(\.\d+){3}')
+
+if [ -n "$WAN_IP" ] && [ -n "$LAN_IP" ]; then
+    log "Setting up routing: WAN=$WAN_IP ($WAN_INTERFACE), LAN=$LAN_IP ($LAN_INTERFACE)"
+
+    # Add routes for internet network access
+    # Route to bootstrap and other internet hosts
+    ip route add 203.0.113.0/24 dev $WAN_INTERFACE 2>/dev/null || true
+
+    # Enable proxy ARP for better connectivity
+    sysctl -w net.ipv4.conf.$WAN_INTERFACE.proxy_arp=1 || true
+    sysctl -w net.ipv4.conf.$LAN_INTERFACE.proxy_arp=1 || true
+
+    # Add iptables rules to allow forwarding from LAN to WAN
+    iptables -A FORWARD -i $LAN_INTERFACE -o $WAN_INTERFACE -j ACCEPT
+    iptables -A FORWARD -i $WAN_INTERFACE -o $LAN_INTERFACE -m state --state ESTABLISHED,RELATED -j ACCEPT
+
+    # NAT from LAN to WAN
+    iptables -t nat -A POSTROUTING -o $WAN_INTERFACE -j MASQUERADE
+
+    log "Routing setup complete"
+else
+    warn "Could not determine IP addresses for routing setup"
+fi
+
 # Load required kernel modules
 modprobe nf_conntrack 2>/dev/null || true
 modprobe nf_conntrack_ipv4 2>/dev/null || true

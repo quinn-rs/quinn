@@ -2164,8 +2164,26 @@ impl SymmetricNatPredictor {
     /// Uses observed port allocation patterns to predict likely external ports
     /// that symmetric NATs will assign for new connections
     #[allow(dead_code)]
-    pub(crate) fn generate_predictions(&mut self, _max_count: usize) -> Vec<DiscoveryCandidate> {
-        Vec::new()
+    pub(crate) fn generate_predictions(&mut self, max_count: usize) -> Vec<DiscoveryCandidate> {
+        if !self.enable_symmetric_prediction {
+            return Vec::new();
+        }
+
+        // Get recent port allocation events for pattern analysis
+        let recent_events = self.get_recent_allocation_events();
+
+        if recent_events.is_empty() {
+            // Fallback to heuristic predictions when no pattern data available
+            return self.generate_heuristic_predictions(&[], max_count);
+        }
+
+        // Analyze allocation pattern
+        if let Some(pattern) = self.analyze_allocation_pattern(&recent_events) {
+            self.generate_pattern_based_predictions(&pattern, max_count)
+        } else {
+            // Use heuristic approach when pattern analysis fails
+            self.generate_heuristic_predictions(&recent_events.iter().collect::<Vec<_>>(), max_count)
+        }
     }
 
     /// Generate predictions based on detected allocation pattern

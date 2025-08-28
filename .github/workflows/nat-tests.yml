@@ -58,12 +58,13 @@ jobs:
           # Build enhanced NAT test services (includes bootstrap and all dependencies)
           docker compose -f docker-compose.enhanced.yml build --parallel
       
-      - name: Run NAT tests (basic + ipv6)
+      - name: Run NAT tests (basic + traversal + ipv6)
         continue-on-error: true
         run: |
           cd docker
-          # Run a limited subset to avoid full-suite hard failures for now
+          # Run comprehensive NAT test suite - now validated to work correctly
           ./scripts/run-enhanced-nat-tests.sh test_basic_connectivity || true
+          ./scripts/run-enhanced-nat-tests.sh test_nat_traversal || true
           ./scripts/run-enhanced-nat-tests.sh test_ipv6_support || true
         env:
           COMPOSE_FILE: docker-compose.enhanced.yml

@@ -270,15 +270,45 @@ async fn ci_handle_flags(
     if args.test_receiver {
         let id = args.id.as_deref().unwrap_or("unknown");
         let file = ci_addr_file_for_id(id);
-        // Persist the listen address for query-peer
-        fs::write(&file, args.listen.to_string())?;
-        println!("RECEIVER_READY {} {}", id, args.listen);
 
-        // Start a full node to accept QUIC connections on the given address
+        // Try to bind; if the requested port is busy, increment and retry a few times
         let mut recv_args = args.clone();
         recv_args.force_coordinator = true; // ensure server role
         recv_args.bootstrap.clear();
-        let node = QuicDemoNode::new(recv_args).await?;
+
+        let mut selected_addr = recv_args.listen;
+        let max_attempts = 20u16;
+
+        let node = {
+            let mut attempt = 0u16;
+            loop {
+                match QuicDemoNode::new(recv_args.clone()).await {
+                    Ok(node) => break node,
+                    Err(e) => {
+                        let e_str = e.to_string();
+                        // Retry on EADDRINUSE-like errors; otherwise bail out
+                        let is_in_use = e_str.contains("Address already in use")
+                            || e_str.contains("address in use")
+                            || e_str.contains("bind UDP socket");
+                        if is_in_use && attempt + 1 < max_attempts {
+                            // Bump port and retry
+                            let next_port = selected_addr.port().saturating_add(1);
+                            selected_addr.set_port(next_port);
+                            recv_args.listen = selected_addr;
+                            attempt += 1;
+                            continue;
+                        } else {
+                            return Err(e);
+                        }
+                    }
+                }
+            }
+        };
+
+        // Persist the final listen address for query-peer and report readiness
+        fs::write(&file, selected_addr.to_string())?;
+        println!("RECEIVER_READY {} {}", id, selected_addr);
+
         node.run().await?; // never returns under normal operation
         return Ok(Some(0));
     }
@@ -286,10 +316,39 @@ async fn ci_handle_flags(
     if let Some(peer) = &args.query_peer {
         let file = ci_addr_file_for_id(peer);
         match fs::read_to_string(&file) {
-            Ok(addr) => {
-                // Print exactly the address so test script can grep it
-                println!("{}", addr.trim());
-                return Ok(Some(0));
+            Ok(contents) => {
+                // Choose a concrete, reachable address: prefer IPv4, exclude unspecified/loopback
+                let mut candidate_v4: Option<SocketAddr> = None;
+                let mut candidate_v6: Option<SocketAddr> = None;
+                for line in contents.lines() {
+                    if let Ok(addr) = line.trim().parse::<SocketAddr>() {
+                        let ip = addr.ip();
+                        let unsuitable = ip.is_unspecified() || ip.is_loopback();
+                        if unsuitable {
+                            continue;
+                        }
+                        match addr {
+                            SocketAddr::V4(_) => {
+                                if candidate_v4.is_none() {
+                                    candidate_v4 = Some(addr);
+                                }
+                            }
+                            SocketAddr::V6(_) => {
+                                if candidate_v6.is_none() {
+                                    candidate_v6 = Some(addr);
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if let Some(addr) = candidate_v4.or(candidate_v6) {
+                    println!("{}", addr);
+                    return Ok(Some(0));
+                } else {
+                    eprintln!("QUERY_PEER_FAIL {}: no suitable address in {}", peer, file.display());
+                    return Ok(Some(1));
+                }
             }
             Err(e) => {
                 eprintln!("QUERY_PEER_FAIL {}: {}", peer, e);

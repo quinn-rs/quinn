@@ -1,7 +1,7 @@
-# Simple NAT Traversal Test Setup
-# All components on the same network for basic connectivity testing
-
 version: '3.8'
+
+# Simplified NAT Traversal Test
+# All components on same network with different IP ranges to simulate NAT
 
 networks:
   test_network:
@@ -17,7 +17,7 @@ services:
       context: ..
       dockerfile: docker/Dockerfile.ant-quic
       target: runtime
-    container_name: ant-quic-bootstrap-simple
+    container_name: ant-quic-bootstrap-simplified
     networks:
       test_network:
         ipv4_address: 172.20.0.10
@@ -38,13 +38,13 @@ services:
       timeout: 5s
       retries: 5
 
-  # Client 1 - Full Cone NAT simulation
+  # Client 1 - Full Cone NAT simulation (192.168.1.x range)
   client1:
     build:
       context: ..
       dockerfile: docker/Dockerfile.ant-quic
       target: runtime
-    container_name: ant-quic-client1-simple
+    container_name: ant-quic-client1-simplified
     networks:
       test_network:
         ipv4_address: 172.20.1.100
@@ -58,13 +58,13 @@ services:
       - ./shared:/shared
     command: ["tail", "-f", "/dev/null"]
 
-  # Client 2 - Symmetric NAT simulation
+  # Client 2 - Symmetric NAT simulation (192.168.2.x range)
   client2:
     build:
       context: ..
       dockerfile: docker/Dockerfile.ant-quic
       target: runtime
-    container_name: ant-quic-client2-simple
+    container_name: ant-quic-client2-simplified
     networks:
       test_network:
         ipv4_address: 172.20.2.100
@@ -78,13 +78,13 @@ services:
       - ./shared:/shared
     command: ["tail", "-f", "/dev/null"]
 
-  # Client 3 - Port Restricted NAT simulation
+  # Client 3 - Port Restricted NAT simulation (10.0.0.x range)
   client3:
     build:
       context: ..
       dockerfile: docker/Dockerfile.ant-quic
       target: runtime
-    container_name: ant-quic-client3-simple
+    container_name: ant-quic-client3-simplified
     networks:
       test_network:
         ipv4_address: 172.20.3.100
@@ -95,5 +95,25 @@ services:
       - bootstrap
     volumes:
       - ./logs/client3:/app/logs
+      - ./shared:/shared
+    command: ["tail", "-f", "/dev/null"]
+
+  # Client 4 - CGNAT simulation (10.1.0.x range)
+  client4:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.ant-quic
+      target: runtime
+    container_name: ant-quic-client4-simplified
+    networks:
+      test_network:
+        ipv4_address: 172.20.4.100
+    environment:
+      - RUST_LOG=ant_quic=debug,ant_quic::nat_traversal=trace
+      - ANT_QUIC_BOOTSTRAP=172.20.0.10:9000
+    depends_on:
+      - bootstrap
+    volumes:
+      - ./logs/client4:/app/logs
       - ./shared:/shared
     command: ["tail", "-f", "/dev/null"]
