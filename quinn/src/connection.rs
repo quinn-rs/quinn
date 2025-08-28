@@ -490,7 +490,7 @@ impl Connection {
     /// and `data` must both fit inside a single QUIC packet and be smaller than the maximum
     /// dictated by the peer.
     ///
-    /// If the send buffer doesn't have enough available space, this will return [TryIoError::WouldBlock]
+    /// If the send buffer doesn't have enough available space, this will return [TrySendDatagramError::WouldBlock]
     pub fn try_send_datagram(&self, data: Bytes) -> Result<(), TrySendDatagramError> {
         let conn = &mut *self.0.state.lock("try_send_datagram");
         if let Some(ref x) = conn.error {
