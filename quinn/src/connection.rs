@@ -346,8 +346,8 @@ impl Connection {
     }
 
     /// Creates a future, resolving as soon as a readable datagram is buffered
-    pub fn readable_datagram(&self) -> ReadableDatagram<'_> {
-        ReadableDatagram {
+    pub fn datagram_readable(&self) -> DatagramReadable<'_> {
+        DatagramReadable {
             conn: &self.0,
             notify: self.0.shared.datagram_received.notified(),
         }
@@ -448,7 +448,7 @@ impl Connection {
     }
 
     /// Creates a future, resolving as soon as a Datagram with the given size in byte can be sent
-    pub fn sendable_datagram(&self, size: usize) -> DatagramSendable<'_> {
+    pub fn datagram_sendable(&self, size: usize) -> DatagramSendable<'_> {
         DatagramSendable {
             conn: &self.0,
             required_space: size,
@@ -884,14 +884,14 @@ impl Future for ReadDatagram<'_> {
 
 pin_project! {
     /// Future produced by [`Connection::datagram_readable`]
-    pub struct ReadableDatagram<'a> {
+    pub struct DatagramReadable<'a> {
         conn: &'a ConnectionRef,
         #[pin]
         notify: Notified<'a>,
     }
 }
 
-impl Future for ReadableDatagram<'_> {
+impl Future for DatagramReadable<'_> {
     type Output = Result<(), ConnectionError>;
     fn poll(self: Pin<&mut Self>, ctx: &mut Context<'_>) -> Poll<Self::Output> {
         let mut this = self.project();
