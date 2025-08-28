@@ -29,29 +29,29 @@ jobs:
   docker-nat-tests:
     name: Docker NAT Tests
     runs-on: ubuntu-latest
-    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' }}
     timeout-minutes: 30
     
     steps:
-      - uses: actions/checkout@v4
-      
-    - name: Set up Docker Buildx
-      uses: docker/setup-buildx-action@v3
-      with:
-        driver: docker-container
-      
-    - name: Configure Docker for NAT testing
-      continue-on-error: true
-      run: |
-        # Verify Docker Compose
-        docker compose version
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-        # Enable IPv6 support for NAT tests
-        docker network create --ipv6 --subnet=2001:db8:1::/64 nat-test-ipv6 || true
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          driver: docker-container
 
-        # Configure iptables for NAT testing
-        sudo modprobe ip6table_nat || true
-        sudo modprobe nf_nat_ipv6 || true
+      - name: Configure Docker for NAT testing
+        continue-on-error: true
+        run: |
+          # Verify Docker Compose
+          docker compose version
+
+          # Enable IPv6 support for NAT tests
+          docker network create --ipv6 --subnet=2001:db8:1::/64 nat-test-ipv6 || true
+
+          # Configure iptables for NAT testing
+          sudo modprobe ip6table_nat || true
+          sudo modprobe nf_nat_ipv6 || true
       
       - name: Cache Docker layers
         uses: actions/cache@v4
@@ -121,8 +121,9 @@ jobs:
     timeout-minutes: 45
     
     steps:
-      - uses: actions/checkout@v4
-      
+      - name: Checkout code
+        uses: actions/checkout@v4
+
       - name: Set up environment
         run: |
           cd docker
@@ -162,8 +163,9 @@ jobs:
     timeout-minutes: 60
     
     steps:
-      - uses: actions/checkout@v4
-      
+      - name: Checkout code
+        uses: actions/checkout@v4
+
       - name: Configure system for stress testing
         run: |
           # Increase system limits
@@ -207,8 +209,9 @@ jobs:
     runs-on: ubuntu-latest
     
     steps:
-      - uses: actions/checkout@v4
-      
+      - name: Checkout code
+        uses: actions/checkout@v4
+
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
