@@ -2,9 +2,9 @@
 set -euo pipefail
 
 # Run key GitHub Actions workflows locally via act with caching and SSH.
-# - Uses SSH agent from host for actions/checkout
+# - Uses SSH agent from host for actions/checkout (opt-in)
 # - Mounts host cargo cache and target dir for speed
-# - Mounts Docker socket for Docker/NAT tests
+# - Mounts Docker socket for Docker/NAT tests (only for NAT job)
 # - Forces linux/amd64 container arch (helpful on Apple Silicon)
 
 IMAGE_MAP=${IMAGE_MAP:-"ubuntu-latest=catthehacker/ubuntu:act-latest"}
@@ -36,7 +36,6 @@ CONTAINER_OPTS+=("-v" "${HOME}/.cargo:/github/home/.cargo")
 mkdir -p target || true
 CONTAINER_OPTS+=("-v" "${PWD}/target:/github/home/target")
 
-# Docker socket (for NAT tests); allow disabling to avoid duplicate mounts
 # NAT-specific container options (privileged + docker socket)
 NAT_OPTS=()
 if [[ "${NO_DOCKER_SOCK}" != "1" && -S "/var/run/docker.sock" ]]; then
@@ -115,7 +114,6 @@ run "security:policy-check" workflow_dispatch -W .github/workflows/security.yml 
 run "security:supply-chain" workflow_dispatch -W .github/workflows/security.yml -j supply-chain "${COMMON[@]}"
 run "security:sbom-generation" workflow_dispatch -W .github/workflows/security.yml -j sbom-generation "${COMMON[@]}"
 
-# 4) NAT Docker tests (requires Docker socket)
 # 4) NAT Docker tests (requires Docker socket) - use NAT_OPTS in addition
 run_with_opts "nat-tests:docker-nat-tests" "${NAT_OPTS[*]}" workflow_dispatch -W .github/workflows/nat-tests.yml -j docker-nat-tests "${COMMON[@]}"
 
@@ -166,3 +164,4 @@ fi
 
 echo "===================================="
 exit $failures
+
