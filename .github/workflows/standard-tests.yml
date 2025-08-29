@@ -63,7 +63,8 @@ jobs:
       
       - name: Run integration tests
         run: |
-          cargo test --test '*' --features "test-utils"
+          # Run all integration tests
+          cargo test --tests --features "test-utils"
         timeout-minutes: 5
 
   doc-tests:
