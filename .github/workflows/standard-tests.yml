@@ -7,6 +7,10 @@ on:
       - completed
   workflow_dispatch:
   workflow_call:
+    outputs:
+      passed:
+        description: "Whether all standard tests passed"
+        value: ${{ jobs.summary.outputs.passed }}
 
 env:
   RUST_BACKTRACE: 1

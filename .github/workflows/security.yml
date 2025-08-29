@@ -2,6 +2,10 @@ name: Security Audit
 
 on:
   workflow_call:
+    outputs:
+      passed:
+        description: "Whether all security checks passed"
+        value: ${{ jobs.security-gate.result == 'success' }}
   workflow_dispatch:
   push:
     branches: [master, main]
