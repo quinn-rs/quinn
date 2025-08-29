@@ -3378,10 +3378,8 @@ impl Connection {
 
                 // If the retry packet validated the server's address, the server is no
                 // longer allowed to migrate.
-                let allow_server_migration = match &self.state {
-                    State::Handshake(hs) => hs.allow_server_migration,
-                    _ => false,
-                };
+                let allow_server_migration =
+                    matches!(self.state, State::Handshake(ref hs) if hs.allow_server_migration);
                 self.state = State::Handshake(state::Handshake {
                     expected_token: Bytes::new(),
                     rem_cid_set: false,
