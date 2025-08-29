@@ -25,7 +25,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        if: ${{ env.ACT != 'true' }}
+        if: ${{ !startsWith(runner.name, 'nektos/act') }}
         with:
           fetch-depth: 1
 
@@ -48,7 +48,7 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
-        if: ${{ env.ACT != 'true' }}
+        if: ${{ !startsWith(runner.name, 'nektos/act') }}
         with:
           fetch-depth: 1
 
@@ -70,7 +70,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-        if: ${{ env.ACT != 'true' }}
+        if: ${{ !startsWith(runner.name, 'nektos/act') }}
         with:
           fetch-depth: 1
 
@@ -87,7 +87,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        if: ${{ env.ACT != 'true' }}
+        if: ${{ !startsWith(runner.name, 'nektos/act') }}
         with:
           fetch-depth: 1
 
@@ -112,7 +112,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        if: ${{ env.ACT != 'true' }}
+        if: ${{ !startsWith(runner.name, 'nektos/act') }}
         with:
           fetch-depth: 1
 

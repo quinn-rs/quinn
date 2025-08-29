@@ -18,7 +18,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-        if: ${{ env.ACT != 'true' }}
+        if: ${{ !startsWith(runner.name, 'nektos/act') }}
       
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -109,7 +109,7 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-        if: ${{ env.ACT != 'true' }}
+        if: ${{ !startsWith(runner.name, 'nektos/act') }}
       
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -139,7 +139,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-        if: ${{ env.ACT != 'true' }}
+        if: ${{ !startsWith(runner.name, 'nektos/act') }}
       
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable

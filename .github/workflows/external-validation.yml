@@ -46,7 +46,7 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-        if: ${{ env.ACT != 'true' }}
+        if: ${{ !startsWith(runner.name, 'nektos/act') }}
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
 

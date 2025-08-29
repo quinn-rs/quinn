@@ -10,7 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        if: ${{ env.ACT != 'true' }}
+        if: ${{ !startsWith(runner.name, 'nektos/act') }}
       - name: Setup mdBook
         uses: peaceiris/actions-mdbook@v2
         with:

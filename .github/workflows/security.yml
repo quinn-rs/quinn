@@ -40,7 +40,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        if: ${{ env.ACT != 'true' }}
+        if: ${{ !startsWith(runner.name, 'nektos/act') }}
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -93,7 +93,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        if: ${{ env.ACT != 'true' }}
+        if: ${{ !startsWith(runner.name, 'nektos/act') }}
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -135,7 +135,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        if: ${{ env.ACT != 'true' }}
+        if: ${{ !startsWith(runner.name, 'nektos/act') }}
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -172,7 +172,7 @@ jobs:
       id-token: write
     steps:
       - uses: actions/checkout@v4
-        if: ${{ env.ACT != 'true' }}
+        if: ${{ !startsWith(runner.name, 'nektos/act') }}
         with:
           persist-credentials: false
 
@@ -195,7 +195,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        if: ${{ env.ACT != 'true' }}
+        if: ${{ !startsWith(runner.name, 'nektos/act') }}
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable

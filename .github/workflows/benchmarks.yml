@@ -27,7 +27,7 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-        if: ${{ env.ACT != 'true' }}
+        if: ${{ !startsWith(runner.name, 'nektos/act') }}
         with:
           fetch-depth: 0
 
@@ -221,7 +221,7 @@ jobs:
     steps:
       - name: Checkout benchmark history
         uses: actions/checkout@v4
-        if: ${{ env.ACT != 'true' }}
+        if: ${{ !startsWith(runner.name, 'nektos/act') }}
         with:
           ref: benchmark-history
 
