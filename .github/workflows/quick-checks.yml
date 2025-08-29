@@ -2,9 +2,9 @@ name: Quick Checks
 
 on:
   push:
-    branches: [master]
+    branches: [master, main]
   pull_request:
-    branches: [master]
+    branches: [master, main]
   workflow_call:
     outputs:
       passed:
@@ -34,6 +34,9 @@ jobs:
           components: clippy
 
       - uses: Swatinem/rust-cache@v2
+
+      - name: Format check
+        run: cargo fmt --all -- --check
 
       - name: Run clippy
         run: cargo clippy --all-targets --all-features -- -W clippy::correctness -W clippy::suspicious -A clippy::missing_docs_in_private_items
@@ -98,11 +101,7 @@ jobs:
         run: |
           cargo install cargo-outdated --locked
           cargo outdated --exit-code 1 || true  # Non-blocking for now
-
-      - name: Check minimum supported Rust version
-        run: |
-          # Verify MSRV is maintained (1.85.0 for ant-quic)
-          cargo check --all-targets || echo "::warning::MSRV check needs attention"
+        
 
   license-check:
     name: License Header Check
@@ -180,8 +179,8 @@ jobs:
           echo "| Clippy | ${{ needs.lint.result == 'success' && '✅' || '❌' }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Quick Tests | ${{ needs.quick-test.result == 'success' && '✅' || '❌' }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Compilation | ${{ needs.check.result == 'success' && '✅' || '❌' }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Dependencies | ${{ needs.dependencies.result == 'success' && '⚠️' || '❌' }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| License Headers | ${{ needs.license-check.result == 'success' && '⚠️' || '❌' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Dependencies | ${{ needs.dependencies.result == 'success' && '✅' || '❌' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| License Headers | ${{ needs.license-check.result == 'success' && '✅' || '❌' }} |" >> $GITHUB_STEP_SUMMARY
           echo "| YAML/TOML | ${{ needs.yaml-lint.result == 'success' && '✅' || '❌' }} |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "Time: $(date -u)" >> $GITHUB_STEP_SUMMARY
