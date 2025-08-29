@@ -23,6 +23,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        if: ${{ env.ACT != 'true' }}
         with:
           fetch-depth: 0  # Need full history for comparisons
       
@@ -97,6 +98,7 @@ jobs:
     if: github.event_name == 'workflow_dispatch'
     steps:
       - uses: actions/checkout@v4
+        if: ${{ env.ACT != 'true' }}
       
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable

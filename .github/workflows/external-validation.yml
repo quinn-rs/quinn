@@ -46,6 +46,7 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        if: ${{ env.ACT != 'true' }}
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
 

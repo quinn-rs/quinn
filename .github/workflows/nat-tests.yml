@@ -34,6 +34,7 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        if: ${{ env.ACT != 'true' }}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -123,6 +124,7 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        if: ${{ env.ACT != 'true' }}
 
       - name: Set up environment
         run: |
@@ -165,6 +167,7 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        if: ${{ env.ACT != 'true' }}
 
       - name: Configure system for stress testing
         run: |
@@ -211,6 +214,7 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        if: ${{ env.ACT != 'true' }}
 
       - name: Download all artifacts
         uses: actions/download-artifact@v4

@@ -64,6 +64,7 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        if: ${{ env.ACT != 'true' }}
 
       # Cache setup
       - name: Cache cargo registry
@@ -225,6 +226,7 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        if: ${{ env.ACT != 'true' }}
 
       - name: Download all test results
         uses: actions/download-artifact@v4
