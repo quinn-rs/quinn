@@ -227,7 +227,7 @@ jobs:
     - name: Install Rust
       uses: dtolnay/rust-toolchain@stable
 
-    - uses: Swatinet/rust-cache@v2
+    - uses: Swatinem/rust-cache@v2
 
     - name: Install cargo-fuzz
       run: cargo install cargo-fuzz --quiet
