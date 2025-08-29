@@ -71,12 +71,12 @@ Benchmarks:
 
 Steps:
 1. Validate version format
-2. Run final tests
+2. Run final tests (reuses quick checks)
 3. Build binaries for all platforms
-4. Create Docker images
-5. Publish to crates.io
-6. Generate release notes
-7. Create GitHub release
+4. Generate release notes
+5. Create GitHub release with artifacts
+
+Note: Docker images and crates.io publishing are not part of the current workflow.
 
 ### 🌐 External Validation (`scheduled-external.yml`)
 **Trigger**: Daily at 4 AM UTC
