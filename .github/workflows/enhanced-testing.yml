@@ -26,7 +26,8 @@ on:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
-  RUSTFLAGS: "-W rust-2024-idioms -W nonstandard-style"
+  # Use stable-supported lint groups; 2024 idioms may not be available yet
+  RUSTFLAGS: "-W rust-2021-compatibility -W nonstandard-style"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
