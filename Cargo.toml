@@ -52,7 +52,7 @@ tinyvec = { version = "1.1", features = ["alloc"] }
 tokio = { version = "1.28.1", features = ["sync"] }
 tracing = { version = "0.1.10", default-features = false, features = ["std"] }
 tracing-futures = { version = "0.2.0", default-features = false, features = ["std-future"] }
-tracing-subscriber = { version = "0.3.0", default-features = false, features = ["env-filter", "fmt", "ansi", "time", "local-time"] }
+tracing-subscriber = { version = "0.3.20", default-features = false, features = ["env-filter", "fmt", "ansi", "time", "local-time"] }
 url = "2"
 wasm-bindgen-test = { version = "0.3.45" }
 web-time = "1"
