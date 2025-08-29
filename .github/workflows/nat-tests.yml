@@ -116,9 +116,9 @@ jobs:
   connectivity-matrix:
     name: NAT Connectivity Matrix
     runs-on: ubuntu-latest
-    if: ${{ github.event.inputs.test-scenarios == 'all' || github.event.inputs.test-scenarios == 'matrix' }}
+    if: ${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.test-scenarios == 'all' || github.event.inputs.test-scenarios == 'matrix') || github.event_name == 'schedule' || (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success') }}
     needs: docker-nat-tests
-    timeout-minutes: 45
+    timeout-minutes: 30
     
     steps:
       - name: Checkout code
@@ -158,9 +158,9 @@ jobs:
   stress-tests:
     name: NAT Stress Tests
     runs-on: ubuntu-latest
-    if: ${{ github.event.inputs.test-scenarios == 'all' || github.event.inputs.test-scenarios == 'stress' }}
+    if: ${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.test-scenarios == 'all' || github.event.inputs.test-scenarios == 'stress') || github.event_name == 'schedule' || (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success') }}
     needs: docker-nat-tests
-    timeout-minutes: 60
+    timeout-minutes: 45
     
     steps:
       - name: Checkout code
