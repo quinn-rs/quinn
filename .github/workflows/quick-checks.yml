@@ -98,12 +98,12 @@ jobs:
 
       - name: Check for unused dependencies
         run: |
-          cargo install cargo-machete --locked
+          cargo install cargo-machete --locked || true
           cargo machete || true  # Non-blocking for now
 
       - name: Check for outdated dependencies
         run: |
-          cargo install cargo-outdated --locked
+          cargo install cargo-outdated --locked || true
           cargo outdated --exit-code 1 || true  # Non-blocking for now
         
 
