@@ -49,6 +49,11 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Install tooling (jq, bc)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq bc
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
