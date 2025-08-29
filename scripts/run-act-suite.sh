@@ -10,7 +10,11 @@ set -euo pipefail
 IMAGE_MAP=${IMAGE_MAP:-"ubuntu-latest=catthehacker/ubuntu:act-latest"}
 ARCH=${ARCH:-"linux/amd64"}
 
-# Construct container options
+# Defaults: disable SSH agent and docker.sock unless explicitly enabled
+NO_SSH_AGENT=${NO_SSH_AGENT:-1}
+NO_DOCKER_SOCK=${NO_DOCKER_SOCK:-1}
+
+# Construct container options (baseline for most jobs)
 CONTAINER_OPTS=()
 
 # SSH agent forwarding (if available); allow disabling
@@ -33,8 +37,10 @@ mkdir -p target || true
 CONTAINER_OPTS+=("-v" "${PWD}/target:/github/home/target")
 
 # Docker socket (for NAT tests); allow disabling to avoid duplicate mounts
-if [[ "${NO_DOCKER_SOCK:-0}" != "1" && -S "/var/run/docker.sock" ]]; then
-  CONTAINER_OPTS+=("--privileged" "-v" "/var/run/docker.sock:/var/run/docker.sock")
+# NAT-specific container options (privileged + docker socket)
+NAT_OPTS=()
+if [[ "${NO_DOCKER_SOCK}" != "1" && -S "/var/run/docker.sock" ]]; then
+  NAT_OPTS+=("--privileged" "-v" "/var/run/docker.sock:/var/run/docker.sock")
 fi
 
 # Common act flags
@@ -77,7 +83,9 @@ run workflow_dispatch -W .github/workflows/security.yml -j supply-chain "${COMMO
 run workflow_dispatch -W .github/workflows/security.yml -j sbom-generation "${COMMON[@]}"
 
 # 4) NAT Docker tests (requires Docker socket)
-run workflow_dispatch -W .github/workflows/nat-tests.yml -j docker-nat-tests "${COMMON[@]}"
+# 4) NAT Docker tests (requires Docker socket) - use NAT_OPTS in addition
+echo "[run-act] workflow_dispatch -W .github/workflows/nat-tests.yml -j docker-nat-tests ${COMMON[*]}"
+act workflow_dispatch -W .github/workflows/nat-tests.yml -j docker-nat-tests "${COMMON[@]}" "--container-options" "${CONTAINER_OPTS[*]} ${NAT_OPTS[*]}"
 
 # 5) Cross-platform (will run in Linux container; cross targets compile)
 run push -W .github/workflows/cross-platform.yml -j cross-platform-test "${COMMON[@]}"
