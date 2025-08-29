@@ -30,10 +30,13 @@ if [[ -f "${HOME}/.ssh/known_hosts" ]]; then
   CONTAINER_OPTS+=("-v" "${HOME}/.ssh/known_hosts:/root/.ssh/known_hosts:ro")
 fi
 
-# Cargo caches
-mkdir -p "${HOME}/.cargo" || true
-CONTAINER_OPTS+=("-v" "${HOME}/.cargo:/root/.cargo")
-CONTAINER_OPTS+=("-v" "${HOME}/.cargo:/github/home/.cargo")
+# Cache directories for cargo registry and git (avoid mounting ~/.cargo/bin)
+ACT_CACHE_DIR=${ACT_CACHE_DIR:-"${PWD}/.act-cache"}
+mkdir -p "${ACT_CACHE_DIR}/cargo/registry" "${ACT_CACHE_DIR}/cargo/git"
+CONTAINER_OPTS+=("-v" "${ACT_CACHE_DIR}/cargo/registry:/root/.cargo/registry")
+CONTAINER_OPTS+=("-v" "${ACT_CACHE_DIR}/cargo/git:/root/.cargo/git")
+CONTAINER_OPTS+=("-v" "${ACT_CACHE_DIR}/cargo/registry:/github/home/.cargo/registry")
+CONTAINER_OPTS+=("-v" "${ACT_CACHE_DIR}/cargo/git:/github/home/.cargo/git")
 
 # Project target directory
 mkdir -p target || true
