@@ -3094,14 +3094,16 @@ impl Connection {
                 debug!(%remote, %path_id, "discarding multipath packet during handshake");
                 return;
             }
-            let allow_server_migration =
-                matches!(self.state, State::Handshake(ref hs) if hs.allow_server_migration);
-            let path_data = self.path_data_mut(path_id);
-            if remote != path_data.remote && allow_server_migration {
-                path_data.remote = remote;
-            } else {
-                debug!("discarding packet with unexpected remote during handshake");
-                return;
+            if remote != self.path_data_mut(path_id).remote {
+                match self.state {
+                    State::Handshake(ref hs) if hs.allow_server_migration => {
+                        self.path_data_mut(path_id).remote = remote
+                    }
+                    _ => {
+                        debug!("discarding packet with unexpected remote during handshake");
+                        return;
+                    }
+                }
             }
         }
 
