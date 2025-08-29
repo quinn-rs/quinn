@@ -125,7 +125,7 @@ impl RecvStream<'_> {
     /// control window is filled. On any given stream, you can switch from ordered to unordered
     /// reads, but ordered reads on streams that have seen previous unordered reads will return
     /// `ReadError::IllegalOrderedRead`.
-    pub fn read(&mut self, ordered: bool) -> Result<Chunks, ReadableError> {
+    pub fn read(&mut self, ordered: bool) -> Result<Chunks<'_>, ReadableError> {
         Chunks::new(self.id, ordered, self.state, self.pending)
     }
 

@@ -336,6 +336,7 @@ impl Connection {
             rem_cid_set: side.is_server(),
             expected_token: Bytes::new(),
             client_hello: None,
+            allow_server_migration: side.is_client(),
         });
         let local_cid_state = FxHashMap::from_iter([(
             PathId(0),
@@ -1646,7 +1647,7 @@ impl Connection {
                 // forbids migration, drop the datagram. This could be relaxed to heuristically
                 // permit NAT-rebinding-like migration.
                 if let Some(known_remote) = self.path(path_id).map(|path| path.remote) {
-                    if remote != known_remote && !self.side.remote_may_migrate() {
+                    if remote != known_remote && !self.side.remote_may_migrate(&self.state) {
                         trace!("discarding packet from unrecognized peer {}", remote);
                         return;
                     }
@@ -3275,9 +3276,16 @@ impl Connection {
                 debug!(%remote, %path_id, "discarding multipath packet during handshake");
                 return;
             }
-            if remote != self.path_data(path_id).remote {
-                debug!("discarding packet with unexpected remote during handshake");
-                return;
+            if remote != self.path_data_mut(path_id).remote {
+                match self.state {
+                    State::Handshake(ref hs) if hs.allow_server_migration => {
+                        self.path_data_mut(path_id).remote = remote;
+                    }
+                    _ => {
+                        debug!("discarding packet with unexpected remote during handshake");
+                        return;
+                    }
+                }
             }
         }
 
@@ -3467,7 +3475,9 @@ impl Connection {
 
         match packet.header {
             Header::Retry {
-                src_cid: rem_cid, ..
+                src_cid: rem_cid,
+                dst_cid: loc_cid,
+                ..
             } => {
                 debug_assert_eq!(path_id, PathId(0));
                 if self.side.is_server() {
@@ -3510,6 +3520,10 @@ impl Connection {
                     .update_initial_cid(rem_cid);
                 self.rem_handshake_cid = rem_cid;
 
+                if loc_cid.len() >= 64 && loc_cid == self.handshake_cid {
+                    self.on_path_validated(path_id);
+                }
+
                 let space = &mut self.spaces[SpaceId::Initial];
                 if let Some(info) = space.for_path(PathId(0)).take(0) {
                     self.on_packet_acked(now, PathId(0), 0, info);
@@ -3548,10 +3562,16 @@ impl Connection {
                     unreachable!("we already short-circuited if we're server");
                 };
                 *token = packet.payload.freeze().split_to(token_len);
+
+                // If the retry packet validated the server's address, the server is no
+                // longer allowed to migrate.
+                let allow_server_migration =
+                    matches!(self.state, State::Handshake(ref hs) if hs.allow_server_migration);
                 self.state = State::Handshake(state::Handshake {
                     expected_token: Bytes::new(),
                     rem_cid_set: false,
                     client_hello: None,
+                    allow_server_migration,
                 });
                 Ok(())
             }
@@ -5412,14 +5432,23 @@ impl Connection {
     /// Mark the path as validated, and enqueue NEW_TOKEN frames to be sent as appropriate
     fn on_path_validated(&mut self, path_id: PathId) {
         self.path_data_mut(path_id).validated = true;
-        let ConnectionSide::Server { server_config } = &self.side else {
-            return;
-        };
-        let remote_addr = self.path_data(path_id).remote;
-        let new_tokens = &mut self.spaces[SpaceId::Data as usize].pending.new_tokens;
-        new_tokens.clear();
-        for _ in 0..server_config.validation_token.sent {
-            new_tokens.push(remote_addr);
+        match &self.side {
+            ConnectionSide::Client { .. } => {
+                // If we are still handshaking we've just validated the first path.  From
+                // now on we should not allow the server to migrate address anymore.
+                if let State::Handshake(ref mut hs) = self.state {
+                    hs.allow_server_migration = false;
+                }
+            }
+            ConnectionSide::Server { server_config } => {
+                // enqueue NEW_TOKEN frames
+                let remote_addr = self.path_data(path_id).remote;
+                let new_tokens = &mut self.spaces[SpaceId::Data as usize].pending.new_tokens;
+                new_tokens.clear();
+                for _ in 0..server_config.validation_token.sent {
+                    new_tokens.push(remote_addr);
+                }
+            }
         }
     }
 
@@ -5482,10 +5511,13 @@ enum ConnectionSide {
 }
 
 impl ConnectionSide {
-    fn remote_may_migrate(&self) -> bool {
+    fn remote_may_migrate(&self, state: &State) -> bool {
         match self {
             Self::Server { server_config } => server_config.migration,
-            Self::Client { .. } => false,
+            Self::Client { .. } => match state {
+                State::Handshake(handshake) => handshake.allow_server_migration,
+                _ => false,
+            },
         }
     }
 
@@ -5707,6 +5739,20 @@ mod state {
         ///
         /// Only set for clients
         pub(super) client_hello: Option<Bytes>,
+        /// Whether the server address is allowed to migrate
+        ///
+        /// We allow the server to migrate during the handshake as long as we have not
+        /// validated it's address: it can send a response from a different address than we
+        /// sent the initial to.  This allows us to send the inial over multiple paths - by
+        /// means of an IPv6 ULA address that copies the packets sent to it to multiple
+        /// destinations - and accept one response.
+        ///
+        /// This is only ever set to true if for a client which hasn't validated the server
+        /// address yet.  It is set back to false in [`Connection::on_path_validated`].
+        ///
+        /// THIS IS NOT RFC 9000 COMPLIANT!  A server is not allowed to migrate addresses,
+        /// other than using the preferred-address transport parameter.
+        pub(super) allow_server_migration: bool,
     }
 
     #[allow(unreachable_pub)] // fuzzing only
