@@ -144,7 +144,7 @@ jobs:
           fetch-depth: 1
 
       - name: Validate GitHub Actions YAML
-        uses: reviewdog/action-actionlint@v1
+        uses: rhysd/actionlint@v1
 
       - name: Validate TOML files
         run: |
