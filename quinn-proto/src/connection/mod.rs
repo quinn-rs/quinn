@@ -3097,7 +3097,7 @@ impl Connection {
             if remote != self.path_data_mut(path_id).remote {
                 match self.state {
                     State::Handshake(ref hs) if hs.allow_server_migration => {
-                        self.path_data_mut(path_id).remote = remote
+                        self.path_data_mut(path_id).remote = remote;
                     }
                     _ => {
                         debug!("discarding packet with unexpected remote during handshake");
