@@ -1638,7 +1638,7 @@ impl Connection {
                 // forbids migration, drop the datagram. This could be relaxed to heuristically
                 // permit NAT-rebinding-like migration.
                 if let Some(known_remote) = self.path(path_id).map(|path| path.remote) {
-                    if remote != known_remote && !self.side.remote_may_migrate(&mut self.state) {
+                    if remote != known_remote && !self.side.remote_may_migrate(&self.state) {
                         trace!("discarding packet from unrecognized peer {}", remote);
                         return;
                     }
@@ -3094,10 +3094,8 @@ impl Connection {
                 debug!(%remote, %path_id, "discarding multipath packet during handshake");
                 return;
             }
-            let allow_server_migration = match self.state {
-                State::Handshake(ref hs) if hs.allow_server_migration => true,
-                _ => false,
-            };
+            let allow_server_migration =
+                matches!(self.state, State::Handshake(ref hs) if hs.allow_server_migration);
             let path_data = self.path_data_mut(path_id);
             if remote != path_data.remote && allow_server_migration {
                 path_data.remote = remote;
