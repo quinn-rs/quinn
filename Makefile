@@ -423,3 +423,9 @@ help:
 	@echo "  make release-major   - Create major release (X+1.0.0)"
 	@echo "  make release-dry-run - Test release process"
 	@echo "  make changelog       - Generate/update CHANGELOG.md"
+
+# Run local CI suite via act
+.PHONY: local-ci
+local-ci:
+	@echo "Running local CI via act..."
+	@ARCH=linux/amd64 IMAGE_MAP='ubuntu-latest=catthehacker/ubuntu:act-latest' CLEAN_BEFORE=1 CLEAN_BETWEEN=1 RUN_COVERAGE=1 scripts/local_ci.sh

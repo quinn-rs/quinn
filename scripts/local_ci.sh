@@ -10,7 +10,7 @@ set -euo pipefail
 IMAGE_MAP=${IMAGE_MAP:-"ubuntu-latest=catthehacker/ubuntu:act-latest"}
 ARCH=${ARCH:-"linux/amd64"}
 # Optional cleanups to avoid running out of Docker disk space
-CLEAN_BEFORE=${CLEAN_BEFORE:-0}
+CLEAN_BEFORE=${CLEAN_BEFORE:-1}
 CLEAN_BETWEEN=${CLEAN_BETWEEN:-0}
 
 # Defaults: disable SSH agent and docker.sock unless explicitly enabled
