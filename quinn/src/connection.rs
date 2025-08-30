@@ -651,6 +651,37 @@ impl Connection {
         // May need to send MAX_STREAMS to make progress
         conn.wake();
     }
+
+    /// Waits until the connection received TLS resumption tickets
+    ///
+    /// Yields `true` once resumption tickets were received. Resolves immediately
+    /// if tickets were already received, otherwise it resolves once tickets arrive.
+    /// If the server does not send any tickets, the returned future will remain pending forever.
+    ///
+    /// This should only be used on the client side. On the server side, it will
+    /// always resolve immediately and yield `false`.
+    pub fn resumption_tickets_received(&self) -> impl Future<Output = bool> + Send + 'static {
+        let conn = self.0.clone();
+        async move {
+            let notify;
+            let (mut notified, out) = {
+                let conn = conn.state.lock("resumption_tickets_received");
+                let (notified, out) = match conn.resumption_tickets.as_ref() {
+                    Some(ResumptionTicketState::Received) => (None, true),
+                    Some(ResumptionTicketState::Pending(n)) => {
+                        notify = n.clone();
+                        (Some(notify.notified()), true)
+                    }
+                    None => (None, false),
+                };
+                (notified, out)
+            };
+            if let Some(notified) = notified.take() {
+                notified.await;
+            }
+            out
+        }
+    }
 }
 
 pin_project! {
@@ -885,6 +916,10 @@ impl ConnectionRef {
         socket: Arc<dyn AsyncUdpSocket>,
         runtime: Arc<dyn Runtime>,
     ) -> Self {
+        let resumption_tickets = match conn.side() {
+            Side::Client => Some(ResumptionTicketState::Pending(Default::default())),
+            Side::Server => None,
+        };
         Self(Arc::new(ConnectionInner {
             state: Mutex::new(State {
                 inner: conn,
@@ -907,6 +942,7 @@ impl ConnectionRef {
                 runtime,
                 send_buffer: Vec::new(),
                 buffered_transmit: None,
+                resumption_tickets,
             }),
             shared: Shared::default(),
         }))
@@ -989,6 +1025,8 @@ pub(crate) struct State {
     send_buffer: Vec<u8>,
     /// We buffer a transmit when the underlying I/O would block
     buffered_transmit: Option<proto::Transmit>,
+    /// Whether we received resumption tickets. None on the server side.
+    resumption_tickets: Option<ResumptionTicketState>,
 }
 
 impl State {
@@ -1121,6 +1159,14 @@ impl State {
                         wake_all(&mut self.blocked_writers);
                         wake_all(&mut self.blocked_readers);
                         wake_all_notify(&mut self.stopped);
+                    }
+                }
+                ResumptionEnabled => {
+                    if let Some(ResumptionTicketState::Pending(notify)) =
+                        self.resumption_tickets.as_mut()
+                    {
+                        notify.notify_waiters();
+                        self.resumption_tickets = Some(ResumptionTicketState::Received);
                     }
                 }
                 ConnectionLost { reason } => {
@@ -1291,6 +1337,12 @@ fn wake_all_notify(wakers: &mut FxHashMap<StreamId, Arc<Notify>>) {
     wakers
         .drain()
         .for_each(|(_, notify)| notify.notify_waiters())
+}
+
+#[derive(Debug)]
+enum ResumptionTicketState {
+    Received,
+    Pending(Arc<Notify>),
 }
 
 /// Errors that can arise when sending a datagram
