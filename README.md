@@ -84,9 +84,8 @@ for servers, and relying on the default configuration for clients.
 For some cases, including peer-to-peer, trust-on-first-use, deliberately
 insecure applications, or any case where servers are not identified by domain
 name, this isn't practical. Arbitrary certificate validation logic can be
-implemented by enabling the `dangerous_configuration` feature of `rustls` and
-constructing a Quinn `ClientConfig` with an overridden certificate verifier by
-hand.
+implemented by customizing the `rustls` configuration; see the
+[insecure_connection.rs][insecure] example for details.
 
 When operating your own certificate authority doesn't make sense, [rcgen][rcgen]
 can be used to generate self-signed certificates on demand. To support
@@ -125,3 +124,4 @@ crates will always be at least 6 months old at the time of release.
 [examples]: https://github.com/djc/quinn/tree/main/quinn/examples
 [documentation]: https://quinn-rs.github.io/quinn/networking-introduction.html
 [sans-io]: https://sans-io.readthedocs.io/how-to-sans-io.html
+[insecure]: https://github.com/quinn-rs/quinn/blob/main/quinn/examples/insecure_connection.rs
