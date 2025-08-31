@@ -89,13 +89,14 @@ impl Pacer {
         }
 
         let elapsed_rtts = time_elapsed.as_secs_f64() / smoothed_rtt.as_secs_f64();
-        let new_tokens = window as f64 * 1.25 * elapsed_rtts;
-        self.tokens = self
-            .tokens
-            .saturating_add(new_tokens as _)
-            .min(self.capacity);
+        let new_tokens = (window as f64 * 1.25 * elapsed_rtts).round() as u64;
+        self.tokens = self.tokens.saturating_add(new_tokens).min(self.capacity);
 
-        self.prev = now;
+        // In the unlikely event that we're getting polled faster than tokens are generated, ensure
+        // that `elapsed_rtts` can grow until we make progress.
+        if new_tokens > 0 {
+            self.prev = now;
+        }
 
         // if we can already send a packet, there is no need for delay
         if self.tokens >= bytes_to_send {
@@ -109,7 +110,7 @@ impl Pacer {
 
         // divisions come before multiplications to prevent overflow
         // this is the time at which the pacing window becomes empty
-        Some(self.prev + (unscaled_delay / 5) * 4)
+        Some(now + (unscaled_delay / 5) * 4)
     }
 }
 
