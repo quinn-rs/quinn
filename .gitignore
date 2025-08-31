@@ -15,3 +15,17 @@ tarpaulin-report.html
 
 # Claude sub-project management
 .claude/
+
+# Docker test artifacts and runtime files
+docker/logs/
+docker/results/
+docker/shared/*.addr
+docker/artifacts/
+
+# GitHub Actions local runner cache
+.act-cache/
+
+# Scripts runtime files
+scripts/*.pid
+scripts/*.log.bak
+scripts/workflow_monitor.log
