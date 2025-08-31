@@ -4,30 +4,13 @@ use tracing_subscriber::{EnvFilter, Layer, fmt, layer::SubscriberExt, util::Subs
 
 use perf::{client, server};
 
-#[derive(Parser)]
-#[clap(long_about = None)]
-struct Cli {
-    #[command(subcommand)]
-    command: Commands,
-}
-
-#[derive(Subcommand)]
-enum Commands {
-    /// Run as a perf server
-    Server(server::Opt),
-    /// Run as a perf client
-    Client(client::Opt),
-}
-
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
     let opt = Cli::parse();
 
     let registry = tracing_subscriber::registry();
-
     #[cfg(feature = "tokio-console")]
     let registry = registry.with(console_subscriber::spawn());
-
     registry
         .with(
             fmt::layer().with_filter(
@@ -45,4 +28,19 @@ async fn main() {
     if let Err(e) = r {
         error!("{:#}", e);
     }
+}
+
+#[derive(Parser)]
+#[clap(long_about = None)]
+struct Cli {
+    #[command(subcommand)]
+    command: Commands,
+}
+
+#[derive(Subcommand)]
+enum Commands {
+    /// Run as a perf server
+    Server(server::Opt),
+    /// Run as a perf client
+    Client(client::Opt),
 }
