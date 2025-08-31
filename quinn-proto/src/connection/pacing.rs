@@ -129,7 +129,7 @@ impl Pacer {
 fn optimal_capacity(smoothed_rtt: Duration, window: u64, mtu: u16) -> u64 {
     let rtt = smoothed_rtt.as_nanos().max(1);
 
-    let capacity = ((window as u128 * BURST_INTERVAL_NANOS) / rtt) as u64;
+    let capacity = ((window as u128 * BURST_INTERVAL.as_nanos()) / rtt) as u64;
 
     // Small bursts are less efficient (no GSO), could increase latency and don't effectively
     // use the channel's buffer capacity. Large bursts might block the connection on sending.
@@ -142,7 +142,7 @@ fn optimal_capacity(smoothed_rtt: Duration, window: u64, mtu: u16) -> u64 {
 /// 2ms is chosen here since framework timers might have 1ms precision.
 /// If kernel-level pacing is supported later a higher time here might be
 /// more applicable.
-const BURST_INTERVAL_NANOS: u128 = 2_000_000; // 2ms
+const BURST_INTERVAL: Duration = Duration::from_millis(2);
 
 /// Allows some usage of GSO, and doesn't slow down the handshake.
 const MIN_BURST_SIZE: u64 = 10;
@@ -187,7 +187,7 @@ mod tests {
         let pacer = Pacer::new(rtt, window, mtu, now);
         assert_eq!(
             pacer.capacity,
-            (window as u128 * BURST_INTERVAL_NANOS / rtt.as_nanos()) as u64
+            (window as u128 * BURST_INTERVAL.as_nanos() / rtt.as_nanos()) as u64
         );
         assert_eq!(pacer.tokens, pacer.capacity);
 
@@ -210,7 +210,7 @@ mod tests {
         let mut pacer = Pacer::new(rtt, window, mtu, now);
         assert_eq!(
             pacer.capacity,
-            (window as u128 * BURST_INTERVAL_NANOS / rtt.as_nanos()) as u64
+            (window as u128 * BURST_INTERVAL.as_nanos() / rtt.as_nanos()) as u64
         );
         assert_eq!(pacer.tokens, pacer.capacity);
         let initial_tokens = pacer.tokens;
@@ -218,21 +218,21 @@ mod tests {
         pacer.delay(rtt, mtu as u64, mtu, window * 2, now);
         assert_eq!(
             pacer.capacity,
-            (2 * window as u128 * BURST_INTERVAL_NANOS / rtt.as_nanos()) as u64
+            (2 * window as u128 * BURST_INTERVAL.as_nanos() / rtt.as_nanos()) as u64
         );
         assert_eq!(pacer.tokens, initial_tokens);
 
         pacer.delay(rtt, mtu as u64, mtu, window / 2, now);
         assert_eq!(
             pacer.capacity,
-            (window as u128 / 2 * BURST_INTERVAL_NANOS / rtt.as_nanos()) as u64
+            (window as u128 / 2 * BURST_INTERVAL.as_nanos() / rtt.as_nanos()) as u64
         );
         assert_eq!(pacer.tokens, initial_tokens / 2);
 
         pacer.delay(rtt, mtu as u64, mtu * 2, window, now);
         assert_eq!(
             pacer.capacity,
-            (window as u128 * BURST_INTERVAL_NANOS / rtt.as_nanos()) as u64
+            (window as u128 * BURST_INTERVAL.as_nanos() / rtt.as_nanos()) as u64
         );
 
         pacer.delay(rtt, mtu as u64, 20_000, window, now);
@@ -259,7 +259,7 @@ mod tests {
             pacer.on_transmit(mtu);
         }
 
-        let pace_duration = Duration::from_nanos((BURST_INTERVAL_NANOS * 4 / 5) as u64);
+        let pace_duration = Duration::from_nanos((BURST_INTERVAL.as_nanos() * 4 / 5) as u64);
 
         assert_eq!(
             pacer
