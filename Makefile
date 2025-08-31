@@ -398,6 +398,21 @@ help:
 	@echo "  make audit          - Check for security vulnerabilities"
 	@echo "  make deny           - Run cargo-deny policy checks"
 	@echo "  make licenses       - Check dependency licenses"
+
+# Monitor GitHub Actions workflows
+.PHONY: monitor-workflows monitor-workflows-once
+
+# Poll interval can be overridden: make monitor-workflows INTERVAL=10
+INTERVAL ?= 15
+LIMIT ?= 10
+
+monitor-workflows:
+	@echo "Monitoring GitHub Actions (interval=$(INTERVAL)s)..."
+	@python3 scripts/monitor_workflows.py --interval $(INTERVAL)
+
+monitor-workflows-once:
+	@echo "Fetching latest GitHub Actions runs (limit=$(LIMIT))..."
+	@python3 scripts/monitor_workflows.py --once --limit $(LIMIT)
 	@echo "  make vet            - Verify supply chain"
 	@echo "  make sbom           - Generate Software Bill of Materials"
 	@echo "  make outdated       - Check for outdated dependencies"
