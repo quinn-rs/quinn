@@ -247,9 +247,8 @@ for servers, and relying on the default configuration for clients.</p>
 <p>For some cases, including peer-to-peer, trust-on-first-use, deliberately
 insecure applications, or any case where servers are not identified by domain
 name, this isn't practical. Arbitrary certificate validation logic can be
-implemented by enabling the <code>dangerous_configuration</code> feature of <code>rustls</code> and
-constructing a Quinn <code>ClientConfig</code> with an overridden certificate verifier by
-hand.</p>
+implemented by customizing the <code>rustls</code> configuration; see the
+<a href="https://github.com/quinn-rs/quinn/blob/main/quinn/examples/insecure_connection.rs">insecure_connection.rs</a> example for details.</p>
 <p>When operating your own certificate authority doesn't make sense, <a href="https://crates.io/crates/rcgen">rcgen</a>
 can be used to generate self-signed certificates on demand. To support
 trust-on-first-use, servers that automatically generate self-signed certificates
