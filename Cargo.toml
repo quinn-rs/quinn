@@ -15,7 +15,6 @@ categories = ["network-programming", "asynchronous"]
 anyhow = "1.0.22"
 arbitrary = { version = "1.0.1", features = ["derive"] }
 async-io = "2"
-async-std = "1.11"
 assert_matches = "1.1"
 aws-lc-rs = { version = "1.9", default-features = false }
 bencher = "0.1.5"
