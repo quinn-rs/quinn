@@ -117,4 +117,4 @@ required-features = ["rustls-ring"]
 
 [package.metadata.docs.rs]
 # all non-default features except fips (cannot build on docs.rs environment)
-features = ["lock_tracking", "rustls-aws-lc-rs", "rustls-ring", "runtime-tokio", "runtime-async-std", "runtime-smol", "log", "rustls-log"]
+features = ["lock_tracking", "rustls-aws-lc-rs", "rustls-ring", "runtime-tokio", "runtime-smol", "log", "rustls-log"]
