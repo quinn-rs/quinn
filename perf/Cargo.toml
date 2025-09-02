@@ -34,7 +34,6 @@ quinn = { path = "../quinn" }
 quinn-proto = { path = "../quinn-proto" }
 rcgen = { workspace = true }
 rustls = { workspace = true }
-rustls-pemfile = { workspace = true }
 serde = { workspace = true, optional = true  }
 serde_json = { workspace = true, optional = true }
 socket2 = { workspace = true }
