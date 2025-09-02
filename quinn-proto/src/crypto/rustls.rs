@@ -209,6 +209,13 @@ impl crypto::Session for TlsSession {
             .map_err(|_| ExportKeyingMaterialError)?;
         Ok(())
     }
+
+    fn resumption_tickets_received(&self) -> Option<u32> {
+        match &self.inner {
+            Connection::Client(conn) => Some(conn.tls13_tickets_received()),
+            Connection::Server(_) => None,
+        }
+    }
 }
 
 const RETRY_INTEGRITY_KEY_DRAFT: [u8; 16] = [

@@ -128,6 +128,10 @@ fn lifecycle() {
     let _guard = subscribe();
     let mut pair = Pair::default();
     let (client_ch, server_ch) = pair.connect();
+    assert_matches!(
+        pair.client_conn_mut(client_ch).poll(),
+        Some(Event::ResumptionEnabled)
+    );
     assert_matches!(pair.client_conn_mut(client_ch).poll(), None);
     assert!(pair.client_conn_mut(client_ch).using_ecn());
     assert!(pair.server_conn_mut(server_ch).using_ecn());
@@ -161,6 +165,10 @@ fn draft_version_compat() {
     let mut pair = Pair::default();
     let (client_ch, server_ch) = pair.connect_with(client_config);
 
+    assert_matches!(
+        pair.client_conn_mut(client_ch).poll(),
+        Some(Event::ResumptionEnabled)
+    );
     assert_matches!(pair.client_conn_mut(client_ch).poll(), None);
     assert!(pair.client_conn_mut(client_ch).using_ecn());
     assert!(pair.server_conn_mut(server_ch).using_ecn());
@@ -206,6 +214,10 @@ fn server_stateless_reset() {
     pair.client.connections.get_mut(&client_ch).unwrap().ping();
     info!("resetting");
     pair.drive();
+    assert_matches!(
+        pair.client_conn_mut(client_ch).poll(),
+        Some(Event::ResumptionEnabled)
+    );
     assert_matches!(
         pair.client_conn_mut(client_ch).poll(),
         Some(Event::ConnectionLost {
@@ -329,6 +341,10 @@ fn finish_stream_simple() {
 
     assert_matches!(
         pair.client_conn_mut(client_ch).poll(),
+        Some(Event::ResumptionEnabled)
+    );
+    assert_matches!(
+        pair.client_conn_mut(client_ch).poll(),
         Some(Event::Stream(StreamEvent::Finished { id })) if id == s
     );
     assert_matches!(pair.client_conn_mut(client_ch).poll(), None);
@@ -379,6 +395,10 @@ fn reset_stream() {
     let mut chunks = recv.read(false).unwrap();
     assert_matches!(chunks.next(usize::MAX), Err(ReadError::Reset(ERROR)));
     let _ = chunks.finalize();
+    assert_matches!(
+        pair.client_conn_mut(client_ch).poll(),
+        Some(Event::ResumptionEnabled)
+    );
     assert_matches!(pair.client_conn_mut(client_ch).poll(), None);
 }
 
@@ -597,6 +617,10 @@ fn zero_rtt_happypath() {
     );
     let _ = chunks.finalize();
     assert_eq!(pair.client_conn_mut(client_ch).stats().path.lost_packets, 0);
+    assert_matches!(
+        pair.client_conn_mut(client_ch).poll(),
+        Some(Event::ResumptionEnabled)
+    );
 }
 
 #[test]
@@ -914,6 +938,10 @@ fn stream_id_limit() {
     pair.drive();
     assert_matches!(
         pair.client_conn_mut(client_ch).poll(),
+        Some(Event::ResumptionEnabled)
+    );
+    assert_matches!(
+        pair.client_conn_mut(client_ch).poll(),
         Some(Event::Stream(StreamEvent::Finished { id })) if id == s
     );
     assert_eq!(
@@ -1201,6 +1229,10 @@ fn idle_timeout() {
     assert!(pair.time - start < Duration::from_millis(2 * IDLE_TIMEOUT));
     assert_matches!(
         pair.client_conn_mut(client_ch).poll(),
+        Some(Event::ResumptionEnabled)
+    );
+    assert_matches!(
+        pair.client_conn_mut(client_ch).poll(),
         Some(Event::ConnectionLost {
             reason: ConnectionError::TimedOut,
         })
@@ -1278,6 +1310,10 @@ fn migration() {
     assert_ne!(pair.server_conn_mut(server_ch).total_recvd(), 0);
 
     pair.drive();
+    assert_matches!(
+        pair.client_conn_mut(client_ch).poll(),
+        Some(Event::ResumptionEnabled)
+    );
     assert_matches!(pair.client_conn_mut(client_ch).poll(), None);
     assert_eq!(
         pair.server_conn_mut(server_ch).remote_address(),
@@ -1666,6 +1702,10 @@ fn finish_stream_flow_control_reordered() {
 
     assert_matches!(
         pair.client_conn_mut(client_ch).poll(),
+        Some(Event::ResumptionEnabled)
+    );
+    assert_matches!(
+        pair.client_conn_mut(client_ch).poll(),
         Some(Event::Stream(StreamEvent::Finished { id })) if id == s
     );
     assert_matches!(pair.client_conn_mut(client_ch).poll(), None);
@@ -1756,6 +1796,10 @@ fn stop_during_finish() {
     pair.drive_server();
     pair.client_send(client_ch, s).finish().unwrap();
     pair.drive_client();
+    assert_matches!(
+        pair.client_conn_mut(client_ch).poll(),
+        Some(Event::ResumptionEnabled)
+    );
     assert_matches!(
         pair.client_conn_mut(client_ch).poll(),
         Some(Event::Stream(StreamEvent::Stopped { id, error_code: ERROR })) if id == s
@@ -2043,6 +2087,10 @@ fn finish_acked() {
     // Send FIN, receive data ack
     info!("client receives ACK, sends FIN");
     pair.drive_client();
+    assert_matches!(
+        pair.client_conn_mut(client_ch).poll(),
+        Some(Event::ResumptionEnabled)
+    );
     // Check for premature finish from data ack
     assert_matches!(pair.client_conn_mut(client_ch).poll(), None);
     // Process FIN ack
@@ -2081,6 +2129,10 @@ fn finish_retransmit() {
     // Receive FIN ack, but no data ack
     pair.drive_client();
     // Check for premature finish from FIN ack
+    assert_matches!(
+        pair.client_conn_mut(client_ch).poll(),
+        Some(Event::ResumptionEnabled)
+    );
     assert_matches!(pair.client_conn_mut(client_ch).poll(), None);
     // Recover
     pair.drive();
