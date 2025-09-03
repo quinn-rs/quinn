@@ -21,29 +21,29 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-   lint:
-     name: Clippy Lint
-     runs-on: ubuntu-latest
-     steps:
-       - uses: actions/checkout@v4
-         if: ${{ !startsWith(runner.name, 'nektos/act') }}
-         with:
-           fetch-depth: 1
+  lint:
+    name: Clippy Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        if: ${{ !startsWith(runner.name, 'nektos/act') }}
+        with:
+          fetch-depth: 1
 
-       - name: Install Rust
-         uses: dtolnay/rust-toolchain@stable
-         with:
-           components: clippy
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
 
-       - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@v2
 
-       - name: Format check
-         run: cargo fmt --all -- --check
+      - name: Format check
+        run: cargo fmt --all -- --check
 
-       - name: Run clippy
-         run: cargo clippy --all-targets --all-features -- -W clippy::correctness -W clippy::suspicious -A clippy::missing_docs_in_private_items
+      - name: Run clippy
+        run: cargo clippy --all-targets --all-features -- -W clippy::correctness -W clippy::suspicious -A clippy::missing_docs_in_private_items
 
-   quick-test:
+  quick-test:
      name: Quick Tests (<30s)
      runs-on: ubuntu-latest
      timeout-minutes: 5
