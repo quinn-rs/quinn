@@ -2182,7 +2182,10 @@ impl SymmetricNatPredictor {
             self.generate_pattern_based_predictions(&pattern, max_count)
         } else {
             // Use heuristic approach when pattern analysis fails
-            self.generate_heuristic_predictions(&recent_events.iter().collect::<Vec<_>>(), max_count)
+            self.generate_heuristic_predictions(
+                &recent_events.iter().collect::<Vec<_>>(),
+                max_count,
+            )
         }
     }
 

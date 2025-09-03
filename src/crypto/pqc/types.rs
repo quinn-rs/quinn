@@ -8,6 +8,7 @@
 
 //! Type definitions for Post-Quantum Cryptography
 
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
@@ -129,6 +130,25 @@ impl MlKemPublicKey {
     }
 }
 
+impl Serialize for MlKemPublicKey {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_bytes(self.as_bytes())
+    }
+}
+
+impl<'de> Deserialize<'de> for MlKemPublicKey {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let bytes = <Vec<u8>>::deserialize(deserializer)?;
+        Self::from_bytes(&bytes).map_err(serde::de::Error::custom)
+    }
+}
+
 /// ML-KEM-768 secret key
 #[derive(ZeroizeOnDrop)]
 pub struct MlKemSecretKey(pub Box<[u8; ML_KEM_768_SECRET_KEY_SIZE]>);
@@ -159,6 +179,25 @@ impl MlKemSecretKey {
     }
 }
 
+impl Serialize for MlKemSecretKey {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_bytes(self.as_bytes())
+    }
+}
+
+impl<'de> Deserialize<'de> for MlKemSecretKey {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let bytes = <Vec<u8>>::deserialize(deserializer)?;
+        Self::from_bytes(&bytes).map_err(serde::de::Error::custom)
+    }
+}
+
 /// ML-KEM-768 ciphertext
 #[derive(Clone)]
 pub struct MlKemCiphertext(pub Box<[u8; ML_KEM_768_CIPHERTEXT_SIZE]>);
@@ -180,6 +219,25 @@ impl MlKemCiphertext {
         let mut ct = Box::new([0u8; ML_KEM_768_CIPHERTEXT_SIZE]);
         ct.copy_from_slice(bytes);
         Ok(Self(ct))
+    }
+}
+
+impl Serialize for MlKemCiphertext {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_bytes(self.as_bytes())
+    }
+}
+
+impl<'de> Deserialize<'de> for MlKemCiphertext {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let bytes = <Vec<u8>>::deserialize(deserializer)?;
+        Self::from_bytes(&bytes).map_err(serde::de::Error::custom)
     }
 }
 
@@ -213,6 +271,25 @@ impl MlDsaPublicKey {
     }
 }
 
+impl Serialize for MlDsaPublicKey {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_bytes(self.as_bytes())
+    }
+}
+
+impl<'de> Deserialize<'de> for MlDsaPublicKey {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let bytes = <Vec<u8>>::deserialize(deserializer)?;
+        Self::from_bytes(&bytes).map_err(serde::de::Error::custom)
+    }
+}
+
 /// ML-DSA-65 secret key
 #[derive(ZeroizeOnDrop)]
 pub struct MlDsaSecretKey(pub Box<[u8; ML_DSA_65_SECRET_KEY_SIZE]>);
@@ -243,6 +320,25 @@ impl MlDsaSecretKey {
     }
 }
 
+impl Serialize for MlDsaSecretKey {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_bytes(self.as_bytes())
+    }
+}
+
+impl<'de> Deserialize<'de> for MlDsaSecretKey {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let bytes = <Vec<u8>>::deserialize(deserializer)?;
+        Self::from_bytes(&bytes).map_err(serde::de::Error::custom)
+    }
+}
+
 /// ML-DSA-65 signature
 #[derive(Clone)]
 pub struct MlDsaSignature(pub Box<[u8; ML_DSA_65_SIGNATURE_SIZE]>);
@@ -264,6 +360,25 @@ impl MlDsaSignature {
         let mut sig = Box::new([0u8; ML_DSA_65_SIGNATURE_SIZE]);
         sig.copy_from_slice(bytes);
         Ok(Self(sig))
+    }
+}
+
+impl Serialize for MlDsaSignature {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_bytes(self.as_bytes())
+    }
+}
+
+impl<'de> Deserialize<'de> for MlDsaSignature {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let bytes = <Vec<u8>>::deserialize(deserializer)?;
+        Self::from_bytes(&bytes).map_err(serde::de::Error::custom)
     }
 }
 
@@ -395,5 +510,101 @@ mod tests {
         assert_eq!(ML_DSA_65_PUBLIC_KEY_SIZE, 1952);
         assert_eq!(ML_DSA_65_SECRET_KEY_SIZE, 4032);
         assert_eq!(ML_DSA_65_SIGNATURE_SIZE, 3309);
+    }
+
+    #[test]
+    fn test_ml_kem_public_key_serialization() {
+        // Create a test public key
+        let test_data = vec![42u8; ML_KEM_768_PUBLIC_KEY_SIZE];
+        let key = MlKemPublicKey::from_bytes(&test_data).unwrap();
+
+        // Serialize
+        let serialized = serde_json::to_string(&key).unwrap();
+
+        // Deserialize
+        let deserialized: MlKemPublicKey = serde_json::from_str(&serialized).unwrap();
+
+        // Verify
+        assert_eq!(key.as_bytes(), deserialized.as_bytes());
+    }
+
+    #[test]
+    fn test_ml_kem_secret_key_serialization() {
+        // Create a test secret key
+        let test_data = vec![43u8; ML_KEM_768_SECRET_KEY_SIZE];
+        let key = MlKemSecretKey::from_bytes(&test_data).unwrap();
+
+        // Serialize
+        let serialized = serde_json::to_string(&key).unwrap();
+
+        // Deserialize
+        let deserialized: MlKemSecretKey = serde_json::from_str(&serialized).unwrap();
+
+        // Verify
+        assert_eq!(key.as_bytes(), deserialized.as_bytes());
+    }
+
+    #[test]
+    fn test_ml_kem_ciphertext_serialization() {
+        // Create a test ciphertext
+        let test_data = vec![44u8; ML_KEM_768_CIPHERTEXT_SIZE];
+        let ct = MlKemCiphertext::from_bytes(&test_data).unwrap();
+
+        // Serialize
+        let serialized = serde_json::to_string(&ct).unwrap();
+
+        // Deserialize
+        let deserialized: MlKemCiphertext = serde_json::from_str(&serialized).unwrap();
+
+        // Verify
+        assert_eq!(ct.as_bytes(), deserialized.as_bytes());
+    }
+
+    #[test]
+    fn test_ml_dsa_public_key_serialization() {
+        // Create a test public key
+        let test_data = vec![45u8; ML_DSA_65_PUBLIC_KEY_SIZE];
+        let key = MlDsaPublicKey::from_bytes(&test_data).unwrap();
+
+        // Serialize
+        let serialized = serde_json::to_string(&key).unwrap();
+
+        // Deserialize
+        let deserialized: MlDsaPublicKey = serde_json::from_str(&serialized).unwrap();
+
+        // Verify
+        assert_eq!(key.as_bytes(), deserialized.as_bytes());
+    }
+
+    #[test]
+    fn test_ml_dsa_secret_key_serialization() {
+        // Create a test secret key
+        let test_data = vec![46u8; ML_DSA_65_SECRET_KEY_SIZE];
+        let key = MlDsaSecretKey::from_bytes(&test_data).unwrap();
+
+        // Serialize
+        let serialized = serde_json::to_string(&key).unwrap();
+
+        // Deserialize
+        let deserialized: MlDsaSecretKey = serde_json::from_str(&serialized).unwrap();
+
+        // Verify
+        assert_eq!(key.as_bytes(), deserialized.as_bytes());
+    }
+
+    #[test]
+    fn test_ml_dsa_signature_serialization() {
+        // Create a test signature
+        let test_data = vec![47u8; ML_DSA_65_SIGNATURE_SIZE];
+        let sig = MlDsaSignature::from_bytes(&test_data).unwrap();
+
+        // Serialize
+        let serialized = serde_json::to_string(&sig).unwrap();
+
+        // Deserialize
+        let deserialized: MlDsaSignature = serde_json::from_str(&serialized).unwrap();
+
+        // Verify
+        assert_eq!(sig.as_bytes(), deserialized.as_bytes());
     }
 }

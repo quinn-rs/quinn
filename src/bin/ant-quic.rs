@@ -346,7 +346,11 @@ async fn ci_handle_flags(
                     println!("{}", addr);
                     return Ok(Some(0));
                 } else {
-                    eprintln!("QUERY_PEER_FAIL {}: no suitable address in {}", peer, file.display());
+                    eprintln!(
+                        "QUERY_PEER_FAIL {}: no suitable address in {}",
+                        peer,
+                        file.display()
+                    );
                     return Ok(Some(1));
                 }
             }
