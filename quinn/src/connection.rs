@@ -368,7 +368,7 @@ impl Connection {
         let mut state = self.0.state.lock("try_read_datagram");
 
         if let Some(ref e) = state.error {
-            return Err(e.clone().into());
+            return Err(e.clone());
         }
 
         Ok(state.inner.datagrams().recv())
