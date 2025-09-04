@@ -345,7 +345,7 @@ impl Connection {
         }
     }
 
-    /// Creates a future, resolving as soon as a readable datagram is buffered
+    /// Resolves as soon as a readable datagram is buffered
     pub fn datagram_readable(&self) -> DatagramReadable<'_> {
         DatagramReadable {
             conn: &self.0,
@@ -364,18 +364,14 @@ impl Connection {
     /// Attempts to receive an application datagram
     ///
     /// If there are no readable datagrams, this will return [TryReceiveDatagramError::WouldBlock]
-    pub fn try_read_datagram(&self) -> Result<Bytes, TryReceiveDatagramError> {
+    pub fn try_read_datagram(&self) -> Result<Option<Bytes>, ConnectionError> {
         let mut state = self.0.state.lock("try_read_datagram");
 
         if let Some(ref e) = state.error {
             return Err(e.clone().into());
         }
 
-        state
-            .inner
-            .datagrams()
-            .recv()
-            .ok_or(TryReceiveDatagramError::WouldBlock)
+        Ok(state.inner.datagrams().recv())
     }
 
     /// Wait for the connection to be closed for any reason
