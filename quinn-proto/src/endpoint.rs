@@ -252,7 +252,7 @@ impl Endpoint {
         } else {
             // If we got this far, we're receiving a seemingly valid packet for an unknown
             // connection. Send a stateless reset if possible.
-            self.stateless_reset(now, datagram_len, addresses, *dst_cid, buf)
+            self.stateless_reset(now, datagram_len, addresses, dst_cid, buf)
                 .map(DatagramEvent::Response)
         }
     }
@@ -426,7 +426,7 @@ impl Endpoint {
         let Some(server_config) = &self.server_config else {
             debug!("packet for unrecognized connection {}", dst_cid);
             return self
-                .stateless_reset(event.now, datagram_len, addresses, *dst_cid, buf)
+                .stateless_reset(event.now, datagram_len, addresses, dst_cid, buf)
                 .map(DatagramEvent::Response);
         };
 
@@ -453,7 +453,7 @@ impl Endpoint {
                 header.version,
                 addresses,
                 &crypto,
-                &header.src_cid,
+                header.src_cid,
                 reason,
                 buf,
             )));
@@ -486,7 +486,7 @@ impl Endpoint {
                     header.version,
                     addresses,
                     &crypto,
-                    &header.src_cid,
+                    header.src_cid,
                     TransportError::INVALID_TOKEN(""),
                     buf,
                 )));
@@ -563,7 +563,7 @@ impl Endpoint {
                     version,
                     incoming.addresses,
                     &incoming.crypto,
-                    &src_cid,
+                    src_cid,
                     TransportError::CONNECTION_REFUSED(""),
                     buf,
                 )),
@@ -659,7 +659,7 @@ impl Endpoint {
                         version,
                         incoming.addresses,
                         &incoming.crypto,
-                        &src_cid,
+                        src_cid,
                         e.clone(),
                         buf,
                     )),
@@ -709,7 +709,7 @@ impl Endpoint {
             incoming.packet.header.version,
             incoming.addresses,
             &incoming.crypto,
-            &incoming.packet.header.src_cid,
+            incoming.packet.header.src_cid,
             TransportError::CONNECTION_REFUSED(""),
             buf,
         )
@@ -753,7 +753,7 @@ impl Endpoint {
         buf.put_slice(&token);
         buf.extend_from_slice(&server_config.crypto.retry_tag(
             incoming.packet.header.version,
-            &incoming.packet.header.dst_cid,
+            incoming.packet.header.dst_cid,
             buf,
         ));
         encode.finish(buf, &*incoming.crypto.header.local, None);
@@ -849,7 +849,7 @@ impl Endpoint {
         version: u32,
         addresses: FourTuple,
         crypto: &Keys,
-        remote_id: &ConnectionId,
+        remote_id: ConnectionId,
         reason: TransportError,
         buf: &mut Vec<u8>,
     ) -> Transmit {
@@ -859,7 +859,7 @@ impl Endpoint {
         let local_id = self.local_cid_generator.generate_cid();
         let number = PacketNumber::U8(0);
         let header = Header::Initial(InitialHeader {
-            dst_cid: *remote_id,
+            dst_cid: remote_id,
             src_cid: local_id,
             number,
             token: Bytes::new(),
@@ -1070,12 +1070,12 @@ impl ConnectionIndex {
     /// Find the existing connection that `datagram` should be routed to, if any
     fn get(&self, addresses: &FourTuple, datagram: &PartialDecode) -> Option<RouteDatagramTo> {
         if !datagram.dst_cid().is_empty() {
-            if let Some(&ch) = self.connection_ids.get(datagram.dst_cid()) {
+            if let Some(&ch) = self.connection_ids.get(&datagram.dst_cid()) {
                 return Some(RouteDatagramTo::Connection(ch));
             }
         }
         if datagram.is_initial() || datagram.is_0rtt() {
-            if let Some(&ch) = self.connection_ids_initial.get(datagram.dst_cid()) {
+            if let Some(&ch) = self.connection_ids_initial.get(&datagram.dst_cid()) {
                 return Some(ch);
             }
         }
@@ -1194,8 +1194,8 @@ impl Incoming {
     }
 
     /// The original destination connection ID sent by the client
-    pub fn orig_dst_cid(&self) -> &ConnectionId {
-        &self.token.orig_dst_cid
+    pub fn orig_dst_cid(&self) -> ConnectionId {
+        self.token.orig_dst_cid
     }
 }
 
