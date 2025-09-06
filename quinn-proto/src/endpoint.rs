@@ -515,15 +515,14 @@ impl Endpoint {
     }
 
     /// Attempt to accept this incoming connection (an error may still occur)
-    // AcceptError cannot be made smaller without semver breakage
-    #[allow(clippy::result_large_err)]
+    // box err to avoid clippy::result_large_err
     pub fn accept(
         &mut self,
         mut incoming: Incoming,
         now: Instant,
         buf: &mut Vec<u8>,
         server_config: Option<Arc<ServerConfig>>,
-    ) -> Result<(ConnectionHandle, Connection), AcceptError> {
+    ) -> Result<(ConnectionHandle, Connection), Box<AcceptError>> {
         let remote_address_validated = incoming.remote_address_validated();
         incoming.improper_drop_warner.dismiss();
         let incoming_buffer = self.incoming_buffers.remove(incoming.incoming_idx);
@@ -548,16 +547,16 @@ impl Endpoint {
         {
             debug!("abandoning accept of stale initial");
             self.index.remove_initial(dst_cid);
-            return Err(AcceptError {
+            return Err(Box::new(AcceptError {
                 cause: ConnectionError::TimedOut,
                 response: None,
-            });
+            }));
         }
 
         if self.cids_exhausted() {
             debug!("refusing connection");
             self.index.remove_initial(dst_cid);
-            return Err(AcceptError {
+            return Err(Box::new(AcceptError {
                 cause: ConnectionError::CidsExhausted,
                 response: Some(self.initial_close(
                     version,
@@ -567,7 +566,7 @@ impl Endpoint {
                     TransportError::CONNECTION_REFUSED(""),
                     buf,
                 )),
-            });
+            }));
         }
 
         if incoming
@@ -583,10 +582,10 @@ impl Endpoint {
         {
             debug!(packet_number, "failed to authenticate initial packet");
             self.index.remove_initial(dst_cid);
-            return Err(AcceptError {
+            return Err(Box::new(AcceptError {
                 cause: TransportError::PROTOCOL_VIOLATION("authentication failed").into(),
                 response: None,
-            });
+            }));
         };
 
         let ch = ConnectionHandle(self.connections.vacant_key());
@@ -665,7 +664,7 @@ impl Endpoint {
                     )),
                     _ => None,
                 };
-                Err(AcceptError { cause: e, response })
+                Err(Box::new(AcceptError { cause: e, response }))
             }
         }
     }
