@@ -99,7 +99,7 @@ impl PartialDecode {
     }
 
     /// The destination connection ID of the packet
-    pub fn dst_cid(&self) -> &ConnectionId {
+    pub fn dst_cid(&self) -> ConnectionId {
         self.plain_header.dst_cid()
     }
 
@@ -555,14 +555,14 @@ impl ProtectedHeader {
     }
 
     /// The destination Connection ID of the packet
-    pub fn dst_cid(&self) -> &ConnectionId {
+    pub fn dst_cid(&self) -> ConnectionId {
         use ProtectedHeader::*;
         match self {
-            Initial(header) => &header.dst_cid,
-            Long { dst_cid, .. } => dst_cid,
-            Retry { dst_cid, .. } => dst_cid,
-            Short { dst_cid, .. } => dst_cid,
-            VersionNegotiate { dst_cid, .. } => dst_cid,
+            Initial(header) => header.dst_cid,
+            &Long { dst_cid, .. } => dst_cid,
+            &Retry { dst_cid, .. } => dst_cid,
+            &Short { dst_cid, .. } => dst_cid,
+            &VersionNegotiate { dst_cid, .. } => dst_cid,
         }
     }
 

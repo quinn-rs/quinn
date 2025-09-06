@@ -53,8 +53,8 @@ impl TlsSession {
 }
 
 impl crypto::Session for TlsSession {
-    fn initial_keys(&self, dst_cid: &ConnectionId, side: Side) -> Keys {
-        initial_keys(self.version, *dst_cid, side, &self.suite)
+    fn initial_keys(&self, dst_cid: ConnectionId, side: Side) -> Keys {
+        initial_keys(self.version, dst_cid, side, &self.suite)
     }
 
     fn handshake_data(&self) -> Option<Box<dyn Any>> {
@@ -171,7 +171,7 @@ impl crypto::Session for TlsSession {
         })
     }
 
-    fn is_valid_retry(&self, orig_dst_cid: &ConnectionId, header: &[u8], payload: &[u8]) -> bool {
+    fn is_valid_retry(&self, orig_dst_cid: ConnectionId, header: &[u8], payload: &[u8]) -> bool {
         let tag_start = match payload.len().checked_sub(16) {
             Some(x) => x,
             None => return false,
@@ -180,7 +180,7 @@ impl crypto::Session for TlsSession {
         let mut pseudo_packet =
             Vec::with_capacity(header.len() + payload.len() + orig_dst_cid.len() + 1);
         pseudo_packet.push(orig_dst_cid.len() as u8);
-        pseudo_packet.extend_from_slice(orig_dst_cid);
+        pseudo_packet.extend_from_slice(&orig_dst_cid);
         pseudo_packet.extend_from_slice(header);
         let tag_start = tag_start + pseudo_packet.len();
         pseudo_packet.extend_from_slice(payload);
@@ -532,13 +532,13 @@ impl crypto::ServerConfig for QuicServerConfig {
     fn initial_keys(
         &self,
         version: u32,
-        dst_cid: &ConnectionId,
+        dst_cid: ConnectionId,
     ) -> Result<Keys, UnsupportedVersion> {
         let version = interpret_version(version)?;
-        Ok(initial_keys(version, *dst_cid, Side::Server, &self.initial))
+        Ok(initial_keys(version, dst_cid, Side::Server, &self.initial))
     }
 
-    fn retry_tag(&self, version: u32, orig_dst_cid: &ConnectionId, packet: &[u8]) -> [u8; 16] {
+    fn retry_tag(&self, version: u32, orig_dst_cid: ConnectionId, packet: &[u8]) -> [u8; 16] {
         // Safe: `start_session()` is never called if `initial_keys()` rejected `version`
         let version = interpret_version(version).unwrap();
         let (nonce, key) = match version {
@@ -549,7 +549,7 @@ impl crypto::ServerConfig for QuicServerConfig {
 
         let mut pseudo_packet = Vec::with_capacity(packet.len() + orig_dst_cid.len() + 1);
         pseudo_packet.push(orig_dst_cid.len() as u8);
-        pseudo_packet.extend_from_slice(orig_dst_cid);
+        pseudo_packet.extend_from_slice(&orig_dst_cid);
         pseudo_packet.extend_from_slice(packet);
 
         let nonce = aead::Nonce::assume_unique_for_key(nonce);
