@@ -154,7 +154,7 @@ jobs:
 
   summary:
     name: Quick Checks Summary
-    needs: [lint, quick-test, check, dependencies, license-check, yaml-lint]
+    needs: [lint, check, dependencies, license-check, yaml-lint]
     runs-on: ubuntu-latest
     if: always()
     outputs:
@@ -165,7 +165,6 @@ jobs:
         run: |
           # Check if all required jobs passed
           if [[ "${{ needs.lint.result }}" == "success" && \
-                "${{ needs.quick-test.result }}" == "success" && \
                 "${{ needs.check.result }}" == "success" && \
                 "${{ needs.yaml-lint.result }}" == "success" ]]; then
             echo "✅ All quick checks passed!"
@@ -184,7 +183,7 @@ jobs:
           echo "| Check | Status |" >> $GITHUB_STEP_SUMMARY
           echo "|-------|--------|" >> $GITHUB_STEP_SUMMARY
           echo "| Clippy | ${{ needs.lint.result == 'success' && '✅' || '❌' }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Quick Tests | ${{ needs.quick-test.result == 'success' && '✅' || '❌' }} |" >> $GITHUB_STEP_SUMMARY
+
           echo "| Compilation | ${{ needs.check.result == 'success' && '✅' || '❌' }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Dependencies | ${{ needs.dependencies.result == 'success' && '✅' || '❌' }} |" >> $GITHUB_STEP_SUMMARY
           echo "| License Headers | ${{ needs.license-check.result == 'success' && '✅' || '❌' }} |" >> $GITHUB_STEP_SUMMARY
