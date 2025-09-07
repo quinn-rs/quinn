@@ -43,7 +43,7 @@ jobs:
       - name: Run clippy
         run: cargo clippy --all-targets --all-features -- -W clippy::correctness -W clippy::suspicious -A clippy::missing_docs_in_private_items
 
-  quick-test:
+   quick-test:
      name: Quick Tests (<30s)
      runs-on: ubuntu-latest
      timeout-minutes: 5
