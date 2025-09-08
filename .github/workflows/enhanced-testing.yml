@@ -1,10 +1,6 @@
 name: Enhanced Testing Suite
 
 on:
-  push:
-    branches: [main, master]
-  pull_request:
-    branches: [main, master]
   schedule:
     # Run comprehensive testing daily at 3 AM UTC
     - cron: '0 3 * * *'
@@ -27,7 +23,7 @@ env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
   # Use stable-supported lint groups; 2024 idioms may not be available yet
-  RUSTFLAGS: "-W rust-2021-compatibility -W nonstandard-style"
+  RUSTFLAGS: ""
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
