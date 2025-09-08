@@ -171,6 +171,13 @@ pub(super) struct PathData {
     /// [`TransportParameters`]: crate::transport_parameters::TransportParameters
     pub(super) keep_alive: Option<Duration>,
 
+    /// Whether the path has already been considered opened from an application perspective
+    ///
+    /// This means, for paths other than the original [`PathId::ZERO`], a first path challenge has
+    /// been responded to, regardless of the initial validation status of the path. This state is
+    /// irreversible, since it's not affected by the path being closed.
+    pub(super) open: bool,
+
     /// Snapshot of the qlog recovery metrics
     #[cfg(feature = "qlog")]
     recovery_metrics: RecoveryMetrics,
@@ -229,6 +236,7 @@ impl PathData {
             pto_count: 0,
             idle_timeout: None,
             keep_alive: None,
+            open: false,
             #[cfg(feature = "qlog")]
             recovery_metrics: RecoveryMetrics::default(),
         }
@@ -262,6 +270,7 @@ impl PathData {
             pto_count: 0,
             idle_timeout: prev.idle_timeout,
             keep_alive: prev.keep_alive,
+            open: false,
             #[cfg(feature = "qlog")]
             recovery_metrics: prev.recovery_metrics.clone(),
         }
@@ -755,6 +764,22 @@ pub enum PathEvent {
         id: PathId,
         /// The new status set by the remote
         status: PathStatus,
+    },
+    // TODO(@divma): remove after consideration
+    // The public API of quinn reports path events (this enum) and based on that it's convenient
+    // to include externally observed addresses here. This is maybe not the best in terms of
+    // separation of concerns, and a more appropriate aproach would be to create a new event type
+    // for the external API. Since this is the only "mixed topics" event so far, the alternative
+    // to having the event here is an overkill. We should consider both options depending on the
+    // number of non-strictly-multipath events that end up here and remove this note or make the
+    // change restoring the event to the higher level.
+    /// Received an observation of our external address from the peer.
+    ObservedAddr {
+        /// Path over which the observed address was reported, [`PathId::ZERO`] when multipath is
+        /// not negotiated
+        id: PathId,
+        /// The address observed by the remote over this path
+        addr: SocketAddr,
     },
 }
 

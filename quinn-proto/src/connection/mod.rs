@@ -348,7 +348,9 @@ impl Connection {
             ),
         )]);
 
-        let path = PathData::new(remote, allow_mtud, None, now, &config);
+        let mut path = PathData::new(remote, allow_mtud, None, now, &config);
+        // TODO(@divma): consider if we want to delay this until the path is validated
+        path.open = true;
         let mut this = Self {
             endpoint_config,
             crypto,
@@ -1999,6 +2001,18 @@ impl Connection {
         // so basically completely wrong as well
         // TODO(@divma): halp
         self.path_data(PathId(0)).remote
+    }
+
+    /// Get the address observed by the remote over the given path
+    pub fn path_observed_address(&self, path_id: PathId) -> Result<Option<SocketAddr>, ClosedPath> {
+        self.path(path_id)
+            .map(|path_data| {
+                path_data
+                    .last_observed_addr_report
+                    .as_ref()
+                    .map(|observed| observed.socket_addr())
+            })
+            .ok_or(ClosedPath { _private: () })
     }
 
     /// The local IP address which was used when the peer established
@@ -3913,6 +3927,16 @@ impl Connection {
                         path.data.validated = true;
                         self.events
                             .push_back(Event::Path(PathEvent::Opened { id: path_id }));
+                        // mark the path as open from the application perspective now that Opened
+                        // event has been queued
+                        if !std::mem::replace(&mut path.data.open, true) {
+                            if let Some(observed) = path.data.last_observed_addr_report.as_ref() {
+                                self.events.push_back(Event::Path(PathEvent::ObservedAddr {
+                                    id: path_id,
+                                    addr: observed.socket_addr(),
+                                }));
+                            }
+                        }
                         if let Some((_, ref mut prev)) = path.prev {
                             prev.challenge = None;
                             prev.challenge_pending = false;
@@ -4152,7 +4176,13 @@ impl Connection {
                     let path = self.path_data_mut(path_id);
                     if remote == path.remote {
                         if let Some(updated) = path.update_observed_addr_report(observed) {
-                            self.events.push_back(Event::ObservedAddr(updated));
+                            if path.open {
+                                self.events.push_back(Event::Path(PathEvent::ObservedAddr {
+                                    id: path_id,
+                                    addr: updated,
+                                }));
+                            }
+                            // otherwise the event is reported when the path is deemed open
                         }
                     } else {
                         // include in migration
@@ -4357,7 +4387,11 @@ impl Connection {
         new_path.last_observed_addr_report = path.last_observed_addr_report.clone();
         if let Some(report) = observed_addr {
             if let Some(updated) = new_path.update_observed_addr_report(report) {
-                self.events.push_back(Event::ObservedAddr(updated));
+                tracing::info!("adding observed addr event from migration");
+                self.events.push_back(Event::Path(PathEvent::ObservedAddr {
+                    id: path_id,
+                    addr: updated,
+                }));
             }
         }
         new_path.challenge = Some(self.rng.random());
@@ -5782,8 +5816,6 @@ pub enum Event {
     DatagramReceived,
     /// One or more application datagrams have been sent after blocking
     DatagramsUnblocked,
-    /// Received an observation of our external address from the peer.
-    ObservedAddr(SocketAddr),
     /// (Multi)Path events
     Path(PathEvent),
 }

@@ -517,6 +517,7 @@ impl TestEndpoint {
         self.outbound.extend(split_transmit(transmit, &buf[..size]));
     }
 
+    #[track_caller]
     pub(super) fn assert_accept(&mut self) -> ConnectionHandle {
         self.accepted
             .take()
@@ -524,6 +525,7 @@ impl TestEndpoint {
             .expect("server experienced error connecting")
     }
 
+    #[track_caller]
     pub(super) fn assert_accept_error(&mut self) -> ConnectionError {
         self.accepted
             .take()
@@ -531,6 +533,7 @@ impl TestEndpoint {
             .expect_err("server did unexpectedly connect without error")
     }
 
+    #[track_caller]
     pub(super) fn assert_no_accept(&self) {
         assert!(self.accepted.is_none(), "server did unexpectedly connect")
     }

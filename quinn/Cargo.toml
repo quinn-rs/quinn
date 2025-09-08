@@ -66,6 +66,7 @@ udp = { package = "iroh-quinn-udp", path = "../quinn-udp", version = "0.5", defa
 async-global-executor = { workspace = true, optional = true }
 async-fs = { workspace = true, optional = true }
 async-executor = { workspace = true, optional = true }
+tokio-stream = { version = "0.1.15", features = ["sync"] }
 
 [target.'cfg(not(all(target_family = "wasm", target_os = "unknown")))'.dependencies]
 socket2 = { workspace = true }

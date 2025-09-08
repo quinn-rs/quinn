@@ -1,11 +1,17 @@
 use std::future::Future;
+use std::net::SocketAddr;
 use std::pin::Pin;
+use std::sync::Arc;
 use std::task::{Context, Poll, ready};
 use std::time::Duration;
 
-use proto::{ClosePathError, ClosedPath, ConnectionError, PathError, PathId, PathStatus, VarInt};
+use proto::{
+    ClosePathError, ClosedPath, ConnectionError, PathError, PathEvent, PathId, PathStatus, VarInt,
+};
 use tokio::sync::{oneshot, watch};
+use tokio_stream::{Stream, wrappers::WatchStream};
 
+use crate::Runtime;
 use crate::connection::ConnectionRef;
 
 /// Future produced by [`crate::Connection::open_path`]
@@ -152,6 +158,21 @@ impl Path {
         let mut state = self.conn.state.lock("path_set_keep_alive_interval");
         state.inner.set_path_keep_alive_interval(self.id, interval)
     }
+
+    /// Track changes on our external address as reported by the peer.
+    ///
+    /// If the address-discovery extension is not negotiated, the stream will never return.
+    pub fn observed_external_addr(&self) -> Result<AddressDiscovery, ClosedPath> {
+        let state = self.conn.state.lock("per_path_observed_address");
+        let path_events = state.path_events.subscribe();
+        let initial_value = state.inner.path_observed_address(self.id)?;
+        Ok(AddressDiscovery::new(
+            self.id,
+            path_events,
+            initial_value,
+            state.runtime.clone(),
+        ))
+    }
 }
 
 /// Future produced by [`Path::close`]
@@ -168,5 +189,71 @@ impl Future for ClosePath {
             Ok(code) => Poll::Ready(Ok(code)),
             Err(_err) => todo!(), // TODO: appropriate error
         }
+    }
+}
+
+/// Stream produced by [`Path::observed_external_addr`]
+///
+/// This will always return the external address most recently reported by the remote over this
+/// path. If the extension is not negotiated, this stream will never return.
+// TODO(@divma): provide a way to check if the extension is negotiated.
+pub struct AddressDiscovery {
+    watcher: WatchStream<SocketAddr>,
+}
+
+impl AddressDiscovery {
+    pub(super) fn new(
+        path_id: PathId,
+        mut path_events: tokio::sync::broadcast::Receiver<PathEvent>,
+        initial_value: Option<SocketAddr>,
+        runtime: Arc<dyn Runtime>,
+    ) -> Self {
+        let (tx, rx) = watch::channel(initial_value.unwrap_or_else(||
+                // if the dummy value is used, it will be ignored
+                SocketAddr::new([0, 0, 0, 0].into(), 0)));
+        let filter = async move {
+            loop {
+                match path_events.recv().await {
+                    Ok(PathEvent::ObservedAddr { id, addr: observed }) if id == path_id => {
+                        tx.send_if_modified(|addr| {
+                            let old = std::mem::replace(addr, observed);
+                            old != *addr
+                        });
+                    }
+                    Ok(PathEvent::Abandoned { id, .. }) if id == path_id => {
+                        // If the path is closed, terminate the stream
+                        break;
+                    }
+                    Ok(_) => {
+                        // ignore any other event
+                    }
+                    Err(_) => {
+                        // A lagged error should never happen since this (detached) task is
+                        // constantly reading from the channel. Therefore, if an error does happen,
+                        // the stream can terminate
+                        break;
+                    }
+                }
+            }
+        };
+
+        let watcher = if initial_value.is_some() {
+            WatchStream::new(rx)
+        } else {
+            WatchStream::from_changes(rx)
+        };
+
+        runtime.spawn(Box::pin(filter));
+        // TODO(@divma): check if there's a way to ensure the future ends. AbortHandle is not an
+        // option
+        Self { watcher }
+    }
+}
+
+impl Stream for AddressDiscovery {
+    type Item = SocketAddr;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        Pin::new(&mut self.watcher).poll_next(cx)
     }
 }

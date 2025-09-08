@@ -3453,7 +3453,7 @@ fn address_discovery() {
     let conn = pair.client_conn_mut(conn_handle);
     assert_matches!(conn.poll(), Some(Event::HandshakeDataReady));
     assert_matches!(conn.poll(), Some(Event::Connected));
-    assert_matches!(conn.poll(), Some(Event::ObservedAddr(addr)) if addr == expected_addr);
+    assert_matches!(conn.poll(), Some(Event::Path(PathEvent::ObservedAddr{id: PathId::ZERO, addr})) if addr == expected_addr);
     assert_matches!(conn.poll(), None);
 
     // check that the server received the correct address
@@ -3462,7 +3462,7 @@ fn address_discovery() {
     let conn = pair.server_conn_mut(conn_handle);
     assert_matches!(conn.poll(), Some(Event::HandshakeDataReady));
     assert_matches!(conn.poll(), Some(Event::Connected));
-    assert_matches!(conn.poll(), Some(Event::ObservedAddr(addr)) if addr == expected_addr);
+    assert_matches!(conn.poll(), Some(Event::Path(PathEvent::ObservedAddr{id: PathId::ZERO, addr})) if addr == expected_addr);
     assert_matches!(conn.poll(), None);
 }
 
@@ -3658,8 +3658,7 @@ fn address_discovery_retransmission() {
 
     pair.drive();
     let conn = pair.client_conn_mut(client_ch);
-    assert_matches!(conn.poll(),
-        Some(Event::ObservedAddr(addr)) if addr == pair.client.addr);
+    assert_matches!(conn.poll(), Some(Event::Path(PathEvent::ObservedAddr{id: PathId::ZERO, addr})) if addr == pair.client.addr);
 }
 
 #[test]
@@ -3701,8 +3700,7 @@ fn address_discovery_rebind_retransmission() {
 
     pair.drive();
     let conn = pair.client_conn_mut(client_ch);
-    assert_matches!(conn.poll(),
-        Some(Event::ObservedAddr(addr)) if addr == pair.client.addr);
+    assert_matches!(conn.poll(), Some(Event::Path(PathEvent::ObservedAddr{id: PathId::ZERO, addr})) if addr == pair.client.addr);
 }
 
 #[test]

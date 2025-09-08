@@ -4,6 +4,7 @@
 use rustls::crypto::aws_lc_rs::default_provider;
 #[cfg(feature = "rustls-ring")]
 use rustls::crypto::ring::default_provider;
+use tokio_stream::StreamExt;
 
 use std::{
     convert::TryInto,
@@ -965,6 +966,58 @@ async fn test_multipath_negotiated() {
             .await
             .unwrap();
         assert!(conn.is_multipath_enabled());
+    }
+    .instrument(info_span!("client"));
+
+    tokio::join!(server_task, client_task);
+}
+
+#[tokio::test]
+async fn test_multipath_observed_address() {
+    let _logging = subscribe();
+    let factory = EndpointFactory::new();
+
+    let mut transport_config = TransportConfig::default();
+    transport_config.max_concurrent_multipath_paths(2);
+    transport_config.send_observed_address_reports(true);
+    transport_config.receive_observed_address_reports(true);
+    let server = factory.endpoint_with_config("server", transport_config);
+    let server_addr = server.local_addr().unwrap();
+
+    let server_task = async move {
+        let conn = server.accept().await.unwrap().await.unwrap();
+        conn.closed().await;
+    }
+    .instrument(info_span!("server"));
+
+    let mut transport_config = TransportConfig::default();
+    transport_config.max_concurrent_multipath_paths(2);
+    transport_config.send_observed_address_reports(true);
+    transport_config.receive_observed_address_reports(true);
+
+    let client = factory.endpoint_with_config("client", transport_config);
+
+    let client_task = async move {
+        let conn = client
+            .connect(server_addr, "localhost")
+            .unwrap()
+            .await
+            .unwrap();
+        // small synchronization step necessary to allow the server to set remote CIDs
+        // TODO(@divma): this is not fixed by removing the early check of remote CIDs, at least not
+        // right now. Removing the check makes poll_transmit panic somewhere. So, eval removing
+        // this sleep after the poll_transmit unwraps have been addressed
+        tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+        let path = conn
+            .open_path(server_addr, proto::PathStatus::Available)
+            .await
+            .unwrap();
+        let mut reports = path.observed_external_addr().unwrap();
+        let observed = reports.next().await.unwrap();
+
+        // in this instance the test is local and the locally known and remotely observed addresses
+        // should coincide
+        assert_eq!(observed, client.local_addr().unwrap());
     }
     .instrument(info_span!("client"));
 

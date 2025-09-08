@@ -14,7 +14,7 @@ use crate::{
     EndpointConfig, Instant, LOC_CID_COUNT, PathId, PathStatus, RandomConnectionIdGenerator,
     ServerConfig, TransportConfig, cid_queue::CidQueue,
 };
-use crate::{Event, PathError};
+use crate::{Event, PathError, PathEvent};
 
 use super::util::{min_opt, subscribe};
 use super::{Pair, client_config, server_config};
@@ -506,4 +506,74 @@ fn close_last_path() {
 
     assert!(pair.server_conn_mut(server_ch).is_closed());
     assert!(pair.client_conn_mut(client_ch).is_closed());
+}
+
+#[test]
+fn per_path_observed_address() {
+    let _guard = subscribe();
+    // create the endpoint pair with both address discovery and multipath enabled
+    let (mut pair, client_ch, server_ch) = {
+        let transport_cfg = Arc::new(TransportConfig {
+            max_concurrent_multipath_paths: NonZeroU32::new(MAX_PATHS),
+            address_discovery_role: crate::address_discovery::Role::Both,
+            ..TransportConfig::default()
+        });
+        let server_cfg = Arc::new(ServerConfig {
+            transport: transport_cfg.clone(),
+            ..server_config()
+        });
+        let server = Endpoint::new(Default::default(), Some(server_cfg), true, None);
+        let client = Endpoint::new(Default::default(), None, true, None);
+
+        let mut pair = Pair::new_from_endpoint(client, server);
+        let client_cfg = ClientConfig {
+            transport: transport_cfg,
+            ..client_config()
+        };
+        let (client_ch, server_ch) = pair.connect_with(client_cfg);
+        pair.drive();
+        info!("connected");
+        (pair, client_ch, server_ch)
+    };
+
+    // check that the client received the correct address
+    let expected_addr = pair.client.addr;
+    let conn = pair.client_conn_mut(client_ch);
+    assert_matches!(conn.poll(), Some(Event::Path(PathEvent::ObservedAddr{id: PathId::ZERO, addr})) if addr == expected_addr);
+    assert_matches!(conn.poll(), None);
+
+    // check that the server received the correct address
+    let expected_addr = pair.server.addr;
+    let conn = pair.server_conn_mut(server_ch);
+    assert_matches!(conn.poll(), Some(Event::Path(PathEvent::ObservedAddr{id: PathId::ZERO, addr})) if addr == expected_addr);
+    assert_matches!(conn.poll(), None);
+
+    // simulate a rebind on thte client
+    pair.client_conn_mut(client_ch).local_address_changed();
+    pair.client
+        .addr
+        .set_port(pair.client.addr.port().overflowing_add(1).0);
+    let our_addr = pair.client.addr;
+
+    // open a second path
+    let remote = pair.server.addr;
+    let conn = pair.client_conn_mut(client_ch);
+    let _new_path_id = conn
+        .open_path(remote, PathStatus::Available, Instant::now())
+        .unwrap();
+
+    pair.drive();
+    let conn = pair.client_conn_mut(client_ch);
+    // check the migration related event
+    assert_matches!(conn.poll(), Some(Event::Path(PathEvent::ObservedAddr{id: PathId::ZERO, addr})) if addr == our_addr);
+    // wait for the open event
+    let mut opened = false;
+    while let Some(ev) = conn.poll() {
+        if matches!(ev, Event::Path(PathEvent::Opened { id: PathId(1) })) {
+            opened = true;
+            break;
+        }
+    }
+    assert!(opened);
+    assert_matches!(conn.poll(), Some(Event::Path(PathEvent::ObservedAddr{id: PathId(1), addr})) if addr == our_addr);
 }

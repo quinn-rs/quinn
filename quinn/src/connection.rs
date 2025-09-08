@@ -1099,15 +1099,16 @@ pub(crate) struct State {
     open_path: FxHashMap<PathId, watch::Sender<Option<Result<(), PathError>>>>,
     /// Tracks paths being closed
     pub(crate) close_path: FxHashMap<PathId, oneshot::Sender<VarInt>>,
-    path_events: tokio::sync::broadcast::Sender<PathEvent>,
+    pub(crate) path_events: tokio::sync::broadcast::Sender<PathEvent>,
     /// Number of live handles that can be used to initiate or handle I/O; excludes the driver
     ref_count: usize,
     sender: Pin<Box<dyn UdpSender>>,
-    runtime: Arc<dyn Runtime>,
+    pub(crate) runtime: Arc<dyn Runtime>,
     send_buffer: Vec<u8>,
     /// We buffer a transmit when the underlying I/O would block
     buffered_transmit: Option<proto::Transmit>,
-    /// Our last external address reported by the peer.
+    /// Our last external address reported by the peer. When multipath is enabled, this will be the
+    /// last report across all paths.
     pub(crate) observed_external_addr: watch::Sender<Option<SocketAddr>>,
 }
 
@@ -1255,7 +1256,8 @@ impl State {
                     wake_stream_notify(id, &mut self.stopped);
                     wake_stream(id, &mut self.blocked_writers);
                 }
-                ObservedAddr(observed) => {
+                Path(ref evt @ PathEvent::ObservedAddr { addr: observed, .. }) => {
+                    self.path_events.send(evt.clone()).ok();
                     self.observed_external_addr.send_if_modified(|addr| {
                         let old = addr.replace(observed);
                         old != *addr
