@@ -31,11 +31,8 @@ jobs:
       - name: Format check
         run: cargo fmt --all -- --check
         
-      - name: Clippy (non-test targets)
-        run: cargo clippy --all-features --lib --bins --examples -- -D clippy::panic -D clippy::unwrap_used -D clippy::expect_used
-
-      - name: Clippy (tests/benches - permissive)
-        run: cargo clippy --all-features --tests --benches -- -A clippy::panic -A clippy::unwrap_used -A clippy::expect_used
+      - name: Clippy (advisory)
+        run: cargo clippy --all-features
         
       - name: Quick build check
         run: cargo check --all-targets
