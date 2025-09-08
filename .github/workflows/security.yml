@@ -29,10 +29,6 @@ permissions:
   id-token: write
   actions: read
 
-env:
-  CARGO_TERM_COLOR: always
-  RUST_BACKTRACE: 1
-
 jobs:
   # Vulnerability scanning with cargo-audit
   vulnerability-scan:
@@ -41,6 +37,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         if: ${{ !startsWith(runner.name, 'nektos/act') }}
+      
+      - name: Set env
+        run: |
+          echo CARGO_TERM_COLOR=always >> "$GITHUB_ENV"
+          echo RUST_BACKTRACE=1       >> "$GITHUB_ENV"
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -94,6 +95,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         if: ${{ !startsWith(runner.name, 'nektos/act') }}
+      
+      - name: Set env
+        run: |
+          echo CARGO_TERM_COLOR=always >> "$GITHUB_ENV"
+          echo RUST_BACKTRACE=1       >> "$GITHUB_ENV"
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -136,6 +142,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         if: ${{ !startsWith(runner.name, 'nektos/act') }}
+      
+      - name: Set env
+        run: |
+          echo CARGO_TERM_COLOR=always >> "$GITHUB_ENV"
+          echo RUST_BACKTRACE=1       >> "$GITHUB_ENV"
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -196,6 +207,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         if: ${{ !startsWith(runner.name, 'nektos/act') }}
+      
+      - name: Set env
+        run: |
+          echo CARGO_TERM_COLOR=always >> "$GITHUB_ENV"
+          echo RUST_BACKTRACE=1       >> "$GITHUB_ENV"
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable

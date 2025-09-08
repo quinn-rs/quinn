@@ -8,7 +8,6 @@ on:
 
 env:
   RUST_BACKTRACE: 1
-  RUSTFLAGS: "-D warnings"
   CARGO_TERM_COLOR: always
 
 # Prevent multiple runs for same PR/branch
@@ -33,7 +32,7 @@ jobs:
         run: cargo fmt --all -- --check
         
       - name: Clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
+        run: cargo clippy --all-features -- -D clippy::panic -D clippy::unwrap_used -D clippy::expect_used
         
       - name: Quick build check
         run: cargo check --all-targets

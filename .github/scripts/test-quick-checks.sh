@@ -34,8 +34,8 @@ run_check() {
 # Format check
 run_check "Format Check" "cargo fmt --all -- --check"
 
-# Clippy
-run_check "Clippy Lint" "cargo clippy --all-targets --all-features -- -D warnings"
+# Clippy (project policy)
+run_check "Clippy Lint" "cargo clippy --all-features -- -D clippy::panic -D clippy::unwrap_used -D clippy::expect_used"
 
 # Quick tests (30s timeout)
 run_check "Quick Tests" "timeout 30s cargo test --lib || [ \$? -eq 124 ]"

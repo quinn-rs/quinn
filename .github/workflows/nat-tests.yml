@@ -135,6 +135,8 @@ jobs:
       - name: Run connectivity matrix tests
         run: |
           cd docker
+          # Ensure a clean, writable results directory (in case containers created it as root)
+          sudo rm -rf results || true
           mkdir -p results
           
           # Test matrix of all NAT type combinations

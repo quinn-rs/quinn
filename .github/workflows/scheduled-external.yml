@@ -38,9 +38,16 @@ jobs:
         run: |
           ./target/release/test-public-endpoints | tee endpoint-results.txt
           
-          # Extract success rate
-          SUCCESS_RATE=$(grep "Success rate:" endpoint-results.txt | cut -d' ' -f3 | tr -d '%')
-          echo "success_rate=$SUCCESS_RATE" >> $GITHUB_OUTPUT
+          # Extract success rate from current output format. The tool now prints
+          # a line like: "Successful connections: 7 (58.3%)".
+          # Fallback to legacy "Success rate: 58.3%" if present.
+          SUCCESS_RATE=$(awk -F'[()]' '/Successful connections:/ {gsub("%","", $2); print $2}' endpoint-results.txt | tail -n1)
+          if [ -z "$SUCCESS_RATE" ]; then
+            SUCCESS_RATE=$(grep -m1 "Success rate:" endpoint-results.txt | awk '{gsub("%", "", $3); print $3}')
+          fi
+          # Default to 0 if still empty to avoid bc errors
+          SUCCESS_RATE=${SUCCESS_RATE:-0}
+          printf "success_rate=%s\n" "$SUCCESS_RATE" >> "$GITHUB_OUTPUT"
           
           # Check if success rate is acceptable
           if (( $(echo "$SUCCESS_RATE < 50" | bc -l) )); then
@@ -50,14 +57,20 @@ jobs:
       - name: Parse results
         id: parse
         run: |
-          # Count successes and failures
-          TOTAL=$(grep -c "Testing" endpoint-results.txt || echo 0)
-          SUCCESS=$(grep -c "✓ Success" endpoint-results.txt || echo 0)
-          FAILED=$(grep -c "✗ Failed" endpoint-results.txt || echo 0)
+          # Parse totals from summary lines emitted by the tool
+          TOTAL=$(awk -F': ' '/Total endpoints tested:/ {print $2}' endpoint-results.txt | tail -n1)
+          PASSED=$(awk -F': ' '/Successful connections:/ {print $2}' endpoint-results.txt | awk '{print $1}' | tail -n1)
+          FAILED=""
+          if [ -n "$TOTAL" ] && [ -n "$PASSED" ]; then
+            FAILED=$((TOTAL-PASSED))
+          fi
+          TOTAL=${TOTAL:-0}
+          PASSED=${PASSED:-0}
+          FAILED=${FAILED:-0}
           
-          echo "total=$TOTAL" >> $GITHUB_OUTPUT
-          echo "success=$SUCCESS" >> $GITHUB_OUTPUT
-          echo "failed=$FAILED" >> $GITHUB_OUTPUT
+          printf "total=%s\n"   "$TOTAL"  >> "$GITHUB_OUTPUT"
+          printf "success=%s\n" "$PASSED" >> "$GITHUB_OUTPUT"
+          printf "failed=%s\n"  "$FAILED" >> "$GITHUB_OUTPUT"
       
       - name: Generate report
         run: |

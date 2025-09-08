@@ -297,6 +297,7 @@ impl SignatureScheme {
 }
 
 /// Extension trait for rustls integration
+#[cfg(any(feature = "rustls-ring", feature = "rustls-aws-lc-rs"))]
 pub trait RustlsIntegration {
     /// Convert to rustls NamedGroup if supported
     fn to_rustls_named_group(&self) -> Option<rustls::NamedGroup>;
@@ -305,6 +306,7 @@ pub trait RustlsIntegration {
     fn to_rustls_signature_scheme(&self) -> Option<rustls::SignatureScheme>;
 }
 
+#[cfg(any(feature = "rustls-ring", feature = "rustls-aws-lc-rs"))]
 impl RustlsIntegration for NamedGroup {
     fn to_rustls_named_group(&self) -> Option<rustls::NamedGroup> {
         // Map classical groups to rustls equivalents
@@ -323,6 +325,7 @@ impl RustlsIntegration for NamedGroup {
     }
 }
 
+#[cfg(any(feature = "rustls-ring", feature = "rustls-aws-lc-rs"))]
 impl RustlsIntegration for SignatureScheme {
     fn to_rustls_named_group(&self) -> Option<rustls::NamedGroup> {
         None // Signature schemes don't map to named groups
@@ -437,6 +440,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(any(feature = "rustls-ring", feature = "rustls-aws-lc-rs"))]
     fn test_rustls_integration() {
         // Test classical mapping
         let group = NamedGroup::X25519;
