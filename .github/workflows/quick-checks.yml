@@ -38,8 +38,11 @@ jobs:
       - name: Format check
         run: cargo fmt --all -- --check
 
-      - name: Run clippy (policy)
-        run: cargo clippy --all-features -- -D clippy::panic -D clippy::unwrap_used -D clippy::expect_used
+      - name: Run clippy (policy, non-test)
+        run: cargo clippy --all-features --lib --bins --examples -- -D clippy::panic -D clippy::unwrap_used -D clippy::expect_used
+
+      - name: Run clippy (tests/benches, permissive)
+        run: cargo clippy --all-features --tests --benches -- -A clippy::panic -A clippy::unwrap_used -A clippy::expect_used
 
   quick-test:
     name: Quick Tests (<30s)
