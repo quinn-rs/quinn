@@ -141,10 +141,9 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 1
-
-      - name: Validate GitHub Actions YAML
-        uses: rhysd/actionlint@v1
-        continue-on-error: true
+      # Skip actionlint (occasionally unavailable); keep only TOML validation
+      - name: Note
+        run: echo "Skipping actionlint; running TOML validation only"
 
       - name: Validate TOML files
         run: |
