@@ -44,6 +44,13 @@ env:
   CARGO_NET_RETRY: 10
   RUST_BACKTRACE: short
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   docker-nat-tests:
     runs-on: ubuntu-22.04

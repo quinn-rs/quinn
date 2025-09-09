@@ -975,30 +975,31 @@ impl Endpoint {
         buf: &mut Vec<u8>,
     ) -> Option<DatagramEvent> {
         let dst_cid = event.first_decode.dst_cid();
-        let header = event.first_decode.initial_header().unwrap();
-
-        let Some(server_config) = &self.server_config else {
-            debug!("packet for unrecognized connection {}", dst_cid);
-            return self
-                .stateless_reset(event.now, datagram_len, addresses, *dst_cid, buf)
-                .map(DatagramEvent::Response);
+        let Some(header) = event.first_decode.initial_header() else {
+            debug!("unable to extract initial header for connection {}", dst_cid);
+            return None;
         };
 
-        if datagram_len < MIN_INITIAL_SIZE as usize {
-            debug!("ignoring short initial for connection {}", dst_cid);
-            return None;
-        }
-
-        let crypto = match server_config.crypto.initial_keys(header.version, dst_cid) {
-            Ok(keys) => keys,
-            Err(UnsupportedVersion) => {
-                // This probably indicates that the user set supported_versions incorrectly in
-                // `EndpointConfig`.
-                debug!(
-                    "ignoring initial packet version {:#x} unsupported by cryptographic layer",
-                    header.version
-                );
+        let crypto = {
+            let Some(server_config) = &self.server_config else {
+                debug!("packet for unrecognized connection {}", dst_cid);
+                return self
+                    .stateless_reset(event.now, datagram_len, addresses, *dst_cid, buf)
+                    .map(DatagramEvent::Response);
+            };
+            if datagram_len < MIN_INITIAL_SIZE as usize {
+                debug!("ignoring short initial for connection {}", dst_cid);
                 return None;
+            }
+            match server_config.crypto.initial_keys(header.version, dst_cid) {
+                Ok(keys) => keys,
+                Err(UnsupportedVersion) => {
+                    debug!(
+                        "ignoring initial packet version {:#x} unsupported by cryptographic layer",
+                        header.version
+                    );
+                    return None;
+                }
             }
         };
 
@@ -1027,14 +1028,26 @@ impl Endpoint {
         }
 
         let Header::Initial(header) = packet.header else {
-            panic!("non-initial packet in handle_first_packet()");
+            debug!("unexpected non-initial packet in handle_first_packet()");
+            return None;
         };
 
-        let server_config = self.server_config.as_ref().unwrap().clone();
-
-        let token = match IncomingToken::from_header(&header, &server_config, addresses.remote) {
-            Ok(token) => token,
-            Err(InvalidRetryTokenError) => {
+        let token = match self.server_config.as_ref() {
+            Some(sc) => match IncomingToken::from_header(&header, sc, addresses.remote) {
+                Ok(token) => token,
+                Err(InvalidRetryTokenError) => {
+                    debug!("rejecting invalid retry token");
+                    return Some(DatagramEvent::Response(self.initial_close(
+                        header.version,
+                        addresses,
+                        &crypto,
+                        &header.src_cid,
+                        TransportError::INVALID_TOKEN(""),
+                        buf,
+                    )));
+                }
+            },
+            None => {
                 debug!("rejecting invalid retry token");
                 return Some(DatagramEvent::Response(self.initial_close(
                     header.version,

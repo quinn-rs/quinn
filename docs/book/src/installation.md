@@ -4,7 +4,7 @@
 
 ### Minimum Rust Version
 
-ant-quic requires Rust 1.74.1 or later.
+ant-quic requires Rust 1.85.0 or later.
 
 ### Platform Requirements
 

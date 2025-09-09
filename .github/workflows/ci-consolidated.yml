@@ -15,6 +15,9 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
   # Quick sanity checks first
   quick-checks:
@@ -31,8 +34,13 @@ jobs:
       - name: Format check
         run: cargo fmt --all -- --check
         
-      - name: Clippy (advisory)
-        run: cargo clippy --all-features
+      - name: Clippy (policy — lib/bins/examples)
+        run: |
+          cargo clippy --all-features --lib --bins --examples -- \
+            -D clippy::panic \
+            -D clippy::unwrap_used \
+            -D clippy::expect_used \
+            -W clippy::pedantic
         
       - name: Quick build check
         run: cargo check --all-targets
@@ -51,7 +59,7 @@ jobs:
       
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@master
+      - uses: dtolnay/rust-toolchain@v1
         with:
           toolchain: ${{ matrix.rust }}
       - uses: Swatinem/rust-cache@v2
@@ -140,9 +148,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install Rust MSRV
-        uses: dtolnay/rust-toolchain@master
+        uses: dtolnay/rust-toolchain@v1
         with:
-          toolchain: 1.75.0
+          toolchain: 1.85.0
       - name: Cache dependencies
         uses: Swatinem/rust-cache@v2
       - name: Check MSRV compatibility

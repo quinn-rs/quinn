@@ -60,7 +60,7 @@ on:
 ```bash
 # What it does:
 - cargo fmt --check      # Code formatting
-- cargo clippy          # Linting
+- cargo clippy --all-features -- -D clippy::panic -D clippy::unwrap_used -D clippy::expect_used  # Linting (policy)
 - cargo doc --no-deps   # Documentation build
 ```
 
@@ -68,7 +68,7 @@ on:
 ```bash
 # Runs on:
 - OS: ubuntu-latest, macos-latest, windows-latest
-- Rust: 1.74.1 (MSRV), stable, beta, nightly
+- Rust: 1.85.0 (MSRV), stable, beta, nightly
 
 # Tests:
 - cargo test --all-features
@@ -190,7 +190,9 @@ cargo fmt --check || {
 }
 
 # Clippy
-cargo clippy --all-targets -- -D warnings || {
+# Enforce panic-free production policy (tests may use unwrap/expect)
+cargo clippy --all-features --lib --bins --examples -- \
+  -D clippy::panic -D clippy::unwrap_used -D clippy::expect_used -W clippy::pedantic || {
     echo "Clippy warnings found"
     exit 1
 }

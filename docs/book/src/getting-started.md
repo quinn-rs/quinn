@@ -4,7 +4,7 @@ This guide will help you get started with ant-quic.
 
 ## Prerequisites
 
-- Rust 1.74.1 or later
+- Rust 1.85.0 or later
 - Basic understanding of networking concepts
 - Familiarity with async Rust programming
 

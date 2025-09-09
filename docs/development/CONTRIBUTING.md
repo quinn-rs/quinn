@@ -24,7 +24,7 @@ This project adheres to a code of conduct. By participating, you are expected to
    ```
 
 2. **Install Dependencies**
-   - Rust 1.74.1 or later
+   - Rust 1.85.0 or later
    - Docker (for NAT testing)
    - Python 3.8+ (for scripts)
 
@@ -61,8 +61,9 @@ git checkout -b fix/issue-number-description
 # Run all tests
 cargo test --all-features
 
-# Run clippy
-cargo clippy --all-targets --all-features -- -D warnings
+# Run clippy (policy)
+cargo clippy --all-features --lib --bins --examples -- \
+  -D clippy::panic -D clippy::unwrap_used -D clippy::expect_used -W clippy::pedantic
 
 # Format code
 cargo fmt --all

@@ -12,6 +12,9 @@ on:
         description: "Whether all standard tests passed"
         value: ${{ jobs.summary.outputs.passed }}
 
+permissions:
+  contents: read
+
 env:
   RUST_BACKTRACE: 1
 
@@ -35,7 +38,7 @@ jobs:
         if: ${{ !startsWith(runner.name, 'nektos/act') }}
       
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@master
+        uses: dtolnay/rust-toolchain@v1
         with:
           toolchain: ${{ matrix.rust }}
       
