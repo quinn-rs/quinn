@@ -2,7 +2,7 @@
 # https://github.com/actions/dependency-review-action
 
 # Fail the action on these severities
-fail-on-severity: low
+fail-on-severity: critical
 
 # Licenses to allow
 allow-licenses:

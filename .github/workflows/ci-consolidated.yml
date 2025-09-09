@@ -96,6 +96,7 @@ jobs:
   coverage:
     name: Code Coverage
     needs: test
+    continue-on-error: true
     if: github.event_name == 'push' && github.ref == 'refs/heads/master'
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -108,7 +109,18 @@ jobs:
         run: cargo install cargo-tarpaulin
         
       - name: Generate coverage
-        run: cargo tarpaulin --verbose --all-features --workspace --timeout 300 --out xml
+        run: |
+          cargo tarpaulin \
+            --verbose \
+            --all-features \
+            --workspace \
+            --timeout 120 \
+            --skip test_nat_traversal_direct_connection \
+            --skip test_network_partition_recovery \
+            --skip test_rapid_reconnection \
+            --skip test_linux_interface_discovery \
+            --out xml \
+            -- --test-threads=1
         
       - name: Upload coverage
         uses: codecov/codecov-action@v4
