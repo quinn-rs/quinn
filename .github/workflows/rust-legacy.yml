@@ -3,8 +3,6 @@ name: Extended Platform Tests
 on:
   push:
     branches: ['master', '0.8.x']
-  pull_request:
-  merge_group:
   schedule:
     - cron: "21 3 * * 5"
 
