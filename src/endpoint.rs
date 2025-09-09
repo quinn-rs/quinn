@@ -762,7 +762,10 @@ impl Endpoint {
             match route_to {
                 RouteDatagramTo::Incoming(incoming_idx) => {
                     let incoming_buffer = &mut self.incoming_buffers[incoming_idx];
-                    let config = &self.server_config.as_ref().unwrap();
+                    let Some(config) = &self.server_config else {
+                        debug!("no server config available to buffer incoming datagram");
+                        return None;
+                    };
 
                     if incoming_buffer
                         .total_bytes
@@ -1103,8 +1106,17 @@ impl Endpoint {
             version,
             ..
         } = incoming.packet.header;
-        let server_config =
-            server_config.unwrap_or_else(|| self.server_config.as_ref().unwrap().clone());
+        let server_config = match server_config.or_else(|| self.server_config.clone()) {
+            Some(sc) => sc,
+            None => {
+                return Err(AcceptError {
+                    cause: ConnectionError::TransportError(
+                        crate::transport_error::Error::INTERNAL_ERROR(""),
+                    ),
+                    response: None,
+                })
+            }
+        };
 
         if server_config
             .transport
@@ -1242,7 +1254,9 @@ impl Endpoint {
         &mut self,
         header: &ProtectedInitialHeader,
     ) -> Result<(), TransportError> {
-        let config = &self.server_config.as_ref().unwrap();
+        let Some(config) = &self.server_config else {
+            return Err(TransportError::INTERNAL_ERROR(""));
+        };
         if self.cids_exhausted() || self.incoming_buffers.len() >= config.max_incoming {
             return Err(TransportError::CONNECTION_REFUSED(""));
         }
@@ -1290,10 +1304,12 @@ impl Endpoint {
             return Err(RetryError(Box::new(incoming)));
         }
 
+        let Some(server_config_arc) = self.server_config.clone() else {
+            return Err(RetryError(Box::new(incoming)));
+        };
+
         self.clean_up_incoming(&incoming);
         incoming.improper_drop_warner.dismiss();
-
-        let server_config = self.server_config.as_ref().unwrap();
 
         // First Initial
         // The peer will use this as the DCID of its following Initials. Initial DCIDs are
@@ -1306,9 +1322,9 @@ impl Endpoint {
         let payload = TokenPayload::Retry {
             address: incoming.addresses.remote,
             orig_dst_cid: incoming.packet.header.dst_cid,
-            issued: server_config.time_source.now(),
+            issued: server_config_arc.time_source.now(),
         };
-        let token = Token::new(payload, &mut self.rng).encode(&*server_config.token_key);
+        let token = Token::new(payload, &mut self.rng).encode(&*server_config_arc.token_key);
 
         let header = Header::Retry {
             src_cid: loc_cid,
@@ -1318,7 +1334,7 @@ impl Endpoint {
 
         let encode = header.encode(buf);
         buf.put_slice(&token);
-        buf.extend_from_slice(&server_config.crypto.retry_tag(
+        buf.extend_from_slice(&server_config_arc.crypto.retry_tag(
             incoming.packet.header.version,
             &incoming.packet.header.dst_cid,
             buf,
