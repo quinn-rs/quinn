@@ -346,7 +346,6 @@ impl NatTraversalConfig {
     }
 }
 
-
 /// Configuration for QUIC Address Discovery extension
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum AddressDiscoveryConfig {
@@ -398,7 +397,6 @@ impl AddressDiscoveryConfig {
         }
     }
 }
-
 
 /// Role of an endpoint in NAT traversal coordination
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
