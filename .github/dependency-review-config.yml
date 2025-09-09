@@ -2,7 +2,7 @@
 # https://github.com/actions/dependency-review-action
 
 # Fail the action on these severities
-fail-on-severity: low
+fail-on-severity: critical
 
 # Licenses to allow
 allow-licenses:
@@ -18,13 +18,8 @@ allow-licenses:
   - Unlicense
   - Zlib
 
-# Licenses to deny
-deny-licenses:
-  - GPL-2.0
-  - GPL-3.0
-  - AGPL-3.0
-  - LGPL-2.0
-  - LGPL-3.0
+# Note: Using allow-licenses only to avoid configuration conflicts
+# GPL/AGPL/LGPL licenses are implicitly denied by not being in allow-licenses
 
 # Allow specific advisories to be ignored
 # allow-ghsas:

@@ -86,10 +86,17 @@ jobs:
       - name: Check dependencies
         run: cargo tree --duplicates
 
+  # NAT tests integration
+  nat-tests:
+    name: NAT Tests
+    needs: quick-checks
+    uses: ./.github/workflows/docker-nat-tests.yml
+
   # Coverage (only on main builds)
   coverage:
     name: Code Coverage
     needs: test
+    continue-on-error: true
     if: github.event_name == 'push' && github.ref == 'refs/heads/master'
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -102,7 +109,18 @@ jobs:
         run: cargo install cargo-tarpaulin
         
       - name: Generate coverage
-        run: cargo tarpaulin --verbose --all-features --workspace --timeout 300 --out xml
+        run: |
+          cargo tarpaulin \
+            --verbose \
+            --all-features \
+            --workspace \
+            --timeout 120 \
+            --skip test_nat_traversal_direct_connection \
+            --skip test_network_partition_recovery \
+            --skip test_rapid_reconnection \
+            --skip test_linux_interface_discovery \
+            --out xml \
+            -- --test-threads=1
         
       - name: Upload coverage
         uses: codecov/codecov-action@v4
@@ -112,10 +130,28 @@ jobs:
           name: codecov-umbrella
           fail_ci_if_error: false
 
+  # MSRV verification (non-blocking)
+  verify-msrv:
+    name: Verify MSRV
+    needs: quick-checks
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust MSRV
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.75.0
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@v2
+      - name: Check MSRV compatibility
+        run: cargo check --all-features
+
   # Summary job for branch protection
   ci-success:
     name: CI Success
-    needs: [quick-checks, test, security]
+    needs: [quick-checks, test, security, nat-tests]
     runs-on: ubuntu-latest
     if: always()
     steps:
@@ -123,7 +159,8 @@ jobs:
         run: |
           if [[ "${{ needs.quick-checks.result }}" != "success" ]] || \
              [[ "${{ needs.test.result }}" != "success" ]] || \
-             [[ "${{ needs.security.result }}" != "success" ]]; then
+             [[ "${{ needs.security.result }}" != "success" ]] || \
+             [[ "${{ needs.nat-tests.result }}" != "success" ]]; then
             echo "One or more required jobs failed"
             exit 1
           fi

@@ -75,10 +75,26 @@ jobs:
             echo "::warning::High number of git dependencies detected: $git_deps"
           fi
           
-          # Check for path dependencies (should be none in production)
-          path_deps=$(grep -c "path = " Cargo.toml || echo 0)
-          if [ "$path_deps" -gt 0 ]; then
-            echo "::error::Path dependencies detected in Cargo.toml"
+          # Section-aware path dependency check (ignore [[bin]], [[test]], [[bench]] path fields)
+          awk '
+            /^\[\[/ { section=$0 }
+            /^[[:space:]]*path[[:space:]]*=/ {
+              if (section ~ /^\[\[(bin|test|bench)\]\]/) next
+              found=1; print
+            }
+            END { if (found) exit 1 }
+          ' Cargo.toml || true
+          if awk '
+            /^\[\[/ { section=$0 }
+            /^[[:space:]]*path[[:space:]]*=/ {
+              if (section ~ /^\[\[(bin|test|bench)\]\]/) next
+              found=1
+            }
+            END { if (found) exit 1 }
+          ' Cargo.toml; then
+            echo "No suspicious path dependencies found."
+          else
+            echo "::error::Suspicious path dependencies detected in Cargo.toml"
             exit 1
           fi
 
