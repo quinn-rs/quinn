@@ -22,6 +22,7 @@ on:
   schedule:
     - cron: '0 4 * * *'
   workflow_dispatch:
+  workflow_call:
     inputs:
       test_scenarios:
         description: 'Test scenarios to run'
@@ -45,7 +46,7 @@ env:
 
 jobs:
   docker-nat-tests:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     timeout-minutes: 120  # Increased from 90
     continue-on-error: true
     
@@ -63,6 +64,14 @@ jobs:
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
+      
+    - name: Prepare networking tools
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y iptables iproute2 net-tools conntrack
+        sudo sysctl -w net.ipv4.ip_forward=1
+        sudo update-alternatives --set iptables /usr/sbin/iptables-legacy || true
+        sudo update-alternatives --set ip6tables /usr/sbin/ip6tables-legacy || true
       
     - name: Free up disk space
       if: ${{ !env.ACT }}

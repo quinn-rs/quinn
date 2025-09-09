@@ -86,6 +86,12 @@ jobs:
       - name: Check dependencies
         run: cargo tree --duplicates
 
+  # NAT tests integration
+  nat-tests:
+    name: NAT Tests
+    needs: quick-checks
+    uses: ./.github/workflows/docker-nat-tests.yml
+
   # Coverage (only on main builds)
   coverage:
     name: Code Coverage
@@ -115,7 +121,7 @@ jobs:
   # Summary job for branch protection
   ci-success:
     name: CI Success
-    needs: [quick-checks, test, security]
+    needs: [quick-checks, test, security, nat-tests]
     runs-on: ubuntu-latest
     if: always()
     steps:
@@ -123,7 +129,8 @@ jobs:
         run: |
           if [[ "${{ needs.quick-checks.result }}" != "success" ]] || \
              [[ "${{ needs.test.result }}" != "success" ]] || \
-             [[ "${{ needs.security.result }}" != "success" ]]; then
+             [[ "${{ needs.security.result }}" != "success" ]] || \
+             [[ "${{ needs.nat-tests.result }}" != "success" ]]; then
             echo "One or more required jobs failed"
             exit 1
           fi
