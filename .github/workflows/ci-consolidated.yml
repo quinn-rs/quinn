@@ -130,6 +130,24 @@ jobs:
           name: codecov-umbrella
           fail_ci_if_error: false
 
+  # MSRV verification (non-blocking)
+  verify-msrv:
+    name: Verify MSRV
+    needs: quick-checks
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust MSRV
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.75.0
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@v2
+      - name: Check MSRV compatibility
+        run: cargo check --all-features
+
   # Summary job for branch protection
   ci-success:
     name: CI Success
