@@ -291,9 +291,10 @@ impl TransportParameters {
 ///
 /// This configuration is negotiated as part of the transport parameters and
 /// enables QUIC NAT traversal extension functionality.
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Debug, Clone, Eq, PartialEq, Default)]
 pub enum NatTraversalConfig {
     /// Client supports NAT traversal (sends empty parameter)
+    #[default]
     ClientSupport,
     /// Server supports NAT traversal with specified concurrency limit
     ServerSupport {
@@ -345,14 +346,9 @@ impl NatTraversalConfig {
     }
 }
 
-impl Default for NatTraversalConfig {
-    fn default() -> Self {
-        Self::ClientSupport
-    }
-}
 
 /// Configuration for QUIC Address Discovery extension
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum AddressDiscoveryConfig {
     /// 0: The node is willing to provide address observations to its peer,
     /// but is not interested in receiving address observations itself.
@@ -362,6 +358,7 @@ pub enum AddressDiscoveryConfig {
     ReceiveOnly,
     /// 2: The node is interested in receiving address observations,
     /// and it is willing to provide address observations.
+    #[default]
     SendAndReceive,
 }
 
@@ -402,12 +399,6 @@ impl AddressDiscoveryConfig {
     }
 }
 
-impl Default for AddressDiscoveryConfig {
-    fn default() -> Self {
-        // Default to send and receive for maximum compatibility
-        Self::SendAndReceive
-    }
-}
 
 /// Role of an endpoint in NAT traversal coordination
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]

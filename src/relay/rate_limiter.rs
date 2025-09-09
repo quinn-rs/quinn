@@ -69,58 +69,28 @@ impl TokenBucket {
         })
     }
 
-    /// Get or create bucket state for an address
-    fn get_or_create_bucket(&self, addr: &SocketAddr) -> BucketState {
-        let mut buckets = self.buckets.lock().unwrap();
-
-        match buckets.get(addr) {
-            Some(state) => state.clone(),
-            None => {
-                let state = BucketState {
-                    tokens: self.max_tokens as f64,
-                    last_update: Instant::now(),
-                };
-                buckets.insert(*addr, state.clone());
-                state
-            }
-        }
-    }
-
-    /// Update bucket tokens based on elapsed time
-    fn update_tokens(&self, mut state: BucketState) -> BucketState {
-        let now = Instant::now();
-        let elapsed = now.duration_since(state.last_update);
-        let elapsed_seconds = elapsed.as_secs_f64();
-
-        // Add tokens based on elapsed time
-        let tokens_to_add = elapsed_seconds * self.tokens_per_second as f64;
-        state.tokens = (state.tokens + tokens_to_add).min(self.max_tokens as f64);
-        state.last_update = now;
-
-        state
-    }
-
     /// Try to consume one token from the bucket
     fn try_consume_token(&self, addr: &SocketAddr) -> RelayResult<()> {
         let mut buckets = self.buckets.lock().unwrap();
+        let now = Instant::now();
 
-        let current_state = self.get_or_create_bucket(addr);
-        let updated_state = self.update_tokens(current_state);
+        let state = buckets.entry(*addr).or_insert(BucketState {
+            tokens: self.max_tokens as f64,
+            last_update: now,
+        });
 
-        if updated_state.tokens >= 1.0 {
-            // Consume one token
-            let new_state = BucketState {
-                tokens: updated_state.tokens - 1.0,
-                last_update: updated_state.last_update,
-            };
-            buckets.insert(*addr, new_state);
+        // Refill based on elapsed time
+        let elapsed_seconds = now.duration_since(state.last_update).as_secs_f64();
+        state.tokens = (state.tokens + elapsed_seconds * self.tokens_per_second as f64)
+            .min(self.max_tokens as f64);
+        state.last_update = now;
+
+        if state.tokens >= 1.0 {
+            state.tokens -= 1.0;
             Ok(())
         } else {
-            // Calculate retry delay
-            let tokens_needed = 1.0 - updated_state.tokens;
-            let retry_after_seconds = tokens_needed / self.tokens_per_second as f64;
-            let retry_after_ms = (retry_after_seconds * 1000.0) as u64;
-
+            let tokens_needed = 1.0 - state.tokens;
+            let retry_after_ms = (tokens_needed / self.tokens_per_second as f64 * 1000.0) as u64;
             Err(RelayError::RateLimitExceeded { retry_after_ms })
         }
     }
