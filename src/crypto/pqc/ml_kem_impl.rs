@@ -279,7 +279,7 @@ impl MlKemOperations for MlKem768Impl {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "pqc"))]
 mod tests {
     use super::*;
 

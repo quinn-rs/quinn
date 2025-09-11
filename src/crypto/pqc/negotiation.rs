@@ -426,7 +426,7 @@ pub fn order_by_preference(
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "pqc"))]
 mod tests {
     use super::*;
 

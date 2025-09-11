@@ -340,7 +340,7 @@ pub mod wire_format {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "pqc"))]
 mod tests {
     use super::*;
 

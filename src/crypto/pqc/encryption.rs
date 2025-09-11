@@ -374,7 +374,7 @@ impl Default for HybridPublicKeyEncryption {
 unsafe impl Send for EncryptedMessage {}
 unsafe impl Sync for EncryptedMessage {}
 
-#[cfg(test)]
+#[cfg(all(test, feature = "pqc"))]
 mod tests {
     use super::*;
 

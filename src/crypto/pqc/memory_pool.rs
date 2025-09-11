@@ -340,7 +340,7 @@ impl PqcMemoryPool {
     }
 
     /// Get available count for ML-KEM public keys (for testing)
-    #[cfg(test)]
+    #[cfg(all(test, feature = "pqc"))]
     pub fn available_count(&self) -> usize {
         self.ml_kem_public_keys.available_count()
     }
@@ -378,7 +378,7 @@ impl fmt::Debug for PqcMemoryPool {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "pqc"))]
 mod tests {
     use super::*;
     use std::sync::Arc;

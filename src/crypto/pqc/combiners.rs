@@ -217,7 +217,7 @@ pub fn default_combiner() -> Box<dyn HybridCombiner> {
     Box::new(ConcatenationCombiner)
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "pqc"))]
 mod tests {
     use super::*;
 

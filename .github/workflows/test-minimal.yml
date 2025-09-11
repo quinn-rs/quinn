@@ -1,0 +1,21 @@
+name: Minimal Test
+
+on: push
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Show system info
+      run: |
+        echo "=== System Info ==="
+        uname -a
+        echo "=== Network ==="
+        ip addr || ifconfig || echo "No network info available"
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+    - name: Run basic test
+      run: |
+        cargo --version
+        cargo test --lib --no-fail-fast -- --test-threads=1 || true

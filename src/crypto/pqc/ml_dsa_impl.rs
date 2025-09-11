@@ -252,7 +252,7 @@ impl MlDsaOperations for MlDsa65Impl {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "pqc"))]
 mod tests {
     use super::*;
 

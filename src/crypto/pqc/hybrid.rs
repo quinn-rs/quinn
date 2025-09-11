@@ -390,7 +390,7 @@ fn combine_shared_secrets(classical: &[u8], pqc: &[u8], info: &[u8]) -> SharedSe
     SharedSecret(secret)
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "pqc"))]
 mod tests {
     use super::*;
 

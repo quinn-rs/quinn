@@ -108,7 +108,7 @@ use types::{
     MlKemSecretKey, SharedSecret,
 };
 
-#[cfg(test)]
+#[cfg(all(test, feature = "pqc"))]
 mod tests {
     use super::*;
 
@@ -127,7 +127,7 @@ mod tests {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "pqc"))]
 mod performance_tests {
     use super::*;
     use std::time::Instant;

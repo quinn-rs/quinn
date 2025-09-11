@@ -273,7 +273,7 @@ pub trait PqcPacketHandling {
     fn get_pqc_optimal_packet_size(&self, space: SpaceId) -> u16;
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "pqc"))]
 mod tests {
     use super::*;
 

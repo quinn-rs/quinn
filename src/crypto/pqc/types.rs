@@ -482,7 +482,7 @@ pub struct HybridSignatureValue {
     pub ml_dsa: Box<[u8]>,
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "pqc"))]
 mod tests {
     use super::*;
 

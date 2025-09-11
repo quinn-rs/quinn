@@ -254,7 +254,7 @@ pub fn estimate_handshake_size(state: &PqcHandshakeState) -> usize {
     size
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "pqc"))]
 mod tests {
     use super::*;
 

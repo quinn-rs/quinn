@@ -229,7 +229,7 @@ impl PqcConfigExt for crate::ServerConfig {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "pqc"))]
 mod tests {
     use super::*;
 

@@ -122,7 +122,7 @@ pub fn is_hybrid_signature(scheme: SignatureScheme) -> bool {
     )
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "pqc"))]
 mod tests {
     use super::*;
 

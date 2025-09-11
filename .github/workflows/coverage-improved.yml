@@ -1,0 +1,161 @@
+name: Test Coverage (Improved)
+
+on:
+  push:
+    branches: [ main, master, develop ]
+  pull_request:
+    branches: [ main, master, develop ]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  COVERAGE_THRESHOLD: 80
+  RUST_BACKTRACE: 1
+
+jobs:
+  coverage-llvm-cov:
+    name: Generate test coverage with llvm-cov
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        components: llvm-tools-preview
+        
+    - name: Cache cargo dependencies
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/.cargo/bin/
+          ~/.cargo/registry/index/
+          ~/.cargo/registry/cache/
+          ~/.cargo/git/db/
+          target/
+        key: ${{ runner.os }}-cargo-coverage-llvm-${{ hashFiles('**/Cargo.lock') }}
+        
+    - name: Install cargo-llvm-cov
+      run: |
+        # Use llvm-cov instead of tarpaulin to avoid segfaults
+        cargo install cargo-llvm-cov --locked
+        
+    - name: Run tests with llvm-cov coverage
+      run: |
+        # Run with llvm-cov which is more stable than tarpaulin
+        cargo llvm-cov \
+          --workspace \
+          --lcov \
+          --output-path lcov.info \
+          --ignore-filename-regex '(tests/|examples/|benches/|build\.rs)' \
+          -- --test-threads=1
+          
+    - name: Generate HTML report
+      run: |
+        cargo llvm-cov report --html --output-dir coverage
+        
+    - name: Check coverage threshold
+      run: |
+        # Extract coverage percentage
+        COVERAGE=$(cargo llvm-cov report --json | jq '.data[0].totals.lines.percent')
+        echo "Coverage: ${COVERAGE}%"
+        
+        # Check if it meets threshold
+        if (( $(echo "$COVERAGE < $COVERAGE_THRESHOLD" | bc -l) )); then
+          echo "❌ Coverage ${COVERAGE}% is below threshold of ${COVERAGE_THRESHOLD}%"
+          exit 1
+        else
+          echo "✅ Coverage ${COVERAGE}% meets threshold of ${COVERAGE_THRESHOLD}%"
+        fi
+        
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v5
+      with:
+        files: ./lcov.info
+        flags: unittests
+        name: ant-quic-coverage
+        fail_ci_if_error: false  # Don't fail if codecov is down
+        
+    - name: Upload coverage reports
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: coverage-report
+        path: coverage/
+        retention-days: 30
+
+  coverage-tarpaulin-fallback:
+    name: Generate test coverage with tarpaulin (fallback)
+    runs-on: ubuntu-latest
+    continue-on-error: true  # Don't fail the workflow if tarpaulin fails
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        components: llvm-tools-preview
+        
+    - name: Cache cargo dependencies
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/.cargo/bin/
+          ~/.cargo/registry/index/
+          ~/.cargo/registry/cache/
+          ~/.cargo/git/db/
+          target/
+        key: ${{ runner.os }}-cargo-coverage-tarpaulin-${{ hashFiles('**/Cargo.lock') }}
+        
+    - name: Install cargo-tarpaulin
+      run: |
+        cargo install cargo-tarpaulin --locked --version 0.27.3
+        
+    - name: Run tests with tarpaulin (with timeout protection)
+      run: |
+        # Run tarpaulin with aggressive timeout settings to prevent hanging
+        timeout 900 cargo tarpaulin \
+          --out Html \
+          --out Lcov \
+          --out Json \
+          --output-dir coverage-tarpaulin \
+          --exclude-files "*/tests/*" \
+          --exclude-files "*/examples/*" \
+          --exclude-files "*/benches/*" \
+          --exclude-files "*/build.rs" \
+          --workspace \
+          --timeout 60 \
+          --test-timeout 30 \
+          --skip-clean \
+          --avoid-cfg-tarpaulin \
+          --engine llvm \
+          --ignore-tests \
+          -- --test-threads=1 || echo "Tarpaulin failed but continuing..."
+          
+    - name: Upload tarpaulin coverage reports
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: coverage-report-tarpaulin
+        path: coverage-tarpaulin/
+        retention-days: 30
+
+  coverage-summary:
+    name: Coverage Summary
+    runs-on: ubuntu-latest
+    needs: [coverage-llvm-cov]
+    if: always()
+    
+    steps:
+    - name: Summary
+      run: |
+        echo "## Coverage Report Summary"
+        echo ""
+        echo "Primary coverage tool: cargo-llvm-cov ✅"
+        echo "Fallback coverage tool: cargo-tarpaulin (optional)"
+        echo ""
+        echo "Coverage threshold: ${{ env.COVERAGE_THRESHOLD }}%"
