@@ -8,6 +8,7 @@ A QUIC transport protocol implementation with advanced NAT traversal capabilitie
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE-APACHE)
 
 [![CI Status](https://github.com/dirvine/ant-quic/actions/workflows/quick-checks.yml/badge.svg)](https://github.com/dirvine/ant-quic/actions/workflows/quick-checks.yml)
+[![Build Status](https://github.com/dirvine/ant-quic/actions/workflows/ci-consolidated.yml/badge.svg)](https://github.com/dirvine/ant-quic/actions/workflows/ci-consolidated.yml)
 [![Security Audit](https://github.com/dirvine/ant-quic/actions/workflows/security.yml/badge.svg)](https://github.com/dirvine/ant-quic/actions/workflows/security.yml)
 [![Cross-Platform](https://github.com/dirvine/ant-quic/actions/workflows/cross-platform.yml/badge.svg)](https://github.com/dirvine/ant-quic/actions/workflows/cross-platform.yml)
 [![Coverage](https://codecov.io/gh/dirvine/ant-quic/branch/main/graph/badge.svg)](https://codecov.io/gh/dirvine/ant-quic)
