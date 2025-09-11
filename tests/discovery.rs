@@ -149,12 +149,11 @@ mod linux_tests {
             
             let mut discovery = CandidateDiscoveryManager::new(config);
             
-            // Use a timeout for the discovery operation itself
-            match tokio::time::timeout(
-                Duration::from_secs(3),
-                discovery.discover_local_candidates()
-            ).await {
-                Ok(Ok(candidates)) => {
+            // discover_local_candidates is not async, so we wrap it
+            let discovery_result = discovery.discover_local_candidates();
+            
+            match discovery_result {
+                Ok(candidates) => {
                     assert!(
                         !candidates.is_empty(),
                         "Linux should discover network interfaces"
@@ -165,13 +164,9 @@ mod linux_tests {
                         .any(|candidate| candidate.address.ip().is_loopback());
                     assert!(has_loopback, "Linux should discover loopback interfaces");
                 }
-                Ok(Err(e)) => {
+                Err(e) => {
                     eprintln!("Discovery failed: {:?}", e);
                     // Don't panic, just log the error
-                }
-                Err(_) => {
-                    eprintln!("Discovery timed out");
-                    // Don't panic on timeout
                 }
             }
         };
