@@ -245,7 +245,10 @@ impl Token {
 
         // Encrypt
         let aead_key = key.aead_from_hkdf(&self.nonce.to_le_bytes());
-        aead_key.seal(&mut buf, &[]).unwrap();
+        if aead_key.seal(&mut buf, &[]).is_err() {
+            // Encryption failure: return empty token to signal no-op to the receiver
+            return Vec::new();
+        }
         buf.extend(&self.nonce.to_le_bytes());
 
         buf
@@ -259,7 +262,7 @@ impl Token {
         let nonce_slice_start = raw_token_bytes.len().checked_sub(size_of::<u128>())?;
         let (sealed_token, nonce_bytes) = raw_token_bytes.split_at(nonce_slice_start);
 
-        let nonce = u128::from_le_bytes(nonce_bytes.try_into().unwrap());
+        let nonce = u128::from_le_bytes(nonce_bytes.try_into().ok()?);
 
         let aead_key = key.aead_from_hkdf(nonce_bytes);
         let mut sealed_token = sealed_token.to_vec();

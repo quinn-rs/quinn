@@ -40,7 +40,7 @@ VALIDATION_PASSED=true
 print_header "Rust Version Check"
 RUST_VERSION=$(rustc --version | cut -d' ' -f2)
 echo "Rust version: $RUST_VERSION"
-MIN_VERSION="1.74.1"
+MIN_VERSION="1.85.0"
 if [[ "$RUST_VERSION" < "$MIN_VERSION" ]]; then
     echo -e "${RED}✗ Rust version $RUST_VERSION is below minimum $MIN_VERSION${NC}"
     VALIDATION_PASSED=false

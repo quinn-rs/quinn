@@ -10,7 +10,7 @@ Successfully implemented a comprehensive cross-platform testing infrastructure f
 #### 1. GitHub Actions Workflows
 - **cross-platform.yml**: Main cross-platform testing workflow
   - Tests Windows, macOS, Linux across x86_64, ARM64, ARM32
-  - Tests Rust stable, beta, and MSRV (1.74.1)
+  - Tests Rust stable, beta, and MSRV (1.85.0)
   - Includes WASM and cross-compilation targets
   - Efficient caching per platform/toolchain
   
@@ -147,7 +147,7 @@ gh workflow run cross-platform-extended.yml -f test-level=exhaustive
 
 1. **Multi-Architecture Support**: x86_64, aarch64, armv7, i686, WASM
 2. **Multi-OS Support**: Linux, Windows, macOS, BSD, mobile, embedded
-3. **Rust Version Coverage**: Stable, beta, nightly, MSRV
+3. **Rust Version Coverage**: Stable, beta, nightly, MSRV (1.85.0)
 4. **Feature Compatibility**: Platform-specific feature detection
 5. **Performance Optimization**: Platform-specific build flags
 

@@ -40,8 +40,8 @@ Provides fast feedback on code quality issues before running expensive tests.
 #### lint
 - **Runner**: ubuntu-latest
 - **Steps**:
-  1. Run clippy with all targets
-  2. Treat warnings as errors
+  1. Run clippy on library, binaries, and examples
+  2. Enforce panic-free policy: forbid `panic`, `unwrap_used`, `expect_used` (tests are checked separately, advisory)
 - **Duration**: ~2m
 
 #### quick-test

@@ -189,6 +189,7 @@ fn validate_linux_network_capabilities() -> ValidationResult<()> {
 
 /// Validate Windows-specific network capabilities
 #[cfg(target_os = "windows")]
+#[allow(dead_code)]
 fn validate_windows_network_capabilities() -> ValidationResult<()> {
     // Check if we can access IP Helper API
     // This is a placeholder - in production, you'd test IP Helper API access

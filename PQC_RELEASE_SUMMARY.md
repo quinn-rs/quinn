@@ -143,7 +143,7 @@ All acceptance criteria have been met:
 
 ### Validation Results
 ```
-✓ Rust version meets requirements (1.74.1+)
+✓ Rust version meets requirements (1.85.0+)
 ✓ All features compile
 ✓ No clippy warnings
 ✓ Basic PQC integration tests pass

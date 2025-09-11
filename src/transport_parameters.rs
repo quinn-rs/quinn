@@ -340,7 +340,7 @@ impl NatTraversalConfig {
         matches!(self, Self::ClientSupport)
     }
 
-    /// Check if this is a server configuration  
+    /// Check if this is a server configuration
     pub fn is_server(&self) -> bool {
         matches!(self, Self::ServerSupport { .. })
     }
@@ -726,14 +726,14 @@ impl TransportParameters {
                     if len > 8 || params.max_datagram_frame_size.is_some() {
                         return Err(Error::Malformed);
                     }
-                    params.max_datagram_frame_size = Some(r.get().unwrap());
+                    params.max_datagram_frame_size = Some(r.get().map_err(|_| Error::Malformed)?);
                 }
                 TransportParameterId::GreaseQuicBit => match len {
                     0 => params.grease_quic_bit = true,
                     _ => return Err(Error::Malformed),
                 },
                 TransportParameterId::MinAckDelayDraft07 => {
-                    params.min_ack_delay = Some(r.get().unwrap())
+                    params.min_ack_delay = Some(r.get().map_err(|_| Error::Malformed)?)
                 }
                 TransportParameterId::NatTraversal => {
                     if params.nat_traversal.is_some() {

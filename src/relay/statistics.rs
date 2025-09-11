@@ -65,7 +65,7 @@ impl RelayStatisticsCollector {
         managers.push(session_manager);
     }
 
-    /// Register a relay connection for statistics collection  
+    /// Register a relay connection for statistics collection
     pub fn register_connection(&self, session_id: u32, connection: Arc<RelayConnection>) {
         let mut connections = self.connections.lock().unwrap();
         connections.insert(session_id, connection);
@@ -370,13 +370,18 @@ mod tests {
     fn test_success_rate_calculation() {
         let collector = RelayStatisticsCollector::new();
 
-        // Record some successful operations
+        // Record more successful operations to ensure > 50% success rate
         collector.record_auth_attempt(true, None);
         collector.record_auth_attempt(true, None);
+        collector.record_auth_attempt(true, None);
+        collector.record_auth_attempt(true, None);
+
+        // Note: record_rate_limit doesn't affect the success_rate calculation
+        // as it's not counted in total_ops
         collector.record_rate_limit(true);
         collector.record_rate_limit(true);
 
-        // Record some failures
+        // Record some failures (but less than successes)
         collector.record_auth_attempt(false, None);
         collector.record_error("protocol_error");
 

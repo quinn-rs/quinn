@@ -9,27 +9,27 @@ These platforms are tested in CI on every commit and are guaranteed to work.
 
 | Platform | Architecture | Rust Version | Status |
 |----------|--------------|--------------|--------|
-| Linux (glibc 2.17+) | x86_64 | 1.74.1+ | ✅ Full Support |
-| Windows 10/11 | x86_64 | 1.74.1+ | ✅ Full Support |
-| macOS 11+ | x86_64 | 1.74.1+ | ✅ Full Support |
-| macOS 11+ | aarch64 (M1/M2) | 1.74.1+ | ✅ Full Support |
+| Linux (glibc 2.17+) | x86_64 | 1.85.0+ | ✅ Full Support |
+| Windows 10/11 | x86_64 | 1.85.0+ | ✅ Full Support |
+| macOS 11+ | x86_64 | 1.85.0+ | ✅ Full Support |
+| macOS 11+ | aarch64 (M1/M2) | 1.85.0+ | ✅ Full Support |
 
 ### Tier 2: Best Effort Support
 These platforms are tested regularly and should work, but may have occasional issues.
 
 | Platform | Architecture | Rust Version | Status |
 |----------|--------------|--------------|--------|
-| Linux (glibc) | aarch64 | 1.74.1+ | ✅ Tested |
-| Linux (glibc) | armv7 | 1.74.1+ | ✅ Tested |
-| Linux (musl) | x86_64 | 1.74.1+ | ✅ Tested |
-| Linux (musl) | aarch64 | 1.74.1+ | ✅ Cross-compiled |
-| Windows | i686 | 1.74.1+ | ✅ Tested |
-| FreeBSD 14+ | x86_64 | 1.74.1+ | ✅ Tested |
-| NetBSD 10+ | x86_64 | 1.74.1+ | ⚠️ Build only |
-| illumos | x86_64 | 1.74.1+ | ⚠️ Build only |
-| Android | x86_64, arm64 | 1.74.1+ | ✅ Tested |
-| iOS | arm64 | 1.74.1+ | ⚠️ Build only |
-| WASM | wasm32 | 1.74.1+ | ⚠️ Limited features |
+| Linux (glibc) | aarch64 | 1.85.0+ | ✅ Tested |
+| Linux (glibc) | armv7 | 1.85.0+ | ✅ Tested |
+| Linux (musl) | x86_64 | 1.85.0+ | ✅ Tested |
+| Linux (musl) | aarch64 | 1.85.0+ | ✅ Cross-compiled |
+| Windows | i686 | 1.85.0+ | ✅ Tested |
+| FreeBSD 14+ | x86_64 | 1.85.0+ | ✅ Tested |
+| NetBSD 10+ | x86_64 | 1.85.0+ | ⚠️ Build only |
+| illumos | x86_64 | 1.85.0+ | ⚠️ Build only |
+| Android | x86_64, arm64 | 1.85.0+ | ✅ Tested |
+| iOS | arm64 | 1.85.0+ | ⚠️ Build only |
+| WASM | wasm32 | 1.85.0+ | ⚠️ Limited features |
 
 ### Tier 3: Experimental Support
 These platforms may compile but are not regularly tested.
@@ -165,7 +165,7 @@ cargo test --features platform-tests
 ### CI Platform Matrix
 Our CI tests the following combinations:
 - OS: Ubuntu (20.04, 22.04, latest), Windows (2019, 2022), macOS (12, 13, 14)
-- Rust: stable, beta, nightly, MSRV (1.74.1)
+- Rust: stable, beta, nightly, MSRV (1.85.0)
 - Architectures: x86_64, aarch64, i686, armv7
 
 ## Known Platform Issues

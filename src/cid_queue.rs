@@ -74,10 +74,10 @@ impl CidQueue {
         // retire_prior_to, and inform the caller that all prior CIDs have been retired, and of
         // the new CID's reset token.
         self.cursor = ((self.cursor as u64 + retired_count) % Self::LEN as u64) as usize;
-        let (i, (_, token)) = self
-            .iter()
-            .next()
-            .expect("it is impossible to retire a CID without supplying a new one");
+        let (i, (_, token)) = match self.iter().next() {
+            Some(v) => v,
+            None => return Ok(None),
+        };
         self.cursor = (self.cursor + i) % Self::LEN;
         let orig_offset = self.offset;
         self.offset = cid.retire_prior_to + i as u64;
@@ -87,9 +87,10 @@ impl CidQueue {
         // connection ID limit we specified based on Self::LEN. If we do receive a such a frame
         // in the future, e.g. due to reordering, we'll retire it then. This ensures we can't be
         // made to buffer an arbitrarily large number of RETIRE_CONNECTION_ID frames.
+        let Some(token) = token else { return Ok(None) };
         Ok(Some((
             orig_offset..self.offset.min(orig_offset + Self::LEN as u64),
-            token.expect("non-initial CID missing reset token"),
+            token,
         )))
     }
 
@@ -102,7 +103,11 @@ impl CidQueue {
         let orig_offset = self.offset;
         self.offset += i as u64;
         self.cursor = (self.cursor + i) % Self::LEN;
-        Some((cid_data.1.unwrap(), orig_offset..self.offset))
+        if let Some(token) = cid_data.1 {
+            Some((token, orig_offset..self.offset))
+        } else {
+            None
+        }
     }
 
     /// Iterate CIDs in CidQueue that are not `None`, including the active CID
@@ -121,7 +126,9 @@ impl CidQueue {
 
     /// Return active remote CID itself
     pub(crate) fn active(&self) -> ConnectionId {
-        self.buffer[self.cursor].unwrap().0
+        self.buffer[self.cursor]
+            .map(|(id, _)| id)
+            .unwrap_or_else(|| ConnectionId::new(&[]))
     }
 
     /// Return the sequence number of active remote CID

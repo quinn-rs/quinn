@@ -64,6 +64,7 @@ unsafe impl Sync for WindowsInterfaceDiscovery {}
 
 /// Internal representation of a Windows network interface
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct WindowsInterface {
     /// Interface index
     index: u32,
@@ -91,6 +92,7 @@ struct WindowsInterface {
 
 /// Windows interface types
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
 enum InterfaceType {
     Ethernet,
     Wireless,
@@ -102,6 +104,7 @@ enum InterfaceType {
 
 /// Operational status of the interface
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
 enum OperationalStatus {
     Up,
     Down,
@@ -114,6 +117,7 @@ enum OperationalStatus {
 
 /// Interface flags
 #[derive(Debug, Clone, Copy, Default)]
+#[allow(dead_code)]
 struct InterfaceFlags {
     /// Interface is up
     is_up: bool,
@@ -141,6 +145,7 @@ enum ScanState {
 }
 
 /// Network change monitoring handle
+#[allow(dead_code)]
 struct NetworkChangeHandle {
     /// Handle to network change notification
     handle: windows::Win32::Foundation::HANDLE,
@@ -169,6 +174,7 @@ struct AdapterConfig {
 
 /// Windows IP Helper API error types
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 enum WindowsNetworkError {
     /// API call failed
     ApiCallFailed {
@@ -228,7 +234,7 @@ impl WindowsInterfaceDiscovery {
 
         // Initialize network change notification
         let mut handle = windows::Win32::Foundation::HANDLE::default();
-        let mut overlapped = unsafe { mem::zeroed() };
+        let overlapped = unsafe { mem::zeroed() };
 
         let result = unsafe {
             windows::Win32::NetworkManagement::IpHelper::NotifyAddrChange(&mut handle, &overlapped)

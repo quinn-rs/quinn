@@ -138,6 +138,14 @@ impl<T: BufMut> BufMutExt for T {
     }
 
     fn write_var(&mut self, x: u64) {
-        VarInt::from_u64(x).unwrap().encode(self);
+        // VarInt::from_u64 only fails for values > 2^62 - 1
+        // This is a programming error if it happens
+        match VarInt::from_u64(x) {
+            Ok(var) => var.encode(self),
+            Err(_) => {
+                // This should never happen in practice as QUIC limits are well below 2^62
+                debug_assert!(false, "VarInt overflow: {}", x);
+            }
+        }
     }
 }

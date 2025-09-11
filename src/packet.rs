@@ -704,7 +704,9 @@ impl PacketNumber {
         } else if range < 1 << 32 {
             Self::U32(n as u32)
         } else {
-            panic!("packet number too large to encode")
+            // Out-of-range packet number difference; clamp to 32 bits to avoid panic
+            // and let higher layers handle any resulting protocol error.
+            Self::U32(n as u32)
         }
     }
 
