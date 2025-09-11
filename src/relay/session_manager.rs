@@ -692,15 +692,15 @@ mod tests {
         manager.add_trusted_key(addr, verifying_key);
 
         // Create session with very short timeout
-        let auth_token = AuthToken::new(1024, 1, &signing_key).unwrap(); // 1 second timeout
+        let auth_token = AuthToken::new(1024, 0, &signing_key).unwrap(); // 0 second timeout (expires immediately)
         let _session_id = manager
             .request_session(addr, vec![1, 2, 3], auth_token)
             .unwrap();
 
         assert_eq!(manager.session_count(), 1);
 
-        // Wait for session to expire
-        std::thread::sleep(Duration::from_millis(2));
+        // Wait for session to expire (give it a bit more time to ensure expiry)
+        std::thread::sleep(Duration::from_millis(10));
 
         // Cleanup should remove expired session
         let cleanup_count = manager.cleanup_expired_sessions().unwrap();

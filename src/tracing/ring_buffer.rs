@@ -22,6 +22,7 @@ impl TraceConfig {
     /// Ring buffer size (must be power of 2)
     pub const BUFFER_SIZE: usize = 65536; // ~8MB
 
+    /// Mask for efficient modulo operations on buffer indices
     pub const BUFFER_MASK: usize = Self::BUFFER_SIZE - 1;
 }
 
