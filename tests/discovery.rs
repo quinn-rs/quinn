@@ -135,10 +135,10 @@ mod linux_tests {
         // Add timeout to prevent hanging
         let test_future = async {
             let config = DiscoveryConfig {
-                total_timeout: Duration::from_secs(5),  // Reduced timeout
-                local_scan_timeout: Duration::from_secs(2),  // Reduced timeout
-                bootstrap_query_timeout: Duration::from_secs(1),  // Reduced timeout
-                max_query_retries: 1,  // Reduced retries
+                total_timeout: Duration::from_secs(5),      // Reduced timeout
+                local_scan_timeout: Duration::from_secs(2), // Reduced timeout
+                bootstrap_query_timeout: Duration::from_secs(1), // Reduced timeout
+                max_query_retries: 1,                       // Reduced retries
                 max_candidates: 50,
                 enable_symmetric_prediction: true,
                 min_bootstrap_consensus: 1,
@@ -146,12 +146,12 @@ mod linux_tests {
                 server_reflexive_cache_ttl: Duration::from_secs(30),
                 bound_address: None,
             };
-            
+
             let mut discovery = CandidateDiscoveryManager::new(config);
-            
+
             // discover_local_candidates is not async, so we wrap it
             let discovery_result = discovery.discover_local_candidates();
-            
+
             match discovery_result {
                 Ok(candidates) => {
                     assert!(
@@ -170,7 +170,7 @@ mod linux_tests {
                 }
             }
         };
-        
+
         // Add overall test timeout
         tokio::time::timeout(Duration::from_secs(10), test_future)
             .await
