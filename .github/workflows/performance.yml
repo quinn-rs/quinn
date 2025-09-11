@@ -2,17 +2,17 @@ name: Performance
 
 on:
   pull_request:
-    branches: [ main, master ]
+    branches: [master]
     paths:
-      - 'src/**'
-      - 'Cargo.toml'
-      - 'Cargo.lock'
+      - "src/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
   workflow_dispatch:
     inputs:
       baseline:
-        description: 'Baseline commit/tag to compare against'
+        description: "Baseline commit/tag to compare against"
         required: false
-        default: 'main'
+        default: "master"
 
 env:
   RUST_BACKTRACE: 1
@@ -25,64 +25,64 @@ jobs:
       - uses: actions/checkout@v4
         if: ${{ !startsWith(runner.name, 'nektos/act') }}
         with:
-          fetch-depth: 0  # Need full history for comparisons
-      
+          fetch-depth: 0 # Need full history for comparisons
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
-      
+
       - uses: Swatinem/rust-cache@v2
-      
+
       - name: Install dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y gnuplot
           cargo install cargo-criterion --force || true
-      
+
       - name: Checkout baseline
         run: |
-          BASELINE="${{ github.event.inputs.baseline || 'main' }}"
+          BASELINE="${{ github.event.inputs.baseline || 'master' }}"
           git fetch origin $BASELINE
           echo "BASELINE_SHA=$(git rev-parse origin/$BASELINE)" >> $GITHUB_ENV
-      
+
       - name: Run baseline benchmarks
         run: |
           git checkout ${{ env.BASELINE_SHA }}
           cargo bench --all-features -- --save-baseline baseline
-      
+
       - name: Checkout PR
         run: git checkout ${{ github.sha }}
-      
+
       - name: Run current benchmarks
         run: |
           cargo bench --all-features -- --save-baseline current
-      
+
       - name: Compare benchmarks
         id: compare
         run: |
           # This script will be created in Task 8
           python3 .github/scripts/benchmark-compare.py || echo "Script not yet implemented"
-          
+
           # For now, just run comparison
           cargo bench --all-features -- --load-baseline baseline --baseline current || true
-      
+
       - name: Generate benchmark report
         run: |
           echo "### 📊 Performance Benchmark Results" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "Comparing: \`${{ github.sha }}\` vs \`${{ env.BASELINE_SHA }}\`" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          
+
           # Add criterion HTML report link if available
           if [ -d "target/criterion" ]; then
             echo "Detailed reports available in artifacts" >> $GITHUB_STEP_SUMMARY
           fi
-          
+
           # Create a placeholder benchmark-comparison.json if it doesn't exist
           if [ ! -f "target/benchmark-comparison.json" ]; then
             mkdir -p target
             echo '{"status": "completed", "comparison": "placeholder"}' > target/benchmark-comparison.json
           fi
-      
+
       - name: Upload benchmark results
         uses: actions/upload-artifact@v4
         with:
@@ -99,22 +99,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         if: ${{ !startsWith(runner.name, 'nektos/act') }}
-      
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
-      
+
       - uses: Swatinem/rust-cache@v2
-      
+
       - name: Install profiling tools
         run: |
           cargo install flamegraph --force || true
           sudo apt-get update
           sudo apt-get install -y linux-tools-common linux-tools-generic
-      
+
       - name: Build with profiling
         run: |
           cargo build --release --features "profiling"
-      
+
       - name: Generate flamegraph
         run: |
           # Run a representative workload
@@ -122,7 +122,7 @@ jobs:
           FLAME_PID=$!
           sleep 10
           kill $FLAME_PID || true
-      
+
       - name: Upload flamegraph
         uses: actions/upload-artifact@v4
         with:
@@ -134,20 +134,20 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
-      
+
       - uses: Swatinem/rust-cache@v2
-      
+
       - name: Install valgrind
         run: |
           sudo apt-get update
           sudo apt-get install -y valgrind
-      
+
       - name: Build test binary
         run: cargo build --release --example simple_chat
-      
+
       - name: Run valgrind analysis
         run: |
           # Run with valgrind to check memory usage
@@ -157,7 +157,7 @@ jobs:
             --track-origins=yes \
             --log-file=valgrind.log \
             ./target/release/examples/simple_chat || true
-      
+
       - name: Parse valgrind results
         run: |
           if [ -f valgrind.log ]; then
@@ -166,7 +166,7 @@ jobs:
             tail -n 50 valgrind.log >> $GITHUB_STEP_SUMMARY
             echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
           fi
-      
+
       - name: Upload valgrind log
         uses: actions/upload-artifact@v4
         with:
@@ -180,22 +180,22 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      
+
       - name: Download benchmark results
         uses: actions/download-artifact@v4
         with:
           name: benchmark-results
           path: benchmark-results
-      
+
       - name: Check for regressions
         id: regression
         run: |
           # This will be properly implemented in Task 8
           echo "Checking for performance regressions > 5%..."
-          
+
           # Placeholder logic
           REGRESSION_FOUND=false
-          
+
           if [ "$REGRESSION_FOUND" = "true" ]; then
             echo "regression=true" >> $GITHUB_OUTPUT
             echo "::error::Performance regression detected!"
@@ -204,30 +204,30 @@ jobs:
             echo "regression=false" >> $GITHUB_OUTPUT
             echo "✅ No significant performance regressions detected"
           fi
-      
+
       - name: Comment on PR
         if: github.event_name == 'pull_request'
         uses: actions/github-script@v7
         with:
           script: |
             const comment = `### Performance Test Results
-            
+
             ✅ No significant performance regressions detected
-            
+
             <details>
             <summary>Benchmark Summary</summary>
-            
+
             | Benchmark | Baseline | Current | Change |
             |-----------|----------|---------|--------|
             | connection_establishment | 125µs | 123µs | -1.6% ✅ |
             | throughput_1mb | 8.2ms | 8.1ms | -1.2% ✅ |
             | frame_parsing | 450ns | 455ns | +1.1% |
-            
+
             </details>
-            
+
             [Full benchmark report](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})
             `;
-            
+
             github.rest.issues.createComment({
               issue_number: context.issue.number,
               owner: context.repo.owner,

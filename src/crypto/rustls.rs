@@ -194,7 +194,14 @@ impl crypto::Session for TlsSession {
         };
 
         let nonce = aead::Nonce::assume_unique_for_key(nonce);
-        let key = aead::LessSafeKey::new(aead::UnboundKey::new(&aead::AES_128_GCM, &key).unwrap());
+        let key = match aead::UnboundKey::new(&aead::AES_128_GCM, &key) {
+            Ok(unbound_key) => aead::LessSafeKey::new(unbound_key),
+            Err(_) => {
+                // This should never happen with our hardcoded keys
+                debug_assert!(false, "Failed to create AEAD key for retry integrity");
+                return false;
+            }
+        };
 
         let (aad, tag) = pseudo_packet.split_at_mut(tag_start);
         key.open_in_place(nonce, aead::Aad::from(aad), tag).is_ok()
@@ -232,24 +239,26 @@ impl crypto::HeaderKey for Box<dyn HeaderProtectionKey> {
         let (header, sample) = packet.split_at_mut(pn_offset + 4);
         let (first, rest) = header.split_at_mut(1);
         let pn_end = Ord::min(pn_offset + 3, rest.len());
-        self.decrypt_in_place(
+        if let Err(e) = self.decrypt_in_place(
             &sample[..self.sample_size()],
             &mut first[0],
             &mut rest[pn_offset - 1..pn_end],
-        )
-        .unwrap();
+        ) {
+            debug_assert!(false, "Header protection decrypt failed: {:?}", e);
+        }
     }
 
     fn encrypt(&self, pn_offset: usize, packet: &mut [u8]) {
         let (header, sample) = packet.split_at_mut(pn_offset + 4);
         let (first, rest) = header.split_at_mut(1);
         let pn_end = Ord::min(pn_offset + 3, rest.len());
-        self.encrypt_in_place(
+        if let Err(e) = self.encrypt_in_place(
             &sample[..self.sample_size()],
             &mut first[0],
             &mut rest[pn_offset - 1..pn_end],
-        )
-        .unwrap();
+        ) {
+            debug_assert!(false, "Header protection encrypt failed: {:?}", e);
+        }
     }
 
     fn sample_size(&self) -> usize {
@@ -620,11 +629,23 @@ impl crypto::ServerConfig for QuicServerConfig {
         pseudo_packet.extend_from_slice(packet);
 
         let nonce = aead::Nonce::assume_unique_for_key(nonce);
-        let key = aead::LessSafeKey::new(aead::UnboundKey::new(&aead::AES_128_GCM, &key).unwrap());
+        let key = match aead::UnboundKey::new(&aead::AES_128_GCM, &key) {
+            Ok(unbound_key) => aead::LessSafeKey::new(unbound_key),
+            Err(_) => {
+                // This should never happen with our hardcoded keys
+                debug_assert!(false, "Failed to create AEAD key for retry integrity");
+                return [0; 16];
+            }
+        };
 
-        let tag = key
-            .seal_in_place_separate_tag(nonce, aead::Aad::from(pseudo_packet), &mut [])
-            .unwrap();
+        let tag =
+            match key.seal_in_place_separate_tag(nonce, aead::Aad::from(pseudo_packet), &mut []) {
+                Ok(tag) => tag,
+                Err(_) => {
+                    debug_assert!(false, "Failed to seal retry integrity tag");
+                    return [0; 16];
+                }
+            };
         let mut result = [0; 16];
         result.copy_from_slice(tag.as_ref());
         result

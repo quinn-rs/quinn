@@ -178,14 +178,16 @@ impl Codec for VarInt {
                     return Err(UnexpectedEnd);
                 }
                 r.copy_to_slice(&mut buf[1..2]);
-                u64::from(u16::from_be_bytes(buf[..2].try_into().unwrap()))
+                // Safe: buf[..2] is exactly 2 bytes
+                u64::from(u16::from_be_bytes([buf[0], buf[1]]))
             }
             0b10 => {
                 if r.remaining() < 3 {
                     return Err(UnexpectedEnd);
                 }
                 r.copy_to_slice(&mut buf[1..4]);
-                u64::from(u32::from_be_bytes(buf[..4].try_into().unwrap()))
+                // Safe: buf[..4] is exactly 4 bytes
+                u64::from(u32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]))
             }
             0b11 => {
                 if r.remaining() < 7 {

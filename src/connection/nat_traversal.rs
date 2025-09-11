@@ -172,7 +172,7 @@ pub(crate) enum CoordinationPhase {
     Idle,
     /// Sending PUNCH_ME_NOW to coordinator
     Requesting,
-    /// Waiting for peer's PUNCH_ME_NOW via coordinator  
+    /// Waiting for peer's PUNCH_ME_NOW via coordinator
     Coordinating,
     /// Grace period before synchronized hole punching
     Preparing,
@@ -214,7 +214,7 @@ pub(super) enum TimeoutAction {
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
 pub(super) struct CandidatePair {
-    /// Sequence of remote candidate  
+    /// Sequence of remote candidate
     pub(super) remote_sequence: VarInt,
     /// Our local address for this pair
     pub(super) local_addr: SocketAddr,
@@ -287,7 +287,7 @@ fn calculate_candidate_priority(
 }
 
 /// Calculate combined priority for a candidate pair
-/// Based on RFC 8445 Section 6.1.2.3  
+/// Based on RFC 8445 Section 6.1.2.3
 fn calculate_pair_priority(local_priority: u32, remote_priority: u32) -> u64 {
     let g = local_priority as u64;
     let d = remote_priority as u64;
@@ -2370,7 +2370,10 @@ impl NatTraversalState {
         trace!(
             "Started coordination round {} with {} targets",
             round,
-            self.coordination.as_ref().unwrap().punch_targets.len()
+            self.coordination
+                .as_ref()
+                .map(|c| c.punch_targets.len())
+                .unwrap_or(0)
         );
         Ok(round)
     }
