@@ -54,7 +54,6 @@ jobs:
           --exclude-files "*/build.rs" \
           --workspace \
           --timeout 120 \
-          --test-timeout 30 \
           --skip-clean \
           --avoid-cfg-tarpaulin \
           --engine llvm \
