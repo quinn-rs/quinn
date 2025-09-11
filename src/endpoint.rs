@@ -979,7 +979,10 @@ impl Endpoint {
     ) -> Option<DatagramEvent> {
         let dst_cid = event.first_decode.dst_cid();
         let Some(header) = event.first_decode.initial_header() else {
-            debug!("unable to extract initial header for connection {}", dst_cid);
+            debug!(
+                "unable to extract initial header for connection {}",
+                dst_cid
+            );
             return None;
         };
 
@@ -1114,7 +1117,7 @@ impl Endpoint {
                         crate::transport_error::Error::INTERNAL_ERROR(""),
                     ),
                     response: None,
-                })
+                });
             }
         };
 
