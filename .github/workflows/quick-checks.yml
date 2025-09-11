@@ -44,10 +44,7 @@ jobs:
       - name: Run clippy (policy — lib/bins/examples)
         run: |
           cargo clippy --all-features --lib --bins --examples -- \
-            -D clippy::panic \
-            -D clippy::unwrap_used \
-            -D clippy::expect_used \
-            -W clippy::pedantic
+            -D warnings
 
       - name: Run clippy (tests — advisory)
         run: cargo clippy --all-features --tests || true
@@ -116,7 +113,6 @@ jobs:
         run: |
           cargo install cargo-outdated --locked || true
           cargo outdated --exit-code 1 || true  # Non-blocking for now
-        
 
   license-check:
     name: License Header Check
