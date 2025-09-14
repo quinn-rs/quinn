@@ -498,7 +498,7 @@ fn recv(io: SockRef<'_>, bufs: &mut [IoSliceMut<'_>], meta: &mut [RecvMeta]) -> 
         }
     };
     for i in 0..(msg_count as usize) {
-        meta[i] = decode_recv(&names[i], &hdrs[i].msg_hdr, hdrs[i].msg_len as usize);
+        meta[i] = decode_recv(&names[i], &hdrs[i].msg_hdr, hdrs[i].msg_len as usize)?;
     }
     Ok(msg_count as usize)
 }
@@ -533,7 +533,7 @@ fn recv(io: SockRef<'_>, bufs: &mut [IoSliceMut<'_>], meta: &mut [RecvMeta]) -> 
         }
     };
     for i in 0..(msg_count as usize) {
-        meta[i] = decode_recv(&names[i], &hdrs[i], hdrs[i].msg_datalen as usize);
+        meta[i] = decode_recv(&names[i], &hdrs[i], hdrs[i].msg_datalen as usize)?;
     }
     Ok(msg_count as usize)
 }
@@ -562,7 +562,7 @@ fn recv(io: SockRef<'_>, bufs: &mut [IoSliceMut<'_>], meta: &mut [RecvMeta]) -> 
             _ => return Err(e),
         }
     };
-    meta[0] = decode_recv(&name, &hdr, n as usize);
+    meta[0] = decode_recv(&name, &hdr, n as usize)?;
     Ok(1)
 }
 
@@ -700,7 +700,7 @@ fn decode_recv(
     #[cfg(not(apple_fast))] hdr: &libc::msghdr,
     #[cfg(apple_fast)] hdr: &msghdr_x,
     len: usize,
-) -> RecvMeta {
+) -> io::Result<RecvMeta> {
     let name = unsafe { name.assume_init() };
     let mut ecn_bits = 0;
     let mut dst_ip = None;
@@ -778,17 +778,21 @@ fn decode_recv(
                 addr.sin6_scope_id,
             ))
         }
-        _ => unreachable!(),
+        f => {
+            return Err(io::Error::other(format!(
+                "expected AF_INET or AF_INET6, got {f} in decode_recv"
+            )));
+        }
     };
 
-    RecvMeta {
+    Ok(RecvMeta {
         len,
         stride,
         addr,
         ecn: EcnCodepoint::from_bits(ecn_bits),
         dst_ip,
         interface_index,
-    }
+    })
 }
 
 #[cfg(not(apple_slow))]
