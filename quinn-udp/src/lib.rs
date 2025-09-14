@@ -93,6 +93,7 @@ pub const BATCH_SIZE: usize = 1;
 ///
 /// [`stride`]: RecvMeta::stride
 #[derive(Debug, Copy, Clone)]
+#[non_exhaustive]
 pub struct RecvMeta {
     /// The source address of the datagram(s) contained in the buffer
     pub addr: SocketAddr,
