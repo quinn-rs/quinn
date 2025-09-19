@@ -55,7 +55,7 @@ impl AsyncTimer for Timer {
     }
 }
 
-#[cfg(any(feature = "runtime-smol"))]
+#[cfg(feature = "runtime-smol")]
 #[derive(Debug, Clone)]
 struct UdpSocket {
     io: Arc<Async<std::net::UdpSocket>>,
