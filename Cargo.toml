@@ -31,7 +31,8 @@ exclude = [
 
 [features]
 # Default features include only essential functionality
-default = ["platform-verifier", "network-discovery", "runtime-tokio", "rustls-ring"]
+# Make PQC support enabled by default. Classical-only can be opted in via a feature.
+default = ["platform-verifier", "network-discovery", "runtime-tokio", "rustls-ring", "pqc"]
 
 # Crypto providers
 rustls-ring = ["dep:rustls", "rustls?/ring", "ring"]
@@ -59,6 +60,10 @@ bloom = []
 
 # Post-Quantum Cryptography support
 pqc = ["saorsa-pqc", "aws-lc-rs"]
+
+# Compile-time switch to force classical-only behavior in PQC config defaults.
+# When enabled, PQC algorithms are compiled but default configs select classical only.
+classical-only = []
 
 # Zero-cost tracing system
 trace = []

@@ -99,13 +99,27 @@ impl std::error::Error for ConfigError {}
 
 impl Default for PqcConfig {
     fn default() -> Self {
-        Self {
-            mode: PqcMode::Hybrid,
-            ml_kem_enabled: true,
-            ml_dsa_enabled: true,
-            hybrid_preference: HybridPreference::PreferPqc, // Prefer PQC by default
-            memory_pool_size: 10,
-            handshake_timeout_multiplier: 2.0,
+        #[cfg(feature = "classical-only")]
+        {
+            return Self {
+                mode: PqcMode::ClassicalOnly,
+                ml_kem_enabled: false,
+                ml_dsa_enabled: false,
+                hybrid_preference: HybridPreference::PreferClassical,
+                memory_pool_size: 10,
+                handshake_timeout_multiplier: 1.5,
+            };
+        }
+        #[cfg(not(feature = "classical-only"))]
+        {
+            return Self {
+                mode: PqcMode::Hybrid,
+                ml_kem_enabled: true,
+                ml_dsa_enabled: true,
+                hybrid_preference: HybridPreference::PreferPqc, // Prefer PQC by default
+                memory_pool_size: 10,
+                handshake_timeout_multiplier: 2.0,
+            };
         }
     }
 }
