@@ -20,17 +20,20 @@ env:
   RUSTFLAGS: -D warnings
 
 jobs:
-   # Windows-specific tests (simplified)
-   windows-tests:
-     runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-      
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@v1
-        with:
-          toolchain: ${{ matrix.rust }}
-          components: rustfmt, clippy
+    # Windows-specific tests (simplified)
+    windows-tests:
+      runs-on: windows-latest
+      strategy:
+        matrix:
+          rust: [stable]
+     steps:
+       - uses: actions/checkout@v4
+
+       - name: Install Rust
+         uses: dtolnay/rust-toolchain@v1
+         with:
+           toolchain: ${{ matrix.rust }}
+           components: rustfmt, clippy
       
       - name: Cache cargo registry
         uses: actions/cache@v4
@@ -65,17 +68,20 @@ jobs:
       - name: Run integration tests
         run: cargo test --test platform_api_integration_tests --features "windows-tests" windows
 
-   # Linux-specific tests (simplified)
-   linux-tests:
-     runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@v1
-        with:
-          toolchain: ${{ matrix.rust }}
-          components: rustfmt, clippy
+    # Linux-specific tests (simplified)
+    linux-tests:
+      runs-on: ubuntu-latest
+      strategy:
+        matrix:
+          rust: [stable]
+     steps:
+       - uses: actions/checkout@v4
+
+       - name: Install Rust
+         uses: dtolnay/rust-toolchain@v1
+         with:
+           toolchain: ${{ matrix.rust }}
+           components: rustfmt, clippy
       
       - name: Install system dependencies
         run: |
@@ -125,17 +131,20 @@ jobs:
       - name: Run integration tests
         run: cargo test --test platform_api_integration_tests --features "linux-tests" linux
 
-   # macOS-specific tests (simplified)
-   macos-tests:
-     runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v4
-      
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@v1
-        with:
-          toolchain: ${{ matrix.rust }}
-          components: rustfmt, clippy
+    # macOS-specific tests (simplified)
+    macos-tests:
+      runs-on: macos-latest
+      strategy:
+        matrix:
+          rust: [stable]
+     steps:
+       - uses: actions/checkout@v4
+
+       - name: Install Rust
+         uses: dtolnay/rust-toolchain@v1
+         with:
+           toolchain: ${{ matrix.rust }}
+           components: rustfmt, clippy
       
       - name: Cache cargo registry
         uses: actions/cache@v4
@@ -171,17 +180,20 @@ jobs:
       - name: Run integration tests
         run: cargo test --test platform_api_integration_tests --features "macos-tests" macos
 
-   # Cross-platform feature matrix tests (simplified)
-   feature-matrix-tests:
-     runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
-      
-      - name: Run tests with features
-        run: cargo test --features "${{ matrix.features }}" candidate_discovery
+    # Cross-platform feature matrix tests (simplified)
+    feature-matrix-tests:
+      runs-on: ubuntu-latest
+      strategy:
+        matrix:
+          features: ["linux-tests", "macos-tests", "windows-tests"]
+     steps:
+       - uses: actions/checkout@v4
+
+       - name: Install Rust stable
+         uses: dtolnay/rust-toolchain@stable
+
+       - name: Run tests with features
+         run: cargo test --features "${{ matrix.features }}" candidate_discovery
 
    # Platform API availability tests (simplified)
    api-availability-tests:

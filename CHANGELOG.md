@@ -42,12 +42,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Resolved test compilation issues with async syntax
 - Fixed integration test configurations for new edition
 
-## [0.8.17] - 2025-09-20
+ ## [0.8.17] - 2025-09-20
 
-### Fixed
-- **Code Quality Improvements** 🧹
-  - Resolved all clippy warnings across 9 files
-  - Eliminated production panic risks with proper error handling
+ ### Fixed
+ - **Code Quality Improvements** 🧹
+   - Resolved all clippy warnings across 9 files
+   - Eliminated production panic risks with proper error handling
+ - **PqcConfig Builder Fixes** 🔧
+   - Fixed PqcConfig builder pattern implementation to resolve compilation errors
+   - Corrected method chaining issues in PqcConfig::builder()
+   - Ensured all PqcConfig examples compile successfully
+   - Validated PqcConfig functionality through comprehensive test suite
   - Enhanced code safety and maintainability
 - **API Refactoring** 🔧
   - Removed deprecated API modules for cleaner architecture
