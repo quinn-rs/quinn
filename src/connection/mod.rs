@@ -5,6 +5,7 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 use std::{
     cmp,
     collections::VecDeque,
@@ -33,6 +34,7 @@ use crate::{
     crypto::{self, KeyPair, Keys, PacketKey},
     endpoint::AddressDiscoveryStats,
     frame::{self, Close, Datagram, FrameStruct, NewToken},
+    nat_traversal_api::PeerId,
     packet::{
         FixedLengthConnectionIdParser, Header, InitialHeader, InitialPacket, LongType, Packet,
         PacketNumber, PartialDecode, SpaceId,
@@ -275,6 +277,12 @@ pub struct Connection {
     /// Qlog writer
     #[cfg(feature = "__qlog")]
     qlog_streamer: Option<Box<dyn std::io::Write + Send + Sync>>,
+
+    /// Optional bound peer identity for NEW_TOKEN v2 issuance
+    peer_id_for_tokens: Option<PeerId>,
+    /// When true, NEW_TOKEN frames are delayed until channel binding
+    /// sets `peer_id_for_tokens`, avoiding legacy tokens in v2 mode.
+    delay_new_token_until_binding: bool,
 }
 
 impl Connection {
@@ -414,6 +422,9 @@ impl Connection {
 
             #[cfg(feature = "__qlog")]
             qlog_streamer: None,
+
+            peer_id_for_tokens: None,
+            delay_new_token_until_binding: false,
         };
 
         // Trace connection creation
@@ -1696,11 +1707,26 @@ impl Connection {
         stats
     }
 
+    /// Set the bound peer identity for token v2 issuance.
+    pub fn set_token_binding_peer_id(&mut self, pid: PeerId) {
+        self.peer_id_for_tokens = Some(pid);
+    }
+
+    /// Control whether NEW_TOKEN frames should be delayed until binding completes.
+    pub fn set_delay_new_token_until_binding(&mut self, v: bool) {
+        self.delay_new_token_until_binding = v;
+    }
+
     /// Ping the remote endpoint
     ///
     /// Causes an ACK-eliciting packet to be transmitted.
     pub fn ping(&mut self) {
         self.spaces[self.highest_space].ping_pending = true;
+    }
+
+    /// Returns true if post-quantum algorithms are in use for this connection.
+    pub(crate) fn is_pqc(&self) -> bool {
+        self.pqc_state.using_pqc
     }
 
     /// Update traffic keys spontaneously
@@ -3986,15 +4012,40 @@ impl Connection {
                 continue;
             }
 
-            let token = Token::new(
-                TokenPayload::Validation {
-                    ip: remote_addr.ip(),
-                    issued: server_config.time_source.now(),
-                },
-                &mut self.rng,
-            );
-            let new_token = NewToken {
-                token: token.encode(&*server_config.token_key).into(),
+            // If configured to delay until binding and we don't yet have a peer id,
+            // postpone NEW_TOKEN issuance.
+            if self.delay_new_token_until_binding && self.peer_id_for_tokens.is_none() {
+                // Requeue and try again later
+                space.pending.new_tokens.push(remote_addr);
+                break;
+            }
+
+            // Issue token v2 if we have a bound peer id; otherwise fall back to legacy
+            let new_token = if let Some(pid) = self.peer_id_for_tokens {
+                // Compose token_v2: pt = peer_id[32] || cid_len[1] || cid[..] || nonce16
+                // token = pt || nonce12_suffix (last 12 bytes of nonce)
+                let nonce_u128: u128 = self.rng.r#gen();
+                let nonce = nonce_u128.to_le_bytes();
+                let cid = self.rem_cids.active();
+                let mut pt = Vec::with_capacity(32 + 1 + cid.len() + 16);
+                pt.extend_from_slice(&pid.0);
+                pt.push(cid.len() as u8);
+                pt.extend_from_slice(&cid[..]);
+                pt.extend_from_slice(&nonce);
+                let mut tok = pt;
+                tok.extend_from_slice(&nonce[..12]);
+                NewToken { token: tok.into() }
+            } else {
+                let token = Token::new(
+                    TokenPayload::Validation {
+                        ip: remote_addr.ip(),
+                        issued: server_config.time_source.now(),
+                    },
+                    &mut self.rng,
+                );
+                NewToken {
+                    token: token.encode(&*server_config.token_key).into(),
+                }
             };
 
             if buf.len() + new_token.size() >= max_size {

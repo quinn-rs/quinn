@@ -732,6 +732,7 @@ impl ClientConfig {
     /// Create a client configuration that trusts the platform's native roots
     #[deprecated(since = "0.11.13", note = "use `try_with_platform_verifier()` instead")]
     #[cfg(feature = "platform-verifier")]
+    #[allow(clippy::expect_used)]
     pub fn with_platform_verifier() -> Self {
         Self::try_with_platform_verifier().expect("use try_with_platform_verifier() instead")
     }

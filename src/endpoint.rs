@@ -19,6 +19,7 @@ use indexmap::IndexMap;
 use bytes::{BufMut, Bytes, BytesMut};
 use rand::{Rng, RngCore, SeedableRng, rngs::StdRng};
 use rustc_hash::FxHashMap;
+use rustls;
 use slab::Slab;
 use thiserror::Error;
 use tracing::{debug, error, trace, warn};
@@ -906,7 +907,7 @@ impl Endpoint {
             loc_cid,
             None,
             &mut self.rng,
-        );
+        )?;
         let tls = config
             .crypto
             .start_session(config.version, server_name, &params)?;
@@ -1180,7 +1181,7 @@ impl Endpoint {
             loc_cid,
             Some(&server_config),
             &mut self.rng,
-        );
+        )?;
         params.stateless_reset_token = Some(ResetToken::new(&*self.config.reset_key, loc_cid));
         params.original_dst_cid = Some(incoming.token.orig_dst_cid);
         params.retry_src_cid = incoming.token.retry_src_cid;
@@ -1917,6 +1918,9 @@ pub enum ConnectError {
     /// The local endpoint does not support the QUIC version specified in the client configuration
     #[error("unsupported QUIC version")]
     UnsupportedVersion,
+    /// A TLS-related error occurred during connection establishment
+    #[error("TLS error: {0}")]
+    TlsError(String),
 }
 
 /// Error type for attempting to accept an [`Incoming`]
@@ -1926,6 +1930,21 @@ pub struct AcceptError {
     pub cause: ConnectionError,
     /// Optional response to transmit back
     pub response: Option<Transmit>,
+}
+
+impl From<rustls::Error> for ConnectError {
+    fn from(error: rustls::Error) -> Self {
+        ConnectError::TlsError(error.to_string())
+    }
+}
+
+impl From<crate::transport_error::Error> for AcceptError {
+    fn from(error: crate::transport_error::Error) -> Self {
+        Self {
+            cause: ConnectionError::TransportError(error),
+            response: None,
+        }
+    }
 }
 
 /// Error for attempting to retry an [`Incoming`] which already bears a token from a previous retry

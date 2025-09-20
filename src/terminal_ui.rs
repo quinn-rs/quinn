@@ -374,7 +374,7 @@ impl ProgressIndicator {
         );
         self.current_frame = (self.current_frame + 1) % self.frames.len();
         use std::io::{self, Write};
-        io::stdout().flush().unwrap();
+        let _ = io::stdout().flush(); // Ignore flush errors in terminal UI
     }
 
     /// Finish the progress indicator with a success message

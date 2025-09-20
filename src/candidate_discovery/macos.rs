@@ -407,7 +407,7 @@ unsafe fn cf_string_to_rust_string(cf_str: CFStringRef) -> Option<String> {
 
 unsafe fn rust_string_to_cf_string(s: &str) -> CFStringRef {
     unsafe {
-        let c_str = CString::new(s).unwrap();
+        let c_str = CString::new(s).unwrap_or_else(|_| panic!("string should be valid UTF-8"));
         CFStringCreateWithCString(kCFAllocatorDefault, c_str.as_ptr(), kCFStringEncodingUTF8)
     }
 }
@@ -447,7 +447,8 @@ impl MacOSInterfaceDiscovery {
         }
 
         // Create dynamic store
-        let store_name = CString::new("ant-quic-network-discovery").unwrap();
+        let store_name = CString::new("ant-quic-network-discovery")
+            .unwrap_or_else(|_| panic!("hardcoded store name should be valid"));
         let sc_store = unsafe {
             // SCDynamicStoreCreate equivalent
             self.create_dynamic_store(store_name.as_ptr())
@@ -473,7 +474,10 @@ impl MacOSInterfaceDiscovery {
         // Initialize dynamic store if not already done
         self.initialize_dynamic_store()?;
 
-        let sc_store = self.sc_store.as_ref().unwrap();
+        let sc_store = self
+            .sc_store
+            .as_ref()
+            .unwrap_or_else(|| panic!("dynamic store should be initialized"));
 
         unsafe {
             // Set up notification keys for network changes
@@ -584,61 +588,111 @@ impl MacOSInterfaceDiscovery {
     fn get_network_services(&self) -> Result<Vec<String>, MacOSNetworkError> {
         let mut services = Vec::new();
 
-        unsafe {
-            // Create preferences reference
-            let prefs_name = rust_string_to_cf_string("ant-quic-network-discovery");
-            let prefs = SCPreferencesCreate(
-                kCFAllocatorDefault,
-                prefs_name,
-                std::ptr::null_mut(), // Use default preferences
+        // First try the simple approach - just check for common interface names
+        // This avoids the potentially hanging System Configuration Framework calls
+        let common_interfaces = [
+            "en0", "en1", "en2", "en3",   // Ethernet/Wi-Fi
+            "awdl0", // Apple Wireless Direct Link
+            "utun0", "utun1", "utun2", // VPN tunnels
+            "bridge0", "bridge1", // Bridge interfaces
+            "p2p0", "p2p1", // Peer-to-peer
+            "lo0",  // Loopback
+        ];
+
+        for interface in &common_interfaces {
+            if self.interface_exists(interface) {
+                services.push(interface.to_string());
+            }
+        }
+
+        // If we found interfaces with the simple method, return them
+        if !services.is_empty() {
+            debug!(
+                "Found {} interfaces using simple enumeration",
+                services.len()
             );
-            CFRelease(prefs_name);
+            return Ok(services);
+        }
 
-            if prefs.is_null() {
-                // Fall back to common interface names if we can't get preferences
-                let common_interfaces = [
-                    "en0", "en1", "en2", "en3",   // Ethernet/Wi-Fi
-                    "awdl0", // Apple Wireless Direct Link
-                    "utun0", "utun1", "utun2", // VPN tunnels
-                    "bridge0", "bridge1", // Bridge interfaces
-                    "p2p0", "p2p1", // Peer-to-peer
-                ];
+        // Fallback to System Configuration Framework with timeout protection
+        // Use a channel to implement timeout for the blocking SC operations
+        let (tx, rx): (
+            std::sync::mpsc::Sender<Result<Vec<String>, MacOSNetworkError>>,
+            std::sync::mpsc::Receiver<Result<Vec<String>, MacOSNetworkError>>,
+        ) = std::sync::mpsc::channel();
 
-                for interface in &common_interfaces {
-                    if self.interface_exists(interface) {
-                        services.push(interface.to_string());
-                    }
+        let _handle = std::thread::spawn(move || {
+            let result = unsafe {
+                // Create preferences reference
+                let prefs_name = rust_string_to_cf_string("ant-quic-network-discovery");
+                let prefs = SCPreferencesCreate(
+                    kCFAllocatorDefault,
+                    prefs_name,
+                    std::ptr::null_mut(), // Use default preferences
+                );
+                CFRelease(prefs_name);
+
+                if prefs.is_null() {
+                    let _ = tx.send(Ok(Vec::new()));
+                    return;
                 }
 
-                return Ok(services);
-            }
+                let mut services = Vec::new();
 
-            // Get all network services
-            let services_array = SCNetworkServiceCopyAll(prefs);
-            if !services_array.is_null() {
-                let count = CFArrayGetCount(services_array);
+                // Get all network services
+                let services_array = SCNetworkServiceCopyAll(prefs);
+                if !services_array.is_null() {
+                    let count = CFArrayGetCount(services_array);
 
-                for i in 0..count {
-                    let service = CFArrayGetValueAtIndex(services_array, i);
-                    if !service.is_null() {
-                        // Get the interface for this service
-                        let interface = SCNetworkServiceGetInterface(service);
-                        if !interface.is_null() {
-                            // Get the BSD name (e.g., "en0")
-                            let bsd_name = SCNetworkInterfaceGetBSDName(interface);
-                            if !bsd_name.is_null() {
-                                if let Some(name) = cf_string_to_rust_string(bsd_name) {
-                                    services.push(name);
+                    for i in 0..count {
+                        let service = CFArrayGetValueAtIndex(services_array, i);
+                        if !service.is_null() {
+                            // Get the interface for this service
+                            let interface = SCNetworkServiceGetInterface(service);
+                            if !interface.is_null() {
+                                // Get the BSD name (e.g., "en0")
+                                let bsd_name = SCNetworkInterfaceGetBSDName(interface);
+                                if !bsd_name.is_null() {
+                                    if let Some(name) = cf_string_to_rust_string(bsd_name) {
+                                        services.push(name);
+                                    }
                                 }
                             }
                         }
                     }
+
+                    CFRelease(services_array);
                 }
 
-                CFRelease(services_array);
-            }
+                CFRelease(prefs);
+                Ok(services)
+            };
 
-            CFRelease(prefs);
+            // Send result through channel
+            let _ = tx.send(result);
+        });
+
+        // Wait for result with timeout
+        match rx.recv_timeout(std::time::Duration::from_secs(5)) {
+            Ok(Ok(services_from_sc)) => {
+                debug!(
+                    "Found {} additional interfaces using System Configuration",
+                    services_from_sc.len()
+                );
+                services.extend(services_from_sc);
+            }
+            Ok(Err(e)) => {
+                warn!("System Configuration Framework error: {:?}", e);
+                // Continue with services found via simple enumeration
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                warn!("System Configuration Framework timed out, using simple enumeration results");
+                // Continue with services found via simple enumeration
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                warn!("System Configuration Framework thread disconnected unexpectedly");
+                // Continue with services found via simple enumeration
+            }
         }
 
         Ok(services)

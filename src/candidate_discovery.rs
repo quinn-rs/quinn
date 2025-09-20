@@ -554,7 +554,7 @@ impl CandidateDiscoveryManager {
             if let Some(interfaces) = self
                 .interface_discovery
                 .lock()
-                .unwrap()
+                .unwrap_or_else(|_| panic!("interface discovery mutex should be valid"))
                 .check_scan_complete()
             {
                 // Convert interfaces to candidates
@@ -849,7 +849,7 @@ impl CandidateDiscoveryManager {
         let scan_complete_result = self
             .interface_discovery
             .lock()
-            .unwrap()
+            .unwrap_or_else(|_| panic!("interface discovery mutex should be valid"))
             .check_scan_complete();
         if let Some(interfaces) = scan_complete_result {
             self.process_session_local_interfaces(session, interfaces, events, now);
@@ -1461,7 +1461,11 @@ impl CandidateDiscoveryManager {
             .into_iter()
             .max_by_key(|(_, count)| *count)
             .map(|(addr, _)| addr)
-            .unwrap_or_else(|| "0.0.0.0:0".parse().unwrap())
+            .unwrap_or_else(|| {
+                "0.0.0.0:0"
+                    .parse()
+                    .unwrap_or_else(|_| panic!("hardcoded fallback address should be valid"))
+            })
     }
 
     /// Calculate the accuracy of predictions based on pattern consistency
@@ -1675,7 +1679,9 @@ impl CandidateDiscoveryManager {
                 if matches!(candidate.state, CandidateState::New) {
                     events.push(DiscoveryEvent::ServerReflexiveCandidateDiscovered {
                         candidate: candidate.to_candidate_address(),
-                        bootstrap_node: "0.0.0.0:0".parse().unwrap(), // Placeholder for QUIC-discovered
+                        bootstrap_node: "0.0.0.0:0".parse().unwrap_or_else(|_| {
+                            panic!("hardcoded placeholder address should be valid")
+                        }), // Placeholder for QUIC-discovered
                     });
                 }
             }
@@ -3334,7 +3340,7 @@ impl NetworkInterfaceDiscovery for GenericInterfaceDiscovery {
                 addresses: vec![
                     "127.0.0.1:0"
                         .parse()
-                        .expect("Failed to parse hardcoded localhost address"),
+                        .unwrap_or_else(|_| panic!("Failed to parse hardcoded localhost address")),
                 ],
                 is_up: true,
                 is_wireless: false,

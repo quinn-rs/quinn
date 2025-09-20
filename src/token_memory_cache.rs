@@ -36,11 +36,18 @@ impl TokenMemoryCache {
 impl TokenStore for TokenMemoryCache {
     fn insert(&self, server_name: &str, token: Bytes) {
         trace!(%server_name, "storing token");
-        self.0.lock().unwrap().store(server_name, token)
+        self.0
+            .lock()
+            .unwrap_or_else(|_| panic!("token cache mutex should be valid"))
+            .store(server_name, token)
     }
 
     fn take(&self, server_name: &str) -> Option<Bytes> {
-        let token = self.0.lock().unwrap().take(server_name);
+        let token = self
+            .0
+            .lock()
+            .unwrap_or_else(|_| panic!("token cache mutex should be valid"))
+            .take(server_name);
         trace!(%server_name, found=%token.is_some(), "taking token");
         token
     }
@@ -94,19 +101,28 @@ impl State {
                 let tokens = &mut self.lru.get_mut(*hmap_entry.get()).tokens;
                 if tokens.len() >= self.max_tokens_per_server {
                     debug_assert!(tokens.len() == self.max_tokens_per_server);
-                    tokens.pop_front().unwrap();
+                    tokens
+                        .pop_front()
+                        .unwrap_or_else(|| panic!("tokens should have at least one element"));
                 }
                 tokens.push_back(token);
             }
             hash_map::Entry::Vacant(hmap_entry) => {
                 // key does not yet exist, create a new one, evicting the oldest if necessary
-                let removed_key = if self.lru.len() >= self.max_server_names {
-                    // unwrap safety: max_server_names is > 0, so there's at least one entry, so
-                    //                lru() is some
-                    Some(self.lru.remove(self.lru.lru().unwrap()).server_name)
-                } else {
-                    None
-                };
+                let removed_key =
+                    if self.lru.len() >= self.max_server_names {
+                        // unwrap safety: max_server_names is > 0, so there's at least one entry, so
+                        //                lru() is some
+                        Some(
+                            self.lru
+                                .remove(self.lru.lru().unwrap_or_else(|| {
+                                    panic!("LRU should have at least one element")
+                                }))
+                                .server_name,
+                        )
+                    } else {
+                        None
+                    };
 
                 hmap_entry.insert(self.lru.insert(CacheEntry::new(server_name, token)));
 
@@ -125,7 +141,10 @@ impl State {
         // pop from entry's token queue
         let entry = self.lru.get_mut(slab_key);
         // unwrap safety: we never leave tokens empty
-        let token = entry.tokens.pop_front().unwrap();
+        let token = entry
+            .tokens
+            .pop_front()
+            .unwrap_or_else(|| panic!("tokens should not be empty"));
 
         if entry.tokens.is_empty() {
             // token stack emptied, remove entry

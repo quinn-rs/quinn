@@ -156,6 +156,7 @@ impl RelayAuthenticator {
     }
 
     /// Verify an authentication token with anti-replay protection
+    #[allow(clippy::expect_used)]
     pub fn verify_token(
         &self,
         token: &AuthToken,
@@ -172,7 +173,10 @@ impl RelayAuthenticator {
         }
 
         // Check for replay attack
-        let mut used_nonces = self.used_nonces.lock().unwrap();
+        let mut used_nonces = self
+            .used_nonces
+            .lock()
+            .expect("Mutex poisoning is unexpected in normal operation");
 
         if used_nonces.contains(&token.nonce) {
             return Err(RelayError::AuthenticationFailed {
@@ -205,14 +209,22 @@ impl RelayAuthenticator {
     }
 
     /// Clear all used nonces (for testing)
+    #[allow(clippy::unwrap_used, clippy::expect_used)]
     pub fn clear_nonces(&self) {
-        let mut used_nonces = self.used_nonces.lock().unwrap();
+        let mut used_nonces = self
+            .used_nonces
+            .lock()
+            .expect("Mutex poisoning is unexpected in normal operation");
         used_nonces.clear();
     }
 
     /// Get number of used nonces (for testing)
+    #[allow(clippy::unwrap_used, clippy::expect_used)]
     pub fn nonce_count(&self) -> usize {
-        let used_nonces = self.used_nonces.lock().unwrap();
+        let used_nonces = self
+            .used_nonces
+            .lock()
+            .expect("Mutex poisoning is unexpected in normal operation");
         used_nonces.len()
     }
 }

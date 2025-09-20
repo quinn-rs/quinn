@@ -94,6 +94,7 @@ struct TestPeer {
     role: EndpointRole,
     received_messages: Arc<Mutex<Vec<ChatMessage>>>,
     connected_peers: Arc<Mutex<HashMap<PeerId, SocketAddr>>>,
+    stop_flag: Arc<AtomicBool>,
 }
 
 impl TestPeer {
@@ -126,6 +127,7 @@ impl TestPeer {
             role,
             received_messages: Arc::new(Mutex::new(Vec::new())),
             connected_peers: Arc::new(Mutex::new(HashMap::new())),
+            stop_flag: Arc::new(AtomicBool::new(false)),
         })
     }
 
@@ -135,14 +137,28 @@ impl TestPeer {
         let messages = Arc::clone(&self.received_messages);
         let _peers = Arc::clone(&self.connected_peers);
         let my_id = self.id;
+        let stop_flag = Arc::clone(&self.stop_flag);
 
         tokio::spawn(async move {
+            let start_time = std::time::Instant::now();
             loop {
-                // Receive and immediately process to avoid holding Result across await
-                let result = node.receive().await;
+                // Check stop flag
+                if stop_flag.load(Ordering::Relaxed) {
+                    debug!("Receive loop stopped for peer {:?}", my_id);
+                    break;
+                }
+
+                // Timeout after 30 seconds to prevent hanging
+                if start_time.elapsed() > Duration::from_secs(30) {
+                    debug!("Receive loop timed out for peer {:?}", my_id);
+                    break;
+                }
+
+                // Receive with timeout to avoid indefinite blocking
+                let result = timeout(Duration::from_secs(1), node.receive()).await;
 
                 match result {
-                    Ok((peer_id, data)) => {
+                    Ok(Ok((peer_id, data))) => {
                         // Try to deserialize as chat message
                         if let Ok(msg) = ChatMessage::deserialize(&data) {
                             debug!("Peer {:?} received message from {:?}", my_id, peer_id);
@@ -160,13 +176,22 @@ impl TestPeer {
                             debug!("Failed to deserialize message");
                         }
                     }
-                    Err(_) => {
-                        debug!("Receive error occurred");
+                    Ok(Err(_)) => {
+                        debug!("Receive error occurred for peer {:?}", my_id);
                         tokio::time::sleep(Duration::from_millis(100)).await;
+                    }
+                    Err(_) => {
+                        // Timeout occurred, continue loop
+                        continue;
                     }
                 }
             }
         });
+    }
+
+    /// Stop the receive loop
+    fn stop_receive_loop(&self) {
+        self.stop_flag.store(true, Ordering::Relaxed);
     }
 
     /// Send a chat message to a peer
@@ -208,9 +233,18 @@ impl P2PTestEnvironment {
             bootstrap_nodes: Vec::new(),
         };
 
+        // Use dynamic port allocation to avoid conflicts
+        let mut next_port = 19000
+            + (std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_millis()
+                % 1000) as u16;
+
         // Create bootstrap nodes
-        for i in 0..env.config.num_bootstrap {
-            let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 19000 + i as u16);
+        for _ in 0..env.config.num_bootstrap {
+            let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), next_port);
+            next_port += 1;
             // Use Bootstrap role for bootstrap nodes as they don't need other bootstrap nodes
             let bootstrap = TestPeer::new(addr, EndpointRole::Bootstrap, vec![]).await?;
             env.bootstrap_nodes.push(bootstrap);
@@ -220,8 +254,9 @@ impl P2PTestEnvironment {
         let bootstrap_addrs: Vec<_> = env.bootstrap_nodes.iter().map(|b| b.address).collect();
 
         // Create regular peers
-        for i in 0..env.config.num_peers {
-            let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 20000 + i as u16);
+        for _ in 0..env.config.num_peers {
+            let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), next_port);
+            next_port += 1;
             let peer = TestPeer::new(addr, EndpointRole::Client, bootstrap_addrs.clone()).await?;
             env.peers.push(peer);
         }
@@ -235,6 +270,20 @@ impl P2PTestEnvironment {
         }
 
         Ok(env)
+    }
+
+    /// Cleanup the test environment
+    async fn cleanup(&self) {
+        // Stop all receive loops
+        for peer in &self.peers {
+            peer.stop_receive_loop();
+        }
+        for peer in &self.bootstrap_nodes {
+            peer.stop_receive_loop();
+        }
+
+        // Give some time for cleanup
+        sleep(Duration::from_millis(100)).await;
     }
 
     /// Connect two peers via bootstrap
@@ -290,6 +339,13 @@ impl P2PTestEnvironment {
     }
 }
 
+impl Drop for P2PTestEnvironment {
+    fn drop(&mut self) {
+        // Note: We can't do async cleanup in Drop, so we rely on explicit cleanup
+        // The tests should call cleanup() explicitly
+    }
+}
+
 // ===== Core P2P Scenario Tests =====
 
 #[tokio::test]
@@ -340,6 +396,9 @@ async fn test_basic_peer_connection() {
             assert_eq!(env.bootstrap_nodes.len(), 1);
         }
     }
+
+    // Cleanup resources
+    env.cleanup().await;
 }
 
 #[tokio::test]
@@ -395,6 +454,9 @@ async fn test_multiple_peer_mesh() {
             messages.len()
         );
     }
+
+    // Cleanup resources
+    env.cleanup().await;
 }
 
 #[tokio::test]

@@ -177,6 +177,7 @@ async fn test_endpoint(
         let crypto = rustls::ClientConfig::builder()
             .with_root_certificates(roots)
             .with_no_client_auth();
+        #[allow(clippy::unwrap_used)]
         ant_quic::ClientConfig::new(Arc::new(
             ant_quic::crypto::rustls::QuicClientConfig::try_from(crypto).unwrap(),
         ))

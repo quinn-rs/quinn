@@ -218,21 +218,19 @@ pub struct PoolGuard<T: BufferCleanup> {
 
 impl<T: BufferCleanup> PoolGuard<T> {
     /// Get a reference to the pooled object
+    #[allow(clippy::unwrap_used)]
     pub fn as_ref(&self) -> &T {
         // SAFETY: PoolGuard is constructed with Some(object) and only consumed on drop
         // The object is guaranteed to exist until drop
-        self.object
-            .as_ref()
-            .expect("PoolGuard object must exist until drop")
+        self.object.as_ref().unwrap() // Safety invariant: object must exist until drop
     }
 
     /// Get a mutable reference to the pooled object
+    #[allow(clippy::unwrap_used)]
     pub fn as_mut(&mut self) -> &mut T {
         // SAFETY: PoolGuard is constructed with Some(object) and only consumed on drop
         // The object is guaranteed to exist until drop
-        self.object
-            .as_mut()
-            .expect("PoolGuard object must exist until drop")
+        self.object.as_mut().unwrap() // Safety invariant: object must exist until drop
     }
 }
 

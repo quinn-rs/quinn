@@ -1921,6 +1921,7 @@ impl NatTraversalState {
     }
 
     /// Add a local candidate that we've discovered
+    #[allow(clippy::expect_used)]
     pub(super) fn add_local_candidate(
         &mut self,
         address: SocketAddr,

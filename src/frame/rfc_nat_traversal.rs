@@ -61,7 +61,7 @@ impl RfcAddAddress {
     }
 
     pub fn decode<R: Buf>(r: &mut R, is_ipv6: bool) -> Result<Self, UnexpectedEnd> {
-        let sequence_number = VarInt::from_u64(r.get_var()?).unwrap();
+        let sequence_number = VarInt::from_u64(r.get_var()?).map_err(|_| UnexpectedEnd)?;
 
         let address = if is_ipv6 {
             if r.remaining() < 16 + 2 {
@@ -144,8 +144,9 @@ impl RfcPunchMeNow {
     }
 
     pub fn decode<R: Buf>(r: &mut R, is_ipv6: bool) -> Result<Self, UnexpectedEnd> {
-        let round = VarInt::from_u64(r.get_var()?).unwrap();
-        let paired_with_sequence_number = VarInt::from_u64(r.get_var()?).unwrap();
+        let round = VarInt::from_u64(r.get_var()?).map_err(|_| UnexpectedEnd)?;
+        let paired_with_sequence_number =
+            VarInt::from_u64(r.get_var()?).map_err(|_| UnexpectedEnd)?;
 
         let address = if is_ipv6 {
             if r.remaining() < 16 + 2 {
@@ -198,7 +199,7 @@ impl RfcRemoveAddress {
     }
 
     pub fn decode<R: Buf>(r: &mut R) -> Result<Self, UnexpectedEnd> {
-        let sequence_number = VarInt::from_u64(r.get_var()?).unwrap();
+        let sequence_number = VarInt::from_u64(r.get_var()?).map_err(|_| UnexpectedEnd)?;
         Ok(Self { sequence_number })
     }
 }

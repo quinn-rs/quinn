@@ -30,11 +30,15 @@ impl crypto::HandshakeTokenKey for hkdf::Prk {
     fn aead_from_hkdf(&self, random_bytes: &[u8]) -> Box<dyn crypto::AeadKey> {
         let mut key_buffer = [0u8; 32];
         let info = [random_bytes];
-        let okm = self.expand(&info, hkdf::HKDF_SHA256).unwrap();
+        let okm = self
+            .expand(&info, hkdf::HKDF_SHA256)
+            .unwrap_or_else(|_| panic!("HKDF expand should succeed with valid parameters"));
 
-        okm.fill(&mut key_buffer).unwrap();
+        okm.fill(&mut key_buffer)
+            .unwrap_or_else(|_| panic!("OKM fill should succeed"));
 
-        let key = aead::UnboundKey::new(&aead::AES_256_GCM, &key_buffer).unwrap();
+        let key = aead::UnboundKey::new(&aead::AES_256_GCM, &key_buffer)
+            .unwrap_or_else(|_| panic!("AES key creation should succeed with valid key material"));
         Box::new(aead::LessSafeKey::new(key))
     }
 }

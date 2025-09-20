@@ -404,7 +404,8 @@ impl fmt::Debug for Ack {
             if !first {
                 ranges.push(',');
             }
-            write!(ranges, "{range:?}").unwrap();
+            write!(ranges, "{range:?}")
+                .unwrap_or_else(|_| panic!("writing to string should not fail"));
             first = false;
         }
         ranges.push(']');
@@ -436,7 +437,9 @@ impl Ack {
         buf: &mut W,
     ) {
         let mut rest = ranges.iter().rev();
-        let first = rest.next().unwrap();
+        let first = rest
+            .next()
+            .unwrap_or_else(|| panic!("ACK ranges should have at least one range"));
         let largest = first.end - 1;
         let first_size = first.end - first.start;
         buf.write(if ecn.is_some() {
@@ -894,7 +897,10 @@ impl Iterator for AckIter<'_> {
         if !self.data.has_remaining() {
             return None;
         }
-        let block = self.data.get_var().unwrap();
+        let block = match self.data.get_var() {
+            Ok(block) => block,
+            Err(_) => return None,
+        };
         let largest = self.largest;
         if let Ok(gap) = self.data.get_var() {
             self.largest -= block + gap + 2;

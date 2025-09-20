@@ -183,18 +183,21 @@ impl SessionManager {
     }
 
     /// Add a trusted peer key for authentication
+    #[allow(clippy::unwrap_used)]
     pub fn add_trusted_key(&self, addr: SocketAddr, key: VerifyingKey) {
         let mut trusted_keys = self.trusted_keys.lock().unwrap();
         trusted_keys.insert(addr, key);
     }
 
     /// Remove a trusted peer key
+    #[allow(clippy::unwrap_used)]
     pub fn remove_trusted_key(&self, addr: &SocketAddr) {
         let mut trusted_keys = self.trusted_keys.lock().unwrap();
         trusted_keys.remove(addr);
     }
 
     /// Generate next session ID
+    #[allow(clippy::unwrap_used)]
     fn next_session_id(&self) -> SessionId {
         let mut next_id = self.next_session_id.lock().unwrap();
         let id = *next_id;
@@ -206,6 +209,7 @@ impl SessionManager {
     }
 
     /// Request a new relay session
+    #[allow(clippy::unwrap_used)]
     pub fn request_session(
         &self,
         client_addr: SocketAddr,
@@ -271,6 +275,7 @@ impl SessionManager {
     }
 
     /// Establish a relay session
+    #[allow(clippy::unwrap_used)]
     pub fn establish_session(&self, session_id: SessionId) -> RelayResult<()> {
         let (client_addr, bandwidth_limit) = {
             let mut sessions = self.sessions.lock().unwrap();
@@ -328,6 +333,7 @@ impl SessionManager {
     }
 
     /// Terminate a relay session
+    #[allow(clippy::unwrap_used)]
     pub fn terminate_session(&self, session_id: SessionId, reason: String) -> RelayResult<()> {
         // Update session state
         {
@@ -355,6 +361,7 @@ impl SessionManager {
     }
 
     /// Forward data through a relay session
+    #[allow(clippy::unwrap_used)]
     pub fn forward_data(
         &self,
         session_id: SessionId,
@@ -409,24 +416,28 @@ impl SessionManager {
     }
 
     /// Get session information
+    #[allow(clippy::unwrap_used)]
     pub fn get_session(&self, session_id: SessionId) -> Option<RelaySessionInfo> {
         let sessions = self.sessions.lock().unwrap();
         sessions.get(&session_id).cloned()
     }
 
     /// List all active sessions
+    #[allow(clippy::unwrap_used)]
     pub fn list_sessions(&self) -> Vec<RelaySessionInfo> {
         let sessions = self.sessions.lock().unwrap();
         sessions.values().cloned().collect()
     }
 
     /// Get session count
+    #[allow(clippy::unwrap_used)]
     pub fn session_count(&self) -> usize {
         let sessions = self.sessions.lock().unwrap();
         sessions.len()
     }
 
     /// Clean up expired sessions
+    #[allow(clippy::unwrap_used)]
     pub fn cleanup_expired_sessions(&self) -> RelayResult<usize> {
         let mut last_cleanup = self.last_cleanup.lock().unwrap();
         let now = Instant::now();
@@ -466,6 +477,7 @@ impl SessionManager {
     }
 
     /// Get session manager statistics
+    #[allow(clippy::unwrap_used)]
     pub fn get_statistics(&self) -> SessionManagerStats {
         let sessions = self.sessions.lock().unwrap();
         let connections = self.connections.lock().unwrap();

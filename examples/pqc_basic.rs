@@ -17,7 +17,7 @@ use ant_quic::{
 #[cfg(feature = "pqc")]
 use std::{net::SocketAddr, sync::Arc, time::Duration};
 #[cfg(feature = "pqc")]
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -94,16 +94,14 @@ async fn run_server() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     // Create server configuration
     let config = QuicNodeConfig {
-        role: EndpointRole::Server {
-            can_coordinate: true,
-        },
+        role: EndpointRole::Bootstrap,
         bootstrap_nodes: vec![],
-        enable_coordinator: true,
+        enable_coordinator: false,
         max_connections: 50,
         connection_timeout: Duration::from_secs(30),
         stats_interval: Duration::from_secs(60),
         auth_config: AuthConfig::default(), // PQC is configured here internally
-        bind_addr: Some("0.0.0.0:5000".parse()?),
+        bind_addr: Some("0.0.0.0:5001".parse()?),
     };
 
     let node = Arc::new(QuicP2PNode::new(config).await?);
@@ -111,20 +109,40 @@ async fn run_server() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     println!("🔐 PQC protection enabled!");
 
     // Handle incoming messages
+    println!("🎧 Server ready and waiting for connections...");
     loop {
-        match node.receive().await {
-            Ok((peer_id, data)) => {
-                let message = String::from_utf8_lossy(&data);
-                println!("📩 Message from {peer_id:?}: {message}");
+        println!("🔄 Waiting for incoming connection...");
+        match node.accept().await {
+            Ok((remote_addr, peer_id)) => {
+                println!("✅ Accepted connection from {remote_addr} (peer: {peer_id:?})");
 
-                // Echo the message back
-                let response = format!("Server received: {message}");
-                if let Err(e) = node.send_to_peer(&peer_id, response.as_bytes()).await {
-                    warn!("Failed to send response: {}", e);
+                // Handle messages from this peer
+                loop {
+                    match node.receive().await {
+                        Ok((recv_peer_id, data)) => {
+                            if recv_peer_id == peer_id {
+                                let message = String::from_utf8_lossy(&data);
+                                println!("📩 Message from {peer_id:?}: {message}");
+
+                                // Echo the message back
+                                let response = format!("Server received: {message}");
+                                if let Err(e) =
+                                    node.send_to_peer(&peer_id, response.as_bytes()).await
+                                {
+                                    warn!("Failed to send response: {}", e);
+                                }
+                                break; // Exit after handling one message
+                            }
+                        }
+                        Err(_) => {
+                            // No messages available
+                            tokio::time::sleep(Duration::from_millis(100)).await;
+                        }
+                    }
                 }
             }
-            Err(_) => {
-                // No messages available
+            Err(e) => {
+                error!("Failed to accept connection: {}", e);
                 tokio::time::sleep(Duration::from_millis(100)).await;
             }
         }
@@ -152,8 +170,8 @@ async fn run_client(
 
     // Create client configuration
     let config = QuicNodeConfig {
-        role: EndpointRole::Client,
-        bootstrap_nodes: vec![server_addr],
+        role: EndpointRole::Bootstrap,
+        bootstrap_nodes: vec!["127.0.0.1:5001".parse()?],
         enable_coordinator: false,
         max_connections: 10,
         connection_timeout: Duration::from_secs(30),
@@ -165,8 +183,20 @@ async fn run_client(
     let node = Arc::new(QuicP2PNode::new(config).await?);
     println!("🔗 Connecting to {server_addr} with PQC...");
 
-    // Connect to server (bootstrap node)
-    let server_peer_id = node.connect_to_bootstrap(server_addr).await?;
+    // Connect to server (bootstrap node) with retry logic
+    println!("🔄 Attempting to connect to server...");
+    tokio::time::sleep(Duration::from_secs(1)).await; // Wait a bit for server to be ready
+    let server_peer_id = loop {
+        match node.connect_to_bootstrap(server_addr).await {
+            Ok(peer_id) => {
+                break peer_id;
+            }
+            Err(e) => {
+                warn!("Connection attempt failed: {}. Retrying in 2 seconds...", e);
+                tokio::time::sleep(Duration::from_secs(2)).await;
+            }
+        }
+    };
     println!("✅ Connected to server with PQC protection!");
     println!("   Server PeerID: {server_peer_id:?}");
 

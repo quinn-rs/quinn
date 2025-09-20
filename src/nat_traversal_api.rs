@@ -35,7 +35,7 @@ use std::{collections::HashMap, fmt, net::SocketAddr, sync::Arc, time::Duration}
 fn create_random_port_bind_addr() -> SocketAddr {
     "0.0.0.0:0"
         .parse()
-        .expect("Random port bind address format is always valid")
+        .unwrap_or_else(|_| panic!("Random port bind address format is always valid"))
 }
 
 use tracing::{debug, error, info, warn};
@@ -1562,7 +1562,11 @@ impl NatTraversalEndpoint {
         // Start accepting connections in a background task
         let endpoint_clone = endpoint.clone();
         let shutdown_clone = self.shutdown.clone();
-        let event_tx = self.event_tx.as_ref().unwrap().clone();
+        let event_tx = self
+            .event_tx
+            .as_ref()
+            .unwrap_or_else(|| panic!("event transmitter should be initialized"))
+            .clone();
         let connections_clone = self.connections.clone();
 
         tokio::spawn(async move {
@@ -3697,8 +3701,16 @@ impl NatTraversalEndpoint {
         // Return default statistics for now
         // In a real implementation, this would collect actual stats from the endpoint
         Ok(NatTraversalStatistics {
-            active_sessions: self.active_sessions.read().unwrap().len(),
-            total_bootstrap_nodes: self.bootstrap_nodes.read().unwrap().len(),
+            active_sessions: self
+                .active_sessions
+                .read()
+                .unwrap_or_else(|_| panic!("active sessions lock should be valid"))
+                .len(),
+            total_bootstrap_nodes: self
+                .bootstrap_nodes
+                .read()
+                .unwrap_or_else(|_| panic!("bootstrap nodes lock should be valid"))
+                .len(),
             successful_coordinations: 7,
             average_coordination_time: self.timeout_config.nat_traversal.retry_interval,
             total_attempts: 10,

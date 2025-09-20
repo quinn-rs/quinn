@@ -31,14 +31,20 @@ impl Default for RfcParser {
 
 impl RfcParser {
     /// Create a new RFC parser
+    #[allow(clippy::expect_used)]
     pub fn new() -> Self {
         Self {
             // RFC 2119 keywords - match whole words with word boundaries
-            must_pattern: Regex::new(r"\b(MUST|SHALL|REQUIRED)\b").unwrap(),
-            must_not_pattern: Regex::new(r"\b(MUST NOT|SHALL NOT)\b").unwrap(),
-            should_pattern: Regex::new(r"\b(SHOULD|RECOMMENDED)\b").unwrap(),
-            should_not_pattern: Regex::new(r"\b(SHOULD NOT|NOT RECOMMENDED)\b").unwrap(),
-            may_pattern: Regex::new(r"\b(MAY|OPTIONAL)\b").unwrap(),
+            must_pattern: Regex::new(r"\b(MUST|SHALL|REQUIRED)\b")
+                .expect("Static regex pattern should always compile"),
+            must_not_pattern: Regex::new(r"\b(MUST NOT|SHALL NOT)\b")
+                .expect("Static regex pattern should always compile"),
+            should_pattern: Regex::new(r"\b(SHOULD|RECOMMENDED)\b")
+                .expect("Static regex pattern should always compile"),
+            should_not_pattern: Regex::new(r"\b(SHOULD NOT|NOT RECOMMENDED)\b")
+                .expect("Static regex pattern should always compile"),
+            may_pattern: Regex::new(r"\b(MAY|OPTIONAL)\b")
+                .expect("Static regex pattern should always compile"),
         }
     }
 
@@ -68,9 +74,11 @@ impl RfcParser {
     }
 
     /// Split RFC content into sections
+    #[allow(clippy::expect_used)]
     fn split_into_sections(&self, content: &str) -> Vec<(String, String)> {
         let mut sections = Vec::new();
-        let section_regex = Regex::new(r"(?m)^(\d+(?:\.\d+)*)\s+(.+)$").unwrap();
+        let section_regex = Regex::new(r"(?m)^(\d+(?:\.\d+)*)\s+(.+)$")
+            .expect("Static regex pattern should always compile");
 
         let mut current_section = String::new();
         let mut current_content = String::new();
@@ -119,9 +127,11 @@ impl RfcParser {
     }
 
     /// Split text into sentences
+    #[allow(clippy::expect_used)]
     fn split_into_sentences(&self, text: &str) -> Vec<String> {
         // Simple sentence splitter - can be improved
-        let sentence_regex = Regex::new(r"[.!?]+\s+").unwrap();
+        let sentence_regex =
+            Regex::new(r"[.!?]+\s+").expect("Static regex pattern should always compile");
         sentence_regex
             .split(text)
             .map(|s| s.trim().to_string())

@@ -18,7 +18,7 @@
 //! - `nat_traversal`: QUIC-native NAT traversal protocol
 //! - `discovery`: Platform-specific network interface discovery
 //! - `crypto`: Raw public key authentication
-//! - `api`: High-level P2P networking API
+//! - `trust`: Trust management with TOFU pinning and channel binding
 
 // Documentation warnings enabled - all public APIs must be documented
 #![cfg_attr(not(fuzzing), warn(missing_docs))]
@@ -151,8 +151,6 @@ mod token_memory_cache;
 pub mod tracing;
 
 // Public modules with new structure
-/// High-level API for QUIC operations
-pub mod api;
 /// Cryptographic operations and raw public key support
 pub mod crypto;
 /// Platform-specific network interface discovery
@@ -189,6 +187,12 @@ pub mod metrics;
 
 /// TURN-style relay protocol for NAT traversal fallback
 pub mod relay;
+
+/// Transport trust module (TOFU, rotations, channel binding surfaces)
+pub mod trust;
+
+/// Address-validation tokens bound to (PeerId||CID||nonce)
+pub mod token_v2;
 
 // High-level async API modules (ported from quinn crate)
 pub mod high_level;
@@ -376,7 +380,14 @@ impl coding::Codec for StreamId {
         VarInt::decode(buf).map(|x| Self(x.into_inner()))
     }
     fn encode<B: bytes::BufMut>(&self, buf: &mut B) {
-        VarInt::from_u64(self.0).unwrap().encode(buf);
+        // StreamId values should always be valid VarInt values, but handle the error case
+        match VarInt::from_u64(self.0) {
+            Ok(varint) => varint.encode(buf),
+            Err(_) => {
+                // This should never happen for valid StreamIds, but use a safe fallback
+                VarInt::MAX.encode(buf);
+            }
+        }
     }
 }
 
@@ -432,5 +443,6 @@ pub use crypto::pqc::{
     PqcError, PqcMode, PqcResult,
 };
 pub(crate) use frame::Frame;
-pub(crate) use token::{NoneTokenLog, ResetToken, TokenLog, TokenStore};
+pub use token::TokenStore;
+pub(crate) use token::{NoneTokenLog, ResetToken, TokenLog};
 pub(crate) use token_memory_cache::TokenMemoryCache;

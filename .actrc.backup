@@ -1,0 +1,39 @@
+# Act configuration for local GitHub Actions testing
+# This file configures act to work properly on macOS with Docker
+
+# Use Docker as the container runtime
+--container-daemon-socket /var/run/docker.sock
+
+# Set the default platform to linux/amd64 for consistency
+--platform linux/amd64
+
+# Use the host's Docker daemon
+--use-host-daemon
+
+# Set environment variables for act
+--env ACT=true
+--env DOCKER_HOST=unix:///var/run/docker.sock
+
+# Enable verbose logging for debugging
+--verbose
+
+# Use a specific GitHub runner image that works well with act
+--default-arch linux/amd64
+
+# Set the working directory to the project root
+--workdir /Users/davidirvine/Desktop/Devel/projects/ant-quic
+
+# Use the host's network for better connectivity
+--use-host-network
+
+# Set the GitHub token (if available) for private repositories
+# --secret GITHUB_TOKEN=${GITHUB_TOKEN}
+
+# Configure artifact server to use host's filesystem
+--artifact-server-path /tmp/artifacts
+
+# Enable privileged mode for Docker-in-Docker scenarios
+--privileged
+
+# Set the default runner image
+--container-options="--platform linux/amd64"

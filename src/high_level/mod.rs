@@ -36,7 +36,7 @@ pub use self::send_stream::{SendStream, StoppedError, WriteError};
 // Runtime-specific exports
 #[cfg(feature = "runtime-async-std")]
 pub use self::runtime::AsyncStdRuntime;
-#[cfg(feature = "smol")]
+#[cfg(feature = "runtime-smol")]
 pub use self::runtime::SmolRuntime;
 #[cfg(feature = "runtime-tokio")]
 pub use self::runtime::TokioRuntime;

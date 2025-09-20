@@ -241,6 +241,7 @@ async fn test_endpoint(
     };
 
     // Create endpoint (use appropriate bind address based on target)
+    #[allow(clippy::unwrap_used)]
     let bind_addr: std::net::SocketAddr = if addr.is_ipv4() {
         "0.0.0.0:0".parse().unwrap()
     } else {
@@ -420,6 +421,7 @@ async fn run_validation(args: Args) -> Result<ValidationResults, Box<dyn Error>>
     // Create client configuration
     let mut roots = rustls::RootCertStore::empty();
     for cert in rustls_native_certs::load_native_certs().expect("could not load platform certs") {
+        #[allow(clippy::unwrap_used)]
         roots.add(cert).unwrap();
     }
 

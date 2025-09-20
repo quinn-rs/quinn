@@ -16,7 +16,10 @@ fmt-check:
 	@cargo fmt --all -- --check
 
 lint:
-	@cargo clippy --all-targets --all-features -- -D warnings
+	@echo "Running clippy on non-test code..."
+	@cargo clippy --all-features --lib --bins --examples -- -D clippy::panic -D clippy::unwrap_used -D clippy::expect_used
+	@echo "Running clippy on test code..."
+	@cargo clippy --all-features --tests --benches -- -A clippy::panic -A clippy::unwrap_used -A clippy::expect_used
 
 quick-test:
 	@timeout 30s cargo test --lib || [ $$? -eq 124 ]
@@ -171,8 +174,10 @@ fmt:
 
 # Run clippy linter
 clippy:
-	@echo "Running clippy..."
-	@cargo clippy --all-targets -- -D warnings
+	@echo "Running clippy on non-test code..."
+	@cargo clippy --all-features --lib --bins --examples -- -D clippy::panic -D clippy::unwrap_used -D clippy::expect_used
+	@echo "Running clippy on test code..."
+	@cargo clippy --all-features --tests --benches -- -A clippy::panic -A clippy::unwrap_used -A clippy::expect_used
 
 # Run all checks (format, clippy, test, audit)
 check: fmt clippy test audit

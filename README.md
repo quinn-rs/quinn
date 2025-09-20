@@ -35,6 +35,63 @@ Comprehensive documentation is available in the [`docs/`](docs/) directory:
 - **Automatic Bootstrap Connection**: Nodes automatically connect to configured bootstrap nodes
 - **Production-Ready Binary**: Full-featured `ant-quic` binary for immediate deployment
 
+## Transport Trust Model
+
+This project treats transport identity as a minimal, safe substrate. We adopt a TOFU (Trust On First Use) baseline at the transport, and let higher layers decide “who this machine is” and what it’s allowed to do. The split keeps the transport simple while enabling strong, decentralized trust above it.
+
+- Identity and pinning
+  - PeerId = H(SPKI) where SPKI is the peer’s SubjectPublicKeyInfo (Ed25519 today; ML‑DSA planned).
+  - First contact: TOFU stores SPKI fingerprint keyed by PeerId. No IP/port pinning.
+  - Rotation: require continuity signature (new_key signed by old_key); otherwise reject.
+- Channel binding
+  - After TLS 1.3 + ML‑KEM handshake, both peers sign a TLS exporter with ML‑DSA/Ed25519; verify against pin. If mismatch, drop.
+- NAT/path changes
+  - Bind address‑validation tokens to (PeerId || CID || nonce), not the 4‑tuple. Treat OBSERVED_ADDRESS as hints only.
+- Surfaces/hooks
+  - PinStore trait + default FS backend (append‑only rotations).
+  - Events: OnFirstSeenPeer(peer_id, spki_fpr), OnRotation(old_fpr, new_fpr), OnBindingVerified(peer_id).
+  - Policy gates: config to allow/deny TOFU, require continuity, or delegate to upper‑layer callback.
+
+### Upper Trust Layers (out of transport scope)
+- Claims/attestations: optional device attestations included in an “identity descriptor”. Transport passes through; upper layer interprets.
+- Endorsements: N‑of‑M introducers can co‑sign descriptors/rotations to reduce TOFU risk without centralizing trust.
+- Transparency: append‑only, replicated log of identity updates (rotations, endorsements). Clients check STH consistency.
+- Enrollment/privileges: unknown peers get minimal capabilities until trust elevates; suspicious rotations are quarantined.
+
+### Operational Policies
+- Key storage: ML‑DSA secret in enclave/TPM if available; sealed backup; continuity process documented.
+- Rotation cadence: rare; continuity‑signed; temporary {Kold, Knew} overlap.
+- Revocation: gossip revocation records in transparency feed; transport enforces on connect.
+
+## Roadmap
+
+Near‑term (transport changes)
+- Implement PinStore + default FS backend; persistence of SPKI pins and rotations.
+- ML‑DSA/Ed25519 channel binding using TLS exporter; drop on mismatch; emit events.
+- Address‑validation token binding to (PeerId || CID || nonce) and treat observed‑address as hints.
+- Events and PolicyCallback with config flags: allow_tofu (default on), require_continuity (default on), enable_channel_binding (default on).
+
+Mid‑term
+- IdentityDescriptor (peer_id, spki, seq, created_at, optional attestations, optional endorsements) surfaced to upper layers.
+- Optional endorsement acceptance path via PolicyCallback.
+
+Long‑term
+- Witness/merkle transparency log (library + docker test harness) and trust‑layer policy wiring.
+
+## Test Plan for Transport Trust
+
+We will land tests first, then implement code to satisfy them:
+
+- TOFU: first contact accepts and pins; event emitted; subsequent contact matches pin.
+- Rotation: continuity‑signed rotation accepted; unsigned rotation rejected (configurable policy).
+- Channel binding: exporter signature exchange verifies; mismatch closes connection; event emitted.
+- NAT/path: rebinding/path migration preserves identity; token binding uses (PeerId||CID||nonce).
+- Policy gates: callbacks can allow/deny TOFU/rotation; defaults are safe.
+
+Config and lint policy
+- Global: forbid `unwrap`/`expect`/`panic!` in non‑tests; prefer `thiserror` and `tracing`.
+- Clippy: `-D clippy::panic -D clippy::unwrap_used -D clippy::expect_used` (pedantic lints as warnings).
+
 ## System Requirements
 
 ### Minimum Requirements

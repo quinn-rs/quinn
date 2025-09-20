@@ -250,7 +250,11 @@ fn verify_ed25519_signature(
         return Err(PqcError::InvalidSignature);
     }
 
-    let sig = Ed25519Signature::from_bytes(signature.try_into().unwrap());
+    let sig = Ed25519Signature::from_bytes(
+        signature
+            .try_into()
+            .map_err(|_| PqcError::InvalidSignature)?,
+    );
 
     use ed25519_dalek::Verifier;
     key.verify(message, &sig)

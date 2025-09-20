@@ -24,7 +24,7 @@ use thiserror::Error;
 
 use crate::{
     LOC_CID_COUNT, MAX_CID_SIZE, MAX_STREAM_COUNT, RESET_TOKEN_SIZE, ResetToken, Side,
-    TIMER_GRANULARITY, TransportError, VarInt,
+    TIMER_GRANULARITY, TransportError, TransportErrorCode, VarInt,
     cid_generator::ConnectionIdGenerator,
     cid_queue::CidQueue,
     coding::{BufExt, BufMutExt, UnexpectedEnd},
@@ -190,8 +190,8 @@ impl TransportParameters {
         initial_src_cid: ConnectionId,
         server_config: Option<&ServerConfig>,
         rng: &mut impl RngCore,
-    ) -> Self {
-        Self {
+    ) -> Result<Self, TransportError> {
+        Ok(Self {
             initial_src_cid: Some(initial_src_cid),
             initial_max_streams_bidi: config.max_concurrent_bidi_streams,
             initial_max_streams_uni: config.max_concurrent_uni_streams,
@@ -221,7 +221,7 @@ impl TransportParameters {
                 });
                 VarInt::from_u64_bounded(micros_u64)
             }),
-            grease_transport_parameter: Some(ReservedTransportParameter::random(rng)),
+            grease_transport_parameter: Some(ReservedTransportParameter::random(rng)?),
             write_order: Some({
                 let mut order = std::array::from_fn(|i| i as u8);
                 order.shuffle(rng);
@@ -232,7 +232,7 @@ impl TransportParameters {
             address_discovery: config.address_discovery_config,
             pqc_algorithms: config.pqc_algorithms.clone(),
             ..Self::default()
-        }
+        })
     }
 
     /// Check that these parameters are legal when resuming from
@@ -935,8 +935,8 @@ impl ReservedTransportParameter {
     /// The implementation is inspired by quic-go and quiche:
     /// 1. <https://github.com/quic-go/quic-go/blob/3e0a67b2476e1819752f04d75968de042b197b56/internal/wire/transport_parameters.go#L338-L344>
     /// 2. <https://github.com/google/quiche/blob/cb1090b20c40e2f0815107857324e99acf6ec567/quiche/quic/core/crypto/transport_parameters.cc#L843-L860>
-    fn random(rng: &mut impl RngCore) -> Self {
-        let id = Self::generate_reserved_id(rng);
+    fn random(rng: &mut impl RngCore) -> Result<Self, TransportError> {
+        let id = Self::generate_reserved_id(rng)?;
 
         let payload_len = rng.gen_range(0..Self::MAX_PAYLOAD_LEN);
 
@@ -946,11 +946,11 @@ impl ReservedTransportParameter {
             slice
         };
 
-        Self {
+        Ok(Self {
             id,
             payload,
             payload_len,
-        }
+        })
     }
 
     fn write(&self, w: &mut impl BufMut) {
@@ -963,7 +963,7 @@ impl ReservedTransportParameter {
     /// Reserved transport parameter identifiers are used to test compliance with the requirement
     /// that unknown transport parameters must be ignored by peers.
     /// See: <https://www.rfc-editor.org/rfc/rfc9000.html#section-18.1> and <https://www.rfc-editor.org/rfc/rfc9000.html#section-22.3>
-    fn generate_reserved_id(rng: &mut impl RngCore) -> VarInt {
+    fn generate_reserved_id(rng: &mut impl RngCore) -> Result<VarInt, TransportError> {
         let id = {
             let rand = rng.gen_range(0u64..(1 << 62) - 27);
             let n = rand / 31;
@@ -973,9 +973,12 @@ impl ReservedTransportParameter {
             id % 31 == 27,
             "generated id does not have the form of 31 * N + 27"
         );
-        VarInt::from_u64(id).expect(
-            "generated id does fit into range of allowed transport parameter IDs: [0; 2^62)",
-        )
+        VarInt::from_u64(id).map_err(|_| TransportError {
+            code: TransportErrorCode::INTERNAL_ERROR,
+            frame: None,
+            reason: "generated id does not fit into range of allowed transport parameter IDs"
+                .to_string(),
+        })
     }
 
     /// The maximum length of the payload to include as the parameter payload.
@@ -1594,7 +1597,7 @@ mod test {
             StepRng::new((1 << 62) + 31, 1),
         ];
         for rng in &mut rngs {
-            let id = ReservedTransportParameter::generate_reserved_id(rng);
+            let id = ReservedTransportParameter::generate_reserved_id(rng).unwrap();
             assert!(id.0 % 31 == 27)
         }
     }
@@ -1602,7 +1605,8 @@ mod test {
     #[test]
     fn reserved_transport_parameter_ignored_when_read() {
         let mut buf = Vec::new();
-        let reserved_parameter = ReservedTransportParameter::random(&mut rand::thread_rng());
+        let reserved_parameter =
+            ReservedTransportParameter::random(&mut rand::thread_rng()).unwrap();
         assert!(reserved_parameter.payload_len < ReservedTransportParameter::MAX_PAYLOAD_LEN);
         assert!(reserved_parameter.id.0 % 31 == 27);
 

@@ -70,6 +70,7 @@ impl TokenBucket {
     }
 
     /// Try to consume one token from the bucket
+    #[allow(clippy::unwrap_used)]
     fn try_consume_token(&self, addr: &SocketAddr) -> RelayResult<()> {
         let mut buckets = self.buckets.lock().unwrap();
         let now = Instant::now();
@@ -101,11 +102,13 @@ impl RateLimiter for TokenBucket {
         self.try_consume_token(addr)
     }
 
+    #[allow(clippy::unwrap_used)]
     fn reset(&self, addr: &SocketAddr) {
         let mut buckets = self.buckets.lock().unwrap();
         buckets.remove(addr);
     }
 
+    #[allow(clippy::unwrap_used)]
     fn cleanup_expired(&self) {
         let mut buckets = self.buckets.lock().unwrap();
         let now = Instant::now();

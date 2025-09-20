@@ -275,3 +275,11 @@ impl From<UnsupportedVersion> for ConnectError {
         Self::UnsupportedVersion
     }
 }
+
+impl From<crate::TransportError> for ConnectError {
+    fn from(_err: crate::TransportError) -> Self {
+        // Convert TransportError to ConnectError - this is a generic conversion
+        // since transport parameter errors during connection setup are connection-level issues
+        Self::EndpointStopping
+    }
+}

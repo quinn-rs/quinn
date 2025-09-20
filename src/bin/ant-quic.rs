@@ -791,6 +791,7 @@ impl QuicDemoNode {
                         }
                     } else if line.starts_with("/nick ") {
                         // Change nickname
+                        #[allow(clippy::unwrap_used)]
                         let new_nick = line.strip_prefix("/nick ").unwrap().trim().to_string();
                         if !new_nick.is_empty() {
                             let old_nick = nickname.clone();

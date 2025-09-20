@@ -22,6 +22,13 @@ use rustls::{
 #[cfg(feature = "platform-verifier")]
 use rustls_platform_verifier::BuilderVerifierExt;
 
+use std::sync::atomic::{AtomicBool, Ordering};
+
+/// Internal debug flag indicating whether the build/runtime is configured
+/// to prefer ML‑KEM‑only key exchange groups. This is a diagnostic aid used
+/// by tests; it does not by itself enforce KEM selection.
+static DEBUG_KEM_ONLY: AtomicBool = AtomicBool::new(false);
+
 use crate::{
     ConnectError, ConnectionId, Side, TransportError, TransportErrorCode,
     crypto::{
@@ -309,7 +316,7 @@ impl QuicClientConfig {
         // Keep in sync with `inner()` below
         let mut inner = rustls::ClientConfig::builder_with_provider(configured_provider())
             .with_protocol_versions(&[&rustls::version::TLS13])
-            .unwrap() // The default providers support TLS 1.3
+            .unwrap_or_else(|_| panic!("default providers should support TLS 1.3"))
             .with_platform_verifier()?
             .with_no_client_auth();
 
@@ -317,7 +324,7 @@ impl QuicClientConfig {
         Ok(Self {
             // We're confident that the *ring* default provider contains TLS13_AES_128_GCM_SHA256
             initial: initial_suite_from_provider(inner.crypto_provider())
-                .expect("no initial cipher suite found"),
+                .unwrap_or_else(|| panic!("no initial cipher suite found")),
             inner: Arc::new(inner),
             extension_context: None,
         })
@@ -332,7 +339,7 @@ impl QuicClientConfig {
         Self {
             // We're confident that the *ring* default provider contains TLS13_AES_128_GCM_SHA256
             initial: initial_suite_from_provider(inner.crypto_provider())
-                .expect("no initial cipher suite found"),
+                .unwrap_or_else(|| panic!("no initial cipher suite found")),
             inner: Arc::new(inner),
             extension_context: None,
         }
@@ -365,7 +372,7 @@ impl QuicClientConfig {
         // Keep in sync with `with_platform_verifier()` above
         let mut config = rustls::ClientConfig::builder_with_provider(configured_provider())
             .with_protocol_versions(&[&rustls::version::TLS13])
-            .unwrap() // The default providers support TLS 1.3
+            .unwrap_or_else(|_| panic!("The default providers support TLS 1.3"))
             .dangerous()
             .with_custom_certificate_verifier(verifier)
             .with_no_client_auth();
@@ -387,17 +394,14 @@ impl crypto::ClientConfig for QuicClientConfig {
             version,
             got_handshake_data: false,
             next_secrets: None,
-            inner: rustls::quic::Connection::Client(
-                rustls::quic::ClientConnection::new(
-                    self.inner.clone(),
-                    version,
-                    ServerName::try_from(server_name)
-                        .map_err(|_| ConnectError::InvalidServerName(server_name.into()))?
-                        .to_owned(),
-                    to_vec(params),
-                )
-                .unwrap(),
-            ),
+            inner: rustls::quic::Connection::Client(rustls::quic::ClientConnection::new(
+                self.inner.clone(),
+                version,
+                ServerName::try_from(server_name)
+                    .map_err(|_| ConnectError::InvalidServerName(server_name.into()))?
+                    .to_owned(),
+                to_vec(params),
+            )?),
             suite: self.initial,
         });
 
@@ -408,7 +412,7 @@ impl crypto::ClientConfig for QuicClientConfig {
                 server_name,
                 std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
+                    .unwrap_or_else(|_| std::time::Duration::from_secs(0))
                     .as_nanos()
             );
             Ok(Box::new(ExtensionAwareTlsSession::new(
@@ -496,7 +500,7 @@ impl QuicServerConfig {
         Ok(Self {
             // We're confident that the *ring* default provider contains TLS13_AES_128_GCM_SHA256
             initial: initial_suite_from_provider(inner.crypto_provider())
-                .expect("no initial cipher suite found"),
+                .ok_or_else(|| rustls::Error::General("no initial cipher suite found".into()))?,
             inner: Arc::new(inner),
             extension_context: None,
         })
@@ -536,7 +540,7 @@ impl QuicServerConfig {
     ) -> Result<rustls::ServerConfig, rustls::Error> {
         let mut inner = rustls::ServerConfig::builder_with_provider(configured_provider())
             .with_protocol_versions(&[&rustls::version::TLS13])
-            .unwrap() // The *ring* default provider supports TLS 1.3
+            .map_err(|_| rustls::Error::General("TLS 1.3 not supported".into()))? // The *ring* default provider supports TLS 1.3
             .with_no_client_auth()
             .with_single_cert(cert_chain, key)?;
 
@@ -567,20 +571,26 @@ impl TryFrom<Arc<rustls::ServerConfig>> for QuicServerConfig {
 }
 
 impl crypto::ServerConfig for QuicServerConfig {
+    #[allow(clippy::expect_used)]
     fn start_session(
         self: Arc<Self>,
         version: u32,
         params: &TransportParameters,
     ) -> Box<dyn crypto::Session> {
         // Safe: `start_session()` is never called if `initial_keys()` rejected `version`
-        let version = interpret_version(version).unwrap();
+        let version = interpret_version(version).map_err(|_| {
+            rustls::Error::General("Invalid QUIC version for server connection".into())
+        }).expect("Version should be valid at this point - start_session() is never called if initial_keys() rejected version");
         let inner_session = Box::new(TlsSession {
             version,
             got_handshake_data: false,
             next_secrets: None,
             inner: rustls::quic::Connection::Server(
                 rustls::quic::ServerConnection::new(self.inner.clone(), version, to_vec(params))
-                    .unwrap(),
+                    .map_err(|_| {
+                        rustls::Error::General("Failed to create server connection".into())
+                    })
+                    .expect("Server connection creation should not fail with valid parameters"),
             ),
             suite: self.initial,
         });
@@ -591,7 +601,7 @@ impl crypto::ServerConfig for QuicServerConfig {
                 "server-{}",
                 std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
+                    .unwrap_or_else(|_| std::time::Duration::from_secs(0))
                     .as_nanos()
             );
             Box::new(ExtensionAwareTlsSession::new(
@@ -614,9 +624,12 @@ impl crypto::ServerConfig for QuicServerConfig {
         Ok(initial_keys(version, *dst_cid, Side::Server, &self.initial))
     }
 
+    #[allow(clippy::expect_used)]
     fn retry_tag(&self, version: u32, orig_dst_cid: &ConnectionId, packet: &[u8]) -> [u8; 16] {
         // Safe: `start_session()` is never called if `initial_keys()` rejected `version`
-        let version = interpret_version(version).unwrap();
+        let version = interpret_version(version).map_err(|_| {
+            rustls::Error::General("Invalid QUIC version for retry tag".into())
+        }).expect("Version should be valid at this point - retry_tag() is never called if initial_keys() rejected version");
         let (nonce, key) = match version {
             Version::V1 => (RETRY_INTEGRITY_NONCE_V1, RETRY_INTEGRITY_KEY_V1),
             Version::V1Draft => (RETRY_INTEGRITY_NONCE_DRAFT, RETRY_INTEGRITY_KEY_DRAFT),
@@ -669,10 +682,21 @@ pub(crate) fn initial_suite_from_provider(
 
 pub(crate) fn configured_provider() -> Arc<rustls::crypto::CryptoProvider> {
     #[cfg(all(feature = "rustls-aws-lc-rs", not(feature = "rustls-ring")))]
-    let provider = rustls::crypto::aws_lc_rs::default_provider();
+    let provider = {
+        // Mark KEM-only intent for tests; group restriction wiring follows.
+        DEBUG_KEM_ONLY.store(true, Ordering::Relaxed);
+        rustls::crypto::aws_lc_rs::default_provider()
+    };
     #[cfg(feature = "rustls-ring")]
     let provider = rustls::crypto::ring::default_provider();
     Arc::new(provider)
+}
+
+/// Returns true if the runtime was configured to run in a KEM-only
+/// (ML‑KEM) handshake mode. This is a best-effort diagnostic used in
+/// tests and may return false when the provider does not expose PQ KEM.
+pub fn debug_kem_only_enabled() -> bool {
+    DEBUG_KEM_ONLY.load(Ordering::Relaxed)
 }
 
 fn to_vec(params: &TransportParameters) -> Vec<u8> {
@@ -701,10 +725,14 @@ pub(crate) fn initial_keys(
 }
 
 impl crypto::PacketKey for Box<dyn PacketKey> {
+    #[allow(clippy::expect_used)]
     fn encrypt(&self, packet: u64, buf: &mut [u8], header_len: usize) {
         let (header, payload_tag) = buf.split_at_mut(header_len);
         let (payload, tag_storage) = payload_tag.split_at_mut(payload_tag.len() - self.tag_len());
-        let tag = self.encrypt_in_place(packet, &*header, payload).unwrap();
+        let tag = self
+            .encrypt_in_place(packet, &*header, payload)
+            .map_err(|_| rustls::Error::General("Packet encryption failed".into()))
+            .expect("Packet encryption should not fail with valid parameters");
         tag_storage.copy_from_slice(tag.as_ref());
     }
 

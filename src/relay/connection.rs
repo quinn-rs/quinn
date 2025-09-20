@@ -253,12 +253,17 @@ impl RelayConnection {
     }
 
     /// Check if connection is active
+    #[allow(clippy::unwrap_used, clippy::expect_used)]
     pub fn is_active(&self) -> bool {
-        let state = self.state.lock().unwrap();
+        let state = self
+            .state
+            .lock()
+            .expect("Mutex poisoning is unexpected in normal operation");
         state.is_active
     }
 
     /// Send data through the relay
+    #[allow(clippy::unwrap_used, clippy::expect_used)]
     pub fn send_data(&self, data: Vec<u8>) -> RelayResult<()> {
         if data.len() > self.config.max_frame_size {
             return Err(RelayError::ProtocolError {
@@ -271,7 +276,10 @@ impl RelayConnection {
             });
         }
 
-        let mut state = self.state.lock().unwrap();
+        let mut state = self
+            .state
+            .lock()
+            .expect("Mutex poisoning is unexpected in normal operation");
 
         if !state.is_active {
             return Err(RelayError::SessionError {
@@ -317,6 +325,7 @@ impl RelayConnection {
     }
 
     /// Receive data from the relay
+    #[allow(clippy::unwrap_used)]
     pub fn receive_data(&self, data: Vec<u8>) -> RelayResult<()> {
         let mut state = self.state.lock().unwrap();
 
@@ -352,6 +361,7 @@ impl RelayConnection {
     }
 
     /// Get next outgoing data packet
+    #[allow(clippy::unwrap_used)]
     pub fn next_outgoing(&self) -> Option<Vec<u8>> {
         let mut state = self.state.lock().unwrap();
         if let Some(data) = state.outgoing_queue.pop_front() {
@@ -363,6 +373,7 @@ impl RelayConnection {
     }
 
     /// Get next incoming data packet
+    #[allow(clippy::unwrap_used)]
     pub fn next_incoming(&self) -> Option<Vec<u8>> {
         let mut state = self.state.lock().unwrap();
         if let Some(data) = state.incoming_queue.pop_front() {
@@ -374,6 +385,7 @@ impl RelayConnection {
     }
 
     /// Check if connection has timed out
+    #[allow(clippy::unwrap_used)]
     pub fn check_timeout(&self) -> RelayResult<()> {
         let state = self.state.lock().unwrap();
         let now = Instant::now();
@@ -389,12 +401,14 @@ impl RelayConnection {
     }
 
     /// Check if keep-alive should be sent
+    #[allow(clippy::unwrap_used)]
     pub fn should_send_keep_alive(&self) -> bool {
         let state = self.state.lock().unwrap();
         Instant::now() >= state.next_keep_alive
     }
 
     /// Send keep-alive
+    #[allow(clippy::unwrap_used)]
     pub fn send_keep_alive(&self) -> RelayResult<()> {
         let mut state = self.state.lock().unwrap();
         state.next_keep_alive = Instant::now() + self.config.keep_alive_interval;
@@ -407,6 +421,7 @@ impl RelayConnection {
     }
 
     /// Terminate the connection
+    #[allow(clippy::unwrap_used)]
     pub fn terminate(&self, reason: String) -> RelayResult<()> {
         let mut state = self.state.lock().unwrap();
         state.is_active = false;
@@ -420,6 +435,7 @@ impl RelayConnection {
     }
 
     /// Get connection statistics
+    #[allow(clippy::unwrap_used)]
     pub fn get_stats(&self) -> ConnectionStats {
         let state = self.state.lock().unwrap();
         ConnectionStats {

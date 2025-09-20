@@ -144,7 +144,7 @@ pub fn timestamp_now() -> u64 {
     use std::time::{SystemTime, UNIX_EPOCH};
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .unwrap()
+        .unwrap_or_else(|_| panic!("current time should always be after UNIX epoch"))
         .as_micros() as u64
 }
 

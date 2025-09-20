@@ -26,137 +26,133 @@ jobs:
     name: Clippy Lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-        if: ${{ !startsWith(runner.name, 'nektos/act') }}
-        with:
-          fetch-depth: 1
+    - uses: actions/checkout@v4
+      if: ${{ !startsWith(runner.name, 'nektos/act') }}
+      with:
+        fetch-depth: 1
 
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        components: clippy
 
-      - uses: Swatinem/rust-cache@v2
+    - uses: Swatinem/rust-cache@v2
 
-      - name: Format check
-        run: cargo fmt --all -- --check
+    - name: Format check
+      run: cargo fmt --all -- --check
 
-      - name: Run clippy (policy — lib/bins/examples)
-        run: |
-          cargo clippy --all-features --lib --bins --examples -- \
-            -D warnings
+    - name: Run clippy (policy — lib/bins/examples)
+      run: |
+        cargo clippy --all-features --lib --bins --examples -- \
+          -D warnings
 
-      - name: Run clippy (tests — advisory)
-        run: cargo clippy --all-features --tests || true
+    - name: Run clippy (tests — advisory)
+      run: cargo clippy --all-features --tests || true
 
   quick-test:
     name: Quick Tests (<30s)
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        if: ${{ !startsWith(runner.name, 'nektos/act') }}
-        with:
-          fetch-depth: 1
+    - name: Checkout code
+      uses: actions/checkout@v4
+      if: ${{ !startsWith(runner.name, 'nektos/act') }}
+      with:
+        fetch-depth: 1
 
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
 
-      - uses: Swatinem/rust-cache@v2
+    - uses: Swatinem/rust-cache@v2
 
-      - name: Run quick tests
-        run: |
-          # Run categorized quick tests (non-blocking if quick suite absent)
-          cargo test --test quick || true
+    - name: Run quick tests
+      run: |
+        cargo test --test quick || true
 
   check:
     name: Cargo Check
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest]
+        exclude:
+          - os: windows-latest
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-        if: ${{ !startsWith(runner.name, 'nektos/act') }}
-        with:
-          fetch-depth: 1
+    - uses: actions/checkout@v4
+      if: ${{ !startsWith(runner.name, 'nektos/act') }}
+      with:
+        fetch-depth: 1
 
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
 
-      - uses: Swatinem/rust-cache@v2
+    - uses: Swatinem/rust-cache@v2
 
-      - name: Check compilation
-        run: cargo check --all-targets
+    - name: Check compilation
+      run: cargo check --all-targets
 
   dependencies:
     name: Dependency Check
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-        if: ${{ !startsWith(runner.name, 'nektos/act') }}
-        with:
-          fetch-depth: 1
+    - uses: actions/checkout@v4
+      if: ${{ !startsWith(runner.name, 'nektos/act') }}
+      with:
+        fetch-depth: 1
 
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
 
-      - uses: Swatinem/rust-cache@v2
+    - uses: Swatinem/rust-cache@v2
 
-      - name: Check for unused dependencies
-        run: |
-          cargo install cargo-machete --locked || true
-          cargo machete || true  # Non-blocking for now
+    - name: Check for unused dependencies
+      run: |
+        cargo install cargo-machete --locked || true
+        cargo machete || true
 
-      - name: Check for outdated dependencies
-        run: |
-          cargo install cargo-outdated --locked || true
-          cargo outdated --exit-code 1 || true  # Non-blocking for now
+    - name: Check for outdated dependencies
+      run: |
+        cargo install cargo-outdated --locked || true
+        cargo outdated --exit-code 1 || true
 
   license-check:
     name: License Header Check
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-        if: ${{ !startsWith(runner.name, 'nektos/act') }}
-        with:
-          fetch-depth: 1
+    - uses: actions/checkout@v4
+      if: ${{ !startsWith(runner.name, 'nektos/act') }}
+      with:
+        fetch-depth: 1
 
-      - name: Check license headers
-        run: |
-          # Check that all Rust source files have proper license headers
-          # ant-quic uses dual MIT/Apache-2.0 licensing
-
-          missing_headers=0
-          for file in $(find src tests examples -name "*.rs" -type f); do
-            if ! head -10 "$file" | grep -q -E "(MIT|Apache|License)"; then
-              echo "::warning file=$file::Missing license header"
-              missing_headers=$((missing_headers + 1))
-            fi
-          done
-
-          if [ $missing_headers -gt 0 ]; then
-            echo "::warning::Found $missing_headers files without license headers"
-            # Non-blocking for now, will be enforced later
+    - name: Check license headers
+      run: |
+        missing_headers=0
+        for file in $(find src tests examples -name "*.rs" -type f); do
+          if ! head -10 "$file" | grep -q -E "(MIT|Apache|License)"; then
+            echo "::warning file=$file::Missing license header"
+            missing_headers=$((missing_headers + 1))
           fi
+        done
+
+        if [ $missing_headers -gt 0 ]; then
+          echo "::warning::Found $missing_headers files without license headers"
+        fi
 
   yaml-lint:
     name: YAML/TOML Validation
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
-      # Skip actionlint (occasionally unavailable); keep only TOML validation
-      - name: Note
-        run: echo "Skipping actionlint; running TOML validation only"
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 1
 
-      - name: Validate TOML files
-        run: |
-          # Check Cargo.toml files are valid
-          find . -name "Cargo.toml" -exec cargo verify-project --manifest-path {} \;
-        continue-on-error: true
+    - name: Note
+      run: echo "Skipping actionlint; running TOML validation only"
+
+    - name: Validate TOML files
+      run: |
+        find . -name "Cargo.toml" -exec cargo verify-project --manifest-path {} \;
+      continue-on-error: true
 
   summary:
     name: Quick Checks Summary
@@ -166,33 +162,31 @@ jobs:
     outputs:
       passed: ${{ steps.check.outputs.passed }}
     steps:
-      - name: Summary
-        id: check
-        run: |
-          # Check if all required jobs passed
-          if [[ "${{ needs.lint.result }}" == "success" && \
-                "${{ needs.check.result }}" == "success" && \
-                "${{ needs.yaml-lint.result }}" == "success" ]]; then
-            echo "✅ All quick checks passed!"
-            echo "passed=true" >> $GITHUB_OUTPUT
-          else
-            echo "❌ Some quick checks failed!"
-            echo "passed=false" >> $GITHUB_OUTPUT
-            exit 1
-          fi
+    - name: Summary
+      id: check
+      run: |
+        if [[ "${{ needs.lint.result }}" == "success" && \
+              "${{ needs.check.result }}" == "success" && \
+              "${{ needs.yaml-lint.result }}" == "success" ]]; then
+          echo "✅ All quick checks passed!"
+          echo "passed=true" >> $GITHUB_OUTPUT
+        else
+          echo "❌ Some quick checks failed!"
+          echo "passed=false" >> $GITHUB_OUTPUT
+          exit 1
+        fi
 
-      - name: Report Status
-        if: always()
-        run: |
-          echo "### Quick Checks Summary" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Check | Status |" >> $GITHUB_STEP_SUMMARY
-          echo "|-------|--------|" >> $GITHUB_STEP_SUMMARY
-          echo "| Clippy | ${{ needs.lint.result == 'success' && '✅' || '❌' }} |" >> $GITHUB_STEP_SUMMARY
-
-          echo "| Compilation | ${{ needs.check.result == 'success' && '✅' || '❌' }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Dependencies | ${{ needs.dependencies.result == 'success' && '✅' || '❌' }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| License Headers | ${{ needs.license-check.result == 'success' && '✅' || '❌' }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| YAML/TOML | ${{ needs.yaml-lint.result == 'success' && '✅' || '❌' }} |" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "Time: $(date -u)" >> $GITHUB_STEP_SUMMARY
+    - name: Report Status
+      if: always()
+      run: |
+        echo "### Quick Checks Summary" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "| Check | Status |" >> $GITHUB_STEP_SUMMARY
+        echo "|-------|--------|" >> $GITHUB_STEP_SUMMARY
+        echo "| Clippy | ${{ needs.lint.result == 'success' && '✅' || '❌' }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| Compilation | ${{ needs.check.result == 'success' && '✅' || '❌' }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| Dependencies | ${{ needs.dependencies.result == 'success' && '✅' || '❌' }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| License Headers | ${{ needs.license-check.result == 'success' && '✅' || '❌' }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| YAML/TOML | ${{ needs.yaml-lint.result == 'success' && '✅' || '❌' }} |" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "Time: $(date -u)" >> $GITHUB_STEP_SUMMARY

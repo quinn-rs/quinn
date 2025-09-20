@@ -133,7 +133,14 @@ impl PartialDecode {
             ..
         }) = plain_header
         {
-            let number = Self::decrypt_header(&mut buf, header_crypto.unwrap())?;
+            let number = match header_crypto {
+                Some(crypto) => Self::decrypt_header(&mut buf, crypto)?,
+                None => {
+                    return Err(PacketDecodeError::InvalidHeader(
+                        "header crypto should be available".into(),
+                    ));
+                }
+            };
             let header_len = buf.position() as usize;
             let mut bytes = buf.into_inner();
 
@@ -163,7 +170,14 @@ impl PartialDecode {
                 ty,
                 dst_cid,
                 src_cid,
-                number: Self::decrypt_header(&mut buf, header_crypto.unwrap())?,
+                number: match header_crypto {
+                    Some(crypto) => Self::decrypt_header(&mut buf, crypto)?,
+                    None => {
+                        return Err(PacketDecodeError::InvalidHeader(
+                            "header crypto should be available for long header packet".into(),
+                        ));
+                    }
+                },
                 version,
             },
             Retry {
@@ -176,7 +190,14 @@ impl PartialDecode {
                 version,
             },
             Short { spin, dst_cid, .. } => {
-                let number = Self::decrypt_header(&mut buf, header_crypto.unwrap())?;
+                let number = match header_crypto {
+                    Some(crypto) => Self::decrypt_header(&mut buf, crypto)?,
+                    None => {
+                        return Err(PacketDecodeError::InvalidHeader(
+                            "header crypto should be available for initial packet".into(),
+                        ));
+                    }
+                };
                 let key_phase = buf.get_ref()[0] & KEY_PHASE_BIT != 0;
                 Header::Short {
                     spin,

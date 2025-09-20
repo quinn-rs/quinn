@@ -238,26 +238,35 @@ impl DynamicLogFilter {
     }
 
     /// Update the filter
+    #[allow(clippy::expect_used)]
     pub fn update<F>(&self, updater: F) -> Result<(), Box<dyn std::error::Error>>
     where
         F: FnOnce(&mut LogFilter) -> Result<(), Box<dyn std::error::Error>>,
     {
-        let mut filter = self.inner.write().unwrap();
+        let mut filter = self
+            .inner
+            .write()
+            .expect("Mutex poisoning is unexpected in normal operation");
         updater(&mut filter)?;
         Ok(())
     }
 
     /// Check if should log
+    #[allow(clippy::unwrap_used, clippy::expect_used)]
     pub fn should_log(&self, target: &str, level: Level, message: &str) -> bool {
         self.inner
             .read()
-            .unwrap()
+            .expect("Mutex poisoning is unexpected in normal operation")
             .should_log(target, level, message)
     }
 
     /// Get level for target
+    #[allow(clippy::unwrap_used, clippy::expect_used)]
     pub fn level_for(&self, target: &str) -> Option<Level> {
-        self.inner.read().unwrap().level_for(target)
+        self.inner
+            .read()
+            .expect("Mutex poisoning is unexpected in normal operation")
+            .level_for(target)
     }
 }
 

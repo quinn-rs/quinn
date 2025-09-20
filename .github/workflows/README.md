@@ -1,199 +1,144 @@
-# ant-quic CI/CD Workflows
+# GitHub Workflows Local Testing Guide
 
-This directory contains the GitHub Actions workflows for the ant-quic project. The workflows are designed to be modular, maintainable, and provide comprehensive testing across all platforms.
+## Overview
 
-## Workflow Overview
+This repository includes comprehensive GitHub workflows that can be tested locally using [act](https://github.com/nektos/act). Local testing allows you to validate workflows before pushing to GitHub, catch issues early, and ensure CI/CD reliability.
 
-### 🚀 Quick Checks (`quick-checks.yml`)
-**Trigger**: Every push and PR
-**Duration**: <5 minutes
-**Purpose**: Fast feedback on code quality
+## Prerequisites
 
-Checks:
-- Code formatting (rustfmt)
-- Linting (clippy)
-- Quick unit tests (<30s)
-- Compilation on all platforms
-- YAML/TOML validation
-
-### 🧪 Standard Tests (`standard-tests.yml`)
-**Trigger**: After quick checks pass
-**Duration**: <10 minutes
-**Purpose**: Comprehensive test coverage
-
-Tests:
-- All unit and integration tests
-- Documentation tests
-- Feature combination tests
-- WASM compatibility
-- Code coverage generation
-
-### 🏋️ Long Tests (`long-tests.yml`)
-**Trigger**: Daily schedule, manual, or PR label
-**Duration**: 30-60 minutes
-**Purpose**: Exhaustive testing
-
-Suites:
-- NAT traversal scenarios
-- Docker-based NAT simulation
-- Stress tests
-- Cross-platform matrix
-- Property-based tests
-
-### 🔒 Security Audit (`security-audit.yml`)
-**Trigger**: Daily or on dependency changes
-**Duration**: <10 minutes
-**Purpose**: Security and compliance
-
-Scans:
-- Vulnerability scanning (cargo-audit)
-- License compliance (cargo-deny)
-- Unsafe code analysis (cargo-geiger)
-- SBOM generation
-- Static analysis (Semgrep)
-
-### 📊 Performance (`performance.yml`)
-**Trigger**: PRs to main branch
-**Duration**: <20 minutes
-**Purpose**: Prevent performance regressions
-
-Benchmarks:
-- Connection establishment
-- Throughput tests
-- Frame parsing
-- Memory usage analysis
-- Regression detection (5% threshold)
-
-### 📦 Release (`release.yml`)
-**Trigger**: Version tags (v*)
-**Duration**: <30 minutes
-**Purpose**: Automated releases
-
-Steps:
-1. Validate version format
-2. Run final tests (reuses quick checks)
-3. Build binaries for all platforms
-4. Generate release notes
-5. Create GitHub release with artifacts
-
-Note: Docker images and crates.io publishing are not part of the current workflow.
-
-### 🌐 External Validation (`scheduled-external.yml`)
-**Trigger**: Daily at 4 AM UTC
-**Duration**: <15 minutes
-**Purpose**: Real-world validation
-
-Tests:
-- Public QUIC endpoints
-- Interoperability matrix
-- RFC compliance checks
-- Success rate tracking
-
-## Workflow Dependencies
-
-```mermaid
-graph LR
-    A[Push/PR] --> B[Quick Checks]
-    B --> C[Standard Tests]
-    C --> D[Long Tests]
-    
-    E[Schedule] --> F[Security Audit]
-    E --> G[External Validation]
-    
-    H[Tag Push] --> I[Release]
-    
-    J[PR to main] --> K[Performance]
-```
-
-## Running Workflows Locally
-
-You can test workflows locally using [act](https://github.com/nektos/act):
+1. **Install act**: `brew install act` (macOS) or follow [installation instructions](https://github.com/nektos/act#installation)
+2. **Docker Desktop**: Required for act to run workflows locally
+3. **act configuration**: Create `~/.actrc` for optimal performance:
 
 ```bash
-# Run quick checks
-act -j quick-checks
-
-# Run with specific event
-act pull_request -j standard-tests
-
-# Run with secrets
-act -s GITHUB_TOKEN=$GITHUB_TOKEN
+# ~/.actrc
+--container-architecture linux/amd64
+--platform macos-latest
 ```
 
-## Triggering Long Tests
+## Available Workflows
 
-Long tests can be triggered in several ways:
+### ✅ Fully Compatible with act
 
-1. **Scheduled**: Runs automatically every day at 2 AM UTC
-2. **Manual**: Go to Actions tab → Long Tests → Run workflow
-3. **PR Label**: Add the `run-long-tests` label to a PR
+#### 1. Quick Checks (`quick-checks.yml`)
+- **Purpose**: Fast validation of code quality, formatting, and basic compilation
+- **Runtime**: ~2-3 minutes
+- **Tests**: Format checking, clippy linting, cargo check, dependency validation
+- **Local testing**: Fully supported
 
-## Configuration
+```bash
+# Test quick-checks workflow
+act -W .github/workflows/quick-checks.yml -j quick-checks
+```
 
-### Test Timeouts
-- Quick tests: 30 seconds
-- Standard tests: 5 minutes
-- Long tests: 30-60 minutes
+#### 2. CI Consolidated (`ci-consolidated.yml`)
+- **Purpose**: Comprehensive testing including unit tests, security checks, and coverage
+- **Runtime**: ~10-15 minutes
+- **Tests**: Full test suite, security audit, coverage analysis
+- **Local testing**: Fully supported (formatting and basic tests work)
 
-### Performance Thresholds
-- Regression threshold: 5%
-- Improvement threshold: 5%
+```bash
+# Test CI consolidated workflow
+act -W .github/workflows/ci-consolidated.yml -j test
+```
 
-### Platform Matrix
-- OS: Ubuntu, Windows, macOS
-- Architectures: x86_64, aarch64
-- Rust: stable, beta, nightly (allowed to fail)
+### ❌ Not Compatible with act (Docker-in-Docker Required)
 
-## Secrets Required
+#### 3. Docker NAT Tests (`docker-nat-tests.yml`)
+- **Purpose**: NAT traversal testing using Docker containers
+- **Runtime**: ~5-10 minutes
+- **Tests**: Network connectivity and NAT traversal scenarios
+- **Local testing**: ❌ **NOT COMPATIBLE** with act
 
-The following secrets need to be configured in the repository:
+**Important**: This workflow requires Docker-in-Docker (DinD) support and cannot run in act environments. It needs full Docker daemon access and is designed exclusively for GitHub Actions.
 
-- `CRATES_IO_TOKEN`: For publishing to crates.io
-- `DOCKER_USERNAME`: Docker Hub username
-- `DOCKER_PASSWORD`: Docker Hub password
+**Alternative**: Use the actual GitHub Actions environment or run NAT tests manually:
+```bash
+# Manual NAT testing (requires Docker)
+./scripts/test_nat_traversal.sh
+./scripts/test_nat_features.sh
+```
+
+## Testing Commands
+
+### Quick Validation (Recommended for Development)
+```bash
+# Run quick checks - fastest validation
+act -W .github/workflows/quick-checks.yml -j quick-checks
+
+# Run CI consolidated tests
+act -W .github/workflows/ci-consolidated.yml -j test
+```
+
+### Full Workflow Testing
+```bash
+# Test all workflows (requires Docker for NAT tests)
+act --list  # List all available jobs
+act -j quick-checks  # Run quick checks
+act -j test  # Run CI consolidated tests
+```
 
 ## Troubleshooting
 
 ### Common Issues
 
-1. **Workflow not triggering**
-   - Check branch protection rules
-   - Verify workflow syntax with `actionlint`
-   - Check GitHub Actions status
+1. **Architecture Warnings**
+   ```
+   ⚠ You are using Apple M-series chip and you have not specified container architecture
+   ```
+   **Solution**: Add `--container-architecture linux/amd64` to your act commands or `~/.actrc`
 
-2. **Tests timing out**
-   - Increase timeout in workflow
-   - Check for deadlocks in tests
-   - Consider moving to long tests
+2. **Docker Command Not Found**
+   ```
+   docker: command not found
+   ```
+   **Solution**: Ensure Docker Desktop is running and accessible
 
-3. **Release failing**
-   - Ensure version tag matches Cargo.toml
-   - Check crates.io token validity
-   - Verify all tests pass
+3. **Permission Issues**
+   ```
+   permission denied while trying to connect to the Docker daemon
+   ```
+   **Solution**: Ensure Docker daemon is running and you have proper permissions
 
-### Debugging
+4. **Network Issues**
+   ```
+   connect EHOSTUNREACH
+   ```
+   **Solution**: Check Docker daemon connectivity and network configuration
 
-Enable debug logging:
-```yaml
-env:
-  ACTIONS_RUNNER_DEBUG: true
-  ACTIONS_STEP_DEBUG: true
+### Performance Tips
+
+1. **Use caching**: act automatically caches Docker images and build artifacts
+2. **Run specific jobs**: Use `-j job-name` to run only specific jobs
+3. **Skip problematic workflows**: Focus on quick-checks and ci-consolidated for development
+4. **Use `--reuse`**: Reuse containers between runs for faster execution
+
+## Workflow Status
+
+| Workflow | Local Testing | Status | Notes |
+|----------|---------------|--------|-------|
+| Quick Checks | ✅ Full | ✅ Working | Auto-formats code, validates quality |
+| CI Consolidated | ✅ Full | ✅ Working | Comprehensive testing suite |
+| Docker NAT Tests | ❌ None | ❌ Incompatible | Requires Docker-in-Docker support |
+
+## Best Practices
+
+1. **Development Workflow**: Always run `act -j quick-checks` before committing
+2. **Pre-PR Validation**: Run both quick-checks and ci-consolidated before opening PRs
+3. **Docker Testing**: Use GitHub Actions for full Docker NAT testing
+4. **Caching**: Leverage act's caching for faster subsequent runs
+
+## Integration with Development
+
+The local testing setup integrates seamlessly with the development workflow:
+
+```bash
+# Typical development cycle
+cargo fmt --all                    # Format code
+cargo clippy -- -D warnings        # Check linting
+cargo test                         # Run tests
+act -j quick-checks               # Validate with GitHub workflow
+git add . && git commit           # Commit changes
 ```
 
-## Contributing
-
-When adding new workflows:
-
-1. Keep workflows focused and modular
-2. Use reusable actions in `.github/actions/`
-3. Document trigger conditions and purpose
-4. Add appropriate timeouts
-5. Include error handling and retries
-6. Update this README
-
-## Monitoring
-
-- Check Actions tab for workflow runs
-- Review workflow insights for trends
-- Monitor security alerts
-- Track performance metrics over time
+This ensures code quality standards are met before pushing to the repository.

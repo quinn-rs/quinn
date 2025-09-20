@@ -94,8 +94,8 @@ async fn test_basic_address_discovery_flow() {
     let server_handle = tokio::spawn(async move {
         info!("Server listening on {}", server_addr);
 
-        match server.accept().await {
-            Some(incoming) => {
+        match tokio::time::timeout(Duration::from_secs(5), server.accept()).await {
+            Ok(Some(incoming)) => {
                 let connection = incoming.accept().unwrap().await.unwrap();
                 info!(
                     "Server accepted connection from {}",
@@ -111,8 +111,11 @@ async fn test_basic_address_discovery_flow() {
 
                 connection
             }
-            _ => {
-                panic!("No incoming connection");
+            Ok(None) => {
+                panic!("Server accept returned None");
+            }
+            Err(_) => {
+                panic!("Server accept timed out - no incoming connection");
             }
         }
     });
@@ -138,6 +141,9 @@ async fn test_basic_address_discovery_flow() {
     // at the protocol level. Applications track discovered addresses through
     // connection events or NAT traversal APIs
     info!("Client connection established with address discovery active");
+
+    // Clean up connection
+    connection.close(0u32.into(), b"test complete");
 
     // Verify server connection
     let _server_conn = server_handle.await.unwrap();
@@ -170,14 +176,24 @@ async fn test_multipath_address_discovery() {
 
         // Accept multiple connections (simulating different paths)
         for i in 0..2 {
-            if let Some(incoming) = server.accept().await {
-                let connection = incoming.accept().unwrap().await.unwrap();
-                info!(
-                    "Server accepted connection {} from {}",
-                    i,
-                    connection.remote_address()
-                );
-                connections.push(connection);
+            match tokio::time::timeout(Duration::from_secs(3), server.accept()).await {
+                Ok(Some(incoming)) => {
+                    let connection = incoming.accept().unwrap().await.unwrap();
+                    info!(
+                        "Server accepted connection {} from {}",
+                        i,
+                        connection.remote_address()
+                    );
+                    connections.push(connection);
+                }
+                Ok(None) => {
+                    info!("Server accept returned None for connection {}", i);
+                    break;
+                }
+                Err(_) => {
+                    info!("Server accept timed out for connection {}", i);
+                    break;
+                }
             }
         }
 
@@ -208,9 +224,11 @@ async fn test_multipath_address_discovery() {
     tokio::time::sleep(Duration::from_millis(500)).await;
 
     // Check discovered addresses on each path
-    for (i, _conn) in client_connections.iter().enumerate() {
+    for (i, conn) in client_connections.iter().enumerate() {
         // Address discovery happens at the protocol level
         info!("Client connection {} established with address discovery", i);
+        // Clean up connection
+        conn.close(0u32.into(), b"test complete");
     }
 
     let server_conns = server_handle.await.unwrap();
@@ -249,8 +267,8 @@ async fn test_address_discovery_rate_limiting() {
 
     // Server that tries to trigger many observations
     let server_handle = tokio::spawn(async move {
-        match server.accept().await {
-            Some(incoming) => {
+        match tokio::time::timeout(Duration::from_secs(5), server.accept()).await {
+            Ok(Some(incoming)) => {
                 let connection = incoming.accept().unwrap().await.unwrap();
 
                 // Try to trigger multiple observations quickly
@@ -267,8 +285,11 @@ async fn test_address_discovery_rate_limiting() {
 
                 connection
             }
-            _ => {
-                panic!("No connection");
+            Ok(None) => {
+                panic!("Rate limiting server accept returned None");
+            }
+            Err(_) => {
+                panic!("Rate limiting server accept timed out - no connection");
             }
         }
     });
@@ -288,13 +309,16 @@ async fn test_address_discovery_rate_limiting() {
         ClientConfig::new(Arc::new(QuicClientConfig::try_from(client_crypto).unwrap()));
     client.set_default_client_config(client_config);
 
-    let _connection = client
+    let connection = client
         .connect(server_addr, "localhost")
         .unwrap()
         .await
         .unwrap();
 
     server_handle.await.unwrap();
+
+    // Clean up connection
+    connection.close(0u32.into(), b"test complete");
 
     info!("✓ Rate limiting test completed");
 }
@@ -333,24 +357,34 @@ async fn test_bootstrap_mode_address_discovery() {
         let mut connections = HashMap::new();
 
         for i in 0..3 {
-            if let Some(incoming) = bootstrap.accept().await {
-                match incoming.accept() {
-                    Ok(connecting) => {
-                        match connecting.await {
-                            Ok(connection) => {
-                                let remote = connection.remote_address();
-                                info!("Bootstrap accepted connection {} from {}", i, remote);
+            match tokio::time::timeout(Duration::from_secs(3), bootstrap.accept()).await {
+                Ok(Some(incoming)) => {
+                    match incoming.accept() {
+                        Ok(connecting) => {
+                            match connecting.await {
+                                Ok(connection) => {
+                                    let remote = connection.remote_address();
+                                    info!("Bootstrap accepted connection {} from {}", i, remote);
 
-                                // Bootstrap nodes should send observations immediately
-                                // for new connections
-                                tokio::time::sleep(Duration::from_millis(50)).await;
+                                    // Bootstrap nodes should send observations immediately
+                                    // for new connections
+                                    tokio::time::sleep(Duration::from_millis(50)).await;
 
-                                connections.insert(remote, connection);
+                                    connections.insert(remote, connection);
+                                }
+                                Err(e) => warn!("Connection failed: {}", e),
                             }
-                            Err(e) => warn!("Connection failed: {}", e),
                         }
+                        Err(e) => warn!("Accept failed: {}", e),
                     }
-                    Err(e) => warn!("Accept failed: {}", e),
+                }
+                Ok(None) => {
+                    info!("Bootstrap accept returned None for connection {}", i);
+                    break;
+                }
+                Err(_) => {
+                    info!("Bootstrap accept timed out for connection {}", i);
+                    break;
                 }
             }
         }
@@ -396,9 +430,11 @@ async fn test_bootstrap_mode_address_discovery() {
     tokio::time::sleep(Duration::from_millis(200)).await;
 
     // All clients should have discovered their addresses
-    for (i, _conn) in clients.iter().enumerate() {
+    for (i, conn) in clients.iter().enumerate() {
         // Clients receive OBSERVED_ADDRESS frames from bootstrap nodes
         info!("Client {} connected to bootstrap with address discovery", i);
+        // Clean up connection
+        conn.close(0u32.into(), b"test complete");
     }
 
     bootstrap_handle.await.unwrap();
@@ -436,8 +472,8 @@ async fn test_address_discovery_disabled() {
 
     // Server accepts connection
     let server_handle = tokio::spawn(async move {
-        match server.accept().await {
-            Some(incoming) => {
+        match tokio::time::timeout(Duration::from_secs(5), server.accept()).await {
+            Ok(Some(incoming)) => {
                 let connection = incoming.accept().unwrap().await.unwrap();
 
                 // Should not send any observations
@@ -447,8 +483,11 @@ async fn test_address_discovery_disabled() {
 
                 connection
             }
-            _ => {
-                panic!("No connection");
+            Ok(None) => {
+                panic!("Disabled discovery server accept returned None");
+            }
+            Err(_) => {
+                panic!("Disabled discovery server accept timed out - no connection");
             }
         }
     });
@@ -469,7 +508,7 @@ async fn test_address_discovery_disabled() {
         ClientConfig::new(Arc::new(QuicClientConfig::try_from(client_crypto).unwrap()));
     client.set_default_client_config(client_config);
 
-    let _connection = client
+    let connection = client
         .connect(server_addr, "localhost")
         .unwrap()
         .await
@@ -480,6 +519,9 @@ async fn test_address_discovery_disabled() {
 
     // When address discovery is disabled at endpoint creation,
     // no OBSERVED_ADDRESS frames are exchanged
+
+    // Clean up connection
+    connection.close(0u32.into(), b"test complete");
 
     let _server_conn = server_handle.await.unwrap();
     info!("Connection established without address discovery");
@@ -502,8 +544,8 @@ async fn test_address_discovery_with_migration() {
 
     // Server accepts and monitors migration
     let server_handle = tokio::spawn(async move {
-        match server.accept().await {
-            Some(incoming) => {
+        match tokio::time::timeout(Duration::from_secs(5), server.accept()).await {
+            Ok(Some(incoming)) => {
                 let connection = incoming.await.unwrap();
                 let initial_remote = connection.remote_address();
                 info!("Server: Initial client address: {}", initial_remote);
@@ -531,8 +573,11 @@ async fn test_address_discovery_with_migration() {
 
                 connection
             }
-            _ => {
-                panic!("No connection");
+            Ok(None) => {
+                panic!("Migration server accept returned None");
+            }
+            Err(_) => {
+                panic!("Migration server accept timed out - no connection");
             }
         }
     });
@@ -552,6 +597,9 @@ async fn test_address_discovery_with_migration() {
 
     // Address discovery handles migration scenarios automatically
     info!("Client: Migration test completed with address discovery");
+
+    // Clean up connection
+    connection.close(0u32.into(), b"test complete");
 
     server_handle.await.unwrap();
 
@@ -590,17 +638,32 @@ async fn test_nat_traversal_integration() {
 
     // Bootstrap node helps clients discover addresses
     tokio::spawn(async move {
-        while let Some(incoming) = bootstrap.accept().await {
-            tokio::spawn(async move {
-                if let Ok(connection) = incoming.accept().unwrap().await {
-                    info!(
-                        "Bootstrap: Helping {} discover address",
-                        connection.remote_address()
-                    );
-                    // Keep connection alive
-                    tokio::time::sleep(Duration::from_secs(10)).await;
+        let start_time = std::time::Instant::now();
+        let mut connection_count = 0;
+        while connection_count < 5 && start_time.elapsed() < Duration::from_secs(15) {
+            match tokio::time::timeout(Duration::from_secs(3), bootstrap.accept()).await {
+                Ok(Some(incoming)) => {
+                    connection_count += 1;
+                    tokio::spawn(async move {
+                        if let Ok(connection) = incoming.accept().unwrap().await {
+                            info!(
+                                "Bootstrap: Helping {} discover address",
+                                connection.remote_address()
+                            );
+                            // Keep connection alive
+                            tokio::time::sleep(Duration::from_secs(5)).await;
+                        }
+                    });
                 }
-            });
+                Ok(None) => {
+                    info!("Bootstrap accept returned None, stopping");
+                    break;
+                }
+                Err(_) => {
+                    info!("Bootstrap accept timed out, stopping");
+                    break;
+                }
+            }
         }
     });
 
@@ -621,7 +684,7 @@ async fn test_nat_traversal_integration() {
     ));
     client_a.set_default_client_config(client_config_a);
 
-    let _conn_a = client_a
+    let conn_a = client_a
         .connect(bootstrap_addr, "localhost")
         .unwrap()
         .await
@@ -635,7 +698,7 @@ async fn test_nat_traversal_integration() {
         ClientConfig::new(Arc::new(QuicClientConfig::try_from(client_crypto).unwrap()));
     client_b.set_default_client_config(client_config_b);
 
-    let _conn_b = client_b
+    let conn_b = client_b
         .connect(bootstrap_addr, "localhost")
         .unwrap()
         .await
@@ -649,6 +712,10 @@ async fn test_nat_traversal_integration() {
 
     info!("Client A connected through bootstrap with address discovery");
     info!("Client B connected through bootstrap with address discovery");
+
+    // Clean up connections
+    conn_a.close(0u32.into(), b"test complete");
+    conn_b.close(0u32.into(), b"test complete");
 
     // In ant-quic, discovered addresses are automatically integrated
     // with the NAT traversal system for hole punching

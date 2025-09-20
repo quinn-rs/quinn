@@ -44,35 +44,35 @@ jobs:
 
   # Main test suite
   test:
-    name: Test Suite
-    needs: quick-checks
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
+      name: Test Suite
+      needs: quick-checks
+      runs-on: ${{ matrix.os }}
+      timeout-minutes: 30
     strategy:
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-        rust: [stable]
-        exclude:
-          # Skip Windows when running with act (not supported on macOS)
-          - os: windows-latest
-      fail-fast: false
+       matrix:
+         os: [ubuntu-latest, macos-latest, windows-latest]
+         rust: [stable]
+         exclude:
+           # Skip Windows when running with act (not supported on macOS)
+           - os: windows-latest
+        fail-fast: false
 
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@v1
-        with:
-          toolchain: ${{ matrix.rust }}
-      - uses: Swatinem/rust-cache@v2
+      steps:
+        - uses: actions/checkout@v4
+        - uses: dtolnay/rust-toolchain@v1
+          with:
+            toolchain: ${{ matrix.rust }}
+        - uses: Swatinem/rust-cache@v2
 
-      - name: Build
-        run: cargo build --all-targets
+        - name: Build
+          run: cargo build --all-targets
 
-      - name: Test
-        run: cargo test --all-features
+        - name: Test
+          run: cargo test --all-features
 
-      - name: Doc tests
-        if: matrix.os == 'ubuntu-latest' && matrix.rust == 'stable'
-        run: cargo test --doc
+       - name: Doc tests
+         if: matrix.os == 'ubuntu-latest' && matrix.rust == 'stable'
+         run: cargo test --doc
 
   # Security and quality checks
   security:

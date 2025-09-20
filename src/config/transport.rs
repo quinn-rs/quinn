@@ -506,7 +506,14 @@ impl Default for TransportConfig {
             enable_segmentation_offload: true,
             nat_traversal_config: None,
             address_discovery_config: None,
-            pqc_algorithms: None,
+            // Default to pure PQ key exchange (ML-KEM-768); signatures are handled at
+            // the transport's binding layer via pinned ML-DSA raw public keys.
+            pqc_algorithms: Some(crate::transport_parameters::PqcAlgorithms {
+                ml_kem_768: true,
+                ml_dsa_65: false,
+                hybrid_x25519_ml_kem: false,
+                hybrid_ed25519_ml_dsa: false,
+            }),
         }
     }
 }

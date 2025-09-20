@@ -436,11 +436,12 @@ impl CertificateNegotiationManager {
     }
 
     /// Fail a negotiation with an error
+    #[allow(clippy::unwrap_used, clippy::expect_used)]
     pub fn fail_negotiation(&self, id: NegotiationId, error: String) {
         let mut sessions = self
             .sessions
             .write()
-            .expect("Session lock should not be poisoned");
+            .expect("Mutex poisoning is unexpected in normal operation");
         sessions.insert(
             id,
             NegotiationState::Failed {
@@ -452,27 +453,29 @@ impl CertificateNegotiationManager {
         let mut stats = self
             .stats
             .lock()
-            .expect("Stats lock should not be poisoned");
+            .expect("Mutex poisoning is unexpected in normal operation");
         stats.failed += 1;
 
         warn!("Certificate type negotiation failed: {:?}", id);
     }
 
     /// Get the current state of a negotiation
+    #[allow(clippy::unwrap_used, clippy::expect_used)]
     pub fn get_negotiation_state(&self, id: NegotiationId) -> Option<NegotiationState> {
         let sessions = self
             .sessions
             .read()
-            .expect("Session lock should not be poisoned");
+            .expect("Mutex poisoning is unexpected in normal operation");
         sessions.get(&id).cloned()
     }
 
     /// Check for and handle timed out negotiations
+    #[allow(clippy::unwrap_used, clippy::expect_used)]
     pub fn handle_timeouts(&self) {
         let mut sessions = self
             .sessions
             .write()
-            .expect("Session lock should not be poisoned");
+            .expect("Mutex poisoning is unexpected in normal operation");
         let mut timed_out_ids = Vec::new();
 
         for (id, state) in sessions.iter() {
@@ -494,7 +497,7 @@ impl CertificateNegotiationManager {
             let mut stats = self
                 .stats
                 .lock()
-                .expect("Stats lock should not be poisoned");
+                .expect("Mutex poisoning is unexpected in normal operation");
             stats.timed_out += 1;
 
             warn!("Certificate type negotiation timed out: {:?}", id);
@@ -502,11 +505,12 @@ impl CertificateNegotiationManager {
     }
 
     /// Clean up completed negotiations older than the specified duration
+    #[allow(clippy::unwrap_used, clippy::expect_used)]
     pub fn cleanup_old_sessions(&self, max_age: Duration) {
         let mut sessions = self
             .sessions
             .write()
-            .expect("Session lock should not be poisoned");
+            .expect("Mutex poisoning is unexpected in normal operation");
         let cutoff = Instant::now() - max_age;
 
         sessions.retain(|id, state| {
@@ -526,29 +530,32 @@ impl CertificateNegotiationManager {
     }
 
     /// Get current negotiation statistics
+    #[allow(clippy::unwrap_used, clippy::expect_used)]
     pub fn get_stats(&self) -> NegotiationStats {
         self.stats
             .lock()
-            .expect("Stats lock should not be poisoned")
+            .expect("Mutex poisoning is unexpected in normal operation")
             .clone()
     }
 
     /// Clear all cached results
+    #[allow(clippy::unwrap_used, clippy::expect_used)]
     pub fn clear_cache(&self) {
         let mut cache = self
             .cache
             .lock()
-            .expect("Cache lock should not be poisoned");
+            .expect("Mutex poisoning is unexpected in normal operation");
         cache.clear();
         debug!("Cleared certificate type negotiation cache");
     }
 
     /// Get cache statistics
+    #[allow(clippy::unwrap_used, clippy::expect_used)]
     pub fn get_cache_stats(&self) -> (usize, usize) {
         let cache = self
             .cache
             .lock()
-            .expect("Cache lock should not be poisoned");
+            .expect("Mutex poisoning is unexpected in normal operation");
         (cache.len(), self.config.max_cache_size)
     }
 }

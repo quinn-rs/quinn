@@ -45,12 +45,12 @@ impl Runtime for AsyncStdRuntime {
     }
 }
 
-#[cfg(feature = "smol")]
+#[cfg(feature = "runtime-smol")]
 /// Runtime for smol
 #[derive(Debug)]
 pub struct SmolRuntime;
 
-#[cfg(feature = "smol")]
+#[cfg(feature = "runtime-smol")]
 impl Runtime for SmolRuntime {
     fn new_timer(&self, i: Instant) -> Pin<Box<dyn AsyncTimer>> {
         Box::pin(AsyncIoTimer(async_io::Timer::at(i.into())))

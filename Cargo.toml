@@ -1,6 +1,6 @@
 [package]
 name = "ant-quic"
-version = "0.8.15"
+version = "0.8.17"
 edition = "2024"
 rust-version = "1.85.0"
 license = "MIT OR Apache-2.0"
@@ -52,6 +52,7 @@ network-discovery = ["dep:socket2", "dep:nix"]
 # Runtime features
 runtime-tokio = []
 runtime-async-std = ["dep:async-std", "dep:async-io"]
+runtime-smol = ["dep:smol"]
 
 # Additional features
 arbitrary = ["dep:arbitrary"]
@@ -60,10 +61,6 @@ bloom = []
 
 # Post-Quantum Cryptography support
 pqc = ["saorsa-pqc", "aws-lc-rs"]
-
-# Compile-time switch to force classical-only behavior in PQC config defaults.
-# When enabled, PQC algorithms are compiled but default configs select classical only.
-classical-only = []
 
 # Zero-cost tracing system
 trace = []
@@ -86,8 +83,7 @@ low_memory = []
 # Note: prometheus feature is excluded from docs.rs builds due to compilation issues
 prometheus = ["dep:prometheus", "dep:warp", "dep:tokio-stream"]
 
-# Test features
-security_validation_not_yet_implemented = []
+
 
 # Enhanced testing features
 property_testing = ["proptest", "proptest-derive"]
@@ -100,7 +96,7 @@ rustc-hash = "2"
 rand = "0.8"
 thiserror = "2.0.3"
 tinyvec = { version = "1.1", features = ["alloc"] }
-tracing = { version = "0.1.10", default-features = false, features = ["std", "attributes"] }
+tracing = { version = "0.1.10", default-features = false, features = ["std", "attributes", "log"] }
 async-trait = "0.1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -217,7 +213,7 @@ proptest-derive = { version = "0.5" }
 # cargo-mutants is a CLI tool, not a library dependency
 # Install with: cargo install cargo-mutants
 [lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(fuzzing)', 'cfg(wasm_browser)', 'cfg(feature, values("arbitrary", "__qlog", "bloom", "low_memory", "prometheus", "security_validation_not_yet_implemented"))'] }
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(fuzzing)', 'cfg(wasm_browser)', 'cfg(feature, values("arbitrary", "__qlog", "bloom", "low_memory", "prometheus", "runtime-smol"))'] }
 
 # Main binary - unified P2P node with automatic coordinator services
 [[bin]]
@@ -282,12 +278,11 @@ harness = false  # Custom test runner for long tests
 features = ["rustls-aws-lc-rs", "rustls-ring", "platform-verifier", "log"]
 # Note: "prometheus" feature is intentionally excluded to avoid docs.rs compilation issues
 
-# Realistic clippy configuration - focus on meaningful issues
-[lints.clippy]
-# Allow unwrap/expect in specific contexts - they're often used for invariants
-# that should never be violated and are clearer than complex error handling
-unwrap_used = { level = "allow", priority = 2 }
-expect_used = { level = "allow", priority = 2 }
+ # Realistic clippy configuration - focus on meaningful issues
+ [lints.clippy]
+ # Deny unwrap/expect in production code - tests can use #[allow(clippy::unwrap_used)]
+ unwrap_used = { level = "deny", priority = 1 }
+ expect_used = { level = "deny", priority = 1 }
 
 # Allow indexing - often used for accessing known-good indices in hot paths
 indexing_slicing = { level = "allow", priority = 2 }
@@ -298,9 +293,9 @@ arithmetic_side_effects = { level = "allow", priority = 2 }
 # Keep these enabled for safety and correctness
 all = { level = "warn", priority = -1 }
 correctness = { level = "deny", priority = 1 }
-suspicious = { level = "warn", priority = 1 }
-complexity = { level = "warn", priority = 1 }
-perf = { level = "warn", priority = 1 }
+suspicious = { level = "warn", priority = 0 }
+complexity = { level = "warn", priority = 0 }
+perf = { level = "warn", priority = 0 }
 
 # Disable overly pedantic lints
 pedantic = { level = "allow", priority = -1 }

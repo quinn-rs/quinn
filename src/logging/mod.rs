@@ -45,6 +45,7 @@ pub use structured::*;
 static LOGGER: once_cell::sync::OnceCell<Arc<Logger>> = once_cell::sync::OnceCell::new();
 
 /// Initialize the logging system
+#[allow(clippy::expect_used)]
 pub fn init_logging(config: LoggingConfig) -> Result<(), LoggingError> {
     let logger = Arc::new(Logger::new(config)?);
 
@@ -53,7 +54,11 @@ pub fn init_logging(config: LoggingConfig) -> Result<(), LoggingError> {
         .map_err(|_| LoggingError::AlreadyInitialized)?;
 
     // Initialize tracing subscriber
-    let env_filter = EnvFilter::from_default_env().add_directive("ant_quic=debug".parse().unwrap());
+    let env_filter = EnvFilter::from_default_env().add_directive(
+        "ant_quic=debug"
+            .parse()
+            .expect("Static directive should always parse"),
+    );
 
     if logger.use_json() {
         let fmt_layer = tracing_subscriber::fmt::layer()
@@ -83,6 +88,7 @@ pub fn init_logging(config: LoggingConfig) -> Result<(), LoggingError> {
 }
 
 /// Get the global logger instance
+#[allow(clippy::expect_used)]
 pub fn logger() -> Arc<Logger> {
     LOGGER.get().cloned().unwrap_or_else(|| {
         // Create default logger if not initialized
@@ -339,6 +345,7 @@ impl RateLimiter {
     }
 
     /// Determine whether an event at the given level should be logged
+    #[allow(clippy::unwrap_used, clippy::expect_used)]
     pub fn should_log(&self, level: Level) -> bool {
         // Always allow ERROR level
         if level == Level::ERROR {
@@ -346,7 +353,10 @@ impl RateLimiter {
         }
 
         let now = Instant::now();
-        let mut window_start = self.window_start.lock().unwrap();
+        let mut window_start = self
+            .window_start
+            .lock()
+            .expect("Mutex poisoning is unexpected in normal operation");
 
         // Reset window if expired
         if now.duration_since(*window_start) > self.window {

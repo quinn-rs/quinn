@@ -7,9 +7,9 @@ use ant_quic::{
     high_level::Endpoint,
 };
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
-use std::net::{Ipv6Addr, SocketAddr};
+use std::net::SocketAddr;
 use std::sync::Arc;
-use tokio::time::{timeout, Duration};
+use tokio::time::{Duration, timeout};
 
 fn gen_self_signed_cert() -> (Vec<CertificateDer<'static>>, PrivateKeyDer<'static>) {
     let cert = rcgen::generate_simple_self_signed(vec!["localhost".to_string()])
@@ -28,15 +28,13 @@ async fn do_connect_classical_tls_loopback() {
 
     // Server config with a self-signed cert
     let (chain, key) = gen_self_signed_cert();
-    let server_cfg = ServerConfig::with_single_cert(chain.clone(), key)
-        .expect("failed to build ServerConfig");
+    let server_cfg =
+        ServerConfig::with_single_cert(chain.clone(), key).expect("failed to build ServerConfig");
 
     // Bind server on an ephemeral port
     let server_addr: SocketAddr = ([127, 0, 0, 1], 0).into();
     let server_ep = Endpoint::server(server_cfg, server_addr).expect("server endpoint");
-    let listen_addr = server_ep
-        .local_addr()
-        .expect("obtain server local addr");
+    let listen_addr = server_ep.local_addr().expect("obtain server local addr");
 
     // Spawn accept loop for a single connection
     let accept_task = tokio::spawn(async move {
@@ -56,8 +54,7 @@ async fn do_connect_classical_tls_loopback() {
     for c in chain {
         roots.add(c).expect("add server cert to roots");
     }
-    let client_cfg = ClientConfig::with_root_certificates(Arc::new(roots))
-        .expect("client config");
+    let client_cfg = ClientConfig::with_root_certificates(Arc::new(roots)).expect("client config");
 
     // Client endpoint on ephemeral port
     let client_addr: SocketAddr = ([127, 0, 0, 1], 0).into();
@@ -89,7 +86,7 @@ async fn connect_classical_tls_loopback() {
 #[cfg(feature = "pqc")]
 #[tokio::test]
 async fn pqc_capability_plus_connection_smoke() {
-    use ant_quic::crypto::pqc::{MlDsa65, MlKem768, MlDsaOperations, MlKemOperations};
+    use ant_quic::crypto::pqc::{MlDsa65, MlDsaOperations, MlKem768, MlKemOperations};
 
     // Exercise PQC primitives quickly (keygen + one op each)
     let kem = MlKem768::new();

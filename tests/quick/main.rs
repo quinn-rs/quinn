@@ -5,9 +5,15 @@
 
 // Re-export test modules
 mod auth_tests;
+mod auto_binding_integration;
+mod binding_stream_tests;
+mod connect_topologies;
 mod connection_tests;
 mod crypto_tests;
 mod frame_tests;
+mod pure_pq_rpk_tests;
+mod token_binding_tests;
+mod token_v2_server_side_tests;
 
 // Quick test utilities
 pub mod utils {

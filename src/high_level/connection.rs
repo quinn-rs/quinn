@@ -285,6 +285,68 @@ impl Future for ConnectionDriver {
         conn.forward_endpoint_events();
         conn.forward_app_events(&self.0.shared);
 
+        // Kick off automatic channel binding once connected, if configured
+        if conn.connected && !conn.binding_started {
+            if let Some(rt) = crate::trust::global_runtime() {
+                // Delay NEW_TOKEN until binding completes
+                conn.inner.set_delay_new_token_until_binding(true);
+
+                let hl_conn_server = Connection(self.0.clone());
+                let hl_conn_client = hl_conn_server.clone();
+                let store = rt.store.clone();
+                let policy = rt.policy.clone();
+                let signer = rt.local_signing_key.clone();
+                let spki = rt.local_spki.clone();
+                let runtime = conn.runtime.clone();
+
+                if conn.inner.side().is_server() {
+                    runtime.spawn(Box::pin(async move {
+                        match crate::trust::recv_verify_binding_ed25519(
+                            &hl_conn_server,
+                            &*store,
+                            &policy,
+                        )
+                        .await
+                        {
+                            Ok(peer) => {
+                                hl_conn_server
+                                    .0
+                                    .state
+                                    .lock("set peer")
+                                    .inner
+                                    .set_token_binding_peer_id(peer);
+                                hl_conn_server
+                                    .0
+                                    .state
+                                    .lock("allow tokens")
+                                    .inner
+                                    .set_delay_new_token_until_binding(false);
+                            }
+                            Err(_e) => {
+                                hl_conn_server.close(0u32.into(), b"channel binding failed");
+                            }
+                        }
+                    }));
+                }
+
+                if conn.inner.side().is_client() {
+                    runtime.spawn(Box::pin(async move {
+                        if let Ok(exp) = crate::trust::derive_exporter(&hl_conn_client) {
+                            let _ = crate::trust::send_binding_ed25519(
+                                &hl_conn_client,
+                                &exp,
+                                &signer,
+                                &spki,
+                            )
+                            .await;
+                        }
+                    }));
+                }
+
+                conn.binding_started = true;
+            }
+        }
+
         if !conn.inner.is_drained() {
             if keep_going {
                 // If the connection hasn't processed all tasks, schedule it again
@@ -634,6 +696,29 @@ impl Connection {
         self.0.stable_id()
     }
 
+    /// Returns true if this connection negotiated post-quantum settings.
+    ///
+    /// This reflects either explicit PQC algorithms advertised via transport
+    /// parameters or in-band detection from handshake CRYPTO frames.
+    pub fn is_pqc(&self) -> bool {
+        let state = self.0.state.lock("is_pqc");
+        state.inner.is_pqc()
+    }
+
+    /// Debug-only hint: returns true when the underlying TLS provider was
+    /// configured to run in KEM-only (ML‑KEM) mode. This is a diagnostic aid
+    /// for tests and does not itself guarantee group enforcement.
+    pub fn debug_kem_only(&self) -> bool {
+        #[cfg(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring"))]
+        {
+            crate::crypto::rustls::debug_kem_only_enabled()
+        }
+        #[cfg(not(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring")))]
+        {
+            false
+        }
+    }
+
     /// Update traffic keys spontaneously
     ///
     /// This primarily exists for testing purposes.
@@ -972,6 +1057,7 @@ impl ConnectionRef {
                 runtime,
                 send_buffer: Vec::new(),
                 buffered_transmit: None,
+                binding_started: false,
             }),
             shared: Shared::default(),
         }))
@@ -1054,6 +1140,8 @@ pub(crate) struct State {
     send_buffer: Vec<u8>,
     /// We buffer a transmit when the underlying I/O would block
     buffered_transmit: Option<crate::Transmit>,
+    /// True once we've initiated automatic channel binding (if enabled)
+    binding_started: bool,
 }
 
 impl State {

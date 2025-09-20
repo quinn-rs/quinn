@@ -67,8 +67,12 @@ impl SimulatedExtensionContext {
 
     /// Simulate sending certificate type preferences
     /// In reality, this would be sent in ClientHello/ServerHello extensions
+    #[allow(clippy::unwrap_used, clippy::expect_used)]
     pub fn simulate_send_preferences(&self, conn_id: &str) -> (Option<Vec<u8>>, Option<Vec<u8>>) {
-        let mut negotiations = self.negotiations.lock().unwrap();
+        let mut negotiations = self
+            .negotiations
+            .lock()
+            .expect("Mutex poisoning is unexpected in normal operation");
 
         let state = NegotiationState {
             local_preferences: self.local_preferences.clone(),
@@ -87,13 +91,17 @@ impl SimulatedExtensionContext {
     }
 
     /// Simulate receiving certificate type preferences from peer
+    #[allow(clippy::unwrap_used, clippy::expect_used)]
     pub fn simulate_receive_preferences(
         &self,
         conn_id: &str,
         client_types_data: Option<&[u8]>,
         server_types_data: Option<&[u8]>,
     ) -> Result<(), TlsExtensionError> {
-        let mut negotiations = self.negotiations.lock().unwrap();
+        let mut negotiations = self
+            .negotiations
+            .lock()
+            .expect("Mutex poisoning is unexpected in normal operation");
 
         let state = negotiations.get_mut(conn_id).ok_or_else(|| {
             TlsExtensionError::InvalidExtensionData(format!(
@@ -113,11 +121,15 @@ impl SimulatedExtensionContext {
     }
 
     /// Complete the negotiation and get the result
+    #[allow(clippy::unwrap_used, clippy::expect_used)]
     pub fn complete_negotiation(
         &self,
         conn_id: &str,
     ) -> Result<NegotiationResult, TlsExtensionError> {
-        let mut negotiations = self.negotiations.lock().unwrap();
+        let mut negotiations = self
+            .negotiations
+            .lock()
+            .expect("Mutex poisoning is unexpected in normal operation");
 
         let state = negotiations.get_mut(conn_id).ok_or_else(|| {
             TlsExtensionError::InvalidExtensionData(format!(
@@ -139,8 +151,12 @@ impl SimulatedExtensionContext {
     }
 
     /// Clean up negotiation state for a connection
+    #[allow(clippy::unwrap_used, clippy::expect_used)]
     pub fn cleanup_connection(&self, conn_id: &str) {
-        let mut negotiations = self.negotiations.lock().unwrap();
+        let mut negotiations = self
+            .negotiations
+            .lock()
+            .expect("Mutex poisoning is unexpected in normal operation");
         negotiations.remove(conn_id);
     }
 }
@@ -479,7 +495,7 @@ impl QuicClientConfig for Rfc7250QuicClientConfig {
             server_name,
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .unwrap_or_else(|_| std::time::Duration::from_secs(0))
                 .as_nanos()
         );
 
@@ -528,7 +544,7 @@ impl QuicServerConfig for Rfc7250QuicServerConfig {
             "server-{}",
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .unwrap_or_else(|_| std::time::Duration::from_secs(0))
                 .as_nanos()
         );
 

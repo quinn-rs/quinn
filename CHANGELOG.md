@@ -42,6 +42,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Resolved test compilation issues with async syntax
 - Fixed integration test configurations for new edition
 
+## [0.8.16] - 2025-09-19
+
+### Fixed
+- Patch release with minor bug fixes and improvements
+
 ## [Unreleased]
 
 ## [0.5.0] - 2025-07-31
