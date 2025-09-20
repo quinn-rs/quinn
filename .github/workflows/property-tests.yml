@@ -147,8 +147,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       
-      - name: Install Rust nightly
-        uses: dtolnay/rust-toolchain@nightly
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
       
       - name: Install cargo-fuzz
         run: cargo install cargo-fuzz

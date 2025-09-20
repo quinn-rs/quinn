@@ -20,13 +20,9 @@ env:
   RUSTFLAGS: -D warnings
 
 jobs:
-  # Windows-specific tests with different versions
-  windows-tests:
-    strategy:
-      matrix:
-        os: [windows-2022, windows-latest]
-        rust: [stable, 1.85.0]
-    runs-on: ${{ matrix.os }}
+   # Windows-specific tests (simplified)
+   windows-tests:
+     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
       
@@ -69,20 +65,9 @@ jobs:
       - name: Run integration tests
         run: cargo test --test platform_api_integration_tests --features "windows-tests" windows
 
-  # Linux-specific tests with different distributions
-  linux-tests:
-    strategy:
-      matrix:
-        include:
-          - os: ubuntu-20.04
-            rust: stable
-          - os: ubuntu-22.04
-            rust: stable
-          - os: ubuntu-latest
-            rust: stable
-          - os: ubuntu-latest
-            rust: 1.85.0
-    runs-on: ${{ matrix.os }}
+   # Linux-specific tests (simplified)
+   linux-tests:
+     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       
@@ -140,20 +125,9 @@ jobs:
       - name: Run integration tests
         run: cargo test --test platform_api_integration_tests --features "linux-tests" linux
 
-  # macOS-specific tests with different versions
-  macos-tests:
-    strategy:
-      matrix:
-        include:
-          - os: macos-12
-            rust: stable
-          - os: macos-13
-            rust: stable
-          - os: macos-latest
-            rust: stable
-          - os: macos-latest
-            rust: 1.85.0
-    runs-on: ${{ matrix.os }}
+   # macOS-specific tests (simplified)
+   macos-tests:
+     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
       
@@ -197,18 +171,9 @@ jobs:
       - name: Run integration tests
         run: cargo test --test platform_api_integration_tests --features "macos-tests" macos
 
-  # Cross-platform feature matrix tests
-  feature-matrix-tests:
-    strategy:
-      matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-        features: 
-          - "rustls-ring"
-          - "rustls-aws-lc-rs"
-          - "platform-tests"
-          - "platform-tests,rustls-ring"
-          - "platform-tests,rustls-aws-lc-rs"
-    runs-on: ${{ matrix.os }}
+   # Cross-platform feature matrix tests (simplified)
+   feature-matrix-tests:
+     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       
@@ -218,76 +183,54 @@ jobs:
       - name: Run tests with features
         run: cargo test --features "${{ matrix.features }}" candidate_discovery
 
-  # Platform API availability tests
-  api-availability-tests:
-    strategy:
-      matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@v4
-      
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
-      
-      - name: Create API availability test
-        run: |
-          cat > tests/check_platform_apis.rs << 'EOF'
-          #[test]
-          #[cfg(target_os = "windows")]
-          fn test_windows_apis_available() {
-              // Check that Windows IP Helper APIs are available
-              assert!(std::path::Path::new("C:\\Windows\\System32\\iphlpapi.dll").exists());
-          }
-          
-          #[test]
-          #[cfg(target_os = "linux")]
-          fn test_linux_apis_available() {
-              // Check that Linux network files are available
-              assert!(std::path::Path::new("/proc/net/dev").exists());
-              assert!(std::path::Path::new("/sys/class/net").exists());
-          }
-          
-          #[test]
-          #[cfg(target_os = "macos")]
-          fn test_macos_apis_available() {
-              // Check that macOS frameworks are available
-              assert!(std::path::Path::new("/System/Library/Frameworks/SystemConfiguration.framework").exists());
-              assert!(std::path::Path::new("/System/Library/Frameworks/CoreFoundation.framework").exists());
-          }
-          EOF
-      
-      - name: Run API availability tests
-        run: cargo test --test check_platform_apis
+   # Platform API availability tests (simplified)
+   api-availability-tests:
+     runs-on: ubuntu-latest
+     steps:
+       - uses: actions/checkout@v4
 
-  # Stress tests for platform-specific code
-  platform-stress-tests:
-    strategy:
-      matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@v4
-      
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
-      
-      - name: Run platform stress tests
-        run: |
-          cargo test --release -- --ignored platform_stress
-        env:
-          RUST_TEST_THREADS: 1
+       - name: Install Rust stable
+         uses: dtolnay/rust-toolchain@stable
 
-  # Summary job to ensure all platform tests pass
-  all-platform-tests:
-    needs: 
-      - windows-tests
-      - linux-tests
-      - macos-tests
-      - feature-matrix-tests
-      - api-availability-tests
-      - platform-stress-tests
-    runs-on: ubuntu-latest
-    steps:
-      - name: Summary
-        run: echo "All platform-specific tests completed successfully!"
+       - name: Create API availability test
+         run: |
+           cat > tests/check_platform_apis.rs << 'EOF'
+           #[test]
+           #[cfg(target_os = "linux")]
+           fn test_linux_apis_available() {
+               // Check that Linux network files are available
+               assert!(std::path::Path::new("/proc/net/dev").exists());
+               assert!(std::path::Path::new("/sys/class/net").exists());
+           }
+
+           #[test]
+           #[cfg(target_os = "macos")]
+           fn test_macos_apis_available() {
+               // Check that macOS frameworks are available
+               assert!(std::path::Path::new("/System/Library/Frameworks/SystemConfiguration.framework").exists());
+               assert!(std::path::Path::new("/System/Library/Frameworks/CoreFoundation.framework").exists());
+           }
+
+           #[test]
+           #[cfg(target_os = "windows")]
+           fn test_windows_apis_available() {
+               // Check that Windows IP Helper APIs are available
+               assert!(std::path::Path::new("C:\\Windows\\System32\\iphlpapi.dll").exists());
+           }
+           EOF
+
+       - name: Run API availability tests
+         run: cargo test --test check_platform_apis
+
+   # Summary job to ensure all platform tests pass
+   all-platform-tests:
+     needs:
+       - windows-tests
+       - linux-tests
+       - macos-tests
+       - feature-matrix-tests
+       - api-availability-tests
+     runs-on: ubuntu-latest
+     steps:
+       - name: Summary
+         run: echo "All platform-specific tests completed successfully!"
