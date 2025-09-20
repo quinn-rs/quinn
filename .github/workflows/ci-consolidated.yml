@@ -21,58 +21,55 @@ permissions:
 jobs:
   # Quick sanity checks first
   quick-checks:
-    name: Quick Checks
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@v2
+      name: Quick Checks
+      runs-on: ubuntu-latest
+      timeout-minutes: 10
+      steps:
+        - uses: actions/checkout@v4
+        - uses: dtolnay/rust-toolchain@stable
+          with:
+            components: rustfmt, clippy
+        - uses: Swatinem/rust-cache@v2
 
-      - name: Format check
-        run: cargo fmt --all -- --check
+        - name: Format check
+          run: cargo fmt --all -- --check
 
-      - name: Clippy (policy — lib/bins/examples)
-        run: |
-          cargo clippy --all-features --lib --bins --examples -- \
-            -D warnings
+        - name: Clippy (policy — lib/bins/examples)
+          run: |
+            cargo clippy --all-features --lib --bins --examples -- \
+              -D warnings
 
-      - name: Quick build check
-        run: cargo check --all-targets
+        - name: Quick build check
+          run: cargo check --all-targets
 
-   # Main test suite
-   test:
-     name: Test Suite
-     needs: quick-checks
-     runs-on: ${{ matrix.os }}
-     timeout-minutes: 15
-     strategy:
-       matrix:
-         os: [ubuntu-latest]
-         rust: [stable]
-         exclude:
-           # Skip Windows when running with act (not supported on macOS)
-           - os: windows-latest
-       fail-fast: false
+  # Main test suite
+  test:
+      name: Test Suite
+      needs: quick-checks
+      runs-on: ${{ matrix.os }}
+      timeout-minutes: 15
+      strategy:
+        matrix:
+          os: [ubuntu-latest]
+          rust: [stable]
+        fail-fast: false
 
-     steps:
-       - uses: actions/checkout@v4
-       - uses: dtolnay/rust-toolchain@v1
-         with:
-           toolchain: ${{ matrix.rust }}
-       - uses: Swatinem/rust-cache@v2
+      steps:
+        - uses: actions/checkout@v4
+        - uses: dtolnay/rust-toolchain@v1
+          with:
+            toolchain: ${{ matrix.rust }}
+        - uses: Swatinem/rust-cache@v2
 
-       - name: Build
-         run: cargo build --all-targets
+        - name: Build
+          run: cargo build --all-targets
 
-       - name: Test
-         run: cargo test --all-features -- --test-threads=2
+        - name: Test
+          run: cargo test --all-features -- --test-threads=2
 
-       - name: Doc tests
-         if: matrix.os == 'ubuntu-latest' && matrix.rust == 'stable'
-         run: cargo test --doc
+        - name: Doc tests
+          if: matrix.os == 'ubuntu-latest' && matrix.rust == 'stable'
+          run: cargo test --doc
 
   # Security and quality checks
   security:
@@ -94,8 +91,8 @@ jobs:
       - name: Check dependencies
         run: cargo tree --duplicates
 
-   # NAT tests integration (simplified)
-   nat-tests:
+  # NAT tests integration (simplified)
+  nat-tests:
      name: NAT Tests
      needs: quick-checks
      runs-on: ubuntu-latest
@@ -179,8 +176,8 @@ jobs:
       - name: Check MSRV compatibility
         run: cargo check --all-features
 
-   # Summary job for branch protection
-   ci-success:
+  # Summary job for branch protection
+  ci-success:
      name: CI Success
      needs: [quick-checks, test, security]
      runs-on: ubuntu-latest

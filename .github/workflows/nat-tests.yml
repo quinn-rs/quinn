@@ -19,43 +19,43 @@
            - matrix
    schedule:
      # Run daily at 3 AM UTC
-     - cron: '0 3 * * *'
+      - cron: '0 3 * * *'
 
- jobs:
-   nat-basic-tests:
+  jobs:
+  nat-basic-tests:
      name: NAT Basic Tests
      runs-on: ubuntu-latest
      timeout-minutes: 10
 
-     steps:
-       - name: Checkout code
-         uses: actions/checkout@v4
-         if: ${{ !startsWith(runner.name, 'nektos/act') }}
+      steps:
+        - name: Checkout code
+          uses: actions/checkout@v4
+          if: ${{ !startsWith(runner.name, 'nektos/act') }}
 
-       - name: Run NAT basic tests (simulation mode)
-         run: |
-           # Create results directory
-           mkdir -p results
+        - name: Run NAT basic tests (simulation mode)
+          run: |
+            # Create results directory
+            mkdir -p results
 
-           # Run simulated NAT tests (no Docker required)
-           echo "NAT Basic Test Results" > results/summary.txt
-           echo "=====================" >> results/summary.txt
-           echo "Date: $(date)" >> results/summary.txt
-           echo "Mode: Simulation (Docker-free)" >> results/summary.txt
-           echo "" >> results/summary.txt
+            # Run simulated NAT tests (no Docker required)
+            echo "NAT Basic Test Results" > results/summary.txt
+            echo "=====================" >> results/summary.txt
+            echo "Date: $(date)" >> results/summary.txt
+            echo "Mode: Simulation (Docker-free)" >> results/summary.txt
+            echo "" >> results/summary.txt
 
-           # Test basic NAT functionality
-           echo "✓ NAT type detection: Full Cone" >> results/summary.txt
-           echo "✓ Port mapping: Successful" >> results/summary.txt
-           echo "✓ Address discovery: Working" >> results/summary.txt
-           echo "✓ Connection establishment: Successful" >> results/summary.txt
-           echo "✓ Data transfer: 1MB transferred" >> results/summary.txt
+            # Test basic NAT functionality
+            echo "✓ NAT type detection: Full Cone" >> results/summary.txt
+            echo "✓ Port mapping: Successful" >> results/summary.txt
+            echo "✓ Address discovery: Working" >> results/summary.txt
+            echo "✓ Connection establishment: Successful" >> results/summary.txt
+            echo "✓ Data transfer: 1MB transferred" >> results/summary.txt
 
-           echo "" >> results/summary.txt
-           echo "Test completed successfully" >> results/summary.txt
+            echo "" >> results/summary.txt
+            echo "Test completed successfully" >> results/summary.txt
 
-           # Quick test execution
-           sleep 2
+            # Quick test execution
+            sleep 2
 
         - name: Upload test results
           uses: actions/upload-artifact@v4
@@ -80,28 +80,28 @@
    connectivity-matrix:
      name: NAT Connectivity Matrix
      runs-on: ubuntu-latest
-     if: ${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.test-scenarios == 'all' || github.event.inputs.test-scenarios == 'matrix') || github.event_name == 'schedule' || (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success') }}
+      if: ${{ github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success') }}
      needs: nat-basic-tests
      timeout-minutes: 10
 
-     steps:
-       - name: Checkout code
-         uses: actions/checkout@v4
-         if: ${{ !startsWith(runner.name, 'nektos/act') }}
+      steps:
+        - name: Checkout code
+          uses: actions/checkout@v4
+          if: ${{ !startsWith(runner.name, 'nektos/act') }}
 
-       - name: Run connectivity matrix tests (simulation)
-         run: |
-           # Ensure a clean, writable results directory
-           mkdir -p results
+        - name: Run connectivity matrix tests (simulation)
+          run: |
+            # Ensure a clean, writable results directory
+            mkdir -p results
 
-           # Test matrix of all NAT type combinations
-           NAT_TYPES=("full-cone" "symmetric" "port-restricted" "cgnat")
+            # Test matrix of all NAT type combinations
+            NAT_TYPES=("full-cone" "symmetric" "port-restricted" "cgnat")
 
-           echo "NAT Connectivity Matrix Test" > results/matrix.txt
-           echo "===========================" >> results/matrix.txt
-           echo "Date: $(date)" >> results/matrix.txt
-           echo "Mode: Simulation (Docker-free)" >> results/matrix.txt
-           echo "" >> results/matrix.txt
+            echo "NAT Connectivity Matrix Test" > results/matrix.txt
+            echo "===========================" >> results/matrix.txt
+            echo "Date: $(date)" >> results/matrix.txt
+            echo "Mode: Simulation (Docker-free)" >> results/matrix.txt
+            echo "" >> results/matrix.txt
 
             for src_nat in "${NAT_TYPES[@]}"; do
               for dst_nat in "${NAT_TYPES[@]}"; do
@@ -130,14 +130,14 @@
     stress-tests:
       name: NAT Stress Tests
       runs-on: ubuntu-latest
-      if: ${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.test-scenarios == 'all' || github.event.inputs.test-scenarios == 'stress') || github.event_name == 'schedule' || (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success') }}
+       if: ${{ github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success') }}
       needs: nat-basic-tests
       timeout-minutes: 10
 
       steps:
-        - name: Checkout code
-          uses: actions/checkout@v4
-          if: ${{ !startsWith(runner.name, 'nektos/act') }}
+         - name: Checkout code
+           uses: actions/checkout@v4
+           if: ${{ !startsWith(runner.name, 'nektos/act') }}
 
          - name: Run stress tests (simulation mode)
            run: |
