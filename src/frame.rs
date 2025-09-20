@@ -397,6 +397,7 @@ pub struct Ack {
 }
 
 impl fmt::Debug for Ack {
+    #[allow(clippy::panic)]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut ranges = "[".to_string();
         let mut first = true;
@@ -430,6 +431,7 @@ impl<'a> IntoIterator for &'a Ack {
 
 impl Ack {
     /// Encode an ACK frame into the provided buffer
+    #[allow(clippy::panic)]
     pub fn encode<W: BufMut>(
         delay: u64,
         ranges: &ArrayRangeSet,

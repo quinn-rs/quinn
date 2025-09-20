@@ -180,7 +180,7 @@ async fn auto_binding_rejects_on_mismatch() {
 
     // Client connects
     let mut client = Endpoint::client(([127, 0, 0, 1], 0).into()).expect("client ep");
-    let mut client_cfg = mk_client_config(&chain);
+    let client_cfg = mk_client_config(&chain);
     client.set_default_client_config(client_cfg);
 
     let connecting = client

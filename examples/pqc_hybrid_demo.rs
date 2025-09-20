@@ -119,7 +119,7 @@ fn key_exchange_protocol_demo() -> Result<(), Box<dyn std::error::Error>> {
     println!("\n[Responder] Processing initiator's share...");
     let responder_share = responder
         .process_peer_key_share(&received_initiator_share)?
-        .expect("Responder should send response");
+        .ok_or("Responder should send response")?;
     println!("✓ Generated responder key share with ciphertext");
     println!("  State: {}", responder.state_name());
 

@@ -34,6 +34,7 @@ impl TokenMemoryCache {
 }
 
 impl TokenStore for TokenMemoryCache {
+    #[allow(clippy::panic)]
     fn insert(&self, server_name: &str, token: Bytes) {
         trace!(%server_name, "storing token");
         self.0

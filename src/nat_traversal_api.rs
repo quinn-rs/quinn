@@ -32,6 +32,7 @@ use std::{collections::HashMap, fmt, net::SocketAddr, sync::Arc, time::Duration}
 /// # Added in Version 0.6.1
 /// This function was introduced as part of security improvements in commit 6e633cd9
 /// to enhance protocol obfuscation capabilities.
+#[allow(clippy::panic)]
 fn create_random_port_bind_addr() -> SocketAddr {
     "0.0.0.0:0"
         .parse()
@@ -1547,6 +1548,7 @@ impl NatTraversalEndpoint {
     }
 
     /// Start listening for incoming connections (async version)
+    #[allow(clippy::panic)]
     pub async fn start_listening(&self, bind_addr: SocketAddr) -> Result<(), NatTraversalError> {
         let endpoint = self.quinn_endpoint.as_ref().ok_or_else(|| {
             NatTraversalError::ConfigError("Quinn endpoint not initialized".to_string())
@@ -3695,6 +3697,7 @@ impl NatTraversalEndpoint {
     }
 
     /// Get NAT traversal statistics
+    #[allow(clippy::panic)]
     pub fn get_nat_stats(
         &self,
     ) -> Result<NatTraversalStatistics, Box<dyn std::error::Error + Send + Sync>> {

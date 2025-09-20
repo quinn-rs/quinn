@@ -244,7 +244,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             })
             .collect()
     } else {
-        vec!["127.0.0.1:9000".parse().unwrap()]
+        vec![
+            "127.0.0.1:9000"
+                .parse()
+                .map_err(|e| format!("Failed to parse default bootstrap address: {}", e))?,
+        ]
     };
 
     // Create chat node

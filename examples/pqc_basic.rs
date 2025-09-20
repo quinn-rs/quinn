@@ -24,8 +24,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // Initialize logging
     tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::from_default_env()
-                .add_directive("info".parse().unwrap()),
+            tracing_subscriber::EnvFilter::from_default_env().add_directive(
+                "info"
+                    .parse()
+                    .map_err(|e| format!("Failed to parse log directive: {}", e))?,
+            ),
         )
         .init();
 
@@ -86,7 +89,10 @@ async fn run_server() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     // Create PQC configuration (configured in the auth layer)
     #[cfg(feature = "pqc")]
-    let pqc_config = PqcConfig::builder().mode(PqcMode::Hybrid).build().unwrap();
+    let pqc_config = PqcConfig::builder()
+        .mode(PqcMode::Hybrid)
+        .build()
+        .map_err(|e| format!("Failed to build PQC config: {}", e))?;
     #[cfg(feature = "pqc")]
     println!("🔐 PQC Mode: {:?}", pqc_config.mode);
     #[cfg(not(feature = "pqc"))]
@@ -162,7 +168,10 @@ async fn run_client(
 
     // Create PQC configuration
     #[cfg(feature = "pqc")]
-    let pqc_config = PqcConfig::builder().mode(PqcMode::Hybrid).build().unwrap();
+    let pqc_config = PqcConfig::builder()
+        .mode(PqcMode::Hybrid)
+        .build()
+        .map_err(|e| format!("Failed to build PQC config: {}", e))?;
     #[cfg(feature = "pqc")]
     println!("🔐 PQC Mode: {:?}", pqc_config.mode);
     #[cfg(not(feature = "pqc"))]

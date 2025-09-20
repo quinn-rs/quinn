@@ -405,6 +405,7 @@ unsafe fn cf_string_to_rust_string(cf_str: CFStringRef) -> Option<String> {
     }
 }
 
+#[allow(clippy::panic)]
 unsafe fn rust_string_to_cf_string(s: &str) -> CFStringRef {
     unsafe {
         let c_str = CString::new(s).unwrap_or_else(|_| panic!("string should be valid UTF-8"));
@@ -441,6 +442,7 @@ impl MacOSInterfaceDiscovery {
     }
 
     /// Initialize System Configuration Framework dynamic store
+    #[allow(clippy::panic)]
     pub fn initialize_dynamic_store(&mut self) -> Result<(), MacOSNetworkError> {
         if self.sc_store.is_some() {
             return Ok(());
@@ -466,6 +468,7 @@ impl MacOSInterfaceDiscovery {
     }
 
     /// Enable network change monitoring
+    #[allow(clippy::panic)]
     pub fn enable_change_monitoring(&mut self) -> Result<(), MacOSNetworkError> {
         if self.run_loop_source.is_some() {
             return Ok(());

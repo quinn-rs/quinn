@@ -65,8 +65,8 @@ fn test_pqc_config_default_is_safe() {
     assert!(config.ml_kem_enabled);
     assert!(config.ml_dsa_enabled);
 
-    // Balanced preference is the safest default
-    assert_eq!(config.hybrid_preference, HybridPreference::Balanced);
+    // PreferPqc preference is the default for quantum resistance
+    assert_eq!(config.hybrid_preference, HybridPreference::PreferPqc);
 
     // Reasonable defaults for performance
     assert_eq!(config.memory_pool_size, 10);

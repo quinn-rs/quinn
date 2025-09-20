@@ -312,6 +312,7 @@ pub struct QuicClientConfig {
 
 impl QuicClientConfig {
     #[cfg(feature = "platform-verifier")]
+    #[allow(clippy::panic)]
     pub(crate) fn with_platform_verifier() -> Result<Self, Error> {
         // Keep in sync with `inner()` below
         let mut inner = rustls::ClientConfig::builder_with_provider(configured_provider())
@@ -368,6 +369,7 @@ impl QuicClientConfig {
         self
     }
 
+    #[allow(clippy::panic)]
     pub(crate) fn inner(verifier: Arc<dyn ServerCertVerifier>) -> rustls::ClientConfig {
         // Keep in sync with `with_platform_verifier()` above
         let mut config = rustls::ClientConfig::builder_with_provider(configured_provider())

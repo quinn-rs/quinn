@@ -532,6 +532,7 @@ impl CandidateDiscoveryManager {
     }
 
     /// Discover local network interface candidates synchronously
+    #[allow(clippy::panic)]
     pub fn discover_local_candidates(&mut self) -> Result<Vec<ValidatedCandidate>, DiscoveryError> {
         // Start interface scan
         let mut interface_discovery = self
@@ -1449,6 +1450,7 @@ impl CandidateDiscoveryManager {
     }
 
     #[allow(dead_code)]
+    #[allow(clippy::panic)]
     fn calculate_consensus_address(&self, responses: &[ServerReflexiveResponse]) -> SocketAddr {
         // Simple majority consensus - in practice, would use more sophisticated algorithm
         let mut address_counts: HashMap<SocketAddr, usize> = HashMap::new();
@@ -1670,6 +1672,7 @@ impl CandidateDiscoveryManager {
     }
 
     /// Poll discovery progress and get pending events
+    #[allow(clippy::panic)]
     pub fn poll_discovery_progress(&mut self, peer_id: PeerId) -> Vec<DiscoveryEvent> {
         let mut events = Vec::new();
 
@@ -3332,6 +3335,7 @@ impl NetworkInterfaceDiscovery for GenericInterfaceDiscovery {
         Ok(())
     }
 
+    #[allow(clippy::panic)]
     fn check_scan_complete(&mut self) -> Option<Vec<NetworkInterface>> {
         if self.scan_complete {
             self.scan_complete = false;

@@ -66,6 +66,7 @@ impl Incoming {
     /// Respond with a retry packet, requiring the client to retry with address validation
     ///
     /// Errors if `may_retry()` is false.
+    #[allow(clippy::panic)]
     pub fn retry(mut self) -> Result<(), RetryError> {
         let state = match self.0.take() {
             Some(state) => state,
@@ -99,6 +100,7 @@ impl Incoming {
     }
 
     /// The peer's UDP address
+    #[allow(clippy::panic)]
     pub fn remote_address(&self) -> SocketAddr {
         self.0
             .as_ref()

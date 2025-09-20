@@ -100,29 +100,30 @@ async fn run_server_phase(phase: MigrationPhase) -> Result<(), Box<dyn Error + S
             PqcConfig::builder()
                 .mode(PqcMode::ClassicalOnly)
                 .build()
-                .unwrap()
+                .map_err(|e| format!("Failed to build classical-only config: {}", e))?
         }
         MigrationPhase::OptionalPqc => {
             println!("   🔐 PQC: Optional (Hybrid mode, prefer classical)");
             PqcConfig::builder()
                 .mode(PqcMode::Hybrid)
                 .hybrid_preference(HybridPreference::PreferClassical)
-                // Migration period can be tracked externally
                 .build()
-                .unwrap()
+                .map_err(|e| format!("Failed to build hybrid config (prefer classical): {}", e))?
         }
         MigrationPhase::PreferredPqc => {
             println!("   🔐 PQC: Preferred (Hybrid mode, prefer PQC)");
             PqcConfig::builder()
                 .mode(PqcMode::Hybrid)
                 .hybrid_preference(HybridPreference::PreferPqc)
-                // Migration period can be tracked externally
                 .build()
-                .unwrap()
+                .map_err(|e| format!("Failed to build hybrid config (prefer PQC): {}", e))?
         }
         MigrationPhase::RequiredPqc => {
             println!("   🔒 PQC: Required (Pure PQC mode)");
-            PqcConfig::builder().mode(PqcMode::PqcOnly).build().unwrap()
+            PqcConfig::builder()
+                .mode(PqcMode::PqcOnly)
+                .build()
+                .map_err(|e| format!("Failed to build PQC-only config: {}", e))?
         }
     };
 
@@ -133,11 +134,13 @@ async fn run_server_phase(phase: MigrationPhase) -> Result<(), Box<dyn Error + S
 
     use rustls::pki_types::{CertificateDer, PrivateKeyDer};
     let cert_chain = vec![CertificateDer::from(cert_der)];
-    let priv_key = PrivateKeyDer::try_from(priv_key).unwrap();
+    let priv_key = PrivateKeyDer::try_from(priv_key)
+        .map_err(|e| format!("Failed to create private key: {}", e))?;
 
     // Create server configuration
     let mut server_config = ServerConfig::with_single_cert(cert_chain, priv_key)?;
-    let transport_config = Arc::get_mut(&mut server_config.transport).unwrap();
+    let transport_config = Arc::get_mut(&mut server_config.transport)
+        .ok_or("Failed to get mutable reference to transport config")?;
     transport_config.max_idle_timeout(Some(VarInt::from_u32(30_000).into()));
 
     // Apply PQC configuration
@@ -187,7 +190,12 @@ async fn test_client_compatibility(
         PqcConfig::builder()
             .mode(PqcMode::ClassicalOnly)
             .build()
-            .unwrap(),
+            .map_err(|e| {
+                format!(
+                    "Failed to build classical-only config for client test: {}",
+                    e
+                )
+            })?,
     )
     .await
     {
@@ -205,7 +213,10 @@ async fn test_client_compatibility(
     // Test with PQC-only client
     if !matches!(server_phase, MigrationPhase::PreMigration) {
         println!("   - PQC-only client...",);
-        let pqc_only = PqcConfig::builder().mode(PqcMode::PqcOnly).build().unwrap();
+        let pqc_only = PqcConfig::builder()
+            .mode(PqcMode::PqcOnly)
+            .build()
+            .map_err(|e| format!("Failed to build PQC-only config for client test: {}", e))?;
         match connect_with_config(server_addr, pqc_only).await {
             Ok(_) => println!("     ✅ Connected successfully"),
             Err(e) => println!("     ❌ Failed: {e}"),

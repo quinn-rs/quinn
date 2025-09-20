@@ -225,6 +225,7 @@ impl Bbr {
                 .unwrap_or(true)
     }
 
+    #[allow(clippy::panic)]
     fn maybe_enter_or_exit_probe_rtt(
         &mut self,
         now: Instant,

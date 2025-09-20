@@ -27,6 +27,7 @@ impl crypto::HmacKey for hmac::Key {
 }
 
 impl crypto::HandshakeTokenKey for hkdf::Prk {
+    #[allow(clippy::panic)]
     fn aead_from_hkdf(&self, random_bytes: &[u8]) -> Box<dyn crypto::AeadKey> {
         let mut key_buffer = [0u8; 32];
         let info = [random_bytes];

@@ -140,6 +140,7 @@ pub use implementation::*;
 // Helper function to get current timestamp in microseconds
 #[cfg(feature = "trace")]
 /// Monotonic timestamp in microseconds (platform-dependent)
+#[allow(clippy::panic)]
 pub fn timestamp_now() -> u64 {
     use std::time::{SystemTime, UNIX_EPOCH};
     SystemTime::now()
