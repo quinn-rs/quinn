@@ -22,6 +22,7 @@ use crate::{
     cid_queue::CidQueue,
     coding::BufMutExt,
     config::{ServerConfig, TransportConfig},
+    connection::spaces::LostPacket,
     crypto::{self, KeyPair, Keys, PacketKey},
     frame::{self, Close, Datagram, FrameStruct, NewConnectionId, NewToken},
     packet::{
@@ -1461,6 +1462,10 @@ impl Connection {
             }
         };
 
+        if self.detect_spurious_loss(&ack, space) {
+            self.path.congestion.on_spurious_congestion_event();
+        }
+
         // Avoid DoS from unreasonably huge ack ranges by filtering out just the new acks.
         let mut newly_acked = ArrayRangeSet::new();
         for range in ack.iter() {
@@ -1555,6 +1560,43 @@ impl Connection {
         Ok(())
     }
 
+    fn detect_spurious_loss(&mut self, ack: &frame::Ack, space: SpaceId) -> bool {
+        let lost_packets = &mut self.spaces[space].lost_packets;
+
+        if lost_packets.is_empty() {
+            return false;
+        }
+
+        for range in ack.iter() {
+            let spurious_losses: Vec<u64> = lost_packets
+                .range(range.clone())
+                .map(|(pn, _info)| pn)
+                .copied()
+                .collect();
+
+            for pn in spurious_losses {
+                lost_packets.remove(&pn);
+            }
+        }
+
+        // If this ACK frame acknowledged all deemed lost packets,
+        // then we have raised a spurious congestion event in the past.
+        // We cannot conclude when there are remaining packets,
+        // but future ACK frames might indicate a spurious loss detection.
+        lost_packets.is_empty()
+    }
+
+    /// Drain lost packets that we reasonably think will never arrive
+    ///
+    /// The current criterion is copied from `msquic`:
+    /// discard packets that were sent earlier than 2 probe timeouts ago.
+    fn drain_lost_packets(&mut self, now: Instant, space: SpaceId) {
+        let two_pto = 2 * self.path.rtt.pto_base();
+
+        let lost_packets = &mut self.spaces[space].lost_packets;
+        lost_packets.retain(|_pn, info| now.saturating_duration_since(info.time_sent) <= two_pto);
+    }
+
     /// Process a new ECN block from an in-order ACK
     fn process_ecn(
         &mut self,
@@ -1577,7 +1619,7 @@ impl Connection {
                 self.stats.path.congestion_events += 1;
                 self.path
                     .congestion
-                    .on_congestion_event(now, largest_sent_time, false, 0);
+                    .on_congestion_event(now, largest_sent_time, false, true, 0);
             }
         }
     }
@@ -1735,6 +1777,8 @@ impl Connection {
             prev_packet = Some(packet);
         }
 
+        self.drain_lost_packets(now, pn_space);
+
         // OnPacketsLost
         if let Some(largest_lost) = lost_packets.last().cloned() {
             let old_bytes_in_flight = self.path.in_flight.bytes;
@@ -1756,12 +1800,20 @@ impl Connection {
                     now,
                     self.orig_rem_cid,
                 );
+
                 self.remove_in_flight(&info);
                 for frame in info.stream_frames {
                     self.streams.retransmit(frame);
                 }
                 self.spaces[pn_space].pending |= info.retransmits;
                 self.path.mtud.on_non_probe_lost(packet, info.size);
+
+                self.spaces[pn_space].lost_packets.insert(
+                    packet,
+                    LostPacket {
+                        time_sent: info.time_sent,
+                    },
+                );
             }
 
             if self.path.mtud.black_hole_detected(now) {
@@ -1783,6 +1835,7 @@ impl Connection {
                     now,
                     largest_lost_sent,
                     in_persistent_congestion,
+                    false,
                     size_of_lost_packets,
                 );
             }
