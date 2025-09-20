@@ -42,6 +42,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Resolved test compilation issues with async syntax
 - Fixed integration test configurations for new edition
 
+## [0.8.17] - 2025-09-20
+
+### Fixed
+- **Code Quality Improvements** 🧹
+  - Resolved all clippy warnings across 9 files
+  - Eliminated production panic risks with proper error handling
+  - Enhanced code safety and maintainability
+- **API Refactoring** 🔧
+  - Removed deprecated API modules for cleaner architecture
+  - Consolidated configuration management
+  - Streamlined P2P node interfaces
+
+### Added
+- **Token v2 Implementation** 🔐
+  - New enhanced token system with improved security
+  - Better token binding mechanisms
+  - Server-side token validation improvements
+- **Trust Model Updates** 🛡️
+  - New trust validation system
+  - Enhanced transport trust model
+  - Security verification improvements
+- **Testing Enhancements** 🧪
+  - 8 new comprehensive test files
+  - Integration tests for token binding and trust models
+  - Enhanced test coverage for new features
+
+### Changed
+- **CI/CD Improvements** ⚙️
+  - Enhanced workflow testing infrastructure
+  - Local workflow testing capabilities
+  - Improved build and test automation
+
 ## [0.8.16] - 2025-09-19
 
 ### Fixed
