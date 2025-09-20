@@ -21,11 +21,11 @@ env:
 
 jobs:
   # Windows-specific tests (simplified)
-  windows-tests:
-    runs-on: windows-latest
-    strategy:
-      matrix:
-        rust: [stable]
+   windows-tests:
+     runs-on: windows-latest
+     strategy:
+       matrix:
+         rust: [stable]
      steps:
        - uses: actions/checkout@v4
 
@@ -69,11 +69,11 @@ jobs:
            netsh interface show interface
 
   # Linux-specific tests (simplified)
-  linux-tests:
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        rust: [stable]
+   linux-tests:
+     runs-on: ubuntu-latest
+     strategy:
+       matrix:
+         rust: [stable]
      steps:
        - uses: actions/checkout@v4
 
@@ -124,11 +124,11 @@ jobs:
            cat /proc/net/if_inet6 || true
 
   # macOS-specific tests (simplified)
-  macos-tests:
-    runs-on: macos-latest
-    strategy:
-      matrix:
-        rust: [stable]
+   macos-tests:
+     runs-on: macos-latest
+     strategy:
+       matrix:
+         rust: [stable]
      steps:
        - uses: actions/checkout@v4
 
@@ -191,7 +191,7 @@ jobs:
              echo "No platform-specific tests found, skipping..."
            fi
 
-  # Platform API availability tests (simplified)
+   # Platform API availability tests (simplified)
   api-availability-tests:
     runs-on: ubuntu-latest
     steps:
