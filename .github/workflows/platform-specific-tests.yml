@@ -1,239 +1,239 @@
- name: Platform-Specific Network Tests
+name: Platform-Specific Network Tests
 
- on:
-   push:
-     branches: [ master ]
-     paths:
-       - 'src/candidate_discovery/**'
-       - 'tests/**'
-       - '.github/workflows/platform-specific-tests.yml'
-   pull_request:
-     branches: [ master ]
-     paths:
-       - 'src/candidate_discovery/**'
-       - 'tests/**'
-       - '.github/workflows/platform-specific-tests.yml'
-   workflow_dispatch:
+on:
+  push:
+    branches: [ master ]
+    paths:
+      - 'src/candidate_discovery/**'
+      - 'tests/**'
+      - '.github/workflows/platform-specific-tests.yml'
+  pull_request:
+    branches: [ master ]
+    paths:
+      - 'src/candidate_discovery/**'
+      - 'tests/**'
+      - '.github/workflows/platform-specific-tests.yml'
+  workflow_dispatch:
 
- env:
-   RUST_BACKTRACE: 1
-   RUSTFLAGS: -D warnings
+env:
+  RUST_BACKTRACE: 1
+  RUSTFLAGS: -D warnings
 
- jobs:
-     # Windows-specific tests (simplified)
-     windows-tests:
-       runs-on: windows-latest
-       strategy:
-         matrix:
-           rust: [stable]
-      steps:
-        - uses: actions/checkout@v4
+jobs:
+  # Windows-specific tests (simplified)
+  windows-tests:
+    runs-on: windows-latest
+    strategy:
+      matrix:
+        rust: [stable]
+    steps:
+      - uses: actions/checkout@v4
 
-        - name: Install Rust
-          uses: dtolnay/rust-toolchain@v1
-          with:
-            toolchain: ${{ matrix.rust }}
-            components: rustfmt, clippy
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: ${{ matrix.rust }}
+          components: rustfmt, clippy
 
-       - name: Cache cargo registry
-         uses: actions/cache@v4
-         with:
-           path: ~/.cargo/registry
-           key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/registry
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
 
-       - name: Cache cargo index
-         uses: actions/cache@v4
-         with:
-           path: ~/.cargo/git
-           key: ${{ runner.os }}-cargo-index-${{ hashFiles('**/Cargo.lock') }}
+      - name: Cache cargo index
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/git
+          key: ${{ runner.os }}-cargo-index-${{ hashFiles('**/Cargo.lock') }}
 
-       - name: Cache cargo build
-         uses: actions/cache@v4
-         with:
-           path: target
-           key: ${{ runner.os }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
+      - name: Cache cargo build
+        uses: actions/cache@v4
+        with:
+          path: target
+          key: ${{ runner.os }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
 
-        - name: Run Windows-specific tests
-          run: |
-            # Run Windows-specific tests directly
-            if cargo test -- --test-threads=1 --list | grep -q "platform_specific"; then
-              echo "Running Windows-specific tests..."
-              cargo test -- --test-threads=1 platform_specific::platform_windows
-            else
-              echo "No Windows-specific tests found, skipping..."
-            fi
+      - name: Run Windows-specific tests
+        run: |
+          # Run Windows-specific tests directly
+          if cargo test -- --test-threads=1 --list | grep -q "platform_specific"; then
+            echo "Running Windows-specific tests..."
+            cargo test -- --test-threads=1 platform_specific::platform_windows
+          else
+            echo "No Windows-specific tests found, skipping..."
+          fi
 
-       - name: Check Windows network interfaces
-         run: |
-           ipconfig /all
-           netsh interface show interface
+      - name: Check Windows network interfaces
+        run: |
+          ipconfig /all
+          netsh interface show interface
 
-     # Linux-specific tests (simplified)
-     linux-tests:
-       runs-on: ubuntu-latest
-       strategy:
-         matrix:
-           rust: [stable]
-      steps:
-        - uses: actions/checkout@v4
+  # Linux-specific tests (simplified)
+  linux-tests:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        rust: [stable]
+    steps:
+      - uses: actions/checkout@v4
 
-        - name: Install Rust
-          uses: dtolnay/rust-toolchain@v1
-          with:
-            toolchain: ${{ matrix.rust }}
-            components: rustfmt, clippy
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: ${{ matrix.rust }}
+          components: rustfmt, clippy
 
-       - name: Install system dependencies
-         run: |
-           sudo apt-get update
-           sudo apt-get install -y net-tools iproute2 wireless-tools
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y net-tools iproute2 wireless-tools
 
-       - name: Cache cargo registry
-         uses: actions/cache@v4
-         with:
-           path: ~/.cargo/registry
-           key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/registry
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
 
-       - name: Cache cargo index
-         uses: actions/cache@v4
-         with:
-           path: ~/.cargo/git
-           key: ${{ runner.os }}-cargo-index-${{ hashFiles('**/Cargo.lock') }}
+      - name: Cache cargo index
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/git
+          key: ${{ runner.os }}-cargo-index-${{ hashFiles('**/Cargo.lock') }}
 
-       - name: Cache cargo build
-         uses: actions/cache@v4
-         with:
-           path: target
-           key: ${{ runner.os }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
+      - name: Cache cargo build
+        uses: actions/cache@v4
+        with:
+          path: target
+          key: ${{ runner.os }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
 
-        - name: Run Linux-specific tests
-          run: |
-            # Run Linux-specific tests directly
-            if cargo test -- --test-threads=1 --list | grep -q "platform_specific"; then
-              echo "Running Linux-specific tests..."
-              cargo test -- --test-threads=1 platform_specific::platform_linux
-            else
-              echo "No Linux-specific tests found, skipping..."
-            fi
+      - name: Run Linux-specific tests
+        run: |
+          # Run Linux-specific tests directly
+          if cargo test -- --test-threads=1 --list | grep -q "platform_specific"; then
+            echo "Running Linux-specific tests..."
+            cargo test -- --test-threads=1 platform_specific::platform_linux
+          else
+            echo "No Linux-specific tests found, skipping..."
+          fi
 
-       - name: Check Linux network interfaces
-         run: |
-           ip addr show
-           ip link show
-           cat /proc/net/dev
-           cat /proc/net/if_inet6 || true
+      - name: Check Linux network interfaces
+        run: |
+          ip addr show
+          ip link show
+          cat /proc/net/dev
+          cat /proc/net/if_inet6 || true
 
-     # macOS-specific tests (simplified)
-     macos-tests:
-       runs-on: macos-latest
-       strategy:
-         matrix:
-           rust: [stable]
-      steps:
-        - uses: actions/checkout@v4
+  # macOS-specific tests (simplified)
+  macos-tests:
+    runs-on: macos-latest
+    strategy:
+      matrix:
+        rust: [stable]
+    steps:
+      - uses: actions/checkout@v4
 
-        - name: Install Rust
-          uses: dtolnay/rust-toolchain@v1
-          with:
-            toolchain: ${{ matrix.rust }}
-            components: rustfmt, clippy
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: ${{ matrix.rust }}
+          components: rustfmt, clippy
 
-       - name: Cache cargo registry
-         uses: actions/cache@v4
-         with:
-           path: ~/.cargo/registry
-           key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/registry
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
 
-       - name: Cache cargo index
-         uses: actions/cache@v4
-         with:
-           path: ~/.cargo/git
-           key: ${{ runner.os }}-cargo-index-${{ hashFiles('**/Cargo.lock') }}
+      - name: Cache cargo index
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/git
+          key: ${{ runner.os }}-cargo-index-${{ hashFiles('**/Cargo.lock') }}
 
-       - name: Cache cargo build
-         uses: actions/cache@v4
-         with:
-           path: target
-           key: ${{ runner.os }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
+      - name: Cache cargo build
+        uses: actions/cache@v4
+        with:
+          path: target
+          key: ${{ runner.os }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
 
-        - name: Run macOS-specific tests
-          run: |
-            # Run macOS-specific tests directly
-            if cargo test -- --test-threads=1 --list | grep -q "platform_specific"; then
-              echo "Running macOS-specific tests..."
-              cargo test -- --test-threads=1 platform_specific::platform_macos
-            else
-              echo "No macOS-specific tests found, skipping..."
-            fi
+      - name: Run macOS-specific tests
+        run: |
+          # Run macOS-specific tests directly
+          if cargo test -- --test-threads=1 --list | grep -q "platform_specific"; then
+            echo "Running macOS-specific tests..."
+            cargo test -- --test-threads=1 platform_specific::platform_macos
+          else
+            echo "No macOS-specific tests found, skipping..."
+          fi
 
-       - name: Check macOS network interfaces
-         run: |
-           ifconfig -a
-           networksetup -listallhardwareports
-           scutil --nwi
+      - name: Check macOS network interfaces
+        run: |
+          ifconfig -a
+          networksetup -listallhardwareports
+          scutil --nwi
 
-     # Cross-platform feature matrix tests (simplified)
-     feature-matrix-tests:
-       runs-on: ubuntu-latest
-       strategy:
-         matrix:
-           features: ["linux-tests", "macos-tests", "windows-tests"]
-      steps:
-        - uses: actions/checkout@v4
+  # Cross-platform feature matrix tests (simplified)
+  feature-matrix-tests:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        features: ["linux-tests", "macos-tests", "windows-tests"]
+    steps:
+      - uses: actions/checkout@v4
 
-        - name: Install Rust stable
-          uses: dtolnay/rust-toolchain@stable
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
 
-        - name: Run tests with platform features
-          run: |
-            # Run platform-specific tests directly
-            if cargo test -- --test-threads=1 --list | grep -q "candidate_discovery"; then
-              echo "Running tests with platform: ${{ matrix.features }}"
-              cargo test candidate_discovery -- --test-threads=1
-            else
-              echo "No tests found for platform: ${{ matrix.features }}, skipping..."
-            fi
+      - name: Run tests with platform features
+        run: |
+          # Run platform-specific tests directly
+          if cargo test -- --test-threads=1 --list | grep -q "candidate_discovery"; then
+            echo "Running tests with platform: ${{ matrix.features }}"
+            cargo test candidate_discovery -- --test-threads=1
+          else
+            echo "No tests found for platform: ${{ matrix.features }}, skipping..."
+          fi
 
-    # Platform API availability tests (simplified)
-    api-availability-tests:
-      runs-on: ubuntu-latest
-      steps:
-        - uses: actions/checkout@v4
+  # Platform API availability tests (simplified)
+  api-availability-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
 
-        - name: Install Rust stable
-          uses: dtolnay/rust-toolchain@stable
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
 
-        - name: Run API availability tests
-          run: |
-            # Check platform-specific APIs are available
-            echo "Checking platform APIs..."
+      - name: Run API availability tests
+        run: |
+          # Check platform-specific APIs are available
+          echo "Checking platform APIs..."
 
-            # Linux checks
-            if [ -f "/proc/net/dev" ]; then
-              echo "✓ Linux network APIs available"
-            fi
+          # Linux checks
+          if [ -f "/proc/net/dev" ]; then
+            echo "✓ Linux network APIs available"
+          fi
 
-            # macOS checks
-            if [ -d "/System/Library/Frameworks/SystemConfiguration.framework" ]; then
-              echo "✓ macOS System Configuration APIs available"
-            fi
+          # macOS checks
+          if [ -d "/System/Library/Frameworks/SystemConfiguration.framework" ]; then
+            echo "✓ macOS System Configuration APIs available"
+          fi
 
-            # Windows checks
-            if [ -f "/c/Windows/System32/iphlpapi.dll" ]; then
-              echo "✓ Windows IP Helper APIs available"
-            fi
+          # Windows checks
+          if [ -f "/c/Windows/System32/iphlpapi.dll" ]; then
+            echo "✓ Windows IP Helper APIs available"
+          fi
 
-            echo "Platform API checks completed"
+          echo "Platform API checks completed"
 
-   # Summary job to ensure all platform tests pass
-   all-platform-tests:
-     needs:
-       - windows-tests
-       - linux-tests
-       - macos-tests
-       - feature-matrix-tests
-       - api-availability-tests
-     runs-on: ubuntu-latest
-     steps:
-       - name: Summary
-         run: echo "All platform-specific tests completed successfully!"
+  # Summary job to ensure all platform tests pass
+  all-platform-tests:
+    needs:
+      - windows-tests
+      - linux-tests
+      - macos-tests
+      - feature-matrix-tests
+      - api-availability-tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Summary
+        run: echo "All platform-specific tests completed successfully!"
