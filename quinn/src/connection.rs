@@ -373,7 +373,7 @@ impl Connection {
                 }
             }
             Ok((path_id, _)) => {
-                let (tx, rx) = watch::channel(None);
+                let (tx, rx) = watch::channel(Ok(()));
                 state.open_path.insert(path_id, tx);
                 drop(state);
                 OpenPath::new(path_id, rx, self.0.clone())
@@ -385,7 +385,7 @@ impl Connection {
     /// Opens a (Multi)Path
     pub fn open_path(&self, addr: SocketAddr, initial_status: PathStatus) -> OpenPath {
         let mut state = self.0.state.lock("open_path");
-        let (on_open_path_send, on_open_path_recv) = watch::channel(None);
+        let (on_open_path_send, on_open_path_recv) = watch::channel(Ok(()));
         let now = state.runtime.now();
         let open_res = state.inner.open_path(addr, initial_status, now);
         state.wake();
@@ -1096,7 +1096,7 @@ pub(crate) struct State {
     /// Always set to Some before the connection becomes drained
     pub(crate) error: Option<ConnectionError>,
     /// Tracks paths being opened
-    open_path: FxHashMap<PathId, watch::Sender<Option<Result<(), PathError>>>>,
+    open_path: FxHashMap<PathId, watch::Sender<Result<(), PathError>>>,
     /// Tracks paths being closed
     pub(crate) close_path: FxHashMap<PathId, oneshot::Sender<VarInt>>,
     pub(crate) path_events: tokio::sync::broadcast::Sender<PathEvent>,
@@ -1266,7 +1266,7 @@ impl State {
                 Path(ref evt @ PathEvent::Opened { id }) => {
                     self.path_events.send(evt.clone()).ok();
                     if let Some(sender) = self.open_path.remove(&id) {
-                        let _ = sender.send(Some(Ok(())));
+                        sender.send_modify(|value| *value = Ok(()));
                     }
                 }
                 Path(ref evt @ PathEvent::Closed { id, error_code }) => {
@@ -1281,7 +1281,7 @@ impl State {
                 Path(ref evt @ PathEvent::LocallyClosed { id, error }) => {
                     self.path_events.send(evt.clone()).ok();
                     if let Some(sender) = self.open_path.remove(&id) {
-                        let _ = sender.send(Some(Err(error)));
+                        sender.send_modify(|value| *value = Err(error));
                     }
                     // this will happen also for already opened paths
                 }
