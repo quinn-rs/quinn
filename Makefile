@@ -250,6 +250,35 @@ docker-nat-logs:
 	@echo "Showing NAT test logs..."
 	@cd docker && docker compose logs -f
 
+# Multi-node real NAT testing
+multi-node-setup:
+	@echo "Setting up multi-node test environment..."
+	@./scripts/setup-multi-node-test.sh
+
+multi-node-test:
+	@echo "Running multi-node NAT traversal tests..."
+	@./scripts/run-real-nat-traversal-tests.sh
+
+multi-node-clean:
+	@echo "Cleaning up multi-node test environment..."
+	@./scripts/setup-multi-node-test.sh --cleanup
+
+multi-node-status:
+	@echo "Checking multi-node test status..."
+	@./scripts/setup-multi-node-test.sh --status
+
+multi-node-validate:
+	@echo "Validating multi-node configuration..."
+	@./scripts/validate-multi-node-config.sh
+
+# Enhanced NAT testing (combines Docker and multi-node)
+nat-test-all:
+	@echo "Running comprehensive NAT tests (Docker + Multi-node)..."
+	@echo "1. Running Docker NAT tests..."
+	@make docker-nat-test
+	@echo "2. Running multi-node NAT tests..."
+	@make multi-node-test || echo "Multi-node tests require manual setup - see scripts/setup-multi-node-test.sh"
+
 # Cross-platform testing
 test-cross-platform:
 	@echo "Running cross-platform tests..."
@@ -382,6 +411,15 @@ help:
 	@echo "  make docker-nat-up    - Start NAT test environment"
 	@echo "  make docker-nat-down  - Stop NAT test environment"
 	@echo "  make docker-nat-logs  - Show NAT test logs"
+	@echo ""
+	@echo "Multi-node testing targets:"
+	@echo "  make multi-node-setup   - Setup multi-node test environment"
+	@echo "  make multi-node-test    - Run multi-node NAT traversal tests"
+	@echo "  make multi-node-clean   - Clean up multi-node test environment"
+	@echo "  make multi-node-status  - Check multi-node test status"
+	@echo "  make multi-node-validate - Validate multi-node configuration"
+	@echo "  make nat-test-all       - Run comprehensive NAT tests"
+	@echo "  make nat-test-all       - Run comprehensive NAT tests"
 	@echo ""
 	@echo "Cross-platform targets:"
 	@echo "  make test-cross-platform - Run platform-specific tests"

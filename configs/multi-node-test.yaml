@@ -1,0 +1,155 @@
+# Multi-Node Local Network Testing Configuration
+# Defines nodes and test scenarios for real NAT traversal testing
+
+# Node Definitions
+# Format: hostname:port (port defaults to 22 if not specified)
+nodes:
+  # Bootstrap nodes - coordinate the network
+  bootstrap:
+    - coordinator.local:22
+    # - bootstrap2.local:22
+
+  # Client nodes - participate in P2P connections
+  clients:
+    - client1.local:22
+    - client2.local:22
+    - client3.local:22
+    # - client4.local:22
+    # - client5.local:22
+
+  # NAT gateways - simulate different NAT types
+  nat_gateways:
+    - nat1.local:22
+    # - nat2.local:22
+
+# Test Configuration
+test:
+  # Test duration in seconds
+  duration: 300
+
+  # Number of concurrent connections to test
+  concurrent_connections: 5
+
+  # Test scenarios to run
+  scenarios:
+    - direct_connectivity
+    - nat_traversal
+    - ipv6_connectivity
+    - network_stress
+
+  # NAT types to simulate (if using NAT gateways)
+  nat_types:
+    - full_cone
+    - restricted
+    - port_restricted
+    - symmetric
+
+# Network Configuration
+network:
+  # Base ports for services
+  ports:
+    ant_quic: 9000
+    bootstrap: 9001
+    client_base: 9002
+    nat_base: 9100
+
+  # Network interfaces
+  interfaces:
+    internal: eth1
+    external: eth0
+
+  # IPv6 configuration
+  ipv6:
+    enabled: true
+    prefix: "2001:db8::/32"
+
+# Monitoring Configuration
+monitoring:
+  # Enable detailed logging
+  detailed_logging: true
+
+  # Log level (debug, info, warn, error)
+  log_level: debug
+
+  # Metrics collection
+  collect_metrics: true
+  metrics_interval: 10  # seconds
+
+  # Performance thresholds
+  thresholds:
+    max_latency: 1000    # milliseconds
+    min_throughput: 1000 # bytes/second
+    max_packet_loss: 5   # percent
+
+# SSH Configuration
+ssh:
+  # SSH user for all nodes
+  user: ant-quic
+
+  # SSH key path (optional, uses default if not specified)
+  key_path: ~/.ssh/id_rsa
+
+  # Connection timeout in seconds
+  timeout: 30
+
+  # Retry attempts
+  retries: 3
+
+# Test Results
+results:
+  # Directory to store results
+  output_dir: results/multi-node
+
+  # Generate reports
+  generate_reports: true
+
+  # Report formats
+  formats:
+    - markdown
+    - json
+    - csv
+
+  # Include detailed logs in reports
+  include_logs: true
+
+# Example configurations for different test environments
+
+# Local testing (single machine with multiple interfaces)
+local_test:
+  nodes:
+    bootstrap:
+      - localhost:22
+    clients:
+      - localhost:22
+      - localhost:22
+    nat_gateways: []
+
+# Small network (2-3 machines)
+small_network:
+  nodes:
+    bootstrap:
+      - bootstrap.local:22
+    clients:
+      - client1.local:22
+      - client2.local:22
+    nat_gateways:
+      - nat.local:22
+
+# Large network (multiple machines with NAT simulation)
+large_network:
+  nodes:
+    bootstrap:
+      - coordinator.local:22
+      - backup-coordinator.local:22
+    clients:
+      - client1.local:22
+      - client2.local:22
+      - client3.local:22
+      - client4.local:22
+      - client5.local:22
+    nat_gateways:
+      - nat1.local:22
+      - nat2.local:22
+
+# Current active configuration (modify as needed)
+active_config: local_test
