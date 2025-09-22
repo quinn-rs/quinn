@@ -12,7 +12,7 @@ keywords = ["quic"]
 categories = ["network-programming", "asynchronous"]
 
 [workspace.dependencies]
-anyhow = "1.0.22"
+anyhow = "1.0.100"
 arbitrary = { version = "1.0.1", features = ["derive"] }
 async-io = "2"
 assert_matches = "1.1"
