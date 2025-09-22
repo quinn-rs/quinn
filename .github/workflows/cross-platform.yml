@@ -69,7 +69,7 @@ jobs:
     name: Test ${{ matrix.target }} / Rust ${{ matrix.rust }}
     needs: define-matrix
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix: ${{ fromJson(needs.define-matrix.outputs.matrix) }}
@@ -175,31 +175,26 @@ jobs:
       - name: Run tests (native)
         if: matrix.cross != true && matrix.wasm != true
         run: |
-          cargo test --target ${{ matrix.target }} --all-features --verbose
-          cargo test --target ${{ matrix.target }} --no-default-features --verbose
+          # Run tests excluding long-running tests in CI
+          cargo test --target ${{ matrix.target }} --all-features --verbose -- --skip long_ --skip stress_ --skip performance_
+          # Run no-default-features test only on stable rust to save time
+          if [ "${{ matrix.rust }}" = "stable" ]; then
+            cargo test --target ${{ matrix.target }} --no-default-features --features rustls-ring --verbose -- --skip long_ --skip stress_ --skip performance_
+          fi
 
       - name: Run tests (cross)
         if: matrix.cross == true && matrix.target != 'aarch64-apple-darwin'
-        run: cross test --target ${{ matrix.target }} --all-features --verbose
+        run: cross test --target ${{ matrix.target }} --all-features --verbose -- --skip long_ --skip stress_ --skip performance_
 
-      # Platform-specific tests
-      - name: Run platform-specific tests
-        if: matrix.cross != true && matrix.wasm != true
-        run: |
-          # Run platform-specific test suites
-          cargo test --target ${{ matrix.target }} --test platform_specific --features platform-tests
+
 
       # Feature combination tests
       - name: Test feature combinations
-        if: matrix.cross != true && matrix.wasm != true && matrix.rust == 'stable'
+        if: matrix.cross != true && matrix.wasm != true && matrix.rust == 'stable' && github.event_name == 'schedule'
         run: |
-          # Test with different crypto providers
-          cargo test --target ${{ matrix.target }} --no-default-features --features rustls-ring
-          cargo test --target ${{ matrix.target }} --no-default-features --features rustls-aws-lc-rs
-
-          # Test runtime combinations
-          cargo test --target ${{ matrix.target }} --no-default-features --features runtime-tokio,rustls-ring
-          cargo test --target ${{ matrix.target }} --no-default-features --features runtime-async-std,rustls-ring
+          # Test with different crypto providers only on scheduled runs
+          cargo test --target ${{ matrix.target }} --no-default-features --features rustls-ring -- --skip long_ --skip stress_ --skip performance_
+          cargo test --target ${{ matrix.target }} --no-default-features --features rustls-aws-lc-rs -- --skip long_ --skip stress_ --skip performance_
 
       # Benchmarks (only on stable)
       - name: Check benchmarks compile

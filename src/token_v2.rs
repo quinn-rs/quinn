@@ -13,9 +13,8 @@
 //! Not wired into transport yet; used by tests and for upcoming integration.
 #![allow(missing_docs)]
 
-// Ensure at least one crypto provider is available
-#[cfg(not(any(feature = "ring", feature = "aws-lc-rs")))]
-compile_error!("token_v2 requires either 'ring' or 'aws-lc-rs' feature to be enabled");
+// This module requires at least one crypto provider
+// It will only be compiled when ring or aws-lc-rs features are enabled
 
 use rand::RngCore;
 
@@ -23,10 +22,10 @@ use crate::{nat_traversal_api::PeerId, shared::ConnectionId};
 
 // Use conditional compilation to avoid import conflicts
 #[cfg(feature = "ring")]
-use ring::aead::{AES_256_GCM, Aad, LessSafeKey, NONCE_LEN, Nonce, UnboundKey};
+use ring::aead::{Aad, LessSafeKey, Nonce, UnboundKey, AES_256_GCM, NONCE_LEN};
 
 #[cfg(all(feature = "aws-lc-rs", not(feature = "ring")))]
-use aws_lc_rs::aead::{AES_256_GCM, Aad, LessSafeKey, NONCE_LEN, Nonce, UnboundKey};
+use aws_lc_rs::aead::{Aad, LessSafeKey, Nonce, UnboundKey, AES_256_GCM, NONCE_LEN};
 
 /// A 256-bit key used for encrypting and authenticating retry tokens.
 /// Used with AES-256-GCM for authenticated encryption of token contents.
@@ -56,9 +55,14 @@ pub fn test_key_from_rng(rng: &mut dyn RngCore) -> TokenKey {
 /// Encode a retry token containing peer ID, connection ID, and a fresh nonce.
 /// Encrypts the token contents using AES-256-GCM with the provided key.
 /// Returns the encrypted token as bytes, including authentication tag and nonce.
-pub fn encode_retry_token(key: &TokenKey, peer_id: &PeerId, cid: &ConnectionId) -> Vec<u8> {
+pub fn encode_retry_token_with_rng<R: RngCore>(
+    key: &TokenKey,
+    peer_id: &PeerId,
+    cid: &ConnectionId,
+    rng: &mut R,
+) -> Vec<u8> {
     let mut nonce_bytes = [0u8; 12]; // AES-GCM standard nonce length is 12 bytes
-    rand::thread_rng().fill_bytes(&mut nonce_bytes);
+    rng.fill_bytes(&mut nonce_bytes);
 
     let mut pt = Vec::with_capacity(32 + 1 + crate::MAX_CID_SIZE + 12);
     pt.extend_from_slice(&peer_id.0);
@@ -66,6 +70,10 @@ pub fn encode_retry_token(key: &TokenKey, peer_id: &PeerId, cid: &ConnectionId) 
     pt.extend_from_slice(&cid[..]);
     pt.extend_from_slice(&nonce_bytes); // Include nonce in plaintext for binding
     seal(&key.0, &nonce_bytes, &pt)
+}
+
+pub fn encode_retry_token(key: &TokenKey, peer_id: &PeerId, cid: &ConnectionId) -> Vec<u8> {
+    encode_retry_token_with_rng(key, peer_id, cid, &mut rand::thread_rng())
 }
 
 /// Decode and validate a retry token, returning the contained peer information.

@@ -192,6 +192,7 @@ pub mod relay;
 pub mod trust;
 
 /// Address-validation tokens bound to (PeerId||CID||nonce)
+#[cfg(any(feature = "ring", feature = "aws-lc-rs"))]
 pub mod token_v2;
 
 // High-level async API modules (ported from quinn crate)
