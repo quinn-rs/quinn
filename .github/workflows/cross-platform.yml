@@ -311,4 +311,4 @@ jobs:
       - name: Check MSRV
         run: |
           cargo check --all-features
-          cargo check --no-default-features
+          cargo check --no-default-features --features rustls-ring
