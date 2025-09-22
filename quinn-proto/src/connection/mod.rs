@@ -3373,17 +3373,23 @@ impl Connection {
                             _ => false,
                         };
 
-                        self.ensure_path(path_id, remote, now, number);
-                        self.on_packet_authenticated(
-                            now,
-                            packet.header.space(),
-                            path_id,
-                            ecn,
-                            number,
-                            spin,
-                            packet.header.is_1rtt(),
-                        );
+                        if self.side().is_server() && !self.abandoned_paths.contains(&path_id) {
+                            // Only the client is allowed to open paths
+                            self.ensure_path(path_id, remote, now, number);
+                        }
+                        if self.paths.contains_key(&path_id) {
+                            self.on_packet_authenticated(
+                                now,
+                                packet.header.space(),
+                                path_id,
+                                ecn,
+                                number,
+                                spin,
+                                packet.header.is_1rtt(),
+                            );
+                        }
                     }
+
                     self.process_decrypted_packet(now, remote, path_id, number, packet)
                 }
             }
@@ -3444,6 +3450,13 @@ impl Connection {
         number: Option<u64>,
         packet: Packet,
     ) -> Result<(), ConnectionError> {
+        if !self.paths.contains_key(&path_id) {
+            // There is a chance this is a server side, first (for this path) packet, which would
+            // be a protocol violation. It's more likely, however, that this is a packet of a
+            // pruned path
+            trace!(%path_id, ?number, "discarding packet for unknown path");
+            return Ok(());
+        }
         let state = match self.state {
             State::Established => {
                 match packet.header.space() {
