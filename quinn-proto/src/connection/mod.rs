@@ -5702,17 +5702,22 @@ impl From<ConnectionError> for io::Error {
 
 /// Errors that might trigger a path being closed
 // TODO(@divma): maybe needs to be reworked based on what we want to do with the public API
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, Error, PartialEq, Eq, Clone, Copy)]
 pub enum PathError {
     /// The extension was not negotiated with the peer
+    #[error("multipath extention not negotiated")]
     MultipathNotNegotiated,
     /// Paths can only be opened client-side
+    #[error("the server side may not open a path")]
     ServerSideNotAllowed,
     /// Current limits do not allow us to open more paths
+    #[error("maximum number of concurrent paths reached")]
     MaxPathIdReached,
     /// No remote CIDs avaiable to open a new path
+    #[error("remoted CIDs exhausted")]
     RemoteCidsExhausted,
     /// Path could not be validated and will be abandoned
+    #[error("path validation failed")]
     ValidationFailed,
 }
 
