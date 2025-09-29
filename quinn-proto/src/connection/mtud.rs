@@ -450,9 +450,9 @@ impl BlackHoleDetector {
         };
         // If a loss burst contains a packet smaller than the minimum MTU or a more recently
         // transmitted packet, it is not suspicious.
-        if burst.smallest_packet_size < self.min_mtu
+        if burst.smallest_packet_size <= self.min_mtu
             || (burst.latest_non_probe < self.largest_post_loss_packet
-                && burst.smallest_packet_size < self.acked_mtu)
+                && burst.smallest_packet_size <= self.acked_mtu)
         {
             return;
         }
