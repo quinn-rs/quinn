@@ -464,6 +464,7 @@ impl PacketNumberSpace {
                 .remove(&oldest_after_ack_eliciting)
                 .unwrap();
             forgotten_bytes = u64::from(packet.size);
+            debug_assert!(!packet.ack_eliciting);
         } else {
             self.unacked_non_ack_eliciting_tail += 1;
         }
