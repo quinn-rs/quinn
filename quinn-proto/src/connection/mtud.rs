@@ -83,9 +83,11 @@ impl MtuDiscovery {
         self.current_mtu = self.current_mtu.min(peer_max_udp_payload_size);
 
         if let Some(state) = self.state.as_mut() {
-            // MTUD is only active after the connection has been fully established, so it is
-            // guaranteed we will receive the peer's transport parameters before we start probing
-            debug_assert!(matches!(state.phase, Phase::Initial));
+            // It is possible for black hole detection to trigger before the connection has been
+            // fully established, if the initial MTU is greater the minimum MTU. We should never
+            // send probes before the connection has been fully established and we have received
+            // the peer's transport parameters though.
+            debug_assert!(!matches!(state.phase, Phase::Searching(_)));
             state.peer_max_udp_payload_size = peer_max_udp_payload_size;
         }
     }
