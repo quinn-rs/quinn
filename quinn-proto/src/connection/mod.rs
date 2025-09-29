@@ -2239,7 +2239,7 @@ impl Connection {
                 // Notify ack frequency that a packet was acked, because it might contain an ACK_FREQUENCY frame
                 self.ack_frequency.on_acked(path, packet);
 
-                self.on_packet_acked(now, path, packet, info);
+                self.on_packet_acked(now, path, info);
             }
         }
 
@@ -2344,11 +2344,11 @@ impl Connection {
 
     // Not timing-aware, so it's safe to call this for inferred acks, such as arise from
     // high-latency handshakes
-    fn on_packet_acked(&mut self, now: Instant, path_id: PathId, pn: u64, info: SentPacket) {
+    fn on_packet_acked(&mut self, now: Instant, path_id: PathId, info: SentPacket) {
         self.paths
             .get_mut(&path_id)
             .expect("known path")
-            .remove_in_flight(pn, &info);
+            .remove_in_flight(&info);
         let app_limited = self.app_limited;
         let path = self.path_data_mut(path_id);
         if info.ack_eliciting && path.challenge.is_none() {
@@ -2653,7 +2653,7 @@ impl Connection {
                 self.paths
                     .get_mut(&path_id)
                     .unwrap()
-                    .remove_in_flight(packet, &info);
+                    .remove_in_flight(&info);
                 for frame in info.stream_frames {
                     self.streams.retransmit(frame);
                 }
@@ -2705,7 +2705,7 @@ impl Connection {
             self.paths
                 .get_mut(&path_id)
                 .unwrap()
-                .remove_in_flight(packet, &info);
+                .remove_in_flight(&info);
             self.path_data_mut(path_id).mtud.on_probe_lost();
             self.stats
                 .paths
@@ -3200,11 +3200,11 @@ impl Connection {
         pns.time_of_last_ack_eliciting_packet = None;
         pns.loss_time = None;
         let sent_packets = mem::take(&mut pns.sent_packets);
-        for (pn, packet) in sent_packets.into_iter() {
+        for packet in sent_packets.into_values() {
             self.paths
                 .get_mut(&PathId::ZERO)
                 .unwrap()
-                .remove_in_flight(pn, &packet);
+                .remove_in_flight(&packet);
         }
 
         self.set_loss_detection_timer(now, PathId::ZERO)
@@ -3559,7 +3559,7 @@ impl Connection {
 
                 let space = &mut self.spaces[SpaceId::Initial];
                 if let Some(info) = space.for_path(PathId(0)).take(0) {
-                    self.on_packet_acked(now, PathId(0), 0, info);
+                    self.on_packet_acked(now, PathId(0), info);
                 };
 
                 self.discard_space(now, SpaceId::Initial); // Make sure we clean up after
@@ -3581,11 +3581,11 @@ impl Connection {
                 // Retransmit all 0-RTT data
                 let zero_rtt =
                     mem::take(&mut self.spaces[SpaceId::Data].for_path(PathId(0)).sent_packets);
-                for (pn, info) in zero_rtt {
+                for info in zero_rtt.into_values() {
                     self.paths
                         .get_mut(&PathId::ZERO)
                         .unwrap()
-                        .remove_in_flight(pn, &info);
+                        .remove_in_flight(&info);
                     self.spaces[SpaceId::Data].pending |= info.retransmits;
                 }
                 self.streams.retransmit_all_for_0rtt();
@@ -3659,11 +3659,11 @@ impl Connection {
                             let sent_packets = mem::take(
                                 &mut self.spaces[SpaceId::Data].for_path(path_id).sent_packets,
                             );
-                            for (pn, packet) in sent_packets {
+                            for packet in sent_packets.into_values() {
                                 self.paths
                                     .get_mut(&path_id)
                                     .unwrap()
-                                    .remove_in_flight(pn, &packet);
+                                    .remove_in_flight(&packet);
                             }
                         } else {
                             self.accepted_0rtt = true;

@@ -88,13 +88,13 @@ pub(super) struct PathState {
 
 impl PathState {
     /// Update counters to account for a packet becoming acknowledged, lost, or abandoned
-    pub(super) fn remove_in_flight(&mut self, pn: u64, packet: &SentPacket) {
+    pub(super) fn remove_in_flight(&mut self, packet: &SentPacket) {
         // Visit known paths from newest to oldest to find the one `pn` was sent on
         for path_data in [&mut self.data]
             .into_iter()
             .chain(self.prev.as_mut().map(|(_, data)| data))
         {
-            if path_data.remove_in_flight(pn, packet) {
+            if path_data.remove_in_flight(packet) {
                 return;
             }
         }
@@ -321,8 +321,8 @@ impl PathData {
 
     /// Remove `packet` with number `pn` from this path's congestion control counters, or return
     /// `false` if `pn` was sent before this path was established.
-    pub(super) fn remove_in_flight(&mut self, pn: u64, packet: &SentPacket) -> bool {
-        if self.first_packet.map_or(true, |first| first > pn) {
+    pub(super) fn remove_in_flight(&mut self, packet: &SentPacket) -> bool {
+        if packet.path_generation != self.generation {
             return false;
         }
         self.in_flight.remove(packet);
