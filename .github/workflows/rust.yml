@@ -284,6 +284,7 @@ jobs:
         api-level: ${{ matrix.api-level }}
         arch: ${{ matrix.emulator-arch }}
         script: .github/workflows/rust-android-run-tests-on-emulator.sh
+<<<<<<< HEAD
 
   # features:
   #   strategy:
@@ -299,3 +300,5 @@ jobs:
   #     - uses: dtolnay/rust-toolchain@stable
   #     - uses: taiki-e/install-action@cargo-hack
   #     - run: cargo hack check --feature-powerset --depth 3 --optional-deps --no-dev-deps --ignore-private --skip "${{env.SKIP_FEATURES}}"
+=======
+>>>>>>> c5b556736cf8e5297b3d52eb58144318ca490dd6
