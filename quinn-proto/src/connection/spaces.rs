@@ -226,13 +226,6 @@ pub(super) struct PacketNumberSpace {
     /// distinguishing between ECN bleaching and counts having been updated by a near-simultaneous
     /// ACK already processed in another space.
     pub(super) ecn_feedback: frame::EcnCounts,
-    /// Number of congestion control "in flight" bytes
-    ///
-    /// Note that this is only for this packet number space, while [`PathData::in_flight`]
-    /// tracks the in-flight bytes for all spaces.
-    ///
-    /// [`PathData::in_flight`]: super::paths::PathData::in_flight
-    pub(super) in_flight: u64,
     /// Number of packets sent in the current key phase
     pub(super) sent_with_keys: u64,
     /// A PING frame needs to be sent on this path
@@ -278,7 +271,6 @@ impl PacketNumberSpace {
             sent_packets: BTreeMap::new(),
             ecn_counters: frame::EcnCounts::ZERO,
             ecn_feedback: frame::EcnCounts::ZERO,
-            in_flight: 0,
             sent_with_keys: 0,
             ping_pending: false,
             immediate_ack_pending: false,
@@ -307,7 +299,6 @@ impl PacketNumberSpace {
             sent_packets: BTreeMap::new(),
             ecn_counters: frame::EcnCounts::ZERO,
             ecn_feedback: frame::EcnCounts::ZERO,
-            in_flight: 0,
             sent_with_keys: 0,
             ping_pending: false,
             immediate_ack_pending: false,
@@ -337,7 +328,6 @@ impl PacketNumberSpace {
             sent_packets: BTreeMap::new(),
             ecn_counters: frame::EcnCounts::ZERO,
             ecn_feedback: frame::EcnCounts::ZERO,
-            in_flight: 0,
             sent_with_keys: 0,
             ping_pending: false,
             immediate_ack_pending: false,
@@ -434,7 +424,6 @@ impl PacketNumberSpace {
     /// Stop tracking sent packet `number`, and return what we knew about it
     pub(super) fn take(&mut self, number: u64) -> Option<SentPacket> {
         let packet = self.sent_packets.remove(&number)?;
-        self.in_flight -= u64::from(packet.size);
         if !packet.ack_eliciting && number > self.largest_ack_eliciting_sent {
             self.unacked_non_ack_eliciting_tail =
                 self.unacked_non_ack_eliciting_tail.checked_sub(1).unwrap();
@@ -475,14 +464,20 @@ impl PacketNumberSpace {
                 .remove(&oldest_after_ack_eliciting)
                 .unwrap();
             forgotten_bytes = u64::from(packet.size);
-            self.in_flight -= forgotten_bytes;
         } else {
             self.unacked_non_ack_eliciting_tail += 1;
         }
 
-        self.in_flight += u64::from(packet.size);
         self.sent_packets.insert(number, packet);
         forgotten_bytes
+    }
+
+    /// Whether any congestion-controlled packets in this space are not yet acknowledged or lost
+    pub(super) fn has_in_flight(&self) -> bool {
+        // The number of non-congestion-controlled (i.e. size == 0) packets in flight at a time
+        // should be small, since otherwise congestion control wouldn't be effective. Therefore,
+        // this shouldn't need to visit many packets before finishing one way or another.
+        self.sent_packets.values().any(|x| x.size != 0)
     }
 }
 

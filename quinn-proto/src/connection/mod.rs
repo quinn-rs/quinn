@@ -2755,7 +2755,7 @@ impl Connection {
                 continue;
             };
 
-            if pns.in_flight == 0 {
+            if !pns.has_in_flight() {
                 continue;
             }
             if space == SpaceId::Data {
@@ -3192,7 +3192,6 @@ impl Connection {
         let pns = space.for_path(PathId::ZERO);
         pns.time_of_last_ack_eliciting_packet = None;
         pns.loss_time = None;
-        pns.in_flight = 0;
         let sent_packets = mem::take(&mut pns.sent_packets);
         for (pn, packet) in sent_packets.into_iter() {
             self.paths
