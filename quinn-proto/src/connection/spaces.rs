@@ -431,8 +431,8 @@ impl PacketNumberSpace {
         Some(packet)
     }
 
-    /// Returns the number of bytes to *remove* from the connection's in-flight count
-    pub(super) fn sent(&mut self, number: u64, packet: SentPacket) -> u64 {
+    /// May return a packet that should be forgotten
+    pub(super) fn sent(&mut self, number: u64, packet: SentPacket) -> Option<SentPacket> {
         // Retain state for at most this many non-ACK-eliciting packets sent after the most recently
         // sent ACK-eliciting packet. We're never guaranteed to receive an ACK for those, and we
         // can't judge them as lost without an ACK, so to limit memory in applications which receive
@@ -441,7 +441,7 @@ impl PacketNumberSpace {
         // due to weird peer behavior.
         const MAX_UNACKED_NON_ACK_ELICTING_TAIL: u64 = 1_000;
 
-        let mut forgotten_bytes = 0;
+        let mut forgotten = None;
         if packet.ack_eliciting {
             self.unacked_non_ack_eliciting_tail = 0;
             self.largest_ack_eliciting_sent = number;
@@ -463,14 +463,14 @@ impl PacketNumberSpace {
                 .sent_packets
                 .remove(&oldest_after_ack_eliciting)
                 .unwrap();
-            forgotten_bytes = u64::from(packet.size);
             debug_assert!(!packet.ack_eliciting);
+            forgotten = Some(packet);
         } else {
             self.unacked_non_ack_eliciting_tail += 1;
         }
 
         self.sent_packets.insert(number, packet);
-        forgotten_bytes
+        forgotten
     }
 
     /// Whether any congestion-controlled packets in this space are not yet acknowledged or lost
