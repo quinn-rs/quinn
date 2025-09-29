@@ -181,6 +181,9 @@ pub(super) struct PathData {
     /// Snapshot of the qlog recovery metrics
     #[cfg(feature = "qlog")]
     recovery_metrics: RecoveryMetrics,
+
+    /// Tag uniquely identifying a path in a connection
+    generation: u64,
 }
 
 impl PathData {
@@ -188,6 +191,7 @@ impl PathData {
         remote: SocketAddr,
         allow_mtud: bool,
         peer_max_udp_payload_size: Option<u16>,
+        generation: u64,
         now: Instant,
         config: &TransportConfig,
     ) -> Self {
@@ -239,13 +243,19 @@ impl PathData {
             open: false,
             #[cfg(feature = "qlog")]
             recovery_metrics: RecoveryMetrics::default(),
+            generation,
         }
     }
 
     /// Create a new path from a previous one.
     ///
     /// This should only be called when migrating paths.
-    pub(super) fn from_previous(remote: SocketAddr, prev: &Self, now: Instant) -> Self {
+    pub(super) fn from_previous(
+        remote: SocketAddr,
+        prev: &Self,
+        generation: u64,
+        now: Instant,
+    ) -> Self {
         let congestion = prev.congestion.clone_box();
         let smoothed_rtt = prev.rtt.get();
         Self {
@@ -273,6 +283,7 @@ impl PathData {
             open: false,
             #[cfg(feature = "qlog")]
             recovery_metrics: prev.recovery_metrics.clone(),
+            generation,
         }
     }
 
@@ -402,6 +413,10 @@ impl PathData {
 
     pub(crate) fn local_status(&self) -> PathStatus {
         self.status.local_status
+    }
+
+    pub(super) fn generation(&self) -> u64 {
+        self.generation
     }
 }
 

@@ -153,6 +153,10 @@ pub struct Connection {
     /// deterministically select the next PathId to send on.
     // TODO(flub): well does it really? But deterministic is nice for now.
     paths: BTreeMap<PathId, PathState>,
+    /// Incremented every time we see a new path
+    ///
+    /// Stored separately from `path.generation` to account for aborted migrations
+    path_counter: u64,
     /// Whether MTU detection is supported in this environment
     allow_mtud: bool,
     state: State,
@@ -348,7 +352,7 @@ impl Connection {
             ),
         )]);
 
-        let mut path = PathData::new(remote, allow_mtud, None, now, &config);
+        let mut path = PathData::new(remote, allow_mtud, None, 0, now, &config);
         // TODO(@divma): consider if we want to delay this until the path is validated
         path.open = true;
         let mut this = Self {
@@ -364,6 +368,7 @@ impl Connection {
                     prev: None,
                 },
             )]),
+            path_counter: 0,
             allow_mtud,
             local_ip,
             state,
@@ -764,10 +769,12 @@ impl Connection {
         debug!(%validated, %path_id, "path added");
         let peer_max_udp_payload_size =
             u16::try_from(self.peer_params.max_udp_payload_size.into_inner()).unwrap_or(u16::MAX);
+        self.path_counter = self.path_counter.wrapping_add(1);
         let mut data = PathData::new(
             remote,
             self.allow_mtud,
             Some(peer_max_udp_payload_size),
+            self.path_counter,
             now,
             &self.config,
         );
@@ -4373,6 +4380,7 @@ impl Connection {
         observed_addr: Option<ObservedAddr>,
     ) {
         trace!(%remote, ?path_id, "migration initiated");
+        self.path_counter = self.path_counter.wrapping_add(1);
         // TODO(@divma): conditions for path migration in multipath are very specific, check them
         // again to prevent path migrations that should actually create a new path
 
@@ -4383,7 +4391,7 @@ impl Connection {
         let known_path = self.paths.get_mut(&path_id).expect("known path");
         let path = &mut known_path.data;
         let mut new_path = if remote.is_ipv4() && remote.ip() == path.remote.ip() {
-            PathData::from_previous(remote, path, now)
+            PathData::from_previous(remote, path, self.path_counter, now)
         } else {
             let peer_max_udp_payload_size =
                 u16::try_from(self.peer_params.max_udp_payload_size.into_inner())
@@ -4392,6 +4400,7 @@ impl Connection {
                 remote,
                 self.allow_mtud,
                 Some(peer_max_udp_payload_size),
+                self.path_counter,
                 now,
                 &self.config,
             )
