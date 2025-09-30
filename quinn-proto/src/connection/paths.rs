@@ -130,12 +130,9 @@ pub(super) struct PathData {
     ///
     /// Used in persistent congestion determination.
     pub(super) first_packet_after_rtt_sample: Option<(SpaceId, u64)>,
-    // TODO(flub): We also have [`super::spaces::PacketNumberSpace::in_flight`]
     /// The in-flight packets and bytes
     ///
-    /// Note that this is across all spaces on this path, while
-    /// [`PacketNumberSpace::in_flight`] tracks the in-flight bytes for a single packet
-    /// number space.
+    /// Note that this is across all spaces on this path
     pub(super) in_flight: InFlight,
     /// Whether this path has had it's remote address reported back to the peer. This only happens
     /// if both peers agree to so based on their transport parameters.
