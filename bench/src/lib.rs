@@ -177,14 +177,14 @@ pub struct Opt {
     pub max_streams: usize,
     /// Number of bytes to transmit from server to client
     ///
-    /// This can use SI prefixes for sizes. E.g. 1M will transfer 1MiB, 10G
-    /// will transfer 10GiB.
+    /// This can use SI suffixes for sizes. For example, 1M will transfer
+    /// 1MiB, 10G will transfer 10GiB.
     #[clap(long, default_value = "1G", value_parser = parse_byte_size)]
     pub download_size: u64,
     /// Number of bytes to transmit from client to server
     ///
-    /// This can use SI prefixes for sizes. E.g. 1M will transfer 1MiB, 10G
-    /// will transfer 10GiB.
+    /// This can use SI suffixes for sizes. For example, 1M will transfer
+    /// 1MiB, 10G will transfer 10GiB.
     #[clap(long, default_value = "0", value_parser = parse_byte_size)]
     pub upload_size: u64,
     /// Show connection stats the at the end of the benchmark
@@ -214,15 +214,12 @@ fn parse_byte_size(s: &str) -> Result<u64, ParseIntError> {
         _ => 1,
     };
 
-    let s = if multiplier != 1 {
-        &s[..s.len() - 1]
-    } else {
-        s
+    let s = match multiplier {
+        1 => s,
+        _ => &s[..s.len() - 1],
     };
 
-    let base: u64 = u64::from_str(s)?;
-
-    Ok(base * multiplier)
+    Ok(u64::from_str(s)? * multiplier)
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]

@@ -2130,6 +2130,11 @@ impl Connection {
         self.streams.max_concurrent(dir)
     }
 
+    /// See [`TransportConfig::send_window()`]
+    pub fn set_send_window(&mut self, send_window: u64) {
+        self.streams.set_send_window(send_window);
+    }
+
     /// See [`TransportConfig::receive_window()`]
     pub fn set_receive_window(&mut self, receive_window: VarInt) {
         if self.streams.set_receive_window(receive_window) {
