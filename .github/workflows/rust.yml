@@ -6,29 +6,29 @@ on:
   pull_request:
 
 jobs:
-  # test-freebsd:
-  # # see https://github.com/actions/runner/issues/385
-  # # use https://github.com/vmactions/freebsd-vm for now
-  #   name: test on freebsd
-  #   runs-on: ubuntu-latest
-  #   steps:
-  #     - uses: actions/checkout@v4
-  #     - name: test on freebsd
-  #       uses: vmactions/freebsd-vm@v1
-  #       with:
-  #         usesh: true
-  #         mem: 4096
-  #         copyback: false
-  #         prepare: |
-  #           pkg install -y curl
-  #           curl https://sh.rustup.rs -sSf --output rustup.sh
-  #           sh rustup.sh -y --profile minimal --default-toolchain stable
-  #         run: |
-  #           export PATH="$HOME/.cargo/bin:$PATH"
-  #           echo "===== rustc --version ====="
-  #           rustc --version
-  #           echo "===== freebsd-version ====="
-  #           freebsd-version
+#   test-freebsd:
+#   # see https://github.com/actions/runner/issues/385
+#   # use https://github.com/vmactions/freebsd-vm for now
+#     name: test on freebsd
+#     runs-on: ubuntu-latest
+#     steps:
+#       - uses: actions/checkout@v5
+#       - name: test on freebsd
+#         uses: vmactions/freebsd-vm@v1
+#         with:
+#           usesh: true
+#           mem: 4096
+#           copyback: false
+#           prepare: |
+#             pkg install -y curl
+#             curl https://sh.rustup.rs -sSf --output rustup.sh
+#             sh rustup.sh -y --profile minimal --default-toolchain stable
+#           run: |
+#             export PATH="$HOME/.cargo/bin:$PATH"
+#             echo "===== rustc --version ====="
+#             rustc --version
+#             echo "===== freebsd-version ====="
+#             freebsd-version
 
   #           cargo build --locked --all-targets && cargo test --locked && cargo test --locked -- --ignored stress && cargo test --locked --manifest-path fuzz/Cargo.toml && cargo test --locked -p iroh-quinn-udp --benches
 
@@ -36,7 +36,7 @@ jobs:
   #   name: test on netbsd
   #   runs-on: ubuntu-latest
   #   steps:
-  #     - uses: actions/checkout@v4
+  #     - uses: actions/checkout@v5
   #     - name: test on netbsd
   #       uses: vmactions/netbsd-vm@v1
   #       with:
@@ -61,7 +61,7 @@ jobs:
   #   name: test on solaris
   #   runs-on: ubuntu-latest
   #   steps:
-  #     - uses: actions/checkout@v4
+  #     - uses: actions/checkout@v5
   #     - name: test on Solaris
   #       uses: vmactions/solaris-vm@v1
   #       with:
@@ -81,12 +81,12 @@ jobs:
   #           # Workaround for https://github.com/quinn-rs/quinn/issues/2218
   #           export CARGO_HTTP_MULTIPLEXING=false
   #           cargo build --locked --all-targets && cargo test --locked --manifest-path fuzz/Cargo.toml && cargo test --locked -p quinn-udp --benches
-
+  # 
   # test-illumos:
   #   name: test on illumos
   #   runs-on: ubuntu-latest
   #   steps:
-  #     - uses: actions/checkout@v4
+  #     - uses: actions/checkout@v5
   #     - name: test on Illumos
   #       uses: vmactions/omnios-vm@v1
   #       with:
@@ -119,7 +119,7 @@ jobs:
       SCCACHE_GHA_ENABLED: "on"
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: mozilla-actions/sccache-action@v0.0.9
       - uses: dtolnay/rust-toolchain@master
         with:
@@ -139,7 +139,7 @@ jobs:
   test-aws-lc-rs:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       # Prevent feature unification from selecting *ring* as the crypto provider
@@ -153,7 +153,7 @@ jobs:
     name: test wasm32-unknown-unknown
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - run: rustup target add wasm32-unknown-unknown
       - uses: actions/setup-node@v4
@@ -184,7 +184,7 @@ jobs:
       RUSTC_WRAPPER: "sccache"
       SCCACHE_GHA_ENABLED: "on"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: mozilla-actions/sccache-action@v0.0.9
       # Note that we must also update the README when changing the MSRV
       - uses: dtolnay/rust-toolchain@1.74.1
@@ -197,7 +197,7 @@ jobs:
       RUSTC_WRAPPER: "sccache"
       SCCACHE_GHA_ENABLED: "on"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: mozilla-actions/sccache-action@v0.0.9
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -220,7 +220,7 @@ jobs:
   audit:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v5
     - uses: EmbarkStudios/cargo-deny-action@v2
 
   test-android:
@@ -242,7 +242,7 @@ jobs:
       run: echo "API_LEVEL=${{ matrix.api-level }}" >> $GITHUB_ENV
 
     - name: Checkout code
-      uses: actions/checkout@v4
+      uses: actions/checkout@v5
 
     - name: Install JDK
       uses: actions/setup-java@v4
@@ -284,8 +284,6 @@ jobs:
         api-level: ${{ matrix.api-level }}
         arch: ${{ matrix.emulator-arch }}
         script: .github/workflows/rust-android-run-tests-on-emulator.sh
-<<<<<<< HEAD
-
   # features:
   #   strategy:
   #     matrix:
@@ -296,9 +294,7 @@ jobs:
   #     # skip FIPS features outside of Linux
   #     SKIP_FEATURES: ${{ matrix.os != 'ubuntu-latest' && 'rustls-aws-lc-rs-fips,aws-lc-rs-fips' || '' }}
   #   steps:
-  #     - uses: actions/checkout@v4
+  #     - uses: actions/checkout@v5
   #     - uses: dtolnay/rust-toolchain@stable
   #     - uses: taiki-e/install-action@cargo-hack
   #     - run: cargo hack check --feature-powerset --depth 3 --optional-deps --no-dev-deps --ignore-private --skip "${{env.SKIP_FEATURES}}"
-=======
->>>>>>> c5b556736cf8e5297b3d52eb58144318ca490dd6
