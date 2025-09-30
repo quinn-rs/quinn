@@ -153,6 +153,10 @@ pub struct Connection {
     /// deterministically select the next PathId to send on.
     // TODO(flub): well does it really? But deterministic is nice for now.
     paths: BTreeMap<PathId, PathState>,
+    /// Incremented every time we see a new path
+    ///
+    /// Stored separately from `path.generation` to account for aborted migrations
+    path_counter: u64,
     /// Whether MTU detection is supported in this environment
     allow_mtud: bool,
     state: State,
@@ -348,7 +352,7 @@ impl Connection {
             ),
         )]);
 
-        let mut path = PathData::new(remote, allow_mtud, None, now, &config);
+        let mut path = PathData::new(remote, allow_mtud, None, 0, now, &config);
         // TODO(@divma): consider if we want to delay this until the path is validated
         path.open = true;
         let mut this = Self {
@@ -364,6 +368,7 @@ impl Connection {
                     prev: None,
                 },
             )]),
+            path_counter: 0,
             allow_mtud,
             local_ip,
             state,
@@ -764,10 +769,12 @@ impl Connection {
         debug!(%validated, %path_id, "path added");
         let peer_max_udp_payload_size =
             u16::try_from(self.peer_params.max_udp_payload_size.into_inner()).unwrap_or(u16::MAX);
+        self.path_counter = self.path_counter.wrapping_add(1);
         let mut data = PathData::new(
             remote,
             self.allow_mtud,
             Some(peer_max_udp_payload_size),
+            self.path_counter,
             now,
             &self.config,
         );
@@ -2123,6 +2130,11 @@ impl Connection {
         self.streams.max_concurrent(dir)
     }
 
+    /// See [`TransportConfig::send_window()`]
+    pub fn set_send_window(&mut self, send_window: u64) {
+        self.streams.set_send_window(send_window);
+    }
+
     /// See [`TransportConfig::receive_window()`]
     pub fn set_receive_window(&mut self, receive_window: VarInt) {
         if self.streams.set_receive_window(receive_window) {
@@ -2232,7 +2244,7 @@ impl Connection {
                 // Notify ack frequency that a packet was acked, because it might contain an ACK_FREQUENCY frame
                 self.ack_frequency.on_acked(path, packet);
 
-                self.on_packet_acked(now, path, packet, info);
+                self.on_packet_acked(now, path, info);
             }
         }
 
@@ -2337,11 +2349,11 @@ impl Connection {
 
     // Not timing-aware, so it's safe to call this for inferred acks, such as arise from
     // high-latency handshakes
-    fn on_packet_acked(&mut self, now: Instant, path_id: PathId, pn: u64, info: SentPacket) {
+    fn on_packet_acked(&mut self, now: Instant, path_id: PathId, info: SentPacket) {
         self.paths
             .get_mut(&path_id)
             .expect("known path")
-            .remove_in_flight(pn, &info);
+            .remove_in_flight(&info);
         let app_limited = self.app_limited;
         let path = self.path_data_mut(path_id);
         if info.ack_eliciting && path.challenge.is_none() {
@@ -2646,7 +2658,7 @@ impl Connection {
                 self.paths
                     .get_mut(&path_id)
                     .unwrap()
-                    .remove_in_flight(packet, &info);
+                    .remove_in_flight(&info);
                 for frame in info.stream_frames {
                     self.streams.retransmit(frame);
                 }
@@ -2698,7 +2710,7 @@ impl Connection {
             self.paths
                 .get_mut(&path_id)
                 .unwrap()
-                .remove_in_flight(packet, &info);
+                .remove_in_flight(&info);
             self.path_data_mut(path_id).mtud.on_probe_lost();
             self.stats
                 .paths
@@ -2755,7 +2767,7 @@ impl Connection {
                 continue;
             };
 
-            if pns.in_flight == 0 {
+            if !pns.has_in_flight() {
                 continue;
             }
             if space == SpaceId::Data {
@@ -3192,13 +3204,12 @@ impl Connection {
         let pns = space.for_path(PathId::ZERO);
         pns.time_of_last_ack_eliciting_packet = None;
         pns.loss_time = None;
-        pns.in_flight = 0;
         let sent_packets = mem::take(&mut pns.sent_packets);
-        for (pn, packet) in sent_packets.into_iter() {
+        for packet in sent_packets.into_values() {
             self.paths
                 .get_mut(&PathId::ZERO)
                 .unwrap()
-                .remove_in_flight(pn, &packet);
+                .remove_in_flight(&packet);
         }
 
         self.set_loss_detection_timer(now, PathId::ZERO)
@@ -3553,7 +3564,7 @@ impl Connection {
 
                 let space = &mut self.spaces[SpaceId::Initial];
                 if let Some(info) = space.for_path(PathId(0)).take(0) {
-                    self.on_packet_acked(now, PathId(0), 0, info);
+                    self.on_packet_acked(now, PathId(0), info);
                 };
 
                 self.discard_space(now, SpaceId::Initial); // Make sure we clean up after
@@ -3575,11 +3586,11 @@ impl Connection {
                 // Retransmit all 0-RTT data
                 let zero_rtt =
                     mem::take(&mut self.spaces[SpaceId::Data].for_path(PathId(0)).sent_packets);
-                for (pn, info) in zero_rtt {
+                for info in zero_rtt.into_values() {
                     self.paths
                         .get_mut(&PathId::ZERO)
                         .unwrap()
-                        .remove_in_flight(pn, &info);
+                        .remove_in_flight(&info);
                     self.spaces[SpaceId::Data].pending |= info.retransmits;
                 }
                 self.streams.retransmit_all_for_0rtt();
@@ -3653,11 +3664,11 @@ impl Connection {
                             let sent_packets = mem::take(
                                 &mut self.spaces[SpaceId::Data].for_path(path_id).sent_packets,
                             );
-                            for (pn, packet) in sent_packets {
+                            for packet in sent_packets.into_values() {
                                 self.paths
                                     .get_mut(&path_id)
                                     .unwrap()
-                                    .remove_in_flight(pn, &packet);
+                                    .remove_in_flight(&packet);
                             }
                         } else {
                             self.accepted_0rtt = true;
@@ -4374,6 +4385,7 @@ impl Connection {
         observed_addr: Option<ObservedAddr>,
     ) {
         trace!(%remote, ?path_id, "migration initiated");
+        self.path_counter = self.path_counter.wrapping_add(1);
         // TODO(@divma): conditions for path migration in multipath are very specific, check them
         // again to prevent path migrations that should actually create a new path
 
@@ -4384,7 +4396,7 @@ impl Connection {
         let known_path = self.paths.get_mut(&path_id).expect("known path");
         let path = &mut known_path.data;
         let mut new_path = if remote.is_ipv4() && remote.ip() == path.remote.ip() {
-            PathData::from_previous(remote, path, now)
+            PathData::from_previous(remote, path, self.path_counter, now)
         } else {
             let peer_max_udp_payload_size =
                 u16::try_from(self.peer_params.max_udp_payload_size.into_inner())
@@ -4393,6 +4405,7 @@ impl Connection {
                 remote,
                 self.allow_mtud,
                 Some(peer_max_udp_payload_size),
+                self.path_counter,
                 now,
                 &self.config,
             )

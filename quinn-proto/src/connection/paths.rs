@@ -88,13 +88,13 @@ pub(super) struct PathState {
 
 impl PathState {
     /// Update counters to account for a packet becoming acknowledged, lost, or abandoned
-    pub(super) fn remove_in_flight(&mut self, pn: u64, packet: &SentPacket) {
+    pub(super) fn remove_in_flight(&mut self, packet: &SentPacket) {
         // Visit known paths from newest to oldest to find the one `pn` was sent on
         for path_data in [&mut self.data]
             .into_iter()
             .chain(self.prev.as_mut().map(|(_, data)| data))
         {
-            if path_data.remove_in_flight(pn, packet) {
+            if path_data.remove_in_flight(packet) {
                 return;
             }
         }
@@ -130,12 +130,9 @@ pub(super) struct PathData {
     ///
     /// Used in persistent congestion determination.
     pub(super) first_packet_after_rtt_sample: Option<(SpaceId, u64)>,
-    // TODO(flub): We also have [`super::spaces::PacketNumberSpace::in_flight`]
     /// The in-flight packets and bytes
     ///
-    /// Note that this is across all spaces on this path, while
-    /// [`PacketNumberSpace::in_flight`] tracks the in-flight bytes for a single packet
-    /// number space.
+    /// Note that this is across all spaces on this path
     pub(super) in_flight: InFlight,
     /// Whether this path has had it's remote address reported back to the peer. This only happens
     /// if both peers agree to so based on their transport parameters.
@@ -181,6 +178,9 @@ pub(super) struct PathData {
     /// Snapshot of the qlog recovery metrics
     #[cfg(feature = "qlog")]
     recovery_metrics: RecoveryMetrics,
+
+    /// Tag uniquely identifying a path in a connection
+    generation: u64,
 }
 
 impl PathData {
@@ -188,6 +188,7 @@ impl PathData {
         remote: SocketAddr,
         allow_mtud: bool,
         peer_max_udp_payload_size: Option<u16>,
+        generation: u64,
         now: Instant,
         config: &TransportConfig,
     ) -> Self {
@@ -239,13 +240,19 @@ impl PathData {
             open: false,
             #[cfg(feature = "qlog")]
             recovery_metrics: RecoveryMetrics::default(),
+            generation,
         }
     }
 
     /// Create a new path from a previous one.
     ///
     /// This should only be called when migrating paths.
-    pub(super) fn from_previous(remote: SocketAddr, prev: &Self, now: Instant) -> Self {
+    pub(super) fn from_previous(
+        remote: SocketAddr,
+        prev: &Self,
+        generation: u64,
+        now: Instant,
+    ) -> Self {
         let congestion = prev.congestion.clone_box();
         let smoothed_rtt = prev.rtt.get();
         Self {
@@ -273,6 +280,7 @@ impl PathData {
             open: false,
             #[cfg(feature = "qlog")]
             recovery_metrics: prev.recovery_metrics.clone(),
+            generation,
         }
     }
 
@@ -305,13 +313,15 @@ impl PathData {
         if self.first_packet.is_none() {
             self.first_packet = Some(pn);
         }
-        self.in_flight.bytes -= space.sent(pn, packet);
+        if let Some(forgotten) = space.sent(pn, packet) {
+            self.remove_in_flight(&forgotten);
+        }
     }
 
     /// Remove `packet` with number `pn` from this path's congestion control counters, or return
     /// `false` if `pn` was sent before this path was established.
-    pub(super) fn remove_in_flight(&mut self, pn: u64, packet: &SentPacket) -> bool {
-        if self.first_packet.map_or(true, |first| first > pn) {
+    pub(super) fn remove_in_flight(&mut self, packet: &SentPacket) -> bool {
+        if packet.path_generation != self.generation {
             return false;
         }
         self.in_flight.remove(packet);
@@ -402,6 +412,10 @@ impl PathData {
 
     pub(crate) fn local_status(&self) -> PathStatus {
         self.status.local_status
+    }
+
+    pub(super) fn generation(&self) -> u64 {
+        self.generation
     }
 }
 

@@ -23,7 +23,7 @@ bytes = "1"
 clap = { version = "4.5", features = ["derive"] }
 crc = "3"
 directories-next = "2"
-fastbloom = "0.12"
+fastbloom = "0.14"
 futures-io = "0.3.19"
 getrandom = { version = "0.3", default-features = false }
 hdrhistogram = { version = "7.2", default-features = false }
@@ -57,7 +57,7 @@ tracing-subscriber = { version = "0.3.1", default-features = false, features = [
 url = "2"
 wasm-bindgen-test = { version = "0.3.45" }
 web-time = "1"
-windows-sys = { version = ">=0.52, <=0.59", features = ["Win32_Foundation", "Win32_System_IO", "Win32_Networking_WinSock"] }
+windows-sys = { version = ">=0.52, <=0.60", features = ["Win32_Foundation", "Win32_System_IO", "Win32_Networking_WinSock"] }
 cfg_aliases = "0.2"
 
 # Fix minimal dependencies for indirect deps

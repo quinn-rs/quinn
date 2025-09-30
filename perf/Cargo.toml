@@ -5,6 +5,10 @@ edition = "2021"
 license = "MIT OR Apache-2.0"
 publish = false
 
+[[bin]]
+name = "quinn-perf"
+path = "src/bin/perf.rs"
+
 [features]
 # NOTE: Please keep this in sync with the feature list in `.github/workflows/codecov.yml`, see
 # comment in that file for more information.

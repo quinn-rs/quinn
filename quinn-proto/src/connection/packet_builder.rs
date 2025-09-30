@@ -222,6 +222,7 @@ impl<'a, 'b> PacketBuilder<'a, 'b> {
         };
 
         let packet = SentPacket {
+            path_generation: conn.paths.get_mut(&path_id).unwrap().data.generation(),
             largest_acked: sent.largest_acked,
             time_sent: now,
             size,

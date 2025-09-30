@@ -8,6 +8,8 @@ use crate::{Dir, Duration, frame::Frame};
 use super::PathId;
 
 /// Statistics about UDP datagrams transmitted or received on a connection
+///
+/// All QUIC packets are carried by UDP datagrams. Hence, these statistics cover all traffic on a connection.
 #[derive(Default, Debug, Copy, Clone)]
 #[non_exhaustive]
 pub struct UdpStats {
@@ -29,7 +31,7 @@ impl UdpStats {
     }
 }
 
-/// Number of frames transmitted of each frame type
+/// Number of frames transmitted or received of each frame type
 #[derive(Default, Copy, Clone)]
 #[non_exhaustive]
 #[allow(missing_docs)]
