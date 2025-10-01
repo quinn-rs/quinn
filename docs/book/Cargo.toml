@@ -11,6 +11,6 @@ categories.workspace = true
 [dependencies]
 anyhow.workspace = true
 bytes = { workspace = true }
-quinn = { version = "0.14", path = "../../quinn", package = "iroh-quinn" }
+quinn = { version = "0.13", path = "../../quinn", package = "iroh-quinn" }
 rcgen.workspace = true
 rustls.workspace = true
