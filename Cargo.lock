@@ -134,7 +134,7 @@ dependencies = [
 
 [[package]]
 name = "ant-quic"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "anyhow",
  "arbitrary",
