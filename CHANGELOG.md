@@ -5,6 +5,51 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.0] - 2025-10-01
+
+### Added
+- **Flexible Port Configuration** 🔌
+  - New `EndpointPortConfig` for flexible port binding strategies
+  - Support for OS-assigned ports (new recommended default)
+  - Explicit port binding with validation
+  - Port range selection for automatic port finding
+  - Dual-stack IPv4/IPv6 support with separate port bindings
+  - Comprehensive port binding API: `PortBinding`, `IpMode`, `SocketOptions`, `PortRetryBehavior`
+  - Port discovery API for querying bound addresses
+  - Retry behaviors: fail-fast, fallback to OS-assigned, try next in range
+  - 23 comprehensive unit tests for port configuration
+  - Example demonstrating all port configuration features
+
+### Changed
+- **Breaking Change**: Default port behavior changed from attempting port 9000 to OS-assigned (port 0)
+  - This allows multiple instances on the same machine without conflicts
+  - Applications requiring specific ports should explicitly configure `PortBinding::Explicit(port)`
+- `EndpointConfig` now includes `port_config` field for port binding configuration
+- Enhanced socket binding with proper error handling and platform support
+
+### Fixed
+- Port conflicts when running multiple QUIC endpoints on same machine
+- Dual-stack IPv4/IPv6 binding conflicts on some platforms
+- Privileged port validation (ports < 1024) with clear error messages
+
+### Migration Guide
+```rust
+// Old (v0.8.x) - attempted port 9000
+let endpoint = Endpoint::new().await?;
+
+// New (v0.9.0) - OS-assigned port (recommended)
+let endpoint = Endpoint::new().await?;
+println!("Listening on: {}", endpoint.local_addr().unwrap());
+
+// To maintain old behavior (port 9000)
+use ant_quic::config::{EndpointConfig, EndpointPortConfig, PortBinding};
+let mut config = EndpointConfig::default();
+config.port_config(EndpointPortConfig {
+    port: PortBinding::Explicit(9000),
+    ..Default::default()
+});
+```
+
 ## [0.6.1] - 2025-08-07
 
 ### Security

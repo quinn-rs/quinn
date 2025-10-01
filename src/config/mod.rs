@@ -38,6 +38,17 @@ pub use transport::{AckFrequencyConfig, IdleTimeout, MtuDiscoveryConfig, Transpo
 pub mod nat_timeouts;
 pub mod timeouts;
 
+// Port configuration module
+pub mod port;
+pub use port::{
+    BoundSocket, EndpointConfigError, EndpointPortConfig, IpMode, PortBinding, PortConfigResult,
+    PortRetryBehavior, SocketOptions,
+};
+
+// Port binding implementation
+pub(crate) mod port_binding;
+pub use port_binding::bind_endpoint;
+
 // Production-ready configuration validation
 pub(crate) mod validation;
 
@@ -66,6 +77,8 @@ pub struct EndpointConfig {
     pub(crate) address_discovery_observe_all: bool,
     /// Post-Quantum Cryptography configuration (always available)
     pub(crate) pqc_config: Option<crate::crypto::pqc::PqcConfig>,
+    /// Port configuration for endpoint binding
+    pub(crate) port_config: EndpointPortConfig,
 }
 
 impl EndpointConfig {
@@ -85,6 +98,7 @@ impl EndpointConfig {
             address_discovery_max_rate: 10,
             address_discovery_observe_all: false,
             pqc_config: Some(crate::crypto::pqc::PqcConfig::default()), // Enable PQC by default
+            port_config: EndpointPortConfig::default(), // Use OS-assigned port by default
         }
     }
 
@@ -262,6 +276,37 @@ impl EndpointConfig {
         self.pqc_config = Some(config);
         self
     }
+
+    /// Set port configuration for endpoint binding
+    ///
+    /// Configure port binding strategy, IP mode (IPv4/IPv6), socket options,
+    /// and retry behavior. Use this to customize port binding behavior from
+    /// the default OS-assigned port.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use ant_quic::config::{EndpointConfig, EndpointPortConfig, PortBinding};
+    /// use std::sync::Arc;
+    ///
+    /// # #[cfg(any(feature = "aws-lc-rs", feature = "ring"))]
+    /// # {
+    /// let mut config = EndpointConfig::default();
+    /// config.port_config(EndpointPortConfig {
+    ///     port: PortBinding::Explicit(9000),
+    ///     ..Default::default()
+    /// });
+    /// # }
+    /// ```
+    pub fn port_config(&mut self, config: EndpointPortConfig) -> &mut Self {
+        self.port_config = config;
+        self
+    }
+
+    /// Get the current port configuration
+    pub fn get_port_config(&self) -> &EndpointPortConfig {
+        &self.port_config
+    }
 }
 
 impl fmt::Debug for EndpointConfig {
@@ -321,6 +366,10 @@ pub struct ServerConfig {
     /// Used to generate one-time AEAD keys to protect handshake tokens
     pub(crate) token_key: Arc<dyn HandshakeTokenKey>,
 
+    /// Key material for Token v2 address-validation tokens. When present, NEW_TOKEN frames will
+    /// emit AES-GCM protected tokens bound to peer identity and connection ID.
+    pub(crate) token_v2_key: Option<crate::token_v2::TokenKey>,
+
     /// Duration after a retry token was issued for which it's considered valid
     pub(crate) retry_token_lifetime: Duration,
 
@@ -351,6 +400,7 @@ impl ServerConfig {
             crypto,
 
             token_key,
+            token_v2_key: None,
             retry_token_lifetime: Duration::from_secs(15),
 
             migration: true,
@@ -386,6 +436,13 @@ impl ServerConfig {
     /// Private key used to authenticate data included in handshake tokens
     pub fn token_key(&mut self, value: Arc<dyn HandshakeTokenKey>) -> &mut Self {
         self.token_key = value;
+        self
+    }
+
+    /// Configure the key used for Token v2 address-validation tokens. When unset, the server will
+    /// continue issuing legacy validation tokens.
+    pub fn token_v2_key(&mut self, key: Option<crate::token_v2::TokenKey>) -> &mut Self {
+        self.token_v2_key = key;
         self
     }
 
