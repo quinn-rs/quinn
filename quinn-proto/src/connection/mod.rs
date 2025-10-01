@@ -1721,8 +1721,9 @@ impl Connection {
         // InPersistentCongestion: Determine if all packets in the time period before the newest
         // lost packet, including the edges, are marked lost. PTO computation must always
         // include max ACK delay, i.e. operate as if in Data space (see RFC9001 §7.6.1).
-        let congestion_period =
-            self.pto(SpaceId::Data) * self.config.persistent_congestion_threshold;
+        let congestion_period = self
+            .pto(SpaceId::Data)
+            .saturating_mul(self.config.persistent_congestion_threshold);
         let mut persistent_congestion_start: Option<Instant> = None;
         let mut prev_packet = None;
         let mut in_persistent_congestion = false;
