@@ -1110,7 +1110,7 @@ pub(crate) struct State {
     /// Number of live handles that can be used to initiate or handle I/O; excludes the driver
     ref_count: usize,
     sender: Pin<Box<dyn UdpSender>>,
-    runtime: Arc<dyn Runtime>,
+    pub(crate) runtime: Arc<dyn Runtime>,
     send_buffer: Vec<u8>,
     /// We buffer a transmit when the underlying I/O would block
     buffered_transmit: Option<proto::Transmit>,
