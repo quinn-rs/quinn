@@ -2,14 +2,13 @@ use std::{
     collections::VecDeque,
     fmt,
     future::Future,
-    io,
-    io::IoSliceMut,
+    io::{self, IoSliceMut},
     mem,
     net::{SocketAddr, SocketAddrV6},
     pin::Pin,
     str,
     sync::{Arc, Mutex},
-    task::{Context, Poll, Waker},
+    task::{Context, Poll, RawWaker, RawWakerVTable, Waker},
 };
 
 #[cfg(all(not(wasm_browser), any(feature = "aws-lc-rs", feature = "ring")))]
@@ -498,7 +497,7 @@ impl State {
             let poll_res = self.recv_state.poll_socket(
                 cx,
                 &mut self.inner,
-                &mut *socket,
+                &mut **socket,
                 &mut self.sender,
                 &*self.runtime,
                 now,
@@ -510,7 +509,7 @@ impl State {
         let poll_res = self.recv_state.poll_socket(
             cx,
             &mut self.inner,
-            &mut self.socket,
+            &mut *self.socket,
             &mut self.sender,
             &*self.runtime,
             now,
@@ -591,9 +590,29 @@ fn respond(
     // to transmit. This is morally equivalent to the packet getting
     // lost due to congestion further along the link, which
     // similarly relies on peer retries for recovery.
-    _ = sender
-        .as_mut()
-        .try_send(&udp_transmit(&transmit, &response_buffer[..transmit.size]));
+
+    // Copied from rust 1.85's std::task::Waker::noop() implementation for backwards compatibility
+    const NOOP: RawWaker = {
+        const VTABLE: RawWakerVTable = RawWakerVTable::new(
+            // Cloning just returns a new no-op raw waker
+            |_| NOOP,
+            // `wake` does nothing
+            |_| {},
+            // `wake_by_ref` does nothing
+            |_| {},
+            // Dropping does nothing as we don't allocate anything
+            |_| {},
+        );
+        RawWaker::new(std::ptr::null(), &VTABLE)
+    };
+    // SAFETY: Copied from rust stdlib, the NOOP waker is thread-safe and doesn't violate the RawWakerVTable contract,
+    // it doesn't access the data pointer at all.
+    let waker = unsafe { Waker::from_raw(NOOP) };
+    let mut cx = Context::from_waker(&waker);
+    _ = sender.as_mut().poll_send(
+        &udp_transmit(&transmit, &response_buffer[..transmit.size]),
+        &mut cx,
+    );
 }
 
 #[inline]
@@ -788,7 +807,7 @@ impl RecvState {
         &mut self,
         cx: &mut Context,
         endpoint: &mut proto::Endpoint,
-        socket: &mut Box<dyn AsyncUdpSocket>,
+        socket: &mut dyn AsyncUdpSocket,
         sender: &mut Pin<Box<dyn UdpSender>>,
         runtime: &dyn Runtime,
         now: Instant,

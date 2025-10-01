@@ -36,7 +36,6 @@ rustls-ring = ["dep:rustls", "ring", "proto/rustls-ring", "proto/ring"]
 # Outside wasm*-unknown-unknown targets, this enables `Endpoint::client` and `Endpoint::server` conveniences.
 ring = ["proto/ring"]
 runtime-tokio = ["tokio/time", "tokio/rt", "tokio/net"]
-runtime-async-std = ["async-io", "async-std"]
 runtime-smol = ["async-io", "smol"]
 
 # Configure `tracing` to log events via `log` if no `tracing` subscriber exists.
@@ -48,7 +47,6 @@ qlog = ["proto/qlog"]
 
 [dependencies]
 async-io = { workspace = true, optional = true }
-async-std = { workspace = true, optional = true }
 bytes = { workspace = true }
 # Enables futures::io::{AsyncRead, AsyncWrite} support for streams
 futures-io = { workspace = true, optional = true }
@@ -119,4 +117,4 @@ required-features = ["rustls-ring"]
 
 [package.metadata.docs.rs]
 # all non-default features except fips (cannot build on docs.rs environment)
-features = ["lock_tracking", "rustls-aws-lc-rs", "rustls-ring", "runtime-tokio", "runtime-async-std", "runtime-smol", "log", "rustls-log"]
+features = ["lock_tracking", "rustls-aws-lc-rs", "rustls-ring", "runtime-tokio", "runtime-smol", "log", "rustls-log"]

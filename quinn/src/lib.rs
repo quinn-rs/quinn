@@ -83,16 +83,11 @@ pub use crate::endpoint::{Accept, Endpoint, EndpointStats};
 pub use crate::incoming::{Incoming, IncomingFuture, RetryError};
 pub use crate::path::{OpenPath, Path};
 pub use crate::recv_stream::{ReadError, ReadExactError, ReadToEndError, RecvStream, ResetError};
-#[cfg(feature = "runtime-async-std")]
-pub use crate::runtime::AsyncStdRuntime;
 #[cfg(feature = "runtime-smol")]
 pub use crate::runtime::SmolRuntime;
 #[cfg(feature = "runtime-tokio")]
 pub use crate::runtime::TokioRuntime;
-pub use crate::runtime::{
-    AsyncTimer, AsyncUdpSocket, Runtime, UdpSender, UdpSenderHelper, UdpSenderHelperSocket,
-    default_runtime,
-};
+pub use crate::runtime::{AsyncTimer, AsyncUdpSocket, Runtime, UdpSender, default_runtime};
 pub use crate::send_stream::{SendStream, StoppedError, WriteError};
 
 #[cfg(test)]
