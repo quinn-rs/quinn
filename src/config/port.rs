@@ -196,11 +196,15 @@ pub enum EndpointConfigError {
     InvalidPort(u32),
 
     /// Cannot bind to privileged port
-    #[error("Cannot bind to privileged port {0}. Use port 1024 or higher, or run with appropriate permissions.")]
+    #[error(
+        "Cannot bind to privileged port {0}. Use port 1024 or higher, or run with appropriate permissions."
+    )]
     PermissionDenied(u16),
 
     /// No available port in range
-    #[error("No available port in range {0}-{1}. Try a wider range or use PortBinding::OsAssigned.")]
+    #[error(
+        "No available port in range {0}-{1}. Try a wider range or use PortBinding::OsAssigned."
+    )]
     NoPortInRange(u16, u16),
 
     /// Dual-stack not supported on this platform
@@ -313,7 +317,10 @@ mod tests {
             ipv6_port: PortBinding::Explicit(9001),
         };
         match mode {
-            IpMode::DualStackSeparate { ipv4_port, ipv6_port } => {
+            IpMode::DualStackSeparate {
+                ipv4_port,
+                ipv6_port,
+            } => {
                 assert_eq!(ipv4_port, PortBinding::Explicit(9000));
                 assert_eq!(ipv6_port, PortBinding::Explicit(9001));
             }
@@ -347,9 +354,7 @@ mod tests {
     #[test]
     fn test_endpoint_config_error_display() {
         let err = EndpointConfigError::PortInUse(9000);
-        assert!(err
-            .to_string()
-            .contains("Port 9000 is already in use"));
+        assert!(err.to_string().contains("Port 9000 is already in use"));
 
         let err = EndpointConfigError::InvalidPort(70000);
         assert!(err.to_string().contains("Invalid port number"));

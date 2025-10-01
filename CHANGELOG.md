@@ -5,6 +5,66 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.0] - 2025-10-01
+
+### Added
+- **P2P NAT Traversal Support** 🔄
+  - Implemented P2P-aware validation for symmetric peer-to-peer QUIC connections
+  - Both peers can now simultaneously act as client AND server (bidirectional NAT traversal)
+  - Added helper methods: `negotiated_nat_concurrency_limit()`, `supports_bidirectional_nat_traversal()`
+  - 6 comprehensive P2P test cases demonstrating symmetric connection scenarios
+  - 2 regression tests ensuring traditional client/server NAT traversal remains unchanged
+  - Concurrency limit validation (1-100) for P2P `ServerSupport` configurations
+
+### Fixed
+- **Critical**: P2P QUIC connections no longer fail handshake validation
+  - Previously, strict asymmetric validation rejected `ServerSupport` from servers and `ClientSupport` from clients
+  - Now correctly allows P2P scenarios where both peers send `ServerSupport` or both send `ClientSupport`
+  - Unblocks saorsa-core's MessagingService for bidirectional message exchange
+- Updated NAT traversal parameter validation to support symmetric P2P connections per draft-seemann-quic-nat-traversal-02
+- Fixed 3 legacy tests that expected the old (broken) P2P rejection behavior
+
+### Changed
+- **Breaking Change**: NAT traversal validation now accepts all four combinations:
+  - Traditional: Client sends `ClientSupport` → Server accepts ✓
+  - Traditional: Server sends `ServerSupport` → Client accepts ✓
+  - P2P: Server sends `ServerSupport` → Server accepts ✓ (NEW)
+  - P2P: Client sends `ClientSupport` → Client accepts ✓ (NEW)
+- Decoding logic is now side-agnostic (either peer can send either parameter type)
+- Enhanced validation with detailed logging for P2P and traditional scenarios
+
+### Technical Details
+- Follows draft-seemann-quic-nat-traversal-02 specification
+- Maintains full backward compatibility with traditional client/server NAT traversal
+- NAT traversal parameter ID: 0x3d7e9f0bca12fea6
+- `ClientSupport`: Empty value (0 bytes)
+- `ServerSupport`: VarInt-encoded concurrency_limit (must be 1-100)
+
+### Migration Guide
+This change is backward compatible. Existing client/server NAT traversal code requires no changes.
+
+For P2P applications that were previously blocked:
+```rust
+// P2P symmetric connections now work automatically
+// Both peers can use:
+let config = NatTraversalConfig::ServerSupport {
+    concurrency_limit: VarInt::from_u32(10),
+};
+
+// Or both can use:
+let config = NatTraversalConfig::ClientSupport;
+
+// Check negotiated limit for P2P connections:
+if let Some(limit) = remote_params.negotiated_nat_concurrency_limit(&local_config) {
+    println!("Negotiated concurrency limit: {}", limit);
+}
+
+// Check if peer supports bidirectional NAT traversal:
+if remote_params.supports_bidirectional_nat_traversal() {
+    println!("Peer supports P2P NAT traversal");
+}
+```
+
 ## [0.9.0] - 2025-10-01
 
 ### Added

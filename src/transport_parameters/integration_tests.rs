@@ -73,25 +73,26 @@ mod transport_parameter_error_integration_tests {
     }
 
     #[test]
-    fn test_nat_traversal_error_handling() {
-        // Test NAT traversal parameter validation errors
+    fn test_nat_traversal_concurrency_limit_error_handling() {
+        // Test NAT traversal concurrency limit validation errors
+        // P2P connections now allow ServerSupport from any side, but concurrency_limit must be 1-100
 
-        // Client sending ServerSupport (invalid)
+        // Test invalid concurrency_limit = 0
         let mut params = TransportParameters::default();
         params.nat_traversal = Some(
             crate::transport_parameters::NatTraversalConfig::ServerSupport {
-                concurrency_limit: VarInt::from_u32(5),
+                concurrency_limit: VarInt::from_u32(0),
             },
         );
 
         let mut buf = Vec::new();
         params.write(&mut buf);
 
-        // Server reading this should fail
+        // Server reading this should fail due to invalid concurrency_limit
         let result = TransportParameters::read(Side::Server, &mut buf.as_slice());
         assert!(result.is_err());
 
-        // The error handler should have logged NAT traversal role mismatch
+        // The error handler should have logged concurrency limit validation failure
     }
 
     #[test]

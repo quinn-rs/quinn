@@ -42,6 +42,8 @@ impl TransportParameterErrorHandler {
     }
 
     /// Log NAT traversal parameter errors
+    /// (Not currently used - kept for potential future diagnostic needs)
+    #[allow(dead_code)]
     pub(super) fn log_nat_traversal_error(side: Side, received_variant: &str, expected: &str) {
         error!(
             side = ?side,

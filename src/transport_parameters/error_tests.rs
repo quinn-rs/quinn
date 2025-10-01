@@ -177,14 +177,15 @@ mod transport_parameter_error_tests {
     }
 
     #[test]
-    fn test_nat_traversal_wrong_side_error() {
-        // Test NAT traversal parameter validation per draft-seemann-quic-nat-traversal-02
+    fn test_nat_traversal_concurrency_limit_validation() {
+        // Test NAT traversal concurrency limit validation per draft-seemann-quic-nat-traversal-02
+        // Concurrency limit must be 1-100
 
-        // Client sending non-empty value (invalid - clients must send empty)
+        // Test concurrency_limit = 0 (invalid)
         let mut buf = Vec::new();
         buf.write_var(0x3d7e9f0bca12fea6); // NAT traversal parameter ID
         buf.write_var(1); // length
-        buf.push(5); // Invalid: client should send empty
+        buf.push(0); // Invalid: concurrency_limit must be > 0
 
         let result = TransportParameters::read(Side::Server, &mut buf.as_slice());
         assert!(result.is_err());
@@ -192,12 +193,19 @@ mod transport_parameter_error_tests {
             assert_eq!(e, Error::IllegalValue);
         }
 
-        // Server sending empty value (invalid - servers must send concurrency limit)
-        let mut buf = Vec::new();
-        buf.write_var(0x3d7e9f0bca12fea6); // NAT traversal parameter ID
-        buf.write_var(0); // Empty value - invalid for server
+        // Test concurrency_limit = 101 (invalid, exceeds maximum)
+        // Must use proper VarInt encoding for the value
+        let mut params = TransportParameters::default();
+        params.nat_traversal = Some(
+            crate::transport_parameters::NatTraversalConfig::ServerSupport {
+                concurrency_limit: VarInt::from_u32(101),
+            },
+        );
 
-        let result = TransportParameters::read(Side::Client, &mut buf.as_slice());
+        let mut buf = Vec::new();
+        params.write(&mut buf);
+
+        let result = TransportParameters::read(Side::Server, &mut buf.as_slice());
         assert!(result.is_err());
         if let Err(e) = result {
             assert_eq!(e, Error::IllegalValue);

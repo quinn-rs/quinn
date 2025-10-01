@@ -14,9 +14,7 @@
 //! - IPv4/IPv6 configuration
 //! - Retry behaviors
 
-use ant_quic::config::{
-    bind_endpoint, EndpointPortConfig, IpMode, PortBinding, PortRetryBehavior,
-};
+use ant_quic::config::{EndpointPortConfig, IpMode, PortBinding, PortRetryBehavior, bind_endpoint};
 
 fn main() {
     println!("=== ant-quic Port Configuration Examples ===\n");
@@ -67,7 +65,9 @@ fn main() {
         port: PortBinding::Explicit(16000),
         ..Default::default()
     };
-    let _bound1 = bind_endpoint(&config1).ok().expect("First bind should succeed");
+    let _bound1 = bind_endpoint(&config1)
+        .ok()
+        .expect("First bind should succeed");
     println!("✓ First endpoint bound to port 16000");
 
     // Try to bind to same port with fallback
@@ -131,7 +131,12 @@ fn main() {
         Ok(bound) => {
             println!("✓ Successfully bound to dual-stack:");
             for addr in bound.all_addrs() {
-                println!("  - {} (IPv4: {}, IPv6: {})", addr, addr.is_ipv4(), addr.is_ipv6());
+                println!(
+                    "  - {} (IPv4: {}, IPv6: {})",
+                    addr,
+                    addr.is_ipv4(),
+                    addr.is_ipv6()
+                );
             }
             println!();
         }

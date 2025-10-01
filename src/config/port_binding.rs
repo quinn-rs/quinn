@@ -89,17 +89,15 @@ fn create_socket(addr: &SocketAddr, opts: &SocketOptions) -> PortConfigResult<Ud
     }
 
     // Bind the socket
-    socket
-        .bind(&socket2::SockAddr::from(*addr))
-        .map_err(|e| {
-            if e.kind() == std::io::ErrorKind::AddrInUse {
-                EndpointConfigError::PortInUse(addr.port())
-            } else if e.kind() == std::io::ErrorKind::PermissionDenied {
-                EndpointConfigError::PermissionDenied(addr.port())
-            } else {
-                EndpointConfigError::BindFailed(e.to_string())
-            }
-        })?;
+    socket.bind(&socket2::SockAddr::from(*addr)).map_err(|e| {
+        if e.kind() == std::io::ErrorKind::AddrInUse {
+            EndpointConfigError::PortInUse(addr.port())
+        } else if e.kind() == std::io::ErrorKind::PermissionDenied {
+            EndpointConfigError::PermissionDenied(addr.port())
+        } else {
+            EndpointConfigError::BindFailed(e.to_string())
+        }
+    })?;
 
     // Convert to std::net::UdpSocket
     let std_socket: UdpSocket = socket.into();
@@ -210,13 +208,15 @@ pub fn bind_endpoint(config: &EndpointPortConfig) -> PortConfigResult<BoundSocke
                 Ok(addrs) => addrs,
                 Err(EndpointConfigError::PortInUse(_)) => match config.retry_behavior {
                     PortRetryBehavior::FailFast => {
-                        return Err(EndpointConfigError::PortInUse(*port))
+                        return Err(EndpointConfigError::PortInUse(*port));
                     }
                     PortRetryBehavior::FallbackToOsAssigned => {
                         tracing::warn!("Port {} in use, falling back to OS-assigned", port);
                         bind_single_socket(0, &config.ip_mode, &config.socket_options)?
                     }
-                    PortRetryBehavior::TryNext => return Err(EndpointConfigError::PortInUse(*port)),
+                    PortRetryBehavior::TryNext => {
+                        return Err(EndpointConfigError::PortInUse(*port));
+                    }
                 },
                 Err(e) => return Err(e),
             }

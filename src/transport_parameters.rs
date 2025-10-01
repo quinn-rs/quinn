@@ -740,15 +740,20 @@ impl TransportParameters {
                         return Err(Error::Malformed);
                     }
                     // Per draft-seemann-quic-nat-traversal-02:
-                    // - Empty value (len=0) from client indicates support
-                    // - VarInt value from server is concurrency limit
-                    match (side, len) {
-                        (Side::Server, 0) => {
-                            // Client sent empty value - they support NAT traversal
+                    // - Empty value (len=0) indicates ClientSupport
+                    // - VarInt value indicates ServerSupport with concurrency limit
+                    // P2P support: Either side can send either parameter type
+                    match len {
+                        0 => {
+                            // Empty value - ClientSupport
+                            // Traditional: Client -> Server
+                            // P2P: Either peer can send this
                             params.nat_traversal = Some(NatTraversalConfig::ClientSupport);
                         }
-                        (Side::Client, _) if len > 0 => {
-                            // Server sent concurrency limit as VarInt
+                        _ if len > 0 => {
+                            // VarInt value - ServerSupport with concurrency limit
+                            // Traditional: Server -> Client
+                            // P2P: Either peer can send this
                             let limit = r.get_var()?;
                             if limit == 0 {
                                 return Err(Error::IllegalValue);
@@ -759,7 +764,7 @@ impl TransportParameters {
                             });
                         }
                         _ => {
-                            // Invalid combination of side and parameter value
+                            // This should be unreachable, but included for safety
                             return Err(Error::IllegalValue);
                         }
                     }
@@ -872,40 +877,127 @@ impl TransportParameters {
         if let Some(ref nat_config) = params.nat_traversal {
             // Validate NAT traversal configuration based on side
             match (side, nat_config) {
-                // Server should receive ClientSupport from client
+                // Traditional: Server receives ClientSupport from client
                 (Side::Server, NatTraversalConfig::ClientSupport) => {
-                    // Valid - log successful negotiation
                     tracing::debug!("Server received valid ClientSupport NAT traversal parameter");
                 }
-                // Client should receive ServerSupport from server
+                // Traditional: Client receives ServerSupport from server
                 (Side::Client, NatTraversalConfig::ServerSupport { concurrency_limit }) => {
-                    // Valid - log successful negotiation
                     tracing::debug!(
                         "Client received valid ServerSupport with concurrency_limit: {}",
                         concurrency_limit
                     );
                 }
-                // Invalid combinations
-                (Side::Server, NatTraversalConfig::ServerSupport { .. }) => {
-                    TransportParameterErrorHandler::log_nat_traversal_error(
-                        side,
-                        "ServerSupport",
-                        "ClientSupport",
+                // P2P: Server receives ServerSupport from peer (symmetric P2P)
+                (Side::Server, NatTraversalConfig::ServerSupport { concurrency_limit }) => {
+                    tracing::debug!(
+                        "P2P: Server received ServerSupport with concurrency_limit: {} (symmetric P2P)",
+                        concurrency_limit
                     );
-                    return Err(Error::IllegalValue);
+                    // Validate concurrency limit (1-100 per draft-seemann-quic-nat-traversal-02)
+                    if concurrency_limit.0 == 0 || concurrency_limit.0 > 100 {
+                        TransportParameterErrorHandler::log_validation_failure(
+                            "nat_traversal_concurrency_limit",
+                            concurrency_limit.0,
+                            "1-100",
+                            "draft-seemann-quic-nat-traversal-02",
+                        );
+                        return Err(Error::IllegalValue);
+                    }
                 }
+                // P2P: Client receives ClientSupport from peer (symmetric P2P)
                 (Side::Client, NatTraversalConfig::ClientSupport) => {
-                    TransportParameterErrorHandler::log_nat_traversal_error(
-                        side,
-                        "ClientSupport",
-                        "ServerSupport",
-                    );
-                    return Err(Error::IllegalValue);
+                    tracing::debug!("P2P: Client received ClientSupport (symmetric P2P)");
+                    // Valid for P2P - both peers have client capabilities
                 }
             }
         }
 
         Ok(params)
+    }
+
+    /// Negotiate effective NAT traversal concurrency limit for this connection
+    ///
+    /// Returns the effective concurrency limit based on local and remote NAT traversal
+    /// configurations. For P2P connections where both peers have `ServerSupport`,
+    /// returns the minimum of the two limits. For traditional client/server, returns
+    /// the server's limit. Returns `None` if NAT traversal is not configured.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use ant_quic::VarInt;
+    /// use ant_quic::TransportParameters;
+    /// use ant_quic::NatTraversalConfig;
+    ///
+    /// // P2P: Both peers have ServerSupport - use minimum
+    /// let local = NatTraversalConfig::ServerSupport {
+    ///     concurrency_limit: VarInt::from_u32(10),
+    /// };
+    /// let mut remote_params = TransportParameters::default();
+    /// remote_params.nat_traversal = Some(NatTraversalConfig::ServerSupport {
+    ///     concurrency_limit: VarInt::from_u32(5),
+    /// });
+    /// assert_eq!(remote_params.negotiated_nat_concurrency_limit(&local), Some(5));
+    /// ```
+    pub fn negotiated_nat_concurrency_limit(
+        &self,
+        local_config: &NatTraversalConfig,
+    ) -> Option<u64> {
+        match (&self.nat_traversal, local_config) {
+            // P2P: Both sides have ServerSupport - use minimum for fairness
+            (
+                Some(NatTraversalConfig::ServerSupport {
+                    concurrency_limit: remote,
+                }),
+                NatTraversalConfig::ServerSupport {
+                    concurrency_limit: local,
+                },
+            ) => Some(local.0.min(remote.0)),
+
+            // Traditional: One side server, one side client - use server's limit
+            (
+                Some(NatTraversalConfig::ServerSupport { concurrency_limit }),
+                NatTraversalConfig::ClientSupport,
+            )
+            | (
+                Some(NatTraversalConfig::ClientSupport),
+                NatTraversalConfig::ServerSupport { concurrency_limit },
+            ) => Some(concurrency_limit.0),
+
+            // Both clients or no NAT traversal - no concurrency limit
+            _ => None,
+        }
+    }
+
+    /// Check if this connection supports bidirectional NAT traversal (P2P)
+    ///
+    /// Returns `true` if the remote peer sent `ServerSupport`, indicating they
+    /// can accept NAT traversal path validation requests. This is used to detect
+    /// P2P connections where both peers have equal capabilities.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use ant_quic::VarInt;
+    /// use ant_quic::TransportParameters;
+    /// use ant_quic::NatTraversalConfig;
+    ///
+    /// let mut params = TransportParameters::default();
+    /// params.nat_traversal = Some(NatTraversalConfig::ServerSupport {
+    ///     concurrency_limit: VarInt::from_u32(5),
+    /// });
+    /// assert!(params.supports_bidirectional_nat_traversal());
+    ///
+    /// let mut client_params = TransportParameters::default();
+    /// client_params.nat_traversal = Some(NatTraversalConfig::ClientSupport);
+    /// assert!(!client_params.supports_bidirectional_nat_traversal());
+    /// ```
+    pub fn supports_bidirectional_nat_traversal(&self) -> bool {
+        matches!(
+            &self.nat_traversal,
+            Some(NatTraversalConfig::ServerSupport { .. })
+        )
     }
 }
 
@@ -1420,33 +1512,39 @@ mod test {
         buf.write_var(0x3d7e9f0bca12fea6); // NAT traversal parameter ID
         buf.write_var(0); // Empty value (client role)
 
-        // Client receiving client role should fail
+        // P2P: Client receiving client role should succeed (symmetric P2P connection)
         let result = TransportParameters::read(Side::Client, &mut buf.as_slice());
         assert!(
-            result.is_err(),
-            "Client should not accept client role from peer"
+            result.is_ok(),
+            "P2P: Client should accept ClientSupport from peer for symmetric P2P"
         );
 
-        // Server receiving client role should succeed
+        // Traditional: Server receiving client role should succeed
         let result = TransportParameters::read(Side::Server, &mut buf.as_slice());
-        assert!(result.is_ok(), "Server should accept client role from peer");
+        assert!(
+            result.is_ok(),
+            "Server should accept ClientSupport from client"
+        );
 
-        // Test server role validation - should fail when received by server
+        // Test server role validation
         let mut buf = Vec::new();
         buf.write_var(0x3d7e9f0bca12fea6); // NAT traversal parameter ID
         buf.write_var(1); // 1-byte value (server role)
         buf.put_u8(5); // Concurrency limit
 
-        // Server receiving server role should fail
+        // P2P: Server receiving server role should succeed (symmetric P2P connection)
         let result = TransportParameters::read(Side::Server, &mut buf.as_slice());
         assert!(
-            result.is_err(),
-            "Server should not accept server role from peer"
+            result.is_ok(),
+            "P2P: Server should accept ServerSupport from peer for symmetric P2P"
         );
 
-        // Client receiving server role should succeed
+        // Traditional: Client receiving server role should succeed
         let result = TransportParameters::read(Side::Client, &mut buf.as_slice());
-        assert!(result.is_ok(), "Client should accept server role from peer");
+        assert!(
+            result.is_ok(),
+            "Client should accept ServerSupport from server"
+        );
     }
 
     #[test]
@@ -1539,6 +1637,217 @@ mod test {
         assert!(matches!(
             client_view,
             NatTraversalConfig::ServerSupport { concurrency_limit } if concurrency_limit == VarInt::from_u32(8)
+        ));
+    }
+
+    // ===== P2P NAT Traversal Tests =====
+
+    #[test]
+    fn test_p2p_nat_traversal_both_server_support() {
+        // Test P2P scenario: Both peers send ServerSupport with concurrency limits
+        // This should now PASS after implementing P2P support
+
+        let peer1_config = NatTraversalConfig::ServerSupport {
+            concurrency_limit: VarInt::from_u32(10),
+        };
+        let _peer2_config = NatTraversalConfig::ServerSupport {
+            concurrency_limit: VarInt::from_u32(5),
+        };
+
+        // Peer 1 sends its ServerSupport config
+        let mut peer1_params = TransportParameters::default();
+        peer1_params.nat_traversal = Some(peer1_config);
+
+        let mut encoded = Vec::new();
+        peer1_params.write(&mut encoded);
+
+        // Peer 2 (acting as server side) receives peer 1's ServerSupport
+        // This currently FAILS but should PASS after P2P fix
+        let decoded = TransportParameters::read(Side::Server, &mut encoded.as_slice())
+            .expect("P2P: Server should accept ServerSupport from peer");
+
+        // Should preserve peer's ServerSupport config
+        assert!(matches!(
+            decoded.nat_traversal,
+            Some(NatTraversalConfig::ServerSupport { concurrency_limit })
+            if concurrency_limit == VarInt::from_u32(10)
+        ));
+    }
+
+    #[test]
+    fn test_p2p_nat_traversal_concurrency_negotiation() {
+        // Test that P2P connections negotiate minimum concurrency limit
+
+        let local = NatTraversalConfig::ServerSupport {
+            concurrency_limit: VarInt::from_u32(10),
+        };
+        let mut remote_params = TransportParameters::default();
+        remote_params.nat_traversal = Some(NatTraversalConfig::ServerSupport {
+            concurrency_limit: VarInt::from_u32(5),
+        });
+
+        // Negotiated limit should be minimum of both
+        let negotiated = remote_params.negotiated_nat_concurrency_limit(&local);
+        assert_eq!(negotiated, Some(5));
+
+        // Test opposite direction
+        let local2 = NatTraversalConfig::ServerSupport {
+            concurrency_limit: VarInt::from_u32(3),
+        };
+        let mut remote_params2 = TransportParameters::default();
+        remote_params2.nat_traversal = Some(NatTraversalConfig::ServerSupport {
+            concurrency_limit: VarInt::from_u32(8),
+        });
+
+        let negotiated2 = remote_params2.negotiated_nat_concurrency_limit(&local2);
+        assert_eq!(negotiated2, Some(3));
+    }
+
+    #[test]
+    fn test_p2p_nat_traversal_invalid_concurrency() {
+        // Test that P2P connections reject zero concurrency limit
+
+        let config = NatTraversalConfig::ServerSupport {
+            concurrency_limit: VarInt::from_u32(0), // Invalid - must be > 0
+        };
+
+        let mut params = TransportParameters::default();
+        params.nat_traversal = Some(config);
+
+        let mut encoded = Vec::new();
+        params.write(&mut encoded);
+
+        // Should reject zero concurrency limit
+        let result = TransportParameters::read(Side::Server, &mut encoded.as_slice());
+        assert!(
+            matches!(result, Err(Error::IllegalValue)),
+            "Should reject concurrency_limit = 0"
+        );
+    }
+
+    #[test]
+    fn test_p2p_nat_traversal_max_concurrency() {
+        // Test that P2P connections reject excessive concurrency limit
+
+        let config = NatTraversalConfig::ServerSupport {
+            concurrency_limit: VarInt::from_u32(101), // Exceeds max of 100
+        };
+
+        let mut params = TransportParameters::default();
+        params.nat_traversal = Some(config);
+
+        let mut encoded = Vec::new();
+        params.write(&mut encoded);
+
+        // Should reject concurrency limit > 100
+        let result = TransportParameters::read(Side::Server, &mut encoded.as_slice());
+        assert!(
+            matches!(result, Err(Error::IllegalValue)),
+            "Should reject concurrency_limit > 100"
+        );
+    }
+
+    #[test]
+    fn test_p2p_both_client_support() {
+        // Test P2P scenario: Client receiving ClientSupport from peer
+        // This means both peers have client-only capabilities
+
+        let config = NatTraversalConfig::ClientSupport;
+
+        let mut params = TransportParameters::default();
+        params.nat_traversal = Some(config);
+
+        let mut encoded = Vec::new();
+        params.write(&mut encoded);
+
+        // Client receiving ClientSupport (currently FAILS, should PASS after P2P fix)
+        let decoded = TransportParameters::read(Side::Client, &mut encoded.as_slice())
+            .expect("P2P: Client should accept ClientSupport from peer");
+
+        assert!(matches!(
+            decoded.nat_traversal,
+            Some(NatTraversalConfig::ClientSupport)
+        ));
+    }
+
+    #[test]
+    fn test_p2p_helper_methods() {
+        // Test helper methods for P2P capability detection
+
+        // Test supports_bidirectional_nat_traversal
+        let mut params_with_server = TransportParameters::default();
+        params_with_server.nat_traversal = Some(NatTraversalConfig::ServerSupport {
+            concurrency_limit: VarInt::from_u32(5),
+        });
+        assert!(params_with_server.supports_bidirectional_nat_traversal());
+
+        let mut params_with_client = TransportParameters::default();
+        params_with_client.nat_traversal = Some(NatTraversalConfig::ClientSupport);
+        assert!(!params_with_client.supports_bidirectional_nat_traversal());
+
+        let params_without_nat = TransportParameters::default();
+        assert!(!params_without_nat.supports_bidirectional_nat_traversal());
+
+        // Test mixed client/server negotiation
+        let local = NatTraversalConfig::ClientSupport;
+        let mut remote_params = TransportParameters::default();
+        remote_params.nat_traversal = Some(NatTraversalConfig::ServerSupport {
+            concurrency_limit: VarInt::from_u32(10),
+        });
+
+        // Should use server's limit
+        let negotiated = remote_params.negotiated_nat_concurrency_limit(&local);
+        assert_eq!(negotiated, Some(10));
+    }
+
+    // ===== Regression Tests =====
+
+    #[test]
+    fn test_traditional_client_server_unchanged() {
+        // Verify that traditional client/server NAT traversal still works
+        // after P2P changes (regression test)
+
+        // Client sends empty value (ClientSupport)
+        let client_config = NatTraversalConfig::ClientSupport;
+        let mut client_params = TransportParameters::default();
+        client_params.nat_traversal = Some(client_config);
+
+        let mut encoded = Vec::new();
+        client_params.write(&mut encoded);
+
+        // Server decodes client's parameters
+        let server_decoded = TransportParameters::read(Side::Server, &mut encoded.as_slice())
+            .expect("Traditional client/server should still work");
+
+        assert!(matches!(
+            server_decoded.nat_traversal,
+            Some(NatTraversalConfig::ClientSupport)
+        ));
+    }
+
+    #[test]
+    fn test_traditional_server_client_unchanged() {
+        // Verify that traditional server/client NAT traversal still works
+        // after P2P changes (regression test)
+
+        // Server sends concurrency limit (ServerSupport)
+        let server_config = NatTraversalConfig::ServerSupport {
+            concurrency_limit: VarInt::from_u32(10),
+        };
+        let mut server_params = TransportParameters::default();
+        server_params.nat_traversal = Some(server_config);
+
+        let mut encoded = Vec::new();
+        server_params.write(&mut encoded);
+
+        // Client decodes server's parameters
+        let client_decoded = TransportParameters::read(Side::Client, &mut encoded.as_slice())
+            .expect("Traditional server/client should still work");
+
+        assert!(matches!(
+            client_decoded.nat_traversal,
+            Some(NatTraversalConfig::ServerSupport { concurrency_limit })
+            if concurrency_limit == VarInt::from_u32(10)
         ));
     }
 

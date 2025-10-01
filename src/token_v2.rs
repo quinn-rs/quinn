@@ -22,10 +22,10 @@ use crate::{nat_traversal_api::PeerId, shared::ConnectionId};
 
 // Use conditional compilation to avoid import conflicts
 #[cfg(feature = "ring")]
-use ring::aead::{Aad, LessSafeKey, Nonce, UnboundKey, AES_256_GCM, NONCE_LEN};
+use ring::aead::{AES_256_GCM, Aad, LessSafeKey, NONCE_LEN, Nonce, UnboundKey};
 
 #[cfg(all(feature = "aws-lc-rs", not(feature = "ring")))]
-use aws_lc_rs::aead::{Aad, LessSafeKey, Nonce, UnboundKey, AES_256_GCM, NONCE_LEN};
+use aws_lc_rs::aead::{AES_256_GCM, Aad, LessSafeKey, NONCE_LEN, Nonce, UnboundKey};
 
 /// A 256-bit key used for encrypting and authenticating retry tokens.
 /// Used with AES-256-GCM for authenticated encryption of token contents.
