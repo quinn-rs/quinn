@@ -359,7 +359,11 @@ impl Connection {
         }
     }
 
-    /// Opens a new path if no path exists yet for the remote address
+    /// Opens a new path if no path exists yet for the remote address.
+    ///
+    /// Otherwise behaves exactly as [`open_path`].
+    ///
+    /// [`open_path`]: Self::open_path
     pub fn open_path_ensure(&self, addr: SocketAddr, initial_status: PathStatus) -> OpenPath {
         let mut state = self.0.state.lock("open_path");
         let now = state.runtime.now();
@@ -382,7 +386,20 @@ impl Connection {
         }
     }
 
-    /// Opens a (Multi)Path
+    /// Opens an additional path if the multipath extension is negotiated.
+    ///
+    /// The returned future completes once the path is either fully opened and ready to
+    /// carry application data, or if there was an error.
+    ///
+    /// Dropping the returned future does not cancel the opening of the path, the
+    /// [`PathEvent::Opened`] event will still be emitted from [`Self::path_events`] if the
+    /// path opens.  The [`PathId`] for the events can be extracted from
+    /// [`OpenPath::path_id`].
+    ///
+    /// Failure to open a path can either occur immediately, before polling the returned
+    /// future, or at a later time.  If the failure is immediate [`OpenPath::path_id`] will
+    /// return `None` and the future will be ready immediately.  If the failure happens
+    /// later, a [`PathEvent`] will be emitted.
     pub fn open_path(&self, addr: SocketAddr, initial_status: PathStatus) -> OpenPath {
         let mut state = self.0.state.lock("open_path");
         let (on_open_path_send, on_open_path_recv) = watch::channel(Ok(()));

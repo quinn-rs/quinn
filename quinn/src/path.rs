@@ -58,6 +58,20 @@ impl OpenPath {
     pub(crate) fn rejected(err: PathError) -> Self {
         Self(OpenPathInner::Rejected { err })
     }
+
+    /// Returns the path ID of the new path being opened.
+    ///
+    /// If an error occurred before a path ID was allocated, `None` is returned.  In this
+    /// case the future is ready and polling it will immediately yield the error.
+    ///
+    /// The returned value remains the same for the entire lifetime of this future.
+    pub fn path_id(&self) -> Option<PathId> {
+        match self.0 {
+            OpenPathInner::Ongoing { path_id, .. } => Some(path_id),
+            OpenPathInner::Rejected { .. } => None,
+            OpenPathInner::Ready { path_id, .. } => Some(path_id),
+        }
+    }
 }
 
 impl Future for OpenPath {
