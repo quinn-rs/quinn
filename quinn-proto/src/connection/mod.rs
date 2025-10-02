@@ -2904,14 +2904,27 @@ impl Connection {
             Some(x) => x,
             None => return,
         };
-        if self.side.is_server() {
-            if self.spaces[SpaceId::Initial].crypto.is_some() && space_id == SpaceId::Handshake {
-                // A server stops sending and processing Initial packets when it receives its first Handshake packet.
-                self.discard_space(now, SpaceId::Initial);
+        match &self.side {
+            ConnectionSide::Client { .. } => {
+                // If we received a handshake packet that authenticated, then we're talking to
+                // the real server.  From now on we should no longer allow the server to migrate
+                // its address.
+                if space_id == SpaceId::Handshake {
+                    if let State::Handshake(ref mut hs) = self.state {
+                        hs.allow_server_migration = false;
+                    }
+                }
             }
-            if self.zero_rtt_crypto.is_some() && is_1rtt {
-                // Discard 0-RTT keys soon after receiving a 1-RTT packet
-                self.set_key_discard_timer(now, space_id)
+            ConnectionSide::Server { .. } => {
+                if self.spaces[SpaceId::Initial].crypto.is_some() && space_id == SpaceId::Handshake
+                {
+                    // A server stops sending and processing Initial packets when it receives its first Handshake packet.
+                    self.discard_space(now, SpaceId::Initial);
+                }
+                if self.zero_rtt_crypto.is_some() && is_1rtt {
+                    // Discard 0-RTT keys soon after receiving a 1-RTT packet
+                    self.set_key_discard_timer(now, space_id)
+                }
             }
         }
         let space = self.spaces[space_id].for_path(path_id);
@@ -3304,6 +3317,7 @@ impl Connection {
             if remote != self.path_data_mut(path_id).remote {
                 match self.state {
                     State::Handshake(ref hs) if hs.allow_server_migration => {
+                        trace!(?remote, prev = ?self.path_data(path_id).remote, "server migrated to new remote");
                         self.path_data_mut(path_id).remote = remote;
                     }
                     _ => {
@@ -3513,9 +3527,7 @@ impl Connection {
 
         match packet.header {
             Header::Retry {
-                src_cid: rem_cid,
-                dst_cid: loc_cid,
-                ..
+                src_cid: rem_cid, ..
             } => {
                 debug_assert_eq!(path_id, PathId(0));
                 if self.side.is_server() {
@@ -3558,10 +3570,6 @@ impl Connection {
                     .update_initial_cid(rem_cid);
                 self.rem_handshake_cid = rem_cid;
 
-                if loc_cid.len() >= 64 && loc_cid == self.handshake_cid {
-                    self.on_path_validated(path_id);
-                }
-
                 let space = &mut self.spaces[SpaceId::Initial];
                 if let Some(info) = space.for_path(PathId(0)).take(0) {
                     self.on_packet_acked(now, PathId(0), info);
@@ -3601,15 +3609,11 @@ impl Connection {
                 };
                 *token = packet.payload.freeze().split_to(token_len);
 
-                // If the retry packet validated the server's address, the server is no
-                // longer allowed to migrate.
-                let allow_server_migration =
-                    matches!(self.state, State::Handshake(ref hs) if hs.allow_server_migration);
                 self.state = State::Handshake(state::Handshake {
                     expected_token: Bytes::new(),
                     rem_cid_set: false,
                     client_hello: None,
-                    allow_server_migration,
+                    allow_server_migration: true,
                 });
                 Ok(())
             }
@@ -5492,23 +5496,14 @@ impl Connection {
     /// Mark the path as validated, and enqueue NEW_TOKEN frames to be sent as appropriate
     fn on_path_validated(&mut self, path_id: PathId) {
         self.path_data_mut(path_id).validated = true;
-        match &self.side {
-            ConnectionSide::Client { .. } => {
-                // If we are still handshaking we've just validated the first path.  From
-                // now on we should not allow the server to migrate address anymore.
-                if let State::Handshake(ref mut hs) = self.state {
-                    hs.allow_server_migration = false;
-                }
-            }
-            ConnectionSide::Server { server_config } => {
-                // enqueue NEW_TOKEN frames
-                let remote_addr = self.path_data(path_id).remote;
-                let new_tokens = &mut self.spaces[SpaceId::Data as usize].pending.new_tokens;
-                new_tokens.clear();
-                for _ in 0..server_config.validation_token.sent {
-                    new_tokens.push(remote_addr);
-                }
-            }
+        let ConnectionSide::Server { server_config } = &self.side else {
+            return;
+        };
+        let remote_addr = self.path_data(path_id).remote;
+        let new_tokens = &mut self.spaces[SpaceId::Data as usize].pending.new_tokens;
+        new_tokens.clear();
+        for _ in 0..server_config.validation_token.sent {
+            new_tokens.push(remote_addr);
         }
     }
 
@@ -5807,13 +5802,14 @@ mod state {
         /// Whether the server address is allowed to migrate
         ///
         /// We allow the server to migrate during the handshake as long as we have not
-        /// validated it's address: it can send a response from a different address than we
-        /// sent the initial to.  This allows us to send the inial over multiple paths - by
-        /// means of an IPv6 ULA address that copies the packets sent to it to multiple
-        /// destinations - and accept one response.
+        /// received an authenticated handshake packet: it can send a response from a
+        /// different address than we sent the initial to.  This allows us to send the
+        /// initial packet over multiple paths - by means of an IPv6 ULA address that copies
+        /// the packets sent to it to multiple destinations - and accept one response.
         ///
-        /// This is only ever set to true if for a client which hasn't validated the server
-        /// address yet.  It is set back to false in [`Connection::on_path_validated`].
+        /// This is only ever set to true if for a client which hasn't yet received an
+        /// authenticated handshake packet.  It is set back to false in
+        /// [`Connection::on_packet_authenticated`].
         ///
         /// THIS IS NOT RFC 9000 COMPLIANT!  A server is not allowed to migrate addresses,
         /// other than using the preferred-address transport parameter.
