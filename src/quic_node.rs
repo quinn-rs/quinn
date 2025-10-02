@@ -213,13 +213,16 @@ impl QuicP2PNode {
         match endpoint.connect(bootstrap_addr, "bootstrap-node") {
             Ok(connecting) => {
                 match connecting.await {
-                    Ok(_connection) => {
+                    Ok(connection) => {
                         // Extract peer ID from the connection
                         // For now, we'll generate a temporary peer ID based on the address
                         // In a real implementation, we'd exchange peer IDs during the handshake
                         let peer_id = self.derive_peer_id_from_address(bootstrap_addr);
 
-                        // Store the connection
+                        // Store the connection in NAT endpoint
+                        self.nat_endpoint.add_connection(peer_id, connection)?;
+
+                        // Store the peer address mapping
                         self.connected_peers
                             .write()
                             .await

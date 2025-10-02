@@ -1994,6 +1994,19 @@ impl NatTraversalEndpoint {
         Ok(connections.get(peer_id).cloned())
     }
 
+    /// Add or update a connection for a peer
+    pub fn add_connection(
+        &self,
+        peer_id: PeerId,
+        connection: QuinnConnection,
+    ) -> Result<(), NatTraversalError> {
+        let mut connections = self.connections.write().map_err(|_| {
+            NatTraversalError::ProtocolError("Connections lock poisoned".to_string())
+        })?;
+        connections.insert(peer_id, connection);
+        Ok(())
+    }
+
     /// Remove a connection by peer ID
     pub fn remove_connection(
         &self,
