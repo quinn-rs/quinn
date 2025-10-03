@@ -190,6 +190,12 @@ impl Path {
             state.runtime.clone(),
         ))
     }
+
+    /// The peer's UDP address for this path.
+    pub fn remote_address(&self) -> Result<SocketAddr, ClosedPath> {
+        let state = self.conn.state.lock("per_path_remote_address");
+        state.inner.path_remote_address(self.id)
+    }
 }
 
 /// Future produced by [`Path::close`]

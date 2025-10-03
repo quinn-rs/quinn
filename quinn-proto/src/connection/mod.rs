@@ -670,6 +670,13 @@ impl Connection {
             .ok_or(ClosedPath { _private: () })
     }
 
+    /// Returns the path's remote socket address
+    pub fn path_remote_address(&self, path_id: PathId) -> Result<SocketAddr, ClosedPath> {
+        self.path(path_id)
+            .map(|path| path.remote)
+            .ok_or(ClosedPath { _private: () })
+    }
+
     /// Sets the [`PathStatus`] for a known [`PathId`]
     ///
     /// Returns the previous path status on success.
