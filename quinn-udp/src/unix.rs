@@ -461,14 +461,14 @@ fn send(state: &UdpSocketState, io: SockRef<'_>, transmit: &Transmit<'_>) -> io:
     }
 }
 
-#[cfg(not(any(apple, target_os = "openbsd", target_os = "netbsd", solarish)))]
+#[cfg(all(
+    not(any(apple, target_os = "openbsd", target_os = "netbsd", solarish)),
+    target_os = "linux"
+))]
 fn recv(io: SockRef<'_>, bufs: &mut [IoSliceMut<'_>], meta: &mut [RecvMeta]) -> io::Result<usize> {
     let mut names = [MaybeUninit::<libc::sockaddr_storage>::uninit(); BATCH_SIZE];
     let mut ctrls = [cmsg::Aligned(MaybeUninit::<[u8; CMSG_LEN]>::uninit()); BATCH_SIZE];
-    #[cfg(target_os = "linux")]
     let mut hdrs = unsafe { mem::zeroed::<[libc::mmsghdr; BATCH_SIZE]>() };
-    #[cfg(not(target_os = "linux"))]
-    compile_error!("recvmmsg and mmsghdr are only available on Linux. Platform-specific implementation required.");
     let max_msg_count = bufs.len().min(BATCH_SIZE);
     for i in 0..max_msg_count {
         prepare_recv(
@@ -504,6 +504,21 @@ fn recv(io: SockRef<'_>, bufs: &mut [IoSliceMut<'_>], meta: &mut [RecvMeta]) -> 
         meta[i] = decode_recv(&names[i], &hdrs[i].msg_hdr, hdrs[i].msg_len as usize)?;
     }
     Ok(msg_count as usize)
+}
+
+#[cfg(all(
+    not(any(apple, target_os = "openbsd", target_os = "netbsd", solarish)),
+    not(target_os = "linux")
+))]
+fn recv(
+    _io: SockRef<'_>,
+    _bufs: &mut [IoSliceMut<'_>],
+    _meta: &mut [RecvMeta],
+) -> io::Result<usize> {
+    Err(io::Error::new(
+        io::ErrorKind::Other,
+        "recvmmsg and mmsghdr are only available on Linux. Platform-specific implementation required.",
+    ))
 }
 
 #[cfg(apple_fast)]
