@@ -174,7 +174,7 @@ pub enum EventData {
     },
 
     // Application events
-    #[cfg(feature = "trace-app")]
+    #[cfg(feature = "trace")]
     AppCommand {
         app_id: [u8; 4],
         cmd: u16,

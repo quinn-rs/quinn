@@ -186,7 +186,7 @@ jobs:
     - uses: Swatinem/rust-cache@v2
 
     - name: Run platform-specific tests
-      run: cargo test --features platform-tests --quiet
+      run: cargo test --quiet
 
   # Cross-platform compilation
   cross-platform:

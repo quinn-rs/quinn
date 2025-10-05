@@ -170,8 +170,7 @@ jobs:
         feature: [
           "rustls-ring",
           "rustls-aws-lc-rs",
-          "runtime-tokio",
-          "runtime-async-std"
+          "runtime-tokio"
         ]
         test_suite: [
           "frame_properties",

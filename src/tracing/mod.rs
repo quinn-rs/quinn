@@ -18,7 +18,7 @@ mod query;
 #[cfg(feature = "trace")]
 mod ring_buffer;
 
-#[cfg(feature = "trace-app")]
+#[cfg(feature = "trace")]
 mod app_protocol;
 
 #[cfg(feature = "trace")]
@@ -31,7 +31,7 @@ mod implementation {
     pub use super::query::{ConnectionAnalysis, TraceQuery};
     pub use super::ring_buffer::{EventLog, TraceConfig};
 
-    #[cfg(feature = "trace-app")]
+    #[cfg(feature = "trace")]
     pub use super::app_protocol::{
         AppProtocol, AppRegistry as AppProtocolRegistry, DataMapProtocol,
     };
@@ -45,11 +45,11 @@ mod implementation {
         EVENT_LOG.clone()
     }
 
-    #[cfg(feature = "trace-app")]
+    #[cfg(feature = "trace")]
     static APP_REGISTRY: once_cell::sync::Lazy<AppProtocolRegistry> =
         once_cell::sync::Lazy::new(AppProtocolRegistry::new);
 
-    #[cfg(feature = "trace-app")]
+    #[cfg(feature = "trace")]
     /// Get the global application protocol registry
     pub fn global_app_registry() -> &'static AppProtocolRegistry {
         &APP_REGISTRY
