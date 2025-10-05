@@ -35,6 +35,7 @@ pub struct SendStream {
     conn: ConnectionRef,
     stream: StreamId,
     is_0rtt: bool,
+    reset_on_drop: Option<VarInt>,
 }
 
 impl SendStream {
@@ -43,6 +44,7 @@ impl SendStream {
             conn,
             stream,
             is_0rtt,
+            reset_on_drop: None,
         }
     }
 
@@ -287,6 +289,15 @@ impl SendStream {
     ) -> Poll<Result<usize, WriteError>> {
         pin!(self.get_mut().write(buf)).as_mut().poll(cx)
     }
+
+    /// Set whether the stream automatically resets rather than finishes when dropped
+    ///
+    /// If this stream is dropped before [`finish()`](Self::finish) or [`reset()`](Self::reset) is
+    /// called on it, it automatically finishes if `error_code` is set to `None`, or automatically
+    /// resets with `error_code` if `error_code` is set to `Some`. Defaults to `None`.
+    pub fn set_reset_on_drop(&mut self, error_code: Option<VarInt>) {
+        self.reset_on_drop = error_code;
+    }
 }
 
 /// Check if a send stream is stopped.
@@ -351,15 +362,21 @@ impl Drop for SendStream {
         if conn.error.is_some() || (self.is_0rtt && conn.check_0rtt().is_err()) {
             return;
         }
-        match conn.inner.send_stream(self.stream).finish() {
-            Ok(()) => conn.wake(),
-            Err(FinishError::Stopped(reason)) => {
-                if conn.inner.send_stream(self.stream).reset(reason).is_ok() {
-                    conn.wake();
-                }
+        if let Some(reason) = self.reset_on_drop {
+            if conn.inner.send_stream(self.stream).reset(reason).is_ok() {
+                conn.wake();
             }
-            // Already finished or reset, which is fine.
-            Err(FinishError::ClosedStream) => {}
+        } else {
+            match conn.inner.send_stream(self.stream).finish() {
+                Ok(()) => conn.wake(),
+                Err(FinishError::Stopped(reason)) => {
+                    if conn.inner.send_stream(self.stream).reset(reason).is_ok() {
+                        conn.wake();
+                    }
+                }
+                // Already finished or reset, which is fine.
+                Err(FinishError::ClosedStream) => {}
+            }
         }
     }
 }
