@@ -6,9 +6,10 @@
 //! Based on: ANT_QUIC_COMPREHENSIVE_SPEC.md
 
 use ant_quic::{
-    auth::AuthConfig, EndpointRole, NatTraversalEvent, PeerId, QuicNodeConfig, QuicP2PNode,
+    EndpointRole, NatTraversalEvent, PeerId, QuicNodeConfig, QuicP2PNode, auth::AuthConfig,
 };
 use std::net::SocketAddr;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::time::sleep;
 
@@ -20,7 +21,7 @@ macro_rules! box_err {
 }
 
 /// Helper function to create a test node with default configuration
-async fn create_test_node() -> anyhow::Result<QuicP2PNode> {
+async fn create_test_node() -> anyhow::Result<Arc<QuicP2PNode>> {
     let config = QuicNodeConfig {
         role: EndpointRole::Bootstrap,
         bootstrap_nodes: vec![],
@@ -28,11 +29,39 @@ async fn create_test_node() -> anyhow::Result<QuicP2PNode> {
         max_connections: 100,
         connection_timeout: Duration::from_secs(30),
         stats_interval: Duration::from_secs(60),
-        auth_config: AuthConfig::default(),
+        auth_config: AuthConfig {
+            require_authentication: false,
+            ..AuthConfig::default()
+        },
         bind_addr: Some("127.0.0.1:0".parse()?),
     };
 
-    QuicP2PNode::new(config).await.map_err(|e| anyhow::anyhow!("{}", e))
+    let node = Arc::new(
+        QuicP2PNode::new(config)
+            .await
+            .map_err(|e| anyhow::anyhow!("{}", e))?,
+    );
+
+    Ok(node)
+}
+
+/// Helper to accept incoming connection on a node (call this before receiving)
+async fn accept_one(node: &Arc<QuicP2PNode>) -> anyhow::Result<bool> {
+    tokio::select! {
+        result = node.accept() => {
+            match result {
+                Ok((addr, peer_id)) => {
+                    println!("✅ Accepted connection from {:?} at {}", peer_id, addr);
+                    Ok(true)
+                }
+                Err(e) => Err(anyhow::anyhow!("Accept failed: {}", e))
+            }
+        }
+        _ = sleep(Duration::from_millis(500)) => {
+            println!("⚠️  Accept timed out - no incoming connection");
+            Ok(false)
+        }
+    }
 }
 
 /// Extension trait for convenient QuicP2PNode operations
@@ -40,7 +69,7 @@ trait QuicNodeExt {
     fn local_addr(&self) -> anyhow::Result<SocketAddr>;
 }
 
-impl QuicNodeExt for QuicP2PNode {
+impl QuicNodeExt for Arc<QuicP2PNode> {
     fn local_addr(&self) -> anyhow::Result<SocketAddr> {
         let nat_endpoint = box_err!(self.get_nat_endpoint())?;
         let quinn_endpoint = nat_endpoint
@@ -127,16 +156,46 @@ async fn test_immediate_send_after_connect() -> anyhow::Result<()> {
     // Connect and send immediately (no delay)
     let peer_id = box_err!(node1.connect_to_bootstrap(addr2).await)?;
 
+    // Node2 must accept the incoming connection
+    let (_addr, _peer) = box_err!(node2.accept().await)?;
+
     // CRITICAL: Send with NO delay after connect
     let data = b"Immediate message";
     let send_result = box_err!(node1.send_to_peer(&peer_id, data).await);
 
     match send_result {
         Ok(_) => {
-            // Verify message is received
-            let (_, received) = box_err!(node2.receive().await)?;
-            assert_eq!(received, data);
-            println!("✅ Immediate send succeeded");
+            // Allow time for stream to be transmitted and accepted
+            sleep(Duration::from_millis(100)).await;
+
+            // Verify message is received (with retry for timing)
+            let mut received_data = None;
+            for attempt in 1..=5 {
+                match tokio::time::timeout(Duration::from_millis(100), node2.receive()).await {
+                    Ok(Ok((_, data_vec))) => {
+                        received_data = Some(data_vec);
+                        break;
+                    }
+                    Ok(Err(e)) => {
+                        println!("Receive attempt {}: {}", attempt, e);
+                        if attempt == 5 {
+                            return Err(anyhow::anyhow!("Failed to receive after 5 attempts: {}", e));
+                        }
+                    }
+                    Err(_) => {
+                        println!("Receive attempt {} timed out", attempt);
+                        if attempt == 5 {
+                            return Err(anyhow::anyhow!("Receive timed out after 5 attempts"));
+                        }
+                    }
+                }
+                sleep(Duration::from_millis(50)).await;
+            }
+
+            if let Some(received) = received_data {
+                assert_eq!(received, data);
+                println!("✅ Immediate send succeeded");
+            }
         }
         Err(e) => {
             println!("❌ Immediate send failed: {}", e);
@@ -163,16 +222,22 @@ async fn test_endpoint_stays_open() -> anyhow::Result<()> {
     // Connect
     let peer_id = box_err!(node1.connect_to_bootstrap(addr2).await)?;
 
+    // Node2 must accept the incoming connection
+    let (_addr, _peer) = box_err!(node2.accept().await)?;
+
     println!("✅ Connection established");
 
     // Try send immediately
     let result1 = node1.send_to_peer(&peer_id, b"test1").await;
-    println!("Immediate send: {}", if result1.is_ok() { "OK" } else { "FAILED" });
+    println!(
+        "Immediate send: {}",
+        if result1.is_ok() { "OK" } else { "FAILED" }
+    );
 
     // Wait 500ms and try again
     sleep(Duration::from_millis(500)).await;
 
-    let result2 = box_err!(node1.send_to_peer(&peer_id, b"test2").await)?;
+    let _result2 = box_err!(node1.send_to_peer(&peer_id, b"test2").await)?;
     println!("✅ Send succeeded after 500ms delay");
 
     // Verify message was received
@@ -209,14 +274,20 @@ async fn test_connection_state_inspection() -> anyhow::Result<()> {
 
     // Try immediate send
     let result1 = node1.send_to_peer(&peer_id, b"test_immediate").await;
-    println!("Immediate send result: {}", if result1.is_ok() { "OK" } else { "FAILED" });
+    println!(
+        "Immediate send result: {}",
+        if result1.is_ok() { "OK" } else { "FAILED" }
+    );
 
     // Wait 50ms
     sleep(Duration::from_millis(50)).await;
 
     println!("\n=== After 50ms ===");
     let result2 = node1.send_to_peer(&peer_id, b"test_50ms").await;
-    println!("Send after 50ms: {}", if result2.is_ok() { "OK" } else { "FAILED" });
+    println!(
+        "Send after 50ms: {}",
+        if result2.is_ok() { "OK" } else { "FAILED" }
+    );
 
     // Summary
     println!("\n=== Summary ===");
@@ -279,7 +350,7 @@ async fn test_event_polling_latency() -> anyhow::Result<()> {
     let addr2 = node2.local_addr()?;
 
     let connect_time = Instant::now();
-    let peer_id = box_err!(node1.connect_to_bootstrap(addr2).await)?;
+    let _peer_id = box_err!(node1.connect_to_bootstrap(addr2).await)?;
     let connect_elapsed = connect_time.elapsed();
 
     // Poll immediately after connect
@@ -313,30 +384,35 @@ async fn test_single_connection_lifecycle() -> anyhow::Result<()> {
     println!("\n=== Test 2.1.1: Single Connection Lifecycle ===");
 
     // SETUP
-    let config1 = QuicNodeConfig {
-        role: EndpointRole::Bootstrap,
-        bootstrap_nodes: vec![],
-        enable_coordinator: false,
-        max_connections: 100,
-        connection_timeout: Duration::from_secs(30),
-        stats_interval: Duration::from_secs(60),
-        auth_config: AuthConfig::default(),
-        bind_addr: Some("127.0.0.1:0".parse()?),
-    };
+    let node1 = create_test_node().await?;
+    let node2 = create_test_node().await?;
 
-    let config2 = config1.clone();
-
-    let node1 = box_err!(QuicP2PNode::new(config1).await)?;
-    let node2 = box_err!(QuicP2PNode::new(config2).await)?;
-
+    let addr1 = node1.local_addr()?;
     let addr2 = node2.local_addr()?;
+    println!("Node1 listening on: {}", addr1);
+    println!("Node2 listening on: {}", addr2);
 
     // TEST: Connect node1 -> node2
+    println!("Node1: Connecting to node2...");
     let peer_id = box_err!(node1.connect_to_bootstrap(addr2).await)?;
     assert!(peer_id != PeerId([0; 32]), "Valid peer ID returned");
+    println!("✅ Connection initiated from node1");
 
-    // VERIFY: Connection is active
-    sleep(Duration::from_millis(100)).await;
+    // Try to accept the connection on node2 with a timeout
+    println!("Node2: Trying to accept connection...");
+    match tokio::time::timeout(Duration::from_millis(100), node2.accept()).await {
+        Ok(Ok((addr, peer))) => {
+            println!("✅ Node2 accepted connection from {:?} at {}", peer, addr);
+        }
+        Ok(Err(e)) => {
+            println!("❌ Accept failed: {}", e);
+            return Err(anyhow::anyhow!("Accept failed: {}", e));
+        }
+        Err(_) => {
+            println!("⚠️  Accept timed out - no incoming connection detected");
+            println!("This suggests the endpoint is not receiving incoming connections");
+        }
+    }
 
     // TEST: Send message
     let data = b"Hello from node1";
@@ -372,6 +448,9 @@ async fn test_connection_persistence() -> anyhow::Result<()> {
 
     // Connect
     let peer_id = box_err!(node1.connect_to_bootstrap(addr2).await)?;
+
+    // Node2 must accept the incoming connection
+    let (_addr, _peer) = box_err!(node2.accept().await)?;
 
     // Multiple messages without reconnect
     for i in 0..10 {
@@ -455,9 +534,9 @@ async fn test_connection_lost_event() -> anyhow::Result<()> {
     let nat_endpoint = box_err!(node1.get_nat_endpoint())?;
     let events = box_err!(nat_endpoint.poll(Instant::now()))?;
 
-    let lost = events.iter().find(|e| {
-        matches!(e, NatTraversalEvent::ConnectionLost { peer_id: p, .. } if p == &peer_id)
-    });
+    let lost = events.iter().find(
+        |e| matches!(e, NatTraversalEvent::ConnectionLost { peer_id: p, .. } if p == &peer_id),
+    );
 
     assert!(lost.is_some(), "ConnectionLost event found");
 

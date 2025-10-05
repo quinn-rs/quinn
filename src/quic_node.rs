@@ -13,7 +13,10 @@
 use std::{
     collections::HashMap,
     net::SocketAddr,
-    sync::Arc,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
     time::{Duration, Instant},
 };
 
@@ -45,6 +48,8 @@ pub struct QuicP2PNode {
     auth_manager: Arc<AuthManager>,
     /// Our peer ID
     peer_id: PeerId,
+    /// Shutdown signal for graceful termination
+    shutdown: Arc<AtomicBool>,
 }
 
 /// Configuration for QUIC P2P node
@@ -182,14 +187,21 @@ impl QuicP2PNode {
         let nat_endpoint =
             Arc::new(NatTraversalEndpoint::new(nat_config, Some(event_callback)).await?);
 
-        Ok(Self {
+        // Initialize shutdown signal
+        let shutdown = Arc::new(AtomicBool::new(false));
+
+        // Create the node
+        let node = Self {
             nat_endpoint,
             connected_peers: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             stats: stats_clone,
             config,
             auth_manager,
             peer_id,
-        })
+            shutdown: shutdown.clone(),
+        };
+
+        Ok(node)
     }
 
     /// Get the node configuration
@@ -219,8 +231,14 @@ impl QuicP2PNode {
                         // In a real implementation, we'd exchange peer IDs during the handshake
                         let peer_id = self.derive_peer_id_from_address(bootstrap_addr);
 
+                        // Spawn the NAT traversal handler loop so connection lifecycle events are processed
+                        let handler_connection = connection.clone();
+
                         // Store the connection in NAT endpoint
                         self.nat_endpoint.add_connection(peer_id, connection)?;
+
+                        self.nat_endpoint
+                            .spawn_connection_handler(peer_id, handler_connection)?;
 
                         // Store the peer address mapping
                         self.connected_peers
@@ -425,6 +443,15 @@ impl QuicP2PNode {
             Ok((peer_id, connection)) => {
                 let remote_addr = connection.remote_address();
 
+                // Spawn connection handler to monitor the connection
+                if let Err(e) = self.nat_endpoint.spawn_connection_handler(peer_id, connection) {
+                    error!(
+                        "Failed to spawn connection handler for peer {:?}: {}",
+                        peer_id, e
+                    );
+                    return Err(Box::new(e));
+                }
+
                 // Store the connection
                 {
                     let mut peers = self.connected_peers.write().await;
@@ -487,15 +514,12 @@ impl QuicP2PNode {
         peer_id: &PeerId,
         data: &[u8],
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        debug!("Attempting to send {} bytes to peer {:?}", data.len(), peer_id);
+
         let peers = self.connected_peers.read().await;
 
         if let Some(remote_addr) = peers.get(peer_id) {
-            debug!(
-                "Sending {} bytes to peer {:?} at {}",
-                data.len(),
-                peer_id,
-                remote_addr
-            );
+            debug!("Found peer {:?} at {}", peer_id, remote_addr);
 
             // Get the Quinn connection for this peer from the NAT traversal endpoint
             match self.nat_endpoint.get_connection(peer_id) {
@@ -874,5 +898,23 @@ impl QuicP2PNode {
         // In a full implementation, this would be a field in the struct
         // and properly wired up to collect actual metrics
         Ok(Arc::new(crate::logging::MetricsCollector::new()))
+    }
+
+    /// Gracefully shutdown the node and close all connections
+    pub fn shutdown(&self) {
+        info!("Shutting down QuicP2PNode");
+        self.shutdown.store(true, Ordering::SeqCst);
+
+        // Close the Quinn endpoint to terminate all connections
+        if let Some(endpoint) = self.nat_endpoint.get_quinn_endpoint() {
+            endpoint.close(0u32.into(), b"node shutdown");
+        }
+    }
+}
+
+/// Automatic cleanup when QuicP2PNode is dropped
+impl Drop for QuicP2PNode {
+    fn drop(&mut self) {
+        self.shutdown();
     }
 }

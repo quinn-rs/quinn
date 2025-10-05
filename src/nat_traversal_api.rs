@@ -45,7 +45,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use tokio::{
     net::UdpSocket,
-    sync::mpsc,
+    sync::{mpsc, mpsc::error::TryRecvError},
     time::{sleep, timeout},
 };
 
@@ -68,7 +68,7 @@ use crate::{crypto::rustls::QuicClientConfig, crypto::rustls::QuicServerConfig};
 use crate::config::validation::{ConfigValidator, ValidationResult};
 
 #[cfg(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring"))]
-use crate::crypto::certificate_manager::{CertificateConfig, CertificateManager};
+use crate::crypto::raw_public_keys::RawPublicKeyConfigBuilder;
 
 /// High-level NAT traversal endpoint for Autonomi P2P networks
 pub struct NatTraversalEndpoint {
@@ -90,6 +90,8 @@ pub struct NatTraversalEndpoint {
     shutdown: Arc<AtomicBool>,
     /// Channel for internal communication
     event_tx: Option<mpsc::UnboundedSender<NatTraversalEvent>>,
+    /// Receiver for internal event notifications
+    event_rx: std::sync::Mutex<mpsc::UnboundedReceiver<NatTraversalEvent>>,
     /// Active connections by peer ID
     connections: Arc<std::sync::RwLock<HashMap<PeerId, QuinnConnection>>>,
     /// Local peer ID
@@ -848,7 +850,7 @@ impl NatTraversalEndpoint {
 
         // Create QUIC endpoint with NAT traversal enabled
         // Create QUIC endpoint with NAT traversal enabled
-        let (quinn_endpoint, event_tx, local_addr) =
+        let (quinn_endpoint, event_tx, event_rx, local_addr) =
             Self::create_quinn_endpoint(&config, nat_traversal_role).await?;
 
         // Update discovery manager with the actual bound address
@@ -872,6 +874,7 @@ impl NatTraversalEndpoint {
             event_callback,
             shutdown: Arc::new(AtomicBool::new(false)),
             event_tx: Some(event_tx.clone()),
+            event_rx: std::sync::Mutex::new(event_rx),
             connections: Arc::new(std::sync::RwLock::new(HashMap::new())),
             local_peer_id: Self::generate_local_peer_id(),
             timeout_config: config.timeouts.clone(),
@@ -1377,6 +1380,7 @@ impl NatTraversalEndpoint {
         (
             QuinnEndpoint,
             mpsc::UnboundedSender<NatTraversalEvent>,
+            mpsc::UnboundedReceiver<NatTraversalEvent>,
             SocketAddr,
         ),
         NatTraversalError,
@@ -1386,34 +1390,19 @@ impl NatTraversalEndpoint {
         // Create server config if this is a coordinator/bootstrap node
         let server_config = match config.role {
             EndpointRole::Bootstrap | EndpointRole::Server { .. } => {
-                // Production certificate management
-                let cert_config = CertificateConfig {
-                    common_name: format!("ant-quic-{}", config.role.name()),
-                    subject_alt_names: vec!["localhost".to_string(), "ant-quic-node".to_string()],
-                    self_signed: true, // Use self-signed for P2P networks
-                    ..CertificateConfig::default()
-                };
+                info!("Creating server config for role: {:?} using Raw Public Keys (RFC 7250)", config.role);
 
-                let cert_manager = CertificateManager::new(cert_config).map_err(|e| {
-                    NatTraversalError::ConfigError(format!(
-                        "Certificate manager creation failed: {e}"
-                    ))
-                })?;
+                // Generate Ed25519 key pair for this server
+                let (server_key, _public_key) = crate::crypto::raw_public_keys::key_utils::generate_ed25519_keypair();
 
-                let cert_bundle = cert_manager.generate_certificate().map_err(|e| {
-                    NatTraversalError::ConfigError(format!("Certificate generation failed: {e}"))
-                })?;
+                // Build RFC 7250 server config with Raw Public Keys
+                let rpk_config = RawPublicKeyConfigBuilder::new()
+                    .with_server_key(server_key)
+                    .allow_any_key() // P2P network - accept any valid Ed25519 key
+                    .build_rfc7250_server_config()
+                    .map_err(|e| NatTraversalError::ConfigError(format!("RPK server config failed: {e}")))?;
 
-                let rustls_config =
-                    cert_manager
-                        .create_server_config(&cert_bundle)
-                        .map_err(|e| {
-                            NatTraversalError::ConfigError(format!(
-                                "Server config creation failed: {e}"
-                            ))
-                        })?;
-
-                let server_crypto = QuicServerConfig::try_from(rustls_config.as_ref().clone())
+                let server_crypto = QuicServerConfig::try_from(rpk_config.inner().as_ref().clone())
                     .map_err(|e| NatTraversalError::ConfigError(e.to_string()))?;
 
                 let mut server_config = ServerConfig::with_crypto(Arc::new(server_crypto));
@@ -1451,26 +1440,15 @@ impl NatTraversalEndpoint {
 
         // Create client config for outgoing connections
         let client_config = {
-            let cert_config = CertificateConfig {
-                common_name: format!("ant-quic-{}", config.role.name()),
-                subject_alt_names: vec!["localhost".to_string(), "ant-quic-node".to_string()],
-                self_signed: true,
-                ..CertificateConfig::default()
-            };
+            info!("Creating client config using Raw Public Keys (RFC 7250)");
 
-            let cert_manager = CertificateManager::new(cert_config).map_err(|e| {
-                NatTraversalError::ConfigError(format!("Certificate manager creation failed: {e}"))
-            })?;
+            // Build RFC 7250 client config with Raw Public Keys
+            let rpk_config = RawPublicKeyConfigBuilder::new()
+                .allow_any_key() // P2P network - accept any valid Ed25519 key
+                .build_rfc7250_client_config()
+                .map_err(|e| NatTraversalError::ConfigError(format!("RPK client config failed: {e}")))?;
 
-            let _cert_bundle = cert_manager.generate_certificate().map_err(|e| {
-                NatTraversalError::ConfigError(format!("Certificate generation failed: {e}"))
-            })?;
-
-            let rustls_config = cert_manager.create_client_config().map_err(|e| {
-                NatTraversalError::ConfigError(format!("Client config creation failed: {e}"))
-            })?;
-
-            let client_crypto = QuicClientConfig::try_from(rustls_config.as_ref().clone())
+            let client_crypto = QuicClientConfig::try_from(rpk_config.inner().as_ref().clone())
                 .map_err(|e| NatTraversalError::ConfigError(e.to_string()))?;
 
             let mut client_config = ClientConfig::new(Arc::new(client_crypto));
@@ -1542,9 +1520,9 @@ impl NatTraversalEndpoint {
         info!("Endpoint bound to actual address: {}", local_addr);
 
         // Create event channel
-        let (event_tx, _event_rx) = mpsc::unbounded_channel();
+        let (event_tx, event_rx) = mpsc::unbounded_channel();
 
-        Ok((endpoint, event_tx, local_addr))
+        Ok((endpoint, event_tx, event_rx, local_addr))
     }
 
     /// Start listening for incoming connections (async version)
@@ -1612,7 +1590,7 @@ impl NatTraversalEndpoint {
                                 });
 
                                 // Handle connection streams
-                                Self::handle_connection(connection, event_tx).await;
+                                Self::handle_connection(peer_id, connection, event_tx).await;
                             }
                             Err(e) => {
                                 debug!("Connection failed: {}", e);
@@ -1775,56 +1753,29 @@ impl NatTraversalEndpoint {
 
     /// Handle an established connection
     async fn handle_connection(
+        peer_id: PeerId,
         connection: QuinnConnection,
         event_tx: mpsc::UnboundedSender<NatTraversalEvent>,
     ) {
-        let peer_id = Self::generate_peer_id_from_address(connection.remote_address());
         let remote_address = connection.remote_address();
+        let closed = connection.closed();
+        tokio::pin!(closed);
 
         debug!(
             "Handling connection from peer {:?} at {}",
             peer_id, remote_address
         );
 
-        // Handle bidirectional and unidirectional streams
-        loop {
-            tokio::select! {
-                stream = connection.accept_bi() => {
-                    match stream {
-                        Ok((send, recv)) => {
-                            tokio::spawn(async move {
-                                Self::handle_bi_stream(send, recv).await;
-                            });
-                        }
-                        Err(e) => {
-                            debug!("Error accepting bidirectional stream: {}", e);
-                            let _ = event_tx.send(NatTraversalEvent::ConnectionLost {
-                                peer_id,
-                                reason: format!("Stream error: {e}"),
-                            });
-                            break;
-                        }
-                    }
-                }
-                stream = connection.accept_uni() => {
-                    match stream {
-                        Ok(recv) => {
-                            tokio::spawn(async move {
-                                Self::handle_uni_stream(recv).await;
-                            });
-                        }
-                        Err(e) => {
-                            debug!("Error accepting unidirectional stream: {}", e);
-                            let _ = event_tx.send(NatTraversalEvent::ConnectionLost {
-                                peer_id,
-                                reason: format!("Stream error: {e}"),
-                            });
-                            break;
-                        }
-                    }
-                }
-            }
-        }
+        // Monitor for connection closure only
+        // Application data streams are handled by the application layer (QuicP2PNode)
+        // not by this background task to avoid race conditions
+        closed.await;
+
+        let reason = connection
+            .close_reason()
+            .map(|reason| format!("Connection closed: {reason}"))
+            .unwrap_or_else(|| "Connection closed".to_string());
+        let _ = event_tx.send(NatTraversalEvent::ConnectionLost { peer_id, reason });
     }
 
     /// Handle a bidirectional stream
@@ -1930,52 +1881,65 @@ impl NatTraversalEndpoint {
 
     /// Accept incoming connections on the endpoint
     pub async fn accept_connection(&self) -> Result<(PeerId, QuinnConnection), NatTraversalError> {
-        let endpoint = self.quinn_endpoint.as_ref().ok_or_else(|| {
-            NatTraversalError::ConfigError("Quinn endpoint not initialized".to_string())
-        })?;
+        info!("Waiting for incoming connection via event channel...");
 
-        // Accept incoming connection
-        let incoming = endpoint
-            .accept()
-            .await
-            .ok_or_else(|| NatTraversalError::NetworkError("Endpoint closed".to_string()))?;
+        let timeout_duration = self.timeout_config.nat_traversal.connection_establishment_timeout;
+        let start = std::time::Instant::now();
 
-        let remote_addr = incoming.remote_address();
-        info!("Accepting connection from {}", remote_addr);
+        loop {
+            // Check shutdown
+            if self.shutdown.load(Ordering::Relaxed) {
+                return Err(NatTraversalError::NetworkError("Endpoint shutting down".to_string()));
+            }
 
-        // Accept the connection
-        let connection = incoming.await.map_err(|e| {
-            NatTraversalError::ConnectionFailed(format!("Failed to accept connection: {e}"))
-        })?;
+            // Check timeout
+            if start.elapsed() > timeout_duration {
+                warn!("accept_connection() timed out after {:?}", timeout_duration);
+                return Err(NatTraversalError::Timeout);
+            }
 
-        // Generate or extract peer ID from connection
-        let peer_id = self
-            .extract_peer_id_from_connection(&connection)
-            .await
-            .unwrap_or_else(|| Self::generate_peer_id_from_address(remote_addr));
+            // Check for ConnectionEstablished events from background accept task
+            {
+                let mut event_rx = self.event_rx.lock().map_err(|_| {
+                    NatTraversalError::ProtocolError("Event channel lock poisoned".to_string())
+                })?;
 
-        // Store the connection
-        {
-            let mut connections = self.connections.write().map_err(|_| {
-                NatTraversalError::ProtocolError("Connections lock poisoned".to_string())
-            })?;
-            connections.insert(peer_id, connection.clone());
+                match event_rx.try_recv() {
+                    Ok(NatTraversalEvent::ConnectionEstablished { peer_id, remote_address }) => {
+                        info!("Received ConnectionEstablished event for peer {:?} at {}", peer_id, remote_address);
+
+                        // Retrieve the already-accepted connection from storage
+                        // The background accept task already stored it in self.connections
+                        let connection = {
+                            let connections = self.connections.read().map_err(|_| {
+                                NatTraversalError::ProtocolError("Connections lock poisoned".to_string())
+                            })?;
+                            connections.get(&peer_id).cloned().ok_or_else(|| {
+                                NatTraversalError::ConnectionFailed(format!(
+                                    "Connection for peer {:?} not found in storage", peer_id
+                                ))
+                            })?
+                        };
+
+                        info!("Retrieved accepted connection from peer {:?} at {}", peer_id, remote_address);
+                        return Ok((peer_id, connection));
+                    }
+                    Ok(event) => {
+                        // Other event type, ignore and continue
+                        debug!("Ignoring non-connection event while waiting for accept: {:?}", event);
+                    }
+                    Err(mpsc::error::TryRecvError::Empty) => {
+                        // No events yet, continue loop
+                    }
+                    Err(mpsc::error::TryRecvError::Disconnected) => {
+                        return Err(NatTraversalError::NetworkError("Event channel closed".to_string()));
+                    }
+                }
+            } // Release event_rx lock before sleeping
+
+            // Brief sleep to avoid busy-waiting
+            tokio::time::sleep(Duration::from_millis(10)).await;
         }
-
-        info!(
-            "Connection accepted from peer {:?} at {}",
-            peer_id, remote_addr
-        );
-
-        // Send event notification
-        if let Some(ref event_tx) = self.event_tx {
-            let _ = event_tx.send(NatTraversalEvent::ConnectionEstablished {
-                peer_id,
-                remote_address: remote_addr,
-            });
-        }
-
-        Ok((peer_id, connection))
     }
 
     /// Get the local peer ID
@@ -2004,6 +1968,32 @@ impl NatTraversalEndpoint {
             NatTraversalError::ProtocolError("Connections lock poisoned".to_string())
         })?;
         connections.insert(peer_id, connection);
+        Ok(())
+    }
+
+    /// Spawn the NAT traversal handler loop for an existing connection referenced by the endpoint.
+    pub fn spawn_connection_handler(
+        &self,
+        peer_id: PeerId,
+        connection: QuinnConnection,
+    ) -> Result<(), NatTraversalError> {
+        let event_tx = self.event_tx.as_ref().cloned().ok_or_else(|| {
+            NatTraversalError::ConfigError("NAT traversal event channel not configured".to_string())
+        })?;
+
+        let remote_address = connection.remote_address();
+
+        // Emit ConnectionEstablished event
+        let _ = event_tx.send(NatTraversalEvent::ConnectionEstablished {
+            peer_id,
+            remote_address,
+        });
+
+        // Spawn connection monitoring task
+        tokio::spawn(async move {
+            Self::handle_connection(peer_id, connection, event_tx).await;
+        });
+
         Ok(())
     }
 
@@ -2643,7 +2633,8 @@ impl NatTraversalEndpoint {
                                         });
 
                                     // Handle the connection
-                                    Self::handle_connection(connection, event_tx).await;
+                                    Self::handle_connection(peer_id_clone, connection, event_tx)
+                                        .await;
                                 }
                                 Err(e) => {
                                     warn!("Connection to {} failed: {}", address, e);
@@ -2674,6 +2665,58 @@ impl NatTraversalEndpoint {
         now: std::time::Instant,
     ) -> Result<Vec<NatTraversalEvent>, NatTraversalError> {
         let mut events = Vec::new();
+
+        // Drain any pending events emitted from async tasks
+        {
+            let mut event_rx = self.event_rx.lock().map_err(|_| {
+                NatTraversalError::ProtocolError("Event channel lock poisoned".to_string())
+            })?;
+
+            loop {
+                match event_rx.try_recv() {
+                    Ok(event) => {
+                        if let Some(ref callback) = self.event_callback {
+                            callback(event.clone());
+                        }
+                        events.push(event);
+                    }
+                    Err(TryRecvError::Empty) => break,
+                    Err(TryRecvError::Disconnected) => break,
+                }
+            }
+        }
+
+        // Detect closed connections and emit ConnectionLost events synchronously
+        let mut closed_connections = Vec::new();
+        {
+            let connections = self.connections.read().map_err(|_| {
+                NatTraversalError::ProtocolError("Connections lock poisoned".to_string())
+            })?;
+
+            for (peer_id, connection) in connections.iter() {
+                if let Some(reason) = connection.close_reason() {
+                    closed_connections.push((*peer_id, reason.clone()));
+                }
+            }
+        }
+
+        if !closed_connections.is_empty() {
+            let mut connections = self.connections.write().map_err(|_| {
+                NatTraversalError::ProtocolError("Connections lock poisoned".to_string())
+            })?;
+
+            for (peer_id, reason) in closed_connections {
+                connections.remove(&peer_id);
+                let event = NatTraversalEvent::ConnectionLost {
+                    peer_id,
+                    reason: reason.to_string(),
+                };
+                if let Some(ref callback) = self.event_callback {
+                    callback(event.clone());
+                }
+                events.push(event);
+            }
+        }
 
         // Check connections for observed addresses
         self.check_connections_for_observed_addresses(&mut events)?;
@@ -3086,6 +3129,7 @@ impl NatTraversalEndpoint {
                         if let Some(event_tx) = &self.event_tx {
                             let event_tx = event_tx.clone();
                             let connections = self.connections.clone();
+                            let peer_id_clone = peer_id;
 
                             tokio::spawn(async move {
                                 match connecting.await {
@@ -3102,7 +3146,12 @@ impl NatTraversalEndpoint {
                                         }
 
                                         // Handle the connection
-                                        Self::handle_connection(connection, event_tx).await;
+                                        Self::handle_connection(
+                                            peer_id_clone,
+                                            connection,
+                                            event_tx,
+                                        )
+                                        .await;
                                     }
                                     Err(e) => {
                                         warn!(
