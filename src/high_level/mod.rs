@@ -34,8 +34,6 @@ pub use self::runtime::{AsyncTimer, AsyncUdpSocket, Runtime, UdpPoller, default_
 pub use self::send_stream::{SendStream, StoppedError, WriteError};
 
 // Runtime-specific exports
-#[cfg(feature = "runtime-async-std")]
-pub use self::runtime::AsyncStdRuntime;
 #[cfg(feature = "runtime-smol")]
 pub use self::runtime::SmolRuntime;
 #[cfg(feature = "runtime-tokio")]

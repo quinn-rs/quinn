@@ -63,17 +63,10 @@ pqc = ["saorsa-pqc", "aws-lc-rs"]
 
 # Zero-cost tracing system
 trace = []
-trace-app = ["trace"]
-trace-index = ["trace"]
-trace-full = ["trace", "trace-app", "trace-index"]
+trace-full = ["trace"]
 
 # Test utilities
 test-utils = []
-docker-tests = ["test-utils"]
-platform-tests = ["test-utils"]
-linux-tests = ["platform-tests"]
-macos-tests = ["platform-tests"]
-windows-tests = ["platform-tests"]
 
 # Memory optimization features
 low_memory = []
