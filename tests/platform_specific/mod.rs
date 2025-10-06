@@ -199,6 +199,7 @@ mod platform_windows {
         use windows::Win32::Networking::WinSock::{
             SO_REUSEADDR, SOCKET, SOCKET_ERROR, SOL_SOCKET, getsockopt,
         };
+        use windows::core::PSTR;
 
         let socket = UdpSocket::bind("127.0.0.1:0").expect("Failed to bind socket");
         let raw_socket = SOCKET(socket.as_raw_socket() as usize);
@@ -211,7 +212,7 @@ mod platform_windows {
                 raw_socket,
                 SOL_SOCKET as i32,
                 SO_REUSEADDR as i32,
-                &mut value as *mut _ as *mut i8,
+                PSTR::from_raw(&mut value as *mut _ as *mut u8),
                 &mut len,
             );
 

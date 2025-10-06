@@ -65,9 +65,13 @@ fn main() {
         port: PortBinding::Explicit(16000),
         ..Default::default()
     };
-    let _bound1 = bind_endpoint(&config1)
-        .ok()
-        .expect("First bind should succeed");
+    let _bound1 = match bind_endpoint(&config1) {
+        Ok(bound) => bound,
+        Err(e) => {
+            println!("✗ Could not bind first endpoint: {}\n", e);
+            return;
+        }
+    };
     println!("✓ First endpoint bound to port 16000");
 
     // Try to bind to same port with fallback
