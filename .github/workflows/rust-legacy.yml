@@ -279,10 +279,11 @@ jobs:
     runs-on: ${{ matrix.os }}
     env:
       RUSTFLAGS: -Dwarnings
-      # skip FIPS features outside of Linux
+      # skip FIPS features outside of Linux, and ensure at least one crypto provider
       SKIP_FEATURES: ${{ matrix.os != 'ubuntu-latest' && 'rustls-aws-lc-rs-fips,aws-lc-rs-fips' || '' }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: taiki-e/install-action@cargo-hack
-      - run: cargo hack check --feature-powerset --depth 3 --optional-deps --no-dev-deps --ignore-private --skip "${{env.SKIP_FEATURES}}"
+      # Skip feature combinations without crypto providers (rustls-ring or rustls-aws-lc-rs required)
+      - run: cargo hack check --feature-powerset --depth 3 --optional-deps --no-dev-deps --ignore-private --skip "${{env.SKIP_FEATURES}}" --at-least-one-of rustls-ring,rustls-aws-lc-rs
