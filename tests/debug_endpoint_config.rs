@@ -1,10 +1,14 @@
 //! Debug test to verify endpoint configuration
 
+mod common;
+
 use ant_quic::{EndpointRole, QuicNodeConfig, QuicP2PNode, auth::AuthConfig};
 use std::time::Duration;
 
 #[tokio::test]
 async fn test_endpoint_has_server_config() -> anyhow::Result<()> {
+    common::init_crypto();
+
     let config = QuicNodeConfig {
         role: EndpointRole::Bootstrap, // Should create server_config
         bootstrap_nodes: vec![],
