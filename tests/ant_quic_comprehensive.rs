@@ -12,6 +12,24 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::time::sleep;
+use std::sync::Once;
+
+/// Initialize cryptographic provider once for all tests
+static INIT: Once = Once::new();
+
+fn init_crypto() {
+    INIT.call_once(|| {
+        // Install default crypto provider (prefer aws-lc-rs if available, fallback to ring)
+        #[cfg(feature = "rustls-aws-lc-rs")]
+        {
+            let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+        }
+        #[cfg(all(feature = "rustls-ring", not(feature = "rustls-aws-lc-rs")))]
+        {
+            let _ = rustls::crypto::ring::default_provider().install_default();
+        }
+    });
+}
 
 /// Helper macro for error conversion from Box<dyn Error> to anyhow::Error
 macro_rules! box_err {
@@ -22,6 +40,8 @@ macro_rules! box_err {
 
 /// Helper function to create a test node with default configuration
 async fn create_test_node() -> anyhow::Result<Arc<QuicP2PNode>> {
+    init_crypto();
+
     let config = QuicNodeConfig {
         role: EndpointRole::Bootstrap,
         bootstrap_nodes: vec![],
