@@ -6,9 +6,11 @@
 mod common;
 
 use ant_quic::{
-    ClientConfig, Endpoint, ServerConfig, VarInt,
+    ClientConfig, Endpoint, EndpointConfig, ServerConfig, VarInt,
     crypto::rustls::{QuicClientConfig, QuicServerConfig},
+    high_level::default_runtime,
 };
+use socket2::{Domain, Protocol, Socket, Type};
 use std::{
     net::{Ipv4Addr, SocketAddr},
     sync::Arc,
@@ -16,6 +18,26 @@ use std::{
 };
 use tokio::sync::mpsc;
 use tracing::info;
+
+/// Create a properly configured UDP socket with larger buffers for Windows
+fn create_configured_socket(addr: SocketAddr) -> std::io::Result<std::net::UdpSocket> {
+    let socket = Socket::new(Domain::for_address(addr), Type::DGRAM, Some(Protocol::UDP))?;
+
+    // On Windows, configure larger buffer sizes to handle QUIC packets
+    // This prevents "message larger than buffer" errors (error 10040)
+    #[cfg(target_os = "windows")]
+    {
+        // Set receive buffer to 256KB
+        socket.set_recv_buffer_size(256 * 1024)?;
+        // Set send buffer to 256KB
+        socket.set_send_buffer_size(256 * 1024)?;
+    }
+
+    // Bind the socket
+    socket.bind(&addr.into())?;
+
+    Ok(socket.into())
+}
 
 /// Helper to generate self-signed certificate for testing
 fn generate_test_cert() -> (
@@ -28,7 +50,7 @@ fn generate_test_cert() -> (
     (cert_der, key_der)
 }
 
-/// Create a test server endpoint
+/// Create a test server endpoint with properly configured socket buffers
 fn create_server_endpoint() -> Endpoint {
     let (cert, key) = generate_test_cert();
 
@@ -41,12 +63,30 @@ fn create_server_endpoint() -> Endpoint {
     let server_config =
         ServerConfig::with_crypto(Arc::new(QuicServerConfig::try_from(server_crypto).unwrap()));
 
-    Endpoint::server(server_config, SocketAddr::from((Ipv4Addr::LOCALHOST, 0))).unwrap()
+    // Create socket with properly configured buffers
+    let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, 0));
+    let socket = create_configured_socket(addr).unwrap();
+
+    // Use Endpoint::new() to create endpoint with custom socket configuration
+    let runtime = default_runtime().unwrap();
+    Endpoint::new(
+        EndpointConfig::default(),
+        Some(server_config),
+        socket,
+        runtime,
+    )
+    .unwrap()
 }
 
-/// Create a test client endpoint  
+/// Create a test client endpoint with properly configured socket buffers
 fn create_client_endpoint() -> Endpoint {
-    Endpoint::client(SocketAddr::from((Ipv4Addr::LOCALHOST, 0))).unwrap()
+    // Create socket with properly configured buffers
+    let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, 0));
+    let socket = create_configured_socket(addr).unwrap();
+
+    // Use Endpoint::new() to create endpoint with custom socket configuration
+    let runtime = default_runtime().unwrap();
+    Endpoint::new(EndpointConfig::default(), None, socket, runtime).unwrap()
 }
 
 /// Test that address discovery is enabled by default
