@@ -76,8 +76,10 @@ fi
 # Load required kernel modules
 modprobe nf_conntrack 2>/dev/null || true
 modprobe nf_conntrack_ipv4 2>/dev/null || true
+modprobe nf_conntrack_ipv6 2>/dev/null || true
 modprobe nf_nat 2>/dev/null || true
 modprobe iptable_nat 2>/dev/null || true
+modprobe ip6table_nat 2>/dev/null || true
 
 # Set connection tracking parameters for better NAT traversal
 sysctl -w net.netfilter.nf_conntrack_max=1000000 || true
@@ -90,6 +92,14 @@ iptables -F
 iptables -t nat -F
 iptables -t mangle -F
 iptables -X
+
+# Clear existing ip6tables rules if IPv6 is enabled
+if [ "${ENABLE_IPV6:-false}" = "true" ]; then
+    ip6tables -F 2>/dev/null || true
+    ip6tables -t nat -F 2>/dev/null || true
+    ip6tables -t mangle -F 2>/dev/null || true
+    ip6tables -X 2>/dev/null || true
+fi
 
 # Default policies
 iptables -P INPUT ACCEPT
@@ -177,11 +187,84 @@ if [ "$LOG_LEVEL" = "debug" ] || [ "$LOG_LEVEL" = "trace" ]; then
     iptables -t nat -A POSTROUTING -j LOG --log-prefix "[NAT-POST] " --log-level 7
 fi
 
+# Configure IPv6 NAT if enabled
+if [ "${ENABLE_IPV6:-false}" = "true" ]; then
+    log "Configuring IPv6 NAT"
+
+    # Get IPv6 addresses
+    WAN_IP6=$(ip -6 addr show $WAN_INTERFACE | grep -oP '(?<=inet6\s)2001:[0-9a-f:]+' | head -1)
+    LAN_IP6=$(ip -6 addr show $LAN_INTERFACE | grep -oP '(?<=inet6\s)fd00:[0-9a-f:]+' | head -1)
+
+    if [ -n "$WAN_IP6" ] && [ -n "$LAN_IP6" ]; then
+        log "IPv6 routing: WAN=$WAN_IP6, LAN=$LAN_IP6"
+
+        # Add route to internet IPv6 network
+        ip -6 route add 2001:db8:1::/64 dev $WAN_INTERFACE 2>/dev/null || true
+
+        # Default IPv6 policies
+        ip6tables -P INPUT ACCEPT
+        ip6tables -P FORWARD DROP
+        ip6tables -P OUTPUT ACCEPT
+
+        # Allow loopback
+        ip6tables -A INPUT -i lo -j ACCEPT
+        ip6tables -A OUTPUT -o lo -j ACCEPT
+
+        # Allow established connections
+        ip6tables -A INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
+        ip6tables -A FORWARD -m state --state ESTABLISHED,RELATED -j ACCEPT
+
+        # Configure IPv6 NAT based on type
+        case "$NAT_TYPE_NORM" in
+            full_cone)
+                log "Configuring IPv6 Full Cone NAT"
+                ip6tables -t nat -A POSTROUTING -o $WAN_INTERFACE -j MASQUERADE
+                ip6tables -A FORWARD -i $LAN_INTERFACE -o $WAN_INTERFACE -j ACCEPT
+                ip6tables -A FORWARD -i $WAN_INTERFACE -o $LAN_INTERFACE -j ACCEPT
+                ;;
+            symmetric)
+                log "Configuring IPv6 Symmetric NAT"
+                ip6tables -t nat -A POSTROUTING -o $WAN_INTERFACE -j MASQUERADE --random
+                ip6tables -A FORWARD -i $LAN_INTERFACE -o $WAN_INTERFACE -j ACCEPT
+                ip6tables -A FORWARD -i $WAN_INTERFACE -o $LAN_INTERFACE -m state --state ESTABLISHED,RELATED -j ACCEPT
+                ip6tables -A FORWARD -i $WAN_INTERFACE -o $LAN_INTERFACE -m state --state NEW -j DROP
+                ;;
+            port_restricted|port-restricted)
+                log "Configuring IPv6 Port Restricted NAT"
+                ip6tables -t nat -A POSTROUTING -o $WAN_INTERFACE -j MASQUERADE
+                ip6tables -A FORWARD -i $LAN_INTERFACE -o $WAN_INTERFACE -j ACCEPT
+                ip6tables -N PORT_RESTRICT_V6 2>/dev/null || true
+                ip6tables -A FORWARD -i $WAN_INTERFACE -o $LAN_INTERFACE -j PORT_RESTRICT_V6
+                ip6tables -A PORT_RESTRICT_V6 -m state --state ESTABLISHED,RELATED -j ACCEPT
+                ip6tables -A PORT_RESTRICT_V6 -m state --state NEW -m recent --name portscan6 --set -j DROP
+                ;;
+            cgnat)
+                log "Configuring IPv6 NAT (CGNAT mode - IPv6 pass-through)"
+                # CGNAT typically doesn't apply IPv6 NAT - just forward
+                ip6tables -A FORWARD -i $LAN_INTERFACE -o $WAN_INTERFACE -j ACCEPT
+                ip6tables -A FORWARD -i $WAN_INTERFACE -o $LAN_INTERFACE -j ACCEPT
+                ;;
+        esac
+
+        log "IPv6 NAT configuration complete"
+    else
+        warn "Could not determine IPv6 addresses, skipping IPv6 NAT configuration"
+    fi
+fi
+
 # Show final configuration
 log "NAT configuration complete. Current rules:"
 iptables -L -n -v
 echo "---"
 iptables -t nat -L -n -v
+
+if [ "${ENABLE_IPV6:-false}" = "true" ]; then
+    echo "---"
+    log "IPv6 rules:"
+    ip6tables -L -n -v 2>/dev/null || true
+    echo "---"
+    ip6tables -t nat -L -n -v 2>/dev/null || true
+fi
 
 # Monitor connection tracking
 log "Starting connection tracking monitor"

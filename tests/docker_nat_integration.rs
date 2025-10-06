@@ -2,8 +2,10 @@
 //!
 //! These tests verify NAT traversal functionality using Docker containers
 //! to simulate various NAT configurations.
+//!
+//! These tests are always compiled but will be skipped at runtime if Docker is not available.
 
-#[cfg(all(test, feature = "docker-tests", not(target_os = "windows")))]
+#[cfg(all(test, not(target_os = "windows")))]
 mod docker_nat_tests {
     use std::process::Command;
 

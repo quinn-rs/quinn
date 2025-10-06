@@ -1390,17 +1390,23 @@ impl NatTraversalEndpoint {
         // Create server config if this is a coordinator/bootstrap node
         let server_config = match config.role {
             EndpointRole::Bootstrap | EndpointRole::Server { .. } => {
-                info!("Creating server config for role: {:?} using Raw Public Keys (RFC 7250)", config.role);
+                info!(
+                    "Creating server config for role: {:?} using Raw Public Keys (RFC 7250)",
+                    config.role
+                );
 
                 // Generate Ed25519 key pair for this server
-                let (server_key, _public_key) = crate::crypto::raw_public_keys::key_utils::generate_ed25519_keypair();
+                let (server_key, _public_key) =
+                    crate::crypto::raw_public_keys::key_utils::generate_ed25519_keypair();
 
                 // Build RFC 7250 server config with Raw Public Keys
                 let rpk_config = RawPublicKeyConfigBuilder::new()
                     .with_server_key(server_key)
                     .allow_any_key() // P2P network - accept any valid Ed25519 key
                     .build_rfc7250_server_config()
-                    .map_err(|e| NatTraversalError::ConfigError(format!("RPK server config failed: {e}")))?;
+                    .map_err(|e| {
+                        NatTraversalError::ConfigError(format!("RPK server config failed: {e}"))
+                    })?;
 
                 let server_crypto = QuicServerConfig::try_from(rpk_config.inner().as_ref().clone())
                     .map_err(|e| NatTraversalError::ConfigError(e.to_string()))?;
@@ -1446,7 +1452,9 @@ impl NatTraversalEndpoint {
             let rpk_config = RawPublicKeyConfigBuilder::new()
                 .allow_any_key() // P2P network - accept any valid Ed25519 key
                 .build_rfc7250_client_config()
-                .map_err(|e| NatTraversalError::ConfigError(format!("RPK client config failed: {e}")))?;
+                .map_err(|e| {
+                    NatTraversalError::ConfigError(format!("RPK client config failed: {e}"))
+                })?;
 
             let client_crypto = QuicClientConfig::try_from(rpk_config.inner().as_ref().clone())
                 .map_err(|e| NatTraversalError::ConfigError(e.to_string()))?;
@@ -1883,13 +1891,18 @@ impl NatTraversalEndpoint {
     pub async fn accept_connection(&self) -> Result<(PeerId, QuinnConnection), NatTraversalError> {
         info!("Waiting for incoming connection via event channel...");
 
-        let timeout_duration = self.timeout_config.nat_traversal.connection_establishment_timeout;
+        let timeout_duration = self
+            .timeout_config
+            .nat_traversal
+            .connection_establishment_timeout;
         let start = std::time::Instant::now();
 
         loop {
             // Check shutdown
             if self.shutdown.load(Ordering::Relaxed) {
-                return Err(NatTraversalError::NetworkError("Endpoint shutting down".to_string()));
+                return Err(NatTraversalError::NetworkError(
+                    "Endpoint shutting down".to_string(),
+                ));
             }
 
             // Check timeout
@@ -1905,34 +1918,51 @@ impl NatTraversalEndpoint {
                 })?;
 
                 match event_rx.try_recv() {
-                    Ok(NatTraversalEvent::ConnectionEstablished { peer_id, remote_address }) => {
-                        info!("Received ConnectionEstablished event for peer {:?} at {}", peer_id, remote_address);
+                    Ok(NatTraversalEvent::ConnectionEstablished {
+                        peer_id,
+                        remote_address,
+                    }) => {
+                        info!(
+                            "Received ConnectionEstablished event for peer {:?} at {}",
+                            peer_id, remote_address
+                        );
 
                         // Retrieve the already-accepted connection from storage
                         // The background accept task already stored it in self.connections
                         let connection = {
                             let connections = self.connections.read().map_err(|_| {
-                                NatTraversalError::ProtocolError("Connections lock poisoned".to_string())
+                                NatTraversalError::ProtocolError(
+                                    "Connections lock poisoned".to_string(),
+                                )
                             })?;
                             connections.get(&peer_id).cloned().ok_or_else(|| {
                                 NatTraversalError::ConnectionFailed(format!(
-                                    "Connection for peer {:?} not found in storage", peer_id
+                                    "Connection for peer {:?} not found in storage",
+                                    peer_id
                                 ))
                             })?
                         };
 
-                        info!("Retrieved accepted connection from peer {:?} at {}", peer_id, remote_address);
+                        info!(
+                            "Retrieved accepted connection from peer {:?} at {}",
+                            peer_id, remote_address
+                        );
                         return Ok((peer_id, connection));
                     }
                     Ok(event) => {
                         // Other event type, ignore and continue
-                        debug!("Ignoring non-connection event while waiting for accept: {:?}", event);
+                        debug!(
+                            "Ignoring non-connection event while waiting for accept: {:?}",
+                            event
+                        );
                     }
                     Err(mpsc::error::TryRecvError::Empty) => {
                         // No events yet, continue loop
                     }
                     Err(mpsc::error::TryRecvError::Disconnected) => {
-                        return Err(NatTraversalError::NetworkError("Event channel closed".to_string()));
+                        return Err(NatTraversalError::NetworkError(
+                            "Event channel closed".to_string(),
+                        ));
                     }
                 }
             } // Release event_rx lock before sleeping

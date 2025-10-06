@@ -31,11 +31,10 @@ async fn kem_only_handshake_is_active() {
             .await
             .unwrap()
             .unwrap();
-        let conn = timeout(Duration::from_secs(10), inc)
+        timeout(Duration::from_secs(10), inc)
             .await
             .unwrap()
-            .unwrap();
-        conn
+            .unwrap()
     });
 
     // Client trusts the self-signed cert
@@ -75,11 +74,10 @@ async fn kem_group_is_restricted_with_provider() {
             .await
             .unwrap()
             .unwrap();
-        let conn = timeout(Duration::from_secs(10), inc)
+        timeout(Duration::from_secs(10), inc)
             .await
             .unwrap()
-            .unwrap();
-        conn
+            .unwrap()
     });
 
     let mut roots = rustls::RootCertStore::empty();

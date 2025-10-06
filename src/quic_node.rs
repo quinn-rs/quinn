@@ -14,8 +14,8 @@ use std::{
     collections::HashMap,
     net::SocketAddr,
     sync::{
-        atomic::{AtomicBool, Ordering},
         Arc,
+        atomic::{AtomicBool, Ordering},
     },
     time::{Duration, Instant},
 };
@@ -444,7 +444,10 @@ impl QuicP2PNode {
                 let remote_addr = connection.remote_address();
 
                 // Spawn connection handler to monitor the connection
-                if let Err(e) = self.nat_endpoint.spawn_connection_handler(peer_id, connection) {
+                if let Err(e) = self
+                    .nat_endpoint
+                    .spawn_connection_handler(peer_id, connection)
+                {
                     error!(
                         "Failed to spawn connection handler for peer {:?}: {}",
                         peer_id, e
@@ -514,7 +517,11 @@ impl QuicP2PNode {
         peer_id: &PeerId,
         data: &[u8],
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        debug!("Attempting to send {} bytes to peer {:?}", data.len(), peer_id);
+        debug!(
+            "Attempting to send {} bytes to peer {:?}",
+            data.len(),
+            peer_id
+        );
 
         let peers = self.connected_peers.read().await;
 

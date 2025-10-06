@@ -12,7 +12,7 @@ use super::event::{Event, TraceId};
 use std::ptr;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
-#[cfg(feature = "trace-index")]
+#[cfg(feature = "trace")]
 use dashmap::DashMap;
 
 /// Configuration for the event log
@@ -36,11 +36,11 @@ pub struct EventLog {
     sequence_counter: AtomicU32,
 
     /// Optional indices for fast queries
-    #[cfg(feature = "trace-index")]
+    #[cfg(feature = "trace")]
     indices: EventIndices,
 }
 
-#[cfg(feature = "trace-index")]
+#[cfg(feature = "trace")]
 struct EventIndices {
     /// Index by trace ID
     by_trace: DashMap<TraceId, Vec<u32>>,
@@ -73,7 +73,7 @@ impl EventLog {
             events,
             write_index: AtomicU64::new(0),
             sequence_counter: AtomicU32::new(0),
-            #[cfg(feature = "trace-index")]
+            #[cfg(feature = "trace")]
             indices: EventIndices {
                 by_trace: DashMap::new(),
                 by_peer: DashMap::new(),
@@ -103,11 +103,11 @@ impl EventLog {
         }
 
         // Update indices if enabled
-        #[cfg(feature = "trace-index")]
+        #[cfg(feature = "trace")]
         self.update_indices(slot, &event);
     }
 
-    #[cfg(feature = "trace-index")]
+    #[cfg(feature = "trace")]
     fn update_indices(&self, slot: usize, event: &Event) {
         // Index by trace ID
         self.indices
@@ -175,7 +175,7 @@ impl EventLog {
     }
 
     /// Query events by trace ID
-    #[cfg(feature = "trace-index")]
+    #[cfg(feature = "trace")]
     pub fn query_trace(&self, trace_id: TraceId) -> Vec<Event> {
         if let Some(indices) = self.indices.by_trace.get(&trace_id) {
             indices
@@ -199,7 +199,7 @@ impl EventLog {
     }
 
     /// Query events by trace ID (without index)
-    #[cfg(not(feature = "trace-index"))]
+    #[cfg(not(feature = "trace"))]
     pub(super) fn query_trace(&self, trace_id: TraceId) -> Vec<Event> {
         let current_idx = self.write_index.load(Ordering::Relaxed);
         let mut events = Vec::new();

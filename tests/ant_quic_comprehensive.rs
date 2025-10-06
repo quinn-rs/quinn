@@ -45,25 +45,6 @@ async fn create_test_node() -> anyhow::Result<Arc<QuicP2PNode>> {
     Ok(node)
 }
 
-/// Helper to accept incoming connection on a node (call this before receiving)
-async fn accept_one(node: &Arc<QuicP2PNode>) -> anyhow::Result<bool> {
-    tokio::select! {
-        result = node.accept() => {
-            match result {
-                Ok((addr, peer_id)) => {
-                    println!("✅ Accepted connection from {:?} at {}", peer_id, addr);
-                    Ok(true)
-                }
-                Err(e) => Err(anyhow::anyhow!("Accept failed: {}", e))
-            }
-        }
-        _ = sleep(Duration::from_millis(500)) => {
-            println!("⚠️  Accept timed out - no incoming connection");
-            Ok(false)
-        }
-    }
-}
-
 /// Extension trait for convenient QuicP2PNode operations
 trait QuicNodeExt {
     fn local_addr(&self) -> anyhow::Result<SocketAddr>;
@@ -179,7 +160,10 @@ async fn test_immediate_send_after_connect() -> anyhow::Result<()> {
                     Ok(Err(e)) => {
                         println!("Receive attempt {}: {}", attempt, e);
                         if attempt == 5 {
-                            return Err(anyhow::anyhow!("Failed to receive after 5 attempts: {}", e));
+                            return Err(anyhow::anyhow!(
+                                "Failed to receive after 5 attempts: {}",
+                                e
+                            ));
                         }
                     }
                     Err(_) => {
@@ -237,7 +221,7 @@ async fn test_endpoint_stays_open() -> anyhow::Result<()> {
     // Wait 500ms and try again
     sleep(Duration::from_millis(500)).await;
 
-    let _result2 = box_err!(node1.send_to_peer(&peer_id, b"test2").await)?;
+    box_err!(node1.send_to_peer(&peer_id, b"test2").await)?;
     println!("✅ Send succeeded after 500ms delay");
 
     // Verify message was received

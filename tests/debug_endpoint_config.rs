@@ -6,7 +6,7 @@ use std::time::Duration;
 #[tokio::test]
 async fn test_endpoint_has_server_config() -> anyhow::Result<()> {
     let config = QuicNodeConfig {
-        role: EndpointRole::Bootstrap,  // Should create server_config
+        role: EndpointRole::Bootstrap, // Should create server_config
         bootstrap_nodes: vec![],
         enable_coordinator: false,
         max_connections: 100,
@@ -20,10 +20,15 @@ async fn test_endpoint_has_server_config() -> anyhow::Result<()> {
     };
 
     println!("\n=== Creating node with EndpointRole::Bootstrap ===");
-    let node = QuicP2PNode::new(config).await.map_err(|e| anyhow::anyhow!("{}", e))?;
+    let node = QuicP2PNode::new(config)
+        .await
+        .map_err(|e| anyhow::anyhow!("{}", e))?;
 
-    let nat_endpoint = node.get_nat_endpoint().map_err(|e| anyhow::anyhow!("{}", e))?;
-    let quinn_endpoint = nat_endpoint.get_quinn_endpoint()
+    let nat_endpoint = node
+        .get_nat_endpoint()
+        .map_err(|e| anyhow::anyhow!("{}", e))?;
+    let quinn_endpoint = nat_endpoint
+        .get_quinn_endpoint()
         .ok_or_else(|| anyhow::anyhow!("No Quinn endpoint"))?;
     let addr = quinn_endpoint.local_addr()?;
 

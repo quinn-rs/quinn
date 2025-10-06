@@ -181,11 +181,12 @@ services:
       context: ..
       dockerfile: docker/Dockerfile.ant-quic
       target: runtime
-    # container_name removed to allow scaling
-    # hostname removed to allow scaling (each instance gets unique hostname)
+    container_name: ant-quic-client1
+    hostname: client1
     networks:
       nat1_lan:
-        # Static IPs removed to allow scaling (DHCP will assign IPs)
+        ipv4_address: 192.168.1.100
+        ipv6_address: fd00:1::100
     environment:
       - RUST_LOG=ant_quic=debug
       - ANT_QUIC_BOOTSTRAP=203.0.113.10:9000,2001:db8:1::10:9000
@@ -204,7 +205,7 @@ services:
       context: ..
       dockerfile: docker/Dockerfile.ant-quic
       target: runtime
-    # container_name removed to allow scaling
+    container_name: ant-quic-client2
     hostname: client2
     networks:
       nat2_lan:
@@ -228,7 +229,7 @@ services:
       context: ..
       dockerfile: docker/Dockerfile.ant-quic
       target: runtime
-    # container_name removed to allow scaling
+    container_name: ant-quic-client3
     hostname: client3
     networks:
       nat3_lan:
@@ -252,7 +253,7 @@ services:
       context: ..
       dockerfile: docker/Dockerfile.ant-quic
       target: runtime
-    # container_name removed to allow scaling
+    container_name: ant-quic-client4
     hostname: client4
     networks:
       nat4_lan:
@@ -275,7 +276,7 @@ services:
       context: ..
       dockerfile: docker/Dockerfile.ant-quic
       target: runtime
-    # container_name removed to allow scaling
+    container_name: ant-quic-client5
     hostname: client5
     networks:
       nat5_lan:
