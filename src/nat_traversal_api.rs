@@ -2139,7 +2139,7 @@ impl NatTraversalEndpoint {
     }
 
     /// Extract peer ID from connection by deriving it from the peer's public key
-    async fn extract_peer_id_from_connection(
+    pub async fn extract_peer_id_from_connection(
         &self,
         connection: &QuinnConnection,
     ) -> Option<PeerId> {
