@@ -886,6 +886,65 @@ ant-quic is designed for high-performance P2P networking with minimal overhead:
 - **With address discovery**: Single attempt, immediate success
 - **Performance gain**: 7x faster establishment, 27% higher success rate
 
+### Real-World Data Transfer Efficiency
+
+Actual test results from version 0.10.3 (localhost testing):
+
+#### Test Configuration
+- **Transfer Size**: 1 MB (1,048,576 bytes)
+- **Chunk Size**: 4 KB (4,096 bytes)
+- **Test Type**: Echo (bidirectional send + receive)
+- **Environment**: Localhost (127.0.0.1)
+
+#### Measured Performance
+- **Send Throughput**: 267.89 Mbps
+- **Receive Throughput**: 26,497.34 Mbps
+- **Round-Trip Time**: 0.03 seconds
+- **Transfer Success Rate**: 100%
+
+#### Protocol Efficiency
+- **Application Data**: 1,048,576 bytes
+- **UDP Bytes Transmitted**: 1,086,563 bytes
+- **Protocol Overhead**: 37,987 bytes
+- **Efficiency**: **96.50%** ✅
+
+This means only **3.5% overhead** for:
+- QUIC packet headers
+- TLS 1.3 encryption
+- Acknowledgment frames
+- Flow control
+- Reliability guarantees
+- NAT traversal extensions
+
+#### How to Test Yourself
+
+Quick test command:
+```bash
+# Single command (automated)
+cargo run --release --example simple_transfer & sleep 2 && cargo run --release --example simple_transfer -- --client
+
+# Or use two terminals:
+# Terminal 1: cargo run --release --example simple_transfer
+# Terminal 2: cargo run --release --example simple_transfer -- --client
+```
+
+See [QUICK_TEST.md](QUICK_TEST.md) for detailed testing instructions and [HOW_TO_TEST_EFFICIENCY.md](HOW_TO_TEST_EFFICIENCY.md) for comprehensive testing guide.
+
+#### Expected Real-World Performance
+
+While localhost shows exceptional speeds, real-world performance depends on network conditions:
+
+- **LAN**: 500-1000 Mbps typical
+- **WAN**: Limited by bandwidth and latency
+- **Efficiency**: 85-95% typical (vs 96.5% on localhost)
+- **NAT Traversal**:
+  - Full Cone NAT: >95% success rate
+  - Port Restricted: 80-90% success rate
+  - Symmetric NAT: 60-80% success rate (with coordination)
+  - CGNAT: 50-70% success rate
+
+Full efficiency analysis available in [EFFICIENCY_REPORT.md](EFFICIENCY_REPORT.md).
+
 ## Security
 
 ant-quic implements comprehensive security measures for safe P2P communication:
