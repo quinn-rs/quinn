@@ -1710,8 +1710,8 @@ dependencies = [
 
 [[package]]
 name = "rustls"
-version = "0.23.27"
-source = "git+https://github.com/n0-computer/rustls?rev=c636f89ae00aee19ddd5e6df4150cec5c031fa31#c636f89ae00aee19ddd5e6df4150cec5c031fa31"
+version = "0.23.29"
+source = "git+https://github.com/n0-computer/rustls?rev=da7b54c6621fdeb2defff38242c5b56ef4c5a920#da7b54c6621fdeb2defff38242c5b56ef4c5a920"
 dependencies = [
  "aws-lc-rs",
  "log",
