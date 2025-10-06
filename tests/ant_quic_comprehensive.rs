@@ -9,10 +9,9 @@ use ant_quic::{
     EndpointRole, NatTraversalEvent, PeerId, QuicNodeConfig, QuicP2PNode, auth::AuthConfig,
 };
 use std::net::SocketAddr;
-use std::sync::Arc;
+use std::sync::{Arc, Once};
 use std::time::{Duration, Instant};
 use tokio::time::sleep;
-use std::sync::Once;
 
 /// Initialize cryptographic provider once for all tests
 static INIT: Once = Once::new();
