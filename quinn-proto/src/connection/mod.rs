@@ -4192,6 +4192,7 @@ impl Connection {
                 }
                 Frame::ObservedAddr(observed) => {
                     // check if params allows the peer to send report and this node to receive it
+                    trace!(seq_no = %observed.seq_no, ip = %observed.ip, port = observed.port);
                     if !self
                         .peer_params
                         .address_discovery_role
