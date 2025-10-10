@@ -107,6 +107,7 @@ impl Future for OpenPath {
 }
 
 /// An open (Multi)Path
+#[derive(Debug)]
 pub struct Path {
     pub(crate) id: PathId,
     pub(crate) conn: ConnectionRef,
