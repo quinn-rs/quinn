@@ -943,12 +943,6 @@ impl Connection {
                 match self.paths.keys().find(|&&next| next > path_id) {
                     Some(next_path_id) => {
                         // See if this next path can send anything.
-                        trace!(
-                            ?space_id,
-                            ?path_id,
-                            ?next_path_id,
-                            "no CIDs to send on path"
-                        );
                         path_id = *next_path_id;
                         space_id = SpaceId::Data;
 
@@ -1378,63 +1372,64 @@ impl Connection {
         self.app_limited = transmit.is_empty() && !congestion_blocked;
 
         // Send MTU probe if necessary
+        // TODO(multipath): We need to send MTUD probes on all paths.  But because of how
+        //    the loop is written now we only send an MTUD probe on the last open path.
         if transmit.is_empty() && self.state.is_established() {
-            let space_id = SpaceId::Data;
-            let next_pn = self.spaces[space_id].for_path(path_id).peek_tx_number();
-            let probe_size = self
-                .path_data_mut(path_id)
-                .mtud
-                .poll_transmit(now, next_pn)?;
+            if let Some(active_cid) = self.rem_cids.get(&path_id).map(CidQueue::active) {
+                let space_id = SpaceId::Data;
+                let next_pn = self.spaces[space_id].for_path(path_id).peek_tx_number();
+                let probe_size = self
+                    .path_data_mut(path_id)
+                    .mtud
+                    .poll_transmit(now, next_pn)?;
 
-            debug_assert_eq!(transmit.num_datagrams(), 0);
-            transmit.start_new_datagram_with_size(probe_size as usize);
+                debug_assert_eq!(transmit.num_datagrams(), 0);
+                transmit.start_new_datagram_with_size(probe_size as usize);
 
-            debug_assert_eq!(transmit.datagram_start_offset(), 0);
-            // TODO(flub): I'm not particularly happy about this unwrap.  But let's leave it
-            //    for now until more stuff is settled.  We probably should check earlier on
-            //    in poll_transmit that we have a valid CID to use.
-            let mut builder = PacketBuilder::new(
-                now,
-                space_id,
-                path_id,
-                self.rem_cids.get(&path_id).unwrap().active(),
-                &mut transmit,
-                true,
-                self,
-            )?;
+                debug_assert_eq!(transmit.datagram_start_offset(), 0);
+                let mut builder = PacketBuilder::new(
+                    now,
+                    space_id,
+                    path_id,
+                    active_cid,
+                    &mut transmit,
+                    true,
+                    self,
+                )?;
 
-            // We implement MTU probes as ping packets padded up to the probe size
-            trace!(?probe_size, "writing MTUD probe");
-            trace!("PING");
-            builder.frame_space_mut().write(frame::FrameType::PING);
-            self.stats.frame_tx.ping += 1;
+                // We implement MTU probes as ping packets padded up to the probe size
+                trace!(?probe_size, "writing MTUD probe");
+                trace!("PING");
+                builder.frame_space_mut().write(frame::FrameType::PING);
+                self.stats.frame_tx.ping += 1;
 
-            // If supported by the peer, we want no delays to the probe's ACK
-            if self.peer_supports_ack_frequency() {
-                trace!("IMMEDIATE_ACK");
-                builder
-                    .frame_space_mut()
-                    .write(frame::FrameType::IMMEDIATE_ACK);
-                self.stats.frame_tx.immediate_ack += 1;
+                // If supported by the peer, we want no delays to the probe's ACK
+                if self.peer_supports_ack_frequency() {
+                    trace!("IMMEDIATE_ACK");
+                    builder
+                        .frame_space_mut()
+                        .write(frame::FrameType::IMMEDIATE_ACK);
+                    self.stats.frame_tx.immediate_ack += 1;
+                }
+
+                let sent_frames = SentFrames {
+                    non_retransmits: true,
+                    ..Default::default()
+                };
+                builder.finish_and_track(
+                    now,
+                    self,
+                    path_id,
+                    sent_frames,
+                    PadDatagram::ToSize(probe_size),
+                );
+
+                self.stats
+                    .paths
+                    .entry(path_id)
+                    .or_default()
+                    .sent_plpmtud_probes += 1;
             }
-
-            let sent_frames = SentFrames {
-                non_retransmits: true,
-                ..Default::default()
-            };
-            builder.finish_and_track(
-                now,
-                self,
-                path_id,
-                sent_frames,
-                PadDatagram::ToSize(probe_size),
-            );
-
-            self.stats
-                .paths
-                .entry(path_id)
-                .or_default()
-                .sent_plpmtud_probes += 1;
         }
 
         if transmit.is_empty() {
@@ -3799,7 +3794,7 @@ impl Connection {
             let frame = result?;
             let span = match frame {
                 Frame::Padding => continue,
-                _ => Some(trace_span!("frame", ty = %frame.ty())),
+                _ => Some(trace_span!("frame", ty = %frame.ty(), path = tracing::field::Empty)),
             };
 
             self.stats.frame_rx.record(&frame);
@@ -3817,6 +3812,8 @@ impl Connection {
                     self.on_ack_received(now, packet.header.space(), ack)?;
                 }
                 Frame::PathAck(ack) => {
+                    span.as_ref()
+                        .map(|span| span.record("path_id", tracing::field::debug(&ack.path_id)));
                     self.on_path_ack_received(now, packet.header.space(), ack)?;
                 }
                 Frame::Close(reason) => {
@@ -3867,7 +3864,7 @@ impl Connection {
             let frame = result?;
             let span = match frame {
                 Frame::Padding => continue,
-                _ => trace_span!("frame", ty = %frame.ty()),
+                _ => trace_span!("frame", ty = %frame.ty(), path = tracing::field::Empty),
             };
 
             self.stats.frame_rx.record(&frame);
@@ -3925,6 +3922,7 @@ impl Connection {
                     self.on_ack_received(now, SpaceId::Data, ack)?;
                 }
                 Frame::PathAck(ack) => {
+                    span.record("path_id", tracing::field::debug(&ack.path_id));
                     self.on_path_ack_received(now, SpaceId::Data, ack)?;
                 }
                 Frame::Padding | Frame::Ping => {}
@@ -4036,6 +4034,9 @@ impl Connection {
                     self.streams.received_stop_sending(id, error_code);
                 }
                 Frame::RetireConnectionId(frame::RetireConnectionId { path_id, sequence }) => {
+                    if let Some(ref path_id) = path_id {
+                        span.record("path_id", tracing::field::debug(&path_id));
+                    }
                     match self.local_cid_state.get_mut(&path_id.unwrap_or_default()) {
                         None => error!(?path_id, "RETIRE_CONNECTION_ID for unknown path"),
                         Some(cid_state) => {
@@ -4052,6 +4053,9 @@ impl Connection {
                     }
                 }
                 Frame::NewConnectionId(frame) => {
+                    if let Some(ref path_id) = frame.path_id {
+                        span.record("path_id", tracing::field::debug(&path_id));
+                    }
                     trace!(
                         path_id = ?frame.path_id,
                         sequence = frame.sequence,
@@ -4229,10 +4233,11 @@ impl Connection {
                     path_id,
                     error_code,
                 }) => {
+                    span.record("path_id", tracing::field::debug(&path_id));
                     // TODO(flub): don't really know which error code to use here.
                     match self.close_path(now, path_id, error_code.into()) {
                         Ok(()) => {
-                            trace!(?path_id, "peer abandoned path");
+                            trace!("peer abandoned path");
                         }
                         Err(ClosePathError::LastOpenPath) => {
                             trace!("peer abandoned last path, closing connection");
@@ -4244,7 +4249,7 @@ impl Connection {
                             );
                         }
                         Err(ClosePathError::ClosedPath) => {
-                            trace!(?path_id, "peer abandoned already closed path");
+                            trace!("peer abandoned already closed path");
                         }
                     }
                     let delay = self.pto(SpaceId::Data, path_id) * 3;
@@ -4252,6 +4257,7 @@ impl Connection {
                     self.timers.stop(Timer::PathNotAbandoned(path_id));
                 }
                 Frame::PathAvailable(info) => {
+                    span.record("path_id", tracing::field::debug(&info.path_id));
                     if self.is_multipath_negotiated() {
                         self.on_path_status(
                             info.path_id,
@@ -4265,6 +4271,7 @@ impl Connection {
                     }
                 }
                 Frame::PathBackup(info) => {
+                    span.record("path_id", tracing::field::debug(&info.path_id));
                     if self.is_multipath_negotiated() {
                         self.on_path_status(info.path_id, PathStatus::Backup, info.status_seq_no);
                     } else {
@@ -4274,6 +4281,7 @@ impl Connection {
                     }
                 }
                 Frame::MaxPathId(frame::MaxPathId(path_id)) => {
+                    span.record("path_id", tracing::field::debug(&path_id));
                     if let Some(current_max) = self.max_path_id() {
                         // frames that do not increase the path id are ignored
                         self.remote_max_path_id = self.remote_max_path_id.max(path_id);
