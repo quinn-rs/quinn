@@ -113,7 +113,7 @@ impl UdpSocketState {
 
         // mac and ios do not support IP_RECVTOS on dual-stack sockets :(
         // older macos versions also don't have the flag and will error out if we don't ignore it
-        #[cfg(not(any(target_os = "openbsd", target_os = "netbsd", solarish)))]
+        #[cfg(target_os = "linux")]
         if is_ipv4 || !io.only_v6()? {
             if let Err(_err) =
                 set_socket_option(&*io, libc::IPPROTO_IP, libc::IP_RECVTOS, OPTION_ON)
@@ -461,7 +461,10 @@ fn send(state: &UdpSocketState, io: SockRef<'_>, transmit: &Transmit<'_>) -> io:
     }
 }
 
-#[cfg(not(any(apple, target_os = "openbsd", target_os = "netbsd", solarish)))]
+#[cfg(all(
+    not(any(apple, target_os = "openbsd", target_os = "netbsd", solarish)),
+    target_os = "linux"
+))]
 fn recv(io: SockRef<'_>, bufs: &mut [IoSliceMut<'_>], meta: &mut [RecvMeta]) -> io::Result<usize> {
     let mut names = [MaybeUninit::<libc::sockaddr_storage>::uninit(); BATCH_SIZE];
     let mut ctrls = [cmsg::Aligned(MaybeUninit::<[u8; CMSG_LEN]>::uninit()); BATCH_SIZE];
@@ -501,6 +504,21 @@ fn recv(io: SockRef<'_>, bufs: &mut [IoSliceMut<'_>], meta: &mut [RecvMeta]) -> 
         meta[i] = decode_recv(&names[i], &hdrs[i].msg_hdr, hdrs[i].msg_len as usize)?;
     }
     Ok(msg_count as usize)
+}
+
+#[cfg(all(
+    not(any(apple, target_os = "openbsd", target_os = "netbsd", solarish)),
+    not(target_os = "linux")
+))]
+fn recv(
+    _io: SockRef<'_>,
+    _bufs: &mut [IoSliceMut<'_>],
+    _meta: &mut [RecvMeta],
+) -> io::Result<usize> {
+    Err(io::Error::new(
+        io::ErrorKind::Other,
+        "recvmmsg and mmsghdr are only available on Linux. Platform-specific implementation required.",
+    ))
 }
 
 #[cfg(apple_fast)]
@@ -715,7 +733,7 @@ fn decode_recv(
                 ecn_bits = cmsg::decode::<u8, libc::cmsghdr>(cmsg);
             },
             // FreeBSD uses IP_RECVTOS here, and we can be liberal because cmsgs are opt-in.
-            #[cfg(not(any(target_os = "openbsd", target_os = "netbsd", solarish)))]
+            #[cfg(target_os = "linux")]
             (libc::IPPROTO_IP, libc::IP_RECVTOS) => unsafe {
                 ecn_bits = cmsg::decode::<u8, libc::cmsghdr>(cmsg);
             },
