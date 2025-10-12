@@ -346,6 +346,10 @@ impl Connection {
     }
 
     /// Receive an application datagram
+    ///
+    /// Guarantees:
+    /// - Cancel-safe future
+    /// - First poll resolves immediately if a datagram is available
     pub fn read_datagram(&self) -> ReadDatagram<'_> {
         ReadDatagram {
             conn: &self.0,
@@ -430,6 +434,10 @@ impl Connection {
     ///
     /// Previously queued datagrams which are still unsent may be discarded to make space for this
     /// datagram, in order of oldest to newest.
+    ///
+    /// Guarantees:
+    /// - Cancel-safe future
+    /// - First poll resolves immediately if given datagram can be sent
     pub fn send_datagram(&self, data: Bytes) -> Result<(), SendDatagramError> {
         let conn = &mut *self.0.state.lock("send_datagram");
         if let Some(ref x) = conn.error {
