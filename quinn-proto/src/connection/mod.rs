@@ -5102,9 +5102,11 @@ impl Connection {
         let delay = delay_micros >> ack_delay_exp.into_inner();
 
         if send_path_acks {
-            trace!("PATH_ACK {path_id:?} {ranges:?}, Delay = {delay_micros}us");
-            frame::PathAck::encode(path_id, delay as _, ranges, ecn, buf);
-            stats.frame_tx.path_acks += 1;
+            if !ranges.is_empty() {
+                trace!("PATH_ACK {path_id:?} {ranges:?}, Delay = {delay_micros}us");
+                frame::PathAck::encode(path_id, delay as _, ranges, ecn, buf);
+                stats.frame_tx.path_acks += 1;
+            }
         } else {
             trace!("ACK {ranges:?}, Delay = {delay_micros}us");
             frame::Ack::encode(delay as _, ranges, ecn, buf);
