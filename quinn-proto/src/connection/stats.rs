@@ -107,8 +107,6 @@ impl FrameStats {
                 Some(_) => self.path_new_connection_id += 1,
                 None => self.new_connection_id += 1,
             },
-
-            // TODO(@divma): split stats?
             Frame::RetireConnectionId(frame) => match frame.get_type() {
                 FrameType::RETIRE_CONNECTION_ID => self.retire_connection_id += 1,
                 FrameType::PATH_RETIRE_CONNECTION_ID => self.path_retire_connection_id += 1,
@@ -138,7 +136,6 @@ impl std::fmt::Debug for FrameStats {
         f.debug_struct("FrameStats")
             .field("ACK", &self.acks)
             .field("ACK_FREQUENCY", &self.ack_frequency)
-            .field("PATH_ACK", &self.path_acks)
             .field("CONNECTION_CLOSE", &self.connection_close)
             .field("CRYPTO", &self.crypto)
             .field("DATA_BLOCKED", &self.data_blocked)
@@ -146,14 +143,22 @@ impl std::fmt::Debug for FrameStats {
             .field("HANDSHAKE_DONE", &self.handshake_done)
             .field("IMMEDIATE_ACK", &self.immediate_ack)
             .field("MAX_DATA", &self.max_data)
+            .field("MAX_PATH_ID", &self.max_path_id)
             .field("MAX_STREAM_DATA", &self.max_stream_data)
             .field("MAX_STREAMS_BIDI", &self.max_streams_bidi)
             .field("MAX_STREAMS_UNI", &self.max_streams_uni)
             .field("NEW_CONNECTION_ID", &self.new_connection_id)
-            .field("PATH_NEW_CONNECTION_ID", &self.path_new_connection_id)
             .field("NEW_TOKEN", &self.new_token)
+            .field("PATHS_BLOCKED", &self.paths_blocked)
+            .field("PATH_ABANDON", &self.path_abandon)
+            .field("PATH_ACK", &self.path_acks)
+            .field("PATH_AVAILABLE", &self.path_available)
+            .field("PATH_BACKUP", &self.path_backup)
             .field("PATH_CHALLENGE", &self.path_challenge)
+            .field("PATH_CIDS_BLOCKED", &self.path_cids_blocked)
+            .field("PATH_NEW_CONNECTION_ID", &self.path_new_connection_id)
             .field("PATH_RESPONSE", &self.path_response)
+            .field("PATH_RETIRE_CONNECTION_ID", &self.path_retire_connection_id)
             .field("PING", &self.ping)
             .field("RESET_STREAM", &self.reset_stream)
             .field("RETIRE_CONNECTION_ID", &self.retire_connection_id)
