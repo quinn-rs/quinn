@@ -128,6 +128,16 @@ impl Path {
             .path_status(self.id)
     }
 
+    /// Sets the [`PathStatus`] of this path.
+    pub fn set_status(&self, status: PathStatus) -> Result<(), ClosedPath> {
+        self.conn
+            .state
+            .lock("set path status")
+            .inner
+            .set_path_status(self.id, status)?;
+        Ok(())
+    }
+
     /// Closes this path
     ///
     /// The passed in `error_code` is sent to the remote.
