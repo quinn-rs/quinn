@@ -663,6 +663,13 @@ impl Connection {
             .map(|path_state| &mut path_state.data)
     }
 
+    /// Returns all known paths.
+    ///
+    /// There is no guarantee any of these paths are open or usable.
+    pub fn paths(&self) -> Vec<PathId> {
+        self.paths.keys().copied().collect()
+    }
+
     /// Gets the local [`PathStatus`] for a known [`PathId`]
     pub fn path_status(&self, path_id: PathId) -> Result<PathStatus, ClosedPath> {
         self.path(path_id)
@@ -773,7 +780,7 @@ impl Connection {
             }
         };
 
-        debug!(%validated, %path_id, "path added");
+        debug!(%validated, %path_id, ?remote, "path added");
         let peer_max_udp_payload_size =
             u16::try_from(self.peer_params.max_udp_payload_size.into_inner()).unwrap_or(u16::MAX);
         self.path_counter = self.path_counter.wrapping_add(1);
@@ -2001,15 +2008,6 @@ impl Connection {
     /// Look up whether we're the client or server of this Connection
     pub fn side(&self) -> Side {
         self.side.side()
-    }
-
-    /// The latest socket address for this connection's peer
-    pub fn remote_address(&self) -> SocketAddr {
-        // say we keep this, this should return at worst the same that the poll_transmit logic
-        // would use
-        // so basically completely wrong as well
-        // TODO(@divma): halp
-        self.path_data(PathId(0)).remote
     }
 
     /// Get the address observed by the remote over the given path
@@ -5743,6 +5741,9 @@ pub enum PathError {
     /// Path could not be validated and will be abandoned
     #[error("path validation failed")]
     ValidationFailed,
+    /// The remote address for the path is not supported by the endpoint
+    #[error("invalid remote address")]
+    InvalidRemoteAddress(SocketAddr),
 }
 
 /// Errors triggered when abandoning a path

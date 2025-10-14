@@ -659,7 +659,7 @@ impl ConnectionSet {
     }
 }
 
-fn ensure_ipv6(x: SocketAddr) -> SocketAddrV6 {
+pub(crate) fn ensure_ipv6(x: SocketAddr) -> SocketAddrV6 {
     match x {
         SocketAddr::V6(x) => x,
         SocketAddr::V4(x) => SocketAddrV6::new(x.ip().to_ipv6_mapped(), x.port(), 0, 0),

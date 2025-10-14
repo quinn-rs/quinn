@@ -18,6 +18,7 @@ use tracing::{Instrument, Span, debug_span};
 
 use crate::{
     ConnectionEvent, Duration, Instant, Path, VarInt,
+    endpoint::ensure_ipv6,
     mutex::Mutex,
     path::OpenPath,
     recv_stream::RecvStream,
@@ -187,7 +188,13 @@ impl Connecting {
     /// Will panic if called after `poll` has returned `Ready`.
     pub fn remote_address(&self) -> SocketAddr {
         let conn_ref: &ConnectionRef = self.conn.as_ref().expect("used after yielding Ready");
-        conn_ref.state.lock("remote_address").inner.remote_address()
+        // TODO: another unwrap
+        conn_ref
+            .state
+            .lock("remote_address")
+            .inner
+            .path_remote_address(PathId::ZERO)
+            .expect("path exists when connecting")
     }
 }
 
@@ -366,6 +373,33 @@ impl Connection {
     /// [`open_path`]: Self::open_path
     pub fn open_path_ensure(&self, addr: SocketAddr, initial_status: PathStatus) -> OpenPath {
         let mut state = self.0.state.lock("open_path");
+
+        // If endpoint::State::ipv6 is true we want to keep all our IP addresses as IPv6.
+        // If not, we do not support IPv6.  We can not access endpoint::State from here
+        // however, but either all our paths use an IPv6 address, or all our paths use an
+        // IPv4 address.  So we can use that information.
+        let ipv6 = state
+            .inner
+            .paths()
+            .iter()
+            .filter_map(|id| {
+                state
+                    .inner
+                    .path_remote_address(*id)
+                    .map(|ip| ip.is_ipv6())
+                    .ok()
+            })
+            .next()
+            .unwrap_or_default();
+        if addr.is_ipv6() && !ipv6 {
+            return OpenPath::rejected(PathError::InvalidRemoteAddress(addr));
+        }
+        let addr = if ipv6 {
+            SocketAddr::V6(ensure_ipv6(addr))
+        } else {
+            addr
+        };
+
         let now = state.runtime.now();
         let open_res = state.inner.open_path_ensure(addr, initial_status, now);
         state.wake();
@@ -402,6 +436,33 @@ impl Connection {
     /// later, a [`PathEvent`] will be emitted.
     pub fn open_path(&self, addr: SocketAddr, initial_status: PathStatus) -> OpenPath {
         let mut state = self.0.state.lock("open_path");
+
+        // If endpoint::State::ipv6 is true we want to keep all our IP addresses as IPv6.
+        // If not, we do not support IPv6.  We can not access endpoint::State from here
+        // however, but either all our paths use an IPv6 address, or all our paths use an
+        // IPv4 address.  So we can use that information.
+        let ipv6 = state
+            .inner
+            .paths()
+            .iter()
+            .filter_map(|id| {
+                state
+                    .inner
+                    .path_remote_address(*id)
+                    .map(|ip| ip.is_ipv6())
+                    .ok()
+            })
+            .next()
+            .unwrap_or_default();
+        if addr.is_ipv6() && !ipv6 {
+            return OpenPath::rejected(PathError::InvalidRemoteAddress(addr));
+        }
+        let addr = if ipv6 {
+            SocketAddr::V6(ensure_ipv6(addr))
+        } else {
+            addr
+        };
+
         let (on_open_path_send, on_open_path_recv) = watch::channel(Ok(()));
         let now = state.runtime.now();
         let open_res = state.inner.open_path(addr, initial_status, now);
@@ -584,10 +645,24 @@ impl Connection {
 
     /// The peer's UDP address
     ///
-    /// If `ServerConfig::migration` is `true`, clients may change addresses at will, e.g. when
-    /// switching to a cellular internet connection.
+    /// If [`ServerConfig::migration`] is `true`, clients may change addresses at will,
+    /// e.g. when switching to a cellular internet connection.
+    ///
+    /// If [`multipath`] is enabled this will return the address of *any*
+    /// path, and may not be consistent. Prefer [`Path::remote_address`] instead.
+    ///
+    /// [`ServerConfig::migration`]: crate::ServerConfig::migration
+    /// [`multipath`]: crate::TransportConfig::max_concurrent_multipath_paths
     pub fn remote_address(&self) -> SocketAddr {
-        self.0.state.lock("remote_address").inner.remote_address()
+        // TODO: an unwrap again
+        let state = self.0.state.lock("remote_address");
+        state
+            .inner
+            .paths()
+            .iter()
+            .filter_map(|id| state.inner.path_remote_address(*id).ok())
+            .next()
+            .unwrap()
     }
 
     /// The local IP address which was used when the peer established
