@@ -3813,7 +3813,7 @@ impl Connection {
                 }
                 Frame::PathAck(ack) => {
                     span.as_ref()
-                        .map(|span| span.record("path_id", tracing::field::debug(&ack.path_id)));
+                        .map(|span| span.record("path", tracing::field::debug(&ack.path_id)));
                     self.on_path_ack_received(now, packet.header.space(), ack)?;
                 }
                 Frame::Close(reason) => {
@@ -3922,7 +3922,7 @@ impl Connection {
                     self.on_ack_received(now, SpaceId::Data, ack)?;
                 }
                 Frame::PathAck(ack) => {
-                    span.record("path_id", tracing::field::debug(&ack.path_id));
+                    span.record("path", tracing::field::debug(&ack.path_id));
                     self.on_path_ack_received(now, SpaceId::Data, ack)?;
                 }
                 Frame::Padding | Frame::Ping => {}
@@ -4035,7 +4035,7 @@ impl Connection {
                 }
                 Frame::RetireConnectionId(frame::RetireConnectionId { path_id, sequence }) => {
                     if let Some(ref path_id) = path_id {
-                        span.record("path_id", tracing::field::debug(&path_id));
+                        span.record("path", tracing::field::debug(&path_id));
                     }
                     match self.local_cid_state.get_mut(&path_id.unwrap_or_default()) {
                         None => error!(?path_id, "RETIRE_CONNECTION_ID for unknown path"),
@@ -4233,7 +4233,7 @@ impl Connection {
                     path_id,
                     error_code,
                 }) => {
-                    span.record("path_id", tracing::field::debug(&path_id));
+                    span.record("path", tracing::field::debug(&path_id));
                     // TODO(flub): don't really know which error code to use here.
                     match self.close_path(now, path_id, error_code.into()) {
                         Ok(()) => {
@@ -4257,7 +4257,7 @@ impl Connection {
                     self.timers.stop(Timer::PathNotAbandoned(path_id));
                 }
                 Frame::PathAvailable(info) => {
-                    span.record("path_id", tracing::field::debug(&info.path_id));
+                    span.record("path", tracing::field::debug(&info.path_id));
                     if self.is_multipath_negotiated() {
                         self.on_path_status(
                             info.path_id,
@@ -4271,7 +4271,7 @@ impl Connection {
                     }
                 }
                 Frame::PathBackup(info) => {
-                    span.record("path_id", tracing::field::debug(&info.path_id));
+                    span.record("path", tracing::field::debug(&info.path_id));
                     if self.is_multipath_negotiated() {
                         self.on_path_status(info.path_id, PathStatus::Backup, info.status_seq_no);
                     } else {
@@ -4281,7 +4281,7 @@ impl Connection {
                     }
                 }
                 Frame::MaxPathId(frame::MaxPathId(path_id)) => {
-                    span.record("path_id", tracing::field::debug(&path_id));
+                    span.record("path", tracing::field::debug(&path_id));
                     if let Some(current_max) = self.max_path_id() {
                         // frames that do not increase the path id are ignored
                         self.remote_max_path_id = self.remote_max_path_id.max(path_id);
