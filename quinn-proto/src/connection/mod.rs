@@ -1322,7 +1322,7 @@ impl Connection {
                     // amounts of bandwidth. The exact threshold is a bit arbitrary
                     // and might benefit from further tuning, though there's no
                     // universally optimal value.
-                    const MAX_PADDING: usize = 16;
+                    const MAX_PADDING: usize = 32;
                     if builder.buf.datagram_remaining_mut()
                         > builder.predict_packet_end() + MAX_PADDING
                     {
