@@ -263,10 +263,10 @@ fn multipath_cid_rotation() {
 
     let stats = pair.server_conn_mut(server_ch).stats();
 
-    // Server sends CIDs for PathId(0) before multipath is negotiated.
+    // Server sends CIDs for PathId::ZERO before multipath is negotiated.
     assert_eq!(stats.frame_tx.new_connection_id, (CidQueue::LEN - 1) as u64);
 
-    // For the first batch the PathId(0) CIDs have already been sent.
+    // For the first batch the PathId::ZERO CIDs have already been sent.
     let initial_batch: u64 = (MAX_PATHS - 1) as u64 * CidQueue::LEN as u64;
     // Each round expires all CIDs, so they all get re-issued.
     let each_round: u64 = MAX_PATHS as u64 * CidQueue::LEN as u64;
@@ -338,7 +338,7 @@ fn issue_max_path_id() {
     assert_eq!(stats.frame_tx.new_connection_id, server_new_cids);
     assert_eq!(stats.frame_tx.path_new_connection_id, server_path_new_cids);
 
-    // Client should have sent PATH_NEW_CONNECTION_ID frames for PathId(0).
+    // Client should have sent PATH_NEW_CONNECTION_ID frames for PathId::ZERO.
     let client_new_cids = 0;
     let mut client_path_new_cids = CidQueue::LEN as u64;
     assert_eq!(stats.frame_rx.new_connection_id, client_new_cids);

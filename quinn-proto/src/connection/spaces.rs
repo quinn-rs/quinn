@@ -33,7 +33,7 @@ pub(super) struct PacketSpace {
     ///
     /// Each [`PathId`] has it's own [`PacketNumberSpace`].  Only the [`SpaceId::Data`] can
     /// have multiple packet number spaces, the other spaces only have a number space for
-    /// `PathId(0)`, which is populated at creation.
+    /// `PathId::ZERO`, which is populated at creation.
     pub(super) number_spaces: BTreeMap<PathId, PacketNumberSpace>,
 }
 
@@ -46,7 +46,7 @@ impl PacketSpace {
             pending: Retransmits::default(),
             crypto_stream: Assembler::new(),
             crypto_offset: 0,
-            number_spaces: BTreeMap::from([(PathId(0), number_space_0)]),
+            number_spaces: BTreeMap::from([(PathId::ZERO, number_space_0)]),
         }
     }
 
@@ -59,7 +59,7 @@ impl PacketSpace {
             pending: Retransmits::default(),
             crypto_stream: Assembler::new(),
             crypto_offset: 0,
-            number_spaces: BTreeMap::from([(PathId(0), number_space_0)]),
+            number_spaces: BTreeMap::from([(PathId::ZERO, number_space_0)]),
         }
     }
 
@@ -79,7 +79,7 @@ impl PacketSpace {
 
     /// Returns the [`PacketNumberSpace`] for a path
     ///
-    /// When multipath is disabled use `PathId(0)`.
+    /// When multipath is disabled use `PathId::ZERO`.
     // TODO(flub): Note that this only exists as `&mut self` because it creates a new
     //    [`PacketNumberSpace`] if one is not yet available for a path.  This forces a few
     //    more `&mut` references to users than strictly needed.  An alternative would be to

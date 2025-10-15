@@ -343,7 +343,7 @@ impl Connection {
             allow_server_migration: side.is_client(),
         });
         let local_cid_state = FxHashMap::from_iter([(
-            PathId(0),
+            PathId::ZERO,
             CidState::new(
                 cid_gen.cid_len(),
                 cid_gen.cid_lifetime(),
@@ -362,7 +362,7 @@ impl Connection {
             rem_handshake_cid: rem_cid,
             local_cid_state,
             paths: BTreeMap::from_iter([(
-                PathId(0),
+                PathId::ZERO,
                 PathState {
                     data: path,
                     prev: None,
@@ -426,7 +426,7 @@ impl Connection {
             ),
             datagrams: DatagramState::default(),
             config,
-            rem_cids: FxHashMap::from_iter([(PathId(0), CidQueue::new(rem_cid))]),
+            rem_cids: FxHashMap::from_iter([(PathId::ZERO, CidQueue::new(rem_cid))]),
             rng,
             stats: ConnectionStats::default(),
             version,
@@ -439,7 +439,7 @@ impl Connection {
             abandoned_paths: Default::default(),
         };
         if path_validated {
-            this.on_path_validated(PathId(0));
+            this.on_path_validated(PathId::ZERO);
         }
         if side.is_client() {
             // Kick off the connection
@@ -920,7 +920,7 @@ impl Connection {
             return Some(challenge);
         }
         let mut space_id = match path_id {
-            PathId(0) => SpaceId::Initial,
+            PathId::ZERO => SpaceId::Initial,
             _ => SpaceId::Data,
         };
 
@@ -1159,7 +1159,7 @@ impl Connection {
                 {
                     debug_assert!(
                         is_multipath_enabled || path_id == PathId::ZERO,
-                        "Only PathId(0) allowed without multipath (have {path_id:?})"
+                        "Only PathId::ZERO allowed without multipath (have {path_id:?})"
                     );
                     Self::populate_acks(
                         now,
@@ -2039,13 +2039,13 @@ impl Connection {
     pub fn rtt(&self) -> Duration {
         // this should return at worst the same that the poll_transmit logic would use
         // TODO(@divma): wrong
-        self.path_data(PathId(0)).rtt.get()
+        self.path_data(PathId::ZERO).rtt.get()
     }
 
     /// Current state of this connection's congestion controller, for debugging purposes
     pub fn congestion_state(&self) -> &dyn Controller {
         // TODO(@divma): same as everything, wrong
-        self.path_data(PathId(0)).congestion.as_ref()
+        self.path_data(PathId::ZERO).congestion.as_ref()
     }
 
     /// Resets path-specific settings.
@@ -2062,7 +2062,7 @@ impl Connection {
         // TODO(@divma): evaluate how this is used
         // wrong call in the multipath case anyhow
         self.paths
-            .get_mut(&PathId(0))
+            .get_mut(&PathId::ZERO)
             .expect("this might fail")
             .data
             .reset(now, &self.config);
@@ -2099,8 +2099,11 @@ impl Connection {
         }
         self.max_concurrent_paths = count;
 
-        let in_use_count =
-            (self.local_max_path_id.0 + 1).saturating_sub(self.abandoned_paths.len() as u32);
+        let in_use_count = self
+            .local_max_path_id
+            .next()
+            .saturating_sub(self.abandoned_paths.len() as u32)
+            .as_u32();
         let extra_needed = count.get().saturating_sub(in_use_count);
         let new_max_path_id = self.local_max_path_id.saturating_add(extra_needed);
 
@@ -3018,7 +3021,7 @@ impl Connection {
         let _guard = span.enter();
         debug_assert!(self.side.is_server());
         let len = packet.header_data.len() + packet.payload.len();
-        let path_id = PathId(0);
+        let path_id = PathId::ZERO;
         self.path_data_mut(path_id).total_recvd = len as u64;
 
         match self.state {
@@ -3028,7 +3031,7 @@ impl Connection {
             _ => unreachable!("first packet must be delivered in Handshake state"),
         }
 
-        // The first packet is always on PathId(0)
+        // The first packet is always on PathId::ZERO
         self.on_packet_authenticated(
             now,
             SpaceId::Initial,
@@ -3529,7 +3532,7 @@ impl Connection {
             Header::Retry {
                 src_cid: rem_cid, ..
             } => {
-                debug_assert_eq!(path_id, PathId(0));
+                debug_assert_eq!(path_id, PathId::ZERO);
                 if self.side.is_server() {
                     return Err(TransportError::PROTOCOL_VIOLATION("client sent Retry").into());
                 }
@@ -3566,13 +3569,13 @@ impl Connection {
                 self.retry_src_cid = Some(rem_cid);
                 self.rem_cids
                     .get_mut(&path_id)
-                    .expect("PathId(0) not yet abandoned, is_valid_retry would have been false")
+                    .expect("PathId::ZERO not yet abandoned, is_valid_retry would have been false")
                     .update_initial_cid(rem_cid);
                 self.rem_handshake_cid = rem_cid;
 
                 let space = &mut self.spaces[SpaceId::Initial];
-                if let Some(info) = space.for_path(PathId(0)).take(0) {
-                    self.on_packet_acked(now, PathId(0), info);
+                if let Some(info) = space.for_path(PathId::ZERO).take(0) {
+                    self.on_packet_acked(now, PathId::ZERO, info);
                 };
 
                 self.discard_space(now, SpaceId::Initial); // Make sure we clean up after
@@ -3592,8 +3595,11 @@ impl Connection {
                 };
 
                 // Retransmit all 0-RTT data
-                let zero_rtt =
-                    mem::take(&mut self.spaces[SpaceId::Data].for_path(PathId(0)).sent_packets);
+                let zero_rtt = mem::take(
+                    &mut self.spaces[SpaceId::Data]
+                        .for_path(PathId::ZERO)
+                        .sent_packets,
+                );
                 for info in zero_rtt.into_values() {
                     self.paths
                         .get_mut(&PathId::ZERO)
@@ -3623,7 +3629,7 @@ impl Connection {
                 dst_cid: loc_cid,
                 ..
             } => {
-                debug_assert_eq!(path_id, PathId(0));
+                debug_assert_eq!(path_id, PathId::ZERO);
                 if rem_cid != self.rem_handshake_cid {
                     debug!(
                         "discarding packet with mismatched remote CID: {} != {}",
@@ -3706,13 +3712,13 @@ impl Connection {
                 dst_cid: loc_cid,
                 ..
             }) => {
-                debug_assert_eq!(path_id, PathId(0));
+                debug_assert_eq!(path_id, PathId::ZERO);
                 if !state.rem_cid_set {
                     trace!("switching remote CID to {}", rem_cid);
                     let mut state = state.clone();
                     self.rem_cids
                         .get_mut(&path_id)
-                        .expect("PathId(0) not yet abandoned")
+                        .expect("PathId::ZERO not yet abandoned")
                         .update_initial_cid(rem_cid);
                     self.rem_handshake_cid = rem_cid;
                     self.orig_rem_cid = rem_cid;
@@ -3785,7 +3791,7 @@ impl Connection {
         packet: Packet,
     ) -> Result<(), TransportError> {
         debug_assert_ne!(packet.header.space(), SpaceId::Data);
-        debug_assert_eq!(path_id, PathId(0));
+        debug_assert_eq!(path_id, PathId::ZERO);
         let payload_len = packet.payload.len();
         let mut ack_eliciting = false;
         for result in frame::Iter::new(packet.payload.freeze())? {
@@ -4455,7 +4461,7 @@ impl Connection {
     /// Handle a change in the local address, i.e. an active migration
     pub fn local_address_changed(&mut self) {
         // TODO(flub): if multipath is enabled this needs to create a new path entirely.
-        self.update_rem_cid(PathId(0));
+        self.update_rem_cid(PathId::ZERO);
         self.ping();
     }
 
@@ -4502,8 +4508,8 @@ impl Connection {
     fn issue_first_cids(&mut self, now: Instant) {
         if self
             .local_cid_state
-            .get(&PathId(0))
-            .expect("PathId(0) exists when the connection is created")
+            .get(&PathId::ZERO)
+            .expect("PathId::ZERO exists when the connection is created")
             .cid_len()
             == 0
         {
@@ -4519,24 +4525,25 @@ impl Connection {
             }
         }
         self.endpoint_events
-            .push_back(EndpointEventInner::NeedIdentifiers(PathId(0), now, n));
+            .push_back(EndpointEventInner::NeedIdentifiers(PathId::ZERO, now, n));
     }
 
     /// Issues an initial set of CIDs for paths that have not yet had any CIDs issued
     ///
     /// Later CIDs are issued when CIDs expire or are retired by the peer.
     fn issue_first_path_cids(&mut self, now: Instant) {
-        if let Some(PathId(max_path_id)) = self.max_path_id() {
-            let start_path_id = self.max_path_id_with_cids.0 + 1;
-            for n in start_path_id..=max_path_id {
+        if let Some(max_path_id) = self.max_path_id() {
+            let mut path_id = self.max_path_id_with_cids.next();
+            while path_id <= max_path_id {
                 self.endpoint_events
                     .push_back(EndpointEventInner::NeedIdentifiers(
-                        PathId(n),
+                        path_id,
                         now,
                         self.peer_params.issue_cids_limit(),
                     ));
+                path_id = path_id.next();
             }
-            self.max_path_id_with_cids = PathId(max_path_id);
+            self.max_path_id_with_cids = max_path_id;
         }
     }
 
@@ -4627,7 +4634,7 @@ impl Connection {
             {
                 debug_assert!(
                     is_multipath_negotiated || path_id == PathId::ZERO,
-                    "Only PathId(0) allowed without multipath (have {path_id:?})"
+                    "Only PathId::ZERO allowed without multipath (have {path_id:?})"
                 );
                 Self::populate_acks(
                     now,
@@ -4949,7 +4956,7 @@ impl Connection {
                         id = %issued.id,
                         "NEW_CONNECTION_ID"
                     );
-                    debug_assert_eq!(issued.path_id, PathId(0));
+                    debug_assert_eq!(issued.path_id, PathId::ZERO);
                     self.stats.frame_tx.new_connection_id += 1;
                     None
                 }
@@ -4969,7 +4976,7 @@ impl Connection {
         let retire_cid_bound = frame::RetireConnectionId::size_bound(is_multipath_negotiated);
         while !path_exclusive_only && buf.remaining_mut() > retire_cid_bound {
             let (path_id, sequence) = match space.pending.retire_cids.pop() {
-                Some((PathId(0), seq)) if !is_multipath_negotiated => {
+                Some((PathId::ZERO, seq)) if !is_multipath_negotiated => {
                     trace!(sequence = seq, "RETIRE_CONNECTION_ID");
                     self.stats.frame_tx.retire_connection_id += 1;
                     (None, seq)
@@ -5159,7 +5166,7 @@ impl Connection {
         trace!("negotiated max idle timeout {:?}", self.idle_timeout);
 
         if let Some(ref info) = params.preferred_address {
-            // During the handshake PathId(0) exists.
+            // During the handshake PathId::ZERO exists.
             self.rem_cids.get_mut(&PathId::ZERO).expect("not yet abandoned").insert(frame::NewConnectionId {
                 path_id: None,
                 sequence: 1,
@@ -5321,13 +5328,13 @@ impl Connection {
     #[cfg(test)]
     pub(crate) fn bytes_in_flight(&self) -> u64 {
         // TODO(@divma): consider including for multipath?
-        self.path_data(PathId(0)).in_flight.bytes
+        self.path_data(PathId::ZERO).in_flight.bytes
     }
 
     /// Number of bytes worth of non-ack-only packets that may be sent
     #[cfg(test)]
     pub(crate) fn congestion_window(&self) -> u64 {
-        let path = self.path_data(PathId(0));
+        let path = self.path_data(PathId::ZERO);
         path.congestion
             .window()
             .saturating_sub(path.in_flight.bytes)
@@ -5355,18 +5362,21 @@ impl Connection {
     /// Whether explicit congestion notification is in use on outgoing packets.
     #[cfg(test)]
     pub(crate) fn using_ecn(&self) -> bool {
-        self.path_data(PathId(0)).sending_ecn
+        self.path_data(PathId::ZERO).sending_ecn
     }
 
     /// The number of received bytes in the current path
     #[cfg(test)]
     pub(crate) fn total_recvd(&self) -> u64 {
-        self.path_data(PathId(0)).total_recvd
+        self.path_data(PathId::ZERO).total_recvd
     }
 
     #[cfg(test)]
     pub(crate) fn active_local_cid_seq(&self) -> (u64, u64) {
-        self.local_cid_state.get(&PathId(0)).unwrap().active_seq()
+        self.local_cid_state
+            .get(&PathId::ZERO)
+            .unwrap()
+            .active_seq()
     }
 
     #[cfg(test)]
@@ -5384,23 +5394,23 @@ impl Connection {
     pub(crate) fn rotate_local_cid(&mut self, v: u64, now: Instant) {
         let n = self
             .local_cid_state
-            .get_mut(&PathId(0))
+            .get_mut(&PathId::ZERO)
             .unwrap()
             .assign_retire_seq(v);
         self.endpoint_events
-            .push_back(EndpointEventInner::NeedIdentifiers(PathId(0), now, n));
+            .push_back(EndpointEventInner::NeedIdentifiers(PathId::ZERO, now, n));
     }
 
-    /// Check the current active remote CID sequence for `PathId(0)`
+    /// Check the current active remote CID sequence for `PathId::ZERO`
     #[cfg(test)]
     pub(crate) fn active_rem_cid_seq(&self) -> u64 {
-        self.rem_cids.get(&PathId(0)).unwrap().active_seq()
+        self.rem_cids.get(&PathId::ZERO).unwrap().active_seq()
     }
 
     /// Returns the detected maximum udp payload size for the current path
     #[cfg(test)]
     pub(crate) fn path_mtu(&self) -> u16 {
-        self.path_data(PathId(0)).current_mtu()
+        self.path_data(PathId::ZERO).current_mtu()
     }
 
     /// Whether we have 1-RTT data to send
@@ -5449,7 +5459,7 @@ impl Connection {
     /// Buffers passed to [`Connection::poll_transmit`] should be at least this large.
     pub fn current_mtu(&self) -> u16 {
         // TODO(@divma): fix
-        self.path_data(PathId(0)).current_mtu()
+        self.path_data(PathId::ZERO).current_mtu()
     }
 
     /// Size of non-frame data for a 1-RTT packet

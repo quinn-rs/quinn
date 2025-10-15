@@ -18,7 +18,6 @@ use crate::{
 use qlog::events::quic::MetricsUpdated;
 
 /// Id representing different paths when using multipath extension
-// TODO(@divma): improve docs, reconsider access to inner
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Default, Hash)]
 pub struct PathId(pub(crate) u32);
 
@@ -60,6 +59,16 @@ impl PathId {
         let rhs = rhs.into();
         let inner = self.0.saturating_sub(rhs.0);
         Self(inner)
+    }
+
+    /// Get the next [`PathId`]
+    pub(crate) fn next(&self) -> Self {
+        self.saturating_add(Self(1))
+    }
+
+    /// Get the underlying u32
+    pub(crate) fn as_u32(&self) -> u32 {
+        self.0
     }
 }
 

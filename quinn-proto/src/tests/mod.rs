@@ -2682,7 +2682,7 @@ fn immediate_ack_triggers_ack() {
 
     let acks_after_connect = pair.client_conn_mut(client_ch).stats().frame_rx.acks;
 
-    pair.client_conn_mut(client_ch).immediate_ack(PathId(0));
+    pair.client_conn_mut(client_ch).immediate_ack(PathId::ZERO);
     pair.drive_client(); // Send immediate ack
     pair.drive_server(); // Process immediate ack
     pair.drive_client(); // Give the client a chance to process the ack

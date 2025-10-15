@@ -284,7 +284,7 @@ impl<'a, 'b> PacketBuilder<'a, 'b> {
         self.buf.put_bytes(0, packet_crypto.tag_len());
         let encode_start = self.partial_encode.start;
         let packet_buf = &mut self.buf.as_mut_slice()[encode_start..];
-        // for packet protection, PathId(0) and no path are equivalent.
+        // for packet protection, PathId::ZERO and no path are equivalent.
         self.partial_encode.finish(
             packet_buf,
             header_crypto,

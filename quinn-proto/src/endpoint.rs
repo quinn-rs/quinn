@@ -169,7 +169,7 @@ impl Endpoint {
             Ok((first_decode, remaining)) => DatagramConnectionEvent {
                 now,
                 remote,
-                path_id: PathId(0), // Corrected later for existing paths
+                path_id: PathId::ZERO, // Corrected later for existing paths
                 ecn,
                 first_decode,
                 remaining,
@@ -218,7 +218,7 @@ impl Endpoint {
 
         if let Some(route_to) = self.index.get(&addresses, &event.first_decode) {
             event.path_id = match route_to {
-                RouteDatagramTo::Incoming(_) => PathId(0),
+                RouteDatagramTo::Incoming(_) => PathId::ZERO,
                 RouteDatagramTo::Connection(_, path_id) => path_id,
             };
             match route_to {
@@ -358,7 +358,7 @@ impl Endpoint {
         trace!(initial_dcid = %remote_id);
 
         let ch = ConnectionHandle(self.connections.vacant_key());
-        let loc_cid = self.new_cid(ch, PathId(0));
+        let loc_cid = self.new_cid(ch, PathId::ZERO);
         let params = TransportParameters::new(
             &config.transport,
             &self.config,
@@ -600,7 +600,7 @@ impl Endpoint {
             .packet
             .remote
             .decrypt(
-                PathId(0),
+                PathId::ZERO,
                 packet_number,
                 &incoming.packet.header_data,
                 &mut incoming.packet.payload,
@@ -616,7 +616,7 @@ impl Endpoint {
         };
 
         let ch = ConnectionHandle(self.connections.vacant_key());
-        let loc_cid = self.new_cid(ch, PathId(0));
+        let loc_cid = self.new_cid(ch, PathId::ZERO);
         let mut params = TransportParameters::new(
             &server_config.transport,
             &self.config,
@@ -855,7 +855,7 @@ impl Endpoint {
 
         let id = self.connections.insert(ConnectionMeta {
             init_cid,
-            loc_cids: FxHashMap::from_iter([(PathId(0), path_cids)]),
+            loc_cids: FxHashMap::from_iter([(PathId::ZERO, path_cids)]),
             addresses,
             side,
             reset_token: Default::default(),
@@ -1043,8 +1043,10 @@ impl ConnectionIndex {
         if dst_cid.is_empty() {
             return;
         }
-        self.connection_ids_initial
-            .insert(dst_cid, RouteDatagramTo::Connection(connection, PathId(0)));
+        self.connection_ids_initial.insert(
+            dst_cid,
+            RouteDatagramTo::Connection(connection, PathId::ZERO),
+        );
     }
 
     /// Associate a connection with its first locally-chosen destination CID if used, or otherwise
@@ -1068,7 +1070,8 @@ impl ConnectionIndex {
                 }
             },
             _ => {
-                self.connection_ids.insert(dst_cid, (connection, PathId(0)));
+                self.connection_ids
+                    .insert(dst_cid, (connection, PathId::ZERO));
             }
         }
     }
@@ -1109,12 +1112,12 @@ impl ConnectionIndex {
         if datagram.dst_cid().is_empty() {
             if let Some(&ch) = self.incoming_connection_remotes.get(addresses) {
                 // Never multipath because QUIC-MULTIPATH 1.1 mandates the use of non-zero
-                // length CIDs.  So this is always PathId(0).
-                return Some(RouteDatagramTo::Connection(ch, PathId(0)));
+                // length CIDs.  So this is always PathId::ZERO.
+                return Some(RouteDatagramTo::Connection(ch, PathId::ZERO));
             }
             if let Some(&ch) = self.outgoing_connection_remotes.get(&addresses.remote) {
                 // Like above, QUIC-MULTIPATH 1.1 mandates the use of non-zero length CIDs.
-                return Some(RouteDatagramTo::Connection(ch, PathId(0)));
+                return Some(RouteDatagramTo::Connection(ch, PathId::ZERO));
             }
         }
         let data = datagram.data();
@@ -1122,7 +1125,7 @@ impl ConnectionIndex {
             return None;
         }
         // For stateless resets the PathId is meaningless since it closes the entire
-        // connection regarldess of path.  So use PathId(0).
+        // connection regarldess of path.  So use PathId::ZERO.
         self.connection_reset_tokens
             .get(addresses.remote, &data[data.len() - RESET_TOKEN_SIZE..])
             .cloned()

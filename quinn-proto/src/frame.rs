@@ -1504,7 +1504,7 @@ mod test {
             ect1: 24,
             ce: 12,
         };
-        const PATH_ID: PathId = PathId(u32::MAX);
+        const PATH_ID: PathId = PathId::MAX;
         PathAck::encode(PATH_ID, 42, &ranges, Some(&ECN), &mut buf);
         let frames = frames(buf);
         assert_eq!(frames.len(), 1);

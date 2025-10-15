@@ -993,7 +993,7 @@ mod tests {
         encode.finish(
             &mut buf,
             &*client.header.local,
-            Some((0, PathId(0), &*client.packet.local)),
+            Some((0, PathId::ZERO, &*client.packet.local)),
         );
 
         for byte in &buf {
@@ -1026,7 +1026,7 @@ mod tests {
         server
             .packet
             .remote
-            .decrypt(PathId(0), 0, &packet.header_data, &mut packet.payload)
+            .decrypt(PathId::ZERO, 0, &packet.header_data, &mut packet.payload)
             .unwrap();
         assert_eq!(packet.payload[..], [0; 16]);
         match packet.header {
