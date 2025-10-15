@@ -4051,16 +4051,10 @@ impl Connection {
                     }
                 }
                 Frame::NewConnectionId(frame) => {
-                    if let Some(ref path_id) = frame.path_id {
-                        span.record("path_id", tracing::field::debug(&path_id));
-                    }
-                    trace!(
-                        path_id = ?frame.path_id,
-                        sequence = frame.sequence,
-                        id = %frame.id,
-                        retire_prior_to = frame.retire_prior_to,
-                    );
                     let path_id = frame.path_id.unwrap_or_default();
+                    if let Some(ref path_id) = frame.path_id {
+                        span.record("path", tracing::field::debug(&path_id));
+                    }
                     // TODO(flub): We should only accept CIDs if path_id < self.max_path_id()
                     //    because otherwise someone could attack us by sending us lots of
                     //    CIDs.
