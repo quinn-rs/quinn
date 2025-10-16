@@ -4057,18 +4057,35 @@ impl Connection {
                     }
                 }
                 Frame::NewConnectionId(frame) => {
-                    let path_id = frame.path_id.unwrap_or_default();
+                    let path_id = match (frame.path_id, self.max_path_id()) {
+                        (Some(path_id), Some(current_max)) if path_id <= current_max => path_id,
+                        (Some(_large_path_id), Some(_current_max)) => {
+                            return Err(TransportError::PROTOCOL_VIOLATION(
+                                "PATH_NEW_CONNECTION_ID contains path_id exceeding current max",
+                            ));
+                        }
+                        (Some(_path_id), None) => {
+                            return Err(TransportError::PROTOCOL_VIOLATION(
+                                "received PATH_NEW_CONNECTION_ID frame when multipath was not negotiated",
+                            ));
+                        }
+
+                        (None, _) => PathId::ZERO,
+                    };
+
+                    if self.abandoned_paths.contains(&path_id) {
+                        trace!("ignoring issued CID for abandoned path");
+                        continue;
+                    }
                     if let Some(ref path_id) = frame.path_id {
                         span.record("path", tracing::field::debug(&path_id));
                     }
-                    // TODO(flub): We should only accept CIDs if path_id < self.max_path_id()
-                    //    because otherwise someone could attack us by sending us lots of
-                    //    CIDs.
                     let rem_cids = self
                         .rem_cids
                         .entry(path_id)
                         .or_insert_with(|| CidQueue::new(frame.id));
                     if rem_cids.active().is_empty() {
+                        // TODO(@divma): is the entry removed later? (rem_cids.entry)
                         return Err(TransportError::PROTOCOL_VIOLATION(
                             "NEW_CONNECTION_ID when CIDs aren't in use",
                         ));
