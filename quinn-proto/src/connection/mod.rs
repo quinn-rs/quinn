@@ -5471,12 +5471,19 @@ impl Connection {
         self.endpoint_events.push_back(EndpointEventInner::Drained);
     }
 
-    /// Storage size required for the largest packet known to be supported by the current path
+    /// Storage size required for the largest packet that can be transmitted on all currently
+    /// available paths
     ///
     /// Buffers passed to [`Connection::poll_transmit`] should be at least this large.
+    ///
+    /// When multipath is enabled, this value is the minimum MTU across all available paths.
     pub fn current_mtu(&self) -> u16 {
-        // TODO(@divma): fix
-        self.path_data(PathId::ZERO).current_mtu()
+        self.paths
+            .iter()
+            .filter(|&(path_id, _path_state)| !self.abandoned_paths.contains(path_id))
+            .map(|(_path_id, path_state)| path_state.data.current_mtu())
+            .min()
+            .expect("There is always at least one available path")
     }
 
     /// Size of non-frame data for a 1-RTT packet

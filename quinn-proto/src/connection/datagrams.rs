@@ -57,7 +57,7 @@ impl Datagrams<'_> {
         Ok(())
     }
 
-    /// Compute the maximum size of datagrams that may passed to `send_datagram`
+    /// Compute the maximum size of datagrams that may be passed to `send_datagram`
     ///
     /// Returns `None` if datagrams are unsupported by the peer or disabled locally.
     ///
@@ -66,11 +66,13 @@ impl Datagrams<'_> {
     /// limit is large this is guaranteed to be a little over a kilobyte at minimum.
     ///
     /// Not necessarily the maximum size of received datagrams.
+    ///
+    /// When multipath is enabled, this is calculated using the smallest MTU across all
+    /// available paths.
     pub fn max_size(&self) -> Option<usize> {
         // We use the conservative overhead bound for any packet number, reducing the budget by at
         // most 3 bytes, so that PN size fluctuations don't cause users sending maximum-size
         // datagrams to suffer avoidable packet loss.
-        // // TODO(@divma): wrong call
         let max_size = self.conn.current_mtu() as usize
             - self.conn.predict_1rtt_overhead_no_pn()
             - Datagram::SIZE_BOUND;

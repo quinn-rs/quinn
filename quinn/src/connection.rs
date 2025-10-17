@@ -1233,7 +1233,6 @@ impl State {
                 Some(t) => t,
                 None => {
                     self.send_buffer.clear();
-                    self.send_buffer.reserve(self.inner.current_mtu() as usize);
                     match self
                         .inner
                         .poll_transmit(now, max_datagrams, &mut self.send_buffer)
