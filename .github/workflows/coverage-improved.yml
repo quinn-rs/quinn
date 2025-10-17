@@ -16,10 +16,12 @@ jobs:
   coverage-llvm-cov:
     name: Generate test coverage with llvm-cov
     runs-on: ubuntu-latest
-    
+
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
+      with:
+        fetch-depth: 0  # Full git history for better codecov tracking
       
     - name: Install Rust
       uses: dtolnay/rust-toolchain@stable
@@ -27,7 +29,7 @@ jobs:
         components: llvm-tools-preview
         
     - name: Cache cargo dependencies
-      uses: actions/cache@v3
+      uses: actions/cache@v4
       with:
         path: |
           ~/.cargo/bin/
@@ -90,10 +92,12 @@ jobs:
     name: Generate test coverage with tarpaulin (fallback)
     runs-on: ubuntu-latest
     continue-on-error: true  # Don't fail the workflow if tarpaulin fails
-    
+
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
+      with:
+        fetch-depth: 0  # Full git history for better codecov tracking
       
     - name: Install Rust
       uses: dtolnay/rust-toolchain@stable
@@ -101,7 +105,7 @@ jobs:
         components: llvm-tools-preview
         
     - name: Cache cargo dependencies
-      uses: actions/cache@v3
+      uses: actions/cache@v4
       with:
         path: |
           ~/.cargo/bin/

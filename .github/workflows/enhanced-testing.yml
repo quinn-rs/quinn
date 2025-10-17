@@ -123,11 +123,12 @@ jobs:
       run: cargo tarpaulin --out Xml --output-dir coverage-xml --quiet
 
     - name: Upload coverage to Codecov
-      uses: codecov/codecov-action@v3
+      uses: codecov/codecov-action@v5
       with:
-        file: coverage-xml/cobertura.xml
+        files: coverage-xml/cobertura.xml
         flags: unittests
         name: codecov-umbrella
+        fail_ci_if_error: false
 
   # Mutation testing (run less frequently due to time constraints)
   mutation-tests:
