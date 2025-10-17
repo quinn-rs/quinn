@@ -186,6 +186,7 @@ jobs:
         if: ${{ !startsWith(runner.name, 'nektos/act') }}
         with:
           persist-credentials: false
+          fetch-depth: 0  # Scorecard needs full git history for proper analysis
 
       - name: Run Scorecard analysis
         uses: ossf/scorecard-action@v2.3.1
