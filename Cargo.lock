@@ -1710,8 +1710,9 @@ dependencies = [
 
 [[package]]
 name = "rustls"
-version = "0.23.29"
-source = "git+https://github.com/n0-computer/rustls?rev=da7b54c6621fdeb2defff38242c5b56ef4c5a920#da7b54c6621fdeb2defff38242c5b56ef4c5a920"
+version = "0.23.33"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "751e04a496ca00bb97a5e043158d23d66b5aabf2e1d5aa2a0aaebb1aafe6f82c"
 dependencies = [
  "aws-lc-rs",
  "log",
