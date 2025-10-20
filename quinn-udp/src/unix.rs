@@ -475,6 +475,18 @@ fn recv(io: SockRef<'_>, bufs: &mut [IoSliceMut<'_>], meta: &mut [RecvMeta]) -> 
             &mut hdrs[i].msg_hdr,
         );
     }
+
+    #[cfg(target_os = "linux")]
+    pub(crate) const IP_RECVERR: libc::c_int = 11;
+    #[cfg(target_os = "linux")]
+    pub(crate) const IPV6_RECVERR: libc::c_int = 25;
+
+    let fd = io.as_raw_fd();
+    let rc = unsafe {
+        libc::setsockopt(fd, libc::IPPROTO_IP, IP_RECVERR, &1i32 as *const i32 as *const libc::c_void,
+                            std::mem::size_of::<i32>() as libc::socklen_t);
+    };
+
     let msg_count = loop {
         let n = unsafe {
             libc::recvmmsg(
