@@ -14,6 +14,9 @@ use std::{
 
 use socket2::SockRef;
 
+#[cfg(target_os = "linux")]
+use crate::SockExtendedErr;
+
 use super::{
     EcnCodepoint, IO_ERROR_LOG_INTERVAL, RecvMeta, Transmit, UdpSockRef, cmsg, log_sendmsg_error,
 };
@@ -818,6 +821,104 @@ fn decode_recv(
         interface_index,
     })
 }
+
+
+#[cfg(target_os = "linux")]
+fn recv_err(io: &impl AsRawFd) -> io::Result<Option<(SocketAddr, SockExtendedErr)>> {
+    use std::mem;
+
+    let fd = io.as_raw_fd();
+
+    let mut control = cmsg::Aligned([0u8; CMSG_LEN]);
+
+    // SEnding error info for now no data is recieved
+    let mut iovec = libc::iovec {
+        iov_base: std::ptr::null_mut(),
+        iov_len: 0,
+    };
+
+    let mut addr_storage: libc::sockaddr_storage  = unsafe { mem::zeroed() };
+
+    let mut hdr: libc::msghdr = unsafe { mem::zeroed() };
+     hdr.msg_name = &mut addr_storage as *mut _ as *mut _;
+    hdr.msg_namelen = mem::size_of::<libc::sockaddr_storage>() as libc::socklen_t;
+    hdr.msg_iov = &mut iovec;
+    hdr.msg_iovlen = 1;
+    hdr.msg_control = control.0.as_mut_ptr() as *mut _;
+    hdr.msg_controllen = control.0.len() as _;
+
+
+    let ret = unsafe {
+        libc::recvmsg(fd, &mut hdr, libc::MSG_ERRQUEUE)
+    };
+
+    if ret < 0 {
+        let err = io::Error::last_os_error();
+        // EAGAIN/EWOULDBLOCK means no error in queue - this is normal
+        if err.kind() == io::ErrorKind::WouldBlock {
+            return Ok(None);
+        }
+        return Err(err);
+    }
+
+    let mut cmsg_ptr = unsafe { libc::CMSG_FIRSTHDR(&hdr)};
+
+    while !cmsg_ptr.is_null() {
+        let cmsg = unsafe { &*cmsg_ptr };
+        
+        const IP_RECVERR: libc::c_int = 11;
+        const IPV6_RECVERR: libc::c_int = 25;
+        
+        let is_ip_err = cmsg.cmsg_level == libc::IPPROTO_IP 
+            && cmsg.cmsg_type == IP_RECVERR;
+        let is_ipv6_err = cmsg.cmsg_level == libc::IPPROTO_IPV6 
+            && cmsg.cmsg_type == IPV6_RECVERR;
+        
+        if is_ip_err || is_ipv6_err {
+            let err_data = unsafe {
+                let data_ptr = libc::CMSG_DATA(cmsg_ptr);
+                &*(data_ptr as *const SockExtendedErr)
+            };
+
+            let addr = unsafe {
+                let addr_ptr = &addr_storage as *const _ as *const libc::sockaddr;
+                match (*addr_ptr).sa_family as i32 {
+                    libc::AF_INET => {
+                        let addr_in = &*(addr_ptr as *const libc::sockaddr_in);
+                        SocketAddr::V4(std::net::SocketAddrV4::new(
+                            std::net::Ipv4Addr::from(u32::from_be(addr_in.sin_addr.s_addr)),
+                            u16::from_be(addr_in.sin_port),
+                        ))
+                    }
+                    libc::AF_INET6 => {
+                        let addr_in6 = &*(addr_ptr as *const libc::sockaddr_in6);
+                        SocketAddr::V6(std::net::SocketAddrV6::new(
+                            std::net::Ipv6Addr::from(addr_in6.sin6_addr.s6_addr),
+                            u16::from_be(addr_in6.sin6_port),
+                            addr_in6.sin6_flowinfo,
+                            addr_in6.sin6_scope_id,
+                        ))
+                    }
+                    _ => return Ok(None), // Unknown address family
+                }
+            };
+            
+            return Ok(Some((addr, *err_data)));
+        }
+
+        cmsg_ptr = unsafe { libc::CMSG_NXTHDR(&hdr, cmsg_ptr)};
+
+    }
+    Ok(None)
+}
+
+
+// I don't know about how other platforms handle this.  
+#[cfg(not(target_os = "linux"))]
+fn recv_error_queue(_io: &impl AsRawFd) -> io::Result<Option<(SocketAddr, ())>> {
+    Ok(None) 
+}
+
 
 #[cfg(not(apple_slow))]
 // Chosen somewhat arbitrarily; might benefit from additional tuning.

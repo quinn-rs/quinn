@@ -241,6 +241,19 @@ impl EcnCodepoint {
 
 
 #[cfg(target_os = "linux")]
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+struct SockExtendedErr {
+    ee_errno: u32,
+    ee_origin: u8,
+    ee_type: u8,
+    ee_code: u8,
+    ee_pad: u8,
+    ee_info: u32,
+    ee_data: u32,
+} 
+
+#[cfg(target_os = "linux")]
 #[derive(Clone, Debug, Copy)]
 pub struct ICMPError {
     pub errno: u32,
