@@ -14,6 +14,11 @@ use std::{
 
 use socket2::SockRef;
 
+use crate::IcmpError;
+
+#[cfg(target_os = "linux")]
+use crate::IcmpErrorKind;
+
 use super::{
     EcnCodepoint, IO_ERROR_LOG_INTERVAL, RecvMeta, Transmit, UdpSockRef, cmsg, log_sendmsg_error,
 };
@@ -31,6 +36,66 @@ pub(crate) struct msghdr_x {
     pub msg_controllen: libc::socklen_t,
     pub msg_flags: libc::c_int,
     pub msg_datalen: usize,
+}
+
+#[cfg(target_os = "linux")]
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct SockExtendedError {
+    pub errno: u32,
+    pub origin: u8,
+    pub r#type: u8,
+    pub code: u8,
+    pub pad: u8,
+    pub info: u32,
+    pub data: u32,
+}
+
+#[cfg(target_os = "linux")]
+impl SockExtendedError {
+    fn kind(&self) -> IcmpErrorKind {
+        const ICMP_DEST_UNREACH: u8 = 3; // Type 3: Destination Unreachable
+        const ICMP_NET_UNREACH: u8 = 0;
+        const ICMP_HOST_UNREACH: u8 = 1;
+        const ICMP_PORT_UNREACH: u8 = 3;
+        const ICMP_FRAG_NEEDED: u8 = 4;
+
+        const ICMPV6_DEST_UNREACH: u8 = 1; // Type 1: Destination Unreachable for IPv6
+        const ICMPV6_NO_ROUTE: u8 = 0;
+        const ICMPV6_ADDR_UNREACH: u8 = 1;
+        const ICMPV6_PORT_UNREACH: u8 = 4;
+
+        const ICMPV6_PACKET_TOO_BIG: u8 = 2;
+
+        match (self.origin, self.r#type, self.code) {
+            (libc::SO_EE_ORIGIN_ICMP, ICMP_DEST_UNREACH, ICMP_NET_UNREACH) => {
+                IcmpErrorKind::NetworkUnreachable
+            }
+            (libc::SO_EE_ORIGIN_ICMP, ICMP_DEST_UNREACH, ICMP_HOST_UNREACH) => {
+                IcmpErrorKind::HostUnreachable
+            }
+            (libc::SO_EE_ORIGIN_ICMP, ICMP_DEST_UNREACH, ICMP_PORT_UNREACH) => {
+                IcmpErrorKind::PortUnreachable
+            }
+            (libc::SO_EE_ORIGIN_ICMP, ICMP_DEST_UNREACH, ICMP_FRAG_NEEDED) => {
+                IcmpErrorKind::PacketTooBig
+            }
+            (libc::SO_EE_ORIGIN_ICMP6, ICMPV6_DEST_UNREACH, ICMPV6_NO_ROUTE) => {
+                IcmpErrorKind::NetworkUnreachable
+            }
+            (libc::SO_EE_ORIGIN_ICMP6, ICMPV6_DEST_UNREACH, ICMPV6_ADDR_UNREACH) => {
+                IcmpErrorKind::HostUnreachable
+            }
+            (libc::SO_EE_ORIGIN_ICMP6, ICMPV6_DEST_UNREACH, ICMPV6_PORT_UNREACH) => {
+                IcmpErrorKind::PortUnreachable
+            }
+            (libc::SO_EE_ORIGIN_ICMP6, ICMPV6_PACKET_TOO_BIG, _) => IcmpErrorKind::PacketTooBig,
+            _ => IcmpErrorKind::Other {
+                icmp_type: self.r#type,
+                icmp_code: self.code,
+            },
+        }
+    }
 }
 
 #[cfg(apple_fast)]
@@ -115,8 +180,21 @@ impl UdpSocketState {
             if let Err(_err) =
                 set_socket_option(&*io, libc::IPPROTO_IP, libc::IP_RECVTOS, OPTION_ON)
             {
-                crate::log::debug!("Ignoring error setting IP_RECVTOS on socket: {_err:?}");
+                crate::log::debug!("Ignoring error setting IP_RECVTOS on socket: {}", _err);
             }
+        }
+
+        // Enable IP_RECVERR and IPV6_RECVERR for ICMP Errors
+        #[cfg(target_os = "linux")]
+        if is_ipv4 {
+            if let Err(err) = set_socket_option(&*io, libc::IPPROTO_IP, libc::IP_RECVERR, OPTION_ON)
+            {
+                crate::log::debug!("Failed to enable IP_RECVERR: {}", err);
+            }
+        } else if let Err(err) =
+            set_socket_option(&*io, libc::IPPROTO_IPV6, libc::IPV6_RECVERR, OPTION_ON)
+        {
+            crate::log::debug!("Failed to enable IPV6_RECVERR: {}", err);
         }
 
         let mut may_fragment = false;
@@ -232,6 +310,10 @@ impl UdpSocketState {
         meta: &mut [RecvMeta],
     ) -> io::Result<usize> {
         recv(socket.0, bufs, meta)
+    }
+
+    pub fn recv_icmp_err(&self, socket: UdpSockRef<'_>) -> io::Result<Option<IcmpError>> {
+        recv_err(socket.0)
     }
 
     /// The maximum amount of segments which can be transmitted if a platform
@@ -507,6 +589,7 @@ fn recv(io: SockRef<'_>, bufs: &mut [IoSliceMut<'_>], meta: &mut [RecvMeta]) -> 
     for i in 0..(msg_count as usize) {
         meta[i] = decode_recv(&names[i], &hdrs[i].msg_hdr, hdrs[i].msg_len as usize)?;
     }
+
     Ok(msg_count as usize)
 }
 
@@ -811,6 +894,95 @@ fn decode_recv(
         dst_ip,
         interface_index,
     })
+}
+
+#[cfg(target_os = "linux")]
+fn recv_err(io: SockRef<'_>) -> io::Result<Option<IcmpError>> {
+    let fd = io.as_raw_fd();
+    let mut control = cmsg::Aligned([0u8; CMSG_LEN]);
+
+    // We don't need actual data, just the error info
+    let mut iovec = libc::iovec {
+        iov_base: std::ptr::null_mut(),
+        iov_len: 0,
+    };
+
+    let mut addr_storage: libc::sockaddr_storage = unsafe { mem::zeroed() };
+
+    let mut hdr: libc::msghdr = unsafe { mem::zeroed() };
+    hdr.msg_name = &mut addr_storage as *mut _ as *mut _;
+    hdr.msg_namelen = mem::size_of::<libc::sockaddr_storage>() as libc::socklen_t;
+    hdr.msg_iov = &mut iovec;
+    hdr.msg_iovlen = 1;
+    hdr.msg_control = control.0.as_mut_ptr() as *mut _;
+    hdr.msg_controllen = CMSG_LEN as _;
+
+    let ret = unsafe { libc::recvmsg(fd, &mut hdr, libc::MSG_ERRQUEUE) };
+
+    if ret < 0 {
+        let err = io::Error::last_os_error();
+        // EAGAIN/EWOULDBLOCK means no error in queue - this is normal
+        if err.kind() == io::ErrorKind::WouldBlock {
+            return Ok(None);
+        }
+        return Err(err);
+    }
+
+    let cmsg_iter = unsafe { cmsg::Iter::new(&hdr) };
+
+    for cmsg in cmsg_iter {
+        const IP_RECVERR: libc::c_int = 11;
+        const IPV6_RECVERR: libc::c_int = 25;
+
+        let is_ipv4_err = cmsg.cmsg_level == libc::IPPROTO_IP && cmsg.cmsg_type == IP_RECVERR;
+        let is_ipv6_err = cmsg.cmsg_level == libc::IPPROTO_IPV6 && cmsg.cmsg_type == IPV6_RECVERR;
+
+        if !is_ipv4_err && !is_ipv6_err {
+            continue;
+        }
+
+        let err_data = unsafe { cmsg::decode::<SockExtendedError, libc::cmsghdr>(cmsg) };
+
+        let dst = unsafe {
+            let addr_ptr = &addr_storage as *const _ as *const libc::sockaddr;
+            match (*addr_ptr).sa_family as i32 {
+                libc::AF_INET => {
+                    let addr_in = &*(addr_ptr as *const libc::sockaddr_in);
+                    SocketAddr::V4(std::net::SocketAddrV4::new(
+                        std::net::Ipv4Addr::from(u32::from_be(addr_in.sin_addr.s_addr)),
+                        u16::from_be(addr_in.sin_port),
+                    ))
+                }
+                libc::AF_INET6 => {
+                    let addr_in6 = &*(addr_ptr as *const libc::sockaddr_in6);
+                    SocketAddr::V6(std::net::SocketAddrV6::new(
+                        std::net::Ipv6Addr::from(addr_in6.sin6_addr.s6_addr),
+                        u16::from_be(addr_in6.sin6_port),
+                        addr_in6.sin6_flowinfo,
+                        addr_in6.sin6_scope_id,
+                    ))
+                }
+                _ => {
+                    crate::log::warn!(
+                        "Ignoring ICMP error with unknown address family: {}",
+                        addr_storage.ss_family
+                    );
+                    continue;
+                }
+            }
+        };
+
+        return Ok(Some(IcmpError {
+            dst,
+            kind: err_data.kind(),
+        }));
+    }
+    Ok(None)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn recv_err(_io: SockRef<'_>) -> io::Result<Option<IcmpError>> {
+    Ok(None)
 }
 
 #[cfg(not(apple_slow))]
