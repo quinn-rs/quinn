@@ -122,6 +122,29 @@ impl UdpSocketState {
             }
         }
 
+
+        // Enable IP_RECVERR and IPV6_RECVERR for ICMP Errors
+        #[cfg(target_os = "linux")]
+        if is_ipv4 {
+            if let Err(e) = set_socket_option(
+                &*io,
+                libc::IPPROTO_IP,
+                libc::IP_RECVERR,
+                OPTION_ON
+            ) {
+                crate::log::warn!("Failed to enable IP_RECVERR: {}", e);
+            } 
+        } else {
+            if let Err(e) = set_socket_option(
+                &*io,
+                libc::IPPROTO_IPV6,
+                libc::IPV6_RECVERR,
+                OPTION_ON
+            ) {
+                crate::log::warn!("Failed to enable IPV6_RECVERR: {}", e);
+            } 
+        }
+
         let mut may_fragment = false;
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
@@ -475,17 +498,6 @@ fn recv(io: SockRef<'_>, bufs: &mut [IoSliceMut<'_>], meta: &mut [RecvMeta]) -> 
             &mut hdrs[i].msg_hdr,
         );
     }
-
-    #[cfg(target_os = "linux")]
-    pub(crate) const IP_RECVERR: libc::c_int = 11;
-    #[cfg(target_os = "linux")]
-    pub(crate) const IPV6_RECVERR: libc::c_int = 25;
-
-    let fd = io.as_raw_fd();
-    let rc = unsafe {
-        libc::setsockopt(fd, libc::IPPROTO_IP, IP_RECVERR, &1i32 as *const i32 as *const libc::c_void,
-                            std::mem::size_of::<i32>() as libc::socklen_t);
-    };
 
     let msg_count = loop {
         let n = unsafe {
