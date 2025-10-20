@@ -238,3 +238,13 @@ impl EcnCodepoint {
         })
     }
 }
+
+
+#[cfg(target_os = "linux")]
+#[derive(Clone, Debug, Copy)]
+pub struct ICMPError {
+    pub errno: u32,
+    pub origin: u8,
+    pub err_no: u8,
+    pub code: u8
+}
