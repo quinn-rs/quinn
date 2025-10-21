@@ -862,8 +862,9 @@ fn recv_err(io: &impl AsRawFd) -> io::Result<Option<(SocketAddr, SockExtendedErr
 
     let mut addr_storage: libc::sockaddr_storage  = unsafe { mem::zeroed() };
 
+    // Have followed the previous declarations
     let mut hdr: libc::msghdr = unsafe { mem::zeroed() };
-     hdr.msg_name = &mut addr_storage as *mut _ as *mut _;
+    hdr.msg_name = &mut addr_storage as *mut _ as *mut _;
     hdr.msg_namelen = mem::size_of::<libc::sockaddr_storage>() as libc::socklen_t;
     hdr.msg_iov = &mut iovec;
     hdr.msg_iovlen = 1;

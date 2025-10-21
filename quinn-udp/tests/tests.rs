@@ -369,3 +369,8 @@ fn ip_to_v6_mapped(x: IpAddr) -> IpAddr {
         IpAddr::V6(_) => x,
     }
 }
+
+fn test_ip_recverr(send: &Socket, recv: &Socket, transmit: Transmit) {
+    let send_state = UdpSocketState::new(send.into()).unwrap();
+    let recv_state = UdpSocketState::new(recv.into()).unwrap();
+}
