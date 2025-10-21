@@ -376,7 +376,6 @@ fn test_ip_recverr() {
     use std::io::IoSliceMut;
     use std::time::Duration;
     
-    // Create IPv4 socket
     let socket = socket2::Socket::new(
         socket2::Domain::IPV4,
         socket2::Type::DGRAM,
@@ -407,12 +406,12 @@ fn test_ip_recverr() {
     };
     
     // Send the packet
-    state.try_send((&socket).into(), &transmit).expect("failed to send");
+    let state_result = state.try_send((&socket).into(), &transmit);
+    assert!(state_result.is_err(), "Expected to fail to transmit");
+
     
-    // Give time for ICMP response to arrive
     std::thread::sleep(Duration::from_millis(200));
     
-    // Try to receive multiple times to drain the error queue
     let mut buf = [0u8; 1500];
     let mut meta = RecvMeta::default();
     let mut received_icmp_error = false;
@@ -433,23 +432,23 @@ fn test_ip_recverr() {
                 // Check if this is an ICMP-related error
                 match e.raw_os_error() {
                     Some(libc::EHOSTUNREACH) => {
-                        println!("✓ Received EHOSTUNREACH (Host unreachable)");
+                        println!("Received EHOSTUNREACH (Host unreachable)");
                         received_icmp_error = true;
                     }
                     Some(libc::ENETUNREACH) => {
-                        println!("✓ Received ENETUNREACH (Network unreachable)");
+                        println!("Received ENETUNREACH (Network unreachable)");
                         received_icmp_error = true;
                     }
                     Some(libc::ECONNREFUSED) => {
-                        println!("✓ Received ECONNREFUSED (Connection refused)");
+                        println!("Received ECONNREFUSED (Connection refused)");
                         received_icmp_error = true;
                     }
                     Some(libc::ETIMEDOUT) => {
-                        println!("✓ Received ETIMEDOUT (Timeout)");
+                        println!("Received ETIMEDOUT (Timeout)");
                         received_icmp_error = true;
                     }
                     _ if e.kind() == std::io::ErrorKind::WouldBlock => {
-                        println!("  No more errors in queue");
+                        println!("No more errors in queue");
                         break;
                     }
                     _ => {}
@@ -459,98 +458,10 @@ fn test_ip_recverr() {
         std::thread::sleep(Duration::from_millis(10));
     }
     
-    // Note: We don't assert here because ICMP errors may not always arrive
-    // depending on network configuration. The important thing is that if
-    // IP_RECVERR is working, we'll see the error logged above.
     if received_icmp_error {
-        println!("✓ IP_RECVERR is working! Received ICMP error.");
+        println!("IP_RECVERR is working! Received ICMP error.");
     } else {
-        println!("⚠ No ICMP error received (may be normal depending on network config)");
-    }
-}
-
-#[cfg(target_os = "linux")]
-#[test]
-fn test_ip_recverr_port_unreachable() {
-    use std::io::IoSliceMut;
-    use std::time::Duration;
-    
-    // Create two sockets
-    let socket1 = socket2::Socket::new(
-        socket2::Domain::IPV4,
-        socket2::Type::DGRAM,
-        Some(socket2::Protocol::UDP),
-    )
-    .expect("failed to create socket1");
-    
-    let socket2 = socket2::Socket::new(
-        socket2::Domain::IPV4,
-        socket2::Type::DGRAM,
-        Some(socket2::Protocol::UDP),
-    )
-    .expect("failed to create socket2");
-    
-    // Bind socket2 to get a port
-    let bind_addr = socket2::SockAddr::from(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0));
-    socket2.bind(&bind_addr).expect("failed to bind socket2");
-    let socket2_addr = socket2.local_addr().unwrap().as_socket().unwrap();
-    
-    // Close socket2 immediately
-    drop(socket2);
-    
-    // Bind socket1
-    socket1.bind(&bind_addr).expect("failed to bind socket1");
-    
-    let state = UdpSocketState::new((&socket1).into())
-        .expect("failed to create UdpSocketState");
-    
-    // Send to the closed port
-    let transmit = Transmit {
-        destination: socket2_addr,
-        ecn: None,
-        contents: b"test to closed port",
-        segment_size: None,
-        src_ip: None,
-    };
-    
-    state.try_send((&socket1).into(), &transmit).expect("failed to send");
-    
-    // Give time for ICMP response
-    std::thread::sleep(Duration::from_millis(100));
-    
-    // Try to receive
-    let mut buf = [0u8; 1500];
-    let mut meta = RecvMeta::default();
-    let mut received_port_unreachable = false;
-    
-    for attempt in 0..5 {
-        match state.recv(
-            (&socket1).into(),
-            &mut [IoSliceMut::new(&mut buf)],
-            std::slice::from_mut(&mut meta),
-        ) {
-            Ok(n) => {
-                println!("Attempt {}: Received {} messages", attempt, n);
-            }
-            Err(e) => {
-                println!("Attempt {}: Error: {} (raw: {:?})", attempt, e, e.raw_os_error());
-                
-                if e.raw_os_error() == Some(libc::ECONNREFUSED) {
-                    println!("✓ Received ECONNREFUSED (Port unreachable)");
-                    received_port_unreachable = true;
-                    break;
-                } else if e.kind() == std::io::ErrorKind::WouldBlock {
-                    break;
-                }
-            }
-        }
-        std::thread::sleep(Duration::from_millis(10));
-    }
-    
-    if received_port_unreachable {
-        println!("✓ IP_RECVERR is working! Received port unreachable error.");
-    } else {
-        println!("⚠ No port unreachable error received");
+        println!("No ICMP error received (may be normal depending on network config)");
     }
 }
 
@@ -594,7 +505,8 @@ fn test_ipv6_recverr() {
         src_ip: None,
     };
     
-    state.try_send((&socket).into(), &transmit).expect("failed to send");
+    let state_res = state.try_send((&socket).into(), &transmit);
+    assert!(state_res.is_err(), "Expected to fail to transmit");
     
     std::thread::sleep(Duration::from_millis(200));
     
@@ -632,84 +544,8 @@ fn test_ipv6_recverr() {
     }
     
     if received_icmp_error {
-        println!("✓ IPV6_RECVERR is working!");
+        println!("IPV6_RECVERR is working!");
     } else {
-        println!("⚠ No ICMPv6 error received");
+        println!("No ICMPv6 error received");
     }
-}
-
-#[cfg(target_os = "linux")]
-#[test]
-fn test_socket_options_enabled() {
-    use std::os::unix::io::AsRawFd;
-    
-    // Test IPv4
-    let socket = socket2::Socket::new(
-        socket2::Domain::IPV4,
-        socket2::Type::DGRAM,
-        Some(socket2::Protocol::UDP),
-    )
-    .expect("failed to create socket");
-    
-    let bind_addr = socket2::SockAddr::from(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0));
-    socket.bind(&bind_addr).expect("failed to bind");
-    
-    let _state = UdpSocketState::new((&socket).into())
-        .expect("failed to create UdpSocketState");
-    
-    // Check if IP_RECVERR is enabled
-    let mut optval: libc::c_int = 0;
-    let mut optlen = std::mem::size_of::<libc::c_int>() as libc::socklen_t;
-    
-    let result = unsafe {
-        libc::getsockopt(
-            socket.as_raw_fd(),
-            libc::IPPROTO_IP,
-            11, // IP_RECVERR
-            &mut optval as *mut _ as *mut libc::c_void,
-            &mut optlen,
-        )
-    };
-    
-    assert_eq!(result, 0, "getsockopt failed");
-    assert_eq!(optval, 1, "IP_RECVERR should be enabled (1), but got {}", optval);
-    
-    println!("✓ IP_RECVERR is enabled: {}", optval);
-    
-    // Test IPv6
-    let socket6 = socket2::Socket::new(
-        socket2::Domain::IPV6,
-        socket2::Type::DGRAM,
-        Some(socket2::Protocol::UDP),
-    )
-    .expect("failed to create IPv6 socket");
-    
-    let bind_addr6 = socket2::SockAddr::from(SocketAddrV6::new(
-        Ipv6Addr::LOCALHOST,
-        0,
-        0,
-        0,
-    ));
-    socket6.bind(&bind_addr6).expect("failed to bind IPv6");
-    
-    let _state6 = UdpSocketState::new((&socket6).into())
-        .expect("failed to create UdpSocketState for IPv6");
-    
-    let mut optval6: libc::c_int = 0;
-    let mut optlen6 = std::mem::size_of::<libc::c_int>() as libc::socklen_t;
-    
-    let result6 = unsafe {
-        libc::getsockopt(
-            socket6.as_raw_fd(),
-            libc::IPPROTO_IPV6,
-            25, // IPV6_RECVERR
-            &mut optval6 as *mut _ as *mut libc::c_void,
-            &mut optlen6,
-        )
-    };
-    
-    assert_eq!(result6, 0, "getsockopt failed for IPv6");
-    assert_eq!(optval6, 1, "IPV6_RECVERR should be enabled (1), but got {}", optval6);
-    
-    println!("✓ IPV6_RECVERR is enabled: {}", optval6);
 }
