@@ -128,15 +128,15 @@ impl UdpSocketState {
         // Enable IP_RECVERR and IPV6_RECVERR for ICMP Errors
         #[cfg(target_os = "linux")]
         if is_ipv4 {
-            if let Err(e) = set_socket_option(&*io, libc::IPPROTO_IP, libc::IP_RECVERR, OPTION_ON) {
-                crate::log::warn!("Failed to enable IP_RECVERR: {}", e);
-            }
-        } else {
-            if let Err(e) =
-                set_socket_option(&*io, libc::IPPROTO_IPV6, libc::IPV6_RECVERR, OPTION_ON)
+            if let Err(_err) =
+                set_socket_option(&*io, libc::IPPROTO_IP, libc::IP_RECVERR, OPTION_ON)
             {
-                crate::log::warn!("Failed to enable IPV6_RECVERR: {}", e);
+                crate::log::warn!("Failed to enable IP_RECVERR: {}", _err);
             }
+        } else if let Err(_err) =
+            set_socket_option(&*io, libc::IPPROTO_IPV6, libc::IPV6_RECVERR, OPTION_ON)
+        {
+            crate::log::warn!("Failed to enable IPV6_RECVERR: {}", _err);
         }
 
         let mut may_fragment = false;
@@ -523,10 +523,10 @@ fn recv(io: SockRef<'_>, bufs: &mut [IoSliceMut<'_>], meta: &mut [RecvMeta]) -> 
     {
         use std::os::fd::AsFd;
         // Clear the error queue after processing normal packets
-        while let Ok(Some((addr, err))) = recv_err(&io.as_fd()) {
+        while let Ok(Some((_addr, err))) = recv_err(&io.as_fd()) {
             crate::log::debug!(
                 "ICMP error from {}: origin: {}, type: {}, code: {}, err_no: {} ",
-                addr,
+                _addr,
                 err.ee_origin,
                 err.ee_type,
                 err.ee_code,
@@ -534,11 +534,13 @@ fn recv(io: SockRef<'_>, bufs: &mut [IoSliceMut<'_>], meta: &mut [RecvMeta]) -> 
             );
             match (err.ee_origin, err.ee_type, err.ee_code) {
                 (libc::SO_EE_ORIGIN_ICMP, 3, 0) => {
-                    crate::log::warn!("Network Unreachable: {}", addr)
+                    crate::log::warn!("Network Unreachable: {}", _addr)
                 }
-                (libc::SO_EE_ORIGIN_ICMP, 3, 1) => crate::log::warn!("Host Unreachable: {}", addr),
-                (libc::SO_EE_ORIGIN_ICMP, 3, 2) => crate::log::warn!("PORT Unreachable: {}", addr),
-                (libc::SO_EE_ORIGIN_ICMP6, 1, 0) => crate::log::warn!("IPv6 Unreachable: {}", addr),
+                (libc::SO_EE_ORIGIN_ICMP, 3, 1) => crate::log::warn!("Host Unreachable: {}", _addr),
+                (libc::SO_EE_ORIGIN_ICMP, 3, 2) => crate::log::warn!("PORT Unreachable: {}", _addr),
+                (libc::SO_EE_ORIGIN_ICMP6, 1, 0) => {
+                    crate::log::warn!("IPv6 Unreachable: {}", _addr)
+                }
                 _ => crate::log::warn!("Other ICMP error: {:?}", err),
             };
         }
@@ -924,10 +926,10 @@ fn recv_err(io: &impl AsRawFd) -> io::Result<Option<(SocketAddr, SockExtendedErr
 }
 
 // I don't know about how other platforms handle this.
-#[cfg(not(target_os = "linux"))]
-fn recv_error_queue(_io: &impl AsRawFd) -> io::Result<Option<(SocketAddr, ())>> {
-    Ok(None)
-}
+//#[cfg(not(target_os = "linux"))]
+// fn recv_err(_io: &impl AsRawFd) -> io::Result<Option<(SocketAddr, ())>> {
+// Ok(None)
+// }
 
 #[cfg(not(apple_slow))]
 // Chosen somewhat arbitrarily; might benefit from additional tuning.
