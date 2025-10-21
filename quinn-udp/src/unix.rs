@@ -125,27 +125,18 @@ impl UdpSocketState {
             }
         }
 
-
         // Enable IP_RECVERR and IPV6_RECVERR for ICMP Errors
         #[cfg(target_os = "linux")]
         if is_ipv4 {
-            if let Err(e) = set_socket_option(
-                &*io,
-                libc::IPPROTO_IP,
-                libc::IP_RECVERR,
-                OPTION_ON
-            ) {
+            if let Err(e) = set_socket_option(&*io, libc::IPPROTO_IP, libc::IP_RECVERR, OPTION_ON) {
                 crate::log::warn!("Failed to enable IP_RECVERR: {}", e);
-            } 
+            }
         } else {
-            if let Err(e) = set_socket_option(
-                &*io,
-                libc::IPPROTO_IPV6,
-                libc::IPV6_RECVERR,
-                OPTION_ON
-            ) {
+            if let Err(e) =
+                set_socket_option(&*io, libc::IPPROTO_IPV6, libc::IPV6_RECVERR, OPTION_ON)
+            {
                 crate::log::warn!("Failed to enable IPV6_RECVERR: {}", e);
-            } 
+            }
         }
 
         let mut may_fragment = false;
@@ -533,19 +524,22 @@ fn recv(io: SockRef<'_>, bufs: &mut [IoSliceMut<'_>], meta: &mut [RecvMeta]) -> 
         use std::os::fd::AsFd;
         // Clear the error queue after processing normal packets
         while let Ok(Some((addr, err))) = recv_err(&io.as_fd()) {
-            crate::log::debug!("ICMP error from {}: origin: {}, type: {}, code: {}, err_no: {} ", 
-            addr, 
-            err.ee_origin, 
-            err.ee_type, 
-            err.ee_code, 
-            err.ee_errno
-        );
-        match (err.ee_origin, err.ee_type, err.ee_code) {
-            (libc::SO_EE_ORIGIN_ICMP, 3, 0) => crate::log::warn!("Network Unreachable: {}", addr),
-            (libc::SO_EE_ORIGIN_ICMP, 3, 1) => crate::log::warn!("Host Unreachable: {}", addr),
-            (libc::SO_EE_ORIGIN_ICMP, 3, 2) => crate::log::warn!("PORT Unreachable: {}", addr),
-            (libc::SO_EE_ORIGIN_ICMP6, 1, 0) => crate::log::warn!("IPv6 Unreachable: {}", addr),
-            _ => crate::log::warn!("Other ICMP error: {:?}", err)
+            crate::log::debug!(
+                "ICMP error from {}: origin: {}, type: {}, code: {}, err_no: {} ",
+                addr,
+                err.ee_origin,
+                err.ee_type,
+                err.ee_code,
+                err.ee_errno
+            );
+            match (err.ee_origin, err.ee_type, err.ee_code) {
+                (libc::SO_EE_ORIGIN_ICMP, 3, 0) => {
+                    crate::log::warn!("Network Unreachable: {}", addr)
+                }
+                (libc::SO_EE_ORIGIN_ICMP, 3, 1) => crate::log::warn!("Host Unreachable: {}", addr),
+                (libc::SO_EE_ORIGIN_ICMP, 3, 2) => crate::log::warn!("PORT Unreachable: {}", addr),
+                (libc::SO_EE_ORIGIN_ICMP6, 1, 0) => crate::log::warn!("IPv6 Unreachable: {}", addr),
+                _ => crate::log::warn!("Other ICMP error: {:?}", err),
             };
         }
     }
@@ -845,7 +839,6 @@ fn decode_recv(
     })
 }
 
-
 #[cfg(target_os = "linux")]
 fn recv_err(io: &impl AsRawFd) -> io::Result<Option<(SocketAddr, SockExtendedErr)>> {
     use std::mem;
@@ -860,7 +853,7 @@ fn recv_err(io: &impl AsRawFd) -> io::Result<Option<(SocketAddr, SockExtendedErr
         iov_len: 0,
     };
 
-    let mut addr_storage: libc::sockaddr_storage  = unsafe { mem::zeroed() };
+    let mut addr_storage: libc::sockaddr_storage = unsafe { mem::zeroed() };
 
     // Have followed the previous declarations
     let mut hdr: libc::msghdr = unsafe { mem::zeroed() };
@@ -871,10 +864,7 @@ fn recv_err(io: &impl AsRawFd) -> io::Result<Option<(SocketAddr, SockExtendedErr
     hdr.msg_control = control.0.as_mut_ptr() as *mut _;
     hdr.msg_controllen = control.0.len() as _;
 
-
-    let ret = unsafe {
-        libc::recvmsg(fd, &mut hdr, libc::MSG_ERRQUEUE)
-    };
+    let ret = unsafe { libc::recvmsg(fd, &mut hdr, libc::MSG_ERRQUEUE) };
 
     if ret < 0 {
         let err = io::Error::last_os_error();
@@ -885,19 +875,17 @@ fn recv_err(io: &impl AsRawFd) -> io::Result<Option<(SocketAddr, SockExtendedErr
         return Err(err);
     }
 
-    let mut cmsg_ptr = unsafe { libc::CMSG_FIRSTHDR(&hdr)};
+    let mut cmsg_ptr = unsafe { libc::CMSG_FIRSTHDR(&hdr) };
 
     while !cmsg_ptr.is_null() {
         let cmsg = unsafe { &*cmsg_ptr };
-        
+
         const IP_RECVERR: libc::c_int = 11;
         const IPV6_RECVERR: libc::c_int = 25;
-        
-        let is_ip_err = cmsg.cmsg_level == libc::IPPROTO_IP 
-            && cmsg.cmsg_type == IP_RECVERR;
-        let is_ipv6_err = cmsg.cmsg_level == libc::IPPROTO_IPV6 
-            && cmsg.cmsg_type == IPV6_RECVERR;
-        
+
+        let is_ip_err = cmsg.cmsg_level == libc::IPPROTO_IP && cmsg.cmsg_type == IP_RECVERR;
+        let is_ipv6_err = cmsg.cmsg_level == libc::IPPROTO_IPV6 && cmsg.cmsg_type == IPV6_RECVERR;
+
         if is_ip_err || is_ipv6_err {
             let err_data = unsafe {
                 let data_ptr = libc::CMSG_DATA(cmsg_ptr);
@@ -926,23 +914,20 @@ fn recv_err(io: &impl AsRawFd) -> io::Result<Option<(SocketAddr, SockExtendedErr
                     _ => return Ok(None), // Unknown address family
                 }
             };
-            
+
             return Ok(Some((addr, *err_data)));
         }
 
-        cmsg_ptr = unsafe { libc::CMSG_NXTHDR(&hdr, cmsg_ptr)};
-
+        cmsg_ptr = unsafe { libc::CMSG_NXTHDR(&hdr, cmsg_ptr) };
     }
     Ok(None)
 }
 
-
-// I don't know about how other platforms handle this.  
+// I don't know about how other platforms handle this.
 #[cfg(not(target_os = "linux"))]
 fn recv_error_queue(_io: &impl AsRawFd) -> io::Result<Option<(SocketAddr, ())>> {
-    Ok(None) 
+    Ok(None)
 }
-
 
 #[cfg(not(apple_slow))]
 // Chosen somewhat arbitrarily; might benefit from additional tuning.
