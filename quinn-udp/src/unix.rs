@@ -527,6 +527,29 @@ fn recv(io: SockRef<'_>, bufs: &mut [IoSliceMut<'_>], meta: &mut [RecvMeta]) -> 
     for i in 0..(msg_count as usize) {
         meta[i] = decode_recv(&names[i], &hdrs[i].msg_hdr, hdrs[i].msg_len as usize)?;
     }
+
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::fd::AsFd;
+        // Clear the error queue after processing normal packets
+        while let Ok(Some((addr, err))) = recv_err(&io.as_fd()) {
+            crate::log::debug!("ICMP error from {}: origin: {}, type: {}, code: {}, err_no: {} ", 
+            addr, 
+            err.ee_origin, 
+            err.ee_type, 
+            err.ee_code, 
+            err.ee_errno
+        );
+        match (err.ee_origin, err.ee_type, err.ee_code) {
+            (libc::SO_EE_ORIGIN_ICMP, 3, 0) => crate::log::warn!("Network Unreachable: {}", addr),
+            (libc::SO_EE_ORIGIN_ICMP, 3, 1) => crate::log::warn!("Host Unreachable: {}", addr),
+            (libc::SO_EE_ORIGIN_ICMP, 3, 2) => crate::log::warn!("PORT Unreachable: {}", addr),
+            (libc::SO_EE_ORIGIN_ICMP6, 1, 0) => crate::log::warn!("IPv6 Unreachable: {}", addr),
+            _ => crate::log::warn!("Other ICMP error: {:?}", err)
+            };
+        }
+    }
+
     Ok(msg_count as usize)
 }
 
