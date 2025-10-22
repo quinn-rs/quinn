@@ -15,7 +15,7 @@ use std::{
 use socket2::SockRef;
 
 #[cfg(target_os = "linux")]
-use crate::SockExtendedErr;
+use crate::{ICMPError, SockExtendedErr};
 
 use super::{
     EcnCodepoint, IO_ERROR_LOG_INTERVAL, RecvMeta, Transmit, UdpSockRef, cmsg, log_sendmsg_error,
@@ -248,6 +248,16 @@ impl UdpSocketState {
         meta: &mut [RecvMeta],
     ) -> io::Result<usize> {
         recv(socket.0, bufs, meta)
+    }
+
+    #[cfg(target_os = "linux")]
+    pub fn recv_icmp_err(&self, socket: UdpSockRef<'_>) -> io::Result<Option<ICMPError>> {
+        recv_err(socket.0)
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    pub fn recv_icmp_err(&self, _socket: UdpSockRef<'_>) -> io::Result<Option<ICMPError>> {
+        Ok(None)
     }
 
     /// The maximum amount of segments which can be transmitted if a platform
@@ -517,33 +527,6 @@ fn recv(io: SockRef<'_>, bufs: &mut [IoSliceMut<'_>], meta: &mut [RecvMeta]) -> 
     };
     for i in 0..(msg_count as usize) {
         meta[i] = decode_recv(&names[i], &hdrs[i].msg_hdr, hdrs[i].msg_len as usize)?;
-    }
-
-    #[cfg(target_os = "linux")]
-    {
-        use std::os::fd::AsFd;
-        // Clear the error queue after processing normal packets
-        while let Ok(Some((_addr, err))) = recv_err(&io.as_fd()) {
-            crate::log::debug!(
-                "ICMP error from {}: origin: {}, type: {}, code: {}, err_no: {} ",
-                _addr,
-                err.ee_origin,
-                err.ee_type,
-                err.ee_code,
-                err.ee_errno
-            );
-            match (err.ee_origin, err.ee_type, err.ee_code) {
-                (libc::SO_EE_ORIGIN_ICMP, 3, 0) => {
-                    crate::log::warn!("Network Unreachable: {}", _addr)
-                }
-                (libc::SO_EE_ORIGIN_ICMP, 3, 1) => crate::log::warn!("Host Unreachable: {}", _addr),
-                (libc::SO_EE_ORIGIN_ICMP, 3, 2) => crate::log::warn!("PORT Unreachable: {}", _addr),
-                (libc::SO_EE_ORIGIN_ICMP6, 1, 0) => {
-                    crate::log::warn!("IPv6 Unreachable: {}", _addr)
-                }
-                _ => crate::log::warn!("Other ICMP error: {:?}", err),
-            };
-        }
     }
 
     Ok(msg_count as usize)
@@ -842,7 +825,7 @@ fn decode_recv(
 }
 
 #[cfg(target_os = "linux")]
-fn recv_err(io: &impl AsRawFd) -> io::Result<Option<(SocketAddr, SockExtendedErr)>> {
+fn recv_err(io: SockRef<'_>) -> io::Result<Option<ICMPError>> {
     use std::mem;
 
     let fd = io.as_raw_fd();
@@ -864,7 +847,7 @@ fn recv_err(io: &impl AsRawFd) -> io::Result<Option<(SocketAddr, SockExtendedErr
     hdr.msg_iov = &mut iovec;
     hdr.msg_iovlen = 1;
     hdr.msg_control = control.0.as_mut_ptr() as *mut _;
-    hdr.msg_controllen = control.0.len() as _;
+    hdr.msg_controllen = CMSG_LEN as _;
 
     let ret = unsafe { libc::recvmsg(fd, &mut hdr, libc::MSG_ERRQUEUE) };
 
@@ -877,11 +860,9 @@ fn recv_err(io: &impl AsRawFd) -> io::Result<Option<(SocketAddr, SockExtendedErr
         return Err(err);
     }
 
-    let mut cmsg_ptr = unsafe { libc::CMSG_FIRSTHDR(&hdr) };
+    let cmsg_iter = unsafe { cmsg::Iter::new(&hdr) };
 
-    while !cmsg_ptr.is_null() {
-        let cmsg = unsafe { &*cmsg_ptr };
-
+    for cmsg in cmsg_iter {
         const IP_RECVERR: libc::c_int = 11;
         const IPV6_RECVERR: libc::c_int = 25;
 
@@ -889,10 +870,7 @@ fn recv_err(io: &impl AsRawFd) -> io::Result<Option<(SocketAddr, SockExtendedErr
         let is_ipv6_err = cmsg.cmsg_level == libc::IPPROTO_IPV6 && cmsg.cmsg_type == IPV6_RECVERR;
 
         if is_ip_err || is_ipv6_err {
-            let err_data = unsafe {
-                let data_ptr = libc::CMSG_DATA(cmsg_ptr);
-                &*(data_ptr as *const SockExtendedErr)
-            };
+            let err_data = unsafe { cmsg::decode::<SockExtendedErr, libc::cmsghdr>(cmsg) };
 
             let addr = unsafe {
                 let addr_ptr = &addr_storage as *const _ as *const libc::sockaddr;
@@ -917,10 +895,11 @@ fn recv_err(io: &impl AsRawFd) -> io::Result<Option<(SocketAddr, SockExtendedErr
                 }
             };
 
-            return Ok(Some((addr, *err_data)));
+            return Ok(Some(ICMPError {
+                addr,
+                kind: crate::ICMPErrorKind::from_extended_err(&err_data),
+            }));
         }
-
-        cmsg_ptr = unsafe { libc::CMSG_NXTHDR(&hdr, cmsg_ptr) };
     }
     Ok(None)
 }
