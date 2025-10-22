@@ -373,7 +373,6 @@ fn ip_to_v6_mapped(x: IpAddr) -> IpAddr {
 #[cfg(target_os = "linux")]
 #[test]
 fn test_ip_recverr() {
-    use std::io::IoSliceMut;
     use std::time::Duration;
 
     let socket = socket2::Socket::new(
@@ -407,68 +406,76 @@ fn test_ip_recverr() {
 
     std::thread::sleep(Duration::from_millis(200));
 
-    let mut buf = [0u8; 1500];
-    let mut meta = RecvMeta::default();
-    let mut received_icmp_error = false;
+    // for attempt in 0..5 {
+    //     match state.recv(
+    //         (&socket).into(),
+    //         &mut [IoSliceMut::new(&mut buf)],
+    //         std::slice::from_mut(&mut meta),
+    //     ) {
+    //         Ok(n) => {
+    //             println!("Attempt {}: Received {} messages", attempt, n);
+    //         }
+    //         Err(e) => {
+    //             println!(
+    //                 "Attempt {}: Received error: {} (kind: {:?}, raw: {:?})",
+    //                 attempt,
+    //                 e,
+    //                 e.kind(),
+    //                 e.raw_os_error()
+    //             );
 
-    for attempt in 0..5 {
-        match state.recv(
-            (&socket).into(),
-            &mut [IoSliceMut::new(&mut buf)],
-            std::slice::from_mut(&mut meta),
-        ) {
-            Ok(n) => {
-                println!("Attempt {}: Received {} messages", attempt, n);
-            }
-            Err(e) => {
-                println!(
-                    "Attempt {}: Received error: {} (kind: {:?}, raw: {:?})",
-                    attempt,
-                    e,
-                    e.kind(),
-                    e.raw_os_error()
-                );
+    //             // Check if this is an ICMP-related error
+    //             match e.raw_os_error() {
+    //                 Some(libc::EHOSTUNREACH) => {
+    //                     println!("Received EHOSTUNREACH (Host unreachable)");
+    //                     received_icmp_error = true;
+    //                 }
+    //                 Some(libc::ENETUNREACH) => {
+    //                     println!("Received ENETUNREACH (Network unreachable)");
+    //                     received_icmp_error = true;
+    //                 }
+    //                 Some(libc::ECONNREFUSED) => {
+    //                     println!("Received ECONNREFUSED (Connection refused)");
+    //                     received_icmp_error = true;
+    //                 }
+    //                 Some(libc::ETIMEDOUT) => {
+    //                     println!("Received ETIMEDOUT (Timeout)");
+    //                     received_icmp_error = true;
+    //                 }
+    //                 _ if e.kind() == std::io::ErrorKind::WouldBlock => {
+    //                     println!("No more errors in queue");
+    //                     break;
+    //                 }
+    //                 _ => {}
+    //             }
+    //         }
+    //     }
+    //     std::thread::sleep(Duration::from_millis(10));
+    // }
 
-                // Check if this is an ICMP-related error
-                match e.raw_os_error() {
-                    Some(libc::EHOSTUNREACH) => {
-                        println!("Received EHOSTUNREACH (Host unreachable)");
-                        received_icmp_error = true;
-                    }
-                    Some(libc::ENETUNREACH) => {
-                        println!("Received ENETUNREACH (Network unreachable)");
-                        received_icmp_error = true;
-                    }
-                    Some(libc::ECONNREFUSED) => {
-                        println!("Received ECONNREFUSED (Connection refused)");
-                        received_icmp_error = true;
-                    }
-                    Some(libc::ETIMEDOUT) => {
-                        println!("Received ETIMEDOUT (Timeout)");
-                        received_icmp_error = true;
-                    }
-                    _ if e.kind() == std::io::ErrorKind::WouldBlock => {
-                        println!("No more errors in queue");
-                        break;
-                    }
-                    _ => {}
-                }
-            }
+    // if received_icmp_error {
+    //     println!("IP_RECVERR is working! Received ICMP error.");
+    // } else {
+    //     println!("No ICMP error received (may be normal depending on network config)");
+    // }
+
+    match state.recv_icmp_err((&socket).into()) {
+        Ok(Some(icmp_err)) => {
+            eprintln!("icmp packet recieved");
+            assert_eq!(unreachable_addr.ip(), icmp_err.addr.ip());
         }
-        std::thread::sleep(Duration::from_millis(10));
-    }
-
-    if received_icmp_error {
-        println!("IP_RECVERR is working! Received ICMP error.");
-    } else {
-        println!("No ICMP error received (may be normal depending on network config)");
+        Ok(None) => {
+            eprintln!("No ICMP Recieved");
+        }
+        Err(e) => {
+            eprintln!("Error in reciveing icmp packet: {}", e);
+        }
     }
 }
 
 #[cfg(target_os = "linux")]
 #[test]
 fn test_ipv6_recverr() {
-    use std::io::IoSliceMut;
     use std::time::Duration;
 
     let socket = socket2::Socket::new(
@@ -504,49 +511,16 @@ fn test_ipv6_recverr() {
 
     std::thread::sleep(Duration::from_millis(200));
 
-    let mut buf = [0u8; 1500];
-    let mut meta = RecvMeta::default();
-    let mut received_icmp_error = false;
-
-    for attempt in 0..5 {
-        match state.recv(
-            (&socket).into(),
-            &mut [IoSliceMut::new(&mut buf)],
-            std::slice::from_mut(&mut meta),
-        ) {
-            Ok(n) => {
-                println!("Attempt {}: Received {} messages", attempt, n);
-            }
-            Err(e) => {
-                println!(
-                    "Attempt {}: Error: {} (raw: {:?})",
-                    attempt,
-                    e,
-                    e.raw_os_error()
-                );
-
-                match e.raw_os_error() {
-                    Some(libc::EHOSTUNREACH)
-                    | Some(libc::ENETUNREACH)
-                    | Some(libc::ECONNREFUSED)
-                    | Some(libc::ETIMEDOUT) => {
-                        println!("✓ Received ICMPv6 error");
-                        received_icmp_error = true;
-                        break;
-                    }
-                    _ if e.kind() == std::io::ErrorKind::WouldBlock => {
-                        break;
-                    }
-                    _ => {}
-                }
-            }
+    match state.recv_icmp_err((&socket).into()) {
+        Ok(Some(icmp_err)) => {
+            eprintln!("Recived ICMPV6 Packets");
+            assert_eq!(unreachable_addr.ip(), icmp_err.addr.ip());
         }
-        std::thread::sleep(Duration::from_millis(10));
-    }
-
-    if received_icmp_error {
-        println!("IPV6_RECVERR is working!");
-    } else {
-        println!("No ICMPv6 error received");
+        Ok(None) => {
+            eprintln!("No ICMPV6 packets are recieved")
+        }
+        Err(e) => {
+            eprintln!("Error in sending ICMP packets: {}", e);
+        }
     }
 }

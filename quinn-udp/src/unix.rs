@@ -255,10 +255,10 @@ impl UdpSocketState {
         recv_err(socket.0)
     }
 
-    #[cfg(not(target_os = "linux"))]
-    pub fn recv_icmp_err(&self, _socket: UdpSockRef<'_>) -> io::Result<Option<ICMPError>> {
-        Ok(None)
-    }
+    // #[cfg(not(target_os = "linux"))]
+    // pub fn recv_icmp_err(&self, _socket: UdpSockRef<'_>) -> io::Result<Option<ICMPError>> {
+    //     Ok(None)
+    // }
 
     /// The maximum amount of segments which can be transmitted if a platform
     /// supports Generic Send Offload (GSO).
