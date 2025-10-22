@@ -255,8 +255,15 @@ struct SockExtendedErr {
 #[cfg(target_os = "linux")]
 #[derive(Clone, Debug, Copy)]
 pub struct ICMPError {
-    pub errno: u32,
-    pub origin: u8,
-    pub err_no: u8,
-    pub code: u8,
+    pub addr: SocketAddr,
+    pub kind: ICMPErrorKind,
+}
+#[cfg(target_os = "linux")]
+#[derive(Clone, Debug, Copy, PartialEq, Eq)]
+pub enum  ICMPErrorKind {
+    NetworkUnreachable,
+    HostUnreachable,
+    PortUnreachable,
+    PacketTooBig,
+    Other { icmp_type: u8, icmp_code: u8}
 }
