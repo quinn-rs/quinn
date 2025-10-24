@@ -273,12 +273,24 @@ mod tests {
 
         let pace_duration = Duration::from_nanos((TARGET_BURST_INTERVAL.as_nanos() * 4 / 5) as u64);
 
-        assert_eq!(
-            pacer
-                .delay(rtt, mtu as u64, mtu, window, old_instant)
-                .expect("Send must be delayed")
-                .duration_since(old_instant),
-            pace_duration
+        let actual_delay = pacer
+            .delay(rtt, mtu as u64, mtu, window, old_instant)
+            .expect("Send must be delayed")
+            .duration_since(old_instant);
+
+        let diff = if actual_delay > pace_duration {
+            actual_delay - pace_duration
+        } else {
+            pace_duration - actual_delay
+        };
+
+        // Allow up to 2ns difference due to rounding
+        assert!(
+            diff < Duration::from_nanos(2),
+            "expected ≈ {:?}, got {:?} (diff {:?})",
+            pace_duration,
+            actual_delay,
+            diff
         );
 
         // Refill half of the tokens
