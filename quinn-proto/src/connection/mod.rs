@@ -4365,6 +4365,9 @@ impl Connection {
                         ));
                     }
                 }
+                Frame::AddAddress(_addr) => {
+                    // TODO(@divma): handle
+                }
             }
         }
 

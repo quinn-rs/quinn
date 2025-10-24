@@ -70,6 +70,7 @@ pub struct FrameStats {
     pub max_path_id: u64,
     pub paths_blocked: u64,
     pub path_cids_blocked: u64,
+    pub add_address: u64,
 }
 
 impl FrameStats {
@@ -127,6 +128,7 @@ impl FrameStats {
             Frame::PathCidsBlocked(_) => {
                 self.path_cids_blocked = self.path_cids_blocked.saturating_add(1)
             }
+            Frame::AddAddress(_) => self.add_address = self.add_address.saturating_add(1),
         }
     }
 }

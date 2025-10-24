@@ -150,6 +150,9 @@ frame_types! {
     MAX_PATH_ID = 0x15228c0c,
     PATHS_BLOCKED = 0x15228c0d,
     PATH_CIDS_BLOCKED = 0x15228c0e,
+    // NAT TRAVERSAL
+    ADD_IPV4_ADDRESS = 0x3d7e90,
+    ADD_IPV6_ADDRESS = 0x3d7e93,
 }
 
 const STREAM_TYS: RangeInclusive<u64> = RangeInclusive::new(0x08, 0x0f);
@@ -188,6 +191,7 @@ pub(crate) enum Frame {
     MaxPathId(MaxPathId),
     PathsBlocked(PathsBlocked),
     PathCidsBlocked(PathCidsBlocked),
+    AddAddress(AddAddress),
 }
 
 impl Frame {
@@ -237,6 +241,7 @@ impl Frame {
             MaxPathId(_) => FrameType::MAX_PATH_ID,
             PathsBlocked(_) => FrameType::PATHS_BLOCKED,
             PathCidsBlocked(_) => FrameType::PATH_CIDS_BLOCKED,
+            AddAddress(ref frame) => frame.get_type(),
         }
     }
 
@@ -968,6 +973,11 @@ impl Iter {
             FrameType::PATH_CIDS_BLOCKED => {
                 Frame::PathCidsBlocked(PathCidsBlocked::decode(&mut self.bytes)?)
             }
+            FrameType::ADD_IPV4_ADDRESS | FrameType::ADD_IPV6_ADDRESS => {
+                let is_ipv6 = ty == FrameType::ADD_IPV6_ADDRESS;
+                let observed = AddAddress::read(&mut self.bytes, is_ipv6)?;
+                Frame::AddAddress(observed)
+            }
             _ => {
                 if let Some(s) = ty.stream() {
                     Frame::Stream(Stream {
@@ -1449,6 +1459,96 @@ impl PathBackup {
     }
 }
 
+/* Nat traversal frames */
+
+/// Conjuction of the information contained in the add address frames
+/// ([`FrameType::ADD_IPV4_ADDRESS`], [`FrameType::ADD_IPV6_ADDRESS`]).
+#[derive(Debug, PartialEq, Eq, Clone)]
+// TODO(@divma): remove
+#[allow(dead_code)]
+pub(crate) struct AddAddress {
+    /// Monotonically increasing integer within the same connection
+    // TODO(@divma): both assumed, the draft has no mention of this but it's standard
+    pub(crate) seq_no: VarInt,
+    /// Address to include in the known set
+    pub(crate) ip: IpAddr,
+    /// Port to use with this address
+    pub(crate) port: u16,
+}
+
+// TODO(@divma): remove
+#[allow(dead_code)]
+impl AddAddress {
+    /// Smallest number of bytes this type of frame is guaranteed to fit within.
+    pub(crate) const SIZE_BOUND: usize = Self {
+        ip: IpAddr::V6(std::net::Ipv6Addr::LOCALHOST),
+        port: u16::MAX,
+        seq_no: VarInt::MAX,
+    }
+    .size();
+
+    pub(crate) const fn new(remote: std::net::SocketAddr, seq_no: VarInt) -> Self {
+        Self {
+            ip: remote.ip(),
+            port: remote.port(),
+            seq_no,
+        }
+    }
+
+    /// Get the [`FrameType`] for this frame.
+    pub(crate) const fn get_type(&self) -> FrameType {
+        if self.ip.is_ipv6() {
+            FrameType::ADD_IPV6_ADDRESS
+        } else {
+            FrameType::ADD_IPV4_ADDRESS
+        }
+    }
+
+    /// Compute the number of bytes needed to encode the frame
+    pub(crate) const fn size(&self) -> usize {
+        let type_size = VarInt(self.get_type().0).size();
+        let req_id_bytes = self.seq_no.size();
+        let ip_bytes = if self.ip.is_ipv6() { 16 } else { 4 };
+        let port_bytes = 2;
+        type_size + req_id_bytes + ip_bytes + port_bytes
+    }
+
+    /// Unconditionally write this frame to `buf`
+    pub(crate) fn write<W: BufMut>(&self, buf: &mut W) {
+        buf.write(self.get_type());
+        buf.write(self.seq_no);
+        match self.ip {
+            IpAddr::V4(ipv4_addr) => {
+                buf.write(ipv4_addr);
+            }
+            IpAddr::V6(ipv6_addr) => {
+                buf.write(ipv6_addr);
+            }
+        }
+        buf.write::<u16>(self.port);
+    }
+
+    /// Read the frame contents from the buffer
+    ///
+    /// Should only be called when the frame type has been identified as
+    /// [`FrameType::ADD_IPV4_ADDRESS`] or [`FrameType::ADD_IPV6_ADDRESS`].
+    pub(crate) fn read<R: Buf>(bytes: &mut R, is_ipv6: bool) -> coding::Result<Self> {
+        let seq_no = bytes.get()?;
+        let ip = if is_ipv6 {
+            IpAddr::V6(bytes.get()?)
+        } else {
+            IpAddr::V4(bytes.get()?)
+        };
+        let port = bytes.get()?;
+        Ok(Self { seq_no, ip, port })
+    }
+
+    /// Give the [`SocketAddr`] encoded in the frame
+    pub(crate) fn socket_addr(&self) -> SocketAddr {
+        (self.ip, self.port).into()
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -1680,6 +1780,31 @@ mod test {
         }
         match decoded.pop().expect("non empty") {
             Frame::PathsBlocked(decoded) => assert_eq!(decoded, frame0),
+            x => panic!("incorrect frame {x:?}"),
+        }
+    }
+
+    /// Test that encoding and decoding [`AddAddress`] produces the same result
+    #[test]
+    fn test_add_address_roundrip() {
+        let add_address = AddAddress {
+            seq_no: VarInt(42),
+            ip: std::net::Ipv4Addr::LOCALHOST.into(),
+            port: 4242,
+        };
+        let mut buf = Vec::with_capacity(add_address.size());
+        add_address.write(&mut buf);
+
+        assert_eq!(
+            add_address.size(),
+            buf.len(),
+            "expected written bytes and actual size differ"
+        );
+
+        let mut decoded = frames(buf);
+        assert_eq!(decoded.len(), 1);
+        match decoded.pop().expect("non empty") {
+            Frame::AddAddress(decoded) => assert_eq!(decoded, add_address),
             x => panic!("incorrect frame {x:?}"),
         }
     }
