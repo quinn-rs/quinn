@@ -155,6 +155,7 @@ frame_types! {
     ADD_IPV6_ADDRESS = 0x3d7e91,
     PUNCH_IPV4_ADDR = 0x3d7e92,
     PUNCH_IPV6_ADDR = 0x3d7e93,
+    REMOVE_ADDRESS = 0x3d7e94,
 }
 
 const STREAM_TYS: RangeInclusive<u64> = RangeInclusive::new(0x08, 0x0f);
@@ -195,6 +196,7 @@ pub(crate) enum Frame {
     PathCidsBlocked(PathCidsBlocked),
     AddAddress(AddAddress),
     PunchMeNow(PunchMeNow),
+    RemoveAddress(RemoveAddress),
 }
 
 impl Frame {
@@ -246,6 +248,7 @@ impl Frame {
             PathCidsBlocked(_) => FrameType::PATH_CIDS_BLOCKED,
             AddAddress(ref frame) => frame.get_type(),
             PunchMeNow(ref frame) => frame.get_type(),
+            RemoveAddress(_) => self::RemoveAddress::TYPE,
         }
     }
 
@@ -987,6 +990,9 @@ impl Iter {
                 let punch_me = PunchMeNow::read(&mut self.bytes, is_ipv6)?;
                 Frame::PunchMeNow(punch_me)
             }
+            FrameType::REMOVE_ADDRESS => {
+                Frame::RemoveAddress(RemoveAddress::read(&mut self.bytes)?)
+            }
             _ => {
                 if let Some(s) = ty.stream() {
                     Frame::Stream(Stream {
@@ -1516,10 +1522,10 @@ impl AddAddress {
     /// Compute the number of bytes needed to encode the frame
     pub(crate) const fn size(&self) -> usize {
         let type_size = VarInt(self.get_type().0).size();
-        let req_id_bytes = self.seq_no.size();
+        let seq_no_bytes = self.seq_no.size();
         let ip_bytes = if self.ip.is_ipv6() { 16 } else { 4 };
         let port_bytes = 2;
-        type_size + req_id_bytes + ip_bytes + port_bytes
+        type_size + seq_no_bytes + ip_bytes + port_bytes
     }
 
     /// Unconditionally write this frame to `buf`
@@ -1558,7 +1564,7 @@ impl AddAddress {
     }
 }
 
-/// Conjuction of the information contained in the add address frames
+/// Conjuction of the information contained in the punch me now frames
 /// ([`FrameType::PUNCH_IPV4_ADDR`], [`FrameType::PUNCH_IPV6_ADDR`])
 #[derive(Debug, PartialEq, Eq, Clone)]
 // TODO(@divma): remove. Beg the draft people for a better name
@@ -1659,6 +1665,52 @@ impl PunchMeNow {
     /// Give the [`SocketAddr`] encoded in the frame
     pub(crate) fn socket_addr(&self) -> SocketAddr {
         (self.ip, self.port).into()
+    }
+}
+
+/// Frame signaling an address is no longer being advertised
+#[derive(Debug, PartialEq, Eq, Clone)]
+// TODO(@divma): remove
+#[allow(dead_code)]
+pub(crate) struct RemoveAddress {
+    /// The sequence number of the address advertisement to be removed
+    pub(crate) seq_no: VarInt,
+}
+
+// TODO(@divma): remove
+#[allow(dead_code)]
+impl RemoveAddress {
+    /// [`FrameType`] of this frame
+    pub(crate) const TYPE: FrameType = FrameType::REMOVE_ADDRESS;
+
+    /// Smallest number of bytes this type of frame is guaranteed to fit within
+    pub(crate) const SIZE_BOUND: usize = Self::new(VarInt::MAX).size();
+
+    pub(crate) const fn new(seq_no: VarInt) -> Self {
+        Self { seq_no }
+    }
+
+    /// Compute the number of bytes needed to encode the frame
+    pub(crate) const fn size(&self) -> usize {
+        let type_size = VarInt(Self::TYPE.0).size();
+        let seq_no_bytes = self.seq_no.size();
+        type_size + seq_no_bytes
+    }
+
+    /// Unconditionally write this frame to `buf`
+    pub(crate) fn write<W: BufMut>(&self, buf: &mut W) {
+        buf.write(Self::TYPE);
+        buf.write(self.seq_no);
+    }
+
+    /// Read the frame contents from the buffer
+    ///
+    /// Should only be called when the frame type has been identified as
+    /// [`FrameType::REMOVE_ADDRESS`].
+    pub(crate) fn read<R: Buf>(bytes: &mut R) -> coding::Result<Self> {
+        Ok(Self {
+            seq_no: bytes.get()?,
+        })
     }
 }
 
@@ -1944,6 +1996,27 @@ mod test {
         assert_eq!(decoded.len(), 1);
         match decoded.pop().expect("non empty") {
             Frame::PunchMeNow(decoded) => assert_eq!(decoded, punch_me),
+            x => panic!("incorrect frame {x:?}"),
+        }
+    }
+
+    /// Test that encoding and decoding [`RemoveAddress`] produces the same result
+    #[test]
+    fn test_remove_address_roundrip() {
+        let remove_addr = RemoveAddress::new(VarInt(10));
+        let mut buf = Vec::with_capacity(remove_addr.size());
+        remove_addr.write(&mut buf);
+
+        assert_eq!(
+            remove_addr.size(),
+            buf.len(),
+            "expected written bytes and actual size differ"
+        );
+
+        let mut decoded = frames(buf);
+        assert_eq!(decoded.len(), 1);
+        match decoded.pop().expect("non empty") {
+            Frame::RemoveAddress(decoded) => assert_eq!(decoded, remove_addr),
             x => panic!("incorrect frame {x:?}"),
         }
     }
