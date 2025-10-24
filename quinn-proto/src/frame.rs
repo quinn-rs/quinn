@@ -152,7 +152,9 @@ frame_types! {
     PATH_CIDS_BLOCKED = 0x15228c0e,
     // NAT TRAVERSAL
     ADD_IPV4_ADDRESS = 0x3d7e90,
-    ADD_IPV6_ADDRESS = 0x3d7e93,
+    ADD_IPV6_ADDRESS = 0x3d7e91,
+    PUNCH_IPV4_ADDR = 0x3d7e92,
+    PUNCH_IPV6_ADDR = 0x3d7e93,
 }
 
 const STREAM_TYS: RangeInclusive<u64> = RangeInclusive::new(0x08, 0x0f);
@@ -192,6 +194,7 @@ pub(crate) enum Frame {
     PathsBlocked(PathsBlocked),
     PathCidsBlocked(PathCidsBlocked),
     AddAddress(AddAddress),
+    PunchMeNow(PunchMeNow),
 }
 
 impl Frame {
@@ -242,6 +245,7 @@ impl Frame {
             PathsBlocked(_) => FrameType::PATHS_BLOCKED,
             PathCidsBlocked(_) => FrameType::PATH_CIDS_BLOCKED,
             AddAddress(ref frame) => frame.get_type(),
+            PunchMeNow(ref frame) => frame.get_type(),
         }
     }
 
@@ -975,8 +979,13 @@ impl Iter {
             }
             FrameType::ADD_IPV4_ADDRESS | FrameType::ADD_IPV6_ADDRESS => {
                 let is_ipv6 = ty == FrameType::ADD_IPV6_ADDRESS;
-                let observed = AddAddress::read(&mut self.bytes, is_ipv6)?;
-                Frame::AddAddress(observed)
+                let add_address = AddAddress::read(&mut self.bytes, is_ipv6)?;
+                Frame::AddAddress(add_address)
+            }
+            FrameType::PUNCH_IPV4_ADDR | FrameType::PUNCH_IPV6_ADDR => {
+                let is_ipv6 = ty == FrameType::PUNCH_IPV6_ADDR;
+                let punch_me = PunchMeNow::read(&mut self.bytes, is_ipv6)?;
+                Frame::PunchMeNow(punch_me)
             }
             _ => {
                 if let Some(s) = ty.stream() {
@@ -1549,6 +1558,110 @@ impl AddAddress {
     }
 }
 
+/// Conjuction of the information contained in the add address frames
+/// ([`FrameType::PUNCH_IPV4_ADDR`], [`FrameType::PUNCH_IPV6_ADDR`])
+#[derive(Debug, PartialEq, Eq, Clone)]
+// TODO(@divma): remove. Beg the draft people for a better name
+#[allow(dead_code)]
+pub(crate) struct PunchMeNow {
+    /// The sequence number of the NAT Traversal attempts
+    // TODO(@divma): type assumed, spec is un-spec-ific
+    pub(crate) round: VarInt,
+    /// The sequence number of the address that was paired with this address
+    pub(crate) paired_with: VarInt,
+    /// Address to use
+    pub(crate) ip: IpAddr,
+    /// Port to use with this address
+    pub(crate) port: u16,
+}
+
+// TODO(@divma): remove
+#[allow(dead_code)]
+impl PunchMeNow {
+    /// Smallest number of bytes this type of frame is guaranteed to fit within
+    pub(crate) const SIZE_BOUND: usize = Self {
+        round: VarInt::MAX,
+        paired_with: VarInt::MAX,
+        ip: IpAddr::V6(std::net::Ipv6Addr::LOCALHOST),
+        port: u16::MAX,
+    }
+    .size();
+
+    pub(crate) const fn new(
+        round: VarInt,
+        paired_with: VarInt,
+        local_addr: std::net::SocketAddr,
+    ) -> Self {
+        Self {
+            round,
+            paired_with,
+            ip: local_addr.ip(),
+            port: local_addr.port(),
+        }
+    }
+
+    /// Get the [`FrameType`] for this frame
+    pub(crate) const fn get_type(&self) -> FrameType {
+        if self.ip.is_ipv6() {
+            FrameType::PUNCH_IPV6_ADDR
+        } else {
+            FrameType::PUNCH_IPV4_ADDR
+        }
+    }
+
+    /// Compute the number of bytes needed to encode the frame
+    pub(crate) const fn size(&self) -> usize {
+        let type_size = VarInt(self.get_type().0).size();
+        let round_bytes = self.round.size();
+        let paired_with_bytes = self.paired_with.size();
+        let ip_bytes = if self.ip.is_ipv6() { 16 } else { 4 };
+        let port_bytes = 2;
+        type_size + round_bytes + paired_with_bytes + ip_bytes + port_bytes
+    }
+
+    /// Unconditionally write this frame to `buf`
+    pub(crate) fn write<W: BufMut>(&self, buf: &mut W) {
+        buf.write(self.get_type());
+        buf.write(self.round);
+        buf.write(self.paired_with);
+        match self.ip {
+            IpAddr::V4(ipv4_addr) => {
+                buf.write(ipv4_addr);
+            }
+            IpAddr::V6(ipv6_addr) => {
+                buf.write(ipv6_addr);
+            }
+        }
+        buf.write::<u16>(self.port);
+    }
+
+    /// Read the frame contents from the buffer
+    ///
+    /// Should only be called when the frame type has been identified as
+    /// [`FrameType::PUNCH_IPV4_ADDR`] or [`FrameType::PUNCH_IPV6_ADDR`].
+    pub(crate) fn read<R: Buf>(bytes: &mut R, is_ipv6: bool) -> coding::Result<Self> {
+        let round = bytes.get()?;
+        let paired_with = bytes.get()?;
+        let ip = if is_ipv6 {
+            IpAddr::V6(bytes.get()?)
+        } else {
+            IpAddr::V4(bytes.get()?)
+        };
+        let port = bytes.get()?;
+        Ok(Self {
+            round,
+            paired_with,
+            ip,
+            port,
+        })
+    }
+
+    /// Give the [`SocketAddr`] encoded in the frame
+    pub(crate) fn socket_addr(&self) -> SocketAddr {
+        (self.ip, self.port).into()
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -1805,6 +1918,32 @@ mod test {
         assert_eq!(decoded.len(), 1);
         match decoded.pop().expect("non empty") {
             Frame::AddAddress(decoded) => assert_eq!(decoded, add_address),
+            x => panic!("incorrect frame {x:?}"),
+        }
+    }
+
+    /// Test that encoding and decoding [`AddAddress`] produces the same result
+    #[test]
+    fn test_punch_me_now_roundrip() {
+        let punch_me = PunchMeNow {
+            round: VarInt(42),
+            paired_with: VarInt(24),
+            ip: std::net::Ipv6Addr::LOCALHOST.into(),
+            port: 4242,
+        };
+        let mut buf = Vec::with_capacity(punch_me.size());
+        punch_me.write(&mut buf);
+
+        assert_eq!(
+            punch_me.size(),
+            buf.len(),
+            "expected written bytes and actual size differ"
+        );
+
+        let mut decoded = frames(buf);
+        assert_eq!(decoded.len(), 1);
+        match decoded.pop().expect("non empty") {
+            Frame::PunchMeNow(decoded) => assert_eq!(decoded, punch_me),
             x => panic!("incorrect frame {x:?}"),
         }
     }

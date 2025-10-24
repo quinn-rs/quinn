@@ -71,6 +71,7 @@ pub struct FrameStats {
     pub paths_blocked: u64,
     pub path_cids_blocked: u64,
     pub add_address: u64,
+    pub punch_me_now: u64,
 }
 
 impl FrameStats {
@@ -129,6 +130,7 @@ impl FrameStats {
                 self.path_cids_blocked = self.path_cids_blocked.saturating_add(1)
             }
             Frame::AddAddress(_) => self.add_address = self.add_address.saturating_add(1),
+            Frame::PunchMeNow(_) => self.punch_me_now = self.punch_me_now.saturating_add(1),
         }
     }
 }
