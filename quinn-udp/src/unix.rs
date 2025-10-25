@@ -256,8 +256,8 @@ impl UdpSocketState {
     }
 
     #[cfg(not(target_os = "linux"))]
-    pub fn recv_icmp_err(&self, _socket: UdpSockRef<'_>) -> io::Result<Option<ICMPError>> {
-        Ok(None)
+    pub fn recv_icmp_err(&self, socket: UdpSockRef<'_>) -> io::Result<Option<()>> {
+        recv_err(socket.0)
     }
 
     /// The maximum amount of segments which can be transmitted if a platform
@@ -912,11 +912,10 @@ fn recv_err(io: SockRef<'_>) -> io::Result<Option<IcmpError>> {
     Ok(None)
 }
 
-// I don't know about how other platforms handle this.
-//#[cfg(not(target_os = "linux"))]
-// fn recv_err(_io: &impl AsRawFd) -> io::Result<Option<(SocketAddr, ())>> {
-// Ok(None)
-// }
+#[cfg(not(target_os = "linux"))]
+fn recv_err(_io: SockRef<'_>) -> io::Result<Option<()>> {
+    Ok(None)
+}
 
 #[cfg(not(apple_slow))]
 // Chosen somewhat arbitrarily; might benefit from additional tuning.
