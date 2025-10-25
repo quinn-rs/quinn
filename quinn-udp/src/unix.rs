@@ -131,12 +131,12 @@ impl UdpSocketState {
             if let Err(_err) =
                 set_socket_option(&*io, libc::IPPROTO_IP, libc::IP_RECVERR, OPTION_ON)
             {
-                crate::log::warn!("Failed to enable IP_RECVERR: {}", _err);
+                crate::log::debug!("Failed to enable IP_RECVERR: {}", _err);
             }
         } else if let Err(_err) =
             set_socket_option(&*io, libc::IPPROTO_IPV6, libc::IPV6_RECVERR, OPTION_ON)
         {
-            crate::log::warn!("Failed to enable IPV6_RECVERR: {}", _err);
+            crate::log::debug!("Failed to enable IPV6_RECVERR: {}", _err);
         }
 
         let mut may_fragment = false;
@@ -255,10 +255,10 @@ impl UdpSocketState {
         recv_err(socket.0)
     }
 
-    // #[cfg(not(target_os = "linux"))]
-    // pub fn recv_icmp_err(&self, _socket: UdpSockRef<'_>) -> io::Result<Option<ICMPError>> {
-    //     Ok(None)
-    // }
+    #[cfg(not(target_os = "linux"))]
+    pub fn recv_icmp_err(&self, _socket: UdpSockRef<'_>) -> io::Result<Option<ICMPError>> {
+        Ok(None)
+    }
 
     /// The maximum amount of segments which can be transmitted if a platform
     /// supports Generic Send Offload (GSO).
@@ -832,7 +832,7 @@ fn recv_err(io: SockRef<'_>) -> io::Result<Option<IcmpError>> {
 
     let mut control = cmsg::Aligned([0u8; CMSG_LEN]);
 
-    // SEnding error info for now no data is recieved
+    // We don't need actual data, just the error info
     let mut iovec = libc::iovec {
         iov_base: std::ptr::null_mut(),
         iov_len: 0,
@@ -869,37 +869,39 @@ fn recv_err(io: SockRef<'_>) -> io::Result<Option<IcmpError>> {
         let is_ipv4_err = cmsg.cmsg_level == libc::IPPROTO_IP && cmsg.cmsg_type == IP_RECVERR;
         let is_ipv6_err = cmsg.cmsg_level == libc::IPPROTO_IPV6 && cmsg.cmsg_type == IPV6_RECVERR;
 
-        if is_ipv4_err || is_ipv6_err {
-            let err_data = unsafe { cmsg::decode::<SockExtendedErr, libc::cmsghdr>(cmsg) };
-
-            let addr = unsafe {
-                let addr_ptr = &addr_storage as *const _ as *const libc::sockaddr;
-                match (*addr_ptr).sa_family as i32 {
-                    libc::AF_INET => {
-                        let addr_in = &*(addr_ptr as *const libc::sockaddr_in);
-                        SocketAddr::V4(std::net::SocketAddrV4::new(
-                            std::net::Ipv4Addr::from(u32::from_be(addr_in.sin_addr.s_addr)),
-                            u16::from_be(addr_in.sin_port),
-                        ))
-                    }
-                    libc::AF_INET6 => {
-                        let addr_in6 = &*(addr_ptr as *const libc::sockaddr_in6);
-                        SocketAddr::V6(std::net::SocketAddrV6::new(
-                            std::net::Ipv6Addr::from(addr_in6.sin6_addr.s6_addr),
-                            u16::from_be(addr_in6.sin6_port),
-                            addr_in6.sin6_flowinfo,
-                            addr_in6.sin6_scope_id,
-                        ))
-                    }
-                    _ => return Ok(None), // Unknown address family
-                }
-            };
-
-            return Ok(Some(IcmpError {
-                addr,
-                kind: crate::IcmpErrorKind::from_extended_err(&err_data),
-            }));
+        if !is_ipv4_err && !is_ipv6_err {
+            continue;
         }
+
+        let err_data = unsafe { cmsg::decode::<SockExtendedErr, libc::cmsghdr>(cmsg) };
+
+        let dst = unsafe {
+            let addr_ptr = &addr_storage as *const _ as *const libc::sockaddr;
+            match (*addr_ptr).sa_family as i32 {
+                libc::AF_INET => {
+                    let addr_in = &*(addr_ptr as *const libc::sockaddr_in);
+                    SocketAddr::V4(std::net::SocketAddrV4::new(
+                        std::net::Ipv4Addr::from(u32::from_be(addr_in.sin_addr.s_addr)),
+                        u16::from_be(addr_in.sin_port),
+                    ))
+                }
+                libc::AF_INET6 => {
+                    let addr_in6 = &*(addr_ptr as *const libc::sockaddr_in6);
+                    SocketAddr::V6(std::net::SocketAddrV6::new(
+                        std::net::Ipv6Addr::from(addr_in6.sin6_addr.s6_addr),
+                        u16::from_be(addr_in6.sin6_port),
+                        addr_in6.sin6_flowinfo,
+                        addr_in6.sin6_scope_id,
+                    ))
+                }
+                _ => return Ok(None), // Unknown address family
+            }
+        };
+
+        return Ok(Some(IcmpError {
+            dst,
+            kind: crate::IcmpErrorKind::from_extended_err(&err_data),
+        }));
     }
     Ok(None)
 }

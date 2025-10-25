@@ -255,7 +255,7 @@ struct SockExtendedErr {
 #[cfg(target_os = "linux")]
 #[derive(Clone, Debug, Copy)]
 pub struct IcmpError {
-    pub addr: SocketAddr,
+    pub dst: SocketAddr,
     pub kind: IcmpErrorKind,
 }
 #[cfg(target_os = "linux")]

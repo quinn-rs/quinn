@@ -462,7 +462,7 @@ fn test_ip_recverr() {
     match state.recv_icmp_err((&socket).into()) {
         Ok(Some(icmp_err)) => {
             eprintln!("icmp packet recieved");
-            assert_eq!(unreachable_addr.ip(), icmp_err.addr.ip());
+            assert_eq!(unreachable_addr.ip(), icmp_err.dst.ip());
         }
         Ok(None) => {
             eprintln!("No ICMP Recieved");
@@ -514,7 +514,7 @@ fn test_ipv6_recverr() {
     match state.recv_icmp_err((&socket).into()) {
         Ok(Some(icmp_err)) => {
             eprintln!("Recived ICMPV6 Packets");
-            assert_eq!(unreachable_addr.ip(), icmp_err.addr.ip());
+            assert_eq!(unreachable_addr.ip(), icmp_err.dst.ip());
         }
         Ok(None) => {
             eprintln!("No ICMPV6 packets are recieved")
