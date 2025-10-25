@@ -254,13 +254,13 @@ struct SockExtendedErr {
 
 #[cfg(target_os = "linux")]
 #[derive(Clone, Debug, Copy)]
-pub struct ICMPError {
+pub struct IcmpError {
     pub addr: SocketAddr,
-    pub kind: ICMPErrorKind,
+    pub kind: IcmpErrorKind,
 }
 #[cfg(target_os = "linux")]
 #[derive(Clone, Debug, Copy, PartialEq, Eq)]
-pub enum ICMPErrorKind {
+pub enum IcmpErrorKind {
     NetworkUnreachable,
     HostUnreachable,
     PortUnreachable,
@@ -269,7 +269,7 @@ pub enum ICMPErrorKind {
 }
 
 #[cfg(target_os = "linux")]
-impl ICMPErrorKind {
+impl IcmpErrorKind {
     fn from_extended_err(err: &SockExtendedErr) -> Self {
         match (err.ee_origin, err.ee_type, err.ee_code) {
             (libc::SO_EE_ORIGIN_ICMP, 3, 0) => Self::NetworkUnreachable,

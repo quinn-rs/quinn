@@ -15,7 +15,7 @@ use std::{
 use socket2::SockRef;
 
 #[cfg(target_os = "linux")]
-use crate::{ICMPError, SockExtendedErr};
+use crate::{IcmpError, SockExtendedErr};
 
 use super::{
     EcnCodepoint, IO_ERROR_LOG_INTERVAL, RecvMeta, Transmit, UdpSockRef, cmsg, log_sendmsg_error,
@@ -251,7 +251,7 @@ impl UdpSocketState {
     }
 
     #[cfg(target_os = "linux")]
-    pub fn recv_icmp_err(&self, socket: UdpSockRef<'_>) -> io::Result<Option<ICMPError>> {
+    pub fn recv_icmp_err(&self, socket: UdpSockRef<'_>) -> io::Result<Option<IcmpError>> {
         recv_err(socket.0)
     }
 
@@ -825,7 +825,7 @@ fn decode_recv(
 }
 
 #[cfg(target_os = "linux")]
-fn recv_err(io: SockRef<'_>) -> io::Result<Option<ICMPError>> {
+fn recv_err(io: SockRef<'_>) -> io::Result<Option<IcmpError>> {
     use std::mem;
 
     let fd = io.as_raw_fd();
@@ -866,10 +866,10 @@ fn recv_err(io: SockRef<'_>) -> io::Result<Option<ICMPError>> {
         const IP_RECVERR: libc::c_int = 11;
         const IPV6_RECVERR: libc::c_int = 25;
 
-        let is_ip_err = cmsg.cmsg_level == libc::IPPROTO_IP && cmsg.cmsg_type == IP_RECVERR;
+        let is_ipv4_err = cmsg.cmsg_level == libc::IPPROTO_IP && cmsg.cmsg_type == IP_RECVERR;
         let is_ipv6_err = cmsg.cmsg_level == libc::IPPROTO_IPV6 && cmsg.cmsg_type == IPV6_RECVERR;
 
-        if is_ip_err || is_ipv6_err {
+        if is_ipv4_err || is_ipv6_err {
             let err_data = unsafe { cmsg::decode::<SockExtendedErr, libc::cmsghdr>(cmsg) };
 
             let addr = unsafe {
@@ -895,9 +895,9 @@ fn recv_err(io: SockRef<'_>) -> io::Result<Option<ICMPError>> {
                 }
             };
 
-            return Ok(Some(ICMPError {
+            return Ok(Some(IcmpError {
                 addr,
-                kind: crate::ICMPErrorKind::from_extended_err(&err_data),
+                kind: crate::IcmpErrorKind::from_extended_err(&err_data),
             }));
         }
     }
