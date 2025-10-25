@@ -238,3 +238,52 @@ impl EcnCodepoint {
         })
     }
 }
+
+#[cfg(target_os = "linux")]
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+struct SockExtendedErr {
+    ee_errno: u32,
+    ee_origin: u8,
+    ee_type: u8,
+    ee_code: u8,
+    ee_pad: u8,
+    ee_info: u32,
+    ee_data: u32,
+}
+
+#[cfg(target_os = "linux")]
+#[derive(Clone, Debug, Copy)]
+pub struct IcmpError {
+    pub dst: SocketAddr,
+    pub kind: IcmpErrorKind,
+}
+#[cfg(target_os = "linux")]
+#[derive(Clone, Debug, Copy, PartialEq, Eq)]
+pub enum IcmpErrorKind {
+    NetworkUnreachable,
+    HostUnreachable,
+    PortUnreachable,
+    PacketTooBig,
+    Other { icmp_type: u8, icmp_code: u8 },
+}
+
+#[cfg(target_os = "linux")]
+impl IcmpErrorKind {
+    fn from_extended_err(err: &SockExtendedErr) -> Self {
+        match (err.ee_origin, err.ee_type, err.ee_code) {
+            (libc::SO_EE_ORIGIN_ICMP, 3, 0) => Self::NetworkUnreachable,
+            (libc::SO_EE_ORIGIN_ICMP, 3, 1) => Self::HostUnreachable,
+            (libc::SO_EE_ORIGIN_ICMP, 3, 3) => Self::PortUnreachable,
+            (libc::SO_EE_ORIGIN_ICMP, 3, 4) => Self::PacketTooBig,
+            (libc::SO_EE_ORIGIN_ICMP6, 1, 0) => Self::NetworkUnreachable,
+            (libc::SO_EE_ORIGIN_ICMP6, 1, 1) => Self::HostUnreachable,
+            (libc::SO_EE_ORIGIN_ICMP6, 1, 4) => Self::PortUnreachable,
+            (libc::SO_EE_ORIGIN_ICMP6, 2, 0) => Self::PacketTooBig,
+            _ => Self::Other {
+                icmp_type: err.ee_type,
+                icmp_code: err.ee_code,
+            },
+        }
+    }
+}
