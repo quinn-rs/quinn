@@ -814,6 +814,7 @@ impl Connection {
             .insert(path_id, pn_space);
         &mut path.data
     }
+
     /// Returns packets to transmit
     ///
     /// Connections should be polled for transmit after:
@@ -1666,7 +1667,12 @@ impl Connection {
                 // permit NAT-rebinding-like migration.
                 if let Some(known_remote) = self.path(path_id).map(|path| path.remote) {
                     if remote != known_remote && !self.side.remote_may_migrate(&self.state) {
-                        trace!("discarding packet from unrecognized peer {}", remote);
+                        trace!(
+                            ?path_id,
+                            ?remote,
+                            path_remote = ?self.path(path_id).map(|p| p.remote),
+                            "discarding packet from unrecognized peer"
+                        );
                         return;
                     }
                 }
@@ -4336,7 +4342,7 @@ impl Connection {
                     // be treated as a connection error of type PROTOCOL_VIOLATION.
                     // Ref <https://www.ietf.org/archive/id/draft-ietf-quic-multipath-14.html#name-paths_blocked-and-path_cids>
                     if self.is_multipath_negotiated() {
-                        if self.local_max_path_id > path_id {
+                        if path_id > self.local_max_path_id {
                             return Err(TransportError::PROTOCOL_VIOLATION(
                                 "PATH_CIDS_BLOCKED path identifier was larger than local maximum",
                             ));
