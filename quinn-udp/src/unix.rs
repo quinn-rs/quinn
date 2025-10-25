@@ -894,7 +894,13 @@ fn recv_err(io: SockRef<'_>) -> io::Result<Option<IcmpError>> {
                         addr_in6.sin6_scope_id,
                     ))
                 }
-                _ => return Ok(None), // Unknown address family
+                _ => {
+                    crate::log::warn!(
+                        "Ignoring ICMP error with unknown address family: {}",
+                        addr_storage.ss_family
+                    );
+                    continue;
+                }
             }
         };
 
