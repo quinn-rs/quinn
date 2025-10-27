@@ -196,9 +196,7 @@ impl TransportParameters {
             }),
             address_discovery_role: config.address_discovery_role,
             initial_max_path_id: config.get_initial_max_path_id(),
-            nat_traversal: config
-                .nat_traversal_concurrency_limit
-                .map(|limit| VarInt::from_u32(limit.get())),
+            nat_traversal: config.get_nat_traversal_concurrency_limit(),
             ..Self::default()
         }
     }

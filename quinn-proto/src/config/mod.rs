@@ -30,6 +30,9 @@ mod transport;
 pub use transport::QlogConfig;
 pub use transport::{AckFrequencyConfig, IdleTimeout, MtuDiscoveryConfig, TransportConfig};
 
+#[cfg(doc)]
+pub use transport::DEFAULT_CONCURRENT_MULTIPATH_PATHS_WHEN_ENABLED;
+
 /// Global configuration for the endpoint, affecting all connections
 ///
 /// Default values should be suitable for most internet applications.

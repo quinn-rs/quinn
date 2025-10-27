@@ -55,6 +55,8 @@ pub use connection::qlog::QlogStream;
 pub use rustls;
 
 mod config;
+#[cfg(doc)]
+pub use config::DEFAULT_CONCURRENT_MULTIPATH_PATHS_WHEN_ENABLED;
 #[cfg(feature = "qlog")]
 pub use config::QlogConfig;
 pub use config::{
