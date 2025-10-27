@@ -118,6 +118,9 @@ macro_rules! make_struct {
 
             // Multipath extension
             pub(crate) initial_max_path_id: Option<PathId>,
+
+            /// Nat traversal draft
+            pub nat_traversal: Option<VarInt>,
         }
 
         // We deliberately don't implement the `Default` trait, since that would be public, and
@@ -143,6 +146,7 @@ macro_rules! make_struct {
                     write_order: None,
                     address_discovery_role: address_discovery::Role::Disabled,
                     initial_max_path_id: None,
+                    nat_traversal: None,
                 }
             }
         }
@@ -192,6 +196,9 @@ impl TransportParameters {
             }),
             address_discovery_role: config.address_discovery_role,
             initial_max_path_id: config.get_initial_max_path_id(),
+            nat_traversal: config
+                .nat_traversal_concurrency_limit
+                .map(|limit| VarInt::from_u32(limit.get())),
             ..Self::default()
         }
     }
@@ -209,6 +216,7 @@ impl TransportParameters {
             || cached.max_datagram_frame_size > self.max_datagram_frame_size
             || cached.grease_quic_bit && !self.grease_quic_bit
             || cached.address_discovery_role != self.address_discovery_role
+            || cached.nat_traversal != self.nat_traversal
         {
             return Err(TransportError::PROTOCOL_VIOLATION(
                 "0-RTT accepted with incompatible transport parameters",
@@ -408,6 +416,13 @@ impl TransportParameters {
                         w.write(val);
                     }
                 }
+                TransportParameterId::NatTraversal => {
+                    if let Some(val) = self.nat_traversal {
+                        w.write_var(id as u64);
+                        w.write_var(val.size() as u64);
+                        w.write(val);
+                    }
+                }
                 id => {
                     macro_rules! write_params {
                         {$($(#[$doc:meta])* $name:ident ($id:ident) = $default:expr,)*} => {
@@ -532,6 +547,22 @@ impl TransportParameters {
                     }
 
                     params.initial_max_path_id = Some(value);
+                }
+                TransportParameterId::NatTraversal => {
+                    if params.nat_traversal.is_some() {
+                        return Err(Error::Malformed);
+                    }
+
+                    let value: VarInt = r.get()?;
+                    if len != value.size() {
+                        return Err(Error::Malformed);
+                    }
+
+                    if value.into_inner() == 0 {
+                        return Err(Error::IllegalValue);
+                    }
+
+                    params.nat_traversal = Some(value);
                 }
                 _ => {
                     macro_rules! parse {
@@ -701,11 +732,14 @@ pub(crate) enum TransportParameterId {
 
     // https://datatracker.ietf.org/doc/html/draft-ietf-quic-multipath
     InitialMaxPathId = 0x0f739bbc1b666d0c,
+
+    // https://www.ietf.org/archive/id/draft-seemann-quic-nat-traversal-02.html
+    NatTraversal = 0x3d7e9f0bca12fea6,
 }
 
 impl TransportParameterId {
     /// Array with all supported transport parameter IDs
-    const SUPPORTED: [Self; 23] = [
+    const SUPPORTED: [Self; 24] = [
         Self::MaxIdleTimeout,
         Self::MaxUdpPayloadSize,
         Self::InitialMaxData,
@@ -729,6 +763,7 @@ impl TransportParameterId {
         Self::MinAckDelayDraft07,
         Self::ObservedAddr,
         Self::InitialMaxPathId,
+        Self::NatTraversal,
     ];
 }
 

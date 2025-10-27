@@ -62,6 +62,8 @@ pub struct TransportConfig {
     pub(crate) default_path_max_idle_timeout: Option<Duration>,
     pub(crate) default_path_keep_alive_interval: Option<Duration>,
 
+    pub(crate) nat_traversal_concurrency_limit: Option<NonZeroU32>,
+
     pub(crate) qlog_sink: QlogSink,
 }
 
@@ -425,6 +427,16 @@ impl TransportConfig {
             .map(Into::into)
     }
 
+    /// Sets the maximum number of concurrent nat traversal attempts to initiate as a client, or to
+    /// allow as a server.
+    ///
+    /// Setting this to any nonzero value will enable the Nat Traversal Extension for QUIC,
+    /// see <https://www.ietf.org/archive/id/draft-seemann-quic-nat-traversal-02.html>
+    pub fn set_max_nat_traversal_concurrent_attempts(&mut self, max_concurrent: u32) -> &mut Self {
+        self.nat_traversal_concurrency_limit = NonZeroU32::new(max_concurrent);
+        self
+    }
+
     /// qlog capture configuration to use for a particular connection
     #[cfg(feature = "qlog")]
     pub fn qlog_stream(&mut self, stream: Option<QlogStream>) -> &mut Self {
@@ -479,6 +491,10 @@ impl Default for TransportConfig {
             max_concurrent_multipath_paths: None,
             default_path_max_idle_timeout: None,
             default_path_keep_alive_interval: None,
+
+            // nat traversal disabled by default
+            nat_traversal_concurrency_limit: None,
+
             qlog_sink: QlogSink::default(),
         }
     }
@@ -516,6 +532,7 @@ impl fmt::Debug for TransportConfig {
             max_concurrent_multipath_paths,
             default_path_max_idle_timeout,
             default_path_keep_alive_interval,
+            nat_traversal_concurrency_limit,
             qlog_sink,
         } = self;
         let mut s = fmt.debug_struct("TransportConfig");
@@ -558,6 +575,10 @@ impl fmt::Debug for TransportConfig {
             .field(
                 "default_path_keep_alive_interval",
                 default_path_keep_alive_interval,
+            )
+            .field(
+                "nat_traversal_concurrency_limit",
+                nat_traversal_concurrency_limit,
             );
         if cfg!(feature = "qlog") {
             s.field("qlog_stream", &qlog_sink.is_enabled());
