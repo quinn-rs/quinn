@@ -140,8 +140,12 @@ impl Path {
 
     /// Closes this path
     ///
-    /// The passed in `error_code` is sent to the remote.
-    /// The future will resolve to the `error_code` received from the remote.
+    /// The passed in `error_code` is sent to the remote.  The future will resolve to the
+    /// `error_code` received from the remote.
+    ///
+    /// The future will resolve when all the path state is dropped.  This only happens after
+    /// the remote has confirmed the path as closed **and** after an additional timeout to
+    /// give any in-flight packets the time to arrive.
     pub fn close(&self, error_code: VarInt) -> Result<ClosePath, ClosePathError> {
         let (on_path_close_send, on_path_close_recv) = oneshot::channel();
         {
