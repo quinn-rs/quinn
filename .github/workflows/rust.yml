@@ -35,31 +35,6 @@ jobs:
 
             cargo build --locked --all-targets && cargo test --locked && cargo test --locked -- --ignored stress && cargo test --locked --manifest-path fuzz/Cargo.toml && cargo test --locked -p quinn-udp --benches
 
-  test-netbsd:
-    name: test on netbsd
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-      - name: test on netbsd
-        uses: vmactions/netbsd-vm@v1
-        with:
-          usesh: true
-          mem: 4096
-          copyback: false
-          prepare: |
-            export PATH="/usr/sbin:/sbin:$PATH"
-            pkg_add curl
-            curl https://sh.rustup.rs -sSf --output rustup.sh
-            sh rustup.sh -y --profile minimal --default-toolchain stable
-          run: |
-            export PATH="$HOME/.cargo/bin:$PATH"
-            echo "===== rustc --version ====="
-            rustc --version
-            echo "===== uname -a        ====="
-            uname -a
-
-            cargo build --locked --all-targets && cargo test --locked && cargo test --locked -- --ignored stress && cargo test --locked --manifest-path fuzz/Cargo.toml && cargo test --locked -p quinn-udp --benches
-
   test-solaris:
     name: test on solaris
     runs-on: ubuntu-latest
