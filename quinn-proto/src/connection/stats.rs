@@ -1,11 +1,14 @@
 //! Connection statistics
 
 use crate::{Dir, Duration, frame::Frame};
+#[cfg(feature = "serde")]
+use serde::Serialize;
 
 /// Statistics about UDP datagrams transmitted or received on a connection
 ///
 /// All QUIC packets are carried by UDP datagrams. Hence, these statistics cover all traffic on a connection.
 #[derive(Default, Debug, Copy, Clone)]
+#[cfg_attr(feature = "serde", derive(Serialize))]
 #[non_exhaustive]
 pub struct UdpStats {
     /// The amount of UDP datagrams observed
@@ -28,6 +31,7 @@ impl UdpStats {
 
 /// Number of frames transmitted or received of each frame type
 #[derive(Default, Copy, Clone)]
+#[cfg_attr(feature = "serde", derive(Serialize))]
 #[non_exhaustive]
 #[allow(missing_docs)]
 pub struct FrameStats {
@@ -132,6 +136,7 @@ impl std::fmt::Debug for FrameStats {
 
 /// Statistics related to a transmission path
 #[derive(Debug, Default, Copy, Clone)]
+#[cfg_attr(feature = "serde", derive(Serialize))]
 #[non_exhaustive]
 pub struct PathStats {
     /// Current best estimate of this connection's latency (round-trip-time)
@@ -159,6 +164,7 @@ pub struct PathStats {
 
 /// Connection statistics
 #[derive(Debug, Default, Copy, Clone)]
+#[cfg_attr(feature = "serde", derive(Serialize))]
 #[non_exhaustive]
 pub struct ConnectionStats {
     /// Statistics about UDP datagrams transmitted on a connection

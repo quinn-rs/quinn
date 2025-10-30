@@ -44,6 +44,8 @@ tracing-log = ["tracing/log", "proto/tracing-log", "udp/tracing-log"]
 rustls-log = ["rustls?/logging"]
 # Enable qlog support
 qlog = ["proto/qlog"]
+# Add serde support.
+serde = ["dep:serde"]
 
 # Internal (PRIVATE!) features used to aid testing.
 # Don't rely on these whatsoever. They may disappear at any time.
@@ -64,6 +66,7 @@ thiserror = { workspace = true }
 tracing =  { workspace = true }
 tokio = { workspace = true }
 udp = { package = "quinn-udp", path = "../quinn-udp", version = "0.6", default-features = false, features = ["tracing"] }
+serde = { workspace = true, optional = true }
 
 [target.'cfg(not(all(target_family = "wasm", target_os = "unknown")))'.dependencies]
 socket2 = { workspace = true }

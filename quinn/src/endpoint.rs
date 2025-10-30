@@ -25,6 +25,8 @@ use proto::{
     EndpointEvent, ServerConfig,
 };
 use rustc_hash::FxHashMap;
+#[cfg(feature = "serde")]
+use serde::Serialize;
 #[cfg(all(not(wasm_browser), any(feature = "aws-lc-rs", feature = "ring"),))]
 use socket2::{Domain, Protocol, Socket, Type};
 use tokio::sync::{Notify, futures::Notified, mpsc};
@@ -334,6 +336,7 @@ impl Endpoint {
 /// Statistics on [Endpoint] activity
 #[non_exhaustive]
 #[derive(Debug, Default, Copy, Clone)]
+#[cfg_attr(feature = "serde", derive(Serialize))]
 pub struct EndpointStats {
     /// Cummulative number of Quic handshakes accepted by this [Endpoint]
     pub accepted_handshakes: u64,
