@@ -37,6 +37,56 @@
 //! authority. If this is infeasible--for example, if servers are short-lived or not associated
 //! with a domain name--then as with TLS, self-signed certificates can be used to provide
 //! encryption alone.
+//!
+//! # Feature flags
+//!
+//! ### Crypto features
+//!
+//! These features control which crypto providers quinn will use. Currently rustls is the only one baked into this crate.
+//! See [quinn-boring](https://github.com/quinn-rs/quinn-boring/) for an example of integrating another crypto provider.
+//!
+//! - `rustls`: Enable rustls as the crypto provider for quinn.
+//!
+//! ### Miscellaneous features
+//!
+//! - `bloom`: Enabled by default. Enables `BloomTokenLog`, and uses it by default.
+//! - `platform-verifier`: Enabled by default. Provides `ClientConfig::with_platform_verifier()` convenience method.
+//! - `futures-io`: Enables `futures::io::{AsyncRead, AsyncWrite}` support for streams.
+//!
+//! ### Logging features
+//!
+//! This will cause a dependency on the `log` crate and will cause logs to be emitted at
+//! various log levels, for code in quinn or its dependencies.
+//!
+//! - `qlog`: Enabled QUIC logs in the [qlog format](https://quicwg.org/qlog/draft-ietf-quic-qlog-main-schema.html).
+//! - `rustls-log`: Enables logging in the rustls create.
+//! - `lock_tracking`: Records how long locks are held, and warns if they are held >= 1ms.
+//! - `tracing-log`: Configure `tracing` to log events via `log` if no `tracing` subscriber exists.
+//!
+//! ### Crypto features
+//!
+//! The three supported rustls backends are rustls+ring, rustls+aws-lc-rs and rustls+aws-lc-rs-fips.
+//! Note the feature default for rustls is to use aws-lc-rs and the default for quinn is to use ring. This means you might
+//! want `default-features = false` on one library or the other if you don't intend to use multiple rustls backends.
+//!
+//! - `rustls-ring`: Enables ring crypto backend for quinn and rustls. Requires the `ring` feature.
+//! - `ring`: Will enable ring for quinn only. Generally used with `rustls-ring`.
+//! - `rustls-aws-lc-rs`: Enables aws-lc-rs crypto backend for quinn and rustls. Requires the `aws-lc-rs` feature.
+//! - `aws-lc-rs`: Enables aws-lc-rs crypto backend for quinn only. Generally used with `rustls-aws-lc-rs`.
+//! - `rustls-aws-lc-rs-fips`: Enables aws-lc-rs-fips crypto backend for quinn and rustls. Requires the aws-lc-rs-fips feature.
+//! - `aws-lc-rs-fips`: Enables aws-lc-rs-fips for quinn only. Generally used with `rustls-aws-lc-rs-fips`.
+//!
+//! ### Runtime features
+//!
+//! These features will integrate quinn with different async runtimes.
+//! The convenience functions `Endpoint::server` and `Endpoint::client` will only work with the tokio or
+//! smol runtime features enabled. If you're using a different or custom runtime you'll need to use `Endpoint::new` and
+//! pass in a `Arc<dyn Runtime>` directly.
+//!
+//! - `runtime-tokio`: Enable integration with the tokio async runtime.
+//! - `runtime-smol`: Enable integration with the smol runtime.
+//! - `smol`: Also enable integration with the smol runtime.
+//! - `async-io`: Also required to enable integration with the smol runtime.
 #![warn(missing_docs)]
 #![warn(unreachable_pub)]
 #![warn(clippy::use_self)]
