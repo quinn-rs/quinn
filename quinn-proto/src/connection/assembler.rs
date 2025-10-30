@@ -314,8 +314,9 @@ impl PartialEq for Buffer {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 enum State {
+    #[default]
     Ordered,
     Unordered {
         /// The set of offsets that have been received from the peer, including portions not yet
@@ -327,12 +328,6 @@ enum State {
 impl State {
     fn is_ordered(&self) -> bool {
         matches!(self, Self::Ordered)
-    }
-}
-
-impl Default for State {
-    fn default() -> Self {
-        Self::Ordered
     }
 }
 
