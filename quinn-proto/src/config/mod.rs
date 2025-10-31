@@ -18,8 +18,9 @@ use crate::NoneTokenLog;
 #[cfg(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring"))]
 use crate::crypto::rustls::{QuicServerConfig, configured_provider};
 use crate::{
-    DEFAULT_SUPPORTED_VERSIONS, Duration, MAX_CID_SIZE, RandomConnectionIdGenerator, SystemTime,
-    TokenLog, TokenMemoryCache, TokenStore, VarInt, VarIntBoundsExceeded,
+    DEFAULT_SUPPORTED_VERSIONS, Duration, MAX_CID_SIZE, MIN_INITIAL_SIZE,
+    RandomConnectionIdGenerator, SystemTime, TokenLog, TokenMemoryCache, TokenStore, VarInt,
+    VarIntBoundsExceeded,
     cid_generator::{ConnectionIdGenerator, HashedConnectionIdGenerator},
     crypto::{self, HandshakeTokenKey, HmacKey},
     shared::ConnectionId,
@@ -48,6 +49,7 @@ pub struct EndpointConfig {
     pub(crate) min_reset_interval: Duration,
     /// Optional seed to be used internally for random number generation
     pub(crate) rng_seed: Option<[u8; 32]>,
+    pub(crate) min_initial_size: u16,
 }
 
 impl EndpointConfig {
@@ -63,6 +65,7 @@ impl EndpointConfig {
             grease_quic_bit: true,
             min_reset_interval: Duration::from_millis(20),
             rng_seed: None,
+            min_initial_size: MIN_INITIAL_SIZE,
         }
     }
 
@@ -157,6 +160,25 @@ impl EndpointConfig {
     /// entropy available).
     pub fn rng_seed(&mut self, seed: Option<[u8; 32]>) -> &mut Self {
         self.rng_seed = seed;
+        self
+    }
+
+    /// Minimum size of the first Initial packet. You should NEVER consider calling this function
+    /// under any circumstances.
+    ///
+    /// <div class="warning">
+    ///
+    /// According to the quinn specification, this value MUST BE 1200. Modifying this value may have
+    /// unexpected consequences.
+    ///
+    /// </div>
+    ///
+    /// # Safety
+    ///
+    /// This function should only be called when you do not need to consider interoperability and know
+    /// exactly what you are doing.
+    pub unsafe fn min_initial_size(&mut self, value: u16) -> &mut Self {
+        self.min_initial_size = value;
         self
     }
 }

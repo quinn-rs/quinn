@@ -15,8 +15,8 @@ use thiserror::Error;
 use tracing::{debug, error, trace, warn};
 
 use crate::{
-    Duration, INITIAL_MTU, Instant, MAX_CID_SIZE, MIN_INITIAL_SIZE, RESET_TOKEN_SIZE, ResetToken,
-    Side, Transmit, TransportConfig, TransportError,
+    Duration, INITIAL_MTU, Instant, MAX_CID_SIZE, RESET_TOKEN_SIZE, ResetToken, Side, Transmit,
+    TransportConfig, TransportError,
     cid_generator::ConnectionIdGenerator,
     coding::BufMutExt,
     config::{ClientConfig, EndpointConfig, ServerConfig},
@@ -430,7 +430,7 @@ impl Endpoint {
                 .map(DatagramEvent::Response);
         };
 
-        if datagram_len < MIN_INITIAL_SIZE as usize {
+        if datagram_len < self.config.min_initial_size as usize {
             debug!("ignoring short initial for connection {}", dst_cid);
             return None;
         }
