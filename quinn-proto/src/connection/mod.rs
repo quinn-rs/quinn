@@ -16,8 +16,8 @@ use tracing::{debug, error, trace, trace_span, warn};
 
 use crate::{
     Dir, Duration, EndpointConfig, Frame, INITIAL_MTU, Instant, MAX_CID_SIZE, MAX_STREAM_COUNT,
-    MIN_INITIAL_SIZE, Side, StreamId, TIMER_GRANULARITY, TokenStore, Transmit, TransportError,
-    TransportErrorCode, VarInt,
+    Side, StreamId, TIMER_GRANULARITY, TokenStore, Transmit, TransportError, TransportErrorCode,
+    VarInt,
     cid_generator::ConnectionIdGenerator,
     cid_queue::CidQueue,
     coding::BufMutExt,
@@ -634,7 +634,7 @@ impl Connection {
                 // Finish current packet
                 if let Some(mut builder) = builder_storage.take() {
                     if pad_datagram {
-                        builder.pad_to(MIN_INITIAL_SIZE);
+                        builder.pad_to(self.endpoint_config.min_initial_size);
                     }
 
                     if num_datagrams > 1 || pad_datagram_to_mtu {
@@ -857,7 +857,7 @@ impl Connection {
                     buf.write(frame::FrameType::PATH_RESPONSE);
                     buf.write(token);
                     self.stats.frame_tx.path_response += 1;
-                    builder.pad_to(MIN_INITIAL_SIZE);
+                    builder.pad_to(self.endpoint_config.min_initial_size);
                     builder.finish_and_track(
                         now,
                         self,
@@ -912,7 +912,7 @@ impl Connection {
         // Finish the last packet
         if let Some(mut builder) = builder_storage {
             if pad_datagram {
-                builder.pad_to(MIN_INITIAL_SIZE);
+                builder.pad_to(self.endpoint_config.min_initial_size);
             }
 
             // If this datagram is a loss probe and `segment_size` is larger than `INITIAL_MTU`,
@@ -1026,7 +1026,7 @@ impl Connection {
             SpaceId::Data,
             "PATH_CHALLENGE queued without 1-RTT keys"
         );
-        buf.reserve(MIN_INITIAL_SIZE as usize);
+        buf.reserve(self.endpoint_config.min_initial_size as usize);
 
         let buf_capacity = buf.capacity();
 
@@ -1054,7 +1054,7 @@ impl Connection {
         // to at least the smallest allowed maximum datagram size of 1200 bytes,
         // unless the anti-amplification limit for the path does not permit
         // sending a datagram of this size
-        builder.pad_to(MIN_INITIAL_SIZE);
+        builder.pad_to(self.endpoint_config.min_initial_size);
 
         builder.finish(self, now, buf);
         self.stats.udp_tx.on_sent(1, buf.len());
