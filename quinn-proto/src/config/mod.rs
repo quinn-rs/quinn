@@ -18,8 +18,9 @@ use crate::NoneTokenLog;
 #[cfg(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring"))]
 use crate::crypto::rustls::{QuicServerConfig, configured_provider};
 use crate::{
-    DEFAULT_SUPPORTED_VERSIONS, Duration, MAX_CID_SIZE, RandomConnectionIdGenerator, SystemTime,
-    TokenLog, TokenMemoryCache, TokenStore, VarInt, VarIntBoundsExceeded,
+    DEFAULT_SUPPORTED_VERSIONS, Duration, MAX_CID_SIZE, MIN_INITIAL_SIZE,
+    RandomConnectionIdGenerator, SystemTime, TokenLog, TokenMemoryCache, TokenStore, VarInt,
+    VarIntBoundsExceeded,
     cid_generator::{ConnectionIdGenerator, HashedConnectionIdGenerator},
     crypto::{self, HandshakeTokenKey, HmacKey},
     shared::ConnectionId,
@@ -48,6 +49,7 @@ pub struct EndpointConfig {
     pub(crate) min_reset_interval: Duration,
     /// Optional seed to be used internally for random number generation
     pub(crate) rng_seed: Option<[u8; 32]>,
+    pub(crate) min_initial_size: u16,
 }
 
 impl EndpointConfig {
@@ -63,6 +65,7 @@ impl EndpointConfig {
             grease_quic_bit: true,
             min_reset_interval: Duration::from_millis(20),
             rng_seed: None,
+            min_initial_size: MIN_INITIAL_SIZE,
         }
     }
 
@@ -157,6 +160,51 @@ impl EndpointConfig {
     /// entropy available).
     pub fn rng_seed(&mut self, seed: Option<[u8; 32]>) -> &mut Self {
         self.rng_seed = seed;
+        self
+    }
+
+    /// Sets the minimum size of the very first Initial flight (handshake packets).
+    ///
+    /// If the first Initial packet is smaller than this value, Quinn will pad it
+    /// up to this size.
+    ///
+    /// <div class="warning">
+    ///
+    /// According to the QUIC specification (RFC 9000), the Initial packet MUST be
+    /// at least **1200 bytes**. Setting this value lower than 1200 can make the
+    /// connection fail when communicating with other QUIC implementations.
+    ///
+    /// Setting this value too large may cause the Initial packet to exceed the
+    /// path MTU, resulting in **handshake failure due to fragmentation loss**.
+    ///
+    /// </div>
+    ///
+    /// ## Safety
+    ///
+    /// Only use this when:
+    /// - You fully control **both endpoints**, and
+    /// - You know the **actual path MTU**, and intentionally violate QUIC
+    ///   interoperability requirements.
+    ///
+    /// ## Relationship to [`TransportConfig::min_mtu`]
+    ///
+    /// - `min_initial_size` affects **only the Initial flight** (handshake packets).
+    ///   It does *not* influence MTU probing or later packet sizes.
+    ///
+    /// - `TransportConfig::min_mtu` defines the **minimum allowed MTU** for normal
+    ///   data transmission **after the handshake**. It participates in MTU
+    ///   discovery (PMTUD/PLPMTUD) and controls how aggressively Quinn may lower MTU.
+    ///
+    /// | Setting                          | Affects                     | Used for                        |
+    /// |----------------------------------|-----------------------------|----------------------------------|
+    /// | `min_initial_size` (this fn)     | Initial packets only        | Faster handshake / experiments   |
+    /// | `TransportConfig::min_mtu`       | Packets after handshake     | MTU discovery & connection stability |
+    ///
+    /// Do **not** confuse the two:
+    /// `min_initial_size` increases handshake packet size,
+    /// while `min_mtu` constrains runtime MTU lowering.
+    pub unsafe fn min_initial_size(&mut self, value: u16) -> &mut Self {
+        self.min_initial_size = value;
         self
     }
 }
