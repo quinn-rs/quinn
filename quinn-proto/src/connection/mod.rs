@@ -1523,7 +1523,7 @@ impl Connection {
                     Duration::from_micros(ack.delay << self.peer_params.ack_delay_exponent.0),
                 )
             };
-            let rtt = instant_saturating_sub(now, self.spaces[space].largest_acked_packet_sent);
+            let rtt = now.saturating_duration_since(self.spaces[space].largest_acked_packet_sent);
             self.path.rtt.update(ack_delay, rtt);
             if self.path.first_packet_after_rtt_sample.is_none() {
                 self.path.first_packet_after_rtt_sample =
@@ -4054,10 +4054,6 @@ pub enum Event {
     DatagramReceived,
     /// One or more application datagrams have been sent after blocking
     DatagramsUnblocked,
-}
-
-fn instant_saturating_sub(x: Instant, y: Instant) -> Duration {
-    if x > y { x - y } else { Duration::ZERO }
 }
 
 fn get_max_ack_delay(params: &TransportParameters) -> Duration {
