@@ -1567,14 +1567,14 @@ impl AddAddress {
 /// Conjuction of the information contained in the reach out frames
 /// ([`FrameType::REACH_OUT_AT_IPV4`], [`FrameType::REACH_OUT_AT_IPV6`])
 #[derive(Debug, PartialEq, Eq, Clone)]
-// TODO(@divma): remove. Beg the draft people for a better name
+// TODO(@divma): remove
 #[allow(dead_code)]
 pub(crate) struct ReachOut {
     /// The sequence number of the NAT Traversal attempts
-    // TODO(@divma): type assumed, spec is un-spec-ific
     pub(crate) round: VarInt,
-    /// The sequence number of the address that was paired with this address
-    pub(crate) paired_with: VarInt,
+    /// The [`PathId`] that will be used to send challenges. This same id should be used by the
+    /// server.
+    pub(crate) path_id: PathId,
     /// Address to use
     pub(crate) ip: IpAddr,
     /// Port to use with this address
@@ -1587,7 +1587,7 @@ impl ReachOut {
     /// Smallest number of bytes this type of frame is guaranteed to fit within
     pub(crate) const SIZE_BOUND: usize = Self {
         round: VarInt::MAX,
-        paired_with: VarInt::MAX,
+        path_id: PathId::MAX,
         ip: IpAddr::V6(std::net::Ipv6Addr::LOCALHOST),
         port: u16::MAX,
     }
@@ -1595,12 +1595,12 @@ impl ReachOut {
 
     pub(crate) const fn new(
         round: VarInt,
-        paired_with: VarInt,
+        path_id: PathId,
         local_addr: std::net::SocketAddr,
     ) -> Self {
         Self {
             round,
-            paired_with,
+            path_id,
             ip: local_addr.ip(),
             port: local_addr.port(),
         }
@@ -1619,17 +1619,17 @@ impl ReachOut {
     pub(crate) const fn size(&self) -> usize {
         let type_size = VarInt(self.get_type().0).size();
         let round_bytes = self.round.size();
-        let paired_with_bytes = self.paired_with.size();
+        let path_id_bytes = self.path_id.size();
         let ip_bytes = if self.ip.is_ipv6() { 16 } else { 4 };
         let port_bytes = 2;
-        type_size + round_bytes + paired_with_bytes + ip_bytes + port_bytes
+        type_size + round_bytes + path_id_bytes + ip_bytes + port_bytes
     }
 
     /// Unconditionally write this frame to `buf`
     pub(crate) fn write<W: BufMut>(&self, buf: &mut W) {
         buf.write(self.get_type());
         buf.write(self.round);
-        buf.write(self.paired_with);
+        buf.write(self.path_id);
         match self.ip {
             IpAddr::V4(ipv4_addr) => {
                 buf.write(ipv4_addr);
@@ -1647,7 +1647,7 @@ impl ReachOut {
     /// [`FrameType::REACH_OUT_AT_IPV4`] or [`FrameType::REACH_OUT_AT_IPV6`].
     pub(crate) fn read<R: Buf>(bytes: &mut R, is_ipv6: bool) -> coding::Result<Self> {
         let round = bytes.get()?;
-        let paired_with = bytes.get()?;
+        let path_id = bytes.get()?;
         let ip = if is_ipv6 {
             IpAddr::V6(bytes.get()?)
         } else {
@@ -1656,7 +1656,7 @@ impl ReachOut {
         let port = bytes.get()?;
         Ok(Self {
             round,
-            paired_with,
+            path_id,
             ip,
             port,
         })
@@ -1979,7 +1979,7 @@ mod test {
     fn test_reach_out_roundrip() {
         let reach_out = ReachOut {
             round: VarInt(42),
-            paired_with: VarInt(24),
+            path_id: PathId(24),
             ip: std::net::Ipv6Addr::LOCALHOST.into(),
             port: 4242,
         };

@@ -41,7 +41,7 @@ impl PathId {
     pub const ZERO: Self = Self(0);
 
     /// The number of bytes this [`PathId`] uses when encoded as a [`VarInt`]
-    pub(crate) fn size(&self) -> usize {
+    pub(crate) const fn size(&self) -> usize {
         VarInt(self.0 as u64).size()
     }
 
