@@ -2275,8 +2275,7 @@ impl Connection {
                     Duration::from_micros(ack.delay << self.peer_params.ack_delay_exponent.0),
                 )
             };
-            let rtt = instant_saturating_sub(
-                now,
+            let rtt = now.saturating_duration_since(
                 self.spaces[space].for_path(path).largest_acked_packet_sent,
             );
 
@@ -2495,8 +2494,6 @@ impl Connection {
             .max(TIMER_GRANULARITY);
         let first_packet_after_rtt_sample = path.first_packet_after_rtt_sample;
 
-        // Packets sent before this time are deemed lost.
-        let lost_send_time = now.checked_sub(loss_delay).unwrap();
         let largest_acked_packet = self.spaces[pn_space]
             .for_path(path_id)
             .largest_acked_packet
@@ -2518,8 +2515,11 @@ impl Connection {
                 persistent_congestion_start = None;
             }
 
-            if info.time_sent <= lost_send_time || largest_acked_packet >= packet + packet_threshold
-            {
+            // Packets sent before now - loss_delay are deemed lost.
+            // However, we avoid substraction as it can panic and there's no
+            // saturating equivalent of this substraction operation with a Duration.
+            let packet_too_old = now.saturating_duration_since(info.time_sent) >= loss_delay;
+            if packet_too_old || largest_acked_packet >= packet + packet_threshold {
                 // The packet should be declared lost.
                 if Some(packet) == in_flight_mtu_probe {
                     // Lost MTU probes are not included in `lost_packets`, because they
@@ -2564,7 +2564,7 @@ impl Connection {
             now,
             lost_packets,
             lost_mtu_probe,
-            lost_send_time,
+            loss_delay,
             in_persistent_congestion,
             size_of_lost_packets,
         );
@@ -2600,7 +2600,7 @@ impl Connection {
                 now,
                 lost_pns,
                 in_flight_mtu_probe,
-                now,
+                Duration::ZERO,
                 false,
                 size_of_lost_packets,
             );
@@ -2625,7 +2625,7 @@ impl Connection {
         now: Instant,
         lost_packets: Vec<u64>,
         lost_mtu_probe: Option<u64>,
-        lost_send_time: Instant,
+        loss_delay: Duration,
         in_persistent_congestion: bool,
         size_of_lost_packets: u64,
     ) {
@@ -2651,6 +2651,17 @@ impl Connection {
                 lost_bytes = size_of_lost_packets,
                 "packets lost",
             );
+
+            // Packets sent before this time are deemed lost.
+            // We avoid computing this value above, since it's possible for this to panic
+            // if the `loss_delay` value internally stores a bigger `Duration` than the
+            // `Duration` that's stored inside the `Instant`, because some platforms may
+            // implement the `Instant` with a counter relative to system or even process
+            // startup (Wasm is one such case).
+            // If we're at this point, then it must be possible to have instants that are
+            // longer ago than `loss_delay` (see the `packet_too_old` computation
+            // above).
+            let lost_send_time = now.checked_sub(loss_delay).unwrap();
 
             for &packet in &lost_packets {
                 let Some(info) = self.spaces[pn_space].for_path(path_id).take(packet) else {
@@ -5913,10 +5924,6 @@ impl From<PathEvent> for Event {
     fn from(source: PathEvent) -> Self {
         Self::Path(source)
     }
-}
-
-fn instant_saturating_sub(x: Instant, y: Instant) -> Duration {
-    if x > y { x - y } else { Duration::ZERO }
 }
 
 fn get_max_ack_delay(params: &TransportParameters) -> Duration {
