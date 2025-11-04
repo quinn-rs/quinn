@@ -387,6 +387,34 @@ fn open_path() {
     );
 }
 
+#[test]
+fn open_path_key_update() {
+    let _guard = subscribe();
+    let (mut pair, client_ch, _server_ch) = multipath_pair();
+
+    let server_addr = pair.server.addr;
+    let path_id = pair
+        .client_conn_mut(client_ch)
+        .open_path(server_addr, PathStatus::Available, Instant::now())
+        .unwrap();
+
+    // Do a key-update at the same time as opening the new path.
+    pair.client_conn_mut(client_ch).force_key_update();
+
+    pair.drive();
+    let client_conn = pair.client_conn_mut(client_ch);
+    assert_matches!(
+        client_conn.poll().unwrap(),
+        Event::Path(crate::PathEvent::Opened { id  }) if id == path_id
+    );
+
+    let server_conn = pair.server_conn_mut(client_ch);
+    assert_matches!(
+        server_conn.poll().unwrap(),
+        Event::Path(crate::PathEvent::Opened { id  }) if id == path_id
+    );
+}
+
 /// Client starts opening a path but the server fails to validate the path
 ///
 /// The client should receive an event closing the path.

@@ -93,9 +93,12 @@ pub(super) fn decrypt_packet_body(
     // this case we assume the initial packet number
     let rx_packet = spaces[space]
         .path_space(path_id)
-        .map(|space| space.rx_packet)
-        .unwrap_or_default();
-    let number = packet.header.number().ok_or(None)?.expand(rx_packet + 1);
+        .map(|space| space.rx_packet);
+    let number = packet
+        .header
+        .number()
+        .ok_or(None)?
+        .expand(rx_packet.map(|n| n + 1).unwrap_or_default());
     let packet_key_phase = packet.header.key_phase();
 
     let mut crypto_update = false;
@@ -146,7 +149,12 @@ pub(super) fn decrypt_packet_body(
 
     if crypto_update {
         // Validate incoming key update
-        if number <= rx_packet || prev_crypto.is_some_and(|x| x.update_unacked) {
+        let invalid_packet_number = match rx_packet {
+            Some(rx_packet) => number <= rx_packet,
+            None => number != 0, // A new PathId, first pn should be 0
+        };
+        if invalid_packet_number || prev_crypto.is_some_and(|x| x.update_unacked) {
+            trace!(?number, ?rx_packet, "crypto update failed");
             return Err(Some(TransportError::KEY_UPDATE_ERROR("")));
         }
     }
