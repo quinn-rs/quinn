@@ -1701,12 +1701,14 @@ impl Connection {
                     self.handle_coalesced(now, remote, path_id, ecn, data);
                 }
 
-                self.config.qlog_sink.emit_recovery_metrics(
-                    self.path_data(path_id).pto_count,
-                    &mut self.paths.get_mut(&path_id).unwrap().data,
-                    now,
-                    self.orig_rem_cid,
-                );
+                if let Some(path) = self.paths.get_mut(&path_id) {
+                    self.config.qlog_sink.emit_recovery_metrics(
+                        path.data.pto_count,
+                        &mut path.data,
+                        now,
+                        self.orig_rem_cid,
+                    );
+                }
 
                 if was_anti_amplification_blocked {
                     // A prior attempt to set the loss detection timer may have failed due to
@@ -3483,7 +3485,15 @@ impl Connection {
 
         // Transmit CONNECTION_CLOSE if necessary
         if let State::Closed(_) = self.state {
-            self.close = remote == self.path_data(path_id).remote;
+            // If there is no PathData for this PathId the packet was for a brand new
+            // path. It was a valid packet however, so the remote is valid and we want to
+            // send CONNECTION_CLOSE.
+            let path_remote = self
+                .paths
+                .get(&path_id)
+                .map(|p| p.data.remote)
+                .unwrap_or(remote);
+            self.close = remote == path_remote;
         }
     }
 
