@@ -414,7 +414,7 @@ impl TransportParameters {
                         w.write(val);
                     }
                 }
-                TransportParameterId::NatTraversal => {
+                TransportParameterId::IrohNatTraversal => {
                     if let Some(val) = self.nat_traversal {
                         w.write_var(id as u64);
                         w.write_var(val.size() as u64);
@@ -546,7 +546,7 @@ impl TransportParameters {
 
                     params.initial_max_path_id = Some(value);
                 }
-                TransportParameterId::NatTraversal => {
+                TransportParameterId::IrohNatTraversal => {
                     if params.nat_traversal.is_some() {
                         return Err(Error::Malformed);
                     }
@@ -731,8 +731,9 @@ pub(crate) enum TransportParameterId {
     // https://datatracker.ietf.org/doc/html/draft-ietf-quic-multipath
     InitialMaxPathId = 0x0f739bbc1b666d0c,
 
-    // https://www.ietf.org/archive/id/draft-seemann-quic-nat-traversal-02.html
-    NatTraversal = 0x3d7e9f0bca12fea6,
+    // inspired by https://www.ietf.org/archive/id/draft-seemann-quic-nat-traversal-02.html,
+    // simplified to iroh's needs
+    IrohNatTraversal = 0x3d7f91120401,
 }
 
 impl TransportParameterId {
@@ -761,7 +762,7 @@ impl TransportParameterId {
         Self::MinAckDelayDraft07,
         Self::ObservedAddr,
         Self::InitialMaxPathId,
-        Self::NatTraversal,
+        Self::IrohNatTraversal,
     ];
 }
 

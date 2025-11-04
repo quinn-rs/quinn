@@ -150,12 +150,12 @@ frame_types! {
     MAX_PATH_ID = 0x15228c0c,
     PATHS_BLOCKED = 0x15228c0d,
     PATH_CIDS_BLOCKED = 0x15228c0e,
-    // NAT TRAVERSAL
-    ADD_IPV4_ADDRESS = 0x3d7e90,
-    ADD_IPV6_ADDRESS = 0x3d7e91,
-    REACH_OUT_AT_IPV4 = 0x3d7e92,
-    REACH_OUT_AT_IPV6 = 0x3d7e93,
-    REMOVE_ADDRESS = 0x3d7e94,
+    // IROH'S NAT TRAVERSAL
+    ADD_IPV4_ADDRESS = 0x3d7f90,
+    ADD_IPV6_ADDRESS = 0x3d7f91,
+    REACH_OUT_AT_IPV4 = 0x3d7f92,
+    REACH_OUT_AT_IPV6 = 0x3d7f93,
+    REMOVE_ADDRESS = 0x3d7f94,
 }
 
 const STREAM_TYS: RangeInclusive<u64> = RangeInclusive::new(0x08, 0x0f);
