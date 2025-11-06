@@ -2,6 +2,7 @@ use std::{
     cmp,
     collections::{BTreeMap, BTreeSet, VecDeque},
     mem,
+    net::IpAddr,
     ops::{Bound, Index, IndexMut},
 };
 
@@ -551,6 +552,12 @@ pub struct Retransmits {
     pub(super) path_status: BTreeSet<PathId>,
     /// If a PATH_CIDS_BLOCKED frame needs to be sent for a path
     pub(super) path_cids_blocked: Vec<PathId>,
+
+    // Nat traversal data
+    /// Addresses to report in `ADD_ADDRESS` frames
+    pub(super) add_address: BTreeSet<SocketAddr>,
+    /// Address IDs to remove in `REMOVE_ADDRESS` frames
+    pub(super) remove_address: BTreeSet<VarInt>,
 }
 
 impl Retransmits {
@@ -574,6 +581,8 @@ impl Retransmits {
             && self.path_status.is_empty()
             && !self.max_path_id
             && !self.paths_blocked
+            && self.add_address.is_empty()
+            && self.remove_address.is_empty()
     }
 }
 
@@ -600,6 +609,8 @@ impl ::std::ops::BitOrAssign for Retransmits {
         self.path_abandon.append(&mut rhs.path_abandon);
         self.max_path_id |= rhs.max_path_id;
         self.paths_blocked |= rhs.paths_blocked;
+        self.add_address.extend(rhs.add_address.iter());
+        self.remove_address.extend(rhs.remove_address.iter());
     }
 }
 

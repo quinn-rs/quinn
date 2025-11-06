@@ -62,7 +62,7 @@ impl State {
     ///
     /// When this endpoint is the server within the connection, these addresses will be sent to the
     /// client in add address frames. For clients, these addresses will be sent in reach out frames
-    pub(crate) fn add_local_address(&mut self, address: SocketAddr) -> Result<VarInt, Error> {
+    pub(crate) fn add_local_address(&mut self, address: SocketAddr) -> Result<SocketAddr, Error> {
         let address = (address.ip(), address.port());
         let allow_new = self.local_addresses.len() < MAX_ADDRESSES;
         match self.local_addresses.entry(address) {
@@ -71,7 +71,8 @@ impl State {
                 let id = self.next_local_addr_id;
                 self.next_local_addr_id = self.next_local_addr_id.saturating_add(1u8);
                 vacant_entry.insert(id);
-                Ok(id)
+                // NOTE for ipv6 addresses this cleans up fields not relevant to the protocol
+                Ok(address.into())
             }
             _ => Err(Error::TooManyAddresses),
         }

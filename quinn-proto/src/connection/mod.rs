@@ -5692,12 +5692,17 @@ impl Connection {
         &mut self,
         addresses: &[SocketAddr],
     ) -> Result<(), iroh_hp::Error> {
+        let is_server = self.side().is_server();
         let hp_state = self
             .iroh_hp
             .as_mut()
             .ok_or(iroh_hp::Error::ExtensionNotNegotiated)?;
-        for address in addresses {
-            hp_state.add_local_address(*address)?;
+
+        for &address in addresses {
+            let added = hp_state.add_local_address(address)?;
+            if is_server {
+                self.spaces[SpaceId::Data].pending.add_address.insert(added);
+            }
         }
         Ok(())
     }
@@ -5709,12 +5714,20 @@ impl Connection {
         &mut self,
         addresses: &[SocketAddr],
     ) -> Result<(), iroh_hp::Error> {
+        let is_server = self.side().is_server();
         let hp_state = self
             .iroh_hp
             .as_mut()
             .ok_or(iroh_hp::Error::ExtensionNotNegotiated)?;
         for address in addresses {
-            hp_state.remove_local_address(*address);
+            if let Some(removed) = hp_state.remove_local_address(*address) {
+                if is_server {
+                    self.spaces[SpaceId::Data]
+                        .pending
+                        .remove_address
+                        .insert(removed);
+                }
+            }
         }
         Ok(())
     }
