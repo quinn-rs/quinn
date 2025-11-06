@@ -829,7 +829,24 @@ impl Connection {
         &self,
         addresses: &[SocketAddr],
     ) -> Result<(), iroh_hp::Error> {
-        let conn = self.0.state.lock("add_nat_traversal_addresses");
+        let mut conn = self.0.state.lock("add_nat_traversal_addresses");
+        conn.inner.add_nat_traversal_addresses(addresses)
+    }
+
+    /// Removes one or more addresses from the set of addresses at which this endpoint is reachable
+    ///
+    /// When the NAT traversal extension is negotiated, servers send address removals to
+    /// clients in `REMOVE_ADDRESS` frames. This allows clients to stop using outdated
+    /// server address candidates that are no longer valid for NAT traversal.
+    ///
+    /// For clients, removed addresses will no longer be advertised in `REACH_OUT` frames.
+    ///
+    /// Addresses not present in the set will be silently ignored.
+    pub fn remove_nat_traversal_addresses(
+        &self,
+        addresses: &[SocketAddr],
+    ) -> Result<(), iroh_hp::Error> {
+        let mut conn = self.0.state.lock("add_nat_traversal_addresses");
         conn.inner.add_nat_traversal_addresses(addresses)
     }
 }

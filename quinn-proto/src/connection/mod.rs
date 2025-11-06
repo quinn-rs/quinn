@@ -5683,7 +5683,7 @@ impl Connection {
         }
     }
 
-    /// Add addresses the local endpoint believes are reachable for nat traversal
+    /// Add addresses the local endpoint considers are reachable for nat traversal
     ///
     /// If adding any address fails, an error is returned. Previous addresses might have been
     /// added.
@@ -5698,6 +5698,23 @@ impl Connection {
             .ok_or(iroh_hp::Error::ExtensionNotNegotiated)?;
         for address in addresses {
             hp_state.add_local_address(*address)?;
+        }
+        Ok(())
+    }
+
+    /// Removes an address the endpoing no longer considers reachable for nat traversal
+    ///
+    /// Addresses not present in the set will be silently ignored.
+    pub fn remove_nat_traversal_addresses(
+        &mut self,
+        addresses: &[SocketAddr],
+    ) -> Result<(), iroh_hp::Error> {
+        let hp_state = self
+            .iroh_hp
+            .as_mut()
+            .ok_or(iroh_hp::Error::ExtensionNotNegotiated)?;
+        for address in addresses {
+            hp_state.remove_local_address(*address);
         }
         Ok(())
     }
