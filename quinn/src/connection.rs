@@ -818,6 +818,17 @@ impl Connection {
         let conn = self.0.state.lock("is_multipath_enabled");
         conn.inner.is_multipath_negotiated()
     }
+
+    /// Registers one or more addresses at which this endpoint is reachable
+    ///
+    /// When the NAT traversal extension is negotiated, servers send these addresses to clients in
+    /// `ADD_ADDRESS` frames. This allows clients to obtain server address candidates to initiate
+    /// NAT traversal attempts. Clients provide their own reachable addresses in `REACH_OUT` frames
+    /// when [`Self::initiate_nat_traversal`] is called.
+    pub fn add_nat_traversal_addresses(&self, addresses: &[SocketAddr]) -> Result<(), ()> {
+        // TODO(@divma): here
+        Ok(())
+    }
 }
 
 pin_project! {
@@ -1394,6 +1405,9 @@ impl State {
                 }
                 Path(evt @ PathEvent::RemoteStatus { .. }) => {
                     self.path_events.send(evt).ok();
+                }
+                NatTraversal(_event) => {
+                    // TODO(@divma): handle event
                 }
             }
         }

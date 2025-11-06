@@ -15,17 +15,22 @@ use crate::{
 const MAX_ADDRESSES: usize = 20;
 
 /// Errors that the nat traversal state might encounter.
-#[derive(Debug)]
-pub(crate) enum Error {
+#[derive(Debug, thiserror::Error)]
+pub enum Error {
     /// An endpoint (local or remote) tried to add too many addresses to their advertised set
+    #[error("Tried to add too many addresses to their advertised set")]
     TooManyAddresses,
-    /// The operation is now allowed for this endpoint's connection side
+    /// The operation is not allowed for this endpoint's connection side
+    #[error("Not allowed for this endpoint's connection side")]
     WrongConnectionSide,
+    /// The extension was not negotiated
+    #[error("Iroh's nat traversal was not negotiated")]
+    ExtensionNotNegotiated,
 }
 
 // TODO(@divma): unclear to me what these events are useful for\
 #[derive(Debug)]
-pub(crate) enum Event {
+pub enum Event {
     AddressAdded(SocketAddr),
     AddressRemoved(SocketAddr),
 }
