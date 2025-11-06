@@ -15,12 +15,19 @@ use crate::{
 const MAX_ADDRESSES: usize = 20;
 
 /// Errors that the nat traversal state might encounter.
+#[derive(Debug)]
 pub(crate) enum Error {
     /// An endpoint (local or remote) tried to add too many addresses to their advertised set
     TooManyAddresses,
     /// The operation is now allowed for this endpoint's connection side
-    // TODO(@divma): ignoring this part for now
     WrongConnectionSide,
+}
+
+// TODO(@divma): unclear to me what these events are useful for\
+#[derive(Debug)]
+pub(crate) enum Event {
+    AddressAdded(SocketAddr),
+    AddressRemoved(SocketAddr),
 }
 
 /// State kept for Iroh's nat traversal
@@ -95,9 +102,12 @@ impl State {
 impl<'a> ClientSide<'a> {
     /// Adds an address to the remote set
     ///
-    /// On success returns whether the address was new to the set. It will error when the set has
-    /// no capacity for the address.
-    pub(crate) fn add_remote_address(&mut self, add_addr: AddAddress) -> Result<bool, Error> {
+    /// On success returns the address if it was new to the set. It will error when the set has no
+    /// capacity for the address.
+    pub(crate) fn add_remote_address(
+        &mut self,
+        add_addr: AddAddress,
+    ) -> Result<Option<SocketAddr>, Error> {
         let AddAddress { seq_no, ip, port } = add_addr;
         let address = (ip, port);
         let allow_new = self.state.remote_addresses.len() < MAX_ADDRESSES;
@@ -106,11 +116,11 @@ impl<'a> ClientSide<'a> {
                 let old_value = occupied_entry.insert(address);
                 // The value might be different. This should not happen, but we assume that the new
                 // address is more recent than the previous, and thus worth updating
-                Ok(address != old_value)
+                Ok((address != old_value).then_some(address.into()))
             }
             Entry::Vacant(vacant_entry) if allow_new => {
                 vacant_entry.insert(address);
-                Ok(true)
+                Ok(Some(address.into()))
             }
             _ => Err(Error::TooManyAddresses),
         }
@@ -119,17 +129,20 @@ impl<'a> ClientSide<'a> {
     /// Removes an address from the remote set
     ///
     /// Returns whether the address was present.
-    pub(crate) fn remove_remote_address(&mut self, remove_addr: RemoveAddress) -> bool {
+    pub(crate) fn remove_remote_address(
+        &mut self,
+        remove_addr: RemoveAddress,
+    ) -> Option<SocketAddr> {
         self.state
             .remote_addresses
             .remove(&remove_addr.seq_no)
-            .is_some()
+            .map(Into::into)
     }
 
     /// Checks that a received remote address is valid
     ///
     /// An address is valid as long as it does not change the value of a known address id.
-    pub(crate) fn check_remote_address(&self, add_addr: AddAddress) -> bool {
+    pub(crate) fn check_remote_address(&self, add_addr: &AddAddress) -> bool {
         let existing = self.state.remote_addresses.get(&add_addr.seq_no);
         existing.is_none() || existing == Some(&add_addr.ip_port())
     }

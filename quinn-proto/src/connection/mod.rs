@@ -4394,15 +4394,57 @@ impl Connection {
                     }
                 }
                 Frame::AddAddress(addr) => {
-                    if let Some(hp_state) = self.iroh_hp.as_mut() {
-                        // hp_state.
+                    let Some(hp_state) = self.iroh_hp.as_mut() else {
+                        return Err(TransportError::PROTOCOL_VIOLATION(
+                            "received ADD_ADDRESS frame when iroh's nat traversal was not negotiated",
+                        ));
+                    };
+
+                    let Ok(mut client_state) = hp_state.client_side() else {
+                        return Err(TransportError::PROTOCOL_VIOLATION(
+                            "client sent ADD_ADDRESS frame",
+                        ));
+                    };
+
+                    if !client_state.check_remote_address(&addr) {
+                        // if the address is not valid we flag it, but update anyway
+                        warn!(?addr, "server sent ilegal ADD_ADDRESS frame");
                     }
-                    // TODO(@divma): handle
+
+                    match client_state.add_remote_address(addr.clone()) {
+                        Ok(maybe_added) => {
+                            if let Some(added) = maybe_added {
+                                self.events.push_back(Event::NatTraversal(
+                                    iroh_hp::Event::AddressAdded(added),
+                                ));
+                            }
+                        }
+                        Err(e) => {
+                            warn!(?e, "failed to add remote address")
+                        }
+                    }
+                }
+                Frame::RemoveAddress(addr) => {
+                    let Some(hp_state) = self.iroh_hp.as_mut() else {
+                        return Err(TransportError::PROTOCOL_VIOLATION(
+                            "received REMOVE_ADDRESS frame when iroh's nat traversal was not negotiated",
+                        ));
+                    };
+
+                    let Ok(mut client_state) = hp_state.client_side() else {
+                        return Err(TransportError::PROTOCOL_VIOLATION(
+                            "client sent REMOVE_ADDRESS frame",
+                        ));
+                    };
+
+                    if let Some(removed_addr) = client_state.remove_remote_address(addr.clone()) {
+                        self.events
+                            .push_back(Event::NatTraversal(iroh_hp::Event::AddressRemoved(
+                                removed_addr,
+                            )));
+                    }
                 }
                 Frame::ReachOut(_frame) => {
-                    // TODO(@divma): handle
-                }
-                Frame::RemoveAddress(_frame) => {
                     // TODO(@divma): handle
                 }
             }
@@ -5955,6 +5997,8 @@ pub enum Event {
     DatagramsUnblocked,
     /// (Multi)Path events
     Path(PathEvent),
+    /// Iroh's nat traversal events
+    NatTraversal(iroh_hp::Event),
 }
 
 impl From<PathEvent> for Event {
