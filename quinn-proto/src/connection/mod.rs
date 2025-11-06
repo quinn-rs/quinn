@@ -66,6 +66,8 @@ mod paths;
 pub use paths::{ClosedPath, PathEvent, PathId, PathStatus, RttEstimator};
 use paths::{PathData, PathState};
 
+mod iroh_hp;
+
 pub(crate) mod qlog;
 
 mod send_buffer;
@@ -299,6 +301,8 @@ pub struct Connection {
     // TODO(flub): Make this a more efficient data structure.  Like ranges of abandoned
     //    paths.  Or a set together with a minimum.  Or something.
     abandoned_paths: FxHashSet<PathId>,
+
+    iroh_hp: Option<iroh_hp::State>,
 }
 
 impl Connection {
@@ -437,6 +441,9 @@ impl Connection {
             remote_max_path_id: PathId::ZERO,
             max_path_id_with_cids: PathId::ZERO,
             abandoned_paths: Default::default(),
+
+            // iroh's nat traversal
+            iroh_hp: None,
         };
         if path_validated {
             this.on_path_validated(PathId::ZERO);

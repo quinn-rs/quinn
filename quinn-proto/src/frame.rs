@@ -1560,7 +1560,11 @@ impl AddAddress {
 
     /// Give the [`SocketAddr`] encoded in the frame
     pub(crate) fn socket_addr(&self) -> SocketAddr {
-        (self.ip, self.port).into()
+        self.ip_port().into()
+    }
+
+    pub(crate) fn ip_port(&self) -> (IpAddr, u16) {
+        (self.ip, self.port)
     }
 }
 
