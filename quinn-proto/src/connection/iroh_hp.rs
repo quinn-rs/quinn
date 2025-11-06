@@ -20,7 +20,7 @@ pub(crate) enum Error {
 }
 
 /// State kept for Iroh's nat traversal
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub(crate) struct State {
     /// Candidate addresses the remote server reports as potentially reachable, to use for nat
     /// traversal attempts.
@@ -29,8 +29,10 @@ pub(crate) struct State {
     /// Candidate addresses the local client reports as potentially reachable, to use for nat
     /// traversal attempts.
     local_addresses: FxHashMap<(IpAddr, u16), VarInt>,
-    // The next id to use for local addresses sent to the client
+    /// The next id to use for local addresses sent to the client
     next_local_addr_id: VarInt,
+    /// Max concurrent address validations to perform
+    max_concurrent_path_validations: u64,
 }
 
 impl State {
@@ -97,5 +99,14 @@ impl State {
     pub(crate) fn check_remote_address(&self, add_addr: AddAddress) -> bool {
         let existing = self.remote_addresses.get(&add_addr.seq_no);
         existing.is_none() || existing == Some(&add_addr.ip_port())
+    }
+
+    pub(crate) fn new(VarInt(max_concurrent_path_validations): VarInt) -> Self {
+        Self {
+            remote_addresses: Default::default(),
+            local_addresses: Default::default(),
+            next_local_addr_id: Default::default(),
+            max_concurrent_path_validations,
+        }
     }
 }

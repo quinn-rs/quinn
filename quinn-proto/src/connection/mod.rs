@@ -5252,6 +5252,20 @@ impl Connection {
             debug!(initial_max_path_id=%local_max_path_id.min(remote_max_path_id), "multipath negotiated");
         }
 
+        if let (Some(local_max_hp_validations), Some(remote_max_hp_validations)) = (
+            self.config.get_nat_traversal_concurrency_limit(),
+            params.nat_traversal,
+        ) {
+            let max_concurrent_path_validations =
+                local_max_hp_validations.min(remote_max_hp_validations);
+            self.iroh_hp = Some(iroh_hp::State::new(max_concurrent_path_validations));
+
+            debug!(
+                %max_concurrent_path_validations,
+                "iroh hole punching negotiated"
+            );
+        }
+
         self.peer_params = params;
         let peer_max_udp_payload_size =
             u16::try_from(self.peer_params.max_udp_payload_size.into_inner()).unwrap_or(u16::MAX);
