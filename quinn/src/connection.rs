@@ -28,7 +28,7 @@ use crate::{
 };
 use proto::{
     ConnectionError, ConnectionHandle, ConnectionStats, Dir, EndpointEvent, PathError, PathEvent,
-    PathId, PathStatus, Side, StreamEvent, StreamId, congestion::Controller,
+    PathId, PathStatus, Side, StreamEvent, StreamId, congestion::Controller, iroh_hp,
 };
 
 /// In-progress connection attempt future
@@ -825,9 +825,12 @@ impl Connection {
     /// `ADD_ADDRESS` frames. This allows clients to obtain server address candidates to initiate
     /// NAT traversal attempts. Clients provide their own reachable addresses in `REACH_OUT` frames
     /// when [`Self::initiate_nat_traversal`] is called.
-    pub fn add_nat_traversal_addresses(&self, addresses: &[SocketAddr]) -> Result<(), ()> {
-        // TODO(@divma): here
-        Ok(())
+    pub fn add_nat_traversal_addresses(
+        &self,
+        addresses: &[SocketAddr],
+    ) -> Result<(), iroh_hp::Error> {
+        let conn = self.0.state.lock("add_nat_traversal_addresses");
+        conn.inner.add_nat_traversal_addresses(addresses)
     }
 }
 

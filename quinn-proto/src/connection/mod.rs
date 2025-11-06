@@ -5682,6 +5682,25 @@ impl Connection {
             None
         }
     }
+
+    /// Add addresses the local endpoint believes are reachable for nat traversal
+    ///
+    /// If adding any address fails, an error is returned. Previous addresses might have been
+    /// added.
+    // TODO(@divma): this combined api has the issue that an error does not mean nothing was done
+    pub fn add_nat_traversal_addresses(
+        &mut self,
+        addresses: &[SocketAddr],
+    ) -> Result<(), iroh_hp::Error> {
+        let hp_state = self
+            .iroh_hp
+            .as_mut()
+            .ok_or(iroh_hp::Error::ExtensionNotNegotiated)?;
+        for address in addresses {
+            hp_state.add_local_address(*address)?;
+        }
+        Ok(())
+    }
 }
 
 impl fmt::Debug for Connection {
