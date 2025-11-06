@@ -27,6 +27,7 @@ use crate::{
     congestion::Controller,
     crypto::{self, KeyPair, Keys, PacketKey},
     frame::{self, Close, Datagram, FrameStruct, NewToken, ObservedAddr},
+    iroh_hp,
     packet::{
         FixedLengthConnectionIdParser, Header, InitialHeader, InitialPacket, LongType, Packet,
         PacketNumber, PartialDecode, SpaceId,
@@ -65,8 +66,6 @@ use packet_crypto::{PrevCrypto, ZeroRttCrypto};
 mod paths;
 pub use paths::{ClosedPath, PathEvent, PathId, PathStatus, RttEstimator};
 use paths::{PathData, PathState};
-
-mod iroh_hp;
 
 pub(crate) mod qlog;
 
