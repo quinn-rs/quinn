@@ -5,9 +5,10 @@ use std::{
 
 use rustc_hash::FxHashMap;
 
-use crate::{VarInt, frame::RemoveAddress};
-
-use super::frame::AddAddress;
+use crate::{
+    Side, VarInt,
+    frame::{AddAddress, RemoveAddress},
+};
 
 /// Maximum number of addresses to handle, applied both to local and remote addresses.
 // TODO(@divma): consider making this a config option
@@ -15,8 +16,11 @@ const MAX_ADDRESSES: usize = 20;
 
 /// Errors that the nat traversal state might encounter.
 pub(crate) enum Error {
-    // An endpoint (local or remote) tried to add too many addresses to their advertised set
+    /// An endpoint (local or remote) tried to add too many addresses to their advertised set
     TooManyAddresses,
+    /// The operation is now allowed for this endpoint's connection side
+    // TODO(@divma): ignoring this part for now
+    WrongConnectionSide,
 }
 
 /// State kept for Iroh's nat traversal
@@ -25,7 +29,6 @@ pub(crate) struct State {
     /// Candidate addresses the remote server reports as potentially reachable, to use for nat
     /// traversal attempts.
     remote_addresses: FxHashMap<VarInt, (IpAddr, u16)>,
-
     /// Candidate addresses the local client reports as potentially reachable, to use for nat
     /// traversal attempts.
     local_addresses: FxHashMap<(IpAddr, u16), VarInt>,
@@ -33,6 +36,13 @@ pub(crate) struct State {
     next_local_addr_id: VarInt,
     /// Max concurrent address validations to perform
     max_concurrent_path_validations: u64,
+    /// Local connection side
+    side: Side,
+}
+
+/// Nat traversal api exclusive to clients
+pub(crate) struct ClientSide<'a> {
+    state: &'a mut State,
 }
 
 impl State {
@@ -63,6 +73,26 @@ impl State {
         self.local_addresses.remove(&(address.ip(), address.port()))
     }
 
+    pub(crate) fn client_side(&mut self) -> Result<ClientSide<'_>, Error> {
+        if self.side.is_client() {
+            Ok(ClientSide { state: self })
+        } else {
+            Err(Error::WrongConnectionSide)
+        }
+    }
+
+    pub(crate) fn new(VarInt(max_concurrent_path_validations): VarInt, side: Side) -> Self {
+        Self {
+            remote_addresses: Default::default(),
+            local_addresses: Default::default(),
+            next_local_addr_id: Default::default(),
+            max_concurrent_path_validations,
+            side,
+        }
+    }
+}
+
+impl<'a> ClientSide<'a> {
     /// Adds an address to the remote set
     ///
     /// On success returns whether the address was new to the set. It will error when the set has
@@ -70,8 +100,8 @@ impl State {
     pub(crate) fn add_remote_address(&mut self, add_addr: AddAddress) -> Result<bool, Error> {
         let AddAddress { seq_no, ip, port } = add_addr;
         let address = (ip, port);
-        let allow_new = self.remote_addresses.len() < MAX_ADDRESSES;
-        match self.remote_addresses.entry(seq_no) {
+        let allow_new = self.state.remote_addresses.len() < MAX_ADDRESSES;
+        match self.state.remote_addresses.entry(seq_no) {
             Entry::Occupied(mut occupied_entry) => {
                 let old_value = occupied_entry.insert(address);
                 // The value might be different. This should not happen, but we assume that the new
@@ -90,23 +120,17 @@ impl State {
     ///
     /// Returns whether the address was present.
     pub(crate) fn remove_remote_address(&mut self, remove_addr: RemoveAddress) -> bool {
-        self.remote_addresses.remove(&remove_addr.seq_no).is_some()
+        self.state
+            .remote_addresses
+            .remove(&remove_addr.seq_no)
+            .is_some()
     }
 
     /// Checks that a received remote address is valid
     ///
-    /// An address is valid as long as it does not change the value of a known address id
+    /// An address is valid as long as it does not change the value of a known address id.
     pub(crate) fn check_remote_address(&self, add_addr: AddAddress) -> bool {
-        let existing = self.remote_addresses.get(&add_addr.seq_no);
+        let existing = self.state.remote_addresses.get(&add_addr.seq_no);
         existing.is_none() || existing == Some(&add_addr.ip_port())
-    }
-
-    pub(crate) fn new(VarInt(max_concurrent_path_validations): VarInt) -> Self {
-        Self {
-            remote_addresses: Default::default(),
-            local_addresses: Default::default(),
-            next_local_addr_id: Default::default(),
-            max_concurrent_path_validations,
-        }
     }
 }

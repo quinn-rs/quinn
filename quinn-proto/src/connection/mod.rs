@@ -4393,7 +4393,10 @@ impl Connection {
                         ));
                     }
                 }
-                Frame::AddAddress(_addr) => {
+                Frame::AddAddress(addr) => {
+                    if let Some(hp_state) = self.iroh_hp.as_mut() {
+                        // hp_state.
+                    }
                     // TODO(@divma): handle
                 }
                 Frame::ReachOut(_frame) => {
@@ -5258,7 +5261,10 @@ impl Connection {
         ) {
             let max_concurrent_path_validations =
                 local_max_hp_validations.min(remote_max_hp_validations);
-            self.iroh_hp = Some(iroh_hp::State::new(max_concurrent_path_validations));
+            self.iroh_hp = Some(iroh_hp::State::new(
+                max_concurrent_path_validations,
+                self.side(),
+            ));
 
             debug!(
                 %max_concurrent_path_validations,
