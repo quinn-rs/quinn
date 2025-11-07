@@ -2689,6 +2689,10 @@ impl Connection {
                 ..
             } => {
                 self.process_payload(now, remote, number.unwrap(), packet)?;
+                // Track that 0-RTT data was received and accepted (server-side)
+                if self.side.is_server() {
+                    self.accepted_0rtt = true;
+                }
                 Ok(())
             }
             Header::VersionNegotiate { .. } => {

@@ -561,6 +561,23 @@ impl Connection {
             .handshake_data()
     }
 
+    /// Whether 0-RTT was accepted
+    ///
+    /// Returns `None` while the handshake is in progress. Once the handshake completes:
+    /// - For clients: `Some(true)` if the server accepted our 0-RTT data, `Some(false)` if rejected
+    /// - For servers: `Some(true)` if the client sent 0-RTT data that we accepted, `Some(false)` otherwise
+    ///
+    /// This is useful on the server side to detect replay attacks - data sent via 0-RTT
+    /// is vulnerable to replay and should be treated carefully (e.g., reject non-idempotent operations).
+    pub fn early_data_accepted(&self) -> Option<bool> {
+        let state = self.0.state.lock("early_data_accepted");
+        if state.inner.is_handshaking() {
+            return None;
+        }
+
+        Some(state.inner.accepted_0rtt())
+    }
+
     /// Cryptographic identity of the peer
     ///
     /// The dynamic type returned is determined by the configured

@@ -334,6 +334,12 @@ async fn zero_rtt() {
             s.write_all(MSG1).await.expect("write");
             // The peer might close the connection before ACKing
             let _ = s.finish();
+
+            // Test early_data_accepted() on server side
+            let early_data = connection.early_data_accepted();
+            info!("server early_data_accepted: {:?}", early_data);
+            // First connection should show Some(false) - no 0-RTT
+            // Second connection should show Some(true) - 0-RTT received
         }
     });
 
@@ -378,6 +384,15 @@ async fn zero_rtt() {
     let msg = stream.read_to_end(usize::MAX).await.expect("read_to_end");
     assert_eq!(msg, MSG0);
     assert!(zero_rtt.await);
+
+    // Test early_data_accepted() on client side after handshake completes
+    let early_data = connection.early_data_accepted();
+    info!("client early_data_accepted: {:?}", early_data);
+    assert_eq!(
+        early_data,
+        Some(true),
+        "Client should see that 0-RTT was accepted by server"
+    );
 
     drop((stream, connection));
 
