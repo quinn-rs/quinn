@@ -28,7 +28,7 @@ use crate::{
 };
 use proto::{
     ConnectionError, ConnectionHandle, ConnectionStats, Dir, EndpointEvent, PathError, PathEvent,
-    PathId, PathStatus, Side, StreamEvent, StreamId, congestion::Controller,
+    PathId, PathStats, PathStatus, Side, StreamEvent, StreamId, congestion::Controller,
 };
 
 /// In-progress connection attempt future
@@ -704,6 +704,11 @@ impl Connection {
     /// Returns connection statistics
     pub fn stats(&self) -> ConnectionStats {
         self.0.state.lock("stats").inner.stats()
+    }
+
+    /// Returns path statistics
+    pub fn path_stats(&self, path_id: PathId) -> Option<PathStats> {
+        self.0.state.lock("path_stats").inner.path_stats(path_id)
     }
 
     /// Current state of the congestion control algorithm, for debugging purposes
