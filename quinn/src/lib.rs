@@ -40,12 +40,28 @@
 //!
 //! # Feature flags
 //!
-//! ### Crypto features
+//! ### TLS provider features
 //!
-//! These features control which crypto providers quinn will use. Currently rustls is the only one baked into this crate.
+//! These features control which TLS providers quinn will use. Currently rustls is the only one baked into this crate.
 //! See [quinn-boring](https://github.com/quinn-rs/quinn-boring/) for an example of integrating another crypto provider.
 //!
-//! - `rustls`: Enable rustls as the crypto provider for quinn.
+//! - `rustls`: Enable rustls as the TLS provider for quinn.
+//! 
+//! ### Cryptographic provider features
+//! 
+//! These features control which libraries quinn will use for cryptographic functions.
+//! 
+//! - `ring`: Use the ring library for cryptographic functions. Should not be combined with the `aws-lc-rs` feature as only one library or the other will be used.
+//! - `aws-lc-rs`: Use the aws-lc-rs library for crytographic functions. Should not be combined with the `ring` feature as only one library or another can be used.
+//! - `aws-lc-rs-fips`: Enable the fips feature for the aws-lc-rs library.
+//! 
+//! ### rustls features
+//! 
+//! These features control which library and features rustls will use for cryptographic functions.
+//! 
+//! - `rustls-ring`: Tell rustls to use the `ring` library for cryptograhic functions.
+//! - `rustls-aws-lc-rs`: Tell rustls to use the `aws-lc-rs` library for cryptographic functions.
+//! - `rustls-aws-lc-rs-fips`: Tell rustls to use the `aws-lc-rs` library for cryptographic functions, and enable the fips feature of that library.
 //!
 //! ### Miscellaneous features
 //!
@@ -62,19 +78,6 @@
 //! - `rustls-log`: Enables logging in the rustls create.
 //! - `lock_tracking`: Records how long locks are held, and warns if they are held >= 1ms.
 //! - `tracing-log`: Configure `tracing` to log events via `log` if no `tracing` subscriber exists.
-//!
-//! ### Crypto features
-//!
-//! The three supported rustls backends are rustls+ring, rustls+aws-lc-rs and rustls+aws-lc-rs-fips.
-//! Note the feature default for rustls is to use aws-lc-rs and the default for quinn is to use ring. This means you might
-//! want `default-features = false` on one library or the other if you don't intend to use multiple rustls backends.
-//!
-//! - `rustls-ring`: Enables ring crypto backend for quinn and rustls. Requires the `ring` feature.
-//! - `ring`: Will enable ring for quinn only. Generally used with `rustls-ring`.
-//! - `rustls-aws-lc-rs`: Enables aws-lc-rs crypto backend for quinn and rustls. Requires the `aws-lc-rs` feature.
-//! - `aws-lc-rs`: Enables aws-lc-rs crypto backend for quinn only. Generally used with `rustls-aws-lc-rs`.
-//! - `rustls-aws-lc-rs-fips`: Enables aws-lc-rs-fips crypto backend for quinn and rustls. Requires the aws-lc-rs-fips feature.
-//! - `aws-lc-rs-fips`: Enables aws-lc-rs-fips for quinn only. Generally used with `rustls-aws-lc-rs-fips`.
 //!
 //! ### Runtime features
 //!
