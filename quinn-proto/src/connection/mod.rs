@@ -3115,6 +3115,7 @@ impl Connection {
                         min_ack_delay: None,
                         ack_delay_exponent: TransportParameters::default().ack_delay_exponent,
                         max_ack_delay: TransportParameters::default().max_ack_delay,
+                        initial_max_path_id: None,
                         ..params
                     };
                     self.set_peer_params(params);
