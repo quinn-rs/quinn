@@ -46,19 +46,19 @@
 //! See [quinn-boring](https://github.com/quinn-rs/quinn-boring/) for an example of integrating another crypto provider.
 //!
 //! - `rustls`: Enable rustls as the TLS provider for quinn.
-//! 
+//!
 //! ### Cryptographic provider features
-//! 
+//!
 //! These features control which libraries quinn will use for cryptographic functions.
-//! 
+//!
 //! - `ring`: Use the ring library for cryptographic functions. Should not be combined with the `aws-lc-rs` feature as only one library or the other will be used.
 //! - `aws-lc-rs`: Use the aws-lc-rs library for crytographic functions. Should not be combined with the `ring` feature as only one library or another can be used.
 //! - `aws-lc-rs-fips`: Enable the fips feature for the aws-lc-rs library.
-//! 
+//!
 //! ### rustls features
-//! 
+//!
 //! These features control which library and features rustls will use for cryptographic functions.
-//! 
+//!
 //! - `rustls-ring`: Tell rustls to use the `ring` library for cryptograhic functions.
 //! - `rustls-aws-lc-rs`: Tell rustls to use the `aws-lc-rs` library for cryptographic functions.
 //! - `rustls-aws-lc-rs-fips`: Tell rustls to use the `aws-lc-rs` library for cryptographic functions, and enable the fips feature of that library.
