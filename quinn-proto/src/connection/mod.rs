@@ -253,6 +253,8 @@ pub struct Connection {
     datagrams: DatagramState,
     /// Connection level statistics
     stats: ConnectionStats,
+    /// Path level statistics
+    path_stats: FxHashMap<PathId, PathStats>,
     /// QUIC version used for the connection.
     version: u32,
 
@@ -430,6 +432,7 @@ impl Connection {
             rem_cids: FxHashMap::from_iter([(PathId::ZERO, CidQueue::new(rem_cid))]),
             rng,
             stats: ConnectionStats::default(),
+            path_stats: Default::default(),
             version,
 
             // peer params are not yet known, so multipath is not enabled
@@ -1435,8 +1438,7 @@ impl Connection {
                     PadDatagram::ToSize(probe_size),
                 );
 
-                self.stats
-                    .paths
+                self.path_stats
                     .entry(path_id)
                     .or_default()
                     .sent_plpmtud_probes += 1;
@@ -1920,13 +1922,17 @@ impl Connection {
 
     /// Returns connection statistics
     pub fn stats(&mut self) -> ConnectionStats {
-        for (path_id, path) in self.paths.iter() {
-            let stats = self.stats.paths.entry(*path_id).or_default();
-            stats.rtt = path.data.rtt.get();
-            stats.cwnd = path.data.congestion.window();
-            stats.current_mtu = path.data.mtud.current_mtu();
-        }
         self.stats.clone()
+    }
+
+    /// Returns path statistics
+    pub fn path_stats(&mut self, path_id: PathId) -> Option<PathStats> {
+        let path = self.paths.get(&path_id)?;
+        let stats = self.path_stats.entry(path_id).or_default();
+        stats.rtt = path.data.rtt.get();
+        stats.cwnd = path.data.congestion.window();
+        stats.current_mtu = path.data.mtud.current_mtu();
+        Some(*stats)
     }
 
     /// Ping the remote endpoint
@@ -2355,7 +2361,7 @@ impl Connection {
             }
             Ok(false) => {}
             Ok(true) => {
-                self.stats.paths.entry(path).or_default().congestion_events += 1;
+                self.path_stats.entry(path).or_default().congestion_events += 1;
                 self.path_data_mut(path).congestion.on_congestion_event(
                     now,
                     largest_sent_time,
@@ -2621,7 +2627,7 @@ impl Connection {
         self.paths.remove(&path_id);
         self.spaces[SpaceId::Data].number_spaces.remove(&path_id);
 
-        let path_stats = self.stats.paths.remove(&path_id).unwrap_or_default();
+        let path_stats = self.path_stats.remove(&path_id).unwrap_or_default();
         self.events.push_back(
             PathEvent::Abandoned {
                 id: path_id,
@@ -2655,7 +2661,7 @@ impl Connection {
             let old_bytes_in_flight = self.path_data_mut(path_id).in_flight.bytes;
             let largest_lost_sent =
                 self.spaces[pn_space].for_path(path_id).sent_packets[&largest_lost].time_sent;
-            let path_stats = self.stats.paths.entry(path_id).or_default();
+            let path_stats = self.path_stats.entry(path_id).or_default();
             path_stats.lost_packets += lost_packets.len() as u64;
             path_stats.lost_bytes += size_of_lost_packets;
             trace!(
@@ -2707,8 +2713,7 @@ impl Connection {
                 if let Some(max_datagram_size) = self.datagrams().max_size() {
                     self.datagrams.drop_oversized(max_datagram_size);
                 }
-                self.stats
-                    .paths
+                self.path_stats
                     .entry(path_id)
                     .or_default()
                     .black_holes_detected += 1;
@@ -2719,8 +2724,7 @@ impl Connection {
                 old_bytes_in_flight != self.path_data_mut(path_id).in_flight.bytes;
 
             if lost_ack_eliciting {
-                self.stats
-                    .paths
+                self.path_stats
                     .entry(path_id)
                     .or_default()
                     .congestion_events += 1;
@@ -2745,8 +2749,7 @@ impl Connection {
                 .unwrap()
                 .remove_in_flight(&info);
             self.path_data_mut(path_id).mtud.on_probe_lost();
-            self.stats
-                .paths
+            self.path_stats
                 .entry(path_id)
                 .or_default()
                 .lost_plpmtud_probes += 1;

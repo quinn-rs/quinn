@@ -599,9 +599,7 @@ fn zero_rtt_happypath() {
     let _ = chunks.finalize();
     assert_eq!(
         pair.client_conn_mut(client_ch)
-            .stats()
-            .paths
-            .get(&PathId::ZERO)
+            .path_stats(PathId::ZERO)
             .unwrap()
             .lost_packets,
         0
@@ -682,9 +680,7 @@ fn zero_rtt_rejection() {
     let _ = chunks.finalize();
     assert_eq!(
         pair.client_conn_mut(client_ch)
-            .stats()
-            .paths
-            .get(&PathId::ZERO)
+            .path_stats(PathId::ZERO)
             .unwrap()
             .lost_packets,
         0
@@ -780,9 +776,7 @@ fn test_zero_rtt_incoming_limit<F: FnOnce(&mut ServerConfig)>(configure_server: 
     let _ = chunks.finalize();
     assert_eq!(
         pair.client_conn_mut(client_ch)
-            .stats()
-            .paths
-            .get(&PathId::ZERO)
+            .path_stats(PathId::ZERO)
             .unwrap()
             .lost_packets,
         EXPECTED_DROPPED
@@ -1035,18 +1029,14 @@ fn key_update_simple() {
 
     assert_eq!(
         pair.client_conn_mut(client_ch)
-            .stats()
-            .paths
-            .get(&PathId::ZERO)
+            .path_stats(PathId::ZERO)
             .unwrap()
             .lost_packets,
         0
     );
     assert_eq!(
         pair.server_conn_mut(server_ch)
-            .stats()
-            .paths
-            .get(&PathId::ZERO)
+            .path_stats(PathId::ZERO)
             .unwrap()
             .lost_packets,
         0
@@ -1084,9 +1074,7 @@ fn key_update_reordered() {
 
     assert_eq!(
         pair.client_conn_mut(client_ch)
-            .stats()
-            .paths
-            .get(&PathId::ZERO)
+            .path_stats(PathId::ZERO)
             .unwrap()
             .lost_packets,
         0
@@ -1107,18 +1095,14 @@ fn key_update_reordered() {
 
     assert_eq!(
         pair.client_conn_mut(client_ch)
-            .stats()
-            .paths
-            .get(&PathId::ZERO)
+            .path_stats(PathId::ZERO)
             .unwrap()
             .lost_packets,
         0
     );
     assert_eq!(
         pair.server_conn_mut(server_ch)
-            .stats()
-            .paths
-            .get(&PathId::ZERO)
+            .path_stats(PathId::ZERO)
             .unwrap()
             .lost_packets,
         0
@@ -1765,9 +1749,7 @@ fn handshake_1rtt_handling() {
 
     assert!(
         pair.client_conn_mut(client_ch)
-            .stats()
-            .paths
-            .get(&PathId::ZERO)
+            .path_stats(PathId::ZERO)
             .unwrap()
             .lost_packets
             != 0
@@ -2369,14 +2351,17 @@ fn connect_lost_mtu_probes_do_not_trigger_congestion_control() {
     let (client_ch, server_ch) = pair.connect();
     pair.drive();
 
-    let client_stats = pair.client_conn_mut(client_ch).stats();
-    let server_stats = pair.server_conn_mut(server_ch).stats();
-
     // Sanity check (all MTU probes should have been lost)
-    let client_path_stats = client_stats.paths.get(&PathId::ZERO).unwrap();
+    let client_path_stats = pair
+        .client_conn_mut(client_ch)
+        .path_stats(PathId::ZERO)
+        .unwrap();
     assert_eq!(client_path_stats.sent_plpmtud_probes, 9);
     assert_eq!(client_path_stats.lost_plpmtud_probes, 9);
-    let server_path_stats = server_stats.paths.get(&PathId::ZERO).unwrap();
+    let server_path_stats = pair
+        .server_conn_mut(server_ch)
+        .path_stats(PathId::ZERO)
+        .unwrap();
     assert_eq!(server_path_stats.sent_plpmtud_probes, 9);
     assert_eq!(server_path_stats.lost_plpmtud_probes, 9);
 
@@ -2481,14 +2466,12 @@ fn connect_runs_mtud_again_after_600_seconds() {
 
     // Sanity check: the mtu has been discovered
     let client_conn = pair.client_conn_mut(client_ch);
-    let client_stats = client_conn.stats();
-    let client_path_stats = client_stats.paths.get(&PathId::ZERO).unwrap();
+    let client_path_stats = client_conn.path_stats(PathId::ZERO).unwrap();
     assert_eq!(client_conn.path_mtu(), 1389);
     assert_eq!(client_path_stats.sent_plpmtud_probes, 5);
     assert_eq!(client_path_stats.lost_plpmtud_probes, 3);
     let server_conn = pair.server_conn_mut(server_ch);
-    let server_stats = server_conn.stats();
-    let server_path_stats = server_stats.paths.get(&PathId::ZERO).unwrap();
+    let server_path_stats = server_conn.path_stats(PathId::ZERO).unwrap();
     assert_eq!(server_conn.path_mtu(), 1389);
     assert_eq!(server_path_stats.sent_plpmtud_probes, 5);
     assert_eq!(server_path_stats.lost_plpmtud_probes, 3);
@@ -2542,8 +2525,10 @@ fn blackhole_after_mtu_change_repairs_itself() {
     assert_eq!(buf.len(), 1300);
 
     // Sanity checks (black hole detected after 3 lost packets)
-    let client_stats = pair.client_conn_mut(client_ch).stats();
-    let client_path_stats = client_stats.paths.get(&PathId::ZERO).unwrap();
+    let client_path_stats = pair
+        .client_conn_mut(client_ch)
+        .path_stats(PathId::ZERO)
+        .unwrap();
     assert!(client_path_stats.lost_packets >= 3);
     assert!(client_path_stats.congestion_events >= 3);
     assert_eq!(client_path_stats.black_holes_detected, 1);
@@ -2557,7 +2542,10 @@ fn mtud_probes_include_immediate_ack() {
     pair.drive();
 
     let stats = pair.client_conn_mut(client_ch).stats();
-    let path_stats = stats.paths.get(&PathId::ZERO).unwrap();
+    let path_stats = pair
+        .client_conn_mut(client_ch)
+        .path_stats(PathId::ZERO)
+        .unwrap();
     assert_eq!(path_stats.sent_plpmtud_probes, 4);
 
     // Each probe contains a ping and an immediate ack
@@ -2758,6 +2746,10 @@ fn single_ack_eliciting_packet_with_ce_bit_triggers_immediate_ack() {
     pair.drive();
 
     let stats_after_connect = pair.client_conn_mut(client_ch).stats();
+    let after_connect_path_stats = pair
+        .client_conn_mut(client_ch)
+        .path_stats(PathId::ZERO)
+        .unwrap();
 
     let start = pair.time;
 
@@ -2782,8 +2774,10 @@ fn single_ack_eliciting_packet_with_ce_bit_triggers_immediate_ack() {
         stats_after_ping.frame_rx.acks - stats_after_connect.frame_rx.acks,
         1
     );
-    let after_ping_path_stats = stats_after_ping.paths.get(&PathId::ZERO).unwrap();
-    let after_connect_path_stats = stats_after_connect.paths.get(&PathId::ZERO).unwrap();
+    let after_ping_path_stats = pair
+        .client_conn_mut(client_ch)
+        .path_stats(PathId::ZERO)
+        .unwrap();
     assert_eq!(
         after_ping_path_stats.congestion_events - after_connect_path_stats.congestion_events,
         1
@@ -3548,9 +3542,7 @@ fn address_discovery_zero_rtt_accepted() {
     let _ = chunks.finalize();
     assert_eq!(
         pair.client_conn_mut(client_ch)
-            .stats()
-            .paths
-            .get(&PathId::ZERO)
+            .path_stats(PathId::ZERO)
             .unwrap()
             .lost_packets,
         0
