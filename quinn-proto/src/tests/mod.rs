@@ -2466,7 +2466,6 @@ fn connect_runs_mtud_again_after_600_seconds() {
 
     // Sanity check: the mtu has been discovered
     let client_conn = pair.client_conn_mut(client_ch);
-    let client_stats = client_conn.stats();
     let client_path_stats = client_conn.path_stats(PathId::ZERO).unwrap();
     assert_eq!(client_conn.path_mtu(), 1389);
     assert_eq!(client_path_stats.sent_plpmtud_probes, 5);
