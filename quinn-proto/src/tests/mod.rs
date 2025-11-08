@@ -579,6 +579,10 @@ fn zero_rtt_happypath() {
         pair.server_conn_mut(server_ch).poll(),
         Some(Event::HandshakeDataReady)
     );
+    assert_matches!(
+        pair.server_conn_mut(server_ch).poll(),
+        Some(Event::HandshakeConfirmed)
+    );
     // We don't currently preserve stream event order wrt. connection events
     assert_matches!(
         pair.server_conn_mut(server_ch).poll(),
@@ -620,6 +624,10 @@ fn zero_rtt_rejection() {
     );
     assert_matches!(
         pair.server_conn_mut(server_ch).poll(),
+        Some(Event::HandshakeConfirmed)
+    );
+    assert_matches!(
+        pair.server_conn_mut(server_ch).poll(),
         Some(Event::Connected)
     );
     assert_matches!(pair.server_conn_mut(server_ch).poll(), None);
@@ -658,6 +666,10 @@ fn zero_rtt_rejection() {
     assert_matches!(
         pair.server_conn_mut(server_ch).poll(),
         Some(Event::HandshakeDataReady)
+    );
+    assert_matches!(
+        pair.server_conn_mut(server_ch).poll(),
+        Some(Event::HandshakeConfirmed)
     );
     assert_matches!(
         pair.server_conn_mut(server_ch).poll(),
@@ -742,6 +754,10 @@ fn test_zero_rtt_incoming_limit<F: FnOnce(&mut ServerConfig)>(configure_server: 
         pair.server_conn_mut(server_ch).poll(),
         Some(Event::HandshakeDataReady)
     );
+    assert_matches!(
+        pair.server_conn_mut(server_ch).poll(),
+        Some(Event::HandshakeConfirmed)
+    );
     // We don't currently preserve stream event order wrt. connection events
     assert_matches!(
         pair.server_conn_mut(server_ch).poll(),
@@ -811,6 +827,10 @@ fn alpn_success() {
     assert_matches!(
         pair.server_conn_mut(server_ch).poll(),
         Some(Event::HandshakeDataReady)
+    );
+    assert_matches!(
+        pair.server_conn_mut(server_ch).poll(),
+        Some(Event::HandshakeConfirmed)
     );
     assert_matches!(
         pair.server_conn_mut(server_ch).poll(),
@@ -1996,6 +2016,10 @@ fn large_initial() {
     assert_matches!(
         pair.server_conn_mut(server_ch).poll(),
         Some(Event::HandshakeDataReady)
+    );
+    assert_matches!(
+        pair.server_conn_mut(server_ch).poll(),
+        Some(Event::HandshakeConfirmed)
     );
     assert_matches!(
         pair.server_conn_mut(server_ch).poll(),
@@ -3386,4 +3410,93 @@ fn preferred_address() {
 
     let mut pair = Pair::new(Arc::new(EndpointConfig::default()), server_config);
     pair.connect();
+}
+
+#[test]
+fn handshake_sequence() {
+    let _guard = subscribe();
+
+    let mut pair = Pair::default();
+    let ch = pair.begin_connect(client_config());
+
+    pair.step();
+    assert_matches!(pair.client_conn_mut(ch).poll(), None);
+    let sh = pair.server.assert_accept();
+    assert_matches!(
+        pair.server_conn_mut(sh).poll(),
+        Some(Event::HandshakeDataReady)
+    );
+    assert_matches!(pair.server_conn_mut(sh).poll(), None);
+
+    pair.step();
+    assert_matches!(
+        pair.client_conn_mut(ch).poll(),
+        Some(Event::HandshakeDataReady)
+    );
+    assert_matches!(pair.client_conn_mut(ch).poll(), Some(Event::Connected));
+    assert_matches!(pair.client_conn_mut(ch).poll(), None);
+    assert_matches!(
+        pair.server_conn_mut(sh).poll(),
+        Some(Event::HandshakeConfirmed)
+    );
+    assert_matches!(pair.server_conn_mut(sh).poll(), Some(Event::Connected));
+    assert_matches!(pair.server_conn_mut(sh).poll(), None);
+
+    pair.drive_client();
+    assert_matches!(
+        pair.client_conn_mut(ch).poll(),
+        Some(Event::HandshakeConfirmed)
+    );
+    assert_matches!(pair.client_conn_mut(ch).poll(), None);
+}
+
+#[test]
+fn handshake_confirmation_no_resumption_shortcut() {
+    let _guard = subscribe();
+
+    // Initial connection
+    let mut pair = Pair::default();
+    let config = client_config();
+    let (ch, _) = pair.connect_with(config.clone());
+    pair.client
+        .connections
+        .get_mut(&ch)
+        .unwrap()
+        .close(pair.time, VarInt(0), [][..].into());
+    pair.drive();
+
+    // Resumed connection
+    info!("resuming session");
+    let ch = pair.begin_connect(config);
+    assert!(pair.client_conn_mut(ch).has_0rtt());
+
+    pair.step();
+    assert_matches!(pair.client_conn_mut(ch).poll(), None);
+    let sh = pair.server.assert_accept();
+    assert_matches!(
+        pair.server_conn_mut(sh).poll(),
+        Some(Event::HandshakeDataReady)
+    );
+    assert_matches!(pair.server_conn_mut(sh).poll(), None);
+
+    pair.step();
+    assert_matches!(
+        pair.client_conn_mut(ch).poll(),
+        Some(Event::HandshakeDataReady)
+    );
+    assert_matches!(pair.client_conn_mut(ch).poll(), Some(Event::Connected));
+    assert_matches!(pair.client_conn_mut(ch).poll(), None);
+    assert_matches!(
+        pair.server_conn_mut(sh).poll(),
+        Some(Event::HandshakeConfirmed)
+    );
+    assert_matches!(pair.server_conn_mut(sh).poll(), Some(Event::Connected));
+    assert_matches!(pair.server_conn_mut(sh).poll(), None);
+
+    pair.drive_client();
+    assert_matches!(
+        pair.client_conn_mut(ch).poll(),
+        Some(Event::HandshakeConfirmed)
+    );
+    assert_matches!(pair.client_conn_mut(ch).poll(), None);
 }
