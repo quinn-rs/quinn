@@ -1796,7 +1796,7 @@ impl Connection {
                 self.config.qlog_sink.emit_packet_lost(
                     packet,
                     &info,
-                    lost_send_time,
+                    loss_delay,
                     pn_space,
                     now,
                     self.orig_rem_cid,

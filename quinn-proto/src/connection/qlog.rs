@@ -3,6 +3,7 @@
 
 #[cfg(feature = "qlog")]
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 #[cfg(feature = "qlog")]
 use qlog::{
@@ -86,7 +87,7 @@ impl QlogSink {
         &self,
         pn: u64,
         info: &SentPacket,
-        lost_send_time: Instant,
+        loss_delay: Duration,
         space: SpaceId,
         now: Instant,
         orig_rem_cid: ConnectionId,
@@ -105,10 +106,12 @@ impl QlogSink {
                     ..Default::default()
                 }),
                 frames: None,
-                trigger: Some(match info.time_sent <= lost_send_time {
-                    true => PacketLostTrigger::TimeThreshold,
-                    false => PacketLostTrigger::ReorderingThreshold,
-                }),
+                trigger: Some(
+                    match info.time_sent.saturating_duration_since(now) >= loss_delay {
+                        true => PacketLostTrigger::TimeThreshold,
+                        false => PacketLostTrigger::ReorderingThreshold,
+                    },
+                ),
             };
 
             stream.emit_event(orig_rem_cid, EventData::PacketLost(event), now);
