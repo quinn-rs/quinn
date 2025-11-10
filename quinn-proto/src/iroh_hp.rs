@@ -122,6 +122,14 @@ impl State {
             side,
         }
     }
+
+    pub(crate) fn get_nat_traversal_addresses(&self) -> Vec<SocketAddr> {
+        self.local_addresses
+            .keys()
+            .copied()
+            .map(Into::into)
+            .collect()
+    }
 }
 
 impl<'a> ClientSide<'a> {

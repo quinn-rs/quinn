@@ -849,6 +849,12 @@ impl Connection {
         let mut conn = self.0.state.lock("add_nat_traversal_addresses");
         conn.inner.add_nat_traversal_addresses(addresses)
     }
+
+    /// Get the currently advertised nat traversal addresses
+    pub fn get_nat_traversal_addresses(&self) -> Result<Vec<SocketAddr>, iroh_hp::Error> {
+        let conn = self.0.state.lock("add_nat_traversal_addresses");
+        conn.inner.get_nat_traversal_addresses()
+    }
 }
 
 pin_project! {
