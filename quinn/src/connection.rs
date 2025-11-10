@@ -492,6 +492,15 @@ impl Connection {
         self.0.state.lock("path_events").path_events.subscribe()
     }
 
+    /// A broadcast receiver of [`iroh_hp::Event`]s for updates about server addresses
+    pub fn nat_traversal_updates(&self) -> tokio::sync::broadcast::Receiver<iroh_hp::Event> {
+        self.0
+            .state
+            .lock("nat_traversal_updates")
+            .nat_traversal_updates
+            .subscribe()
+    }
+
     /// Wait for the connection to be closed for any reason
     ///
     /// Despite the return type's name, closed connections are often not an error condition at the
@@ -1114,6 +1123,7 @@ impl ConnectionRef {
                 send_buffer: Vec::new(),
                 buffered_transmit: None,
                 observed_external_addr: watch::Sender::new(None),
+                nat_traversal_updates: tokio::sync::broadcast::channel(32).0,
             }),
             shared: Shared::default(),
         }))
@@ -1252,6 +1262,7 @@ pub(crate) struct State {
     /// Our last external address reported by the peer. When multipath is enabled, this will be the
     /// last report across all paths.
     pub(crate) observed_external_addr: watch::Sender<Option<SocketAddr>>,
+    pub(crate) nat_traversal_updates: tokio::sync::broadcast::Sender<iroh_hp::Event>,
 }
 
 impl State {
@@ -1432,8 +1443,8 @@ impl State {
                 Path(evt @ PathEvent::RemoteStatus { .. }) => {
                     self.path_events.send(evt).ok();
                 }
-                NatTraversal(_event) => {
-                    // TODO(@divma): handle event
+                NatTraversal(update) => {
+                    self.nat_traversal_updates.send(evt).ok();
                 }
             }
         }
