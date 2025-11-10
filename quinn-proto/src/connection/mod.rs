@@ -5755,6 +5755,14 @@ impl Connection {
             .ok_or(iroh_hp::Error::ExtensionNotNegotiated)?;
         Ok(hp_state.get_nat_traversal_addresses())
     }
+
+    pub fn initiate_nat_traversal_round(&self) -> Result<(), iroh_hp::Error> {
+        let hp_state = self
+            .iroh_hp
+            .as_ref()
+            .ok_or(iroh_hp::Error::ExtensionNotNegotiated)?;
+        hp_state.initiate_nat_traversal_round()
+    }
 }
 
 impl fmt::Debug for Connection {

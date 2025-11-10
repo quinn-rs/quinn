@@ -130,6 +130,14 @@ impl State {
             .map(Into::into)
             .collect()
     }
+
+    pub(crate) fn initiate_nat_traversal_round(&self) -> Result<(), Error> {
+        if self.side.is_server() {
+            return Err(Error::WrongConnectionSide);
+        }
+        // TODO(@divma): here
+        Ok(())
+    }
 }
 
 impl<'a> ClientSide<'a> {

@@ -864,6 +864,13 @@ impl Connection {
         let conn = self.0.state.lock("add_nat_traversal_addresses");
         conn.inner.get_nat_traversal_addresses()
     }
+
+    //// Initiate a nat traversal round
+    // TODO(@divma): improve docs when things are more clear un my head
+    pub fn initiate_nat_traversal_round(&self) -> Result<(), iroh_hp::Error> {
+        let conn = self.0.state.lock("initiate_nat_traversal_round");
+        conn.inner.initiate_nat_traversal_round()
+    }
 }
 
 pin_project! {
