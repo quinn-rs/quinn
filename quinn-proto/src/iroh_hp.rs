@@ -58,21 +58,31 @@ pub(crate) struct ClientSide<'a> {
 }
 
 impl State {
-    /// Add a local address to use for nat traversal
+    /// Adds a local address to use for nat traversal
     ///
     /// When this endpoint is the server within the connection, these addresses will be sent to the
     /// client in add address frames. For clients, these addresses will be sent in reach out frames
-    pub(crate) fn add_local_address(&mut self, address: SocketAddr) -> Result<SocketAddr, Error> {
+    /// when nat traversal attempts are initiated.
+    ///
+    /// If a frame should be sent, it is returned.
+    pub(crate) fn add_local_address(
+        &mut self,
+        address: SocketAddr,
+    ) -> Result<Option<AddAddress>, Error> {
         let address = (address.ip(), address.port());
         let allow_new = self.local_addresses.len() < MAX_ADDRESSES;
+        let is_server = self.side.is_server();
         match self.local_addresses.entry(address) {
-            Entry::Occupied(occupied_entry) => Ok(*occupied_entry.get()),
+            Entry::Occupied(_) => Ok(None),
             Entry::Vacant(vacant_entry) if allow_new => {
                 let id = self.next_local_addr_id;
                 self.next_local_addr_id = self.next_local_addr_id.saturating_add(1u8);
                 vacant_entry.insert(id);
-                // NOTE for ipv6 addresses this cleans up fields not relevant to the protocol
-                Ok(address.into())
+                if is_server {
+                    Ok(Some(AddAddress::new(address, id)))
+                } else {
+                    Ok(None)
+                }
             }
             _ => Err(Error::TooManyAddresses),
         }
@@ -82,8 +92,17 @@ impl State {
     ///
     /// When this endpoint is the server, removed addresses must be reported with remove address
     /// frames. Clients will simply stop reporting these addresses in reach out frames.
-    pub(crate) fn remove_local_address(&mut self, address: SocketAddr) -> Option<VarInt> {
-        self.local_addresses.remove(&(address.ip(), address.port()))
+    ///
+    /// If a frame should be sent, it is returned.
+    pub(crate) fn remove_local_address(&mut self, address: SocketAddr) -> Option<RemoveAddress> {
+        let id = self
+            .local_addresses
+            .remove(&(address.ip(), address.port()))?;
+        if self.side.is_server() {
+            Some(RemoveAddress::new(id))
+        } else {
+            None
+        }
     }
 
     pub(crate) fn client_side(&mut self) -> Result<ClientSide<'_>, Error> {

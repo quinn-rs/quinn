@@ -5172,6 +5172,23 @@ impl Connection {
             self.stats.frame_tx.stream += sent.stream_frames.len() as u64;
         }
 
+        // TODO(@divma): check if we need to do path exclusive filters
+        while space_id == SpaceId::Data && frame::AddAddress::SIZE_BOUND <= buf.remaining_mut() {
+            if let Some(added_address) = space.pending.add_address.pop_last() {
+                added_address.write(buf);
+            } else {
+                break;
+            }
+        }
+
+        while space_id == SpaceId::Data && frame::RemoveAddress::SIZE_BOUND <= buf.remaining_mut() {
+            if let Some(removed_address) = space.pending.remove_address.pop_last() {
+                removed_address.write(buf);
+            } else {
+                break;
+            }
+        }
+
         sent
     }
 
@@ -5692,17 +5709,15 @@ impl Connection {
         &mut self,
         addresses: &[SocketAddr],
     ) -> Result<(), iroh_hp::Error> {
-        let is_server = self.side().is_server();
         let hp_state = self
             .iroh_hp
             .as_mut()
             .ok_or(iroh_hp::Error::ExtensionNotNegotiated)?;
 
         for &address in addresses {
-            let added = hp_state.add_local_address(address)?;
-            if is_server {
+            if let Some(added) = hp_state.add_local_address(address)? {
                 self.spaces[SpaceId::Data].pending.add_address.insert(added);
-            }
+            };
         }
         Ok(())
     }

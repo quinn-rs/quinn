@@ -1478,7 +1478,7 @@ impl PathBackup {
 
 /// Conjuction of the information contained in the add address frames
 /// ([`FrameType::ADD_IPV4_ADDRESS`], [`FrameType::ADD_IPV6_ADDRESS`]).
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, PartialEq, Eq, Copy, Clone, PartialOrd, Ord)]
 // TODO(@divma): remove
 #[allow(dead_code)]
 pub(crate) struct AddAddress {
@@ -1502,12 +1502,8 @@ impl AddAddress {
     }
     .size();
 
-    pub(crate) const fn new(remote: std::net::SocketAddr, seq_no: VarInt) -> Self {
-        Self {
-            ip: remote.ip(),
-            port: remote.port(),
-            seq_no,
-        }
+    pub(crate) const fn new((ip, port): (IpAddr, u16), seq_no: VarInt) -> Self {
+        Self { ip, port, seq_no }
     }
 
     /// Get the [`FrameType`] for this frame.
@@ -1673,7 +1669,7 @@ impl ReachOut {
 }
 
 /// Frame signaling an address is no longer being advertised
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, PartialEq, Eq, Copy, Clone, PartialOrd, Ord)]
 // TODO(@divma): remove
 #[allow(dead_code)]
 pub(crate) struct RemoveAddress {

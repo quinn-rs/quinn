@@ -2,7 +2,6 @@ use std::{
     cmp,
     collections::{BTreeMap, BTreeSet, VecDeque},
     mem,
-    net::IpAddr,
     ops::{Bound, Index, IndexMut},
 };
 
@@ -13,7 +12,11 @@ use tracing::{error, trace};
 use super::{PathId, assembler::Assembler};
 use crate::{
     Dir, Duration, Instant, SocketAddr, StreamId, TransportError, TransportErrorCode, VarInt,
-    connection::StreamsState, crypto::Keys, frame, packet::SpaceId, range_set::ArrayRangeSet,
+    connection::StreamsState,
+    crypto::Keys,
+    frame::{self, AddAddress, RemoveAddress},
+    packet::SpaceId,
+    range_set::ArrayRangeSet,
     shared::IssuedCid,
 };
 
@@ -555,9 +558,9 @@ pub struct Retransmits {
 
     // Nat traversal data
     /// Addresses to report in `ADD_ADDRESS` frames
-    pub(super) add_address: BTreeSet<SocketAddr>,
+    pub(super) add_address: BTreeSet<AddAddress>,
     /// Address IDs to remove in `REMOVE_ADDRESS` frames
-    pub(super) remove_address: BTreeSet<VarInt>,
+    pub(super) remove_address: BTreeSet<RemoveAddress>,
 }
 
 impl Retransmits {
@@ -609,8 +612,9 @@ impl ::std::ops::BitOrAssign for Retransmits {
         self.path_abandon.append(&mut rhs.path_abandon);
         self.max_path_id |= rhs.max_path_id;
         self.paths_blocked |= rhs.paths_blocked;
-        self.add_address.extend(rhs.add_address.iter());
-        self.remove_address.extend(rhs.remove_address.iter());
+        self.add_address.extend(rhs.add_address.iter().copied());
+        self.remove_address
+            .extend(rhs.remove_address.iter().copied());
     }
 }
 
