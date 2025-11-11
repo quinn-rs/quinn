@@ -243,8 +243,8 @@ mod tokio;
 #[cfg(feature = "runtime-tokio")]
 pub use self::tokio::TokioRuntime;
 
-#[cfg(feature = "async-io")]
-mod async_io;
+#[cfg(feature = "runtime-smol")]
+mod smol;
 // Due to MSRV, we must specify `self::` where there's crate/module ambiguity
 #[cfg(feature = "runtime-smol")]
-pub use self::async_io::*;
+pub use self::smol::*;
