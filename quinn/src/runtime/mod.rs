@@ -242,7 +242,7 @@ mod tokio;
 #[cfg(feature = "runtime-tokio")]
 pub use tokio::TokioRuntime;
 
-#[cfg(feature = "async-io")]
+#[cfg(feature = "runtime-smol")]
 mod smol;
 #[cfg(feature = "runtime-smol")]
 pub use smol::*;
