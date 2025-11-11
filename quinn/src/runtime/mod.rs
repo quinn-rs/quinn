@@ -243,6 +243,6 @@ mod tokio;
 pub use tokio::TokioRuntime;
 
 #[cfg(feature = "async-io")]
-mod async_io;
+mod smol;
 #[cfg(feature = "runtime-smol")]
-pub use async_io::*;
+pub use smol::*;
