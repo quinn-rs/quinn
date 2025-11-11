@@ -4,43 +4,29 @@ use std::{
     task::{Context, Poll},
     time::Instant,
 };
-#[cfg(feature = "runtime-smol")]
 use std::{io, sync::Arc, task::ready};
 
-#[cfg(feature = "runtime-smol")]
 use async_io::Async;
 use async_io::Timer;
 
 use super::AsyncTimer;
-#[cfg(feature = "runtime-smol")]
 use super::{AsyncUdpSocket, Runtime, UdpSender, UdpSenderHelper, UdpSenderHelperSocket};
 
-#[cfg(feature = "runtime-smol")]
-pub use smol::SmolRuntime;
+/// A Quinn runtime for smol
+#[derive(Debug)]
+pub struct SmolRuntime;
 
-#[cfg(feature = "runtime-smol")]
-mod smol {
-    use super::*;
+impl Runtime for SmolRuntime {
+    fn new_timer(&self, t: Instant) -> Pin<Box<dyn AsyncTimer>> {
+        Box::pin(Timer::at(t))
+    }
 
-    /// A Quinn runtime for smol
-    #[derive(Debug)]
-    pub struct SmolRuntime;
+    fn spawn(&self, future: Pin<Box<dyn Future<Output = ()> + Send>>) {
+        ::smol::spawn(future).detach();
+    }
 
-    impl Runtime for SmolRuntime {
-        fn new_timer(&self, t: Instant) -> Pin<Box<dyn AsyncTimer>> {
-            Box::pin(Timer::at(t))
-        }
-
-        fn spawn(&self, future: Pin<Box<dyn Future<Output = ()> + Send>>) {
-            ::smol::spawn(future).detach();
-        }
-
-        fn wrap_udp_socket(
-            &self,
-            sock: std::net::UdpSocket,
-        ) -> io::Result<Box<dyn AsyncUdpSocket>> {
-            Ok(Box::new(UdpSocket::new(sock)?))
-        }
+    fn wrap_udp_socket(&self, sock: std::net::UdpSocket) -> io::Result<Box<dyn AsyncUdpSocket>> {
+        Ok(Box::new(UdpSocket::new(sock)?))
     }
 }
 
@@ -54,14 +40,12 @@ impl AsyncTimer for Timer {
     }
 }
 
-#[cfg(feature = "runtime-smol")]
 #[derive(Debug, Clone)]
 struct UdpSocket {
     io: Arc<Async<std::net::UdpSocket>>,
     inner: Arc<udp::UdpSocketState>,
 }
 
-#[cfg(feature = "runtime-smol")]
 impl UdpSocket {
     fn new(sock: std::net::UdpSocket) -> io::Result<Self> {
         Ok(Self {
@@ -71,7 +55,6 @@ impl UdpSocket {
     }
 }
 
-#[cfg(feature = "runtime-smol")]
 impl UdpSenderHelperSocket for UdpSocket {
     fn max_transmit_segments(&self) -> usize {
         self.inner.max_gso_segments()
@@ -82,7 +65,6 @@ impl UdpSenderHelperSocket for UdpSocket {
     }
 }
 
-#[cfg(feature = "runtime-smol")]
 impl AsyncUdpSocket for UdpSocket {
     fn create_sender(&self) -> Pin<Box<dyn UdpSender>> {
         Box::pin(UdpSenderHelper::new(self.clone(), |socket: &Self| {
