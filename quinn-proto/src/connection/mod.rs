@@ -641,7 +641,7 @@ impl Connection {
         // expires.
         self.timers.set(
             Timer::PerPath(path_id, PathTimer::PathNotAbandoned),
-            now + self.pto_max_path(SpaceId::Data),
+            now + 3 * self.pto_max_path(SpaceId::Data),
         );
 
         Ok(())
@@ -2591,6 +2591,7 @@ impl Connection {
 
     /// Drops the path state, declaring any remaining in-flight packets as lost
     fn drop_path_state(&mut self, path_id: PathId, now: Instant) {
+        trace!(?path_id, "dropping path state");
         let path = self.path_data(path_id);
         let in_flight_mtu_probe = path.mtud.in_flight_mtu_probe();
 
@@ -4319,11 +4320,25 @@ impl Connection {
                             trace!("peer abandoned already closed path");
                         }
                     }
-                    let delay = self.pto(SpaceId::Data, path_id) * 3;
-                    self.timers.set(
-                        Timer::PerPath(path_id, PathTimer::PathAbandoned),
-                        now + delay,
-                    );
+                    // If we receive a retransmit of PATH_ABANDON then we may already have
+                    // abandoned this path locally.  In that case the PathAbandoned timer
+                    // may already have fired and we no longer have any state for this path.
+                    // Only set this timer if we still have path state.
+                    // TODO(flub): Note that if we process a retransmit and *do* still have
+                    //    path state, we are extending the expiration time of this timer.
+                    //    That's technically not needed, but not a violation.  We would have
+                    //    to be able to inspect if the timer is set to avoid this.
+                    if self.path(path_id).is_some() {
+                        // TODO(flub): Checking is_some() here followed by a number of calls
+                        //    that would panic if it was None is really ugly.  If only we
+                        //    could do something like PathData::pto().  One day we'll have
+                        //    unified SpaceId and PathId and this will be possible.
+                        let delay = self.pto(SpaceId::Data, path_id) * 3;
+                        self.timers.set(
+                            Timer::PerPath(path_id, PathTimer::PathAbandoned),
+                            now + delay,
+                        );
+                    }
                     self.timers
                         .stop(Timer::PerPath(path_id, PathTimer::PathNotAbandoned));
                 }
