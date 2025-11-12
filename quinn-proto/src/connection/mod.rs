@@ -3262,12 +3262,11 @@ impl Connection {
         let pns = space.for_path(PathId::ZERO);
         pns.time_of_last_ack_eliciting_packet = None;
         pns.loss_time = None;
+        pns.loss_probes = 0;
         let sent_packets = mem::take(&mut pns.sent_packets);
+        let path = self.paths.get_mut(&PathId::ZERO).unwrap();
         for packet in sent_packets.into_values() {
-            self.paths
-                .get_mut(&PathId::ZERO)
-                .unwrap()
-                .remove_in_flight(&packet);
+            path.data.remove_in_flight(&packet);
         }
 
         self.set_loss_detection_timer(now, PathId::ZERO)
