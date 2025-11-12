@@ -911,10 +911,9 @@ impl Connection {
 
         // If there is any available path we only want to send frames to any backup path
         // that must be sent on that backup path exclusively.
-        let have_available_path = self
-            .paths
-            .values()
-            .any(|path| path.data.local_status() == PathStatus::Available);
+        let have_available_path = self.paths.iter().any(|(id, path)| {
+            path.data.local_status() == PathStatus::Available && self.rem_cids.contains_key(id)
+        });
 
         // Setup for the first path_id
         let mut transmit = TransmitBuf::new(
