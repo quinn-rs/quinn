@@ -846,18 +846,18 @@ impl Connection {
         // all datagrams in a GSO batch are for the same destination.  Therefore only
         // datagrams for one Path ID are produced for each poll_transmit call.
 
+        // TODO(flub): this is wishful thinking and not actually implemented, but perhaps it
+        //   should be:
+
         // First, if we have to send a close, select a path for that.
         // Next, all paths that have a PATH_CHALLENGE or PATH_RESPONSE pending.
 
-        // For all AVAILABLE paths:
+        // For all, open, validated and AVAILABLE paths:
         // - Is the path congestion blocked or pacing blocked?
         // - call maybe_queue_ to ensure a tail-loss probe would be sent?
         // - do we need to send a close message?
         // - call can_send
         // Once there's nothing more to send on the AVAILABLE paths, do the same for BACKUP paths
-
-        // What about PATH_CHALLENGE or PATH_RESPONSE?  We need to check if we need to send
-        // any of those.
 
         // Check whether we need to send a close message
         let close = match self.state {
@@ -909,10 +909,12 @@ impl Connection {
 
         let mut path_id = *self.paths.first_key_value().expect("one path must exist").0;
 
-        // If there is any available path we only want to send frames to any backup path
-        // that must be sent on that backup path exclusively.
+        // If there is any open, validated and available path we only want to send frames to
+        // any backup path that must be sent on that backup path exclusively.
         let have_available_path = self.paths.iter().any(|(id, path)| {
-            path.data.local_status() == PathStatus::Available && self.rem_cids.contains_key(id)
+            path.data.validated
+                && path.data.local_status() == PathStatus::Available
+                && self.rem_cids.contains_key(id)
         });
 
         // Setup for the first path_id
