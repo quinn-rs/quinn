@@ -6,7 +6,7 @@ use std::{
 use rustc_hash::FxHashMap;
 
 use crate::{
-    Side, VarInt,
+    PathId, Side, VarInt,
     frame::{AddAddress, RemoveAddress},
 };
 
@@ -26,10 +26,27 @@ pub enum Error {
     /// The extension was not negotiated
     #[error("Iroh's nat traversal was not negotiated")]
     ExtensionNotNegotiated,
+    /// Not enough addresses to complete the operation
+    #[error("Not enough addresses")]
+    NotEnoughAddresses,
+    /// Nat traversal attempt failed due to a multipath error
+    #[error("Failed to establish paths {0}")]
+    Multipath(super::PathError),
+}
+
+pub(crate) struct NatTraversalRound {
+    /// Sequence number to use for the new reach out frames
+    pub(crate) new_round: VarInt,
+    /// Addresses to use to send reach out frames
+    pub(crate) reach_out_at: Vec<(IpAddr, u16)>,
+    /// Remotes to probe by attempting to open new paths
+    pub(crate) addresses_to_probe: Vec<(IpAddr, u16)>,
+    /// [`PathId`]s of the cancelled round
+    pub(crate) prev_round_path_ids: Vec<PathId>,
 }
 
 // TODO(@divma): unclear to me what these events are useful for\
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Event {
     AddressAdded(SocketAddr),
     AddressRemoved(SocketAddr),
@@ -47,9 +64,18 @@ pub(crate) struct State {
     /// The next id to use for local addresses sent to the client
     next_local_addr_id: VarInt,
     /// Max concurrent address validations to perform
+    // TODO(@divma): opening paths might not be a good idea after all
     max_concurrent_path_validations: u64,
     /// Local connection side
     side: Side,
+    /// Current nat holepunching round
+    ///
+    /// Clients initiate hole punching rounds and are thus responsible for incrementing the count.
+    /// Servers keep track of the client's most recent round and cancel probing related to previous
+    /// rounds.
+    round: VarInt,
+    /// [`PathId`]s used to probe remotes assigned to this round
+    round_path_ids: Vec<PathId>,
 }
 
 /// Nat traversal api exclusive to clients
@@ -120,6 +146,8 @@ impl State {
             next_local_addr_id: Default::default(),
             max_concurrent_path_validations,
             side,
+            round: Default::default(),
+            round_path_ids: Default::default(),
         }
     }
 
@@ -131,11 +159,39 @@ impl State {
             .collect()
     }
 
-    pub(crate) fn initiate_nat_traversal_round(&self) -> Result<(), Error> {
+    /// Initiates a new nat traversal round
+    ///
+    /// A nat traversal round involves advertising the client's local addresses in `REACH_OUT`
+    /// frames, and initiating probing of the known remote addresses. When a new round is
+    /// initiated, the previous one is cancelled, and paths that have not been opened should be
+    /// closed.
+    pub(crate) fn initiate_nat_traversal_round(&mut self) -> Result<NatTraversalRound, Error> {
         if self.side.is_server() {
             return Err(Error::WrongConnectionSide);
         }
-        // TODO(@divma): here
+
+        if self.local_addresses.is_empty() || self.remote_addresses.is_empty() {
+            return Err(Error::NotEnoughAddresses);
+        }
+
+        let prev_round_path_ids = std::mem::replace(&mut self.round_path_ids, Default::default());
+        self.round = self.round.saturating_add(1u8);
+
+        Ok(NatTraversalRound {
+            new_round: self.round,
+            reach_out_at: self.local_addresses.keys().copied().collect(),
+            addresses_to_probe: self.remote_addresses.values().copied().collect(),
+            prev_round_path_ids,
+        })
+    }
+
+    /// Add a [`PathId`] as part of the current attempts to create paths based on the server's
+    /// advertised addresses.
+    pub(crate) fn set_round_path_ids(&mut self, path_ids: Vec<PathId>) -> Result<(), Error> {
+        if self.side.is_server() {
+            return Err(Error::WrongConnectionSide);
+        }
+        self.round_path_ids = path_ids;
         Ok(())
     }
 }

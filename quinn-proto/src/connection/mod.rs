@@ -5756,12 +5756,71 @@ impl Connection {
         Ok(hp_state.get_nat_traversal_addresses())
     }
 
-    pub fn initiate_nat_traversal_round(&self) -> Result<(), iroh_hp::Error> {
+    /// Initiates a new nat traversal round
+    ///
+    /// A nat traversal round involves advertising the client's local addresses in `REACH_OUT`
+    /// frames, and initiating probing of the known remote addresses. When a new round is
+    /// initiated, the previous one is cancelled, and paths that have not been opened are closed.
+    ///
+    /// Returns the server addresses that are now being probed.
+    pub fn initiate_nat_traversal_round(
+        &mut self,
+        now: Instant,
+    ) -> Result<Vec<SocketAddr>, iroh_hp::Error> {
         let hp_state = self
             .iroh_hp
-            .as_ref()
+            .as_mut()
             .ok_or(iroh_hp::Error::ExtensionNotNegotiated)?;
-        hp_state.initiate_nat_traversal_round()
+        let iroh_hp::NatTraversalRound {
+            new_round,
+            reach_out_at,
+            addresses_to_probe,
+            prev_round_path_ids,
+        } = hp_state.initiate_nat_traversal_round()?;
+
+        self.spaces[SpaceId::Data].pending.reach_out = Some((new_round, reach_out_at));
+
+        for path_id in prev_round_path_ids {
+            // TODO(@divma): this sounds reasonable but we need if this actually works for the
+            // purposes of the protocol
+            let validated = self
+                .path(path_id)
+                .map(|path| path.validated)
+                .unwrap_or(false);
+
+            if !validated {
+                let _ =
+                    self.close_path(now, path_id, TransportErrorCode::APPLICATION_ABANDON.into());
+            }
+        }
+
+        let mut err = None;
+
+        let mut path_ids = Vec::with_capacity(addresses_to_probe.len());
+        let mut probed_addresses = Vec::with_capacity(addresses_to_probe.len());
+        for address in addresses_to_probe {
+            let remote: SocketAddr = address.into();
+            match self.open_path_ensure(remote, PathStatus::Backup, now) {
+                Ok((path_id, path_was_known)) if !path_was_known => {
+                    path_ids.push(path_id);
+                    probed_addresses.push(remote);
+                }
+                Ok((path_id, _)) => {
+                    trace!(%path_id, %remote,"nat traversal: path existed for remote")
+                }
+                Err(e) => {
+                    debug!(%remote, %e,"nat traversal: failed to probe remote");
+                    err.get_or_insert(e);
+                }
+            }
+        }
+
+        let hp_state = self.iroh_hp.as_mut().expect("previously validated");
+        hp_state
+            .set_round_path_ids(path_ids)
+            .expect("connection side validated");
+
+        Ok(probed_addresses)
     }
 }
 

@@ -866,10 +866,11 @@ impl Connection {
     }
 
     //// Initiate a nat traversal round
-    // TODO(@divma): improve docs when things are more clear un my head
-    pub fn initiate_nat_traversal_round(&self) -> Result<(), iroh_hp::Error> {
-        let conn = self.0.state.lock("initiate_nat_traversal_round");
-        conn.inner.initiate_nat_traversal_round()
+    ///
+    pub fn initiate_nat_traversal_round(&self) -> Result<Vec<SocketAddr>, iroh_hp::Error> {
+        let mut conn = self.0.state.lock("initiate_nat_traversal_round");
+        let now = conn.runtime.now();
+        conn.inner.initiate_nat_traversal_round(now)
     }
 }
 
@@ -1451,7 +1452,7 @@ impl State {
                     self.path_events.send(evt).ok();
                 }
                 NatTraversal(update) => {
-                    self.nat_traversal_updates.send(evt).ok();
+                    self.nat_traversal_updates.send(update).ok();
                 }
             }
         }
