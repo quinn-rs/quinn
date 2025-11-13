@@ -833,7 +833,7 @@ impl Connection {
     /// When the NAT traversal extension is negotiated, servers send these addresses to clients in
     /// `ADD_ADDRESS` frames. This allows clients to obtain server address candidates to initiate
     /// NAT traversal attempts. Clients provide their own reachable addresses in `REACH_OUT` frames
-    /// when [`Self::initiate_nat_traversal`] is called.
+    /// when [`Self::initiate_nat_traversal_round`] is called.
     pub fn add_nat_traversal_addresses(
         &self,
         addresses: &[SocketAddr],
@@ -865,8 +865,13 @@ impl Connection {
         conn.inner.get_nat_traversal_addresses()
     }
 
-    //// Initiate a nat traversal round
+    /// Initiates a new nat traversal round
     ///
+    /// A nat traversal round involves advertising the client's local addresses in `REACH_OUT`
+    /// frames, and initiating probing of the known remote addresses. When a new round is
+    /// initiated, the previous one is cancelled, and paths that have not been opened are closed.
+    ///
+    /// Returns the server addresses that are now being probed.
     pub fn initiate_nat_traversal_round(&self) -> Result<Vec<SocketAddr>, iroh_hp::Error> {
         let mut conn = self.0.state.lock("initiate_nat_traversal_round");
         let now = conn.runtime.now();
