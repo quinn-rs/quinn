@@ -1589,12 +1589,8 @@ impl ReachOut {
     }
     .size();
 
-    pub(crate) const fn new(round: VarInt, local_addr: std::net::SocketAddr) -> Self {
-        Self {
-            round,
-            ip: local_addr.ip(),
-            port: local_addr.port(),
-        }
+    pub(crate) const fn new(round: VarInt, (ip, port): (IpAddr, u16)) -> Self {
+        Self { round, ip, port }
     }
 
     /// Get the [`FrameType`] for this frame

@@ -4687,6 +4687,22 @@ impl Connection {
                 self.stats.frame_tx.handshake_done.saturating_add(1);
         }
 
+        // TODO(@divma): path explusive considerations
+        if let Some((round, addresses)) = space.pending.reach_out.as_mut() {
+            while let Some(local_addr) = addresses.pop() {
+                let reach_out = frame::ReachOut::new(*round, local_addr);
+                if buf.remaining_mut() > reach_out.size() {
+                    reach_out.write(buf);
+                } else {
+                    addresses.push(local_addr);
+                    break;
+                }
+            }
+            if addresses.is_empty() {
+                space.pending.reach_out = None;
+            }
+        }
+
         // OBSERVED_ADDR
         if !path_exclusive_only
             && space_id == SpaceId::Data
