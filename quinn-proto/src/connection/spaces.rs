@@ -2,6 +2,7 @@ use std::{
     cmp,
     collections::{BTreeMap, BTreeSet, VecDeque},
     mem,
+    net::IpAddr,
     ops::{Bound, Index, IndexMut},
 };
 
@@ -561,6 +562,8 @@ pub struct Retransmits {
     pub(super) add_address: BTreeSet<AddAddress>,
     /// Address IDs to remove in `REMOVE_ADDRESS` frames
     pub(super) remove_address: BTreeSet<RemoveAddress>,
+    /// Round and local addresses to advertise in `REACH_OUT` frames
+    pub(super) reach_out: Option<(VarInt, Vec<(IpAddr, u16)>)>,
 }
 
 impl Retransmits {
@@ -586,6 +589,7 @@ impl Retransmits {
             && !self.paths_blocked
             && self.add_address.is_empty()
             && self.remove_address.is_empty()
+            && self.reach_out.is_none()
     }
 }
 
@@ -615,6 +619,14 @@ impl ::std::ops::BitOrAssign for Retransmits {
         self.add_address.extend(rhs.add_address.iter().copied());
         self.remove_address
             .extend(rhs.remove_address.iter().copied());
+        if let Some((rhs_round, _)) = rhs.reach_out.as_ref() {
+            let maybe_lhs_round = self.reach_out.as_ref().map(|(round, _addresses)| *round);
+            match maybe_lhs_round {
+                Some(lhs_round) if *rhs_round > lhs_round => self.reach_out = rhs.reach_out.clone(),
+                None => self.reach_out = rhs.reach_out.clone(),
+                _ => {}
+            }
+        }
     }
 }
 
