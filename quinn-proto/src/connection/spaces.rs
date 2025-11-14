@@ -564,6 +564,8 @@ pub struct Retransmits {
     pub(super) remove_address: BTreeSet<RemoveAddress>,
     /// Round and local addresses to advertise in `REACH_OUT` frames
     pub(super) reach_out: Option<(VarInt, Vec<(IpAddr, u16)>)>,
+    /// Round and remote addresses to which `PATH_CHALLENGE`s need to be sent
+    pub(super) challenges: Option<(VarInt, Vec<(IpAddr, u16)>)>,
 }
 
 impl Retransmits {
@@ -590,6 +592,7 @@ impl Retransmits {
             && self.add_address.is_empty()
             && self.remove_address.is_empty()
             && self.reach_out.is_none()
+            && self.challenges.is_none()
     }
 }
 
@@ -619,13 +622,26 @@ impl ::std::ops::BitOrAssign for Retransmits {
         self.add_address.extend(rhs.add_address.iter().copied());
         self.remove_address
             .extend(rhs.remove_address.iter().copied());
-        if let Some((rhs_round, _)) = rhs.reach_out.as_ref() {
-            let maybe_lhs_round = self.reach_out.as_ref().map(|(round, _addresses)| *round);
-            match maybe_lhs_round {
-                Some(lhs_round) if *rhs_round > lhs_round => self.reach_out = rhs.reach_out.clone(),
-                None => self.reach_out = rhs.reach_out.clone(),
-                _ => {}
+        // if there are two rounds, prefer the most recent reach out set
+        let lhs_round = self.reach_out.as_ref().map(|(round, _)| *round);
+        let rhs_round = rhs.reach_out.as_ref().map(|(round, _)| *round);
+        match (lhs_round, rhs_round) {
+            (None, Some(_)) => self.reach_out = rhs.reach_out.clone(),
+            (Some(lhs_round), Some(rhs_round)) if rhs_round > lhs_round => {
+                self.reach_out = rhs.reach_out.clone()
             }
+            _ => {}
+        }
+
+        // if there are two rounds, prefer the most recent pending challenges set
+        let lhs_round = self.challenges.as_ref().map(|(round, _)| *round);
+        let rhs_round = rhs.challenges.as_ref().map(|(round, _)| *round);
+        match (lhs_round, rhs_round) {
+            (None, Some(_)) => self.challenges = rhs.challenges.clone(),
+            (Some(lhs_round), Some(rhs_round)) if rhs_round > lhs_round => {
+                self.challenges = rhs.challenges.clone()
+            }
+            _ => {}
         }
     }
 }

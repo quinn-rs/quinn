@@ -76,6 +76,9 @@ pub(crate) struct State {
     round: VarInt,
     /// [`PathId`]s used to probe remotes assigned to this round
     round_path_ids: Vec<PathId>,
+    /// Challenges sent by servers to validate client addresses without attempting to open
+    /// multipath paths
+    challenges: FxHashMap<u64, (IpAddr, u16)>,
 }
 
 /// Nat traversal api exclusive to clients
@@ -148,6 +151,7 @@ impl State {
             side,
             round: Default::default(),
             round_path_ids: Default::default(),
+            challenges: Default::default(),
         }
     }
 
