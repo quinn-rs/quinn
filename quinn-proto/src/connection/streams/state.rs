@@ -256,9 +256,8 @@ impl StreamsState {
         payload_len: usize,
     ) -> Result<ShouldTransmit, TransportError> {
         let id = frame.id;
-        self.validate_receive_id(id).map_err(|e| {
+        self.validate_receive_id(id).inspect_err(|_e| {
             debug!("received illegal STREAM frame");
-            e
         })?;
 
         let rs = match self
@@ -310,9 +309,8 @@ impl StreamsState {
             error_code,
             final_offset,
         } = frame;
-        self.validate_receive_id(id).map_err(|e| {
+        self.validate_receive_id(id).inspect_err(|_e| {
             debug!("received illegal RESET_STREAM frame");
-            e
         })?;
 
         let rs = match self

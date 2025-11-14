@@ -28,7 +28,7 @@ use crate::{
 };
 use proto::{
     ConnectionError, ConnectionHandle, ConnectionStats, Dir, EndpointEvent, PathError, PathEvent,
-    PathId, PathStatus, Side, StreamEvent, StreamId, congestion::Controller, iroh_hp,
+    PathId, PathStats, PathStatus, Side, StreamEvent, StreamId, congestion::Controller, iroh_hp,
 };
 
 /// In-progress connection attempt future
@@ -527,6 +527,24 @@ impl Connection {
             .clone()
     }
 
+    /// Wait for the connection to be closed without keeping a strong reference to the connection
+    ///
+    /// Returns a future that resolves, once the connection is closed, to a tuple of
+    /// ([`ConnectionError`], [`ConnectionStats`]).
+    ///
+    /// Calling [`Self::closed`] keeps the connection alive until it is either closed locally via [`Connection::close`]
+    /// or closed by the remote peer. This function instead does not keep the connection itself alive,
+    /// so if all *other* clones of the connection are dropped, the connection will be closed implicitly even
+    /// if there are futures returned from this function still being awaited.
+    pub fn on_closed(&self) -> OnClosed {
+        let (tx, rx) = oneshot::channel();
+        self.0.state.lock("on_closed").on_closed.push(tx);
+        OnClosed {
+            conn: self.weak_handle(),
+            rx,
+        }
+    }
+
     /// If the connection is closed, the reason why.
     ///
     /// Returns `None` if the connection is still open.
@@ -695,6 +713,11 @@ impl Connection {
     /// Returns connection statistics
     pub fn stats(&self) -> ConnectionStats {
         self.0.state.lock("stats").inner.stats()
+    }
+
+    /// Returns path statistics
+    pub fn path_stats(&self, path_id: PathId) -> Option<PathStats> {
+        self.0.state.lock("path_stats").inner.path_stats(path_id)
     }
 
     /// Current state of the congestion control algorithm, for debugging purposes
@@ -1096,6 +1119,43 @@ impl Future for SendDatagram<'_> {
     }
 }
 
+/// Future returned by [`Connection::on_closed`]
+///
+/// Resolves to a tuple of ([`ConnectionError`], [`ConnectionStats`]).
+pub struct OnClosed {
+    rx: oneshot::Receiver<(ConnectionError, ConnectionStats)>,
+    conn: WeakConnectionHandle,
+}
+
+impl Drop for OnClosed {
+    fn drop(&mut self) {
+        if self.rx.is_terminated() {
+            return;
+        };
+        if let Some(conn) = self.conn.upgrade() {
+            self.rx.close();
+            conn.0
+                .state
+                .lock("OnClosed::drop")
+                .on_closed
+                .retain(|tx| !tx.is_closed());
+        }
+    }
+}
+
+impl Future for OnClosed {
+    type Output = (ConnectionError, ConnectionStats);
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let this = self.get_mut();
+        // The `expect` is safe because `State::drop` ensures that all senders are triggered
+        // before being dropped.
+        Pin::new(&mut this.rx)
+            .poll(cx)
+            .map(|x| x.expect("on_close sender is never dropped before sending"))
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct ConnectionRef(Arc<ConnectionInner>);
 
@@ -1137,6 +1197,7 @@ impl ConnectionRef {
                 buffered_transmit: None,
                 observed_external_addr: watch::Sender::new(None),
                 nat_traversal_updates: tokio::sync::broadcast::channel(32).0,
+                on_closed: Vec::new(),
             }),
             shared: Shared::default(),
         }))
@@ -1276,6 +1337,7 @@ pub(crate) struct State {
     /// last report across all paths.
     pub(crate) observed_external_addr: watch::Sender<Option<SocketAddr>>,
     pub(crate) nat_traversal_updates: tokio::sync::broadcast::Sender<iroh_hp::Event>,
+    on_closed: Vec<oneshot::Sender<(ConnectionError, ConnectionStats)>>,
 }
 
 impl State {
@@ -1539,6 +1601,12 @@ impl State {
         }
         wake_all_notify(&mut self.stopped);
         shared.closed.notify_waiters();
+
+        // Send to the registered on_closed futures.
+        let stats = self.inner.stats();
+        for tx in self.on_closed.drain(..) {
+            tx.send((reason.clone(), stats.clone())).ok();
+        }
     }
 
     fn close(&mut self, error_code: VarInt, reason: Bytes, shared: &Shared) {
@@ -1571,6 +1639,15 @@ impl Drop for State {
             let _ = self
                 .endpoint_events
                 .send((self.handle, proto::EndpointEvent::drained()));
+        }
+
+        if !self.on_closed.is_empty() {
+            // Ensure that all on_closed oneshot senders are triggered before dropping.
+            let reason = self.error.as_ref().expect("closed without error reason");
+            let stats = self.inner.stats();
+            for tx in self.on_closed.drain(..) {
+                tx.send((reason.clone(), stats.clone())).ok();
+            }
         }
     }
 }

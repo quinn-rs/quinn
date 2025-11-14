@@ -1049,7 +1049,7 @@ impl PendingAcks {
     pub(super) fn insert_one(&mut self, packet: u64, now: Instant) {
         self.ranges.insert_one(packet);
 
-        if self.largest_packet.map_or(true, |(pn, _)| packet > pn) {
+        if self.largest_packet.is_none_or(|(pn, _)| packet > pn) {
             self.largest_packet = Some((packet, now));
         }
 

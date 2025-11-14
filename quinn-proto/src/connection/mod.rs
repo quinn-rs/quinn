@@ -25,6 +25,7 @@ use crate::{
     coding::BufMutExt,
     config::{ServerConfig, TransportConfig},
     congestion::Controller,
+    connection::timer::{ConnTimer, PathTimer},
     crypto::{self, KeyPair, Keys, PacketKey},
     frame::{self, Close, Datagram, FrameStruct, NewToken, ObservedAddr},
     iroh_hp,
@@ -253,6 +254,8 @@ pub struct Connection {
     datagrams: DatagramState,
     /// Connection level statistics
     stats: ConnectionStats,
+    /// Path level statistics
+    path_stats: FxHashMap<PathId, PathStats>,
     /// QUIC version used for the connection.
     version: u32,
 
@@ -432,6 +435,7 @@ impl Connection {
             rem_cids: FxHashMap::from_iter([(PathId::ZERO, CidQueue::new(rem_cid))]),
             rng,
             stats: ConnectionStats::default(),
+            path_stats: Default::default(),
             version,
 
             // peer params are not yet known, so multipath is not enabled
@@ -464,7 +468,7 @@ impl Connection {
     /// - a call was made to `handle_timeout`
     #[must_use]
     pub fn poll_timeout(&mut self) -> Option<Instant> {
-        self.timers.peek().map(|entry| entry.time)
+        self.timers.peek()
     }
 
     /// Returns application-facing events
@@ -642,8 +646,8 @@ impl Connection {
         // The peer MUST respond with a corresponding PATH_ABANDON frame. If not, this timer
         // expires.
         self.timers.set(
-            Timer::PathNotAbandoned(path_id),
-            now + self.pto_max_path(SpaceId::Data),
+            Timer::PerPath(path_id, PathTimer::PathNotAbandoned),
+            now + 3 * self.pto_max_path(SpaceId::Data),
         );
 
         Ok(())
@@ -802,7 +806,8 @@ impl Connection {
         data.validated = validated;
 
         let pto = self.ack_frequency.max_ack_delay_for_pto() + data.rtt.pto_base();
-        self.timers.set(Timer::PathOpen(path_id), now + 3 * pto);
+        self.timers
+            .set(Timer::PerPath(path_id, PathTimer::PathOpen), now + 3 * pto);
 
         // for the path to be opened we need to send a packet on the path. Sending a challenge
         // guarantees this
@@ -847,18 +852,18 @@ impl Connection {
         // all datagrams in a GSO batch are for the same destination.  Therefore only
         // datagrams for one Path ID are produced for each poll_transmit call.
 
+        // TODO(flub): this is wishful thinking and not actually implemented, but perhaps it
+        //   should be:
+
         // First, if we have to send a close, select a path for that.
         // Next, all paths that have a PATH_CHALLENGE or PATH_RESPONSE pending.
 
-        // For all AVAILABLE paths:
+        // For all, open, validated and AVAILABLE paths:
         // - Is the path congestion blocked or pacing blocked?
         // - call maybe_queue_ to ensure a tail-loss probe would be sent?
         // - do we need to send a close message?
         // - call can_send
         // Once there's nothing more to send on the AVAILABLE paths, do the same for BACKUP paths
-
-        // What about PATH_CHALLENGE or PATH_RESPONSE?  We need to check if we need to send
-        // any of those.
 
         // Check whether we need to send a close message
         let close = match self.state {
@@ -910,12 +915,13 @@ impl Connection {
 
         let mut path_id = *self.paths.first_key_value().expect("one path must exist").0;
 
-        // If there is any available path we only want to send frames to any backup path
-        // that must be sent on that backup path exclusively.
-        let have_available_path = self
-            .paths
-            .values()
-            .any(|path| path.data.local_status() == PathStatus::Available);
+        // If there is any open, validated and available path we only want to send frames to
+        // any backup path that must be sent on that backup path exclusively.
+        let have_available_path = self.paths.iter().any(|(id, path)| {
+            path.data.validated
+                && path.data.local_status() == PathStatus::Available
+                && self.rem_cids.contains_key(id)
+        });
 
         // Setup for the first path_id
         let mut transmit = TransmitBuf::new(
@@ -1302,7 +1308,8 @@ impl Connection {
                     .for_path(*path_id)
                     .pending_acks
                     .acks_sent();
-                self.timers.stop(Timer::MaxAckDelay(*path_id));
+                self.timers
+                    .stop(Timer::PerPath(*path_id, PathTimer::MaxAckDelay));
             }
 
             // Now we need to finish the packet.  Before we do so we need to know if we will
@@ -1438,8 +1445,7 @@ impl Connection {
                     PadDatagram::ToSize(probe_size),
                 );
 
-                self.stats
-                    .paths
+                self.path_stats
                     .entry(path_id)
                     .or_default()
                     .sent_plpmtud_probes += 1;
@@ -1550,7 +1556,8 @@ impl Connection {
 
         // Pacing check.
         if let Some(delay) = self.path_data_mut(path_id).pacing_delay(bytes_to_send, now) {
-            self.timers.set(Timer::Pacing(path_id), delay);
+            self.timers
+                .set(Timer::PerPath(path_id, PathTimer::Pacing), delay);
             // Loss probes and CONNECTION_CLOSE should be subject to pacing, even though
             // they are not congestion controlled.
             trace!(?space_id, ?path_id, "blocked by pacing");
@@ -1751,130 +1758,138 @@ impl Connection {
     /// `Instant` that was output by `poll_timeout`; however spurious extra calls will simply
     /// no-op and therefore are safe.
     pub fn handle_timeout(&mut self, now: Instant) {
-        while let Some(timer) = self.timers.expire_before(now) {
+        while let Some((timer, _time)) = self.timers.expire_before(now) {
             // TODO(@divma): remove `at` when the unicorn is born
             trace!(?timer, at=?now, "timeout");
             match timer {
-                Timer::Close => {
-                    self.state = State::Drained;
-                    self.endpoint_events.push_back(EndpointEventInner::Drained);
-                }
-                Timer::Idle => {
-                    self.kill(ConnectionError::TimedOut);
-                }
-                Timer::PathIdle(path_id) => {
-                    // TODO(flub): TransportErrorCode::NO_ERROR but where's the API to get
-                    //    that into a VarInt?
-                    self.close_path(now, path_id, TransportErrorCode::NO_ERROR.into())
-                        .ok();
-                }
-                Timer::KeepAlive => {
-                    trace!("sending keep-alive");
-                    self.ping();
-                }
-                Timer::PathKeepAlive(path_id) => {
-                    trace!(?path_id, "sending keep-alive on path");
-                    self.ping_path(path_id).ok();
-                }
-                Timer::LossDetection(path_id) => {
-                    self.on_loss_detection_timeout(now, path_id);
-                    self.config.qlog_sink.emit_recovery_metrics(
-                        self.path_data(path_id).pto_count,
-                        &mut self.paths.get_mut(&path_id).unwrap().data,
-                        now,
-                        self.orig_rem_cid,
-                    );
-                }
-                Timer::KeyDiscard => {
-                    self.zero_rtt_crypto = None;
-                    self.prev_crypto = None;
-                }
-                Timer::PathValidation(path_id) => {
-                    let Some(path) = self.paths.get_mut(&path_id) else {
-                        continue;
-                    };
-                    debug!("path validation failed");
-                    if let Some((_, prev)) = path.prev.take() {
-                        path.data = prev;
+                Timer::Conn(timer) => match timer {
+                    ConnTimer::Close => {
+                        self.state = State::Drained;
+                        self.endpoint_events.push_back(EndpointEventInner::Drained);
                     }
-                    path.data.challenge = None;
-                    path.data.challenge_pending = false;
-                }
-                Timer::PathOpen(path_id) => {
-                    let Some(path) = self.path_mut(path_id) else {
-                        continue;
-                    };
-                    path.challenge = None;
-                    path.challenge_pending = false;
-                    debug!("new path validation failed");
-                    if let Err(err) =
-                        self.close_path(now, path_id, TransportErrorCode::UNSTABLE_INTERFACE.into())
-                    {
-                        warn!(?err, "failed closing path");
+                    ConnTimer::Idle => {
+                        self.kill(ConnectionError::TimedOut);
                     }
-
-                    self.events.push_back(Event::Path(PathEvent::LocallyClosed {
-                        id: path_id,
-                        error: PathError::ValidationFailed,
-                    }));
-                }
-                Timer::Pacing(path_id) => trace!(?path_id, "pacing timer expired"),
-                Timer::PushNewCid => {
-                    while let Some((path_id, when)) = self.next_cid_retirement() {
-                        if when > now {
-                            break;
-                        }
-                        match self.local_cid_state.get_mut(&path_id) {
-                            None => error!(?path_id, "No local CID state for path"),
-                            Some(cid_state) => {
-                                // Update `retire_prior_to` field in NEW_CONNECTION_ID frame
-                                let num_new_cid = cid_state.on_cid_timeout().into();
-                                if !self.state.is_closed() {
-                                    trace!(
-                                        "push a new CID to peer RETIRE_PRIOR_TO field {}",
-                                        cid_state.retire_prior_to()
-                                    );
-                                    self.endpoint_events.push_back(
-                                        EndpointEventInner::NeedIdentifiers(
-                                            path_id,
-                                            now,
-                                            num_new_cid,
-                                        ),
-                                    );
+                    ConnTimer::KeepAlive => {
+                        trace!("sending keep-alive");
+                        self.ping();
+                    }
+                    ConnTimer::KeyDiscard => {
+                        self.zero_rtt_crypto = None;
+                        self.prev_crypto = None;
+                    }
+                    ConnTimer::PushNewCid => {
+                        while let Some((path_id, when)) = self.next_cid_retirement() {
+                            if when > now {
+                                break;
+                            }
+                            match self.local_cid_state.get_mut(&path_id) {
+                                None => error!(?path_id, "No local CID state for path"),
+                                Some(cid_state) => {
+                                    // Update `retire_prior_to` field in NEW_CONNECTION_ID frame
+                                    let num_new_cid = cid_state.on_cid_timeout().into();
+                                    if !self.state.is_closed() {
+                                        trace!(
+                                            "push a new CID to peer RETIRE_PRIOR_TO field {}",
+                                            cid_state.retire_prior_to()
+                                        );
+                                        self.endpoint_events.push_back(
+                                            EndpointEventInner::NeedIdentifiers(
+                                                path_id,
+                                                now,
+                                                num_new_cid,
+                                            ),
+                                        );
+                                    }
                                 }
                             }
                         }
                     }
-                }
-                Timer::MaxAckDelay(path_id) => {
-                    trace!("max ack delay reached");
-                    // This timer is only armed in the Data space
-                    self.spaces[SpaceId::Data]
-                        .for_path(path_id)
-                        .pending_acks
-                        .on_max_ack_delay_timeout()
-                }
-                Timer::PathAbandoned(path_id) => {
-                    // The path was abandoned and 3*PTO has expired since.  Clean up all
-                    // remaining state and install stateless reset token.
-                    if let Some(loc_cid_state) = self.local_cid_state.remove(&path_id) {
-                        let (min_seq, max_seq) = loc_cid_state.active_seq();
-                        for seq in min_seq..=max_seq {
-                            self.endpoint_events
-                                .push_back(EndpointEventInner::RetireConnectionId(
-                                    now, path_id, seq, false,
-                                ));
-                        }
+                },
+                Timer::PerPath(path_id, timer) => match timer {
+                    PathTimer::PathIdle => {
+                        // TODO(flub): TransportErrorCode::NO_ERROR but where's the API to get
+                        //    that into a VarInt?
+                        self.close_path(now, path_id, TransportErrorCode::NO_ERROR.into())
+                            .ok();
                     }
-                    self.drop_path_state(path_id, now);
-                }
-                Timer::PathNotAbandoned(path_id) => {
-                    // The peer failed to respond with a PATH_ABANDON when we sent such a
-                    // frame.
-                    warn!(?path_id, "missing PATH_ABANDON from peer");
-                    // TODO(flub): What should the error code be?
-                    self.close(now, 0u8.into(), "peer ignored PATH_ABANDON frame".into());
-                }
+
+                    PathTimer::PathKeepAlive => {
+                        trace!(?path_id, "sending keep-alive on path");
+                        self.ping_path(path_id).ok();
+                    }
+                    PathTimer::LossDetection => {
+                        self.on_loss_detection_timeout(now, path_id);
+                        self.config.qlog_sink.emit_recovery_metrics(
+                            self.path_data(path_id).pto_count,
+                            &mut self.paths.get_mut(&path_id).unwrap().data,
+                            now,
+                            self.orig_rem_cid,
+                        );
+                    }
+                    PathTimer::PathValidation => {
+                        let Some(path) = self.paths.get_mut(&path_id) else {
+                            continue;
+                        };
+                        debug!("path validation failed");
+                        if let Some((_, prev)) = path.prev.take() {
+                            path.data = prev;
+                        }
+                        path.data.challenge = None;
+                        path.data.challenge_pending = false;
+                    }
+                    PathTimer::PathOpen => {
+                        let Some(path) = self.path_mut(path_id) else {
+                            continue;
+                        };
+                        path.challenge = None;
+                        path.challenge_pending = false;
+                        debug!("new path validation failed");
+                        if let Err(err) = self.close_path(
+                            now,
+                            path_id,
+                            TransportErrorCode::UNSTABLE_INTERFACE.into(),
+                        ) {
+                            warn!(?err, "failed closing path");
+                        }
+
+                        self.events.push_back(Event::Path(PathEvent::LocallyClosed {
+                            id: path_id,
+                            error: PathError::ValidationFailed,
+                        }));
+                    }
+                    PathTimer::Pacing => trace!(?path_id, "pacing timer expired"),
+                    PathTimer::MaxAckDelay => {
+                        trace!("max ack delay reached");
+                        // This timer is only armed in the Data space
+                        self.spaces[SpaceId::Data]
+                            .for_path(path_id)
+                            .pending_acks
+                            .on_max_ack_delay_timeout()
+                    }
+                    PathTimer::PathAbandoned => {
+                        // The path was abandoned and 3*PTO has expired since.  Clean up all
+                        // remaining state and install stateless reset token.
+                        if let Some(loc_cid_state) = self.local_cid_state.remove(&path_id) {
+                            let (min_seq, max_seq) = loc_cid_state.active_seq();
+                            for seq in min_seq..=max_seq {
+                                self.endpoint_events.push_back(
+                                    EndpointEventInner::RetireConnectionId(
+                                        now, path_id, seq, false,
+                                    ),
+                                );
+                            }
+                        }
+                        self.drop_path_state(path_id, now);
+                    }
+                    PathTimer::PathNotAbandoned => {
+                        // The peer failed to respond with a PATH_ABANDON when we sent such a
+                        // frame.
+                        warn!(?path_id, "missing PATH_ABANDON from peer");
+                        // TODO(flub): What should the error code be?
+                        self.close(now, 0u8.into(), "peer ignored PATH_ABANDON frame".into());
+                    }
+                },
             }
         }
     }
@@ -1914,13 +1929,17 @@ impl Connection {
 
     /// Returns connection statistics
     pub fn stats(&mut self) -> ConnectionStats {
-        for (path_id, path) in self.paths.iter() {
-            let stats = self.stats.paths.entry(*path_id).or_default();
-            stats.rtt = path.data.rtt.get();
-            stats.cwnd = path.data.congestion.window();
-            stats.current_mtu = path.data.mtud.current_mtu();
-        }
         self.stats.clone()
+    }
+
+    /// Returns path statistics
+    pub fn path_stats(&mut self, path_id: PathId) -> Option<PathStats> {
+        let path = self.paths.get(&path_id)?;
+        let stats = self.path_stats.entry(path_id).or_default();
+        stats.rtt = path.data.rtt.get();
+        stats.cwnd = path.data.congestion.window();
+        stats.current_mtu = path.data.mtud.current_mtu();
+        Some(*stats)
     }
 
     /// Ping the remote endpoint
@@ -2203,10 +2222,7 @@ impl Connection {
         }
         let new_largest = {
             let space = &mut self.spaces[space].for_path(path);
-            if space
-                .largest_acked_packet
-                .map_or(true, |pn| ack.largest > pn)
-            {
+            if space.largest_acked_packet.is_none_or(|pn| ack.largest > pn) {
                 space.largest_acked_packet = Some(ack.largest);
                 if let Some(info) = space.sent_packets.get(&ack.largest) {
                     // This should always succeed, but a misbehaving peer might ACK a packet we
@@ -2352,7 +2368,7 @@ impl Connection {
             }
             Ok(false) => {}
             Ok(true) => {
-                self.stats.paths.entry(path).or_default().congestion_events += 1;
+                self.path_stats.entry(path).or_default().congestion_events += 1;
                 self.path_data_mut(path).congestion.on_congestion_event(
                     now,
                     largest_sent_time,
@@ -2406,11 +2422,13 @@ impl Connection {
         };
 
         // QUIC-MULTIPATH § 2.5 Key Phase Update Process: use largest PTO off all paths.
-        self.timers
-            .set(Timer::KeyDiscard, start + self.pto_max_path(space) * 3);
+        self.timers.set(
+            Timer::Conn(ConnTimer::KeyDiscard),
+            start + self.pto_max_path(space) * 3,
+        );
     }
 
-    /// Handle a [`Timer::LossDetection`] timeout.
+    /// Handle a [`PathTimer::LossDetection`] timeout.
     ///
     /// This timer expires for two reasons:
     /// - An ACK-eliciting packet we sent should be considered lost.
@@ -2467,7 +2485,7 @@ impl Connection {
     /// There are two cases in which we detects lost packets:
     ///
     /// - We received an ACK packet.
-    /// - The [`Timer::LossDetection`] timer expired. So there is an un-acknowledged packet
+    /// - The [`PathTimer::LossDetection`] timer expired. So there is an un-acknowledged packet
     ///   that was followed by an acknowleged packet. The loss timer for this
     ///   un-acknowledged packet expired and we need to detect that packet as lost.
     ///
@@ -2580,6 +2598,7 @@ impl Connection {
 
     /// Drops the path state, declaring any remaining in-flight packets as lost
     fn drop_path_state(&mut self, path_id: PathId, now: Instant) {
+        trace!(?path_id, "dropping path state");
         let path = self.path_data(path_id);
         let in_flight_mtu_probe = path.mtud.in_flight_mtu_probe();
 
@@ -2616,7 +2635,7 @@ impl Connection {
         self.paths.remove(&path_id);
         self.spaces[SpaceId::Data].number_spaces.remove(&path_id);
 
-        let path_stats = self.stats.paths.remove(&path_id).unwrap_or_default();
+        let path_stats = self.path_stats.remove(&path_id).unwrap_or_default();
         self.events.push_back(
             PathEvent::Abandoned {
                 id: path_id,
@@ -2650,7 +2669,7 @@ impl Connection {
             let old_bytes_in_flight = self.path_data_mut(path_id).in_flight.bytes;
             let largest_lost_sent =
                 self.spaces[pn_space].for_path(path_id).sent_packets[&largest_lost].time_sent;
-            let path_stats = self.stats.paths.entry(path_id).or_default();
+            let path_stats = self.path_stats.entry(path_id).or_default();
             path_stats.lost_packets += lost_packets.len() as u64;
             path_stats.lost_bytes += size_of_lost_packets;
             trace!(
@@ -2702,8 +2721,7 @@ impl Connection {
                 if let Some(max_datagram_size) = self.datagrams().max_size() {
                     self.datagrams.drop_oversized(max_datagram_size);
                 }
-                self.stats
-                    .paths
+                self.path_stats
                     .entry(path_id)
                     .or_default()
                     .black_holes_detected += 1;
@@ -2714,8 +2732,7 @@ impl Connection {
                 old_bytes_in_flight != self.path_data_mut(path_id).in_flight.bytes;
 
             if lost_ack_eliciting {
-                self.stats
-                    .paths
+                self.path_stats
                     .entry(path_id)
                     .or_default()
                     .congestion_events += 1;
@@ -2740,8 +2757,7 @@ impl Connection {
                 .unwrap()
                 .remove_in_flight(&info);
             self.path_data_mut(path_id).mtud.on_probe_lost();
-            self.stats
-                .paths
+            self.path_stats
                 .entry(path_id)
                 .or_default()
                 .lost_plpmtud_probes += 1;
@@ -2810,7 +2826,7 @@ impl Connection {
                 continue;
             };
             let pto = last_ack_eliciting + duration;
-            if result.map_or(true, |(earliest_pto, _)| pto < earliest_pto) {
+            if result.is_none_or(|(earliest_pto, _)| pto < earliest_pto) {
                 if path.anti_amplification_blocked(1) {
                     // Nothing would be able to be sent.
                     continue;
@@ -2844,7 +2860,7 @@ impl Connection {
                 && self.spaces[SpaceId::Handshake].crypto.is_none())
     }
 
-    /// Resets the the [`Timer::LossDetection`] timer to the next instant it may be needed
+    /// Resets the the [`PathTimer::LossDetection`] timer to the next instant it may be needed
     ///
     /// The timer must fire if either:
     /// - An ack-eliciting packet we sent needs to be declared lost.
@@ -2861,16 +2877,19 @@ impl Connection {
 
         if let Some((loss_time, _)) = self.loss_time_and_space(path_id) {
             // Time threshold loss detection.
-            self.timers.set(Timer::LossDetection(path_id), loss_time);
+            self.timers
+                .set(Timer::PerPath(path_id, PathTimer::LossDetection), loss_time);
             return;
         }
 
         // Determine which PN space to arm PTO for.
         // Calculate PTO duration
         if let Some((timeout, _)) = self.pto_time_and_space(now, path_id) {
-            self.timers.set(Timer::LossDetection(path_id), timeout);
+            self.timers
+                .set(Timer::PerPath(path_id, PathTimer::LossDetection), timeout);
         } else {
-            self.timers.stop(Timer::LossDetection(path_id));
+            self.timers
+                .stop(Timer::PerPath(path_id, PathTimer::LossDetection));
         }
     }
 
@@ -2980,44 +2999,49 @@ impl Connection {
         // First reset the global idle timeout.
         if let Some(timeout) = self.idle_timeout {
             if self.state.is_closed() {
-                self.timers.stop(Timer::Idle);
+                self.timers.stop(Timer::Conn(ConnTimer::Idle));
             } else {
                 let dt = cmp::max(timeout, 3 * self.pto_max_path(space));
-                self.timers.set(Timer::Idle, now + dt);
+                self.timers.set(Timer::Conn(ConnTimer::Idle), now + dt);
             }
         }
 
         // Now handle the per-path state
         if let Some(timeout) = self.path_data(path_id).idle_timeout {
             if self.state.is_closed() {
-                self.timers.stop(Timer::PathIdle(path_id));
+                self.timers
+                    .stop(Timer::PerPath(path_id, PathTimer::PathIdle));
             } else {
                 let dt = cmp::max(timeout, 3 * self.pto(space, path_id));
-                self.timers.set(Timer::PathIdle(path_id), now + dt);
+                self.timers
+                    .set(Timer::PerPath(path_id, PathTimer::PathIdle), now + dt);
             }
         }
     }
 
-    /// Resets both the [`Timer::KeepAlive`] and [`Timer::PathKeepAlive`] timers
+    /// Resets both the [`ConnTimer::KeepAlive`] and [`PathTimer::PathKeepAlive`] timers
     fn reset_keep_alive(&mut self, path_id: PathId, now: Instant) {
         if !self.state.is_established() {
             return;
         }
 
         if let Some(interval) = self.config.keep_alive_interval {
-            self.timers.set(Timer::KeepAlive, now + interval);
+            self.timers
+                .set(Timer::Conn(ConnTimer::KeepAlive), now + interval);
         }
 
         if let Some(interval) = self.path_data(path_id).keep_alive {
-            self.timers
-                .set(Timer::PathKeepAlive(path_id), now + interval);
+            self.timers.set(
+                Timer::PerPath(path_id, PathTimer::PathKeepAlive),
+                now + interval,
+            );
         }
     }
 
     /// Sets the timer for when a previously issued CID should be retired next
     fn reset_cid_retirement(&mut self) {
         if let Some((_path, t)) = self.next_cid_retirement() {
-            self.timers.set(Timer::PushNewCid, t);
+            self.timers.set(Timer::Conn(ConnTimer::PushNewCid), t);
         }
     }
 
@@ -3102,6 +3126,7 @@ impl Connection {
                         min_ack_delay: None,
                         ack_delay_exponent: TransportParameters::default().ack_delay_exponent,
                         max_ack_delay: TransportParameters::default().max_ack_delay,
+                        initial_max_path_id: None,
                         ..params
                     };
                     self.set_peer_params(params);
@@ -3245,12 +3270,11 @@ impl Connection {
         let pns = space.for_path(PathId::ZERO);
         pns.time_of_last_ack_eliciting_packet = None;
         pns.loss_time = None;
+        pns.loss_probes = 0;
         let sent_packets = mem::take(&mut pns.sent_packets);
+        let path = self.paths.get_mut(&PathId::ZERO).unwrap();
         for packet in sent_packets.into_values() {
-            self.paths
-                .get_mut(&PathId::ZERO)
-                .unwrap()
-                .remove_in_flight(&packet);
+            path.data.remove_in_flight(&packet);
         }
 
         self.set_loss_detection_timer(now, PathId::ZERO)
@@ -3486,7 +3510,7 @@ impl Connection {
             self.endpoint_events.push_back(EndpointEventInner::Drained);
             // Close timer may have been started previously, e.g. if we sent a close and got a
             // stateless reset in response
-            self.timers.stop(Timer::Close);
+            self.timers.stop(Timer::Conn(ConnTimer::Close));
         }
 
         // Transmit CONNECTION_CLOSE if necessary
@@ -3988,11 +4012,13 @@ impl Connection {
                         .get_mut(&path_id)
                         .expect("payload is processed only after the path becomes known");
                     if path.data.challenge == Some(token) && remote == path.data.remote {
-                        self.timers.stop(Timer::PathValidation(path_id));
+                        self.timers
+                            .stop(Timer::PerPath(path_id, PathTimer::PathValidation));
                         if !path.data.validated {
                             trace!("new path validated");
                         }
-                        self.timers.stop(Timer::PathOpen(path_id));
+                        self.timers
+                            .stop(Timer::PerPath(path_id, PathTimer::PathOpen));
                         path.data.challenge = None;
                         path.data.validated = true;
                         self.events
@@ -4222,7 +4248,8 @@ impl Connection {
                             .pending_acks
                             .max_ack_delay_timeout(self.ack_frequency.max_ack_delay)
                         {
-                            self.timers.set(Timer::MaxAckDelay(*path_id), timeout);
+                            self.timers
+                                .set(Timer::PerPath(*path_id, PathTimer::MaxAckDelay), timeout);
                         }
                     }
                 }
@@ -4300,9 +4327,27 @@ impl Connection {
                             trace!("peer abandoned already closed path");
                         }
                     }
-                    let delay = self.pto(SpaceId::Data, path_id) * 3;
-                    self.timers.set(Timer::PathAbandoned(path_id), now + delay);
-                    self.timers.stop(Timer::PathNotAbandoned(path_id));
+                    // If we receive a retransmit of PATH_ABANDON then we may already have
+                    // abandoned this path locally.  In that case the PathAbandoned timer
+                    // may already have fired and we no longer have any state for this path.
+                    // Only set this timer if we still have path state.
+                    // TODO(flub): Note that if we process a retransmit and *do* still have
+                    //    path state, we are extending the expiration time of this timer.
+                    //    That's technically not needed, but not a violation.  We would have
+                    //    to be able to inspect if the timer is set to avoid this.
+                    if self.path(path_id).is_some() {
+                        // TODO(flub): Checking is_some() here followed by a number of calls
+                        //    that would panic if it was None is really ugly.  If only we
+                        //    could do something like PathData::pto().  One day we'll have
+                        //    unified SpaceId and PathId and this will be possible.
+                        let delay = self.pto(SpaceId::Data, path_id) * 3;
+                        self.timers.set(
+                            Timer::PerPath(path_id, PathTimer::PathAbandoned),
+                            now + delay,
+                        );
+                    }
+                    self.timers
+                        .stop(Timer::PerPath(path_id, PathTimer::PathNotAbandoned));
                 }
                 Frame::PathAvailable(info) => {
                     span.record("path", tracing::field::debug(&info.path_id));
@@ -4460,7 +4505,7 @@ impl Connection {
                 space.pending_acks.set_immediate_ack_required();
             } else {
                 self.timers.set(
-                    Timer::MaxAckDelay(path_id),
+                    Timer::PerPath(path_id, PathTimer::MaxAckDelay),
                     now + self.ack_frequency.max_ack_delay,
                 );
             }
@@ -4557,7 +4602,7 @@ impl Connection {
         }
 
         self.timers.set(
-            Timer::PathValidation(path_id),
+            Timer::PerPath(path_id, PathTimer::PathValidation),
             now + 3 * cmp::max(self.pto(SpaceId::Data, path_id), prev_pto),
         );
     }
@@ -5261,7 +5306,7 @@ impl Connection {
         // QUIC-MULTIPATH § 2.6 Connection Closure: draining for 3*PTO with PTO the max of
         // the PTO for all paths.
         self.timers.set(
-            Timer::Close,
+            Timer::Conn(ConnTimer::Close),
             now + 3 * self.pto_max_path(self.highest_space),
         );
     }
@@ -5500,17 +5545,17 @@ impl Connection {
         let current_timers = self.timers.values();
         current_timers
             .into_iter()
-            .filter(|entry| {
+            .filter(|(timer, _)| {
                 !matches!(
-                    entry.timer,
-                    Timer::KeepAlive
-                        | Timer::PathKeepAlive(_)
-                        | Timer::PushNewCid
-                        | Timer::KeyDiscard
+                    timer,
+                    Timer::Conn(ConnTimer::KeepAlive)
+                        | Timer::PerPath(_, PathTimer::PathKeepAlive)
+                        | Timer::Conn(ConnTimer::PushNewCid)
+                        | Timer::Conn(ConnTimer::KeyDiscard)
                 )
             })
-            .min_by_key(|entry| entry.time)
-            .map_or(true, |entry| entry.timer == Timer::Idle)
+            .min_by_key(|(_, time)| *time)
+            .is_none_or(|(timer, _)| timer == Timer::Conn(ConnTimer::Idle))
     }
 
     /// Whether explicit congestion notification is in use on outgoing packets.

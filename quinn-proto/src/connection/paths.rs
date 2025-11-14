@@ -18,8 +18,16 @@ use crate::{
 use qlog::events::quic::MetricsUpdated;
 
 /// Id representing different paths when using multipath extension
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Default, Hash)]
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Default)]
 pub struct PathId(pub(crate) u32);
+
+impl std::hash::Hash for PathId {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        state.write_u32(self.0);
+    }
+}
+
+impl identity_hash::IdentityHashable for PathId {}
 
 impl coding::Codec for PathId {
     fn decode<B: bytes::Buf>(r: &mut B) -> coding::Result<Self> {
@@ -557,11 +565,7 @@ impl RttEstimator {
             } else {
                 self.latest
             };
-            let var_sample = if smoothed > adjusted_rtt {
-                smoothed - adjusted_rtt
-            } else {
-                adjusted_rtt - smoothed
-            };
+            let var_sample = smoothed.abs_diff(adjusted_rtt);
             self.var = (3 * self.var + var_sample) / 4;
             self.smoothed = Some((7 * smoothed + adjusted_rtt) / 8);
         } else {

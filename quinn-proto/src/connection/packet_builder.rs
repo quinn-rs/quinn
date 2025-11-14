@@ -236,7 +236,7 @@ impl<'a, 'b> PacketBuilder<'a, 'b> {
             packet,
             conn.spaces[space_id].for_path(path_id),
         );
-        conn.stats.paths.entry(path_id).or_default().sent_packets += 1;
+        conn.path_stats.entry(path_id).or_default().sent_packets += 1;
         conn.reset_keep_alive(path_id, now);
         if size != 0 {
             if ack_eliciting {

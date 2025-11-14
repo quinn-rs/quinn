@@ -1,11 +1,7 @@
 //! Connection statistics
 
-use rustc_hash::FxHashMap;
-
 use crate::FrameType;
 use crate::{Dir, Duration, frame::Frame};
-
-use super::PathId;
 
 /// Statistics about UDP datagrams transmitted or received on a connection
 ///
@@ -216,6 +212,4 @@ pub struct ConnectionStats {
     pub frame_tx: FrameStats,
     /// Statistics about frames received on a connection
     pub frame_rx: FrameStats,
-    /// Statistics related to the current transmission path
-    pub paths: FxHashMap<PathId, PathStats>,
 }
