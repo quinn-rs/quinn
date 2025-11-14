@@ -232,7 +232,15 @@ impl Pair {
         );
         assert_matches!(
             self.server_conn_mut(server_ch).poll(),
+            Some(Event::HandshakeConfirmed)
+        );
+        assert_matches!(
+            self.server_conn_mut(server_ch).poll(),
             Some(Event::Connected)
+        );
+        assert_matches!(
+            self.client_conn_mut(client_ch).poll(),
+            Some(Event::HandshakeConfirmed)
         );
     }
 
