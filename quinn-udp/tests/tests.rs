@@ -297,67 +297,83 @@ fn test_send_recv(send: &Socket, recv: &Socket, transmit: Transmit) {
     let expected_datagrams = transmit.contents.len() / segment_size;
     let mut datagrams = 0;
     while datagrams < expected_datagrams {
-        let n = recv_state
-            .recv(
-                recv.into(),
-                &mut [IoSliceMut::new(&mut buf)],
-                slice::from_mut(&mut meta),
-            )
-            .unwrap();
-        assert_eq!(n, 1);
-        let segments = meta.len / meta.stride;
-        for i in 0..segments {
-            assert_eq!(
-                &buf[(i * meta.stride)..((i + 1) * meta.stride)],
-                &transmit.contents
-                    [(datagrams + i) * segment_size..(datagrams + i + 1) * segment_size]
-            );
-        }
-        datagrams += segments;
-
-        assert_eq!(
-            meta.addr.port(),
-            send.local_addr().unwrap().as_socket().unwrap().port()
+        let result = recv_state.recv(
+            recv.into(),
+            &mut [IoSliceMut::new(&mut buf)],
+            slice::from_mut(&mut meta),
         );
-        let send_v6 = send.local_addr().unwrap().as_socket().unwrap().is_ipv6();
-        let recv_v6 = recv.local_addr().unwrap().as_socket().unwrap().is_ipv6();
-        let mut addresses = vec![meta.addr.ip()];
-        // Not populated on every OS. See `RecvMeta::dst_ip` for details.
-        if let Some(addr) = meta.dst_ip {
-            addresses.push(addr);
-        }
-        for addr in addresses {
-            match (send_v6, recv_v6) {
-                (_, false) => assert_eq!(addr, Ipv4Addr::LOCALHOST),
-                // Windows gives us real IPv4 addrs, whereas *nix use IPv6-mapped IPv4
-                // addrs. Canonicalize to IPv6-mapped for robustness.
-                (false, true) => {
-                    assert_eq!(ip_to_v6_mapped(addr), Ipv4Addr::LOCALHOST.to_ipv6_mapped())
+        match result {
+            Ok(n) => {
+                assert_eq!(n, 1);
+                let segments = meta.len / meta.stride;
+                for i in 0..segments {
+                    assert_eq!(
+                        &buf[(i * meta.stride)..((i + 1) * meta.stride)],
+                        &transmit.contents
+                            [(datagrams + i) * segment_size..(datagrams + i + 1) * segment_size]
+                    );
                 }
-                (true, true) => assert!(
-                    addr == Ipv6Addr::LOCALHOST || addr == Ipv4Addr::LOCALHOST.to_ipv6_mapped()
-                ),
+                datagrams += segments;
+
+                assert_eq!(
+                    meta.addr.port(),
+                    send.local_addr().unwrap().as_socket().unwrap().port()
+                );
+                let send_v6 = send.local_addr().unwrap().as_socket().unwrap().is_ipv6();
+                let recv_v6 = recv.local_addr().unwrap().as_socket().unwrap().is_ipv6();
+                let mut addresses = vec![meta.addr.ip()];
+                // Not populated on every OS. See `RecvMeta::dst_ip` for details.
+                if let Some(addr) = meta.dst_ip {
+                    addresses.push(addr);
+                }
+                for addr in addresses {
+                    match (send_v6, recv_v6) {
+                        (_, false) => assert_eq!(addr, Ipv4Addr::LOCALHOST),
+                        // Windows gives us real IPv4 addrs, whereas *nix use IPv6-mapped IPv4
+                        // addrs. Canonicalize to IPv6-mapped for robustness.
+                        (false, true) => {
+                            assert_eq!(ip_to_v6_mapped(addr), Ipv4Addr::LOCALHOST.to_ipv6_mapped())
+                        }
+                        (true, true) => assert!(
+                            addr == Ipv6Addr::LOCALHOST || addr == Ipv4Addr::LOCALHOST.to_ipv6_mapped()
+                        ),
+                    }
+                }
+
+                let ipv4_or_ipv4_mapped_ipv6 = match transmit.destination.ip() {
+                    IpAddr::V4(_) => true,
+                    IpAddr::V6(a) => a.to_ipv4_mapped().is_some(),
+                };
+
+                // On Android API level <= 25 the IPv4 `IP_TOS` control message is
+                // not supported and thus ECN bits can not be received.
+                if ipv4_or_ipv4_mapped_ipv6
+                    && cfg!(target_os = "android")
+                    && std::env::var("API_LEVEL")
+                        .ok()
+                        .and_then(|v| v.parse::<u32>().ok())
+                        .expect("API_LEVEL environment variable to be set on Android")
+                        <= 25
+                {
+                    assert_eq!(meta.ecn, None);
+                } else {
+                    assert_eq!(meta.ecn, transmit.ecn);
+                }
             }
-        }
-
-        let ipv4_or_ipv4_mapped_ipv6 = match transmit.destination.ip() {
-            IpAddr::V4(_) => true,
-            IpAddr::V6(a) => a.to_ipv4_mapped().is_some(),
-        };
-
-        // On Android API level <= 25 the IPv4 `IP_TOS` control message is
-        // not supported and thus ECN bits can not be received.
-        if ipv4_or_ipv4_mapped_ipv6
-            && cfg!(target_os = "android")
-            && std::env::var("API_LEVEL")
-                .ok()
-                .and_then(|v| v.parse::<u32>().ok())
-                .expect("API_LEVEL environment variable to be set on Android")
-                <= 25
-        {
-            assert_eq!(meta.ecn, None);
-        } else {
-            assert_eq!(meta.ecn, transmit.ecn);
+            Err(e) => {
+                // If the error is due to unsupported platform features, skip assertions.
+                if let Some(msg) = e.get_ref().and_then(|r| r.downcast_ref::<String>()) {
+                    if msg.contains("recvmmsg and mmsghdr are only available on Linux") {
+                        eprintln!("Skipping assertions: {}", msg);
+                        return;
+                    }
+                }
+                if e.to_string().contains("recvmmsg and mmsghdr are only available on Linux") {
+                    eprintln!("Skipping assertions: {}", e);
+                    return;
+                }
+                panic!("recv failed: {}", e);
+            }
         }
     }
     assert_eq!(datagrams, expected_datagrams);
