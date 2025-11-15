@@ -16,8 +16,7 @@ use super::AsyncTimer;
 use super::{AsyncUdpSocket, Runtime, UdpSender, UdpSenderHelper, UdpSenderHelperSocket};
 
 #[cfg(feature = "runtime-smol")]
-// Due to MSRV, we must specify `self::` where there's crate/module ambiguity
-pub use self::smol::SmolRuntime;
+pub use smol::SmolRuntime;
 
 #[cfg(feature = "runtime-smol")]
 mod smol {

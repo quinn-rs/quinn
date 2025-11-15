@@ -7,12 +7,11 @@ use std::{
     net::{Ipv6Addr, SocketAddr, UdpSocket},
     ops::RangeFrom,
     str,
-    sync::{Arc, Mutex},
+    sync::{Arc, LazyLock, Mutex},
 };
 
 use assert_matches::assert_matches;
 use bytes::BytesMut;
-use lazy_static::lazy_static;
 use rustls::{
     KeyLogFile,
     client::WebPkiServerVerifier,
@@ -719,12 +718,11 @@ fn set_congestion_experienced(
     })
 }
 
-lazy_static! {
-    pub static ref SERVER_PORTS: Mutex<RangeFrom<u16>> = Mutex::new(4433..);
-    pub static ref CLIENT_PORTS: Mutex<RangeFrom<u16>> = Mutex::new(44433..);
-    pub(crate) static ref CERTIFIED_KEY: rcgen::CertifiedKey<rcgen::KeyPair> =
-        rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
-}
+static SERVER_PORTS: LazyLock<Mutex<RangeFrom<u16>>> = LazyLock::new(|| Mutex::new(4433..));
+pub(crate) static CLIENT_PORTS: LazyLock<Mutex<RangeFrom<u16>>> =
+    LazyLock::new(|| Mutex::new(44433..));
+pub(crate) static CERTIFIED_KEY: LazyLock<rcgen::CertifiedKey<rcgen::KeyPair>> =
+    LazyLock::new(|| rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap());
 
 #[derive(Default)]
 struct SimpleTokenLog(Mutex<HashSet<u128>>);
