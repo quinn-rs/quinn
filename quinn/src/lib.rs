@@ -57,6 +57,9 @@ pub(crate) use std::time::{Duration, Instant};
 #[cfg(wasm_browser)]
 pub(crate) use web_time::{Duration, Instant};
 
+#[cfg(all(not(feature = "runtime-tokio"), not(feature = "runtime-smol"), not(feature = "allow-missing-runtime")))]
+compile_error!("no async runtime found");
+
 #[cfg(feature = "bloom")]
 pub use proto::BloomTokenLog;
 pub use proto::{
