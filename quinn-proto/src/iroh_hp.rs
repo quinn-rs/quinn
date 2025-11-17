@@ -155,12 +155,17 @@ impl State {
         }
     }
 
-    pub(crate) fn get_nat_traversal_addresses(&self) -> Vec<SocketAddr> {
-        self.local_addresses
-            .keys()
+    pub(crate) fn get_remote_nat_traversal_addresses(&self) -> Result<Vec<SocketAddr>, Error> {
+        if !self.side.is_client() {
+            return Err(Error::WrongConnectionSide);
+        }
+
+        Ok(self
+            .remote_addresses
+            .values()
             .copied()
             .map(Into::into)
-            .collect()
+            .collect())
     }
 
     /// Initiates a new nat traversal round

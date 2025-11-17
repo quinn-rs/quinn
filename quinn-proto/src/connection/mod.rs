@@ -5808,13 +5808,13 @@ impl Connection {
         Ok(())
     }
 
-    /// Get the currently advertised nat traversal addresses
-    pub fn get_nat_traversal_addresses(&self) -> Result<Vec<SocketAddr>, iroh_hp::Error> {
+    /// Get the currently advertised nat traversal addresses by the server
+    pub fn get_remote_nat_traversal_addresses(&self) -> Result<Vec<SocketAddr>, iroh_hp::Error> {
         let hp_state = self
             .iroh_hp
             .as_ref()
             .ok_or(iroh_hp::Error::ExtensionNotNegotiated)?;
-        Ok(hp_state.get_nat_traversal_addresses())
+        hp_state.get_remote_nat_traversal_addresses()
     }
 
     /// Initiates a new nat traversal round
