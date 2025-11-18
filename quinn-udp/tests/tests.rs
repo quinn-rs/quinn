@@ -369,3 +369,88 @@ fn ip_to_v6_mapped(x: IpAddr) -> IpAddr {
         IpAddr::V6(_) => x,
     }
 }
+
+#[cfg(target_os = "linux")]
+#[test]
+fn test_ipv4_recverr() {
+    use std::time::Duration;
+
+    let socket = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+
+    // Create UdpSocketState (this should enable IP_RECVERR)
+    let state = UdpSocketState::new((&socket).into()).expect("failed to create UdpSocketState");
+
+    // Send to an unreachable address in the documentation range (192.0.2.0/24)
+    let unreachable_addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(192, 0, 2, 1), 12345));
+
+    let transmit = Transmit {
+        destination: unreachable_addr,
+        ecn: None,
+        contents: b"test packet to unreachable destination",
+        segment_size: None,
+        src_ip: None,
+    };
+
+    // Send the packet
+    let state_result = state.try_send((&socket).into(), &transmit);
+    assert!(state_result.is_err(), "Expected to fail to transmit");
+
+    std::thread::sleep(Duration::from_millis(200));
+
+    match state.recv_icmp_err((&socket).into()) {
+        Ok(Some(icmp_err)) => {
+            eprintln!("icmp packet recieved");
+            assert_eq!(unreachable_addr.ip(), icmp_err.dst.ip());
+        }
+        Ok(None) => {
+            eprintln!("No ICMP Recieved");
+        }
+        Err(e) => {
+            eprintln!("Error in reciveing icmp packet: {}", e);
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn test_ipv6_recverr() {
+    use std::time::Duration;
+
+    let socket = UdpSocket::bind((Ipv6Addr::LOCALHOST, 0)).unwrap();
+
+    let state = UdpSocketState::new((&socket).into()).expect("failed to create UdpSocketState");
+
+    // Send to unreachable IPv6 address
+    let unreachable_addr = SocketAddr::V6(SocketAddrV6::new(
+        Ipv6Addr::new(0x2001, 0x0db8, 0, 0, 0, 0, 0, 1),
+        12345,
+        0,
+        0,
+    ));
+
+    let transmit = Transmit {
+        destination: unreachable_addr,
+        ecn: None,
+        contents: b"test IPv6 packet",
+        segment_size: None,
+        src_ip: None,
+    };
+
+    let state_res = state.try_send((&socket).into(), &transmit);
+    assert!(state_res.is_err(), "Expected to fail to transmit");
+
+    std::thread::sleep(Duration::from_millis(200));
+
+    match state.recv_icmp_err((&socket).into()) {
+        Ok(Some(icmp_err)) => {
+            eprintln!("Recived ICMPV6 Packets");
+            assert_eq!(unreachable_addr.ip(), icmp_err.dst.ip());
+        }
+        Ok(None) => {
+            eprintln!("No ICMPV6 packets are recieved")
+        }
+        Err(e) => {
+            eprintln!("Error in sending ICMP packets: {}", e);
+        }
+    }
+}
