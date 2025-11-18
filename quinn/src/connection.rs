@@ -422,6 +422,38 @@ impl Connection {
         conn.close(error_code, Bytes::copy_from_slice(reason), &self.0.shared);
     }
 
+    /// Wait for the handshake to be confirmed.
+    ///
+    /// As a server, who must be authenticated by clients,
+    /// this happens when the handshake completes
+    /// upon receiving a TLS Finished message from the client.
+    /// In return, the server send a HANDSHAKE_DONE frame.
+    ///
+    /// As a client, this happens when receiving a HANDSHAKE_DONE frame.
+    /// At this point, the server has either accepted our authentication,
+    /// or, if client authentication is not required, accepted our lack of authentication.
+    pub async fn handshake_confirmed(&self) -> Result<(), ConnectionError> {
+        {
+            let conn = self.0.state.lock("handshake_confirmed");
+            if let Some(error) = conn.error.as_ref() {
+                return Err(error.clone());
+            }
+            if conn.handshake_confirmed {
+                return Ok(());
+            }
+            // Construct the future while the lock is held to ensure we can't miss a wakeup if
+            // the `Notify` is signaled immediately after we release the lock. `await` it after
+            // the lock guard is out of scope.
+            self.0.shared.handshake_confirmed.notified()
+        }
+        .await;
+        if let Some(error) = self.0.state.lock("handshake_confirmed").error.as_ref() {
+            Err(error.clone())
+        } else {
+            Ok(())
+        }
+    }
+
     /// Transmit `data` as an unreliable, unordered application datagram
     ///
     /// Application datagrams are a low-level primitive. They may be lost or delivered out of order,
@@ -893,6 +925,7 @@ impl ConnectionRef {
                 on_handshake_data: Some(on_handshake_data),
                 on_connected: Some(on_connected),
                 connected: false,
+                handshake_confirmed: false,
                 timer: None,
                 timer_deadline: None,
                 conn_events,
@@ -954,6 +987,7 @@ pub(crate) struct ConnectionInner {
 
 #[derive(Debug, Default)]
 pub(crate) struct Shared {
+    handshake_confirmed: Notify,
     /// Notified when new streams may be locally initiated due to an increase in stream ID flow
     /// control budget
     stream_budget_available: [Notify; 2],
@@ -971,6 +1005,7 @@ pub(crate) struct State {
     on_handshake_data: Option<oneshot::Sender<()>>,
     on_connected: Option<oneshot::Sender<bool>>,
     connected: bool,
+    handshake_confirmed: bool,
     timer: Option<Pin<Box<dyn AsyncTimer>>>,
     timer_deadline: Option<Instant>,
     conn_events: mpsc::UnboundedReceiver<ConnectionEvent>,
@@ -1110,6 +1145,10 @@ impl State {
                         wake_all_notify(&mut self.stopped);
                     }
                 }
+                HandshakeConfirmed => {
+                    self.handshake_confirmed = true;
+                    shared.handshake_confirmed.notify_waiters();
+                }
                 ConnectionLost { reason } => {
                     self.terminate(reason, shared);
                 }
@@ -1214,6 +1253,7 @@ impl State {
         if let Some(x) = self.on_connected.take() {
             let _ = x.send(false);
         }
+        shared.handshake_confirmed.notify_waiters();
         wake_all_notify(&mut self.stopped);
         shared.closed.notify_waiters();
     }

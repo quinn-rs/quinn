@@ -2638,6 +2638,8 @@ impl Connection {
                     // Server-only
                     self.spaces[SpaceId::Data].pending.handshake_done = true;
                     self.discard_space(now, SpaceId::Handshake);
+                    self.events.push_back(Event::HandshakeConfirmed);
+                    trace!("handshake confirmed");
                 }
 
                 self.events.push_back(Event::Connected);
@@ -3057,6 +3059,8 @@ impl Connection {
                     if self.spaces[SpaceId::Handshake].crypto.is_some() {
                         self.discard_space(now, SpaceId::Handshake);
                     }
+                    self.events.push_back(Event::HandshakeConfirmed);
+                    trace!("handshake confirmed");
                 }
             }
         }
@@ -4042,6 +4046,8 @@ pub enum Event {
     HandshakeDataReady,
     /// The connection was successfully established
     Connected,
+    /// The TLS handshake was confirmed
+    HandshakeConfirmed,
     /// The connection was lost
     ///
     /// Emitted if the peer closes the connection or an error is encountered.
