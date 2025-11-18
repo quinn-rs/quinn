@@ -10,9 +10,9 @@ use crate::{
     frame::{AddAddress, RemoveAddress},
 };
 
-/// Maximum number of addresses to handle, applied both to local and remote addresses.
-// TODO(@divma): consider making this a config option
-const MAX_ADDRESSES: usize = 20;
+/// Maximum number of addresses to handle, applied both to local and remote addresses, regardless
+/// of configuration parameters
+const MAX_ADDRESSES: u8 = 20;
 
 /// Errors that the nat traversal state might encounter.
 #[derive(Debug, thiserror::Error)]
@@ -55,6 +55,14 @@ pub enum Event {
 /// State kept for Iroh's nat traversal
 #[derive(Debug)]
 pub(crate) struct State {
+    /// Max number of remote addresses we allow
+    ///
+    /// This is set by the local endpoint.
+    max_remote_addresses: usize,
+    /// Max number of local addresses allowed
+    ///
+    /// This is set by the remote endpoint.
+    max_local_addresses: usize,
     /// Candidate addresses the remote server reports as potentially reachable, to use for nat
     /// traversal attempts.
     remote_addresses: FxHashMap<VarInt, (IpAddr, u16)>,
@@ -63,9 +71,6 @@ pub(crate) struct State {
     local_addresses: FxHashMap<(IpAddr, u16), VarInt>,
     /// The next id to use for local addresses sent to the client
     next_local_addr_id: VarInt,
-    /// Max concurrent address validations to perform
-    // TODO(@divma): opening paths might not be a good idea after all
-    max_concurrent_path_validations: u64,
     /// Local connection side
     side: Side,
     /// Current nat holepunching round
@@ -99,7 +104,7 @@ impl State {
         address: SocketAddr,
     ) -> Result<Option<AddAddress>, Error> {
         let address = (address.ip(), address.port());
-        let allow_new = self.local_addresses.len() < MAX_ADDRESSES;
+        let allow_new = self.local_addresses.len() < self.max_local_addresses;
         let is_server = self.side.is_server();
         match self.local_addresses.entry(address) {
             Entry::Occupied(_) => Ok(None),
@@ -142,16 +147,17 @@ impl State {
         }
     }
 
-    pub(crate) fn new(VarInt(max_concurrent_path_validations): VarInt, side: Side) -> Self {
+    pub(crate) fn new(max_remote_addresses: u8, max_local_addresses: u8, side: Side) -> Self {
         Self {
             remote_addresses: Default::default(),
             local_addresses: Default::default(),
             next_local_addr_id: Default::default(),
-            max_concurrent_path_validations,
             side,
             round: Default::default(),
             round_path_ids: Default::default(),
             challenges: Default::default(),
+            max_remote_addresses: max_remote_addresses.min(MAX_ADDRESSES).into(),
+            max_local_addresses: max_local_addresses.min(MAX_ADDRESSES).into(),
         }
     }
 
@@ -216,7 +222,7 @@ impl<'a> ClientSide<'a> {
     ) -> Result<Option<SocketAddr>, Error> {
         let AddAddress { seq_no, ip, port } = add_addr;
         let address = (ip, port);
-        let allow_new = self.state.remote_addresses.len() < MAX_ADDRESSES;
+        let allow_new = self.state.remote_addresses.len() < self.state.max_remote_addresses;
         match self.state.remote_addresses.entry(seq_no) {
             Entry::Occupied(mut occupied_entry) => {
                 let old_value = occupied_entry.insert(address);

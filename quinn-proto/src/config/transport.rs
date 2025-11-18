@@ -1,4 +1,8 @@
-use std::{fmt, num::NonZeroU32, sync::Arc};
+use std::{
+    fmt,
+    num::{NonZeroU8, NonZeroU32},
+    sync::Arc,
+};
 #[cfg(feature = "qlog")]
 use std::{io, sync::Mutex, time::Instant};
 
@@ -15,7 +19,7 @@ use crate::{
 /// When multipath is required and has not been explicitly enabled, this value will be used for
 /// [`TransportConfig::max_concurrent_multipath_paths`].
 const DEFAULT_CONCURRENT_MULTIPATH_PATHS_WHEN_ENABLED_: NonZeroU32 = {
-    match NonZeroU32::new(4) {
+    match NonZeroU32::new(12) {
         Some(v) => v,
         None => panic!("to enable multipath this must be positive, which clearly it is"),
     }
@@ -78,7 +82,7 @@ pub struct TransportConfig {
     pub(crate) default_path_max_idle_timeout: Option<Duration>,
     pub(crate) default_path_keep_alive_interval: Option<Duration>,
 
-    pub(crate) nat_traversal_concurrency_limit: Option<NonZeroU32>,
+    pub(crate) max_remote_nat_traversal_addresses: Option<NonZeroU8>,
 
     pub(crate) qlog_sink: QlogSink,
 }
@@ -443,31 +447,24 @@ impl TransportConfig {
             .map(Into::into)
     }
 
-    /// Sets the maximum number of concurrent nat traversal attempts to initiate as a client, or to
-    /// allow as a server.
+    /// Sets the maximum number of nat traversal addresses this endpoint allows the remote to
+    /// advertise
     ///
-    /// Setting this to any nonzero value will enable the Nat Traversal Extension for QUIC,
-    /// see <https://www.ietf.org/archive/id/draft-seemann-quic-nat-traversal-02.html>
+    /// Setting this to any nonzero value will enable Iroh's holepunching, losely based in the Nat
+    /// Traversal Extension for QUIC, see
+    /// <https://www.ietf.org/archive/id/draft-seemann-quic-nat-traversal-02.html>
     ///
     /// This implementation expects the multipath extension to be enabled as well. if not yet
     /// enabled via [`Self::max_concurrent_multipath_paths`], a default value of
     /// [`DEFAULT_CONCURRENT_MULTIPATH_PATHS_WHEN_ENABLED`] will be used.
-    pub fn set_max_nat_traversal_concurrent_attempts(&mut self, max_concurrent: u32) -> &mut Self {
-        self.nat_traversal_concurrency_limit = NonZeroU32::new(max_concurrent);
-        if max_concurrent != 0 && self.max_concurrent_multipath_paths.is_none() {
+    pub fn set_max_remote_nat_traversal_addresses(&mut self, max_addresses: u8) -> &mut Self {
+        self.max_remote_nat_traversal_addresses = NonZeroU8::new(max_addresses);
+        if max_addresses != 0 && self.max_concurrent_multipath_paths.is_none() {
             self.max_concurrent_multipath_paths(
                 DEFAULT_CONCURRENT_MULTIPATH_PATHS_WHEN_ENABLED_.get(),
             );
         }
         self
-    }
-
-    /// Gets the maximum number of concurrent attempts for nat traversal
-    ///
-    /// If this is `Some`, the value is guaranteed to be non zero.
-    pub fn get_nat_traversal_concurrency_limit(&self) -> Option<VarInt> {
-        self.nat_traversal_concurrency_limit
-            .map(|non_zero| VarInt::from_u32(non_zero.get()))
     }
 
     /// qlog capture configuration to use for a particular connection
@@ -526,7 +523,7 @@ impl Default for TransportConfig {
             default_path_keep_alive_interval: None,
 
             // nat traversal disabled by default
-            nat_traversal_concurrency_limit: None,
+            max_remote_nat_traversal_addresses: None,
 
             qlog_sink: QlogSink::default(),
         }
@@ -565,7 +562,7 @@ impl fmt::Debug for TransportConfig {
             max_concurrent_multipath_paths,
             default_path_max_idle_timeout,
             default_path_keep_alive_interval,
-            nat_traversal_concurrency_limit,
+            max_remote_nat_traversal_addresses,
             qlog_sink,
         } = self;
         let mut s = fmt.debug_struct("TransportConfig");
@@ -610,8 +607,8 @@ impl fmt::Debug for TransportConfig {
                 default_path_keep_alive_interval,
             )
             .field(
-                "nat_traversal_concurrency_limit",
-                nat_traversal_concurrency_limit,
+                "max_remote_nat_traversal_addresses",
+                max_remote_nat_traversal_addresses,
             );
         if cfg!(feature = "qlog") {
             s.field("qlog_stream", &qlog_sink.is_enabled());
