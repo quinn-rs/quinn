@@ -3,11 +3,12 @@ use std::{
     net::{IpAddr, SocketAddr},
 };
 
+use rand::{Rng, rngs::StdRng};
 use rustc_hash::FxHashMap;
 
 use crate::{
     PathId, Side, VarInt,
-    frame::{AddAddress, RemoveAddress},
+    frame::{AddAddress, ReachOut, RemoveAddress},
 };
 
 /// Maximum number of addresses to handle, applied both to local and remote addresses, regardless
@@ -45,6 +46,17 @@ pub(crate) struct NatTraversalRound {
     pub(crate) prev_round_path_ids: Vec<PathId>,
 }
 
+pub(crate) struct ChallengeNeeded {
+    /// Token to send on the challenge
+    pub(crate) token: u64,
+    /// Destination address of the challenge
+    pub(crate) ip: IpAddr,
+    /// Destination port of the challenge
+    pub(crate) port: u16,
+    /// Round to which this challenge belongs to
+    pub(crate) round: VarInt,
+}
+
 // TODO(@divma): unclear to me what these events are useful for\
 #[derive(Debug, Clone)]
 pub enum Event {
@@ -63,6 +75,8 @@ pub(crate) struct State {
     ///
     /// This is set by the remote endpoint.
     max_local_addresses: usize,
+    /// Random generator
+    rng: StdRng,
     /// Candidate addresses the remote server reports as potentially reachable, to use for nat
     /// traversal attempts.
     remote_addresses: FxHashMap<VarInt, (IpAddr, u16)>,
@@ -83,7 +97,7 @@ pub(crate) struct State {
     round_path_ids: Vec<PathId>,
     /// Challenges sent by servers to validate client addresses without attempting to open
     /// multipath paths
-    challenges: FxHashMap<u64, (IpAddr, u16)>,
+    challenges: FxHashMap<(IpAddr, u16), u64>,
 }
 
 /// Nat traversal api exclusive to clients
@@ -147,10 +161,16 @@ impl State {
         }
     }
 
-    pub(crate) fn new(max_remote_addresses: u8, max_local_addresses: u8, side: Side) -> Self {
+    pub(crate) fn new(
+        max_remote_addresses: u8,
+        max_local_addresses: u8,
+        side: Side,
+        rng: StdRng,
+    ) -> Self {
         Self {
             remote_addresses: Default::default(),
             local_addresses: Default::default(),
+            rng,
             next_local_addr_id: Default::default(),
             side,
             round: Default::default(),
@@ -208,6 +228,43 @@ impl State {
         }
         self.round_path_ids = path_ids;
         Ok(())
+    }
+
+    /// Handles a received [`ReachOut`]
+    ///
+    /// It returns the token that should be sent in response to this frame as a challenge, and
+    /// whether this starts a new nat traversal round.
+    ///
+    /// If this frame was ignored, it returns `None`.
+    pub(crate) fn handle_reach_out(
+        &mut self,
+        reach_out: ReachOut,
+    ) -> Result<Option<(ChallengeNeeded, bool)>, Error> {
+        let ReachOut { round, ip, port } = reach_out;
+        if self.side.is_client() {
+            return Err(Error::WrongConnectionSide);
+        }
+
+        if round >= self.round {
+            let is_new_round = round > self.round;
+            if is_new_round {
+                self.challenges.clear();
+            }
+            if self.challenges.len() >= self.max_remote_addresses {
+                return Err(Error::TooManyAddresses);
+            }
+            let token = self.rng.random();
+            self.challenges.insert((ip, port), token);
+            let challenge_info = ChallengeNeeded {
+                token,
+                ip,
+                port,
+                round,
+            };
+            return Ok(Some((challenge_info, is_new_round)));
+        }
+
+        Ok(None)
     }
 }
 

@@ -4488,8 +4488,52 @@ impl Connection {
                             )));
                     }
                 }
-                Frame::ReachOut(_frame) => {
-                    // TODO(@divma): handle
+                Frame::ReachOut(reach_out) => {
+                    let Some(hp_state) = self.iroh_hp.as_mut() else {
+                        return Err(TransportError::PROTOCOL_VIOLATION(
+                            "received REACH_OUT frame when iroh's nat traversal was not negotiated",
+                        ));
+                    };
+
+                    match hp_state.handle_reach_out(reach_out) {
+                        Ok(None) => {
+                            // no action required here
+                        }
+                        Ok(Some((challenge_info, is_new_round))) => {
+                            let iroh_hp::ChallengeNeeded {
+                                token,
+                                ip,
+                                port,
+                                round,
+                            } = challenge_info;
+                            if is_new_round {
+                                // TODO(@divma): this depends on round starting on 1 right now,
+                                // because the round should be greater to the default one, which is
+                                // zero
+                                self.spaces[SpaceId::Data].pending.challenges_round = round;
+                                self.spaces[SpaceId::Data].pending.challenges.clear();
+                            }
+
+                            self.spaces[SpaceId::Data]
+                                .pending
+                                .challenges
+                                .push((token, ip, port));
+                        }
+                        Err(iroh_hp::Error::WrongConnectionSide) => {
+                            return Err(TransportError::PROTOCOL_VIOLATION(
+                                "server sent REACH_OUT frames for nat traversal",
+                            ));
+                        }
+                        Err(iroh_hp::Error::TooManyAddresses) => {
+                            return Err(TransportError::PROTOCOL_VIOLATION(
+                                "client exceeded allowed REACH_OUT frames for this round",
+                            ));
+                        }
+                        Err(error) => {
+                            warn!(%error,"error handling REACH_OUT frame");
+                            // TODO(@divma): check if this is reachable
+                        }
+                    }
                 }
             }
         }
@@ -5391,6 +5435,7 @@ impl Connection {
                     max_remote_addresses,
                     max_local_addresses,
                     self.side(),
+                    self.rng.clone(),
                 ));
                 debug!(
                     %max_remote_addresses, %max_local_addresses,

@@ -564,8 +564,12 @@ pub struct Retransmits {
     pub(super) remove_address: BTreeSet<RemoveAddress>,
     /// Round and local addresses to advertise in `REACH_OUT` frames
     pub(super) reach_out: Option<(VarInt, Vec<(IpAddr, u16)>)>,
-    /// Round and remote addresses to which `PATH_CHALLENGE`s need to be sent
-    pub(super) challenges: Option<(VarInt, Vec<(IpAddr, u16)>)>,
+    /// Round of the nat traversal challenges that are pending
+    ///
+    /// This is only used for bitwise operations on the retransmission data.
+    pub(super) challenges_round: VarInt,
+    /// Tokens and remote addresses to which `PATH_CHALLENGE`s need to be sent
+    pub(super) challenges: Vec<(u64, IpAddr, u16)>,
 }
 
 impl Retransmits {
@@ -592,7 +596,7 @@ impl Retransmits {
             && self.add_address.is_empty()
             && self.remove_address.is_empty()
             && self.reach_out.is_none()
-            && self.challenges.is_none()
+            && self.challenges.is_empty()
     }
 }
 
@@ -633,15 +637,11 @@ impl ::std::ops::BitOrAssign for Retransmits {
             _ => {}
         }
 
-        // if there are two rounds, prefer the most recent pending challenges set
-        let lhs_round = self.challenges.as_ref().map(|(round, _)| *round);
-        let rhs_round = rhs.challenges.as_ref().map(|(round, _)| *round);
-        match (lhs_round, rhs_round) {
-            (None, Some(_)) => self.challenges = rhs.challenges.clone(),
-            (Some(lhs_round), Some(rhs_round)) if rhs_round > lhs_round => {
-                self.challenges = rhs.challenges.clone()
-            }
-            _ => {}
+        if self.challenges_round < rhs.challenges_round {
+            self.challenges_round = rhs.challenges_round;
+            self.challenges = rhs.challenges.clone();
+        } else if self.challenges_round == rhs.challenges_round {
+            self.challenges.extend_from_slice(&rhs.challenges);
         }
     }
 }
