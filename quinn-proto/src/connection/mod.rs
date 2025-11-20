@@ -4794,6 +4794,13 @@ impl Connection {
                 let reach_out = frame::ReachOut::new(*round, local_addr);
                 if buf.remaining_mut() > reach_out.size() {
                     reach_out.write(buf);
+                    let sent_reachouts = sent
+                        .retransmits
+                        .get_or_create()
+                        .reach_out
+                        .get_or_insert_with(|| (*round, Default::default()));
+                    sent_reachouts.1.push(local_addr);
+                    self.stats.frame_tx.reach_out = self.stats.frame_tx.reach_out.saturating_add(1);
                 } else {
                     addresses.push(local_addr);
                     break;
