@@ -5300,6 +5300,11 @@ impl Connection {
         while space_id == SpaceId::Data && frame::AddAddress::SIZE_BOUND <= buf.remaining_mut() {
             if let Some(added_address) = space.pending.add_address.pop_last() {
                 added_address.write(buf);
+                sent.retransmits
+                    .get_or_create()
+                    .add_address
+                    .insert(added_address);
+                self.stats.frame_tx.add_address = self.stats.frame_tx.add_address.saturating_add(1);
             } else {
                 break;
             }
@@ -5308,6 +5313,12 @@ impl Connection {
         while space_id == SpaceId::Data && frame::RemoveAddress::SIZE_BOUND <= buf.remaining_mut() {
             if let Some(removed_address) = space.pending.remove_address.pop_last() {
                 removed_address.write(buf);
+                sent.retransmits
+                    .get_or_create()
+                    .remove_address
+                    .insert(removed_address);
+                self.stats.frame_tx.remove_address =
+                    self.stats.frame_tx.remove_address.saturating_add(1);
             } else {
                 break;
             }
