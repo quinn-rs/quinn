@@ -564,12 +564,12 @@ pub struct Retransmits {
     pub(super) remove_address: BTreeSet<RemoveAddress>,
     /// Round and local addresses to advertise in `REACH_OUT` frames
     pub(super) reach_out: Option<(VarInt, Vec<(IpAddr, u16)>)>,
-    /// Round of the nat traversal challenges that are pending
+    /// Round of the nat traversal rand data that are pending
     ///
-    /// This is only used for bitwise operations on the retransmission data.
-    pub(super) challenges_round: VarInt,
-    /// Tokens and remote addresses to which `PATH_CHALLENGE`s need to be sent
-    pub(super) challenges: Vec<(u64, IpAddr, u16)>,
+    /// This is only used for bitwise operations on the pending data.
+    pub(super) hole_punch_round: VarInt,
+    /// Remote addresses to which random data needs to be sent
+    pub(super) hole_punch_to: Vec<(IpAddr, u16)>,
 }
 
 impl Retransmits {
@@ -596,7 +596,7 @@ impl Retransmits {
             && self.add_address.is_empty()
             && self.remove_address.is_empty()
             && self.reach_out.is_none()
-            && self.challenges.is_empty()
+            && self.hole_punch_to.is_empty()
     }
 }
 
@@ -637,11 +637,11 @@ impl ::std::ops::BitOrAssign for Retransmits {
             _ => {}
         }
 
-        if self.challenges_round < rhs.challenges_round {
-            self.challenges_round = rhs.challenges_round;
-            self.challenges = rhs.challenges.clone();
-        } else if self.challenges_round == rhs.challenges_round {
-            self.challenges.extend_from_slice(&rhs.challenges);
+        if self.hole_punch_round < rhs.hole_punch_round {
+            self.hole_punch_round = rhs.hole_punch_round;
+            self.hole_punch_to = rhs.hole_punch_to.clone();
+        } else if self.hole_punch_round == rhs.hole_punch_round {
+            self.hole_punch_to.extend_from_slice(&rhs.hole_punch_to);
         }
     }
 }

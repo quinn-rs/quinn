@@ -3,8 +3,7 @@ use std::{
     net::{IpAddr, SocketAddr},
 };
 
-use rand::{Rng, rngs::StdRng};
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::{
     PathId, Side, VarInt,
@@ -46,15 +45,15 @@ pub(crate) struct NatTraversalRound {
     pub(crate) prev_round_path_ids: Vec<PathId>,
 }
 
-pub(crate) struct ChallengeNeeded {
-    /// Token to send on the challenge
-    pub(crate) token: u64,
-    /// Destination address of the challenge
+pub(crate) struct RandDataNeeded {
+    /// Destination address of the hole punching random data
     pub(crate) ip: IpAddr,
-    /// Destination port of the challenge
+    /// Destination port of the hole punching random data
     pub(crate) port: u16,
-    /// Round to which this challenge belongs to
+    /// Round to which this hole punching random data belongs to
     pub(crate) round: VarInt,
+    /// Whether this starts a new round
+    pub(crate) is_new_round: bool,
 }
 
 // TODO(@divma): unclear to me what these events are useful for\
@@ -75,8 +74,6 @@ pub(crate) struct State {
     ///
     /// This is set by the remote endpoint.
     max_local_addresses: usize,
-    /// Random generator
-    rng: StdRng,
     /// Candidate addresses the remote server reports as potentially reachable, to use for nat
     /// traversal attempts.
     remote_addresses: FxHashMap<VarInt, (IpAddr, u16)>,
@@ -95,9 +92,8 @@ pub(crate) struct State {
     round: VarInt,
     /// [`PathId`]s used to probe remotes assigned to this round
     round_path_ids: Vec<PathId>,
-    /// Challenges sent by servers to validate client addresses without attempting to open
-    /// multipath paths
-    challenges: FxHashMap<(IpAddr, u16), u64>,
+    /// Addresses to which random data sent by servers to attempt to hole punch to clients
+    server_sent_rand_data: FxHashSet<(IpAddr, u16)>,
 }
 
 /// Nat traversal api exclusive to clients
@@ -161,21 +157,15 @@ impl State {
         }
     }
 
-    pub(crate) fn new(
-        max_remote_addresses: u8,
-        max_local_addresses: u8,
-        side: Side,
-        rng: StdRng,
-    ) -> Self {
+    pub(crate) fn new(max_remote_addresses: u8, max_local_addresses: u8, side: Side) -> Self {
         Self {
             remote_addresses: Default::default(),
             local_addresses: Default::default(),
-            rng,
             next_local_addr_id: Default::default(),
             side,
             round: Default::default(),
             round_path_ids: Default::default(),
-            challenges: Default::default(),
+            server_sent_rand_data: Default::default(),
             max_remote_addresses: max_remote_addresses.min(MAX_ADDRESSES).into(),
             max_local_addresses: max_local_addresses.min(MAX_ADDRESSES).into(),
         }
@@ -239,7 +229,7 @@ impl State {
     pub(crate) fn handle_reach_out(
         &mut self,
         reach_out: ReachOut,
-    ) -> Result<Option<(ChallengeNeeded, bool)>, Error> {
+    ) -> Result<Option<RandDataNeeded>, Error> {
         let ReachOut { round, ip, port } = reach_out;
         if self.side.is_client() {
             return Err(Error::WrongConnectionSide);
@@ -248,20 +238,19 @@ impl State {
         if round >= self.round {
             let is_new_round = round > self.round;
             if is_new_round {
-                self.challenges.clear();
+                self.server_sent_rand_data.clear();
             }
-            if self.challenges.len() >= self.max_remote_addresses {
+            if self.server_sent_rand_data.len() >= self.max_remote_addresses {
                 return Err(Error::TooManyAddresses);
             }
-            let token = self.rng.random();
-            self.challenges.insert((ip, port), token);
-            let challenge_info = ChallengeNeeded {
-                token,
+            self.server_sent_rand_data.insert((ip, port));
+            let info = RandDataNeeded {
                 ip,
                 port,
                 round,
+                is_new_round,
             };
-            return Ok(Some((challenge_info, is_new_round)));
+            return Ok(Some(info));
         }
 
         Ok(None)

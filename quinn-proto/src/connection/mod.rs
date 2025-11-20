@@ -11,7 +11,7 @@ use std::{
 use bytes::{BufMut, Bytes, BytesMut};
 use frame::StreamMetaVec;
 
-use rand::{Rng, SeedableRng, rngs::StdRng};
+use rand::{Rng, RngCore, SeedableRng, rngs::StdRng};
 use rustc_hash::{FxHashMap, FxHashSet};
 use thiserror::Error;
 use tracing::{debug, error, trace, trace_span, warn};
@@ -842,6 +842,18 @@ impl Connection {
         max_datagrams: usize,
         buf: &mut Vec<u8>,
     ) -> Option<Transmit> {
+        if let Some(address) = self.spaces[SpaceId::Data].pending.hole_punch_to.pop() {
+            buf.reserve_exact(8); // send 8 bytes of random data
+            self.rng.fill_bytes(buf);
+            return Some(Transmit {
+                destination: address.into(),
+                ecn: None,
+                size: 8,
+                segment_size: None,
+                src_ip: None,
+            });
+        }
+
         assert!(max_datagrams != 0);
         let max_datagrams = match self.config.enable_segmentation_offload {
             false => 1,
@@ -4499,25 +4511,25 @@ impl Connection {
                         Ok(None) => {
                             // no action required here
                         }
-                        Ok(Some((challenge_info, is_new_round))) => {
-                            let iroh_hp::ChallengeNeeded {
-                                token,
+                        Ok(Some(info)) => {
+                            let iroh_hp::RandDataNeeded {
                                 ip,
                                 port,
                                 round,
-                            } = challenge_info;
+                                is_new_round,
+                            } = info;
                             if is_new_round {
                                 // TODO(@divma): this depends on round starting on 1 right now,
                                 // because the round should be greater to the default one, which is
                                 // zero
-                                self.spaces[SpaceId::Data].pending.challenges_round = round;
-                                self.spaces[SpaceId::Data].pending.challenges.clear();
+                                self.spaces[SpaceId::Data].pending.hole_punch_round = round;
+                                self.spaces[SpaceId::Data].pending.hole_punch_to.clear();
                             }
 
                             self.spaces[SpaceId::Data]
                                 .pending
-                                .challenges
-                                .push((token, ip, port));
+                                .hole_punch_to
+                                .push((ip, port));
                         }
                         Err(iroh_hp::Error::WrongConnectionSide) => {
                             return Err(TransportError::PROTOCOL_VIOLATION(
@@ -5435,7 +5447,6 @@ impl Connection {
                     max_remote_addresses,
                     max_local_addresses,
                     self.side(),
-                    self.rng.clone(),
                 ));
                 debug!(
                     %max_remote_addresses, %max_local_addresses,
