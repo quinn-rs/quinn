@@ -117,7 +117,7 @@ macro_rules! make_struct {
             /// The role of this peer in address discovery, if any.
             pub(crate) address_discovery_role: address_discovery::Role,
 
-            // Multipath extension
+            /// Multipath extension
             pub(crate) initial_max_path_id: Option<PathId>,
 
             /// Nat traversal draft
@@ -802,6 +802,7 @@ impl TryFrom<u64> for TransportParameterId {
             id if Self::MinAckDelayDraft07 == id => Self::MinAckDelayDraft07,
             id if Self::ObservedAddr == id => Self::ObservedAddr,
             id if Self::InitialMaxPathId == id => Self::InitialMaxPathId,
+            id if Self::IrohNatTraversal == id => Self::IrohNatTraversal,
             _ => return Err(()),
         };
         Ok(param)
@@ -842,6 +843,7 @@ mod test {
             min_ack_delay: Some(2_000u32.into()),
             address_discovery_role: address_discovery::Role::SendOnly,
             initial_max_path_id: Some(PathId::MAX),
+            max_remote_nat_traversal_addresses: Some(5u8.try_into().unwrap()),
             ..TransportParameters::default()
         };
         params.write(&mut buf);
