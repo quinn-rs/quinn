@@ -110,6 +110,7 @@ impl crypto::Session for TlsSession {
                     code: TransportErrorCode::crypto(alert.into()),
                     frame: None,
                     reason: e.to_string(),
+                    crypto: Some(Arc::new(e)),
                 }
             } else {
                 TransportError::PROTOCOL_VIOLATION(format!("TLS error: {e}"))

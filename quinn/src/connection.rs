@@ -1109,11 +1109,10 @@ impl State {
                     self.close(error_code, reason, shared);
                 }
                 Poll::Ready(None) => {
-                    return Err(ConnectionError::TransportError(proto::TransportError {
-                        code: proto::TransportErrorCode::INTERNAL_ERROR,
-                        frame: None,
-                        reason: "endpoint driver future was dropped".to_string(),
-                    }));
+                    return Err(ConnectionError::TransportError(proto::TransportError::new(
+                        proto::TransportErrorCode::INTERNAL_ERROR,
+                        "endpoint driver future was dropped".to_string(),
+                    )));
                 }
                 Poll::Pending => {
                     return Ok(());

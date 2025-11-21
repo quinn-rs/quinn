@@ -2605,6 +2605,7 @@ impl Connection {
                                 code: TransportErrorCode::crypto(0x6d),
                                 frame: None,
                                 reason: "transport parameters missing".into(),
+                                crypto: None,
                             })?;
 
                     if self.has_0rtt() {
@@ -2680,6 +2681,7 @@ impl Connection {
                                 code: TransportErrorCode::crypto(0x6d),
                                 frame: None,
                                 reason: "transport parameters missing".into(),
+                                crypto: None,
                             })?;
                     self.handle_peer_params(params)?;
                     self.issue_first_cids(now);
