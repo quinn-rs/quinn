@@ -842,6 +842,7 @@ impl Connection {
         buf: &mut Vec<u8>,
     ) -> Option<Transmit> {
         if let Some(address) = self.spaces[SpaceId::Data].pending.hole_punch_to.pop() {
+            trace!(dst = ?address, "RAND_DATA packet");
             buf.reserve_exact(8); // send 8 bytes of random data
             let tmp: [u8; 8] = self.rng.random();
             buf.put_slice(&tmp);
@@ -1854,6 +1855,11 @@ impl Connection {
                         };
                         path.challenges_sent.clear();
                         path.challenge_pending = false;
+
+                        // TODO(flub): not sure yet
+                        self.timers
+                            .stop(Timer::PerPath(path_id, PathTimer::LossDetection));
+
                         debug!("new path validation failed");
                         if let Err(err) = self.close_path(
                             now,
@@ -2461,7 +2467,7 @@ impl Connection {
         let (_, space) = match self.pto_time_and_space(now, path_id) {
             Some(x) => x,
             None => {
-                error!("PTO expired while unset");
+                error!(?path_id, "PTO expired while unset");
                 return;
             }
         };
@@ -5305,9 +5311,16 @@ impl Connection {
             self.stats.frame_tx.stream += sent.stream_frames.len() as u64;
         }
 
+        // ADD_ADDRESS
         // TODO(@divma): check if we need to do path exclusive filters
         while space_id == SpaceId::Data && frame::AddAddress::SIZE_BOUND <= buf.remaining_mut() {
             if let Some(added_address) = space.pending.add_address.pop_last() {
+                trace!(
+                    seq = %added_address.seq_no,
+                    ip = ?added_address.ip,
+                    port = added_address.port,
+                    "ADD_ADDRESS",
+                );
                 added_address.write(buf);
                 sent.retransmits
                     .get_or_create()
@@ -5319,8 +5332,10 @@ impl Connection {
             }
         }
 
+        // REMOVE_ADDRESS
         while space_id == SpaceId::Data && frame::RemoveAddress::SIZE_BOUND <= buf.remaining_mut() {
             if let Some(removed_address) = space.pending.remove_address.pop_last() {
+                trace!(seq = %removed_address.seq_no, "REMOVE_ADDRESS");
                 removed_address.write(buf);
                 sent.retransmits
                     .get_or_create()
