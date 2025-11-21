@@ -11,7 +11,7 @@ use std::{
 use bytes::{BufMut, Bytes, BytesMut};
 use frame::StreamMetaVec;
 
-use rand::{Rng, RngCore, SeedableRng, rngs::StdRng};
+use rand::{Rng, SeedableRng, rngs::StdRng};
 use rustc_hash::{FxHashMap, FxHashSet};
 use thiserror::Error;
 use tracing::{debug, error, trace, trace_span, warn};
@@ -844,7 +844,8 @@ impl Connection {
     ) -> Option<Transmit> {
         if let Some(address) = self.spaces[SpaceId::Data].pending.hole_punch_to.pop() {
             buf.reserve_exact(8); // send 8 bytes of random data
-            self.rng.fill_bytes(buf);
+            let tmp: [u8; 8] = self.rng.random();
+            buf.put_slice(&tmp);
             return Some(Transmit {
                 destination: address.into(),
                 ecn: None,
