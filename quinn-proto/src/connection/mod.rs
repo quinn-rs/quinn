@@ -811,7 +811,6 @@ impl Connection {
 
         // for the path to be opened we need to send a packet on the path. Sending a challenge
         // guarantees this
-        data.challenge = Some(self.rng.random());
         data.challenge_pending = true;
 
         let path = vacant_entry.insert(PathState { data, prev: None });
@@ -1593,11 +1592,9 @@ impl Connection {
         let (prev_cid, prev_path) = self.paths.get_mut(&path_id)?.prev.as_mut()?;
         if !prev_path.challenge_pending {
             return None;
-        }
-        prev_path.challenge_pending = false;
-        let token = prev_path
-            .challenge
-            .expect("previous path challenge pending without token");
+        };
+        let token = self.rng.random();
+        prev_path.challenges_sent.insert(token, now);
         let destination = prev_path.remote;
         debug_assert_eq!(
             self.highest_space,
@@ -1848,14 +1845,14 @@ impl Connection {
                         if let Some((_, prev)) = path.prev.take() {
                             path.data = prev;
                         }
-                        path.data.challenge = None;
+                        path.data.challenges_sent.clear();
                         path.data.challenge_pending = false;
                     }
                     PathTimer::PathOpen => {
                         let Some(path) = self.path_mut(path_id) else {
                             continue;
                         };
-                        path.challenge = None;
+                        path.challenges_sent.clear();
                         path.challenge_pending = false;
                         debug!("new path validation failed");
                         if let Err(err) = self.close_path(
@@ -2401,7 +2398,7 @@ impl Connection {
             .remove_in_flight(&info);
         let app_limited = self.app_limited;
         let path = self.path_data_mut(path_id);
-        if info.ack_eliciting && path.challenge.is_none() {
+        if info.ack_eliciting && path.challenges_sent.is_empty() {
             // Only pass ACKs to the congestion controller if we are not validating the current
             // path, so as to ignore any ACKs from older paths still coming in.
             let rtt = path.rtt;
@@ -4024,7 +4021,10 @@ impl Connection {
                         .paths
                         .get_mut(&path_id)
                         .expect("payload is processed only after the path becomes known");
-                    if path.data.challenge == Some(token) && remote == path.data.remote {
+
+                    if remote != path.data.remote {
+                        debug!(token, "ignoring invalid PATH_RESPONSE");
+                    } else if let Some(&challenge_sent) = path.data.challenges_sent.get(&token) {
                         self.timers
                             .stop(Timer::PerPath(path_id, PathTimer::PathValidation));
                         if !path.data.validated {
@@ -4032,8 +4032,13 @@ impl Connection {
                         }
                         self.timers
                             .stop(Timer::PerPath(path_id, PathTimer::PathOpen));
-                        path.data.challenge = None;
+                        path.data.challenges_sent.clear();
+                        path.data.challenge_pending = false;
                         path.data.validated = true;
+                        path.data.rtt.update(
+                            Duration::ZERO,
+                            now.saturating_duration_since(challenge_sent),
+                        );
                         self.events
                             .push_back(Event::Path(PathEvent::Opened { id: path_id }));
                         // mark the path as open from the application perspective now that Opened
@@ -4047,7 +4052,7 @@ impl Connection {
                             }
                         }
                         if let Some((_, ref mut prev)) = path.prev {
-                            prev.challenge = None;
+                            prev.challenges_sent.clear();
                             prev.challenge_pending = false;
                         }
                     } else {
@@ -4644,13 +4649,11 @@ impl Connection {
                 }));
             }
         }
-        new_path.challenge = Some(self.rng.random());
         new_path.challenge_pending = true;
 
         let mut prev = mem::replace(path, new_path);
         // Don't clobber the original path if the previous one hasn't been validated yet
-        if prev.challenge.is_none() {
-            prev.challenge = Some(self.rng.random());
+        if !prev.validated {
             prev.challenge_pending = true;
             // We haven't updated the remote CID yet, this captures the remote CID we were using on
             // the previous path.
@@ -4912,16 +4915,19 @@ impl Connection {
         }
 
         // PATH_CHALLENGE
-        if buf.remaining_mut() > 9 && space_id == SpaceId::Data {
+        if buf.remaining_mut() > 9 && space_id == SpaceId::Data && !path.validated {
             // Transmit challenges with every outgoing packet on an unvalidated path
-            if let Some(token) = path.challenge {
+            if !path.validated {
+                // Generate a new challenge every time we send a new PC
+                let token = self.rng.random();
+                path.challenges_sent.insert(token, now);
                 sent.non_retransmits = true;
                 sent.requires_padding = true;
                 trace!("PATH_CHALLENGE {:08x}", token);
                 buf.write(frame::FrameType::PATH_CHALLENGE);
                 buf.write(token);
 
-                if is_multipath_negotiated && !path.validated && path.challenge_pending {
+                if is_multipath_negotiated && path.challenge_pending {
                     // queue informing the path status along with the challenge
                     space.pending.path_status.insert(path_id);
                 }
