@@ -5872,46 +5872,48 @@ impl Connection {
     /// If adding any address fails, an error is returned. Previous addresses might have been
     /// added.
     // TODO(@divma): this combined api has the issue that an error does not mean nothing was done
-    pub fn add_nat_traversal_addresses(
-        &mut self,
-        addresses: &[SocketAddr],
-    ) -> Result<(), iroh_hp::Error> {
+    pub fn add_nat_traversal_address(&mut self, address: SocketAddr) -> Result<(), iroh_hp::Error> {
         let hp_state = self
             .iroh_hp
             .as_mut()
             .ok_or(iroh_hp::Error::ExtensionNotNegotiated)?;
 
-        for &address in addresses {
-            if let Some(added) = hp_state.add_local_address(address)? {
-                self.spaces[SpaceId::Data].pending.add_address.insert(added);
-            };
-        }
+        if let Some(added) = hp_state.add_local_address(address)? {
+            self.spaces[SpaceId::Data].pending.add_address.insert(added);
+        };
         Ok(())
     }
 
     /// Removes an address the endpoing no longer considers reachable for nat traversal
     ///
     /// Addresses not present in the set will be silently ignored.
-    pub fn remove_nat_traversal_addresses(
+    pub fn remove_nat_traversal_address(
         &mut self,
-        addresses: &[SocketAddr],
+        address: SocketAddr,
     ) -> Result<(), iroh_hp::Error> {
         let is_server = self.side().is_server();
         let hp_state = self
             .iroh_hp
             .as_mut()
             .ok_or(iroh_hp::Error::ExtensionNotNegotiated)?;
-        for address in addresses {
-            if let Some(removed) = hp_state.remove_local_address(*address) {
-                if is_server {
-                    self.spaces[SpaceId::Data]
-                        .pending
-                        .remove_address
-                        .insert(removed);
-                }
+        if let Some(removed) = hp_state.remove_local_address(address) {
+            if is_server {
+                self.spaces[SpaceId::Data]
+                    .pending
+                    .remove_address
+                    .insert(removed);
             }
         }
         Ok(())
+    }
+
+    /// Get the current local nat traversal addresses
+    pub fn get_local_nat_traversal_addresses(&self) -> Result<Vec<SocketAddr>, iroh_hp::Error> {
+        let hp_state = self
+            .iroh_hp
+            .as_ref()
+            .ok_or(iroh_hp::Error::ExtensionNotNegotiated)?;
+        Ok(hp_state.get_local_nat_traversal_addresses())
     }
 
     /// Get the currently advertised nat traversal addresses by the server

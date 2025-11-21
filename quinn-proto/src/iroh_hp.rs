@@ -171,6 +171,14 @@ impl State {
         }
     }
 
+    pub(crate) fn get_local_nat_traversal_addresses(&self) -> Vec<SocketAddr> {
+        self.local_addresses
+            .keys()
+            .copied()
+            .map(Into::into)
+            .collect()
+    }
+
     pub(crate) fn get_remote_nat_traversal_addresses(&self) -> Result<Vec<SocketAddr>, Error> {
         if !self.side.is_client() {
             return Err(Error::WrongConnectionSide);
@@ -195,7 +203,7 @@ impl State {
             return Err(Error::WrongConnectionSide);
         }
 
-        if self.local_addresses.is_empty() || self.remote_addresses.is_empty() {
+        if self.local_addresses.is_empty() {
             return Err(Error::NotEnoughAddresses);
         }
 

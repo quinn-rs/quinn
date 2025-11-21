@@ -851,18 +851,15 @@ impl Connection {
         conn.inner.is_multipath_negotiated()
     }
 
-    /// Registers one or more addresses at which this endpoint is reachable
+    /// Registers one address at which this endpoint might be reachable
     ///
     /// When the NAT traversal extension is negotiated, servers send these addresses to clients in
     /// `ADD_ADDRESS` frames. This allows clients to obtain server address candidates to initiate
     /// NAT traversal attempts. Clients provide their own reachable addresses in `REACH_OUT` frames
     /// when [`Self::initiate_nat_traversal_round`] is called.
-    pub fn add_nat_traversal_addresses(
-        &self,
-        addresses: &[SocketAddr],
-    ) -> Result<(), iroh_hp::Error> {
+    pub fn add_nat_traversal_address(&self, address: SocketAddr) -> Result<(), iroh_hp::Error> {
         let mut conn = self.0.state.lock("add_nat_traversal_addresses");
-        conn.inner.add_nat_traversal_addresses(addresses)
+        conn.inner.add_nat_traversal_address(address)
     }
 
     /// Removes one or more addresses from the set of addresses at which this endpoint is reachable
@@ -874,12 +871,15 @@ impl Connection {
     /// For clients, removed addresses will no longer be advertised in `REACH_OUT` frames.
     ///
     /// Addresses not present in the set will be silently ignored.
-    pub fn remove_nat_traversal_addresses(
-        &self,
-        addresses: &[SocketAddr],
-    ) -> Result<(), iroh_hp::Error> {
+    pub fn remove_nat_traversal_address(&self, address: SocketAddr) -> Result<(), iroh_hp::Error> {
         let mut conn = self.0.state.lock("remove_nat_traversal_addresses");
-        conn.inner.add_nat_traversal_addresses(addresses)
+        conn.inner.remove_nat_traversal_address(address)
+    }
+
+    /// Get the current local nat traversal addresses
+    pub fn get_local_nat_traversal_addresses(&self) -> Result<Vec<SocketAddr>, iroh_hp::Error> {
+        let conn = self.0.state.lock("get_remote_nat_traversal_addresses");
+        conn.inner.get_local_nat_traversal_addresses()
     }
 
     /// Get the currently advertised nat traversal addresses by the server
