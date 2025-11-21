@@ -1,5 +1,6 @@
 use std::{cmp, net::SocketAddr};
 
+use identity_hash::IntMap;
 use thiserror::Error;
 use tracing::{debug, trace};
 
@@ -128,7 +129,7 @@ pub(super) struct PathData {
     pub(super) congestion: Box<dyn congestion::Controller>,
     /// Pacing state
     pub(super) pacing: Pacer,
-    pub(super) challenge: Option<u64>,
+    pub(super) challenges_sent: IntMap<u64, Instant>,
     pub(super) challenge_pending: bool,
     /// Pending responses to PATH_CHALLENGE frames
     pub(super) path_responses: PathResponses,
@@ -224,8 +225,8 @@ impl PathData {
                 now,
             ),
             congestion,
-            challenge: None,
-            challenge_pending: false,
+            challenges_sent: Default::default(),
+            challenge_pending: Default::default(),
             path_responses: PathResponses::default(),
             validated: false,
             total_sent: 0,
@@ -278,8 +279,8 @@ impl PathData {
             pacing: Pacer::new(smoothed_rtt, congestion.window(), prev.current_mtu(), now),
             sending_ecn: true,
             congestion,
-            challenge: None,
-            challenge_pending: false,
+            challenges_sent: Default::default(),
+            challenge_pending: Default::default(),
             path_responses: PathResponses::default(),
             validated: false,
             total_sent: 0,
