@@ -4788,11 +4788,13 @@ impl Connection {
                 self.stats.frame_tx.handshake_done.saturating_add(1);
         }
 
+        // REACH_OUT
         // TODO(@divma): path explusive considerations
         if let Some((round, addresses)) = space.pending.reach_out.as_mut() {
             while let Some(local_addr) = addresses.pop() {
                 let reach_out = frame::ReachOut::new(*round, local_addr);
                 if buf.remaining_mut() > reach_out.size() {
+                    trace!(%round, ?local_addr, "REACH_OUT");
                     reach_out.write(buf);
                     let sent_reachouts = sent
                         .retransmits
