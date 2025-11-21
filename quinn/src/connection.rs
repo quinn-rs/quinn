@@ -1078,6 +1078,7 @@ impl State {
                         code: proto::TransportErrorCode::INTERNAL_ERROR,
                         frame: None,
                         reason: "endpoint driver future was dropped".to_string(),
+                        tls: None,
                     }));
                 }
                 Poll::Pending => {
