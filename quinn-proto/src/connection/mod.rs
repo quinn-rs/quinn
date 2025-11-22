@@ -1855,11 +1855,6 @@ impl Connection {
                         };
                         path.challenges_sent.clear();
                         path.challenge_pending = false;
-
-                        // TODO(flub): not sure yet
-                        self.timers
-                            .stop(Timer::PerPath(path_id, PathTimer::LossDetection));
-
                         debug!("new path validation failed");
                         if let Err(err) = self.close_path(
                             now,
@@ -1886,6 +1881,7 @@ impl Connection {
                     PathTimer::PathAbandoned => {
                         // The path was abandoned and 3*PTO has expired since.  Clean up all
                         // remaining state and install stateless reset token.
+                        self.timers.stop_per_path(path_id);
                         if let Some(loc_cid_state) = self.local_cid_state.remove(&path_id) {
                             let (min_seq, max_seq) = loc_cid_state.active_seq();
                             for seq in min_seq..=max_seq {
