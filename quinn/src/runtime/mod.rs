@@ -12,6 +12,9 @@ use udp::{RecvMeta, Transmit};
 
 use crate::Instant;
 
+#[cfg(not(any(feature = "runtime-tokio", feature = "runtime-smol", feature = "custom-runtime")))]
+compile_error!("no async runtime found. Please enable a runtimse such as runtime-tokio, runtime-smol or custom-runtime");
+
 /// Abstracts I/O and timer operations for runtime independence
 pub trait Runtime: Send + Sync + Debug + 'static {
     /// Construct a timer that will expire at `i`
