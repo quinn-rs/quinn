@@ -349,11 +349,21 @@ impl PathData {
     /// Increment the total size of sent UDP datagrams
     pub(super) fn inc_total_sent(&mut self, inc: u64) {
         self.total_sent = self.total_sent.saturating_add(inc);
+        trace!(
+            remote = %self.remote,
+            anti_amplification_budget = %(self.total_recvd * 3).saturating_sub(self.total_sent),
+            "anti amplification budget decreased"
+        );
     }
 
     /// Increment the total size of received UDP datagrams
     pub(super) fn inc_total_recvd(&mut self, inc: u64) {
         self.total_recvd = self.total_recvd.saturating_add(inc);
+        trace!(
+            remote = %self.remote,
+            anti_amplification_budget = %(self.total_recvd * 3).saturating_sub(self.total_sent),
+            "anti amplification budget increased"
+        );
     }
 
     #[cfg(feature = "qlog")]
