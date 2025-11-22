@@ -75,10 +75,10 @@ pub(crate) struct State {
     /// This is set by the remote endpoint.
     max_local_addresses: usize,
     /// Candidate addresses the remote server reports as potentially reachable, to use for nat
-    /// traversal attempts.
+    /// traversal attempts. Always canonical.
     remote_addresses: FxHashMap<VarInt, (IpAddr, u16)>,
     /// Candidate addresses the local client reports as potentially reachable, to use for nat
-    /// traversal attempts.
+    /// traversal attempts. Always canonical.
     local_addresses: FxHashMap<(IpAddr, u16), VarInt>,
     /// The next id to use for local addresses sent to the client
     next_local_addr_id: VarInt,
@@ -113,7 +113,7 @@ impl State {
         &mut self,
         address: SocketAddr,
     ) -> Result<Option<AddAddress>, Error> {
-        let address = (address.ip(), address.port());
+        let address = (address.ip().to_canonical(), address.port());
         let allow_new = self.local_addresses.len() < self.max_local_addresses;
         let is_server = self.side.is_server();
         match self.local_addresses.entry(address) {
@@ -275,7 +275,7 @@ impl<'a> ClientSide<'a> {
         add_addr: AddAddress,
     ) -> Result<Option<SocketAddr>, Error> {
         let AddAddress { seq_no, ip, port } = add_addr;
-        let address = (ip, port);
+        let address = (ip.to_canonical(), port);
         let allow_new = self.state.remote_addresses.len() < self.state.max_remote_addresses;
         match self.state.remote_addresses.entry(seq_no) {
             Entry::Occupied(mut occupied_entry) => {

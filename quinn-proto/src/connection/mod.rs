@@ -5991,8 +5991,19 @@ impl Connection {
 
         let mut path_ids = Vec::with_capacity(addresses_to_probe.len());
         let mut probed_addresses = Vec::with_capacity(addresses_to_probe.len());
-        for address in addresses_to_probe {
-            let remote: SocketAddr = address.into();
+        let ipv6 = self.paths.values().any(|p| p.data.remote.is_ipv6());
+
+        for (ip, port) in addresses_to_probe {
+            // If this endpoint is an IPv6 endpoint we use IPv6 addresses for all remotes.
+            let remote = match ip {
+                IpAddr::V4(addr) if ipv6 => SocketAddr::new(addr.to_ipv6_mapped().into(), port),
+                IpAddr::V4(addr) => SocketAddr::new(addr.into(), port),
+                IpAddr::V6(_) if ipv6 => SocketAddr::new(ip, port),
+                IpAddr::V6(_) => {
+                    trace!("not using IPv6 nat candidate for IPv4 socket");
+                    continue;
+                }
+            };
             match self.open_path_ensure(remote, PathStatus::Backup, now) {
                 Ok((path_id, path_was_known)) if !path_was_known => {
                     path_ids.push(path_id);
