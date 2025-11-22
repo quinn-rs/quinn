@@ -37,7 +37,8 @@ rustls-ring = ["dep:rustls", "ring", "proto/rustls-ring", "proto/ring"]
 ring = ["proto/ring"]
 runtime-tokio = ["tokio/time", "tokio/rt", "tokio/net"]
 runtime-smol = ["dep:async-io", "dep:smol"]
-
+# Allow users to declare a custom runtimne
+custom-runtime = []
 # Configure `tracing` to log events via `log` if no `tracing` subscriber exists.
 tracing-log = ["tracing/log", "proto/tracing-log", "udp/tracing-log"]
 # Enable rustls logging
