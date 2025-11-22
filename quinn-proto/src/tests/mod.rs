@@ -1382,7 +1382,7 @@ fn path_challenge_retransmit() {
             .stats()
             .frame_tx
             .path_challenge,
-        challenges_sent_before + 2
+        challenges_sent_before + 3
     );
 }
 
