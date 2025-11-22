@@ -1899,7 +1899,11 @@ impl Connection {
                         // frame.
                         warn!(?path_id, "missing PATH_ABANDON from peer");
                         // TODO(flub): What should the error code be?
-                        self.close(now, 0u8.into(), "peer ignored PATH_ABANDON frame".into());
+                        self.close(
+                            now,
+                            TransportErrorCode::NO_ERROR.into(),
+                            "peer ignored PATH_ABANDON frame".into(),
+                        );
                     }
                 },
             }
@@ -4339,7 +4343,7 @@ impl Connection {
                             // TODO(flub): which error code?
                             self.close(
                                 now,
-                                0u8.into(),
+                                TransportErrorCode::NO_ERROR.into(),
                                 Bytes::from_static(b"last path abandoned by peer"),
                             );
                         }
