@@ -4793,6 +4793,7 @@ impl Connection {
                 trace!("PATH_CHALLENGE {:08x}", token);
                 buf.write(frame::FrameType::PATH_CHALLENGE);
                 buf.write(token);
+                self.stats.frame_tx.path_challenge += 1;
 
                 if is_multipath_negotiated && path.challenge_pending {
                     // queue informing the path status along with the challenge

@@ -1339,6 +1339,53 @@ fn migration() {
     );
 }
 
+#[test]
+fn path_challenge_retransmit() {
+    let _guard = subscribe();
+    let mut pair = Pair::default();
+    let (client_ch, server_ch) = pair.connect();
+    pair.drive();
+
+    let challenges_sent_before = pair
+        .server_conn_mut(server_ch)
+        .stats()
+        .frame_tx
+        .path_challenge;
+
+    println!("-------- client migrates --------");
+    pair.client.addr = SocketAddr::new(
+        Ipv4Addr::new(127, 0, 0, 1).into(),
+        CLIENT_PORTS.lock().unwrap().next().unwrap(),
+    );
+    // Send more than a ping to make sure we have enough anti-amplification budget to resend
+    let stream_id = pair.client_streams(client_ch).open(Dir::Uni).unwrap();
+    let to_write = [0u8; 1000];
+    let mut written = 0;
+    while written < 1000 {
+        written += pair
+            .client_conn_mut(client_ch)
+            .send_stream(stream_id)
+            .write(&to_write[written..])
+            .unwrap();
+    }
+
+    pair.drive_client(); // This will send the stream datagram
+    pair.drive_server(); // This will make the server receive the stream datagram, increase its anti-amp budget, and send the first path challenge
+    println!("-------- client loses messages --------");
+    // Have the client lose the challenge
+    pair.client.inbound.clear();
+
+    pair.drive();
+
+    assert_eq!(
+        pair.server_conn_mut(server_ch)
+            .stats()
+            .frame_tx
+            .path_challenge,
+        challenges_sent_before + 2
+    );
+}
+
 fn test_flow_control(config: TransportConfig, window_size: usize) {
     let _guard = subscribe();
     let mut pair = Pair::new(
