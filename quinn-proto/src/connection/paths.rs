@@ -129,8 +129,10 @@ pub(super) struct PathData {
     pub(super) congestion: Box<dyn congestion::Controller>,
     /// Pacing state
     pub(super) pacing: Pacer,
+    /// Actually sent challenges (on the wire)
     pub(super) challenges_sent: IntMap<u64, Instant>,
-    pub(super) challenge_pending: bool,
+    /// Whether to *immediately* trigger another PATH_CHALLENGE (via Connection::can_send)
+    pub(super) send_new_challenge: bool,
     /// Pending responses to PATH_CHALLENGE frames
     pub(super) path_responses: PathResponses,
     /// Whether we're certain the peer can both send and receive on this address
@@ -226,7 +228,7 @@ impl PathData {
             ),
             congestion,
             challenges_sent: Default::default(),
-            challenge_pending: Default::default(),
+            send_new_challenge: false,
             path_responses: PathResponses::default(),
             validated: false,
             total_sent: 0,
@@ -280,7 +282,7 @@ impl PathData {
             sending_ecn: true,
             congestion,
             challenges_sent: Default::default(),
-            challenge_pending: Default::default(),
+            send_new_challenge: false,
             path_responses: PathResponses::default(),
             validated: false,
             total_sent: 0,
@@ -300,6 +302,11 @@ impl PathData {
             recovery_metrics: prev.recovery_metrics.clone(),
             generation,
         }
+    }
+
+    /// Whether we're in the process of validating this path with PATH_CHALLENGEs
+    pub(super) fn is_validating_path(&self) -> bool {
+        !self.challenges_sent.is_empty() || self.send_new_challenge
     }
 
     /// Resets RTT, congestion control and MTU states.
