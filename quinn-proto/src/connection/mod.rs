@@ -1690,13 +1690,15 @@ impl Connection {
                 first_decode,
                 remaining,
             }) => {
+                let span = trace_span!("pkt", %path_id);
+                let _guard = span.enter();
                 // If this packet could initiate a migration and we're a client or a server that
                 // forbids migration, drop the datagram. This could be relaxed to heuristically
                 // permit NAT-rebinding-like migration.
                 if let Some(known_remote) = self.path(path_id).map(|path| path.remote) {
                     if remote != known_remote && !self.side.remote_may_migrate(&self.state) {
                         trace!(
-                            ?path_id,
+                            %path_id,
                             ?remote,
                             path_remote = ?self.path(path_id).map(|p| p.remote),
                             "discarding packet from unrecognized peer"
@@ -1821,104 +1823,107 @@ impl Connection {
                         }
                     }
                 },
-                Timer::PerPath(path_id, timer) => match timer {
-                    PathTimer::PathIdle => {
-                        // TODO(flub): TransportErrorCode::NO_ERROR but where's the API to get
-                        //    that into a VarInt?
-                        self.close_path(now, path_id, TransportErrorCode::NO_ERROR.into())
-                            .ok();
-                    }
-
-                    PathTimer::PathKeepAlive => {
-                        trace!(?path_id, "sending keep-alive on path");
-                        self.ping_path(path_id).ok();
-                    }
-                    PathTimer::LossDetection => {
-                        self.on_loss_detection_timeout(now, path_id);
-                        self.config.qlog_sink.emit_recovery_metrics(
-                            self.path_data(path_id).pto_count,
-                            &mut self.paths.get_mut(&path_id).unwrap().data,
-                            now,
-                            self.orig_rem_cid,
-                        );
-                    }
-                    PathTimer::PathValidation => {
-                        let Some(path) = self.paths.get_mut(&path_id) else {
-                            continue;
-                        };
-                        self.timers
-                            .stop(Timer::PerPath(path_id, PathTimer::PathChallengeLost));
-                        debug!("path validation failed");
-                        if let Some((_, prev)) = path.prev.take() {
-                            path.data = prev;
-                        }
-                        path.data.challenges_sent.clear();
-                        path.data.send_new_challenge = false;
-                    }
-                    PathTimer::PathChallengeLost => {
-                        let Some(path) = self.paths.get_mut(&path_id) else {
-                            continue;
-                        };
-                        trace!("path challenge deemed lost");
-                        path.data.send_new_challenge = true;
-                    }
-                    PathTimer::PathOpen => {
-                        let Some(path) = self.path_mut(path_id) else {
-                            continue;
-                        };
-                        path.challenges_sent.clear();
-                        path.send_new_challenge = false;
-                        debug!("new path validation failed");
-                        if let Err(err) = self.close_path(
-                            now,
-                            path_id,
-                            TransportErrorCode::UNSTABLE_INTERFACE.into(),
-                        ) {
-                            warn!(?err, "failed closing path");
+                // TODO: add path_id as span somehow
+                Timer::PerPath(path_id, timer) => {
+                    let span = trace_span!("per-path timer fired", %path_id, ?timer);
+                    let _guard = span.enter();
+                    match timer {
+                        PathTimer::PathIdle => {
+                            self.close_path(now, path_id, TransportErrorCode::NO_ERROR.into())
+                                .ok();
                         }
 
-                        self.events.push_back(Event::Path(PathEvent::LocallyClosed {
-                            id: path_id,
-                            error: PathError::ValidationFailed,
-                        }));
-                    }
-                    PathTimer::Pacing => trace!(?path_id, "pacing timer expired"),
-                    PathTimer::MaxAckDelay => {
-                        trace!("max ack delay reached");
-                        // This timer is only armed in the Data space
-                        self.spaces[SpaceId::Data]
-                            .for_path(path_id)
-                            .pending_acks
-                            .on_max_ack_delay_timeout()
-                    }
-                    PathTimer::PathAbandoned => {
-                        // The path was abandoned and 3*PTO has expired since.  Clean up all
-                        // remaining state and install stateless reset token.
-                        self.timers.stop_per_path(path_id);
-                        if let Some(loc_cid_state) = self.local_cid_state.remove(&path_id) {
-                            let (min_seq, max_seq) = loc_cid_state.active_seq();
-                            for seq in min_seq..=max_seq {
-                                self.endpoint_events.push_back(
-                                    EndpointEventInner::RetireConnectionId(
-                                        now, path_id, seq, false,
-                                    ),
-                                );
+                        PathTimer::PathKeepAlive => {
+                            trace!("sending keep-alive on path");
+                            self.ping_path(path_id).ok();
+                        }
+                        PathTimer::LossDetection => {
+                            self.on_loss_detection_timeout(now, path_id);
+                            self.config.qlog_sink.emit_recovery_metrics(
+                                self.path_data(path_id).pto_count,
+                                &mut self.paths.get_mut(&path_id).unwrap().data,
+                                now,
+                                self.orig_rem_cid,
+                            );
+                        }
+                        PathTimer::PathValidation => {
+                            let Some(path) = self.paths.get_mut(&path_id) else {
+                                continue;
+                            };
+                            self.timers
+                                .stop(Timer::PerPath(path_id, PathTimer::PathChallengeLost));
+                            debug!("path validation failed");
+                            if let Some((_, prev)) = path.prev.take() {
+                                path.data = prev;
                             }
+                            path.data.challenges_sent.clear();
+                            path.data.send_new_challenge = false;
                         }
-                        self.drop_path_state(path_id, now);
+                        PathTimer::PathChallengeLost => {
+                            let Some(path) = self.paths.get_mut(&path_id) else {
+                                continue;
+                            };
+                            trace!("path challenge deemed lost");
+                            path.data.send_new_challenge = true;
+                        }
+                        PathTimer::PathOpen => {
+                            let Some(path) = self.path_mut(path_id) else {
+                                continue;
+                            };
+                            path.challenges_sent.clear();
+                            path.send_new_challenge = false;
+                            debug!("new path validation failed");
+                            if let Err(err) = self.close_path(
+                                now,
+                                path_id,
+                                TransportErrorCode::UNSTABLE_INTERFACE.into(),
+                            ) {
+                                warn!(?err, "failed closing path");
+                            }
+
+                            self.events.push_back(Event::Path(PathEvent::LocallyClosed {
+                                id: path_id,
+                                error: PathError::ValidationFailed,
+                            }));
+                        }
+                        PathTimer::Pacing => trace!("pacing timer expired"),
+                        PathTimer::MaxAckDelay => {
+                            trace!("max ack delay reached");
+                            // This timer is only armed in the Data space
+                            self.spaces[SpaceId::Data]
+                                .for_path(path_id)
+                                .pending_acks
+                                .on_max_ack_delay_timeout()
+                        }
+                        PathTimer::PathAbandoned => {
+                            // The path was abandoned and 3*PTO has expired since.  Clean up all
+                            // remaining state and install stateless reset token.
+                            self.timers.stop_per_path(path_id);
+                            if let Some(loc_cid_state) = self.local_cid_state.remove(&path_id) {
+                                let (min_seq, max_seq) = loc_cid_state.active_seq();
+                                for seq in min_seq..=max_seq {
+                                    self.endpoint_events.push_back(
+                                        EndpointEventInner::RetireConnectionId(
+                                            now, path_id, seq, false,
+                                        ),
+                                    );
+                                }
+                            }
+                            self.drop_path_state(path_id, now);
+                        }
+                        PathTimer::PathNotAbandoned => {
+                            // The peer failed to respond with a PATH_ABANDON when we sent such a
+                            // frame.
+                            warn!("missing PATH_ABANDON from peer");
+                            // TODO(flub): What should the error code be?
+                            self.close(
+                                now,
+                                TransportErrorCode::NO_ERROR.into(),
+                                "peer ignored PATH_ABANDON frame".into(),
+                            );
+                        }
                     }
-                    PathTimer::PathNotAbandoned => {
-                        // The peer failed to respond with a PATH_ABANDON when we sent such a
-                        // frame.
-                        warn!(?path_id, "missing PATH_ABANDON from peer");
-                        // TODO(flub): What should the error code be?
-                        self.close(
-                            now,
-                            TransportErrorCode::NO_ERROR.into(),
-                            "peer ignored PATH_ABANDON frame".into(),
-                        );
-                    }
-                },
+                }
             }
         }
     }
@@ -3445,8 +3450,8 @@ impl Connection {
             }
             Ok((packet, number)) => {
                 let span = match number {
-                    Some(pn) => trace_span!("recv", space = ?packet.header.space(), pn, %path_id),
-                    None => trace_span!("recv", space = ?packet.header.space(), %path_id),
+                    Some(pn) => trace_span!("recv", space = ?packet.header.space(), pn),
+                    None => trace_span!("recv", space = ?packet.header.space()),
                 };
                 let _guard = span.enter();
 
