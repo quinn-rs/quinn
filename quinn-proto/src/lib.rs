@@ -103,6 +103,8 @@ mod address_discovery;
 mod token_memory_cache;
 pub use token_memory_cache::TokenMemoryCache;
 
+pub mod iroh_hp;
+
 #[cfg(feature = "arbitrary")]
 use arbitrary::Arbitrary;
 
@@ -327,7 +329,7 @@ pub struct Transmit {
 //
 
 /// The maximum number of CIDs we bother to issue per path
-const LOC_CID_COUNT: u64 = 8;
+const LOC_CID_COUNT: u64 = 12;
 const RESET_TOKEN_SIZE: usize = 16;
 const MAX_CID_SIZE: usize = 20;
 const MIN_INITIAL_SIZE: u16 = 1200;

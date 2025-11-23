@@ -50,7 +50,7 @@ impl PathId {
     pub const ZERO: Self = Self(0);
 
     /// The number of bytes this [`PathId`] uses when encoded as a [`VarInt`]
-    pub(crate) fn size(&self) -> usize {
+    pub(crate) const fn size(&self) -> usize {
         VarInt(self.0 as u64).size()
     }
 
@@ -302,6 +302,11 @@ impl PathData {
             recovery_metrics: prev.recovery_metrics.clone(),
             generation,
         }
+    }
+
+    /// Whether we're in the process of validating this path with PATH_CHALLENGEs
+    pub(super) fn is_validating_path(&self) -> bool {
+        !self.challenges_sent.is_empty() || self.send_new_challenge
     }
 
     /// Resets RTT, congestion control and MTU states.

@@ -28,7 +28,7 @@ use crate::{
 };
 use proto::{
     ConnectionError, ConnectionHandle, ConnectionStats, Dir, EndpointEvent, PathError, PathEvent,
-    PathId, PathStats, PathStatus, Side, StreamEvent, StreamId, congestion::Controller,
+    PathId, PathStats, PathStatus, Side, StreamEvent, StreamId, congestion::Controller, iroh_hp,
 };
 
 /// In-progress connection attempt future
@@ -492,6 +492,15 @@ impl Connection {
         self.0.state.lock("path_events").path_events.subscribe()
     }
 
+    /// A broadcast receiver of [`iroh_hp::Event`]s for updates about server addresses
+    pub fn nat_traversal_updates(&self) -> tokio::sync::broadcast::Receiver<iroh_hp::Event> {
+        self.0
+            .state
+            .lock("nat_traversal_updates")
+            .nat_traversal_updates
+            .subscribe()
+    }
+
     /// Wait for the connection to be closed for any reason
     ///
     /// Despite the return type's name, closed connections are often not an error condition at the
@@ -841,6 +850,56 @@ impl Connection {
         let conn = self.0.state.lock("is_multipath_enabled");
         conn.inner.is_multipath_negotiated()
     }
+
+    /// Registers one address at which this endpoint might be reachable
+    ///
+    /// When the NAT traversal extension is negotiated, servers send these addresses to clients in
+    /// `ADD_ADDRESS` frames. This allows clients to obtain server address candidates to initiate
+    /// NAT traversal attempts. Clients provide their own reachable addresses in `REACH_OUT` frames
+    /// when [`Self::initiate_nat_traversal_round`] is called.
+    pub fn add_nat_traversal_address(&self, address: SocketAddr) -> Result<(), iroh_hp::Error> {
+        let mut conn = self.0.state.lock("add_nat_traversal_addresses");
+        conn.inner.add_nat_traversal_address(address)
+    }
+
+    /// Removes one or more addresses from the set of addresses at which this endpoint is reachable
+    ///
+    /// When the NAT traversal extension is negotiated, servers send address removals to
+    /// clients in `REMOVE_ADDRESS` frames. This allows clients to stop using outdated
+    /// server address candidates that are no longer valid for NAT traversal.
+    ///
+    /// For clients, removed addresses will no longer be advertised in `REACH_OUT` frames.
+    ///
+    /// Addresses not present in the set will be silently ignored.
+    pub fn remove_nat_traversal_address(&self, address: SocketAddr) -> Result<(), iroh_hp::Error> {
+        let mut conn = self.0.state.lock("remove_nat_traversal_addresses");
+        conn.inner.remove_nat_traversal_address(address)
+    }
+
+    /// Get the current local nat traversal addresses
+    pub fn get_local_nat_traversal_addresses(&self) -> Result<Vec<SocketAddr>, iroh_hp::Error> {
+        let conn = self.0.state.lock("get_remote_nat_traversal_addresses");
+        conn.inner.get_local_nat_traversal_addresses()
+    }
+
+    /// Get the currently advertised nat traversal addresses by the server
+    pub fn get_remote_nat_traversal_addresses(&self) -> Result<Vec<SocketAddr>, iroh_hp::Error> {
+        let conn = self.0.state.lock("get_remote_nat_traversal_addresses");
+        conn.inner.get_remote_nat_traversal_addresses()
+    }
+
+    /// Initiates a new nat traversal round
+    ///
+    /// A nat traversal round involves advertising the client's local addresses in `REACH_OUT`
+    /// frames, and initiating probing of the known remote addresses. When a new round is
+    /// initiated, the previous one is cancelled, and paths that have not been opened are closed.
+    ///
+    /// Returns the server addresses that are now being probed.
+    pub fn initiate_nat_traversal_round(&self) -> Result<Vec<SocketAddr>, iroh_hp::Error> {
+        let mut conn = self.0.state.lock("initiate_nat_traversal_round");
+        let now = conn.runtime.now();
+        conn.inner.initiate_nat_traversal_round(now)
+    }
 }
 
 pin_project! {
@@ -1137,6 +1196,7 @@ impl ConnectionRef {
                 send_buffer: Vec::new(),
                 buffered_transmit: None,
                 observed_external_addr: watch::Sender::new(None),
+                nat_traversal_updates: tokio::sync::broadcast::channel(32).0,
                 on_closed: Vec::new(),
             }),
             shared: Shared::default(),
@@ -1276,6 +1336,7 @@ pub(crate) struct State {
     /// Our last external address reported by the peer. When multipath is enabled, this will be the
     /// last report across all paths.
     pub(crate) observed_external_addr: watch::Sender<Option<SocketAddr>>,
+    pub(crate) nat_traversal_updates: tokio::sync::broadcast::Sender<iroh_hp::Event>,
     on_closed: Vec<oneshot::Sender<(ConnectionError, ConnectionStats)>>,
 }
 
@@ -1456,6 +1517,9 @@ impl State {
                 }
                 Path(evt @ PathEvent::RemoteStatus { .. }) => {
                     self.path_events.send(evt).ok();
+                }
+                NatTraversal(update) => {
+                    self.nat_traversal_updates.send(update).ok();
                 }
             }
         }

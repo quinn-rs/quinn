@@ -281,6 +281,15 @@ impl TimerTable {
         }
     }
 
+    /// Stops all per-path timers
+    pub(super) fn stop_per_path(&mut self, path_id: PathId) {
+        for timer in PathTimer::VALUES {
+            if let Some(e) = self.path_timers.get_mut(&path_id) {
+                e.stop(timer);
+            }
+        }
+    }
+
     /// Get the next queued timeout
     pub(super) fn peek(&mut self) -> Option<Instant> {
         // TODO: this is currently linear in the number of paths

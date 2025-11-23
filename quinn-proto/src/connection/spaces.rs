@@ -2,6 +2,7 @@ use std::{
     cmp,
     collections::{BTreeMap, BTreeSet, VecDeque},
     mem,
+    net::IpAddr,
     ops::{Bound, Index, IndexMut},
 };
 
@@ -12,7 +13,11 @@ use tracing::{error, trace};
 use super::{PathId, assembler::Assembler};
 use crate::{
     Dir, Duration, Instant, SocketAddr, StreamId, TransportError, TransportErrorCode, VarInt,
-    connection::StreamsState, crypto::Keys, frame, packet::SpaceId, range_set::ArrayRangeSet,
+    connection::StreamsState,
+    crypto::Keys,
+    frame::{self, AddAddress, RemoveAddress},
+    packet::SpaceId,
+    range_set::ArrayRangeSet,
     shared::IssuedCid,
 };
 
@@ -551,6 +556,20 @@ pub struct Retransmits {
     pub(super) path_status: BTreeSet<PathId>,
     /// If a PATH_CIDS_BLOCKED frame needs to be sent for a path
     pub(super) path_cids_blocked: Vec<PathId>,
+
+    // Nat traversal data
+    /// Addresses to report in `ADD_ADDRESS` frames
+    pub(super) add_address: BTreeSet<AddAddress>,
+    /// Address IDs to remove in `REMOVE_ADDRESS` frames
+    pub(super) remove_address: BTreeSet<RemoveAddress>,
+    /// Round and local addresses to advertise in `REACH_OUT` frames
+    pub(super) reach_out: Option<(VarInt, Vec<(IpAddr, u16)>)>,
+    /// Round of the nat traversal rand data that are pending
+    ///
+    /// This is only used for bitwise operations on the pending data.
+    pub(super) hole_punch_round: VarInt,
+    /// Remote addresses to which random data needs to be sent
+    pub(super) hole_punch_to: Vec<(IpAddr, u16)>,
 }
 
 impl Retransmits {
@@ -574,6 +593,10 @@ impl Retransmits {
             && self.path_status.is_empty()
             && !self.max_path_id
             && !self.paths_blocked
+            && self.add_address.is_empty()
+            && self.remove_address.is_empty()
+            && self.reach_out.is_none()
+            && self.hole_punch_to.is_empty()
     }
 }
 
@@ -600,6 +623,26 @@ impl ::std::ops::BitOrAssign for Retransmits {
         self.path_abandon.append(&mut rhs.path_abandon);
         self.max_path_id |= rhs.max_path_id;
         self.paths_blocked |= rhs.paths_blocked;
+        self.add_address.extend(rhs.add_address.iter().copied());
+        self.remove_address
+            .extend(rhs.remove_address.iter().copied());
+        // if there are two rounds, prefer the most recent reach out set
+        let lhs_round = self.reach_out.as_ref().map(|(round, _)| *round);
+        let rhs_round = rhs.reach_out.as_ref().map(|(round, _)| *round);
+        match (lhs_round, rhs_round) {
+            (None, Some(_)) => self.reach_out = rhs.reach_out.clone(),
+            (Some(lhs_round), Some(rhs_round)) if rhs_round > lhs_round => {
+                self.reach_out = rhs.reach_out.clone()
+            }
+            _ => {}
+        }
+
+        if self.hole_punch_round < rhs.hole_punch_round {
+            self.hole_punch_round = rhs.hole_punch_round;
+            self.hole_punch_to = rhs.hole_punch_to.clone();
+        } else if self.hole_punch_round == rhs.hole_punch_round {
+            self.hole_punch_to.extend_from_slice(&rhs.hole_punch_to);
+        }
     }
 }
 
