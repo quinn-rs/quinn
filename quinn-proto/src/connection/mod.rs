@@ -4676,7 +4676,7 @@ impl Connection {
 
         let mut prev = mem::replace(path, new_path);
         // Don't clobber the original path if the previous one hasn't been validated yet
-        if !prev.is_validating() {
+        if !prev.is_validating_path() {
             prev.send_new_challenge = true;
             // We haven't updated the remote CID yet, this captures the remote CID we were using on
             // the previous path.
