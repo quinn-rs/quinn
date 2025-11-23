@@ -1346,43 +1346,62 @@ fn path_challenge_retransmit() {
     let (client_ch, server_ch) = pair.connect();
     pair.drive();
 
-    let challenges_sent_before = pair
-        .server_conn_mut(server_ch)
-        .stats()
-        .frame_tx
-        .path_challenge;
+    pair.client_conn_mut(client_ch).ping();
+    pair.drive();
 
-    println!("-------- client migrates --------");
-    pair.client.addr = SocketAddr::new(
-        Ipv4Addr::new(127, 0, 0, 1).into(),
-        CLIENT_PORTS.lock().unwrap().next().unwrap(),
-    );
-    // Send more than a ping to make sure we have enough anti-amplification budget to resend
-    let stream_id = pair.client_streams(client_ch).open(Dir::Uni).unwrap();
-    let to_write = [0u8; 1000];
-    let mut written = 0;
-    while written < 1000 {
-        written += pair
-            .client_conn_mut(client_ch)
-            .send_stream(stream_id)
-            .write(&to_write[written..])
-            .unwrap();
-    }
-
-    pair.drive_client(); // This will send the stream datagram
-    pair.drive_server(); // This will make the server receive the stream datagram, increase its anti-amp budget, and send the first path challenge
+    println!("-------- server wants path validation --------");
+    pair.server_conn_mut(server_ch).trigger_path_validation();
+    pair.drive_server(); // Send the path challenge
     println!("-------- client loses messages --------");
     // Have the client lose the challenge
     pair.client.inbound.clear();
 
     pair.drive();
 
+    let client_tx = pair.client_conn_mut(client_ch).stats().frame_tx;
+    let server_tx = pair.server_conn_mut(server_ch).stats().frame_tx;
+
     assert_eq!(
-        pair.server_conn_mut(server_ch)
-            .stats()
-            .frame_tx
-            .path_challenge,
-        challenges_sent_before + 2
+        server_tx.path_challenge, 2,
+        "expected server to send two path challenges"
+    );
+    assert_eq!(
+        client_tx.path_response, 1,
+        "expected client to send one path response"
+    );
+}
+
+#[test]
+fn path_response_retransmit() {
+    let _guard = subscribe();
+    let mut pair = Pair::default();
+    let (client_ch, server_ch) = pair.connect();
+    pair.drive();
+
+    pair.client_conn_mut(client_ch).ping();
+    pair.drive();
+
+    println!("-------- server wants path validation --------");
+    pair.server_conn_mut(server_ch).trigger_path_validation();
+    pair.drive_server(); // Send the path challenge
+    pair.drive_client(); // Send the path response
+    println!("-------- server loses messages --------");
+    // Have the server lose the path response
+    pair.server.inbound.clear();
+
+    // The server should decide to re-send the path challenge
+    pair.drive();
+
+    let client_tx = pair.client_conn_mut(client_ch).stats().frame_tx;
+    let server_tx = pair.server_conn_mut(server_ch).stats().frame_tx;
+
+    assert_eq!(
+        server_tx.path_challenge, 2,
+        "expected server to send two path challenges"
+    );
+    assert_eq!(
+        client_tx.path_response, 2,
+        "expected client to send two path responses"
     );
 }
 
