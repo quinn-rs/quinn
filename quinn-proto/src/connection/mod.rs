@@ -614,12 +614,13 @@ impl Connection {
         if self.abandoned_paths.contains(&path_id) || Some(path_id) > self.max_path_id() {
             return Err(ClosePathError::ClosedPath);
         }
-        if self
-            .paths
-            .keys()
-            .filter(|&id| !self.abandoned_paths.contains(id))
-            .count()
-            < 2
+        if self.paths.contains_key(&path_id)
+            && self
+                .paths
+                .keys()
+                .filter(|&id| !self.abandoned_paths.contains(id))
+                .count()
+                < 2
         {
             return Err(ClosePathError::LastOpenPath);
         }
