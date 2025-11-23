@@ -1571,6 +1571,8 @@ impl Connection {
         path_id: PathId,
     ) -> Option<Transmit> {
         let (prev_cid, prev_path) = self.paths.get_mut(&path_id)?.prev.as_mut()?;
+        // TODO (matheus23): We could use !prev_path.is_validating() here instead to
+        // (possibly) also re-send challenges when they get lost.
         if !prev_path.send_new_challenge {
             return None;
         };
@@ -5517,6 +5519,14 @@ impl Connection {
     #[cfg(test)]
     pub(crate) fn path_mtu(&self) -> u16 {
         self.path_data(PathId::ZERO).current_mtu()
+    }
+
+    /// Triggers path validation on all paths
+    #[cfg(test)]
+    pub(crate) fn trigger_path_validation(&mut self) {
+        for path in self.paths.values_mut() {
+            path.data.send_new_challenge = true;
+        }
     }
 
     /// Whether we have 1-RTT data to send
