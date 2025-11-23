@@ -1825,12 +1825,21 @@ impl Connection {
                         let Some(path) = self.paths.get_mut(&path_id) else {
                             continue;
                         };
+                        self.timers
+                            .stop(Timer::PerPath(path_id, PathTimer::PathChallengeLost));
                         debug!("path validation failed");
                         if let Some((_, prev)) = path.prev.take() {
                             path.data = prev;
                         }
                         path.data.challenges_sent.clear();
                         path.data.send_new_challenge = false;
+                    }
+                    PathTimer::PathChallengeLost => {
+                        let Some(path) = self.paths.get_mut(&path_id) else {
+                            continue;
+                        };
+                        trace!("path challenge deemed lost");
+                        path.data.send_new_challenge = true;
                     }
                     PathTimer::PathOpen => {
                         let Some(path) = self.path_mut(path_id) else {
@@ -4011,6 +4020,8 @@ impl Connection {
                     } else if let Some(&challenge_sent) = path.data.challenges_sent.get(&token) {
                         self.timers
                             .stop(Timer::PerPath(path_id, PathTimer::PathValidation));
+                        self.timers
+                            .stop(Timer::PerPath(path_id, PathTimer::PathChallengeLost));
                         if !path.data.validated {
                             trace!("new path validated");
                         }
@@ -4797,6 +4808,11 @@ impl Connection {
                 buf.write(frame::FrameType::PATH_CHALLENGE);
                 buf.write(token);
                 self.stats.frame_tx.path_challenge += 1;
+                let pto = self.ack_frequency.max_ack_delay_for_pto() + path.rtt.pto_base();
+                self.timers.set(
+                    Timer::PerPath(path_id, PathTimer::PathChallengeLost),
+                    now + pto,
+                );
 
                 if is_multipath_negotiated && !path.validated && path.send_new_challenge {
                     // queue informing the path status along with the challenge

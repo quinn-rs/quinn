@@ -1358,13 +1358,16 @@ fn path_challenge_retransmit() {
 
     pair.drive();
 
+    let client_tx = pair.client_conn_mut(client_ch).stats().frame_tx;
+    let server_tx = pair.server_conn_mut(server_ch).stats().frame_tx;
+
     assert_eq!(
-        pair.server_conn_mut(server_ch)
-            .stats()
-            .frame_tx
-            .path_challenge,
-        2,
+        server_tx.path_challenge, 2,
         "expected server to send two path challenges"
+    );
+    assert_eq!(
+        client_tx.path_response, 1,
+        "expected client to send one path response"
     );
 }
 
@@ -1386,15 +1389,19 @@ fn path_response_retransmit() {
     // Have the server lose the path response
     pair.server.inbound.clear();
 
+    // The server should decide to re-send the path challenge
     pair.drive();
 
+    let client_tx = pair.client_conn_mut(client_ch).stats().frame_tx;
+    let server_tx = pair.server_conn_mut(server_ch).stats().frame_tx;
+
     assert_eq!(
-        pair.client_conn_mut(server_ch)
-            .stats()
-            .frame_tx
-            .path_response,
-        2,
-        "expected client to send two path challenges"
+        server_tx.path_challenge, 2,
+        "expected server to send two path challenges"
+    );
+    assert_eq!(
+        client_tx.path_response, 2,
+        "expected client to send two path responses"
     );
 }
 
