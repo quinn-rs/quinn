@@ -304,11 +304,6 @@ impl PathData {
         }
     }
 
-    /// Whether we're in the process of validating this path with PATH_CHALLENGEs
-    pub(super) fn is_validating_path(&self) -> bool {
-        !self.challenges_sent.is_empty() || self.send_new_challenge
-    }
-
     /// Resets RTT, congestion control and MTU states.
     ///
     /// This is useful when it is known the underlying path has changed.

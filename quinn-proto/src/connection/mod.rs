@@ -4796,53 +4796,48 @@ impl Connection {
         }
 
         // PATH_CHALLENGE
-        if buf.remaining_mut() > 9 && space_id == SpaceId::Data {
-            // Transmit challenges with every outgoing packet on an unvalidated path
-            if path.is_validating_path() {
-                // Generate a new challenge every time we send a new PATH_CHALLENGE
-                let token = self.rng.random();
-                path.challenges_sent.insert(token, now);
-                sent.non_retransmits = true;
-                sent.requires_padding = true;
-                trace!("PATH_CHALLENGE {:08x}", token);
-                buf.write(frame::FrameType::PATH_CHALLENGE);
-                buf.write(token);
-                self.stats.frame_tx.path_challenge += 1;
-                let pto = self.ack_frequency.max_ack_delay_for_pto() + path.rtt.pto_base();
-                self.timers.set(
-                    Timer::PerPath(path_id, PathTimer::PathChallengeLost),
-                    now + pto,
-                );
+        if buf.remaining_mut() > 9 && space_id == SpaceId::Data && path.send_new_challenge {
+            path.send_new_challenge = false;
 
-                if is_multipath_negotiated && !path.validated && path.send_new_challenge {
-                    // queue informing the path status along with the challenge
-                    space.pending.path_status.insert(path_id);
-                }
+            // Generate a new challenge every time we send a new PATH_CHALLENGE
+            let token = self.rng.random();
+            path.challenges_sent.insert(token, now);
+            sent.non_retransmits = true;
+            sent.requires_padding = true;
+            trace!("PATH_CHALLENGE {:08x}", token);
+            buf.write(frame::FrameType::PATH_CHALLENGE);
+            buf.write(token);
+            self.stats.frame_tx.path_challenge += 1;
+            let pto = self.ack_frequency.max_ack_delay_for_pto() + path.rtt.pto_base();
+            self.timers.set(
+                Timer::PerPath(path_id, PathTimer::PathChallengeLost),
+                now + pto,
+            );
 
-                // But only send a packet solely for that purpose at most once
-                path.send_new_challenge = false;
+            if is_multipath_negotiated && !path.validated && path.send_new_challenge {
+                // queue informing the path status along with the challenge
+                space.pending.path_status.insert(path_id);
+            }
 
-                // Always include an OBSERVED_ADDR frame with a PATH_CHALLENGE, regardless
-                // of whether one has already been sent on this path.
-                if space_id == SpaceId::Data
-                    && self
-                        .config
-                        .address_discovery_role
-                        .should_report(&self.peer_params.address_discovery_role)
-                {
-                    let frame =
-                        frame::ObservedAddr::new(path.remote, self.next_observed_addr_seq_no);
-                    if buf.remaining_mut() > frame.size() {
-                        frame.write(buf);
+            // Always include an OBSERVED_ADDR frame with a PATH_CHALLENGE, regardless
+            // of whether one has already been sent on this path.
+            if space_id == SpaceId::Data
+                && self
+                    .config
+                    .address_discovery_role
+                    .should_report(&self.peer_params.address_discovery_role)
+            {
+                let frame = frame::ObservedAddr::new(path.remote, self.next_observed_addr_seq_no);
+                if buf.remaining_mut() > frame.size() {
+                    frame.write(buf);
 
-                        self.next_observed_addr_seq_no =
-                            self.next_observed_addr_seq_no.saturating_add(1u8);
-                        path.observed_addr_sent = true;
+                    self.next_observed_addr_seq_no =
+                        self.next_observed_addr_seq_no.saturating_add(1u8);
+                    path.observed_addr_sent = true;
 
-                        self.stats.frame_tx.observed_addr += 1;
-                        sent.retransmits.get_or_create().observed_addr = true;
-                        space.pending.observed_addr = false;
-                    }
+                    self.stats.frame_tx.observed_addr += 1;
+                    sent.retransmits.get_or_create().observed_addr = true;
+                    space.pending.observed_addr = false;
                 }
             }
         }
