@@ -16,7 +16,7 @@ anyhow = "1.0.22"
 arbitrary = { version = "1.0.1", features = ["derive"] }
 async-io = "2"
 assert_matches = "1.1"
-aws-lc-rs = { version = "1.9", default-features = false }
+aws-lc-rs = { version = "1.15", default-features = false }
 bencher = "0.1.5"
 bytes = "1"
 clap = { version = "4", features = ["derive"] }
