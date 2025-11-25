@@ -345,12 +345,33 @@ impl Connection {
         }
     }
 
+    /// Resolves as soon as a readable datagram is buffered
+    pub fn datagram_readable(&self) -> DatagramReadable<'_> {
+        DatagramReadable {
+            conn: &self.0,
+            notify: self.0.shared.datagram_received.notified(),
+        }
+    }
+
     /// Receive an application datagram
     pub fn read_datagram(&self) -> ReadDatagram<'_> {
         ReadDatagram {
             conn: &self.0,
             notify: self.0.shared.datagram_received.notified(),
         }
+    }
+
+    /// Attempts to receive an application datagram
+    ///
+    /// If there are no readable datagrams, this will return [TryReceiveDatagramError::WouldBlock]
+    pub fn try_read_datagram(&self) -> Result<Option<Bytes>, ConnectionError> {
+        let mut state = self.0.state.lock("try_read_datagram");
+
+        if let Some(ref e) = state.error {
+            return Err(e.clone());
+        }
+
+        Ok(state.inner.datagrams().recv())
     }
 
     /// Wait for the connection to be closed for any reason
@@ -422,6 +443,15 @@ impl Connection {
         conn.close(error_code, Bytes::copy_from_slice(reason), &self.0.shared);
     }
 
+    /// Creates a future, resolving as soon as a Datagram with the given size in byte can be sent
+    pub fn datagram_sendable(&self, size: usize) -> DatagramSendable<'_> {
+        DatagramSendable {
+            conn: &self.0,
+            required_space: size,
+            notify: self.0.shared.datagrams_unblocked.notified(),
+        }
+    }
+
     /// Transmit `data` as an unreliable, unordered application datagram
     ///
     /// Application datagrams are a low-level primitive. They may be lost or delivered out of order,
@@ -446,6 +476,33 @@ impl Connection {
                 UnsupportedByPeer => SendDatagramError::UnsupportedByPeer,
                 Disabled => SendDatagramError::Disabled,
                 TooLarge => SendDatagramError::TooLarge,
+            }),
+        }
+    }
+
+    /// Transmit `data` as an unreliable, unordered application datagram
+    ///
+    /// Application datagrams are a low-level primitive. They may be lost or delivered out of order,
+    /// and `data` must both fit inside a single QUIC packet and be smaller than the maximum
+    /// dictated by the peer.
+    ///
+    /// If the send buffer doesn't have enough available space, this will return [TrySendDatagramError::WouldBlock]
+    pub fn try_send_datagram(&self, data: Bytes) -> Result<(), TrySendDatagramError> {
+        let conn = &mut *self.0.state.lock("try_send_datagram");
+        if let Some(ref x) = conn.error {
+            return Err(SendDatagramError::ConnectionLost(x.clone()).into());
+        }
+        use proto::SendDatagramError::*;
+        match conn.inner.datagrams().send(data, false) {
+            Ok(()) => {
+                conn.wake();
+                Ok(())
+            }
+            Err(e) => Err(match e {
+                Blocked(bytes) => TrySendDatagramError::WouldBlock(bytes),
+                UnsupportedByPeer => SendDatagramError::UnsupportedByPeer.into(),
+                Disabled => SendDatagramError::Disabled.into(),
+                TooLarge => SendDatagramError::TooLarge.into(),
             }),
         }
     }
@@ -822,6 +879,46 @@ impl Future for ReadDatagram<'_> {
 }
 
 pin_project! {
+    /// Future produced by [`Connection::datagram_readable`]
+    pub struct DatagramReadable<'a> {
+        conn: &'a ConnectionRef,
+        #[pin]
+        notify: Notified<'a>,
+    }
+}
+
+impl Future for DatagramReadable<'_> {
+    type Output = Result<(), ConnectionError>;
+    fn poll(self: Pin<&mut Self>, ctx: &mut Context<'_>) -> Poll<Self::Output> {
+        let mut this = self.project();
+        let mut state = this.conn.state.lock("ReadDatagram::poll");
+
+        // Check for buffered datagrams before checking `state.error` so that already-received
+        // datagrams, which are necessarily finite, can be drained from a closed connection.
+
+        if state.inner.datagrams().recv_buffered() > 0 {
+            return Poll::Ready(Ok(()));
+        }
+
+        if let Some(ref e) = state.error {
+            return Poll::Ready(Err(e.clone()));
+        }
+
+        loop {
+            // Poll next datagram received notification
+            match this.notify.as_mut().poll(ctx) {
+                // `state` lock ensures we didn't race with readiness
+                Poll::Pending => return Poll::Pending,
+                // Replace already used Notify from previous poll
+                Poll::Ready(()) => this
+                    .notify
+                    .set(this.conn.shared.datagram_received.notified()),
+            }
+        }
+    }
+}
+
+pin_project! {
     /// Future produced by [`Connection::send_datagram_wait`]
     pub struct SendDatagram<'a> {
         conn: &'a ConnectionRef,
@@ -854,6 +951,7 @@ impl Future for SendDatagram<'_> {
                     this.data.replace(data);
                     loop {
                         match this.notify.as_mut().poll(ctx) {
+                            // `state` lock ensures we didn't race with readiness
                             Poll::Pending => return Poll::Pending,
                             // Spurious wakeup, get a new future
                             Poll::Ready(()) => this
@@ -866,6 +964,59 @@ impl Future for SendDatagram<'_> {
                 Disabled => SendDatagramError::Disabled,
                 TooLarge => SendDatagramError::TooLarge,
             })),
+        }
+    }
+}
+
+pin_project! {
+    /// Future produced by [`Connection::sendable_datagram`]
+    pub struct DatagramSendable<'a> {
+        conn: &'a ConnectionRef,
+        required_space: usize,
+        #[pin]
+        notify: Notified<'a>,
+    }
+}
+
+impl Future for DatagramSendable<'_> {
+    type Output = Result<(), SendDatagramError>;
+    fn poll(self: Pin<&mut Self>, ctx: &mut Context<'_>) -> Poll<Self::Output> {
+        let mut this = self.project();
+        let mut state = this.conn.state.lock("DatagramSendable::poll");
+        if let Some(ref e) = state.error {
+            return Poll::Ready(Err(SendDatagramError::ConnectionLost(e.clone())));
+        }
+
+        // Check if peer support datagrams
+        let max = state
+            .inner
+            .datagrams()
+            .max_size()
+            .ok_or(SendDatagramError::UnsupportedByPeer)?;
+
+        if *this.required_space > max {
+            return Poll::Ready(Err(SendDatagramError::TooLarge));
+        }
+
+        // Check if send can be satisfied
+        if state.inner.datagrams().send_buffer_space() > *this.required_space {
+            // We currently have enough space to satisfy the requirements
+            return Poll::Ready(Ok(()));
+        }
+
+        // Otherwise - set send_blocked and wait for the unblocked notification
+        state.inner.datagrams().set_send_blocked();
+
+        loop {
+            // Poll next datagram unblocked
+            match this.notify.as_mut().poll(ctx) {
+                // `state` lock ensures we didn't race with readiness
+                Poll::Pending => return Poll::Pending,
+                // Replace already used Notify
+                Poll::Ready(()) => this
+                    .notify
+                    .set(this.conn.shared.datagrams_unblocked.notified()),
+            }
         }
     }
 }
@@ -1298,6 +1449,37 @@ pub enum SendDatagramError {
     /// The connection was lost
     #[error("connection lost")]
     ConnectionLost(#[from] ConnectionError),
+}
+
+/// Errors that can arise when trying to send a datagram without blocking
+#[derive(Debug, Error, Clone, Eq, PartialEq)]
+pub enum TrySendDatagramError {
+    /// Send Would Block - contains the unsent Bytes
+    #[error("send would block")]
+    WouldBlock(Bytes),
+    /// Actual Error sending the Datagram
+    #[error(transparent)]
+    SendDatagramError(#[from] SendDatagramError),
+}
+
+/// Errors that can arise when trying to receive a datagram without blocking
+#[derive(Debug, Error, Clone, PartialEq, Eq)]
+pub enum TryReceiveDatagramError {
+    /// The operation would block
+    #[error("operation would block")]
+    WouldBlock,
+    /// A Connection error has occurred
+    #[error(transparent)]
+    ConnectionError(#[from] ConnectionError),
+}
+
+impl From<TryReceiveDatagramError> for io::Error {
+    fn from(err: TryReceiveDatagramError) -> Self {
+        match err {
+            TryReceiveDatagramError::ConnectionError(err) => err.into(),
+            TryReceiveDatagramError::WouldBlock => Self::new(io::ErrorKind::WouldBlock, err),
+        }
+    }
 }
 
 /// The maximum amount of datagrams which will be produced in a single `drive_transmit` call

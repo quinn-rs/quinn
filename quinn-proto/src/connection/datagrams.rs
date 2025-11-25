@@ -57,6 +57,12 @@ impl Datagrams<'_> {
         Ok(())
     }
 
+    /// Marks a sender as blocked.
+    /// Triggers a `datagram_unblocked` notification once sending becomes possible again.
+    pub fn set_send_blocked(&mut self) {
+        self.conn.datagrams.send_blocked = true;
+    }
+
     /// Compute the maximum size of datagrams that may passed to `send_datagram`
     ///
     /// Returns `None` if datagrams are unsupported by the peer or disabled locally.
@@ -85,6 +91,11 @@ impl Datagrams<'_> {
     /// Receive an unreliable, unordered datagram
     pub fn recv(&mut self) -> Option<Bytes> {
         self.conn.datagrams.recv()
+    }
+
+    /// Recv Bytes currently stored in the read buffer
+    pub fn recv_buffered(&self) -> usize {
+        self.conn.datagrams.recv_buffered
     }
 
     /// Bytes available in the outgoing datagram buffer
