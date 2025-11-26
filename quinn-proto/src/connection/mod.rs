@@ -4163,20 +4163,20 @@ impl Connection {
                     }
                 }
                 Frame::NewConnectionId(frame) => {
-                    let path_id = match (frame.path_id, self.max_path_id()) {
-                        (Some(path_id), Some(current_max)) if path_id <= current_max => path_id,
-                        (Some(_large_path_id), Some(_current_max)) => {
-                            return Err(TransportError::PROTOCOL_VIOLATION(
-                                "PATH_NEW_CONNECTION_ID contains path_id exceeding current max",
-                            ));
-                        }
-                        (Some(_path_id), None) => {
+                    let path_id = if let Some(path_id) = frame.path_id {
+                        if !self.is_multipath_negotiated() {
                             return Err(TransportError::PROTOCOL_VIOLATION(
                                 "received PATH_NEW_CONNECTION_ID frame when multipath was not negotiated",
                             ));
                         }
-
-                        (None, _) => PathId::ZERO,
+                        if path_id > self.local_max_path_id {
+                            return Err(TransportError::PROTOCOL_VIOLATION(
+                                "PATH_NEW_CONNECTION_ID contains path_id exceeding current max",
+                            ));
+                        }
+                        path_id
+                    } else {
+                        PathId::ZERO
                     };
 
                     if self.abandoned_paths.contains(&path_id) {
@@ -4422,16 +4422,15 @@ impl Connection {
                 }
                 Frame::MaxPathId(frame::MaxPathId(path_id)) => {
                     span.record("path", tracing::field::debug(&path_id));
-                    if let Some(current_max) = self.max_path_id() {
-                        // frames that do not increase the path id are ignored
-                        self.remote_max_path_id = self.remote_max_path_id.max(path_id);
-                        if self.max_path_id() != Some(current_max) {
-                            self.issue_first_path_cids(now);
-                        }
-                    } else {
+                    if !self.is_multipath_negotiated() {
                         return Err(TransportError::PROTOCOL_VIOLATION(
                             "received MAX_PATH_ID frame when multipath was not negotiated",
                         ));
+                    }
+                    // frames that do not increase the path id are ignored
+                    if path_id > self.remote_max_path_id {
+                        self.remote_max_path_id = path_id;
+                        self.issue_first_path_cids(now);
                     }
                 }
                 Frame::PathsBlocked(frame::PathsBlocked(max_path_id)) => {
@@ -5911,10 +5910,14 @@ impl Connection {
         );
     }
 
-    /// Returns the maximum [`PathId`] to be used in this connection.
+    /// Returns the maximum [`PathId`] to be used for sending in this connection.
     ///
     /// This is calculated as minimum between the local and remote's maximums when multipath is
     /// enabled, or `None` when disabled.
+    ///
+    /// For data that's received, we should use [`self.local_max_path_id`] instead.
+    /// The reasoning is that the remote might already have updated to its own newer
+    /// [`Self::max_path_id`] after sending out a `MAX_PATH_ID` frame, but it got re-ordered.
     fn max_path_id(&self) -> Option<PathId> {
         if self.is_multipath_negotiated() {
             Some(self.remote_max_path_id.min(self.local_max_path_id))
