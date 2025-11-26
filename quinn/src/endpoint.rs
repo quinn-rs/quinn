@@ -11,7 +11,11 @@ use std::{
     task::{Context, Poll, RawWaker, RawWakerVTable, Waker},
 };
 
-#[cfg(all(not(wasm_browser), any(feature = "aws-lc-rs", feature = "ring")))]
+#[cfg(all(
+    not(wasm_browser),
+    any(feature = "runtime-tokio", feature = "runtime-smol"),
+    any(feature = "aws-lc-rs", feature = "ring"),
+))]
 use crate::runtime::default_runtime;
 use crate::{
     Instant,
@@ -25,7 +29,11 @@ use proto::{
     EndpointEvent, ServerConfig,
 };
 use rustc_hash::FxHashMap;
-#[cfg(all(not(wasm_browser), any(feature = "aws-lc-rs", feature = "ring"),))]
+#[cfg(all(
+    not(wasm_browser),
+    any(feature = "runtime-tokio", feature = "runtime-smol"),
+    any(feature = "aws-lc-rs", feature = "ring"),
+))]
 use socket2::{Domain, Protocol, Socket, Type};
 use tokio::sync::{Notify, futures::Notified, mpsc};
 use tracing::{Instrument, Span};
@@ -67,7 +75,11 @@ impl Endpoint {
     ///
     /// Some environments may not allow creation of dual-stack sockets, in which case an IPv6
     /// client will only be able to connect to IPv6 servers. An IPv4 client is never dual-stack.
-    #[cfg(all(not(wasm_browser), any(feature = "aws-lc-rs", feature = "ring")))] // `EndpointConfig::default()` is only available with these
+    #[cfg(all(
+        not(wasm_browser),
+        any(feature = "runtime-tokio", feature = "runtime-smol"),
+        any(feature = "aws-lc-rs", feature = "ring"), // `EndpointConfig::default()` is only available with these
+    ))]
     pub fn client(addr: SocketAddr) -> io::Result<Self> {
         let socket = Socket::new(Domain::for_address(addr), Type::DGRAM, Some(Protocol::UDP))?;
         if addr.is_ipv6() {
@@ -97,7 +109,11 @@ impl Endpoint {
     /// IPv6 address on Windows will not by default be able to communicate with IPv4
     /// addresses. Portable applications should bind an address that matches the family they wish to
     /// communicate within.
-    #[cfg(all(not(wasm_browser), any(feature = "aws-lc-rs", feature = "ring")))] // `EndpointConfig::default()` is only available with these
+    #[cfg(all(
+        not(wasm_browser),
+        any(feature = "runtime-tokio", feature = "runtime-smol"),
+        any(feature = "aws-lc-rs", feature = "ring"), // `EndpointConfig::default()` is only available with these
+    ))]
     pub fn server(config: ServerConfig, addr: SocketAddr) -> io::Result<Self> {
         let socket = std::net::UdpSocket::bind(addr)?;
         let runtime =

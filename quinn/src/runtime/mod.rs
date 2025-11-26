@@ -1,10 +1,11 @@
+#[cfg(any(feature = "runtime-tokio", feature = "runtime-smol"))]
+use std::sync::Arc;
 use std::{
     fmt::{self, Debug},
     future::Future,
     io::{self, IoSliceMut},
     net::SocketAddr,
     pin::Pin,
-    sync::Arc,
     task::{Context, Poll},
 };
 
@@ -222,6 +223,7 @@ trait UdpSenderHelperSocket: Send + Sync + 'static {
 /// If `runtime-tokio` is enabled and this function is called from within a Tokio runtime context,
 /// then `TokioRuntime` is returned. Otherwise, if `runtime-smol` is enabled, `SmolRuntime` is
 /// returned. Otherwise, `None` is returned.
+#[cfg(any(feature = "runtime-tokio", feature = "runtime-smol"))]
 #[allow(clippy::needless_return)] // Be sure we return the right thing
 pub fn default_runtime() -> Option<Arc<dyn Runtime>> {
     #[cfg(feature = "runtime-tokio")]
