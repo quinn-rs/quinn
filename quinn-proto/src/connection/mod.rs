@@ -4501,7 +4501,7 @@ impl Connection {
                         warn!(?addr, "server sent ilegal ADD_ADDRESS frame");
                     }
 
-                    match client_state.add_remote_address(addr.clone()) {
+                    match client_state.add_remote_address(addr) {
                         Ok(maybe_added) => {
                             if let Some(added) = maybe_added {
                                 self.events.push_back(Event::NatTraversal(
@@ -4527,7 +4527,7 @@ impl Connection {
                         ));
                     };
 
-                    if let Some(removed_addr) = client_state.remove_remote_address(addr.clone()) {
+                    if let Some(removed_addr) = client_state.remove_remote_address(addr) {
                         self.events
                             .push_back(Event::NatTraversal(iroh_hp::Event::AddressRemoved(
                                 removed_addr,
@@ -5915,7 +5915,7 @@ impl Connection {
     /// This is calculated as minimum between the local and remote's maximums when multipath is
     /// enabled, or `None` when disabled.
     ///
-    /// For data that's received, we should use [`self.local_max_path_id`] instead.
+    /// For data that's received, we should use [`Self::local_max_path_id`] instead.
     /// The reasoning is that the remote might already have updated to its own newer
     /// [`Self::max_path_id`] after sending out a `MAX_PATH_ID` frame, but it got re-ordered.
     fn max_path_id(&self) -> Option<PathId> {

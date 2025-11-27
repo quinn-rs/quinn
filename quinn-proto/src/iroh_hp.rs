@@ -1,3 +1,5 @@
+//! iroh NAT Traversal
+
 use std::{
     collections::hash_map::Entry,
     net::{IpAddr, SocketAddr},
@@ -56,10 +58,12 @@ pub(crate) struct RandDataNeeded {
     pub(crate) is_new_round: bool,
 }
 
-// TODO(@divma): unclear to me what these events are useful for\
+/// Event emitted when the client receives ADD_ADDRESS or REMOVE_ADDRESS frames.
 #[derive(Debug, Clone)]
 pub enum Event {
+    /// An ADD_ADDRESS frame was received.
     AddressAdded(SocketAddr),
+    /// A REMOVE_ADDRESS frame was received.
     AddressRemoved(SocketAddr),
 }
 
@@ -207,7 +211,7 @@ impl State {
             return Err(Error::NotEnoughAddresses);
         }
 
-        let prev_round_path_ids = std::mem::replace(&mut self.round_path_ids, Default::default());
+        let prev_round_path_ids = std::mem::take(&mut self.round_path_ids);
         self.round = self.round.saturating_add(1u8);
 
         Ok(NatTraversalRound {
