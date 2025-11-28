@@ -7,7 +7,7 @@ use bytes::BytesMut;
 use ring::aead;
 pub use rustls::Error;
 use rustls::{
-    self, CipherSuite, ProtocolVersion, NamedGroup, HandshakeKind,
+    self, CipherSuite, HandshakeKind, NamedGroup, ProtocolVersion,
     client::danger::ServerCertVerifier,
     pki_types::{CertificateDer, PrivateKeyDer, ServerName},
     quic::{Connection, HeaderProtectionKey, KeyChange, PacketKey, Secrets, Suite, Version},
@@ -61,26 +61,26 @@ impl crypto::Session for TlsSession {
         }
 
         let data = match &self.inner {
-            Connection::Client(conn) => {
-                HandshakeData {
-                    protocol: conn.alpn_protocol().map(|x| x.into()),
-                    server_name: None,
-                    protocol_version: conn.protocol_version(),
-                    negotiated_cipher_suite: conn.negotiated_cipher_suite().map(|s| s.suite()),
-                    negotiated_key_exchange_group: conn.negotiated_key_exchange_group().map(|g| g.name()),
-                    handshake_kind: conn.handshake_kind(),
-                }
+            Connection::Client(conn) => HandshakeData {
+                protocol: conn.alpn_protocol().map(|x| x.into()),
+                server_name: None,
+                protocol_version: conn.protocol_version(),
+                negotiated_cipher_suite: conn.negotiated_cipher_suite().map(|s| s.suite()),
+                negotiated_key_exchange_group: conn
+                    .negotiated_key_exchange_group()
+                    .map(|g| g.name()),
+                handshake_kind: conn.handshake_kind(),
             },
-            Connection::Server(conn) => {
-                HandshakeData {
-                    protocol: conn.alpn_protocol().map(|x| x.into()),
-                    server_name: conn.server_name().map(|x| x.into()),
-                    protocol_version: conn.protocol_version(),
-                    negotiated_cipher_suite: conn.negotiated_cipher_suite().map(|s| s.suite()),
-                    negotiated_key_exchange_group: conn.negotiated_key_exchange_group().map(|g| g.name()),
-                    handshake_kind: conn.handshake_kind(),
-                }
-            }
+            Connection::Server(conn) => HandshakeData {
+                protocol: conn.alpn_protocol().map(|x| x.into()),
+                server_name: conn.server_name().map(|x| x.into()),
+                protocol_version: conn.protocol_version(),
+                negotiated_cipher_suite: conn.negotiated_cipher_suite().map(|s| s.suite()),
+                negotiated_key_exchange_group: conn
+                    .negotiated_key_exchange_group()
+                    .map(|g| g.name()),
+                handshake_kind: conn.handshake_kind(),
+            },
         };
 
         Some(Box::new(data))
