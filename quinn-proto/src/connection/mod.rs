@@ -3607,12 +3607,9 @@ impl Connection {
 
                     self.stats.frame_rx.record(&frame);
 
-                    if let Frame::Close(error) = frame {
+                    if let Frame::Close(_) = frame {
                         trace!("draining");
                         self.state = State::Draining;
-                        if self.error.is_none() {
-                            self.error = Some(error.into());
-                        }
                         break;
                     }
                 }
