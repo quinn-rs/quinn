@@ -6,10 +6,8 @@ use bytes::BytesMut;
 #[cfg(feature = "ring")]
 use ring::aead;
 pub use rustls::Error;
-#[cfg(feature = "__rustls-post-quantum-test")]
-use rustls::NamedGroup;
 use rustls::{
-    self, CipherSuite,
+    self, CipherSuite, ProtocolVersion, NamedGroup, HandshakeKind,
     client::danger::ServerCertVerifier,
     pki_types::{CertificateDer, PrivateKeyDer, ServerName},
     quic::{Connection, HeaderProtectionKey, KeyChange, PacketKey, Secrets, Suite, Version},
@@ -61,19 +59,31 @@ impl crypto::Session for TlsSession {
         if !self.got_handshake_data {
             return None;
         }
-        Some(Box::new(HandshakeData {
-            protocol: self.inner.alpn_protocol().map(|x| x.into()),
-            server_name: match self.inner {
-                Connection::Client(_) => None,
-                Connection::Server(ref session) => session.server_name().map(|x| x.into()),
+
+        let data = match &self.inner {
+            Connection::Client(conn) => {
+                HandshakeData {
+                    protocol: conn.alpn_protocol().map(|x| x.into()),
+                    server_name: None,
+                    protocol_version: conn.protocol_version(),
+                    negotiated_cipher_suite: conn.negotiated_cipher_suite().map(|s| s.suite()),
+                    negotiated_key_exchange_group: conn.negotiated_key_exchange_group().map(|g| g.name()),
+                    handshake_kind: conn.handshake_kind(),
+                }
             },
-            #[cfg(feature = "__rustls-post-quantum-test")]
-            negotiated_key_exchange_group: self
-                .inner
-                .negotiated_key_exchange_group()
-                .expect("key exchange group is negotiated")
-                .name(),
-        }))
+            Connection::Server(conn) => {
+                HandshakeData {
+                    protocol: conn.alpn_protocol().map(|x| x.into()),
+                    server_name: conn.server_name().map(|x| x.into()),
+                    protocol_version: conn.protocol_version(),
+                    negotiated_cipher_suite: conn.negotiated_cipher_suite().map(|s| s.suite()),
+                    negotiated_key_exchange_group: conn.negotiated_key_exchange_group().map(|g| g.name()),
+                    handshake_kind: conn.handshake_kind(),
+                }
+            }
+        };
+
+        Some(Box::new(data))
     }
 
     /// For the rustls `TlsSession`, the `Any` type is `Vec<rustls::pki_types::CertificateDer>`
@@ -266,9 +276,16 @@ pub struct HandshakeData {
     ///
     /// Always `None` for outgoing connections
     pub server_name: Option<String>,
+    /// Retrieves the protocol version agreed with the peer
+    pub protocol_version: Option<ProtocolVersion>,
+    /// Retrieves the ciphersuite agreed with the peer.
+    pub negotiated_cipher_suite: Option<CipherSuite>,
     /// The key exchange group negotiated with the peer
-    #[cfg(feature = "__rustls-post-quantum-test")]
-    pub negotiated_key_exchange_group: NamedGroup,
+    pub negotiated_key_exchange_group: Option<NamedGroup>,
+    /// Which kind of handshake was performed.
+    /// This tells you whether the handshake was a resumption or not.
+    /// This will return `None` before it is known which sort of handshake occurred.
+    pub handshake_kind: Option<HandshakeKind>,
 }
 
 /// A QUIC-compatible TLS client configuration
