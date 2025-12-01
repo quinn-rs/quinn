@@ -6,6 +6,7 @@ use std::{
     ops::{Bound, Index, IndexMut},
 };
 
+use packet_buf::PacketBuf;
 use rand::Rng;
 use rustc_hash::{FxHashMap, FxHashSet};
 use tracing::{error, trace};
@@ -221,7 +222,7 @@ pub(super) struct PacketNumberSpace {
     pub(super) unacked_non_ack_eliciting_tail: u64,
     /// Transmitted but not acked
     // We use a BTreeMap here so we can efficiently query by range on ACK and for loss detection
-    pub(super) sent_packets: BTreeMap<u64, SentPacket>,
+    pub(super) sent_packets: PacketBuf<SentPacket>,
     /// Number of explicit congestion notification codepoints seen on incoming packets
     pub(super) ecn_counters: frame::EcnCounts,
     /// Recent ECN counters sent by the peer in ACK frames
@@ -273,7 +274,7 @@ impl PacketNumberSpace {
             largest_acked_packet_sent: now,
             largest_ack_eliciting_sent: 0,
             unacked_non_ack_eliciting_tail: 0,
-            sent_packets: BTreeMap::new(),
+            sent_packets: PacketBuf::new(),
             ecn_counters: frame::EcnCounts::ZERO,
             ecn_feedback: frame::EcnCounts::ZERO,
             sent_with_keys: 0,
@@ -301,7 +302,7 @@ impl PacketNumberSpace {
             largest_acked_packet_sent: now,
             largest_ack_eliciting_sent: 0,
             unacked_non_ack_eliciting_tail: 0,
-            sent_packets: BTreeMap::new(),
+            sent_packets: PacketBuf::new(),
             ecn_counters: frame::EcnCounts::ZERO,
             ecn_feedback: frame::EcnCounts::ZERO,
             sent_with_keys: 0,
@@ -330,7 +331,7 @@ impl PacketNumberSpace {
             largest_acked_packet_sent: Instant::now(),
             largest_ack_eliciting_sent: 0,
             unacked_non_ack_eliciting_tail: 0,
-            sent_packets: BTreeMap::new(),
+            sent_packets: PacketBuf::new(),
             ecn_counters: frame::EcnCounts::ZERO,
             ecn_feedback: frame::EcnCounts::ZERO,
             sent_with_keys: 0,
@@ -428,7 +429,7 @@ impl PacketNumberSpace {
 
     /// Stop tracking sent packet `number`, and return what we knew about it
     pub(super) fn take(&mut self, number: u64) -> Option<SentPacket> {
-        let packet = self.sent_packets.remove(&number)?;
+        let packet = self.sent_packets.remove(number)?;
         if !packet.ack_eliciting && number > self.largest_ack_eliciting_sent {
             self.unacked_non_ack_eliciting_tail =
                 self.unacked_non_ack_eliciting_tail.checked_sub(1).unwrap();
@@ -451,22 +452,21 @@ impl PacketNumberSpace {
             self.unacked_non_ack_eliciting_tail = 0;
             self.largest_ack_eliciting_sent = number;
         } else if self.unacked_non_ack_eliciting_tail > MAX_UNACKED_NON_ACK_ELICTING_TAIL {
-            let oldest_after_ack_eliciting = *self
+            let oldest_after_ack_eliciting = self
                 .sent_packets
-                .range((
+                .keys_range((
                     Bound::Excluded(self.largest_ack_eliciting_sent),
                     Bound::Unbounded,
                 ))
                 .next()
-                .unwrap()
-                .0;
+                .unwrap();
             // Per https://www.rfc-editor.org/rfc/rfc9000.html#name-frames-and-frame-types,
             // non-ACK-eliciting packets must only contain PADDING, ACK, and CONNECTION_CLOSE
             // frames, which require no special handling on ACK or loss beyond removal from
             // in-flight counters if padded.
             let packet = self
                 .sent_packets
-                .remove(&oldest_after_ack_eliciting)
+                .remove(oldest_after_ack_eliciting)
                 .unwrap();
             debug_assert!(!packet.ack_eliciting);
             forgotten = Some(packet);
