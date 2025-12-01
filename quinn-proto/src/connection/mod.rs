@@ -2435,7 +2435,7 @@ impl Connection {
             .remove_in_flight(&info);
         let app_limited = self.app_limited;
         let path = self.path_data_mut(path_id);
-        if info.ack_eliciting && !path.challenges_sent.is_empty() {
+        if info.ack_eliciting && !path.is_validating_path() {
             // Only pass ACKs to the congestion controller if we are not validating the current
             // path, so as to ignore any ACKs from older paths still coming in.
             let rtt = path.rtt;
