@@ -322,7 +322,7 @@ impl PacketNumberSpace {
     /// PacketNumberSpace.  While the space will work it will not skip packet numbers to
     /// protect against eaget ack attacks.
     fn new_default(space_id: SpaceId, path_id: PathId) -> Self {
-        error!(?path_id, ?space_id, "PacketNumberSpace created by default");
+        error!(%path_id, ?space_id, "PacketNumberSpace created by default");
         Self {
             rx_packet: 0,
             next_packet_number: 0,
