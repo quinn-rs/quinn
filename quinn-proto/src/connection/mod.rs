@@ -99,7 +99,12 @@ mod transmit_buf;
 use transmit_buf::TransmitBuf;
 
 mod state;
-use state::{State, StateType};
+
+#[cfg(not(fuzzing))]
+use state::State;
+#[cfg(fuzzing)]
+pub use state::State;
+use state::StateType;
 
 /// Protocol state and logic for a single QUIC connection
 ///

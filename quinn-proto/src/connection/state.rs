@@ -40,8 +40,9 @@ impl State {
         }
     }
 
-    #[cfg(test)]
-    pub(super) fn established() -> Self {
+    #[allow(unreachable_pub)] // fuzzing only
+    #[cfg(any(test, fuzzing))]
+    pub fn established() -> Self {
         Self {
             inner: InnerState::Established,
         }
