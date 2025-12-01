@@ -151,7 +151,13 @@ pub(super) fn decrypt_packet_body(
         // Validate incoming key update
         let invalid_packet_number = match rx_packet {
             Some(rx_packet) => number <= rx_packet,
-            None => number != 0, // A new PathId, first pn should be 0
+            None => {
+                // A new PathId, but we can not know the "first" pn
+                // so we cannot do a comparision for correctness here.
+                // Potential reasons for it being not 0 could be skipped
+                // or reordering.
+                false
+            }
         };
         if invalid_packet_number || prev_crypto.is_some_and(|x| x.update_unacked) {
             trace!(?number, ?rx_packet, "crypto update failed");
