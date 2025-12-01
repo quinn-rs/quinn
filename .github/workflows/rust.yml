@@ -55,7 +55,7 @@ jobs:
             export PATH=$HOME/.rust_solaris/bin:$PATH
             # Workaround for https://github.com/quinn-rs/quinn/issues/2218
             export CARGO_HTTP_MULTIPLEXING=false
-            cargo build --locked --all-targets && cargo test --locked --manifest-path fuzz/Cargo.toml && cargo test --locked -p quinn-udp --benches
+            cargo build --locked --all-targets && cargo test --locked --manifest-path fuzz/Cargo.toml && cargo test --locked -p iroh-quinn-udp --benches
 
   test-illumos:
     name: test on illumos
@@ -73,7 +73,7 @@ jobs:
             curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
           run: |
             . "$HOME/.cargo/env"
-            cargo build --locked --all-targets && cargo test --locked && cargo test --locked -- --ignored stress && cargo test --locked --manifest-path fuzz/Cargo.toml && cargo test --locked -p quinn-udp --benches
+            cargo build --locked --all-targets && cargo test --locked && cargo test --locked -- --ignored stress && cargo test --locked --manifest-path fuzz/Cargo.toml && cargo test --locked -p iroh-quinn-udp --benches
 
   test:
     strategy:
@@ -154,7 +154,7 @@ jobs:
 
       # Match the version of wasm-bindgen used in `Cargo.lock`
       - run: cargo binstall wasm-bindgen-cli@0.2.105 --locked --no-confirm
-      - run: cargo test --locked -p quinn-proto --target wasm32-unknown-unknown
+      - run: cargo test --locked -p iroh-quinn-proto --target wasm32-unknown-unknown
 
   msrv:
     runs-on: ubuntu-latest
