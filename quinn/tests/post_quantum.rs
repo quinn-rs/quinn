@@ -12,7 +12,7 @@ use rustls::{
 };
 use tracing::info;
 
-use quinn::{
+use iroh_quinn::{
     Endpoint,
     crypto::rustls::{HandshakeData, QuicClientConfig, QuicServerConfig},
 };
@@ -88,7 +88,7 @@ fn make_client_endpoint(
     .with_no_client_auth();
 
     let client_cfg =
-        quinn::ClientConfig::new(Arc::new(QuicClientConfig::try_from(rustls_config).unwrap()));
+        iroh_quinn::ClientConfig::new(Arc::new(QuicClientConfig::try_from(rustls_config).unwrap()));
     let mut endpoint = Endpoint::client(bind_addr)?;
     endpoint.set_default_client_config(client_cfg);
     Ok(endpoint)
@@ -101,7 +101,7 @@ fn make_server_endpoint(
     let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
     let key = PrivatePkcs8KeyDer::from(cert.signing_key.serialize_der());
     let cert = CertificateDer::from(cert.cert);
-    let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(
+    let mut server_config = iroh_quinn::ServerConfig::with_crypto(Arc::new(
         QuicServerConfig::try_from(
             rustls::ServerConfig::builder_with_provider(Arc::new(
                 rustls::crypto::aws_lc_rs::default_provider(),
