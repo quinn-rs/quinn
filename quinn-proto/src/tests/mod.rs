@@ -3734,6 +3734,8 @@ fn address_discovery_retransmission() {
     let server = ServerConfig {
         transport: Arc::new(TransportConfig {
             address_discovery_role: crate::address_discovery::Role::Both,
+            // Assume a low-latency connection so pacing doesn't interfere with the test
+            initial_rtt: Duration::from_millis(10),
             ..TransportConfig::default()
         }),
         ..server_config()
@@ -3742,6 +3744,8 @@ fn address_discovery_retransmission() {
     let client_config = ClientConfig {
         transport: Arc::new(TransportConfig {
             address_discovery_role: crate::address_discovery::Role::Both,
+            // Assume a low-latency connection so pacing doesn't interfere with the test
+            initial_rtt: Duration::from_millis(10),
             ..TransportConfig::default()
         }),
         ..client_config()
@@ -3759,6 +3763,7 @@ fn address_discovery_retransmission() {
 
     pair.drive();
     let conn = pair.client_conn_mut(client_ch);
+    assert_matches!(conn.poll(), Some(Event::HandshakeConfirmed));
     assert_matches!(conn.poll(), Some(Event::Path(PathEvent::ObservedAddr{id: PathId::ZERO, addr})) if addr == pair.client.addr);
 }
 
@@ -3769,6 +3774,8 @@ fn address_discovery_rebind_retransmission() {
     let server = ServerConfig {
         transport: Arc::new(TransportConfig {
             address_discovery_role: crate::address_discovery::Role::Both,
+            // Assume a low-latency connection so pacing doesn't interfere with the test
+            initial_rtt: Duration::from_millis(10),
             ..TransportConfig::default()
         }),
         ..server_config()
@@ -3777,6 +3784,8 @@ fn address_discovery_rebind_retransmission() {
     let client_config = ClientConfig {
         transport: Arc::new(TransportConfig {
             address_discovery_role: crate::address_discovery::Role::Both,
+            // Assume a low-latency connection so pacing doesn't interfere with the test
+            initial_rtt: Duration::from_millis(10),
             ..TransportConfig::default()
         }),
         ..client_config()
@@ -3801,6 +3810,7 @@ fn address_discovery_rebind_retransmission() {
 
     pair.drive();
     let conn = pair.client_conn_mut(client_ch);
+    assert_matches!(conn.poll(), Some(Event::HandshakeConfirmed));
     assert_matches!(conn.poll(), Some(Event::Path(PathEvent::ObservedAddr{id: PathId::ZERO, addr})) if addr == pair.client.addr);
 }
 
