@@ -126,7 +126,7 @@ impl State {
         assert!(
             matches!(
                 self.inner,
-                InnerState::Handshake(_) | InnerState::Established
+                InnerState::Handshake(_) | InnerState::Established | InnerState::Closed { .. }
             ),
             "invalid state transition {:?} -> closed",
             self.as_type()
@@ -145,7 +145,7 @@ impl State {
         assert!(
             matches!(
                 self.inner,
-                InnerState::Handshake(_) | InnerState::Established
+                InnerState::Handshake(_) | InnerState::Established | InnerState::Closed { .. }
             ),
             "invalid state transition {:?} -> closed (local)",
             self.as_type()
