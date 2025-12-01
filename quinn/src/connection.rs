@@ -27,8 +27,9 @@ use crate::{
     udp_transmit,
 };
 use proto::{
-    ConnectionError, ConnectionHandle, ConnectionStats, Dir, EndpointEvent, PathError, PathEvent,
-    PathId, PathStats, PathStatus, Side, StreamEvent, StreamId, congestion::Controller, iroh_hp,
+    ConnectionError, ConnectionHandle, ConnectionStats, Dir, EndpointEvent, OpenPathError,
+    PathEvent, PathId, PathStats, PathStatus, Side, StreamEvent, StreamId, congestion::Controller,
+    iroh_hp,
 };
 
 /// In-progress connection attempt future
@@ -392,7 +393,7 @@ impl Connection {
             .next()
             .unwrap_or_default();
         if addr.is_ipv6() && !ipv6 {
-            return OpenPath::rejected(PathError::InvalidRemoteAddress(addr));
+            return OpenPath::rejected(OpenPathError::InvalidRemoteAddress(addr));
         }
         let addr = if ipv6 {
             SocketAddr::V6(ensure_ipv6(addr))
@@ -455,7 +456,7 @@ impl Connection {
             .next()
             .unwrap_or_default();
         if addr.is_ipv6() && !ipv6 {
-            return OpenPath::rejected(PathError::InvalidRemoteAddress(addr));
+            return OpenPath::rejected(OpenPathError::InvalidRemoteAddress(addr));
         }
         let addr = if ipv6 {
             SocketAddr::V6(ensure_ipv6(addr))
@@ -1322,7 +1323,7 @@ pub(crate) struct State {
     /// Always set to Some before the connection becomes drained
     pub(crate) error: Option<ConnectionError>,
     /// Tracks paths being opened
-    open_path: FxHashMap<PathId, watch::Sender<Result<(), PathError>>>,
+    open_path: FxHashMap<PathId, watch::Sender<Result<(), OpenPathError>>>,
     /// Tracks paths being closed
     pub(crate) close_path: FxHashMap<PathId, oneshot::Sender<VarInt>>,
     pub(crate) path_events: tokio::sync::broadcast::Sender<PathEvent>,

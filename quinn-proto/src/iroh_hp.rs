@@ -33,7 +33,7 @@ pub enum Error {
     NotEnoughAddresses,
     /// Nat traversal attempt failed due to a multipath error
     #[error("Failed to establish paths {0}")]
-    Multipath(super::PathError),
+    Multipath(super::OpenPathError),
 }
 
 pub(crate) struct NatTraversalRound {

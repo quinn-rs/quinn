@@ -6,7 +6,8 @@ use std::task::{Context, Poll, ready};
 use std::time::Duration;
 
 use proto::{
-    ClosePathError, ClosedPath, ConnectionError, PathError, PathEvent, PathId, PathStatus, VarInt,
+    ClosePathError, NotOpen, ConnectionError, OpenPathError, PathEvent, PathId, PathStatus,
+    SetPathStatusError, VarInt,
 };
 use tokio::sync::{oneshot, watch};
 use tokio_stream::{Stream, wrappers::WatchStream};
@@ -22,14 +23,14 @@ enum OpenPathInner {
     ///
     /// This migth fail later on.
     Ongoing {
-        opened: WatchStream<Result<(), PathError>>,
+        opened: WatchStream<Result<(), OpenPathError>>,
         path_id: PathId,
         conn: ConnectionRef,
     },
     /// Opening a path failed immediately
     Rejected {
         /// The error that occurred
-        err: PathError,
+        err: OpenPathError,
     },
     /// The path is already open
     Ready {
@@ -41,7 +42,7 @@ enum OpenPathInner {
 impl OpenPath {
     pub(crate) fn new(
         path_id: PathId,
-        opened: watch::Receiver<Result<(), PathError>>,
+        opened: watch::Receiver<Result<(), OpenPathError>>,
         conn: ConnectionRef,
     ) -> Self {
         Self(OpenPathInner::Ongoing {
@@ -55,7 +56,7 @@ impl OpenPath {
         Self(OpenPathInner::Ready { path_id, conn })
     }
 
-    pub(crate) fn rejected(err: PathError) -> Self {
+    pub(crate) fn rejected(err: OpenPathError) -> Self {
         Self(OpenPathInner::Rejected { err })
     }
 
@@ -75,7 +76,7 @@ impl OpenPath {
 }
 
 impl Future for OpenPath {
-    type Output = Result<Path, PathError>;
+    type Output = Result<Path, OpenPathError>;
     fn poll(self: Pin<&mut Self>, ctx: &mut Context<'_>) -> Poll<Self::Output> {
         match self.get_mut().0 {
             OpenPathInner::Ongoing {
@@ -91,7 +92,7 @@ impl Future for OpenPath {
                     // This only happens if receiving a notification change failed, this means the
                     // sender was dropped. This generally should not happen so we use a transient
                     // error
-                    Poll::Ready(Err(PathError::ValidationFailed))
+                    Poll::Ready(Err(OpenPathError::ValidationFailed))
                 }
             },
             OpenPathInner::Ready {
@@ -120,7 +121,7 @@ impl Path {
     }
 
     /// The current local [`PathStatus`] of this path.
-    pub fn status(&self) -> Result<PathStatus, ClosedPath> {
+    pub fn status(&self) -> Result<PathStatus, NotOpen> {
         self.conn
             .state
             .lock("path status")
@@ -129,7 +130,7 @@ impl Path {
     }
 
     /// Sets the [`PathStatus`] of this path.
-    pub fn set_status(&self, status: PathStatus) -> Result<(), ClosedPath> {
+    pub fn set_status(&self, status: PathStatus) -> Result<(), SetPathStatusError> {
         self.conn
             .state
             .lock("set path status")
@@ -171,7 +172,7 @@ impl Path {
     pub fn set_max_idle_timeout(
         &self,
         timeout: Option<Duration>,
-    ) -> Result<Option<Duration>, ClosedPath> {
+    ) -> Result<Option<Duration>, NotOpen> {
         let mut state = self.conn.state.lock("path_set_max_idle_timeout");
         state.inner.set_path_max_idle_timeout(self.id, timeout)
     }
@@ -186,7 +187,7 @@ impl Path {
     pub fn set_keep_alive_interval(
         &self,
         interval: Option<Duration>,
-    ) -> Result<Option<Duration>, ClosedPath> {
+    ) -> Result<Option<Duration>, NotOpen> {
         let mut state = self.conn.state.lock("path_set_keep_alive_interval");
         state.inner.set_path_keep_alive_interval(self.id, interval)
     }
@@ -194,7 +195,7 @@ impl Path {
     /// Track changes on our external address as reported by the peer.
     ///
     /// If the address-discovery extension is not negotiated, the stream will never return.
-    pub fn observed_external_addr(&self) -> Result<AddressDiscovery, ClosedPath> {
+    pub fn observed_external_addr(&self) -> Result<AddressDiscovery, NotOpen> {
         let state = self.conn.state.lock("per_path_observed_address");
         let path_events = state.path_events.subscribe();
         let initial_value = state.inner.path_observed_address(self.id)?;
@@ -207,7 +208,7 @@ impl Path {
     }
 
     /// The peer's UDP address for this path.
-    pub fn remote_address(&self) -> Result<SocketAddr, ClosedPath> {
+    pub fn remote_address(&self) -> Result<SocketAddr, NotOpen> {
         let state = self.conn.state.lock("per_path_remote_address");
         state.inner.path_remote_address(self.id)
     }

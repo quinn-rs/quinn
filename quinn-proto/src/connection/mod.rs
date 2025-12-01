@@ -65,7 +65,7 @@ mod packet_crypto;
 use packet_crypto::{PrevCrypto, ZeroRttCrypto};
 
 mod paths;
-pub use paths::{ClosedPath, PathEvent, PathId, PathStatus, RttEstimator};
+pub use paths::{NotOpen, PathEvent, PathId, PathStatus, RttEstimator, SetPathStatusError};
 use paths::{PathData, PathState};
 
 pub(crate) mod qlog;
@@ -547,7 +547,7 @@ impl Connection {
         remote: SocketAddr,
         initial_status: PathStatus,
         now: Instant,
-    ) -> Result<(PathId, bool), PathError> {
+    ) -> Result<(PathId, bool), OpenPathError> {
         match self
             .paths
             .iter()
@@ -569,12 +569,12 @@ impl Connection {
         remote: SocketAddr,
         initial_status: PathStatus,
         now: Instant,
-    ) -> Result<PathId, PathError> {
+    ) -> Result<PathId, OpenPathError> {
         if !self.is_multipath_negotiated() {
-            return Err(PathError::MultipathNotNegotiated);
+            return Err(OpenPathError::MultipathNotNegotiated);
         }
         if self.side().is_server() {
-            return Err(PathError::ServerSideNotAllowed);
+            return Err(OpenPathError::ServerSideNotAllowed);
         }
 
         let max_abandoned = self.abandoned_paths.iter().max().copied();
@@ -585,18 +585,18 @@ impl Connection {
             .saturating_add(1u8);
 
         if Some(path_id) > self.max_path_id() {
-            return Err(PathError::MaxPathIdReached);
+            return Err(OpenPathError::MaxPathIdReached);
         }
         if path_id > self.remote_max_path_id {
             self.spaces[SpaceId::Data].pending.paths_blocked = true;
-            return Err(PathError::MaxPathIdReached);
+            return Err(OpenPathError::MaxPathIdReached);
         }
         if self.rem_cids.get(&path_id).map(CidQueue::active).is_none() {
             self.spaces[SpaceId::Data]
                 .pending
                 .path_cids_blocked
                 .push(path_id);
-            return Err(PathError::RemoteCidsExhausted);
+            return Err(OpenPathError::RemoteCidsExhausted);
         }
 
         let path = self.ensure_path(path_id, remote, now, None);
@@ -687,17 +687,17 @@ impl Connection {
     }
 
     /// Gets the local [`PathStatus`] for a known [`PathId`]
-    pub fn path_status(&self, path_id: PathId) -> Result<PathStatus, ClosedPath> {
+    pub fn path_status(&self, path_id: PathId) -> Result<PathStatus, NotOpen> {
         self.path(path_id)
             .map(PathData::local_status)
-            .ok_or(ClosedPath { _private: () })
+            .ok_or(NotOpen { _private: () })
     }
 
     /// Returns the path's remote socket address
-    pub fn path_remote_address(&self, path_id: PathId) -> Result<SocketAddr, ClosedPath> {
+    pub fn path_remote_address(&self, path_id: PathId) -> Result<SocketAddr, NotOpen> {
         self.path(path_id)
             .map(|path| path.remote)
-            .ok_or(ClosedPath { _private: () })
+            .ok_or(NotOpen { _private: () })
     }
 
     /// Sets the [`PathStatus`] for a known [`PathId`]
@@ -707,8 +707,11 @@ impl Connection {
         &mut self,
         path_id: PathId,
         status: PathStatus,
-    ) -> Result<PathStatus, ClosedPath> {
-        let path = self.path_mut(path_id).ok_or(ClosedPath { _private: () })?;
+    ) -> Result<PathStatus, SetPathStatusError> {
+        if !self.is_multipath_negotiated() {
+            return Err(SetPathStatusError::MultipathNotNegotiated);
+        }
+        let path = self.path_mut(path_id).ok_or(SetPathStatusError::NotOpen)?;
         let prev = match path.status.local_update(status) {
             Some(prev) => {
                 self.spaces[SpaceId::Data]
@@ -739,11 +742,11 @@ impl Connection {
         &mut self,
         path_id: PathId,
         timeout: Option<Duration>,
-    ) -> Result<Option<Duration>, ClosedPath> {
+    ) -> Result<Option<Duration>, NotOpen> {
         let path = self
             .paths
             .get_mut(&path_id)
-            .ok_or(ClosedPath { _private: () })?;
+            .ok_or(NotOpen { _private: () })?;
         Ok(std::mem::replace(&mut path.data.idle_timeout, timeout))
     }
 
@@ -756,11 +759,11 @@ impl Connection {
         &mut self,
         path_id: PathId,
         interval: Option<Duration>,
-    ) -> Result<Option<Duration>, ClosedPath> {
+    ) -> Result<Option<Duration>, NotOpen> {
         let path = self
             .paths
             .get_mut(&path_id)
-            .ok_or(ClosedPath { _private: () })?;
+            .ok_or(NotOpen { _private: () })?;
         Ok(std::mem::replace(&mut path.data.keep_alive, interval))
     }
 
@@ -959,7 +962,7 @@ impl Connection {
         loop {
             // check if there is at least one active CID to use for sending
             let Some(remote_cid) = self.rem_cids.get(&path_id).map(CidQueue::active) else {
-                let err = PathError::RemoteCidsExhausted;
+                let err = OpenPathError::RemoteCidsExhausted;
                 if !self.abandoned_paths.contains(&path_id) {
                     debug!(?err, %path_id, "no active CID for path");
                     self.events.push_back(Event::Path(PathEvent::LocallyClosed {
@@ -1890,7 +1893,7 @@ impl Connection {
 
                             self.events.push_back(Event::Path(PathEvent::LocallyClosed {
                                 id: path_id,
-                                error: PathError::ValidationFailed,
+                                error: OpenPathError::ValidationFailed,
                             }));
                         }
                         PathTimer::Pacing => trace!("pacing timer expired"),
@@ -1997,11 +2000,11 @@ impl Connection {
     /// Ping the remote endpoint over a specific path
     ///
     /// Causes an ACK-eliciting packet to be transmitted on the path.
-    pub fn ping_path(&mut self, path: PathId) -> Result<(), ClosedPath> {
+    pub fn ping_path(&mut self, path: PathId) -> Result<(), NotOpen> {
         let path_data = self.spaces[self.highest_space]
             .number_spaces
             .get_mut(&path)
-            .ok_or(ClosedPath { _private: () })?;
+            .ok_or(NotOpen { _private: () })?;
         path_data.ping_pending = true;
         Ok(())
     }
@@ -2085,7 +2088,7 @@ impl Connection {
     }
 
     /// Get the address observed by the remote over the given path
-    pub fn path_observed_address(&self, path_id: PathId) -> Result<Option<SocketAddr>, ClosedPath> {
+    pub fn path_observed_address(&self, path_id: PathId) -> Result<Option<SocketAddr>, NotOpen> {
         self.path(path_id)
             .map(|path_data| {
                 path_data
@@ -2093,7 +2096,7 @@ impl Connection {
                     .as_ref()
                     .map(|observed| observed.socket_addr())
             })
-            .ok_or(ClosedPath { _private: () })
+            .ok_or(NotOpen { _private: () })
     }
 
     /// The local IP address which was used when the peer established
@@ -6251,7 +6254,7 @@ impl From<ConnectionError> for io::Error {
 /// Errors that might trigger a path being closed
 // TODO(@divma): maybe needs to be reworked based on what we want to do with the public API
 #[derive(Debug, Error, PartialEq, Eq, Clone, Copy)]
-pub enum PathError {
+pub enum OpenPathError {
     /// The extension was not negotiated with the peer
     #[error("multipath extention not negotiated")]
     MultipathNotNegotiated,
