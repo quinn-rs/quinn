@@ -31,7 +31,7 @@ enum Operation {
 
 fuzz_target!(|input: (StreamParams, Vec<Operation>)| {
     let (params, operations) = input;
-    let (mut pending, conn_state) = (Retransmits::default(), ConnectionState::Established);
+    let (mut pending, conn_state) = (Retransmits::default(), ConnectionState::established());
     let mut state = StreamsState::new(
         params.side,
         params.max_remote_uni.into(),

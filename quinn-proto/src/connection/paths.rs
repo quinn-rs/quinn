@@ -1,5 +1,6 @@
 use std::{cmp, net::SocketAddr};
 
+use identity_hash::IntMap;
 use thiserror::Error;
 use tracing::{debug, trace};
 
@@ -49,7 +50,7 @@ impl PathId {
     pub const ZERO: Self = Self(0);
 
     /// The number of bytes this [`PathId`] uses when encoded as a [`VarInt`]
-    pub(crate) fn size(&self) -> usize {
+    pub(crate) const fn size(&self) -> usize {
         VarInt(self.0 as u64).size()
     }
 
@@ -128,8 +129,10 @@ pub(super) struct PathData {
     pub(super) congestion: Box<dyn congestion::Controller>,
     /// Pacing state
     pub(super) pacing: Pacer,
-    pub(super) challenge: Option<u64>,
-    pub(super) challenge_pending: bool,
+    /// Actually sent challenges (on the wire)
+    pub(super) challenges_sent: IntMap<u64, Instant>,
+    /// Whether to *immediately* trigger another PATH_CHALLENGE (via Connection::can_send)
+    pub(super) send_new_challenge: bool,
     /// Pending responses to PATH_CHALLENGE frames
     pub(super) path_responses: PathResponses,
     /// Whether we're certain the peer can both send and receive on this address
@@ -224,8 +227,8 @@ impl PathData {
                 now,
             ),
             congestion,
-            challenge: None,
-            challenge_pending: false,
+            challenges_sent: Default::default(),
+            send_new_challenge: false,
             path_responses: PathResponses::default(),
             validated: false,
             total_sent: 0,
@@ -278,8 +281,8 @@ impl PathData {
             pacing: Pacer::new(smoothed_rtt, congestion.window(), prev.current_mtu(), now),
             sending_ecn: true,
             congestion,
-            challenge: None,
-            challenge_pending: false,
+            challenges_sent: Default::default(),
+            send_new_challenge: false,
             path_responses: PathResponses::default(),
             validated: false,
             total_sent: 0,
@@ -299,6 +302,11 @@ impl PathData {
             recovery_metrics: prev.recovery_metrics.clone(),
             generation,
         }
+    }
+
+    /// Whether we're in the process of validating this path with PATH_CHALLENGEs
+    pub(super) fn is_validating_path(&self) -> bool {
+        !self.challenges_sent.is_empty() || self.send_new_challenge
     }
 
     /// Resets RTT, congestion control and MTU states.
@@ -348,11 +356,25 @@ impl PathData {
     /// Increment the total size of sent UDP datagrams
     pub(super) fn inc_total_sent(&mut self, inc: u64) {
         self.total_sent = self.total_sent.saturating_add(inc);
+        if !self.validated {
+            trace!(
+                remote = %self.remote,
+                anti_amplification_budget = %(self.total_recvd * 3).saturating_sub(self.total_sent),
+                "anti amplification budget decreased"
+            );
+        }
     }
 
     /// Increment the total size of received UDP datagrams
     pub(super) fn inc_total_recvd(&mut self, inc: u64) {
         self.total_recvd = self.total_recvd.saturating_add(inc);
+        if !self.validated {
+            trace!(
+                remote = %self.remote,
+                anti_amplification_budget = %(self.total_recvd * 3).saturating_sub(self.total_sent),
+                "anti amplification budget increased"
+            );
+        }
     }
 
     #[cfg(feature = "qlog")]

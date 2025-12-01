@@ -1280,7 +1280,7 @@ mod tests {
             ..TransportParameters::default()
         });
 
-        let (mut pending, state) = (Retransmits::default(), ConnState::Established);
+        let (mut pending, state) = (Retransmits::default(), ConnState::established());
         let id = Streams {
             state: &mut server,
             conn_state: &state,
@@ -1341,7 +1341,7 @@ mod tests {
             ..TransportParameters::default()
         });
 
-        let (mut pending, state) = (Retransmits::default(), ConnState::Established);
+        let (mut pending, state) = (Retransmits::default(), ConnState::established());
         let mut streams = Streams {
             state: &mut server,
             conn_state: &state,
@@ -1397,7 +1397,7 @@ mod tests {
             ..TransportParameters::default()
         });
 
-        let (mut pending, state) = (Retransmits::default(), ConnState::Established);
+        let (mut pending, state) = (Retransmits::default(), ConnState::established());
         let mut streams = Streams {
             state: &mut server,
             conn_state: &state,
@@ -1467,7 +1467,7 @@ mod tests {
                 ..TransportParameters::default()
             });
 
-            let (mut pending, state) = (Retransmits::default(), ConnState::Established);
+            let (mut pending, state) = (Retransmits::default(), ConnState::established());
             let mut streams = Streams {
                 state: &mut server,
                 conn_state: &state,
@@ -1548,7 +1548,7 @@ mod tests {
             ..TransportParameters::default()
         });
 
-        let (mut pending, state) = (Retransmits::default(), ConnState::Established);
+        let (mut pending, state) = (Retransmits::default(), ConnState::established());
         let mut streams = Streams {
             state: &mut server,
             conn_state: &state,
@@ -1654,7 +1654,7 @@ mod tests {
             initial_max_stream_data_uni: 42u32.into(),
             ..TransportParameters::default()
         });
-        let (mut pending, state) = (Retransmits::default(), ConnState::Established);
+        let (mut pending, state) = (Retransmits::default(), ConnState::established());
         let mut streams = Streams {
             state: &mut server,
             conn_state: &state,
@@ -1957,7 +1957,7 @@ mod tests {
         assert_eq!(server.poll(), None);
 
         let mut retransmits = Retransmits::default();
-        let conn_state = ConnState::Established;
+        let conn_state = ConnState::established();
 
         let stream_id = Streams {
             state: &mut server,
@@ -2032,7 +2032,7 @@ mod tests {
         assert_eq!(server.poll(), None);
 
         let mut retransmits = Retransmits::default();
-        let conn_state = ConnState::Established;
+        let conn_state = ConnState::established();
 
         let stream_id = Streams {
             state: &mut server,

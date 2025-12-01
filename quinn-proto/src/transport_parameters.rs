@@ -9,6 +9,7 @@
 use std::{
     convert::TryFrom,
     net::{Ipv4Addr, Ipv6Addr, SocketAddrV4, SocketAddrV6},
+    num::NonZeroU8,
 };
 
 use bytes::{Buf, BufMut};
@@ -116,11 +117,11 @@ macro_rules! make_struct {
             /// The role of this peer in address discovery, if any.
             pub(crate) address_discovery_role: address_discovery::Role,
 
-            // Multipath extension
+            /// Multipath extension
             pub(crate) initial_max_path_id: Option<PathId>,
 
             /// Nat traversal draft
-            pub nat_traversal: Option<VarInt>,
+            pub max_remote_nat_traversal_addresses: Option<NonZeroU8>,
         }
 
         // We deliberately don't implement the `Default` trait, since that would be public, and
@@ -146,7 +147,7 @@ macro_rules! make_struct {
                     write_order: None,
                     address_discovery_role: address_discovery::Role::Disabled,
                     initial_max_path_id: None,
-                    nat_traversal: None,
+                    max_remote_nat_traversal_addresses: None,
                 }
             }
         }
@@ -196,7 +197,7 @@ impl TransportParameters {
             }),
             address_discovery_role: config.address_discovery_role,
             initial_max_path_id: config.get_initial_max_path_id(),
-            nat_traversal: config.get_nat_traversal_concurrency_limit(),
+            max_remote_nat_traversal_addresses: config.max_remote_nat_traversal_addresses,
             ..Self::default()
         }
     }
@@ -214,7 +215,7 @@ impl TransportParameters {
             || cached.max_datagram_frame_size > self.max_datagram_frame_size
             || cached.grease_quic_bit && !self.grease_quic_bit
             || cached.address_discovery_role != self.address_discovery_role
-            || cached.nat_traversal != self.nat_traversal
+            || cached.max_remote_nat_traversal_addresses != self.max_remote_nat_traversal_addresses
         {
             return Err(TransportError::PROTOCOL_VIOLATION(
                 "0-RTT accepted with incompatible transport parameters",
@@ -414,11 +415,11 @@ impl TransportParameters {
                         w.write(val);
                     }
                 }
-                TransportParameterId::NatTraversal => {
-                    if let Some(val) = self.nat_traversal {
+                TransportParameterId::IrohNatTraversal => {
+                    if let Some(val) = self.max_remote_nat_traversal_addresses {
                         w.write_var(id as u64);
-                        w.write_var(val.size() as u64);
-                        w.write(val);
+                        w.write(VarInt(1));
+                        w.write(val.get());
                     }
                 }
                 id => {
@@ -546,21 +547,18 @@ impl TransportParameters {
 
                     params.initial_max_path_id = Some(value);
                 }
-                TransportParameterId::NatTraversal => {
-                    if params.nat_traversal.is_some() {
+                TransportParameterId::IrohNatTraversal => {
+                    if params.max_remote_nat_traversal_addresses.is_some() {
+                        return Err(Error::Malformed);
+                    }
+                    if len != 1 {
                         return Err(Error::Malformed);
                     }
 
-                    let value: VarInt = r.get()?;
-                    if len != value.size() {
-                        return Err(Error::Malformed);
-                    }
+                    let value: u8 = r.get()?;
+                    let value = NonZeroU8::new(value).ok_or(Error::IllegalValue)?;
 
-                    if value.into_inner() == 0 {
-                        return Err(Error::IllegalValue);
-                    }
-
-                    params.nat_traversal = Some(value);
+                    params.max_remote_nat_traversal_addresses = Some(value);
                 }
                 _ => {
                     macro_rules! parse {
@@ -731,8 +729,9 @@ pub(crate) enum TransportParameterId {
     // https://datatracker.ietf.org/doc/html/draft-ietf-quic-multipath
     InitialMaxPathId = 0x0f739bbc1b666d0c,
 
-    // https://www.ietf.org/archive/id/draft-seemann-quic-nat-traversal-02.html
-    NatTraversal = 0x3d7e9f0bca12fea6,
+    // inspired by https://www.ietf.org/archive/id/draft-seemann-quic-nat-traversal-02.html,
+    // simplified to iroh's needs
+    IrohNatTraversal = 0x3d7f91120401,
 }
 
 impl TransportParameterId {
@@ -761,7 +760,7 @@ impl TransportParameterId {
         Self::MinAckDelayDraft07,
         Self::ObservedAddr,
         Self::InitialMaxPathId,
-        Self::NatTraversal,
+        Self::IrohNatTraversal,
     ];
 }
 
@@ -803,6 +802,7 @@ impl TryFrom<u64> for TransportParameterId {
             id if Self::MinAckDelayDraft07 == id => Self::MinAckDelayDraft07,
             id if Self::ObservedAddr == id => Self::ObservedAddr,
             id if Self::InitialMaxPathId == id => Self::InitialMaxPathId,
+            id if Self::IrohNatTraversal == id => Self::IrohNatTraversal,
             _ => return Err(()),
         };
         Ok(param)
@@ -843,6 +843,7 @@ mod test {
             min_ack_delay: Some(2_000u32.into()),
             address_discovery_role: address_discovery::Role::SendOnly,
             initial_max_path_id: Some(PathId::MAX),
+            max_remote_nat_traversal_addresses: Some(5u8.try_into().unwrap()),
             ..TransportParameters::default()
         };
         params.write(&mut buf);

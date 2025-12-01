@@ -44,25 +44,28 @@ pub(crate) enum PathTimer {
     PathIdle = 1,
     /// When to give up on validating a new path from RFC9000 migration
     PathValidation = 2,
+    /// When to resend a path challenge deemed lost
+    PathChallengeLost = 3,
     /// When to give up on validating a new (multi)path
-    PathOpen = 3,
+    PathOpen = 4,
     /// When to send a `PING` frame to keep the path alive
-    PathKeepAlive = 4,
+    PathKeepAlive = 5,
     /// When pacing will allow us to send a packet
-    Pacing = 5,
+    Pacing = 6,
     /// When to send an immediate ACK if there are unacked ack-eliciting packets of the peer
-    MaxAckDelay = 6,
+    MaxAckDelay = 7,
     /// When to clean up state for an abandoned path
-    PathAbandoned = 7,
+    PathAbandoned = 8,
     /// When the peer fails to confirm abandoning the path
-    PathNotAbandoned = 8,
+    PathNotAbandoned = 9,
 }
 
 impl PathTimer {
-    const VALUES: [Self; 9] = [
+    const VALUES: [Self; 10] = [
         Self::LossDetection,
         Self::PathIdle,
         Self::PathValidation,
+        Self::PathChallengeLost,
         Self::PathOpen,
         Self::PathKeepAlive,
         Self::Pacing,
@@ -274,6 +277,15 @@ impl TimerTable {
                 if let Some(e) = self.path_timers.get_mut(&path_id) {
                     e.stop(timer);
                 }
+            }
+        }
+    }
+
+    /// Stops all per-path timers
+    pub(super) fn stop_per_path(&mut self, path_id: PathId) {
+        for timer in PathTimer::VALUES {
+            if let Some(e) = self.path_timers.get_mut(&path_id) {
+                e.stop(timer);
             }
         }
     }

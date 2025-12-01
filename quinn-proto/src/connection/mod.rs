@@ -28,6 +28,7 @@ use crate::{
     connection::timer::{ConnTimer, PathTimer},
     crypto::{self, KeyPair, Keys, PacketKey},
     frame::{self, Close, Datagram, FrameStruct, NewToken, ObservedAddr},
+    iroh_hp,
     packet::{
         FixedLengthConnectionIdParser, Header, InitialHeader, InitialPacket, LongType, Packet,
         PacketNumber, PartialDecode, SpaceId,
@@ -96,6 +97,14 @@ use timer::{Timer, TimerTable};
 
 mod transmit_buf;
 use transmit_buf::TransmitBuf;
+
+mod state;
+
+#[cfg(not(fuzzing))]
+use state::State;
+#[cfg(fuzzing)]
+pub use state::State;
+use state::StateType;
 
 /// Protocol state and logic for a single QUIC connection
 ///
@@ -204,8 +213,6 @@ pub struct Connection {
     timers: TimerTable,
     /// Number of packets received which could not be authenticated
     authentication_failures: u64,
-    /// Why the connection was lost, if it has been
-    error: Option<ConnectionError>,
 
     //
     // Queued non-retransmittable 1-RTT data
@@ -302,6 +309,8 @@ pub struct Connection {
     // TODO(flub): Make this a more efficient data structure.  Like ranges of abandoned
     //    paths.  Or a set together with a minimum.  Or something.
     abandoned_paths: FxHashSet<PathId>,
+
+    iroh_hp: Option<iroh_hp::State>,
 }
 
 impl Connection {
@@ -339,7 +348,7 @@ impl Connection {
         };
         #[cfg(not(test))]
         let data_space = PacketSpace::new(now, SpaceId::Data, &mut rng);
-        let state = State::Handshake(state::Handshake {
+        let state = State::handshake(state::Handshake {
             rem_cid_set: side.is_server(),
             expected_token: Bytes::new(),
             client_hello: None,
@@ -406,7 +415,6 @@ impl Connection {
             },
             timers: TimerTable::default(),
             authentication_failures: 0,
-            error: None,
             close: false,
 
             ack_frequency: AckFrequencyState::new(get_max_ack_delay(
@@ -441,6 +449,9 @@ impl Connection {
             remote_max_path_id: PathId::ZERO,
             max_path_id_with_cids: PathId::ZERO,
             abandoned_paths: Default::default(),
+
+            // iroh's nat traversal
+            iroh_hp: None,
         };
         if path_validated {
             this.on_path_validated(PathId::ZERO);
@@ -480,8 +491,8 @@ impl Connection {
             return Some(Event::Stream(event));
         }
 
-        if let Some(err) = self.error.take() {
-            return Some(Event::ConnectionLost { reason: err });
+        if let Some(reason) = self.state.take_error() {
+            return Some(Event::ConnectionLost { reason });
         }
 
         None
@@ -608,12 +619,13 @@ impl Connection {
         if self.abandoned_paths.contains(&path_id) || Some(path_id) > self.max_path_id() {
             return Err(ClosePathError::ClosedPath);
         }
-        if self
-            .paths
-            .keys()
-            .filter(|&id| !self.abandoned_paths.contains(id))
-            .count()
-            < 2
+        if self.paths.contains_key(&path_id)
+            && self
+                .paths
+                .keys()
+                .filter(|&id| !self.abandoned_paths.contains(id))
+                .count()
+                < 2
         {
             return Err(ClosePathError::LastOpenPath);
         }
@@ -805,8 +817,7 @@ impl Connection {
 
         // for the path to be opened we need to send a packet on the path. Sending a challenge
         // guarantees this
-        data.challenge = Some(self.rng.random());
-        data.challenge_pending = true;
+        data.send_new_challenge = true;
 
         let path = vacant_entry.insert(PathState { data, prev: None });
 
@@ -836,6 +847,20 @@ impl Connection {
         max_datagrams: usize,
         buf: &mut Vec<u8>,
     ) -> Option<Transmit> {
+        if let Some(address) = self.spaces[SpaceId::Data].pending.hole_punch_to.pop() {
+            trace!(dst = ?address, "RAND_DATA packet");
+            buf.reserve_exact(8); // send 8 bytes of random data
+            let tmp: [u8; 8] = self.rng.random();
+            buf.put_slice(&tmp);
+            return Some(Transmit {
+                destination: address.into(),
+                ecn: None,
+                size: 8,
+                segment_size: None,
+                src_ip: None,
+            });
+        }
+
         assert!(max_datagrams != 0);
         let max_datagrams = match self.config.enable_segmentation_offload {
             false => 1,
@@ -860,12 +885,12 @@ impl Connection {
         // Once there's nothing more to send on the AVAILABLE paths, do the same for BACKUP paths
 
         // Check whether we need to send a close message
-        let close = match self.state {
-            State::Drained => {
+        let close = match self.state.as_type() {
+            StateType::Drained => {
                 self.app_limited = true;
                 return None;
             }
-            State::Draining | State::Closed(_) => {
+            StateType::Draining | StateType::Closed => {
                 // self.close is only reset once the associated packet had been
                 // encoded successfully
                 if !self.close {
@@ -1189,8 +1214,10 @@ impl Connection {
                 );
                 if frame::ConnectionClose::SIZE_BOUND < builder.frame_space_remaining() {
                     let max_frame_size = builder.frame_space_remaining();
-                    match self.state {
-                        State::Closed(state::Closed { ref reason }) => {
+                    match self.state.as_type() {
+                        StateType::Closed => {
+                            let reason: Close =
+                                self.state.as_closed().expect("checked").clone().into();
                             if space_id == SpaceId::Data || reason.is_transport_layer() {
                                 reason.encode(&mut builder.frame_space_mut(), max_frame_size)
                             } else {
@@ -1202,7 +1229,7 @@ impl Connection {
                                 .encode(&mut builder.frame_space_mut(), max_frame_size)
                             }
                         }
-                        State::Draining => frame::ConnectionClose {
+                        StateType::Draining => frame::ConnectionClose {
                             error_code: TransportErrorCode::NO_ERROR,
                             frame_type: None,
                             reason: Bytes::new(),
@@ -1572,13 +1599,14 @@ impl Connection {
         path_id: PathId,
     ) -> Option<Transmit> {
         let (prev_cid, prev_path) = self.paths.get_mut(&path_id)?.prev.as_mut()?;
-        if !prev_path.challenge_pending {
+        // TODO (matheus23): We could use !prev_path.is_validating() here instead to
+        // (possibly) also re-send challenges when they get lost.
+        if !prev_path.send_new_challenge {
             return None;
-        }
-        prev_path.challenge_pending = false;
-        let token = prev_path
-            .challenge
-            .expect("previous path challenge pending without token");
+        };
+        prev_path.send_new_challenge = false;
+        let token = self.rng.random();
+        prev_path.challenges_sent.insert(token, now);
         let destination = prev_path.remote;
         debug_assert_eq!(
             self.highest_space,
@@ -1669,13 +1697,15 @@ impl Connection {
                 first_decode,
                 remaining,
             }) => {
+                let span = trace_span!("pkt", %path_id);
+                let _guard = span.enter();
                 // If this packet could initiate a migration and we're a client or a server that
                 // forbids migration, drop the datagram. This could be relaxed to heuristically
                 // permit NAT-rebinding-like migration.
                 if let Some(known_remote) = self.path(path_id).map(|path| path.remote) {
                     if remote != known_remote && !self.side.remote_may_migrate(&self.state) {
                         trace!(
-                            ?path_id,
+                            %path_id,
                             ?remote,
                             path_remote = ?self.path(path_id).map(|p| p.remote),
                             "discarding packet from unrecognized peer"
@@ -1758,7 +1788,7 @@ impl Connection {
             match timer {
                 Timer::Conn(timer) => match timer {
                     ConnTimer::Close => {
-                        self.state = State::Drained;
+                        self.state.move_to_drained(None);
                         self.endpoint_events.push_back(EndpointEventInner::Drained);
                     }
                     ConnTimer::Idle => {
@@ -1800,90 +1830,107 @@ impl Connection {
                         }
                     }
                 },
-                Timer::PerPath(path_id, timer) => match timer {
-                    PathTimer::PathIdle => {
-                        // TODO(flub): TransportErrorCode::NO_ERROR but where's the API to get
-                        //    that into a VarInt?
-                        self.close_path(now, path_id, TransportErrorCode::NO_ERROR.into())
-                            .ok();
-                    }
-
-                    PathTimer::PathKeepAlive => {
-                        trace!(?path_id, "sending keep-alive on path");
-                        self.ping_path(path_id).ok();
-                    }
-                    PathTimer::LossDetection => {
-                        self.on_loss_detection_timeout(now, path_id);
-                        self.config.qlog_sink.emit_recovery_metrics(
-                            self.path_data(path_id).pto_count,
-                            &mut self.paths.get_mut(&path_id).unwrap().data,
-                            now,
-                            self.orig_rem_cid,
-                        );
-                    }
-                    PathTimer::PathValidation => {
-                        let Some(path) = self.paths.get_mut(&path_id) else {
-                            continue;
-                        };
-                        debug!("path validation failed");
-                        if let Some((_, prev)) = path.prev.take() {
-                            path.data = prev;
-                        }
-                        path.data.challenge = None;
-                        path.data.challenge_pending = false;
-                    }
-                    PathTimer::PathOpen => {
-                        let Some(path) = self.path_mut(path_id) else {
-                            continue;
-                        };
-                        path.challenge = None;
-                        path.challenge_pending = false;
-                        debug!("new path validation failed");
-                        if let Err(err) = self.close_path(
-                            now,
-                            path_id,
-                            TransportErrorCode::UNSTABLE_INTERFACE.into(),
-                        ) {
-                            warn!(?err, "failed closing path");
+                // TODO: add path_id as span somehow
+                Timer::PerPath(path_id, timer) => {
+                    let span = trace_span!("per-path timer fired", %path_id, ?timer);
+                    let _guard = span.enter();
+                    match timer {
+                        PathTimer::PathIdle => {
+                            self.close_path(now, path_id, TransportErrorCode::NO_ERROR.into())
+                                .ok();
                         }
 
-                        self.events.push_back(Event::Path(PathEvent::LocallyClosed {
-                            id: path_id,
-                            error: PathError::ValidationFailed,
-                        }));
-                    }
-                    PathTimer::Pacing => trace!(?path_id, "pacing timer expired"),
-                    PathTimer::MaxAckDelay => {
-                        trace!("max ack delay reached");
-                        // This timer is only armed in the Data space
-                        self.spaces[SpaceId::Data]
-                            .for_path(path_id)
-                            .pending_acks
-                            .on_max_ack_delay_timeout()
-                    }
-                    PathTimer::PathAbandoned => {
-                        // The path was abandoned and 3*PTO has expired since.  Clean up all
-                        // remaining state and install stateless reset token.
-                        if let Some(loc_cid_state) = self.local_cid_state.remove(&path_id) {
-                            let (min_seq, max_seq) = loc_cid_state.active_seq();
-                            for seq in min_seq..=max_seq {
-                                self.endpoint_events.push_back(
-                                    EndpointEventInner::RetireConnectionId(
-                                        now, path_id, seq, false,
-                                    ),
-                                );
+                        PathTimer::PathKeepAlive => {
+                            trace!("sending keep-alive on path");
+                            self.ping_path(path_id).ok();
+                        }
+                        PathTimer::LossDetection => {
+                            self.on_loss_detection_timeout(now, path_id);
+                            self.config.qlog_sink.emit_recovery_metrics(
+                                self.path_data(path_id).pto_count,
+                                &mut self.paths.get_mut(&path_id).unwrap().data,
+                                now,
+                                self.orig_rem_cid,
+                            );
+                        }
+                        PathTimer::PathValidation => {
+                            let Some(path) = self.paths.get_mut(&path_id) else {
+                                continue;
+                            };
+                            self.timers
+                                .stop(Timer::PerPath(path_id, PathTimer::PathChallengeLost));
+                            debug!("path validation failed");
+                            if let Some((_, prev)) = path.prev.take() {
+                                path.data = prev;
                             }
+                            path.data.challenges_sent.clear();
+                            path.data.send_new_challenge = false;
                         }
-                        self.drop_path_state(path_id, now);
+                        PathTimer::PathChallengeLost => {
+                            let Some(path) = self.paths.get_mut(&path_id) else {
+                                continue;
+                            };
+                            trace!("path challenge deemed lost");
+                            path.data.send_new_challenge = true;
+                        }
+                        PathTimer::PathOpen => {
+                            let Some(path) = self.path_mut(path_id) else {
+                                continue;
+                            };
+                            path.challenges_sent.clear();
+                            path.send_new_challenge = false;
+                            debug!("new path validation failed");
+                            if let Err(err) = self.close_path(
+                                now,
+                                path_id,
+                                TransportErrorCode::UNSTABLE_INTERFACE.into(),
+                            ) {
+                                warn!(?err, "failed closing path");
+                            }
+
+                            self.events.push_back(Event::Path(PathEvent::LocallyClosed {
+                                id: path_id,
+                                error: PathError::ValidationFailed,
+                            }));
+                        }
+                        PathTimer::Pacing => trace!("pacing timer expired"),
+                        PathTimer::MaxAckDelay => {
+                            trace!("max ack delay reached");
+                            // This timer is only armed in the Data space
+                            self.spaces[SpaceId::Data]
+                                .for_path(path_id)
+                                .pending_acks
+                                .on_max_ack_delay_timeout()
+                        }
+                        PathTimer::PathAbandoned => {
+                            // The path was abandoned and 3*PTO has expired since.  Clean up all
+                            // remaining state and install stateless reset token.
+                            self.timers.stop_per_path(path_id);
+                            if let Some(loc_cid_state) = self.local_cid_state.remove(&path_id) {
+                                let (min_seq, max_seq) = loc_cid_state.active_seq();
+                                for seq in min_seq..=max_seq {
+                                    self.endpoint_events.push_back(
+                                        EndpointEventInner::RetireConnectionId(
+                                            now, path_id, seq, false,
+                                        ),
+                                    );
+                                }
+                            }
+                            self.drop_path_state(path_id, now);
+                        }
+                        PathTimer::PathNotAbandoned => {
+                            // The peer failed to respond with a PATH_ABANDON when we sent such a
+                            // frame.
+                            warn!("missing PATH_ABANDON from peer");
+                            // TODO(flub): What should the error code be?
+                            self.close(
+                                now,
+                                TransportErrorCode::NO_ERROR.into(),
+                                "peer ignored PATH_ABANDON frame".into(),
+                            );
+                        }
                     }
-                    PathTimer::PathNotAbandoned => {
-                        // The peer failed to respond with a PATH_ABANDON when we sent such a
-                        // frame.
-                        warn!(?path_id, "missing PATH_ABANDON from peer");
-                        // TODO(flub): What should the error code be?
-                        self.close(now, 0u8.into(), "peer ignored PATH_ABANDON frame".into());
-                    }
-                },
+                }
             }
         }
     }
@@ -1912,7 +1959,7 @@ impl Connection {
             self.close_common();
             self.set_close_timer(now);
             self.close = true;
-            self.state = State::Closed(state::Closed { reason });
+            self.state.move_to_closed_local(reason);
         }
     }
 
@@ -2382,7 +2429,7 @@ impl Connection {
             .remove_in_flight(&info);
         let app_limited = self.app_limited;
         let path = self.path_data_mut(path_id);
-        if info.ack_eliciting && path.challenge.is_none() {
+        if info.ack_eliciting && !path.challenges_sent.is_empty() {
             // Only pass ACKs to the congestion controller if we are not validating the current
             // path, so as to ignore any ACKs from older paths still coming in.
             let rtt = path.rtt;
@@ -2445,7 +2492,7 @@ impl Connection {
         let (_, space) = match self.pto_time_and_space(now, path_id) {
             Some(x) => x,
             None => {
-                error!("PTO expired while unset");
+                error!(?path_id, "PTO expired while unset");
                 return;
             }
         };
@@ -2951,7 +2998,7 @@ impl Connection {
                 // the real server.  From now on we should no longer allow the server to migrate
                 // its address.
                 if space_id == SpaceId::Handshake {
-                    if let State::Handshake(ref mut hs) = self.state {
+                    if let Some(hs) = self.state.as_handshake_mut() {
                         hs.allow_server_migration = false;
                     }
                 }
@@ -3067,11 +3114,10 @@ impl Connection {
         let path_id = PathId::ZERO;
         self.path_data_mut(path_id).total_recvd = len as u64;
 
-        match self.state {
-            State::Handshake(ref mut state) => {
-                state.expected_token = packet.header.token.clone();
-            }
-            _ => unreachable!("first packet must be delivered in Handshake state"),
+        if let Some(hs) = self.state.as_handshake_mut() {
+            hs.expected_token = packet.header.token.clone();
+        } else {
+            unreachable!("first packet must be delivered in Handshake state");
         }
 
         // The first packet is always on PathId::ZERO
@@ -3211,9 +3257,9 @@ impl Connection {
             }
             let offset = self.spaces[space].crypto_offset;
             let outgoing = Bytes::from(outgoing);
-            if let State::Handshake(ref mut state) = self.state {
+            if let Some(hs) = self.state.as_handshake_mut() {
                 if space == SpaceId::Initial && offset == 0 && self.side.is_client() {
-                    state.client_hello = Some(outgoing.clone());
+                    hs.client_hello = Some(outgoing.clone());
                 }
             }
             self.spaces[space].crypto_offset += outgoing.len() as u64;
@@ -3361,15 +3407,17 @@ impl Connection {
                 return;
             }
             if remote != self.path_data_mut(path_id).remote {
-                match self.state {
-                    State::Handshake(ref hs) if hs.allow_server_migration => {
+                if let Some(hs) = self.state.as_handshake() {
+                    if hs.allow_server_migration {
                         trace!(?remote, prev = ?self.path_data(path_id).remote, "server migrated to new remote");
                         self.path_data_mut(path_id).remote = remote;
-                    }
-                    _ => {
+                    } else {
                         debug!("discarding packet with unexpected remote during handshake");
                         return;
                     }
+                } else {
+                    debug!("discarding packet with unexpected remote during handshake");
+                    return;
                 }
             }
         }
@@ -3410,8 +3458,8 @@ impl Connection {
             }
             Ok((packet, number)) => {
                 let span = match number {
-                    Some(pn) => trace_span!("recv", space = ?packet.header.space(), pn, %path_id),
-                    None => trace_span!("recv", space = ?packet.header.space(), %path_id),
+                    Some(pn) => trace_span!("recv", space = ?packet.header.space(), pn),
+                    None => trace_span!("recv", space = ?packet.header.space()),
                 };
                 let _guard = span.enter();
 
@@ -3427,7 +3475,7 @@ impl Connection {
                     return;
                 } else {
                     if let Header::Initial(InitialHeader { ref token, .. }) = packet.header {
-                        if let State::Handshake(ref hs) = self.state {
+                        if let Some(hs) = self.state.as_handshake() {
                             if self.side.is_server() && token != &hs.expected_token {
                                 // Clients must send the same retry token in every Initial. Initial
                                 // packets can be spoofed, so we discard rather than killing the
@@ -3468,23 +3516,26 @@ impl Connection {
 
         // State transitions for error cases
         if let Err(conn_err) = result {
-            self.error = Some(conn_err.clone());
-            self.state = match conn_err {
-                ConnectionError::ApplicationClosed(reason) => State::closed(reason),
-                ConnectionError::ConnectionClosed(reason) => State::closed(reason),
+            match conn_err {
+                ConnectionError::ApplicationClosed(reason) => self.state.move_to_closed(reason),
+                ConnectionError::ConnectionClosed(reason) => self.state.move_to_closed(reason),
                 ConnectionError::Reset
                 | ConnectionError::TransportError(TransportError {
                     code: TransportErrorCode::AEAD_LIMIT_REACHED,
                     ..
-                }) => State::Drained,
+                }) => {
+                    self.state.move_to_drained(Some(conn_err));
+                }
                 ConnectionError::TimedOut => {
                     unreachable!("timeouts aren't generated by packet processing");
                 }
                 ConnectionError::TransportError(err) => {
                     debug!("closing connection due to transport error: {}", err);
-                    State::closed(err)
+                    self.state.move_to_closed(err);
                 }
-                ConnectionError::VersionMismatch => State::Draining,
+                ConnectionError::VersionMismatch => {
+                    self.state.move_to_draining(Some(conn_err));
+                }
                 ConnectionError::LocallyClosed => {
                     unreachable!("LocallyClosed isn't generated by packet processing");
                 }
@@ -3508,7 +3559,7 @@ impl Connection {
         }
 
         // Transmit CONNECTION_CLOSE if necessary
-        if let State::Closed(_) = self.state {
+        if matches!(self.state.as_type(), StateType::Closed) {
             // If there is no PathData for this PathId the packet was for a brand new
             // path. It was a valid packet however, so the remote is valid and we want to
             // send CONNECTION_CLOSE.
@@ -3536,8 +3587,8 @@ impl Connection {
             trace!(%path_id, ?number, "discarding packet for unknown path");
             return Ok(());
         }
-        let state = match self.state {
-            State::Established => {
+        let state = match self.state.as_type() {
+            StateType::Established => {
                 match packet.header.space() {
                     SpaceId::Data => {
                         self.process_payload(now, remote, path_id, number.unwrap(), packet)?
@@ -3551,7 +3602,7 @@ impl Connection {
                 }
                 return Ok(());
             }
-            State::Closed(_) => {
+            StateType::Closed => {
                 for result in frame::Iter::new(packet.payload.freeze())? {
                     let frame = match result {
                         Ok(frame) => frame,
@@ -3567,16 +3618,16 @@ impl Connection {
 
                     self.stats.frame_rx.record(&frame);
 
-                    if let Frame::Close(_) = frame {
+                    if let Frame::Close(_error) = frame {
                         trace!("draining");
-                        self.state = State::Draining;
+                        self.state.move_to_draining(None);
                         break;
                     }
                 }
                 return Ok(());
             }
-            State::Draining | State::Drained => return Ok(()),
-            State::Handshake(ref mut state) => state,
+            StateType::Draining | StateType::Drained => return Ok(()),
+            StateType::Handshake => self.state.as_handshake_mut().expect("checked"),
         };
 
         match packet.header {
@@ -3666,7 +3717,7 @@ impl Connection {
                 };
                 *token = packet.payload.freeze().split_to(token_len);
 
-                self.state = State::Handshake(state::Handshake {
+                self.state = State::handshake(state::Handshake {
                     expected_token: Bytes::new(),
                     rem_cid_set: false,
                     client_hello: None,
@@ -3750,7 +3801,7 @@ impl Connection {
                 }
 
                 self.events.push_back(Event::Connected);
-                self.state = State::Established;
+                self.state.move_to_established();
                 trace!("established");
 
                 // Multipath can only be enabled after the state has reached Established.
@@ -3774,7 +3825,7 @@ impl Connection {
                     self.rem_handshake_cid = rem_cid;
                     self.orig_rem_cid = rem_cid;
                     state.rem_cid_set = true;
-                    self.state = State::Handshake(state);
+                    self.state.move_to_handshake(state);
                 } else if rem_cid != self.rem_handshake_cid {
                     debug!(
                         "discarding packet with mismatched remote CID: {} != {}",
@@ -3872,12 +3923,10 @@ impl Connection {
                     self.on_path_ack_received(now, packet.header.space(), ack)?;
                 }
                 Frame::Close(reason) => {
-                    self.error = Some(reason.into());
-                    self.state = State::Draining;
+                    self.state.move_to_draining(Some(reason.into()));
                     return Ok(());
                 }
                 _ => {
-                    dbg!(&frame);
                     let mut err =
                         TransportError::PROTOCOL_VIOLATION("illegal frame type in handshake");
                     err.frame = Some(frame.ty());
@@ -4005,16 +4054,26 @@ impl Connection {
                         .paths
                         .get_mut(&path_id)
                         .expect("payload is processed only after the path becomes known");
-                    if path.data.challenge == Some(token) && remote == path.data.remote {
+
+                    if remote != path.data.remote {
+                        debug!(token, "ignoring invalid PATH_RESPONSE");
+                    } else if let Some(&challenge_sent) = path.data.challenges_sent.get(&token) {
                         self.timers
                             .stop(Timer::PerPath(path_id, PathTimer::PathValidation));
+                        self.timers
+                            .stop(Timer::PerPath(path_id, PathTimer::PathChallengeLost));
                         if !path.data.validated {
                             trace!("new path validated");
                         }
                         self.timers
                             .stop(Timer::PerPath(path_id, PathTimer::PathOpen));
-                        path.data.challenge = None;
+                        path.data.challenges_sent.clear();
+                        path.data.send_new_challenge = false;
                         path.data.validated = true;
+                        path.data.rtt.update(
+                            Duration::ZERO,
+                            now.saturating_duration_since(challenge_sent),
+                        );
                         self.events
                             .push_back(Event::Path(PathEvent::Opened { id: path_id }));
                         // mark the path as open from the application perspective now that Opened
@@ -4028,8 +4087,8 @@ impl Connection {
                             }
                         }
                         if let Some((_, ref mut prev)) = path.prev {
-                            prev.challenge = None;
-                            prev.challenge_pending = false;
+                            prev.challenges_sent.clear();
+                            prev.send_new_challenge = false;
                         }
                     } else {
                         debug!(token, "ignoring invalid PATH_RESPONSE");
@@ -4110,20 +4169,20 @@ impl Connection {
                     }
                 }
                 Frame::NewConnectionId(frame) => {
-                    let path_id = match (frame.path_id, self.max_path_id()) {
-                        (Some(path_id), Some(current_max)) if path_id <= current_max => path_id,
-                        (Some(_large_path_id), Some(_current_max)) => {
-                            return Err(TransportError::PROTOCOL_VIOLATION(
-                                "PATH_NEW_CONNECTION_ID contains path_id exceeding current max",
-                            ));
-                        }
-                        (Some(_path_id), None) => {
+                    let path_id = if let Some(path_id) = frame.path_id {
+                        if !self.is_multipath_negotiated() {
                             return Err(TransportError::PROTOCOL_VIOLATION(
                                 "received PATH_NEW_CONNECTION_ID frame when multipath was not negotiated",
                             ));
                         }
-
-                        (None, _) => PathId::ZERO,
+                        if path_id > self.local_max_path_id {
+                            return Err(TransportError::PROTOCOL_VIOLATION(
+                                "PATH_NEW_CONNECTION_ID contains path_id exceeding current max",
+                            ));
+                        }
+                        path_id
+                    } else {
+                        PathId::ZERO
                     };
 
                     if self.abandoned_paths.contains(&path_id) {
@@ -4313,7 +4372,7 @@ impl Connection {
                             // TODO(flub): which error code?
                             self.close(
                                 now,
-                                0u8.into(),
+                                TransportErrorCode::NO_ERROR.into(),
                                 Bytes::from_static(b"last path abandoned by peer"),
                             );
                         }
@@ -4369,16 +4428,15 @@ impl Connection {
                 }
                 Frame::MaxPathId(frame::MaxPathId(path_id)) => {
                     span.record("path", tracing::field::debug(&path_id));
-                    if let Some(current_max) = self.max_path_id() {
-                        // frames that do not increase the path id are ignored
-                        self.remote_max_path_id = self.remote_max_path_id.max(path_id);
-                        if self.max_path_id() != Some(current_max) {
-                            self.issue_first_path_cids(now);
-                        }
-                    } else {
+                    if !self.is_multipath_negotiated() {
                         return Err(TransportError::PROTOCOL_VIOLATION(
                             "received MAX_PATH_ID frame when multipath was not negotiated",
                         ));
+                    }
+                    // frames that do not increase the path id are ignored
+                    if path_id > self.remote_max_path_id {
+                        self.remote_max_path_id = path_id;
+                        self.issue_first_path_cids(now);
                     }
                 }
                 Frame::PathsBlocked(frame::PathsBlocked(max_path_id)) => {
@@ -4431,14 +4489,103 @@ impl Connection {
                         ));
                     }
                 }
-                Frame::AddAddress(_addr) => {
-                    // TODO(@divma): handle
+                Frame::AddAddress(addr) => {
+                    let Some(hp_state) = self.iroh_hp.as_mut() else {
+                        return Err(TransportError::PROTOCOL_VIOLATION(
+                            "received ADD_ADDRESS frame when iroh's nat traversal was not negotiated",
+                        ));
+                    };
+
+                    let Ok(mut client_state) = hp_state.client_side() else {
+                        return Err(TransportError::PROTOCOL_VIOLATION(
+                            "client sent ADD_ADDRESS frame",
+                        ));
+                    };
+
+                    if !client_state.check_remote_address(&addr) {
+                        // if the address is not valid we flag it, but update anyway
+                        warn!(?addr, "server sent ilegal ADD_ADDRESS frame");
+                    }
+
+                    match client_state.add_remote_address(addr) {
+                        Ok(maybe_added) => {
+                            if let Some(added) = maybe_added {
+                                self.events.push_back(Event::NatTraversal(
+                                    iroh_hp::Event::AddressAdded(added),
+                                ));
+                            }
+                        }
+                        Err(e) => {
+                            warn!(?e, "failed to add remote address")
+                        }
+                    }
                 }
-                Frame::PunchMeNow(_frame) => {
-                    // TODO(@divma): handle
+                Frame::RemoveAddress(addr) => {
+                    let Some(hp_state) = self.iroh_hp.as_mut() else {
+                        return Err(TransportError::PROTOCOL_VIOLATION(
+                            "received REMOVE_ADDRESS frame when iroh's nat traversal was not negotiated",
+                        ));
+                    };
+
+                    let Ok(mut client_state) = hp_state.client_side() else {
+                        return Err(TransportError::PROTOCOL_VIOLATION(
+                            "client sent REMOVE_ADDRESS frame",
+                        ));
+                    };
+
+                    if let Some(removed_addr) = client_state.remove_remote_address(addr) {
+                        self.events
+                            .push_back(Event::NatTraversal(iroh_hp::Event::AddressRemoved(
+                                removed_addr,
+                            )));
+                    }
                 }
-                Frame::RemoveAddress(_frame) => {
-                    // TODO(@divma): handle
+                Frame::ReachOut(reach_out) => {
+                    let Some(hp_state) = self.iroh_hp.as_mut() else {
+                        return Err(TransportError::PROTOCOL_VIOLATION(
+                            "received REACH_OUT frame when iroh's nat traversal was not negotiated",
+                        ));
+                    };
+
+                    match hp_state.handle_reach_out(reach_out) {
+                        Ok(None) => {
+                            // no action required here
+                        }
+                        Ok(Some(info)) => {
+                            let iroh_hp::RandDataNeeded {
+                                ip,
+                                port,
+                                round,
+                                is_new_round,
+                            } = info;
+                            if is_new_round {
+                                // TODO(@divma): this depends on round starting on 1 right now,
+                                // because the round should be greater to the default one, which is
+                                // zero
+                                self.spaces[SpaceId::Data].pending.hole_punch_round = round;
+                                self.spaces[SpaceId::Data].pending.hole_punch_to.clear();
+                            }
+
+                            self.spaces[SpaceId::Data]
+                                .pending
+                                .hole_punch_to
+                                .push((ip, port));
+                        }
+                        Err(iroh_hp::Error::WrongConnectionSide) => {
+                            return Err(TransportError::PROTOCOL_VIOLATION(
+                                "server sent REACH_OUT frames for nat traversal",
+                            ));
+                        }
+                        Err(iroh_hp::Error::TooManyAddresses) => {
+                            return Err(TransportError::PROTOCOL_VIOLATION(
+                                "client exceeded allowed REACH_OUT frames for this round",
+                            ));
+                        }
+                        Err(error) => {
+                            warn!(%error,"error handling REACH_OUT frame");
+                            // TODO(@divma): check if this is reachable
+                        }
+                    }
                 }
             }
         }
@@ -4468,8 +4615,7 @@ impl Connection {
         self.streams.queue_max_stream_id(pending);
 
         if let Some(reason) = close {
-            self.error = Some(reason.into());
-            self.state = State::Draining;
+            self.state.move_to_draining(Some(reason.into()));
             self.close = true;
         }
 
@@ -4536,14 +4682,12 @@ impl Connection {
                 }));
             }
         }
-        new_path.challenge = Some(self.rng.random());
-        new_path.challenge_pending = true;
+        new_path.send_new_challenge = true;
 
         let mut prev = mem::replace(path, new_path);
         // Don't clobber the original path if the previous one hasn't been validated yet
-        if prev.challenge.is_none() {
-            prev.challenge = Some(self.rng.random());
-            prev.challenge_pending = true;
+        if !prev.is_validating_path() {
+            prev.send_new_challenge = true;
             // We haven't updated the remote CID yet, this captures the remote CID we were using on
             // the previous path.
 
@@ -4681,6 +4825,31 @@ impl Connection {
                 self.stats.frame_tx.handshake_done.saturating_add(1);
         }
 
+        // REACH_OUT
+        // TODO(@divma): path explusive considerations
+        if let Some((round, addresses)) = space.pending.reach_out.as_mut() {
+            while let Some(local_addr) = addresses.pop() {
+                let reach_out = frame::ReachOut::new(*round, local_addr);
+                if buf.remaining_mut() > reach_out.size() {
+                    trace!(%round, ?local_addr, "REACH_OUT");
+                    reach_out.write(buf);
+                    let sent_reachouts = sent
+                        .retransmits
+                        .get_or_create()
+                        .reach_out
+                        .get_or_insert_with(|| (*round, Default::default()));
+                    sent_reachouts.1.push(local_addr);
+                    self.stats.frame_tx.reach_out = self.stats.frame_tx.reach_out.saturating_add(1);
+                } else {
+                    addresses.push(local_addr);
+                    break;
+                }
+            }
+            if addresses.is_empty() {
+                space.pending.reach_out = None;
+            }
+        }
+
         // OBSERVED_ADDR
         if !path_exclusive_only
             && space_id == SpaceId::Data
@@ -4779,44 +4948,48 @@ impl Connection {
         }
 
         // PATH_CHALLENGE
-        if buf.remaining_mut() > 9 && space_id == SpaceId::Data {
-            // Transmit challenges with every outgoing packet on an unvalidated path
-            if let Some(token) = path.challenge {
-                sent.non_retransmits = true;
-                sent.requires_padding = true;
-                trace!("PATH_CHALLENGE {:08x}", token);
-                buf.write(frame::FrameType::PATH_CHALLENGE);
-                buf.write(token);
+        if buf.remaining_mut() > 9 && space_id == SpaceId::Data && path.send_new_challenge {
+            path.send_new_challenge = false;
 
-                if is_multipath_negotiated && !path.validated && path.challenge_pending {
-                    // queue informing the path status along with the challenge
-                    space.pending.path_status.insert(path_id);
-                }
+            // Generate a new challenge every time we send a new PATH_CHALLENGE
+            let token = self.rng.random();
+            path.challenges_sent.insert(token, now);
+            sent.non_retransmits = true;
+            sent.requires_padding = true;
+            trace!("PATH_CHALLENGE {:08x}", token);
+            buf.write(frame::FrameType::PATH_CHALLENGE);
+            buf.write(token);
+            self.stats.frame_tx.path_challenge += 1;
+            let pto = self.ack_frequency.max_ack_delay_for_pto() + path.rtt.pto_base();
+            self.timers.set(
+                Timer::PerPath(path_id, PathTimer::PathChallengeLost),
+                now + pto,
+            );
 
-                // But only send a packet solely for that purpose at most once
-                path.challenge_pending = false;
+            if is_multipath_negotiated && !path.validated && path.send_new_challenge {
+                // queue informing the path status along with the challenge
+                space.pending.path_status.insert(path_id);
+            }
 
-                // Always include an OBSERVED_ADDR frame with a PATH_CHALLENGE, regardless
-                // of whether one has already been sent on this path.
-                if space_id == SpaceId::Data
-                    && self
-                        .config
-                        .address_discovery_role
-                        .should_report(&self.peer_params.address_discovery_role)
-                {
-                    let frame =
-                        frame::ObservedAddr::new(path.remote, self.next_observed_addr_seq_no);
-                    if buf.remaining_mut() > frame.size() {
-                        frame.write(buf);
+            // Always include an OBSERVED_ADDR frame with a PATH_CHALLENGE, regardless
+            // of whether one has already been sent on this path.
+            if space_id == SpaceId::Data
+                && self
+                    .config
+                    .address_discovery_role
+                    .should_report(&self.peer_params.address_discovery_role)
+            {
+                let frame = frame::ObservedAddr::new(path.remote, self.next_observed_addr_seq_no);
+                if buf.remaining_mut() > frame.size() {
+                    frame.write(buf);
 
-                        self.next_observed_addr_seq_no =
-                            self.next_observed_addr_seq_no.saturating_add(1u8);
-                        path.observed_addr_sent = true;
+                    self.next_observed_addr_seq_no =
+                        self.next_observed_addr_seq_no.saturating_add(1u8);
+                    path.observed_addr_sent = true;
 
-                        self.stats.frame_tx.observed_addr += 1;
-                        sent.retransmits.get_or_create().observed_addr = true;
-                        space.pending.observed_addr = false;
-                    }
+                    self.stats.frame_tx.observed_addr += 1;
+                    sent.retransmits.get_or_create().observed_addr = true;
+                    space.pending.observed_addr = false;
                 }
             }
         }
@@ -5166,6 +5339,43 @@ impl Connection {
             self.stats.frame_tx.stream += sent.stream_frames.len() as u64;
         }
 
+        // ADD_ADDRESS
+        // TODO(@divma): check if we need to do path exclusive filters
+        while space_id == SpaceId::Data && frame::AddAddress::SIZE_BOUND <= buf.remaining_mut() {
+            if let Some(added_address) = space.pending.add_address.pop_last() {
+                trace!(
+                    seq = %added_address.seq_no,
+                    ip = ?added_address.ip,
+                    port = added_address.port,
+                    "ADD_ADDRESS",
+                );
+                added_address.write(buf);
+                sent.retransmits
+                    .get_or_create()
+                    .add_address
+                    .insert(added_address);
+                self.stats.frame_tx.add_address = self.stats.frame_tx.add_address.saturating_add(1);
+            } else {
+                break;
+            }
+        }
+
+        // REMOVE_ADDRESS
+        while space_id == SpaceId::Data && frame::RemoveAddress::SIZE_BOUND <= buf.remaining_mut() {
+            if let Some(removed_address) = space.pending.remove_address.pop_last() {
+                trace!(seq = %removed_address.seq_no, "REMOVE_ADDRESS");
+                removed_address.write(buf);
+                sent.retransmits
+                    .get_or_create()
+                    .remove_address
+                    .insert(removed_address);
+                self.stats.frame_tx.remove_address =
+                    self.stats.frame_tx.remove_address.saturating_add(1);
+            } else {
+                break;
+            }
+        }
+
         sent
     }
 
@@ -5280,6 +5490,7 @@ impl Connection {
         }
         self.ack_frequency.peer_max_ack_delay = get_max_ack_delay(&params);
 
+        let mut multipath_enabled = None;
         if let (Some(local_max_path_id), Some(remote_max_path_id)) = (
             self.config.get_initial_max_path_id(),
             params.initial_max_path_id,
@@ -5287,7 +5498,55 @@ impl Connection {
             // multipath is enabled, register the local and remote maximums
             self.local_max_path_id = local_max_path_id;
             self.remote_max_path_id = remote_max_path_id;
-            debug!(initial_max_path_id=%local_max_path_id.min(remote_max_path_id), "multipath negotiated");
+            let initial_max_path_id = local_max_path_id.min(remote_max_path_id);
+            debug!(%initial_max_path_id, "multipath negotiated");
+            multipath_enabled = Some(initial_max_path_id);
+        }
+
+        if let Some((max_locally_allowed_remote_addresses, max_remotely_allowed_remote_addresses)) =
+            self.config
+                .max_remote_nat_traversal_addresses
+                .zip(params.max_remote_nat_traversal_addresses)
+        {
+            if let Some(max_initial_paths) =
+                multipath_enabled.map(|path_id| path_id.saturating_add(1u8))
+            {
+                let max_local_addresses = max_remotely_allowed_remote_addresses.get();
+                let max_remote_addresses = max_locally_allowed_remote_addresses.get();
+                self.iroh_hp = Some(iroh_hp::State::new(
+                    max_remote_addresses,
+                    max_local_addresses,
+                    self.side(),
+                ));
+                debug!(
+                    %max_remote_addresses, %max_local_addresses,
+                    "iroh hole punching negotiated"
+                );
+
+                match self.side() {
+                    Side::Client => {
+                        if max_initial_paths.as_u32() < max_remote_addresses as u32 + 1 {
+                            // in this case the client might try to open `max_remote_addresses` new
+                            // paths, but the current multipath configuration will not allow it
+                            warn!(%max_initial_paths, %max_remote_addresses, "local client configuration might cause nat traversal issues")
+                        } else if max_local_addresses as u64
+                            > params.active_connection_id_limit.into_inner()
+                        {
+                            // the server allows us to send at most `params.active_connection_id_limit`
+                            // but they might need at least `max_local_addresses` to effectively send
+                            // `PATH_CHALLENGE` frames to each advertised local address
+                            warn!(%max_local_addresses, remote_cid_limit=%params.active_connection_id_limit.into_inner(), "remote server configuration might cause nat traversal issues")
+                        }
+                    }
+                    Side::Server => {
+                        if (max_initial_paths.as_u32() as u64) < crate::LOC_CID_COUNT {
+                            warn!(%max_initial_paths, local_cid_limit=%crate::LOC_CID_COUNT, "local server configuration might cause nat traversal issues")
+                        }
+                    }
+                }
+            } else {
+                debug!("iroh nat traversal enabled for both endpoints, but multipath is missing")
+            }
         }
 
         self.peer_params = params;
@@ -5511,6 +5770,14 @@ impl Connection {
         self.path_data(PathId::ZERO).current_mtu()
     }
 
+    /// Triggers path validation on all paths
+    #[cfg(test)]
+    pub(crate) fn trigger_path_validation(&mut self) {
+        for path in self.paths.values_mut() {
+            path.data.send_new_challenge = true;
+        }
+    }
+
     /// Whether we have 1-RTT data to send
     ///
     /// This checks for frames that can only be sent in the data space (1-RTT):
@@ -5523,11 +5790,11 @@ impl Connection {
     /// may need to be sent.
     fn can_send_1rtt(&self, path_id: PathId, max_size: usize) -> SendableFrames {
         let path_exclusive = self.paths.get(&path_id).is_some_and(|path| {
-            path.data.challenge_pending
+            path.data.send_new_challenge
                 || path
                     .prev
                     .as_ref()
-                    .is_some_and(|(_, path)| path.challenge_pending)
+                    .is_some_and(|(_, path)| path.send_new_challenge)
                 || !path.data.path_responses.is_empty()
         });
         let other = self.streams.can_send_stream_data()
@@ -5547,8 +5814,7 @@ impl Connection {
     /// Terminate the connection instantly, without sending a close packet
     fn kill(&mut self, reason: ConnectionError) {
         self.close_common();
-        self.error = Some(reason);
-        self.state = State::Drained;
+        self.state.move_to_drained(Some(reason));
         self.endpoint_events.push_back(EndpointEventInner::Drained);
     }
 
@@ -5648,16 +5914,156 @@ impl Connection {
         );
     }
 
-    /// Returns the maximum [`PathId`] to be used in this connection.
+    /// Returns the maximum [`PathId`] to be used for sending in this connection.
     ///
     /// This is calculated as minimum between the local and remote's maximums when multipath is
     /// enabled, or `None` when disabled.
+    ///
+    /// For data that's received, we should use [`Self::local_max_path_id`] instead.
+    /// The reasoning is that the remote might already have updated to its own newer
+    /// [`Self::max_path_id`] after sending out a `MAX_PATH_ID` frame, but it got re-ordered.
     fn max_path_id(&self) -> Option<PathId> {
         if self.is_multipath_negotiated() {
             Some(self.remote_max_path_id.min(self.local_max_path_id))
         } else {
             None
         }
+    }
+
+    /// Add addresses the local endpoint considers are reachable for nat traversal
+    ///
+    /// If adding any address fails, an error is returned. Previous addresses might have been
+    /// added.
+    // TODO(@divma): this combined api has the issue that an error does not mean nothing was done
+    pub fn add_nat_traversal_address(&mut self, address: SocketAddr) -> Result<(), iroh_hp::Error> {
+        let hp_state = self
+            .iroh_hp
+            .as_mut()
+            .ok_or(iroh_hp::Error::ExtensionNotNegotiated)?;
+
+        if let Some(added) = hp_state.add_local_address(address)? {
+            self.spaces[SpaceId::Data].pending.add_address.insert(added);
+        };
+        Ok(())
+    }
+
+    /// Removes an address the endpoing no longer considers reachable for nat traversal
+    ///
+    /// Addresses not present in the set will be silently ignored.
+    pub fn remove_nat_traversal_address(
+        &mut self,
+        address: SocketAddr,
+    ) -> Result<(), iroh_hp::Error> {
+        let is_server = self.side().is_server();
+        let hp_state = self
+            .iroh_hp
+            .as_mut()
+            .ok_or(iroh_hp::Error::ExtensionNotNegotiated)?;
+        if let Some(removed) = hp_state.remove_local_address(address) {
+            if is_server {
+                self.spaces[SpaceId::Data]
+                    .pending
+                    .remove_address
+                    .insert(removed);
+            }
+        }
+        Ok(())
+    }
+
+    /// Get the current local nat traversal addresses
+    pub fn get_local_nat_traversal_addresses(&self) -> Result<Vec<SocketAddr>, iroh_hp::Error> {
+        let hp_state = self
+            .iroh_hp
+            .as_ref()
+            .ok_or(iroh_hp::Error::ExtensionNotNegotiated)?;
+        Ok(hp_state.get_local_nat_traversal_addresses())
+    }
+
+    /// Get the currently advertised nat traversal addresses by the server
+    pub fn get_remote_nat_traversal_addresses(&self) -> Result<Vec<SocketAddr>, iroh_hp::Error> {
+        let hp_state = self
+            .iroh_hp
+            .as_ref()
+            .ok_or(iroh_hp::Error::ExtensionNotNegotiated)?;
+        hp_state.get_remote_nat_traversal_addresses()
+    }
+
+    /// Initiates a new nat traversal round
+    ///
+    /// A nat traversal round involves advertising the client's local addresses in `REACH_OUT`
+    /// frames, and initiating probing of the known remote addresses. When a new round is
+    /// initiated, the previous one is cancelled, and paths that have not been opened are closed.
+    ///
+    /// Returns the server addresses that are now being probed.
+    pub fn initiate_nat_traversal_round(
+        &mut self,
+        now: Instant,
+    ) -> Result<Vec<SocketAddr>, iroh_hp::Error> {
+        let hp_state = self
+            .iroh_hp
+            .as_mut()
+            .ok_or(iroh_hp::Error::ExtensionNotNegotiated)?;
+        let iroh_hp::NatTraversalRound {
+            new_round,
+            reach_out_at,
+            addresses_to_probe,
+            prev_round_path_ids,
+        } = hp_state.initiate_nat_traversal_round()?;
+
+        self.spaces[SpaceId::Data].pending.reach_out = Some((new_round, reach_out_at));
+
+        for path_id in prev_round_path_ids {
+            // TODO(@divma): this sounds reasonable but we need if this actually works for the
+            // purposes of the protocol
+            let validated = self
+                .path(path_id)
+                .map(|path| path.validated)
+                .unwrap_or(false);
+
+            if !validated {
+                let _ =
+                    self.close_path(now, path_id, TransportErrorCode::APPLICATION_ABANDON.into());
+            }
+        }
+
+        let mut err = None;
+
+        let mut path_ids = Vec::with_capacity(addresses_to_probe.len());
+        let mut probed_addresses = Vec::with_capacity(addresses_to_probe.len());
+        let ipv6 = self.paths.values().any(|p| p.data.remote.is_ipv6());
+
+        for (ip, port) in addresses_to_probe {
+            // If this endpoint is an IPv6 endpoint we use IPv6 addresses for all remotes.
+            let remote = match ip {
+                IpAddr::V4(addr) if ipv6 => SocketAddr::new(addr.to_ipv6_mapped().into(), port),
+                IpAddr::V4(addr) => SocketAddr::new(addr.into(), port),
+                IpAddr::V6(_) if ipv6 => SocketAddr::new(ip, port),
+                IpAddr::V6(_) => {
+                    trace!("not using IPv6 nat candidate for IPv4 socket");
+                    continue;
+                }
+            };
+            match self.open_path_ensure(remote, PathStatus::Backup, now) {
+                Ok((path_id, path_was_known)) if !path_was_known => {
+                    path_ids.push(path_id);
+                    probed_addresses.push(remote);
+                }
+                Ok((path_id, _)) => {
+                    trace!(%path_id, %remote,"nat traversal: path existed for remote")
+                }
+                Err(e) => {
+                    debug!(%remote, %e,"nat traversal: failed to probe remote");
+                    err.get_or_insert(e);
+                }
+            }
+        }
+
+        let hp_state = self.iroh_hp.as_mut().expect("previously validated");
+        hp_state
+            .set_round_path_ids(path_ids)
+            .expect("connection side validated");
+
+        Ok(probed_addresses)
     }
 }
 
@@ -5694,10 +6100,13 @@ impl ConnectionSide {
     fn remote_may_migrate(&self, state: &State) -> bool {
         match self {
             Self::Server { server_config } => server_config.migration,
-            Self::Client { .. } => match state {
-                State::Handshake(handshake) => handshake.allow_server_migration,
-                _ => false,
-            },
+            Self::Client { .. } => {
+                if let Some(hs) = state.as_handshake() {
+                    hs.allow_server_migration
+                } else {
+                    false
+                }
+            }
         }
     }
 
@@ -5874,83 +6283,6 @@ pub struct MultipathNotNegotiated {
     _private: (),
 }
 
-#[allow(unreachable_pub)] // fuzzing only
-#[derive(Clone)]
-pub enum State {
-    Handshake(state::Handshake),
-    Established,
-    Closed(state::Closed),
-    Draining,
-    /// Waiting for application to call close so we can dispose of the resources
-    Drained,
-}
-
-impl State {
-    fn closed<R: Into<Close>>(reason: R) -> Self {
-        Self::Closed(state::Closed {
-            reason: reason.into(),
-        })
-    }
-
-    fn is_handshake(&self) -> bool {
-        matches!(*self, Self::Handshake(_))
-    }
-
-    fn is_established(&self) -> bool {
-        matches!(*self, Self::Established)
-    }
-
-    fn is_closed(&self) -> bool {
-        matches!(*self, Self::Closed(_) | Self::Draining | Self::Drained)
-    }
-
-    fn is_drained(&self) -> bool {
-        matches!(*self, Self::Drained)
-    }
-}
-
-mod state {
-    use super::*;
-
-    #[allow(unreachable_pub)] // fuzzing only
-    #[derive(Clone)]
-    pub struct Handshake {
-        /// Whether the remote CID has been set by the peer yet
-        ///
-        /// Always set for servers
-        pub(super) rem_cid_set: bool,
-        /// Stateless retry token received in the first Initial by a server.
-        ///
-        /// Must be present in every Initial. Always empty for clients.
-        pub(super) expected_token: Bytes,
-        /// First cryptographic message
-        ///
-        /// Only set for clients
-        pub(super) client_hello: Option<Bytes>,
-        /// Whether the server address is allowed to migrate
-        ///
-        /// We allow the server to migrate during the handshake as long as we have not
-        /// received an authenticated handshake packet: it can send a response from a
-        /// different address than we sent the initial to.  This allows us to send the
-        /// initial packet over multiple paths - by means of an IPv6 ULA address that copies
-        /// the packets sent to it to multiple destinations - and accept one response.
-        ///
-        /// This is only ever set to true if for a client which hasn't yet received an
-        /// authenticated handshake packet.  It is set back to false in
-        /// [`Connection::on_packet_authenticated`].
-        ///
-        /// THIS IS NOT RFC 9000 COMPLIANT!  A server is not allowed to migrate addresses,
-        /// other than using the preferred-address transport parameter.
-        pub(super) allow_server_migration: bool,
-    }
-
-    #[allow(unreachable_pub)] // fuzzing only
-    #[derive(Clone)]
-    pub struct Closed {
-        pub(super) reason: Close,
-    }
-}
-
 /// Events of interest to the application
 #[derive(Debug)]
 pub enum Event {
@@ -5973,6 +6305,8 @@ pub enum Event {
     DatagramsUnblocked,
     /// (Multi)Path events
     Path(PathEvent),
+    /// Iroh's nat traversal events
+    NatTraversal(iroh_hp::Event),
 }
 
 impl From<PathEvent> for Event {
