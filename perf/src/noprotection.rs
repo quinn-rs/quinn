@@ -64,7 +64,7 @@ impl NoProtectionServerConfig {
 
 // forward all calls to inner except those related to packet encryption/decryption
 impl crypto::Session for NoProtectionSession {
-    fn initial_keys(&self, dst_cid: &ConnectionId, side: Side) -> crypto::Keys {
+    fn initial_keys(&self, dst_cid: ConnectionId, side: Side) -> crypto::Keys {
         self.inner.initial_keys(dst_cid, side)
     }
 
@@ -115,7 +115,7 @@ impl crypto::Session for NoProtectionSession {
         Some(Self::wrap_packet_keys(keys))
     }
 
-    fn is_valid_retry(&self, orig_dst_cid: &ConnectionId, header: &[u8], payload: &[u8]) -> bool {
+    fn is_valid_retry(&self, orig_dst_cid: ConnectionId, header: &[u8], payload: &[u8]) -> bool {
         self.inner.is_valid_retry(orig_dst_cid, header, payload)
     }
 
@@ -149,12 +149,12 @@ impl crypto::ServerConfig for NoProtectionServerConfig {
     fn initial_keys(
         &self,
         version: u32,
-        dst_cid: &ConnectionId,
+        dst_cid: ConnectionId,
     ) -> Result<crypto::Keys, crypto::UnsupportedVersion> {
         self.inner.initial_keys(version, dst_cid)
     }
 
-    fn retry_tag(&self, version: u32, orig_dst_cid: &ConnectionId, packet: &[u8]) -> [u8; 16] {
+    fn retry_tag(&self, version: u32, orig_dst_cid: ConnectionId, packet: &[u8]) -> [u8; 16] {
         self.inner.retry_tag(version, orig_dst_cid, packet)
     }
 

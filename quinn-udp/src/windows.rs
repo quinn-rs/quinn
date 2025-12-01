@@ -4,12 +4,11 @@ use std::{
     net::{IpAddr, Ipv4Addr},
     os::windows::io::AsRawSocket,
     ptr,
-    sync::Mutex,
+    sync::{LazyLock, Mutex},
     time::Instant,
 };
 
 use libc::{c_int, c_uint};
-use once_cell::sync::Lazy;
 use windows_sys::Win32::Networking::WinSock;
 
 use crate::{
@@ -225,6 +224,7 @@ impl UdpSocketState {
         // Decode control messages (PKTINFO and ECN)
         let mut ecn_bits = 0;
         let mut dst_ip = None;
+        let mut interface_index = None;
         let mut stride = len;
 
         let cmsg_iter = unsafe { cmsg::Iter::new(&wsa_msg) };
@@ -238,12 +238,14 @@ impl UdpSocketState {
                     // Addr is stored in big endian format
                     let ip4 = Ipv4Addr::from(u32::from_be(unsafe { pktinfo.ipi_addr.S_un.S_addr }));
                     dst_ip = Some(ip4.into());
+                    interface_index = Some(pktinfo.ipi_ifindex);
                 }
                 (WinSock::IPPROTO_IPV6, WinSock::IPV6_PKTINFO) => {
                     let pktinfo =
                         unsafe { cmsg::decode::<WinSock::IN6_PKTINFO, WinSock::CMSGHDR>(cmsg) };
                     // Addr is stored in big endian format
                     dst_ip = Some(IpAddr::from(unsafe { pktinfo.ipi6_addr.u.Byte }));
+                    interface_index = Some(pktinfo.ipi6_ifindex);
                 }
                 (WinSock::IPPROTO_IP, WinSock::IP_ECN) => {
                     // ECN is a C integer https://learn.microsoft.com/en-us/windows/win32/winsock/winsock-ecn
@@ -268,6 +270,7 @@ impl UdpSocketState {
             addr: addr.unwrap(),
             ecn: EcnCodepoint::from_bits(ecn_bits as u8),
             dst_ip,
+            interface_index,
         };
         Ok(1)
     }
@@ -443,8 +446,7 @@ pub(crate) const BATCH_SIZE: usize = 1;
 const CMSG_LEN: usize = 128;
 const OPTION_ON: u32 = 1;
 
-// FIXME this could use [`std::sync::OnceLock`] once the MSRV is bumped to 1.70 and upper
-static WSARECVMSG_PTR: Lazy<WinSock::LPFN_WSARECVMSG> = Lazy::new(|| {
+static WSARECVMSG_PTR: LazyLock<WinSock::LPFN_WSARECVMSG> = LazyLock::new(|| {
     let s = unsafe { WinSock::socket(WinSock::AF_INET as _, WinSock::SOCK_DGRAM as _, 0) };
     if s == WinSock::INVALID_SOCKET {
         debug!(
@@ -492,7 +494,7 @@ static WSARECVMSG_PTR: Lazy<WinSock::LPFN_WSARECVMSG> = Lazy::new(|| {
     wsa_recvmsg_ptr
 });
 
-static MAX_GSO_SEGMENTS: Lazy<usize> = Lazy::new(|| {
+static MAX_GSO_SEGMENTS: LazyLock<usize> = LazyLock::new(|| {
     let socket = match std::net::UdpSocket::bind("[::]:0")
         .or_else(|_| std::net::UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)))
     {

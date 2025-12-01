@@ -1,4 +1,4 @@
-use std::fmt;
+use std::{fmt, sync::Arc};
 
 use bytes::{Buf, BufMut};
 
@@ -9,7 +9,12 @@ use crate::{
 };
 
 /// Transport-level errors occur when a peer violates the protocol specification
-#[derive(Debug, Clone, Eq, PartialEq)]
+///
+/// # Note
+///
+/// The `PartialEq` implementation for this type performs comparison on the `code` field only
+#[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct Error {
     /// Type of error
     pub code: Code,
@@ -17,7 +22,29 @@ pub struct Error {
     pub frame: Option<frame::FrameType>,
     /// Human-readable explanation of the reason
     pub reason: String,
+    /// An underlying crypto (e.g. TLS) layer error
+    pub crypto: Option<Arc<dyn std::error::Error + Send + Sync>>,
 }
+
+impl Error {
+    /// Construct an error with a code and a reason
+    pub fn new(code: Code, reason: String) -> Self {
+        Self {
+            code,
+            frame: None,
+            reason,
+            crypto: None,
+        }
+    }
+}
+
+impl PartialEq for Error {
+    fn eq(&self, other: &Self) -> bool {
+        self.code == other.code
+    }
+}
+
+impl Eq for Error {}
 
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -40,6 +67,7 @@ impl From<Code> for Error {
             code: x,
             frame: None,
             reason: "".to_string(),
+            crypto: None,
         }
     }
 }
@@ -92,6 +120,7 @@ macro_rules! errors {
                     code: Code::$name,
                     frame: None,
                     reason: reason.into(),
+                    crypto: None,
                 }
             }
             )*
