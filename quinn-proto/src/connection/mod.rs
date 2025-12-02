@@ -66,7 +66,7 @@ mod packet_crypto;
 use packet_crypto::{PrevCrypto, ZeroRttCrypto};
 
 mod paths;
-pub use paths::{ClosedPath, PathEvent, PathId, PathStatus, RttEstimator};
+pub use paths::{ClosedPath, PathEvent, PathId, PathStatus, RttEstimator, SetPathStatusError};
 use paths::{PathData, PathState};
 
 pub(crate) mod qlog;
@@ -708,8 +708,13 @@ impl Connection {
         &mut self,
         path_id: PathId,
         status: PathStatus,
-    ) -> Result<PathStatus, ClosedPath> {
-        let path = self.path_mut(path_id).ok_or(ClosedPath { _private: () })?;
+    ) -> Result<PathStatus, SetPathStatusError> {
+        if !self.is_multipath_negotiated() {
+            return Err(SetPathStatusError::MultipathNotNegotiated);
+        }
+        let path = self
+            .path_mut(path_id)
+            .ok_or(SetPathStatusError::ClosedPath)?;
         let prev = match path.status.local_update(status) {
             Some(prev) => {
                 self.spaces[SpaceId::Data]

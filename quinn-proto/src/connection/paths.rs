@@ -820,6 +820,17 @@ pub enum PathEvent {
     },
 }
 
+/// Error from setting path status
+#[derive(Debug, Error, Clone, PartialEq, Eq)]
+pub enum SetPathStatusError {
+    /// Error indicating that a path has not been opened or has already been abandoned
+    #[error("closed path")]
+    ClosedPath,
+    /// Error indicating that this operation requires multipath to be negotiated whereas it hasn't been
+    #[error("multipath not negotiated")]
+    MultipathNotNegotiated,
+}
+
 /// Error indicating that a path has not been opened or has already been abandoned
 #[derive(Debug, Default, Error, Clone, PartialEq, Eq)]
 #[error("closed path")]
