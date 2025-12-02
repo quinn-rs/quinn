@@ -169,6 +169,7 @@ impl<'a, 'b> PacketBuilder<'a, 'b> {
             Some(exact_number),
             space_id,
             space_id == SpaceId::Data && conn.spaces[SpaceId::Data].crypto.is_none(),
+            path_id,
         );
 
         Some(Self {

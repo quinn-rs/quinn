@@ -209,6 +209,7 @@ impl QlogSentPacket {
         pn: Option<u64>,
         space: SpaceId,
         is_0rtt: bool,
+        path_id: PathId,
     ) {
         #[cfg(feature = "qlog")]
         {
@@ -216,6 +217,7 @@ impl QlogSentPacket {
             self.inner.header.dcid = Some(stringify_cid(header.dst_cid()));
             self.inner.header.packet_number = pn;
             self.inner.header.packet_type = packet_type(space, is_0rtt);
+            self.inner.header.path_id = Some(path_id.as_u32() as u64);
         }
     }
 
@@ -355,7 +357,7 @@ impl QlogRecvPacket {
     }
 
     /// Adds info from the packet header.
-    pub(crate) fn header(&mut self, header: &Header, pn: Option<u64>) {
+    pub(crate) fn header(&mut self, header: &Header, pn: Option<u64>, path_id: PathId) {
         #[cfg(feature = "qlog")]
         {
             let is_0rtt = !header.is_1rtt();
@@ -363,6 +365,7 @@ impl QlogRecvPacket {
             self.inner.header.dcid = Some(stringify_cid(header.dst_cid()));
             self.inner.header.packet_number = pn;
             self.inner.header.packet_type = packet_type(header.space(), is_0rtt);
+            self.inner.header.path_id = Some(path_id.as_u32() as u64);
         }
     }
 

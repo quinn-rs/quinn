@@ -3229,7 +3229,7 @@ impl Connection {
         let packet: Packet = packet.into();
 
         let mut qlog = QlogRecvPacket::new(len);
-        qlog.header(&packet.header, Some(packet_number));
+        qlog.header(&packet.header, Some(packet_number), path_id);
 
         self.process_decrypted_packet(
             now,
@@ -3568,7 +3568,7 @@ impl Connection {
                 }
             }
             Ok((packet, number)) => {
-                qlog.header(&packet.header, number);
+                qlog.header(&packet.header, number, path_id);
                 let span = match number {
                     Some(pn) => trace_span!("recv", space = ?packet.header.space(), pn),
                     None => trace_span!("recv", space = ?packet.header.space()),
