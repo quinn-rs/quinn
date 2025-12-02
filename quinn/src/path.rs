@@ -6,7 +6,7 @@ use std::task::{Context, Poll, ready};
 use std::time::Duration;
 
 use proto::{
-    ClosePathError, NotOpen, ConnectionError, OpenPathError, PathEvent, PathId, PathStatus,
+    ClosePathError, ConnectionError, NotOpen, OpenPathError, PathEvent, PathId, PathStatus,
     SetPathStatusError, VarInt,
 };
 use tokio::sync::{oneshot, watch};
