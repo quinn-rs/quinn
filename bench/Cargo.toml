@@ -16,3 +16,10 @@ rustls = { workspace = true }
 tokio = { workspace = true, features = ["rt"] }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
+
+
+[features]
+default = []
+
+# Use private Apple APIs to send multiple packets in a single syscall.
+fast-apple-datapath = ["quinn/fast-apple-datapath"]

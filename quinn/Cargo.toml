@@ -44,6 +44,8 @@ tracing-log = ["tracing/log", "proto/tracing-log", "udp/tracing-log"]
 rustls-log = ["rustls?/logging"]
 # Enable qlog support
 qlog = ["proto/qlog"]
+# Use private Apple APIs to send multiple packets in a single syscall.
+fast-apple-datapath = ["udp/fast-apple-datapath"]
 
 # Internal (PRIVATE!) features used to aid testing.
 # Don't rely on these whatsoever. They may disappear at any time.
