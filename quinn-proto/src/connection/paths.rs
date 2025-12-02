@@ -5,7 +5,7 @@ use thiserror::Error;
 use tracing::{debug, trace};
 
 use super::{
-    OpenPathError, PathStats,
+    PathError, PathStats,
     mtud::MtuDiscovery,
     pacing::Pacer,
     spaces::{PacketNumberSpace, SentPacket},
@@ -797,7 +797,7 @@ pub enum PathEvent {
         /// Path for which the error occurred
         id: PathId,
         /// The error that occurred
-        error: OpenPathError,
+        error: PathError,
     },
     /// The remote changed the status of the path
     ///
@@ -824,8 +824,8 @@ pub enum PathEvent {
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum SetPathStatusError {
     /// Error indicating that a path has not been opened or has already been abandoned
-    #[error("path not open")]
-    NotOpen,
+    #[error("closed path")]
+    ClosedPath,
     /// Error indicating that this operation requires multipath to be negotiated whereas it hasn't been
     #[error("multipath not negotiated")]
     MultipathNotNegotiated,
@@ -833,8 +833,8 @@ pub enum SetPathStatusError {
 
 /// Error indicating that a path has not been opened or has already been abandoned
 #[derive(Debug, Default, Error, Clone, PartialEq, Eq)]
-#[error("path not open")]
-pub struct NotOpen {
+#[error("closed path")]
+pub struct ClosedPath {
     pub(super) _private: (),
 }
 

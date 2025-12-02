@@ -14,7 +14,7 @@ use crate::{
     EndpointConfig, Instant, LOC_CID_COUNT, PathId, PathStatus, RandomConnectionIdGenerator,
     ServerConfig, TransportConfig, cid_queue::CidQueue,
 };
-use crate::{Event, OpenPathError, PathEvent};
+use crate::{Event, PathError, PathEvent};
 
 use super::util::{min_opt, subscribe};
 use super::{Pair, client_config, server_config};
@@ -509,7 +509,7 @@ fn open_path_validation_fails_server_side() {
     let client_conn = pair.client_conn_mut(client_ch);
     assert_matches!(
         client_conn.poll().unwrap(),
-        Event::Path(crate::PathEvent::LocallyClosed { id, error: OpenPathError::ValidationFailed  }) if id == path_id
+        Event::Path(crate::PathEvent::LocallyClosed { id, error: PathError::ValidationFailed  }) if id == path_id
     );
 
     let server_conn = pair.server_conn_mut(client_ch);
@@ -541,7 +541,7 @@ fn open_path_validation_fails_client_side() {
 
     let server_conn = pair.server_conn_mut(client_ch);
     assert_matches!(server_conn.poll().unwrap(),
-        Event::Path(crate::PathEvent::LocallyClosed { id, error: OpenPathError::ValidationFailed  }) if id == path_id
+        Event::Path(crate::PathEvent::LocallyClosed { id, error: PathError::ValidationFailed  }) if id == path_id
     );
 }
 

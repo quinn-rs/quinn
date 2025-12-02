@@ -43,8 +43,8 @@ pub use bloom_token_log::BloomTokenLog;
 
 mod connection;
 pub use crate::connection::{
-    Chunk, Chunks, ClosePathError, ClosedStream, Connection, ConnectionError, ConnectionStats,
-    Datagrams, Event, FinishError, FrameStats, NotOpen, OpenPathError, PathEvent, PathId,
+    Chunk, Chunks, ClosePathError, ClosedPath, ClosedStream, Connection, ConnectionError,
+    ConnectionStats, Datagrams, Event, FinishError, FrameStats, PathError, PathEvent, PathId,
     PathStats, PathStatus, ReadError, ReadableError, RecvStream, RttEstimator, SendDatagramError,
     SendStream, SetPathStatusError, ShouldTransmit, StreamEvent, Streams, UdpStats, WriteError,
     Written,
