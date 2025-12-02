@@ -1,0 +1,298 @@
+name: CI
+
+on:
+  pull_request:
+    types: ["labeled", "unlabeled", "opened", "synchronize", "reopened"]
+  merge_group:
+  push:
+    branches:
+      - main-iroh
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  RUST_BACKTRACE: 1
+  RUSTFLAGS: -Dwarnings
+  RUSTDOCFLAGS: -Dwarnings
+  MSRV: "1.83"
+  SCCACHE_CACHE_SIZE: "10G"
+
+jobs:
+  tests:
+    name: CI Test Suite
+    if: "github.event_name != 'pull_request' || ! contains(github.event.pull_request.labels.*.name, 'flaky-test')"
+    uses: "./.github/workflows/tests.yaml"
+
+  test-aws-lc-rs:
+    name: Test aws-lc-rs crypto backend
+    if: "github.event_name != 'pull_request' || ! contains(github.event.pull_request.labels.*.name, 'flaky-test')"
+    timeout-minutes: 30
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # Go is required for FIPS builds
+      - uses: actions/setup-go@v5
+        with:
+          go-version: 'stable'
+      # Prevent feature unification from selecting *ring* as the crypto provider
+      - run: RUST_BACKTRACE=1 cargo test --locked --manifest-path quinn-proto/Cargo.toml --no-default-features --features rustls-aws-lc-rs
+      - run: RUST_BACKTRACE=1 cargo test --locked --manifest-path quinn/Cargo.toml --no-default-features --features rustls-aws-lc-rs,runtime-tokio,__rustls-post-quantum-test
+      # FIPS
+      - run: RUST_BACKTRACE=1 cargo test --locked --manifest-path quinn-proto/Cargo.toml --no-default-features --features rustls-aws-lc-rs-fips
+      - run: RUST_BACKTRACE=1 cargo test --locked --manifest-path quinn/Cargo.toml --no-default-features --features rustls-aws-lc-rs-fips,runtime-tokio,__rustls-post-quantum-test
+
+  wasm_test:
+    name: Build & test wasm32
+    if: "github.event_name != 'pull_request' || ! contains(github.event.pull_request.labels.*.name, 'flaky-test')"
+    timeout-minutes: 30
+    runs-on: [self-hosted, linux, X64]
+    env:
+      CC_wasm32_unknown_unknown: clang
+      AR_wasm32_unknown_unknown: llvm-ar
+      RUSTFLAGS: '--cfg getrandom_backend="wasm_js"'
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install LLVM tools for wasm
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y llvm clang lld
+
+      - uses: dtolnay/rust-toolchain@stable
+      - run: rustup target add wasm32-unknown-unknown
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 20
+      - uses: bytecodealliance/actions/wasm-tools/setup@v1
+      - uses: cargo-bins/cargo-binstall@main
+
+      - name: wasm32 test build (iroh-quinn-proto)
+        run: cargo test --locked -p iroh-quinn-proto --target wasm32-unknown-unknown --no-run
+
+      - name: wasm32 check (iroh-quinn-udp)
+        run: cargo check --locked -p iroh-quinn-udp --target wasm32-unknown-unknown --no-default-features --features=tracing,log
+
+      - name: wasm32 build (iroh-quinn)
+        run: cargo rustc --locked -p iroh-quinn --target wasm32-unknown-unknown --no-default-features --features=tracing-log,platform-verifier,rustls-ring --crate-type=cdylib
+
+      # If the Wasm file contains any 'import "env"' declarations, then
+      # some non-Wasm-compatible code made it into the final code.
+      - name: Ensure no 'import "env"' in iroh-quinn-proto Wasm
+        run: |
+          ! wasm-tools print --skeleton target/wasm32-unknown-unknown/debug/deps/iroh_quinn_proto-*.wasm | grep 'import "env"'
+      - name: Ensure no 'import "env"' in iroh-quinn Wasm
+        run: |
+          ! wasm-tools print --skeleton target/wasm32-unknown-unknown/debug/iroh_quinn.wasm | grep 'import "env"'
+
+      # Match the version of wasm-bindgen used in Cargo.lock
+      - run: cargo binstall wasm-bindgen-cli@0.2.106 --locked --no-confirm
+      - name: wasm32 test (iroh-quinn-proto)
+        run: cargo test --locked -p iroh-quinn-proto --target wasm32-unknown-unknown
+
+  android_build:
+    name: Android Build Only
+    if: "github.event_name != 'pull_request' || ! contains(github.event.pull_request.labels.*.name, 'flaky-test')"
+    timeout-minutes: 30
+    runs-on: [self-hosted, linux, X64]
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - aarch64-linux-android
+          - armv7-linux-androideabi
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          target: ${{ matrix.target }}
+
+      - name: Install rustup target
+        run: rustup target add ${{ matrix.target }}
+
+      - name: Setup Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: "temurin"
+          java-version: "17"
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Setup Android NDK
+        uses: arqu/setup-ndk@main
+        id: setup-ndk
+        with:
+          ndk-version: r23
+          add-to-path: true
+
+      - name: Build
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+        run: |
+          cargo install --version 3.5.4 cargo-ndk
+          cargo ndk --target ${{ matrix.target }} build
+
+  android_emulator_test:
+    name: Android Emulator Tests
+    if: "github.event_name != 'pull_request' || ! contains(github.event.pull_request.labels.*.name, 'flaky-test')"
+    timeout-minutes: 45
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        api-level: [28]
+        target: [x86_64-linux-android]
+        emulator-arch: [x86_64]
+    env:
+      TARGET: ${{ matrix.target }}
+      API_LEVEL: ${{ matrix.api-level }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          target: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install cargo-ndk
+        run: cargo install cargo-ndk
+
+      - name: Build unit tests for Android
+        run: cargo ndk -t ${{ matrix.target }} test --no-run
+
+      - name: Enable KVM group perms
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Set up Android Emulator and run tests
+        env:
+          TARGET: ${{ matrix.target }}
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: ${{ matrix.api-level }}
+          arch: ${{ matrix.emulator-arch }}
+          script: .github/workflows/rust-android-run-tests-on-emulator.sh
+
+  fuzz_build:
+    name: Fuzz build check
+    if: "github.event_name != 'pull_request' || ! contains(github.event.pull_request.labels.*.name, 'flaky-test')"
+    timeout-minutes: 30
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@nightly
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz
+      - name: Build fuzz targets
+        run: cargo +nightly fuzz build
+
+  check_fmt:
+    timeout-minutes: 30
+    name: Checking fmt
+    runs-on: ubuntu-latest
+    env:
+      RUSTC_WRAPPER: "sccache"
+      SCCACHE_GHA_ENABLED: "on"
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - uses: mozilla-actions/sccache-action@v0.0.9
+      - uses: taiki-e/install-action@cargo-make
+      - run: cargo make format-check
+
+  check_docs:
+    timeout-minutes: 30
+    name: Checking docs
+    runs-on: ubuntu-latest
+    env:
+      RUSTC_WRAPPER: "sccache"
+      SCCACHE_GHA_ENABLED: "on"
+      RUSTDOCFLAGS: --cfg docsrs
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2025-10-09
+      - name: Install sccache
+        uses: mozilla-actions/sccache-action@v0.0.9
+
+      - name: Docs
+        run: cargo doc --workspace --all-features --no-deps --document-private-items
+
+  clippy_check:
+    timeout-minutes: 30
+    name: Clippy
+    runs-on: ubuntu-latest
+    env:
+      RUSTC_WRAPPER: "sccache"
+      SCCACHE_GHA_ENABLED: "on"
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - name: Install sccache
+        uses: mozilla-actions/sccache-action@v0.0.9
+
+      - name: clippy check (all features)
+        run: cargo clippy --workspace --all-features --all-targets --lib --bins --tests --benches --examples -- -D warnings
+
+      - name: clippy check (no features)
+        run: cargo clippy --workspace --no-default-features --all-targets --lib --bins --tests --benches --examples -- -D warnings
+
+      - name: clippy check (default features)
+        run: cargo clippy --workspace --all-targets --lib --bins --tests --benches --examples -- -D warnings
+
+  msrv:
+    if: "github.event_name != 'pull_request' || ! contains(github.event.pull_request.labels.*.name, 'flaky-test')"
+    timeout-minutes: 30
+    name: Minimal Supported Rust Version
+    runs-on: ubuntu-latest
+    env:
+      RUSTC_WRAPPER: "sccache"
+      SCCACHE_GHA_ENABLED: "on"
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.MSRV }}
+      - name: Install sccache
+        uses: mozilla-actions/sccache-action@v0.0.9
+
+      - name: Check MSRV all features
+        run: |
+          cargo +$MSRV check --workspace --all-targets
+
+  cargo_deny:
+    timeout-minutes: 30
+    name: cargo deny
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          arguments: --workspace --all-features
+          command: check
+          command-arguments: "-Dwarnings"
+
+  codespell:
+    timeout-minutes: 30
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - run: pip install --user codespell[toml]
+      - run: codespell --ignore-words-list=ans,atmost,crate,inout,ser,worl --skip=CHANGELOG.md,*.lock
