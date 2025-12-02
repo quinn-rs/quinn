@@ -1070,7 +1070,7 @@ impl Connection {
                         trace!(
                             ?space_id,
                             %path_id,
-                            ?next_path_id,
+                            %next_path_id,
                             "nothing to send on path"
                         );
                         path_id = *next_path_id;
