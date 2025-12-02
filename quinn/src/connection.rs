@@ -26,7 +26,7 @@ use crate::{
 };
 use proto::{
     ConnectionError, ConnectionHandle, ConnectionStats, Dir, EndpointEvent, Side, StreamEvent,
-    StreamId, congestion::Controller,
+    StreamId, TransportError, TransportErrorCode, congestion::Controller,
 };
 
 /// In-progress connection attempt future
@@ -1109,8 +1109,8 @@ impl State {
                     self.close(error_code, reason, shared);
                 }
                 Poll::Ready(None) => {
-                    return Err(ConnectionError::TransportError(proto::TransportError::new(
-                        proto::TransportErrorCode::INTERNAL_ERROR,
+                    return Err(ConnectionError::TransportError(TransportError::new(
+                        TransportErrorCode::INTERNAL_ERROR,
                         "endpoint driver future was dropped".to_string(),
                     )));
                 }
