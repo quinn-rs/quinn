@@ -89,13 +89,14 @@ impl Pacer {
         }
 
         let elapsed_rtts = time_elapsed.as_secs_f64() / smoothed_rtt.as_secs_f64();
-        let new_tokens = window as f64 * 1.25 * elapsed_rtts;
-        self.tokens = self
-            .tokens
-            .saturating_add(new_tokens as _)
-            .min(self.capacity);
+        let new_tokens = (window as f64 * 1.25 * elapsed_rtts).round() as u64;
+        self.tokens = self.tokens.saturating_add(new_tokens).min(self.capacity);
 
-        self.prev = now;
+        // In the unlikely event that we're getting polled faster than tokens are generated, ensure
+        // that `elapsed_rtts` can grow until we make progress.
+        if new_tokens > 0 {
+            self.prev = now;
+        }
 
         // if we can already send a packet, there is no need for delay
         if self.tokens >= bytes_to_send {
@@ -109,7 +110,7 @@ impl Pacer {
 
         // divisions come before multiplications to prevent overflow
         // this is the time at which the pacing window becomes empty
-        Some(self.prev + (unscaled_delay / 5) * 4)
+        Some(now + (unscaled_delay / 5) * 4)
     }
 }
 
@@ -128,23 +129,34 @@ impl Pacer {
 /// Too long burst intervals make pacing less effective.
 fn optimal_capacity(smoothed_rtt: Duration, window: u64, mtu: u16) -> u64 {
     let rtt = smoothed_rtt.as_nanos().max(1);
+    let mtu = u64::from(mtu);
 
-    let capacity = ((window as u128 * BURST_INTERVAL_NANOS) / rtt) as u64;
+    let target_capacity = ((window as u128 * TARGET_BURST_INTERVAL.as_nanos()) / rtt) as u64;
+    // Never restrict capacity below one MTU.
+    let max_capacity = Ord::max(
+        ((window as u128 * MAX_BURST_INTERVAL.as_nanos()) / rtt) as u64,
+        mtu,
+    );
 
-    // Small bursts are less efficient (no GSO), could increase latency and don't effectively
-    // use the channel's buffer capacity. Large bursts might block the connection on sending.
-    capacity.clamp(MIN_BURST_SIZE * mtu as u64, MAX_BURST_SIZE * mtu as u64)
+    // Batch the greater of `TARGET_BURST_INTERVAL` or `MIN_BURST_SIZE` worth of traffic at a
+    // time. To avoid inducing excessive latency, limit that result to at most `MAX_BURST_INTERVAL`
+    // worth of traffic.
+    Ord::min(
+        max_capacity,
+        target_capacity.clamp(MIN_BURST_SIZE * mtu, MAX_BURST_SIZE * mtu),
+    )
 }
 
-/// The burst interval
-///
-/// The capacity will we refilled in 4/5 of that time.
-/// 2ms is chosen here since framework timers might have 1ms precision.
-/// If kernel-level pacing is supported later a higher time here might be
-/// more applicable.
-const BURST_INTERVAL_NANOS: u128 = 2_000_000; // 2ms
+/// Period of traffic to batch together on a reasonably fast connection
+const TARGET_BURST_INTERVAL: Duration = Duration::from_millis(2);
 
-/// Allows some usage of GSO, and doesn't slow down the handshake.
+/// Maximum period of traffic to batch together on a slow connection
+///
+/// Takes precedence over [`MIN_BURST_SIZE`].
+const MAX_BURST_INTERVAL: Duration = Duration::from_millis(10);
+
+/// Minimum number of datagrams to batch together, so long as we won't have to wait for more than
+/// [`MAX_BURST_INTERVAL`]
 const MIN_BURST_SIZE: u64 = 10;
 
 /// Creating 256 packets took 1ms in a benchmark, so larger bursts don't make sense.
@@ -187,7 +199,7 @@ mod tests {
         let pacer = Pacer::new(rtt, window, mtu, now);
         assert_eq!(
             pacer.capacity,
-            (window as u128 * BURST_INTERVAL_NANOS / rtt.as_nanos()) as u64
+            (window as u128 * TARGET_BURST_INTERVAL.as_nanos() / rtt.as_nanos()) as u64
         );
         assert_eq!(pacer.tokens, pacer.capacity);
 
@@ -196,7 +208,7 @@ mod tests {
         assert_eq!(pacer.tokens, pacer.capacity);
 
         let pacer = Pacer::new(rtt, 1, mtu, now);
-        assert_eq!(pacer.capacity, MIN_BURST_SIZE * mtu as u64);
+        assert_eq!(pacer.capacity, mtu as u64);
         assert_eq!(pacer.tokens, pacer.capacity);
     }
 
@@ -210,7 +222,7 @@ mod tests {
         let mut pacer = Pacer::new(rtt, window, mtu, now);
         assert_eq!(
             pacer.capacity,
-            (window as u128 * BURST_INTERVAL_NANOS / rtt.as_nanos()) as u64
+            (window as u128 * TARGET_BURST_INTERVAL.as_nanos() / rtt.as_nanos()) as u64
         );
         assert_eq!(pacer.tokens, pacer.capacity);
         let initial_tokens = pacer.tokens;
@@ -218,21 +230,21 @@ mod tests {
         pacer.delay(rtt, mtu as u64, mtu, window * 2, now);
         assert_eq!(
             pacer.capacity,
-            (2 * window as u128 * BURST_INTERVAL_NANOS / rtt.as_nanos()) as u64
+            (2 * window as u128 * TARGET_BURST_INTERVAL.as_nanos() / rtt.as_nanos()) as u64
         );
         assert_eq!(pacer.tokens, initial_tokens);
 
         pacer.delay(rtt, mtu as u64, mtu, window / 2, now);
         assert_eq!(
             pacer.capacity,
-            (window as u128 / 2 * BURST_INTERVAL_NANOS / rtt.as_nanos()) as u64
+            (window as u128 / 2 * TARGET_BURST_INTERVAL.as_nanos() / rtt.as_nanos()) as u64
         );
         assert_eq!(pacer.tokens, initial_tokens / 2);
 
         pacer.delay(rtt, mtu as u64, mtu * 2, window, now);
         assert_eq!(
             pacer.capacity,
-            (window as u128 * BURST_INTERVAL_NANOS / rtt.as_nanos()) as u64
+            (window as u128 * TARGET_BURST_INTERVAL.as_nanos() / rtt.as_nanos()) as u64
         );
 
         pacer.delay(rtt, mtu as u64, 20_000, window, now);
@@ -259,16 +271,20 @@ mod tests {
             pacer.on_transmit(mtu);
         }
 
-        let pace_duration = Duration::from_nanos((BURST_INTERVAL_NANOS * 4 / 5) as u64);
+        let pace_duration = Duration::from_nanos((TARGET_BURST_INTERVAL.as_nanos() * 4 / 5) as u64);
 
-        assert_eq!(
-            pacer
-                .delay(rtt, mtu as u64, mtu, window, old_instant)
-                .expect("Send must be delayed")
-                .duration_since(old_instant),
-            pace_duration
+        let actual_delay = pacer
+            .delay(rtt, mtu as u64, mtu, window, old_instant)
+            .expect("Send must be delayed")
+            .duration_since(old_instant);
+
+        let diff = actual_delay.abs_diff(pace_duration);
+
+        // Allow up to 2ns difference due to rounding
+        assert!(
+            diff < Duration::from_nanos(2),
+            "expected ≈ {pace_duration:?}, got {actual_delay:?} (diff {diff:?})"
         );
-
         // Refill half of the tokens
         assert_eq!(
             pacer.delay(

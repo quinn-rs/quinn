@@ -25,6 +25,8 @@ const MAX_PATHS: u32 = 3;
 fn multipath_pair() -> (Pair, ConnectionHandle, ConnectionHandle) {
     let multipath_transport_cfg = Arc::new(TransportConfig {
         max_concurrent_multipath_paths: NonZeroU32::new(MAX_PATHS),
+        // Assume a low-latency connection so pacing doesn't interfere with the test
+        initial_rtt: Duration::from_millis(10),
         ..TransportConfig::default()
     });
     let server_cfg = Arc::new(ServerConfig {
@@ -50,6 +52,8 @@ fn non_zero_length_cids() {
     let _guard = subscribe();
     let multipath_transport_cfg = Arc::new(TransportConfig {
         max_concurrent_multipath_paths: NonZeroU32::new(3 as _),
+        // Assume a low-latency connection so pacing doesn't interfere with the test
+        initial_rtt: Duration::from_millis(10),
         ..TransportConfig::default()
     });
     let server_cfg = Arc::new(ServerConfig {
@@ -197,6 +201,8 @@ fn multipath_cid_rotation() {
     let server_cfg = ServerConfig {
         transport: Arc::new(TransportConfig {
             max_concurrent_multipath_paths: NonZeroU32::new(MAX_PATHS),
+            // Assume a low-latency connection so pacing doesn't interfere with the test
+            initial_rtt: Duration::from_millis(10),
             ..TransportConfig::default()
         }),
         ..server_config()
@@ -217,6 +223,8 @@ fn multipath_cid_rotation() {
     let client_cfg = ClientConfig {
         transport: Arc::new(TransportConfig {
             max_concurrent_multipath_paths: NonZeroU32::new(MAX_PATHS),
+            // Assume a low-latency connection so pacing doesn't interfere with the test
+            initial_rtt: Duration::from_millis(10),
             ..TransportConfig::default()
         }),
         ..client_config()
@@ -306,6 +314,8 @@ fn issue_max_path_id() {
     // We enable multipath but initially do not allow any paths to be opened.
     let multipath_transport_cfg = Arc::new(TransportConfig {
         max_concurrent_multipath_paths: NonZeroU32::new(1),
+        // Assume a low-latency connection so pacing doesn't interfere with the test
+        initial_rtt: Duration::from_millis(10),
         ..TransportConfig::default()
     });
     let server_cfg = Arc::new(ServerConfig {
@@ -320,6 +330,8 @@ fn issue_max_path_id() {
     // The client is allowed to create more paths immediately.
     let client_multipath_transport_cfg = Arc::new(TransportConfig {
         max_concurrent_multipath_paths: NonZeroU32::new(MAX_PATHS),
+        // Assume a low-latency connection so pacing doesn't interfere with the test
+        initial_rtt: Duration::from_millis(10),
         ..TransportConfig::default()
     });
     let client_cfg = ClientConfig {
@@ -374,6 +386,8 @@ fn issue_max_path_id_reordered() {
     // We enable multipath but initially do not allow any paths to be opened.
     let multipath_transport_cfg = Arc::new(TransportConfig {
         max_concurrent_multipath_paths: NonZeroU32::new(1),
+        // Assume a low-latency connection so pacing doesn't interfere with the test
+        initial_rtt: Duration::from_millis(10),
         ..TransportConfig::default()
     });
     let server_cfg = Arc::new(ServerConfig {
@@ -388,6 +402,8 @@ fn issue_max_path_id_reordered() {
     // The client is allowed to create more paths immediately.
     let client_multipath_transport_cfg = Arc::new(TransportConfig {
         max_concurrent_multipath_paths: NonZeroU32::new(MAX_PATHS),
+        // Assume a low-latency connection so pacing doesn't interfere with the test
+        initial_rtt: Duration::from_millis(10),
         ..TransportConfig::default()
     });
     let client_cfg = ClientConfig {

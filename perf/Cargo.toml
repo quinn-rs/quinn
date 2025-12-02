@@ -17,17 +17,23 @@ default = ["json-output", "qlog"]
 json-output = ["serde", "serde_json"]
 # Enable qlog support
 qlog = ["quinn/qlog"]
+# Enable tokio-console https://github.com/tokio-rs/console
+# See https://docs.rs/console-subscriber/latest/console_subscriber/struct.Builder.html#method.with_default_env
+#    for useful environment variables in particular to change listen addr and port
+# WARNING: it requires special compilation flags
+#    RUSTFLAGS="--cfg tokio_unstable" cargo build -r -p perf -F tokio-console
+tokio-console = ["console-subscriber"]
 
 [dependencies]
 anyhow = { workspace = true }
 bytes = { workspace = true }
 clap = { workspace = true }
+console-subscriber = { version = "0.5.0", features = ["parking_lot"], optional = true }
 hdrhistogram = { workspace = true }
 quinn = { package = "iroh-quinn", path = "../quinn" }
 quinn-proto = { package = "iroh-quinn-proto", path = "../quinn-proto" }
 rcgen = { workspace = true }
 rustls = { workspace = true }
-rustls-pemfile = { workspace = true }
 serde = { workspace = true, optional = true  }
 serde_json = { workspace = true, optional = true }
 socket2 = { workspace = true }

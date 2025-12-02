@@ -27,7 +27,7 @@ pub mod rustls;
 /// A cryptographic session (commonly TLS)
 pub trait Session: Send + Sync + 'static {
     /// Create the initial set of keys given the client's initial destination ConnectionId
-    fn initial_keys(&self, dst_cid: &ConnectionId, side: Side) -> Keys;
+    fn initial_keys(&self, dst_cid: ConnectionId, side: Side) -> Keys;
 
     /// Get data negotiated during the handshake, if available
     ///
@@ -77,7 +77,7 @@ pub trait Session: Send + Sync + 'static {
     fn next_1rtt_keys(&mut self) -> Option<KeyPair<Box<dyn PacketKey>>>;
 
     /// Verify the integrity of a retry packet
-    fn is_valid_retry(&self, orig_dst_cid: &ConnectionId, header: &[u8], payload: &[u8]) -> bool;
+    fn is_valid_retry(&self, orig_dst_cid: ConnectionId, header: &[u8], payload: &[u8]) -> bool;
 
     /// Fill `output` with `output.len()` bytes of keying material derived
     /// from the [Session]'s secrets, using `label` and `context` for domain
@@ -123,16 +123,13 @@ pub trait ClientConfig: Send + Sync {
 /// Server-side configuration for the crypto protocol
 pub trait ServerConfig: Send + Sync {
     /// Create the initial set of keys given the client's initial destination ConnectionId
-    fn initial_keys(
-        &self,
-        version: u32,
-        dst_cid: &ConnectionId,
-    ) -> Result<Keys, UnsupportedVersion>;
+    fn initial_keys(&self, version: u32, dst_cid: ConnectionId)
+    -> Result<Keys, UnsupportedVersion>;
 
     /// Generate the integrity tag for a retry packet
     ///
     /// Never called if `initial_keys` rejected `version`.
-    fn retry_tag(&self, version: u32, orig_dst_cid: &ConnectionId, packet: &[u8]) -> [u8; 16];
+    fn retry_tag(&self, version: u32, orig_dst_cid: ConnectionId, packet: &[u8]) -> [u8; 16];
 
     /// Start a server session with this configuration
     ///
