@@ -979,7 +979,7 @@ impl Connection {
                         .path_cids_blocked
                         .push(path_id);
                 } else {
-                    trace!(?path_id, "remote CIDs retired for abandoned path");
+                    trace!(%path_id, "remote CIDs retired for abandoned path");
                 }
 
                 match self.paths.keys().find(|&&next| next > path_id) {
@@ -1002,7 +1002,7 @@ impl Connection {
                         // Nothing more to send.
                         trace!(
                             ?space_id,
-                            ?path_id,
+                            %path_id,
                             "no CIDs to send on path, no more paths"
                         );
                         break;
@@ -1071,7 +1071,7 @@ impl Connection {
                         // See if this next path can send anything.
                         trace!(
                             ?space_id,
-                            ?path_id,
+                            %path_id,
                             ?next_path_id,
                             "nothing to send on path"
                         );
@@ -1092,7 +1092,7 @@ impl Connection {
                         // Nothing more to send.
                         trace!(
                             ?space_id,
-                            ?path_id,
+                            %path_id,
                             "nothing to send on path, no more paths"
                         );
                         break;
@@ -1561,7 +1561,7 @@ impl Connection {
                 .path_data(path_id)
                 .anti_amplification_blocked(transmit.len() as u64 + 1)
         {
-            trace!(?space_id, ?path_id, "blocked by anti-amplification");
+            trace!(?space_id, %path_id, "blocked by anti-amplification");
             return PathBlocked::AntiAmplification;
         }
 
@@ -1584,7 +1584,7 @@ impl Connection {
                 .set(Timer::PerPath(path_id, PathTimer::Pacing), delay);
             // Loss probes and CONNECTION_CLOSE should be subject to pacing, even though
             // they are not congestion controlled.
-            trace!(?space_id, ?path_id, "blocked by pacing");
+            trace!(?space_id, %path_id, "blocked by pacing");
             return PathBlocked::Pacing;
         }
 
@@ -1811,7 +1811,7 @@ impl Connection {
                                 break;
                             }
                             match self.local_cid_state.get_mut(&path_id) {
-                                None => error!(?path_id, "No local CID state for path"),
+                                None => error!(%path_id, "No local CID state for path"),
                                 Some(cid_state) => {
                                     // Update `retire_prior_to` field in NEW_CONNECTION_ID frame
                                     let num_new_cid = cid_state.on_cid_timeout().into();
@@ -2438,7 +2438,7 @@ impl Connection {
             .remove_in_flight(&info);
         let app_limited = self.app_limited;
         let path = self.path_data_mut(path_id);
-        if info.ack_eliciting && !path.challenges_sent.is_empty() {
+        if info.ack_eliciting && !path.is_validating_path() {
             // Only pass ACKs to the congestion controller if we are not validating the current
             // path, so as to ignore any ACKs from older paths still coming in.
             let rtt = path.rtt;
@@ -2501,7 +2501,7 @@ impl Connection {
         let (_, space) = match self.pto_time_and_space(now, path_id) {
             Some(x) => x,
             None => {
-                error!(?path_id, "PTO expired while unset");
+                error!(%path_id, "PTO expired while unset");
                 return;
             }
         };
@@ -2509,7 +2509,7 @@ impl Connection {
             in_flight = self.path_data(path_id).in_flight.bytes,
             count = self.path_data(path_id).pto_count,
             ?space,
-            ?path_id,
+            %path_id,
             "PTO fired"
         );
 
@@ -2648,7 +2648,7 @@ impl Connection {
 
     /// Drops the path state, declaring any remaining in-flight packets as lost
     fn drop_path_state(&mut self, path_id: PathId, now: Instant) {
-        trace!(?path_id, "dropping path state");
+        trace!(%path_id, "dropping path state");
         let path = self.path_data(path_id);
         let in_flight_mtu_probe = path.mtud.in_flight_mtu_probe();
 
@@ -2666,7 +2666,7 @@ impl Connection {
 
         if !lost_pns.is_empty() {
             trace!(
-                ?path_id,
+                %path_id,
                 count = lost_pns.len(),
                 lost_bytes = size_of_lost_packets,
                 "packets lost on path abandon"
@@ -2723,7 +2723,7 @@ impl Connection {
             path_stats.lost_packets += lost_packets.len() as u64;
             path_stats.lost_bytes += size_of_lost_packets;
             trace!(
-                ?path_id,
+                %path_id,
                 count = lost_packets.len(),
                 lost_bytes = size_of_lost_packets,
                 "packets lost",
@@ -3026,8 +3026,8 @@ impl Connection {
         }
         let space = self.spaces[space_id].for_path(path_id);
         space.pending_acks.insert_one(packet, now);
-        if packet >= space.rx_packet {
-            space.rx_packet = packet;
+        if packet >= space.rx_packet.unwrap_or_default() {
+            space.rx_packet = Some(packet);
             // Update outgoing spin bit, inverting iff we're the client
             self.spin = self.side.is_client() ^ spin;
         }
@@ -4491,7 +4491,7 @@ impl Connection {
                                 "PATH_CIDS_BLOCKED next sequence number larger than in local state",
                             ));
                         }
-                        debug!(?path_id, %next_seq, "received PATH_CIDS_BLOCKED");
+                        debug!(%path_id, %next_seq, "received PATH_CIDS_BLOCKED");
                     } else {
                         return Err(TransportError::PROTOCOL_VIOLATION(
                             "received PATH_CIDS_BLOCKED frame when not multipath was not negotiated",
@@ -4628,7 +4628,7 @@ impl Connection {
             self.close = true;
         }
 
-        if number == self.spaces[SpaceId::Data].for_path(path_id).rx_packet
+        if Some(number) == self.spaces[SpaceId::Data].for_path(path_id).rx_packet
             && !is_probing_packet
             && remote != self.path_data(path_id).remote
         {
@@ -4655,7 +4655,7 @@ impl Connection {
         remote: SocketAddr,
         observed_addr: Option<ObservedAddr>,
     ) {
-        trace!(%remote, ?path_id, "migration initiated");
+        trace!(%remote, %path_id, "migration initiated");
         self.path_counter = self.path_counter.wrapping_add(1);
         // TODO(@divma): conditions for path migration in multipath are very specific, check them
         // again to prevent path migrations that should actually create a new path
@@ -5095,7 +5095,7 @@ impl Connection {
             }
             .encode(buf);
             self.stats.frame_tx.path_abandon += 1;
-            trace!(?path_id, "PATH_ABANDON");
+            trace!(%path_id, "PATH_ABANDON");
             sent.retransmits
                 .get_or_create()
                 .path_abandon
@@ -5126,7 +5126,7 @@ impl Connection {
                     }
                     .encode(buf);
                     self.stats.frame_tx.path_available += 1;
-                    trace!(?path_id, %seq, "PATH_AVAILABLE")
+                    trace!(%path_id, %seq, "PATH_AVAILABLE")
                 }
                 PathStatus::Backup => {
                     frame::PathBackup {
@@ -5135,7 +5135,7 @@ impl Connection {
                     }
                     .encode(buf);
                     self.stats.frame_tx.path_backup += 1;
-                    trace!(?path_id, %seq, "PATH_BACKUP")
+                    trace!(%path_id, %seq, "PATH_BACKUP")
                 }
             }
         }
@@ -5183,7 +5183,7 @@ impl Connection {
                 .get_or_create()
                 .path_cids_blocked
                 .push(path_id);
-            trace!(?path_id, next_seq, "PATH_CIDS_BLOCKED");
+            trace!(%path_id, next_seq, "PATH_CIDS_BLOCKED");
             self.stats.frame_tx.path_cids_blocked += 1;
         }
 
@@ -5262,7 +5262,7 @@ impl Connection {
                     (None, seq)
                 }
                 Some((path_id, seq)) => {
-                    trace!(?path_id, sequence = seq, "PATH_RETIRE_CONNECTION_ID");
+                    trace!(%path_id, sequence = seq, "PATH_RETIRE_CONNECTION_ID");
                     self.stats.frame_tx.path_retire_connection_id += 1;
                     (Some(path_id), seq)
                 }
