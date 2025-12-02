@@ -89,11 +89,12 @@ pub(super) fn decrypt_packet_body(
             "multipath packet on non Data packet number space",
         )));
     }
-    // Packets that do not belong to known path ids are valid as long as they can be decrypted. In
-    // this case we assume the initial packet number
+    // Packets that do not belong to known path ids are valid as long as they can be decrypted.
+    // If we didn't have a path, that's for the purposes of this function equivalent to not
+    // having received packets on that path yet. So both of these cases are represented by `None`.
     let rx_packet = spaces[space]
         .path_space(path_id)
-        .map(|space| space.rx_packet);
+        .and_then(|space| space.rx_packet);
     let number = packet
         .header
         .number()
@@ -149,18 +150,12 @@ pub(super) fn decrypt_packet_body(
 
     if crypto_update {
         // Validate incoming key update
-        let invalid_packet_number = match rx_packet {
-            Some(rx_packet) => number <= rx_packet,
-            None => {
-                // A new PathId, but we can not know the "first" pn
-                // so we cannot do a comparision for correctness here.
-                // Potential reasons for it being not 0 could be skipped
-                // or reordering.
-                false
-            }
-        };
+        // If `rx_packet` is `None`, then either the path is entirely new, or we haven't received
+        // any packets on this path yet. In that case, having the first packet be a crypto update
+        // is fine.
+        let invalid_packet_number = rx_packet.is_some_and(|rx_packet| number <= rx_packet);
         if invalid_packet_number || prev_crypto.is_some_and(|x| x.update_unacked) {
-            trace!(?number, ?rx_packet, "crypto update failed");
+            trace!(?number, ?rx_packet, %path_id, "crypto update failed");
             return Err(Some(TransportError::KEY_UPDATE_ERROR("")));
         }
     }

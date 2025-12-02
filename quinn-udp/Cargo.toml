@@ -1,6 +1,6 @@
 [package]
 name = "iroh-quinn-udp"
-version = "0.5.12"
+version = "0.6.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -13,10 +13,10 @@ workspace = ".."
 [features]
 # NOTE: Please keep this in sync with the feature list in `.github/workflows/codecov.yml`, see
 # comment in that file for more information.
-default = ["tracing", "log"]
+default = ["tracing", "tracing-log"]
 # Configure `tracing` to log events via `log` if no `tracing` subscriber exists.
-log = ["tracing/log"]
-direct-log = ["dep:log"]
+tracing-log = ["tracing/log"]
+log = ["dep:log"]
 # Use private Apple APIs to send multiple packets in a single syscall.
 fast-apple-datapath = []
 
@@ -29,7 +29,6 @@ tracing = { workspace = true, optional = true }
 socket2 = { workspace = true }
 
 [target.'cfg(windows)'.dependencies]
-once_cell = { workspace = true }
 windows-sys = { workspace = true }
 
 [dev-dependencies]

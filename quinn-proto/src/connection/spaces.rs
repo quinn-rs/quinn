@@ -208,8 +208,8 @@ impl IndexMut<SpaceId> for [PacketSpace; 3] {
 /// This contains the data specific to a per-path packet number space.  You should access
 /// this via [`PacketSpace::for_path`].
 pub(super) struct PacketNumberSpace {
-    /// Highest received packet number
-    pub(super) rx_packet: u64,
+    /// Highest received packet number, if any
+    pub(super) rx_packet: Option<u64>,
     /// The packet number of the next packet that will be sent, if any. In the Data space, the
     /// packet number stored here is sometimes skipped by [`PacketNumberFilter`] logic.
     pub(super) next_packet_number: u64,
@@ -223,6 +223,9 @@ pub(super) struct PacketNumberSpace {
     /// Transmitted but not acked
     // We use a BTreeMap here so we can efficiently query by range on ACK and for loss detection
     pub(super) sent_packets: PacketBuf<SentPacket>,
+    /// Packets that were deemed lost
+    // Older packets are regularly removed in `Connection::drain_lost_packets`.
+    pub(super) lost_packets: BTreeMap<u64, LostPacket>,
     /// Number of explicit congestion notification codepoints seen on incoming packets
     pub(super) ecn_counters: frame::EcnCounts,
     /// Recent ECN counters sent by the peer in ACK frames
@@ -268,13 +271,14 @@ impl PacketNumberSpace {
             SpaceId::Data => Some(PacketNumberFilter::new(rng)),
         };
         Self {
-            rx_packet: 0,
+            rx_packet: None,
             next_packet_number: 0,
             largest_acked_packet: None,
             largest_acked_packet_sent: now,
             largest_ack_eliciting_sent: 0,
             unacked_non_ack_eliciting_tail: 0,
             sent_packets: PacketBuf::new(),
+            lost_packets: BTreeMap::new(),
             ecn_counters: frame::EcnCounts::ZERO,
             ecn_feedback: frame::EcnCounts::ZERO,
             sent_with_keys: 0,
@@ -296,13 +300,14 @@ impl PacketNumberSpace {
             SpaceId::Data => Some(PacketNumberFilter::disabled()),
         };
         Self {
-            rx_packet: 0,
+            rx_packet: None,
             next_packet_number: 0,
             largest_acked_packet: None,
             largest_acked_packet_sent: now,
             largest_ack_eliciting_sent: 0,
             unacked_non_ack_eliciting_tail: 0,
             sent_packets: PacketBuf::new(),
+            lost_packets: BTreeMap::new(),
             ecn_counters: frame::EcnCounts::ZERO,
             ecn_feedback: frame::EcnCounts::ZERO,
             sent_with_keys: 0,
@@ -323,15 +328,16 @@ impl PacketNumberSpace {
     /// PacketNumberSpace.  While the space will work it will not skip packet numbers to
     /// protect against eaget ack attacks.
     fn new_default(space_id: SpaceId, path_id: PathId) -> Self {
-        error!(?path_id, ?space_id, "PacketNumberSpace created by default");
+        error!(%path_id, ?space_id, "PacketNumberSpace created by default");
         Self {
-            rx_packet: 0,
+            rx_packet: None,
             next_packet_number: 0,
             largest_acked_packet: None,
             largest_acked_packet_sent: Instant::now(),
             largest_ack_eliciting_sent: 0,
             unacked_non_ack_eliciting_tail: 0,
             sent_packets: PacketBuf::new(),
+            lost_packets: BTreeMap::new(),
             ecn_counters: frame::EcnCounts::ZERO,
             ecn_feedback: frame::EcnCounts::ZERO,
             sent_with_keys: 0,
@@ -510,6 +516,13 @@ pub(super) struct SentPacket {
     ///
     /// The actual application data is stored with the stream state.
     pub(super) stream_frames: frame::StreamMetaVec,
+}
+
+/// Represents one or more packets that are deemed lost.
+#[derive(Debug)]
+pub(super) struct LostPacket {
+    /// The time the packet was sent.
+    pub(super) time_sent: Instant,
 }
 
 /// Retransmittable data queue

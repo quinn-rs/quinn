@@ -56,13 +56,13 @@ mod imp;
 
 #[allow(unused_imports, unused_macros)]
 mod log {
-    #[cfg(all(feature = "direct-log", not(feature = "tracing")))]
+    #[cfg(all(feature = "log", not(feature = "tracing-log")))]
     pub(crate) use log::{debug, error, info, trace, warn};
 
-    #[cfg(feature = "tracing")]
+    #[cfg(feature = "tracing-log")]
     pub(crate) use tracing::{debug, error, info, trace, warn};
 
-    #[cfg(not(any(feature = "direct-log", feature = "tracing")))]
+    #[cfg(not(any(feature = "log", feature = "tracing-log")))]
     mod no_op {
         macro_rules! trace    ( ($($tt:tt)*) => {{}} );
         macro_rules! debug    ( ($($tt:tt)*) => {{}} );
@@ -73,7 +73,7 @@ mod log {
         pub(crate) use {debug, error, info, log_warn as warn, trace};
     }
 
-    #[cfg(not(any(feature = "direct-log", feature = "tracing")))]
+    #[cfg(not(any(feature = "log", feature = "tracing-log")))]
     pub(crate) use no_op::*;
 }
 
@@ -93,6 +93,7 @@ pub const BATCH_SIZE: usize = 1;
 ///
 /// [`stride`]: RecvMeta::stride
 #[derive(Debug, Copy, Clone)]
+#[non_exhaustive]
 pub struct RecvMeta {
     /// The source address of the datagram(s) contained in the buffer
     pub addr: SocketAddr,
@@ -115,6 +116,8 @@ pub struct RecvMeta {
     /// Populated on platforms: Windows, Linux, Android (API level > 25),
     /// FreeBSD, OpenBSD, NetBSD, macOS, and iOS.
     pub dst_ip: Option<IpAddr>,
+    /// The interface index of the interface on which the datagram was received
+    pub interface_index: Option<u32>,
 }
 
 impl Default for RecvMeta {
@@ -126,6 +129,7 @@ impl Default for RecvMeta {
             stride: 0,
             ecn: None,
             dst_ip: None,
+            interface_index: None,
         }
     }
 }
@@ -154,7 +158,7 @@ const IO_ERROR_LOG_INTERVAL: Duration = std::time::Duration::from_secs(60);
 ///
 /// Logging will only be performed if at least [`IO_ERROR_LOG_INTERVAL`]
 /// has elapsed since the last error was logged.
-#[cfg(all(not(wasm_browser), any(feature = "tracing", feature = "direct-log")))]
+#[cfg(all(not(wasm_browser), any(feature = "tracing-log", feature = "log")))]
 fn log_sendmsg_error(
     last_send_error: &Mutex<Instant>,
     err: impl core::fmt::Debug,
@@ -177,7 +181,7 @@ fn log_sendmsg_error(
 }
 
 // No-op
-#[cfg(not(any(wasm_browser, feature = "tracing", feature = "direct-log")))]
+#[cfg(not(any(wasm_browser, feature = "tracing-log", feature = "log")))]
 fn log_sendmsg_error(_: &Mutex<Instant>, _: impl core::fmt::Debug, _: &Transmit) {}
 
 /// A borrowed UDP socket
