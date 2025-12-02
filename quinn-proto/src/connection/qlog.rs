@@ -271,13 +271,26 @@ impl QlogSentPacket {
     /// This is a no-op if the `qlog` feature is not enabled.
     pub(crate) fn frame_path_ack(
         &mut self,
-        _path_id: PathId,
-        _delay: u64,
-        _ranges: &ArrayRangeSet,
-        _ecn: Option<&EcnCounts>,
+        path_id: PathId,
+        delay: u64,
+        ranges: &ArrayRangeSet,
+        ecn: Option<&EcnCounts>,
     ) {
         #[cfg(feature = "qlog")]
-        self.frame_raw(unknown_frame(&FrameType::PATH_ACK))
+        self.frame_raw(QuicFrame::PathAck {
+            path_id: path_id.as_u32() as u64,
+            ack_delay: Some(delay as f32),
+            acked_ranges: Some(AckedRanges::Double(
+                ranges
+                    .iter()
+                    .map(|range| (range.start, range.end))
+                    .collect(),
+            )),
+            ect1: ecn.map(|e| e.ect1),
+            ect0: ecn.map(|e| e.ect0),
+            ce: ecn.map(|e| e.ce),
+            raw: None,
+        });
     }
 
     /// Adds a DATAGRAM frame.
@@ -550,17 +563,51 @@ impl Frame {
                 }),
             },
             Self::HandshakeDone => QuicFrame::HandshakeDone { raw: None },
+            Self::PathAck(ack) => QuicFrame::PathAck {
+                path_id: ack.path_id.as_u32().into(),
+                ack_delay: Some(ack.delay as f32),
+                ect1: ack.ecn.as_ref().map(|e| e.ect1),
+                ect0: ack.ecn.as_ref().map(|e| e.ect0),
+                ce: ack.ecn.as_ref().map(|e| e.ce),
+                raw: None,
+                acked_ranges: Some(AckedRanges::Double(
+                    ack.into_iter()
+                        .map(|range| (*range.start(), *range.end()))
+                        .collect(),
+                )),
+            },
+            Self::PathAbandon(frame) => QuicFrame::PathAbandon {
+                path_id: frame.path_id.as_u32().into(),
+                error_code: frame.error_code.into(),
+                raw: None,
+            },
+            Self::PathAvailable(frame) => QuicFrame::PathStatusAvailable {
+                path_id: frame.path_id.as_u32().into(),
+                path_status_sequence_number: frame.status_seq_no.into(),
+                raw: None,
+            },
+            Self::PathBackup(frame) => QuicFrame::PathStatusBackup {
+                path_id: frame.path_id.as_u32().into(),
+                path_status_sequence_number: frame.status_seq_no.into(),
+                raw: None,
+            },
+            Self::PathsBlocked(frame) => QuicFrame::PathsBlocked {
+                maximum_path_id: frame.0.as_u32().into(),
+                raw: None,
+            },
+            Self::PathCidsBlocked(frame) => QuicFrame::PathCidsBlocked {
+                path_id: frame.path_id.as_u32().into(),
+                next_sequence_number: frame.next_seq.into(),
+                raw: None,
+            },
+            Self::MaxPathId(id) => QuicFrame::MaxPathId {
+                maximum_path_id: id.0.as_u32().into(),
+                raw: None,
+            },
             // Extensions and unsupported frames.
             Self::AckFrequency(_)
             | Self::ImmediateAck
             | Self::ObservedAddr(_)
-            | Self::PathAck(_)
-            | Self::PathAbandon(_)
-            | Self::PathAvailable(_)
-            | Self::PathBackup(_)
-            | Self::MaxPathId(_)
-            | Self::PathsBlocked(_)
-            | Self::PathCidsBlocked(_)
             | Self::AddAddress(_)
             | Self::ReachOut(_)
             | Self::RemoveAddress(_) => unknown_frame(&self.ty()),
