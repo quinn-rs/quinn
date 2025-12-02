@@ -1,7 +1,7 @@
 #[cfg(not(any(target_os = "openbsd", target_os = "netbsd", solarish)))]
 use std::net::{SocketAddr, SocketAddrV6};
 use std::{
-    io::IoSliceMut,
+    io::{self, IoSliceMut},
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddrV4, UdpSocket},
     slice,
 };
@@ -289,7 +289,15 @@ fn test_send_recv(send: &Socket, recv: &Socket, transmit: Transmit) {
     // Reverse non-blocking flag set by `UdpSocketState` to make the test non-racy
     recv.set_nonblocking(false).unwrap();
 
-    send_state.try_send(send.into(), &transmit).unwrap();
+    match send_state.try_send(send.into(), &transmit) {
+        Ok(_) => (),
+        Err(err) if err.kind() == io::ErrorKind::InvalidInput && cfg!(target_os = "windows") => {
+            // GSO can fail on windows. It should have disabled GSO now.
+            assert_eq!(send_state.max_gso_segments(), 1);
+            return;
+        }
+        Err(err) => panic!("send failed: {err:?}"),
+    }
 
     let mut buf = [0; u16::MAX as usize];
     let mut meta = RecvMeta::default();

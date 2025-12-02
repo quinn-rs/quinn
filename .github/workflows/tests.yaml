@@ -231,6 +231,9 @@ jobs:
           echo "C:\Strawberry\perl\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
           echo "C:\Strawberry\c\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
+      - name: Install cmake
+        uses: lukka/get-cmake@latest
+
       - name: build tests
         run: |
           cargo nextest run --workspace --exclude fuzz ${{ env.FEATURES }} --lib --bins --tests --target ${{ matrix.target }} --no-run
