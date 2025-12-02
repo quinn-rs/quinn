@@ -103,12 +103,7 @@ macro_rules! errors {
         impl Error {
             $(
             pub(crate) fn $name<T>(reason: T) -> Self where T: Into<String> {
-                Self {
-                    code: Code::$name,
-                    frame: None,
-                    reason: reason.into(),
-                    crypto: None,
-                }
+                Self::new(Code::$name, reason.into())
             }
             )*
         }

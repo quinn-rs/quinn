@@ -2598,15 +2598,12 @@ impl Connection {
 
                 if self.side.is_client() {
                     // Client-only because server params were set from the client's Initial
-                    let params =
-                        self.crypto
-                            .transport_parameters()?
-                            .ok_or_else(|| TransportError {
-                                code: TransportErrorCode::crypto(0x6d),
-                                frame: None,
-                                reason: "transport parameters missing".into(),
-                                crypto: None,
-                            })?;
+                    let params = self.crypto.transport_parameters()?.ok_or_else(|| {
+                        TransportError::new(
+                            TransportErrorCode::crypto(0x6d),
+                            "transport parameters missing".to_owned(),
+                        )
+                    })?;
 
                     if self.has_0rtt() {
                         if !self.crypto.early_data_accepted().unwrap() {
@@ -2674,15 +2671,12 @@ impl Connection {
                     && starting_space == SpaceId::Initial
                     && self.highest_space != SpaceId::Initial
                 {
-                    let params =
-                        self.crypto
-                            .transport_parameters()?
-                            .ok_or_else(|| TransportError {
-                                code: TransportErrorCode::crypto(0x6d),
-                                frame: None,
-                                reason: "transport parameters missing".into(),
-                                crypto: None,
-                            })?;
+                    let params = self.crypto.transport_parameters()?.ok_or_else(|| {
+                        TransportError::new(
+                            TransportErrorCode::crypto(0x6d),
+                            "transport parameters missing".to_owned(),
+                        )
+                    })?;
                     self.handle_peer_params(params)?;
                     self.issue_first_cids(now);
                     self.init_0rtt();
