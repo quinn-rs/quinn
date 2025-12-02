@@ -1,12 +1,14 @@
 name: Coverage
 
 on:
+  pull_request:
   push:
-    branches: ['main', '0.8.x']
+    branches: ['main-iroh']
 
 jobs:
   coverage:
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
@@ -27,11 +29,11 @@ jobs:
         #       | paste -sd ',' -
         run: |
           cargo llvm-cov \
-            --features="arbitrary,async-io,aws-lc-rs,bloom,log,fast-apple-datapath,futures-io,json-output,lock_tracking,tracing-log,platform-verifier,qlog,ring,runtime-smol,runtime-tokio,rustls,rustls-aws-lc-rs,rustls-log,rustls-ring,serde,serde_json,smol,tracing" \
+            --features="arbitrary,aws-lc-rs,bloom,fast-apple-datapath,futures-io,json-output,lock_tracking,log,platform-verifier,qlog,ring,runtime-smol,runtime-tokio,rustls,rustls-aws-lc-rs,rustls-log,rustls-ring,serde,serde_json,tracing,tracing-log" \
             --workspace --lcov --output-path lcov.info
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: lcov.info
-          fail_ci_if_error: true
+          fail_ci_if_error: false

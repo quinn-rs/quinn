@@ -1,0 +1,149 @@
+# Daily CI jobs that don't need to run on every PR
+# These jobs run on a schedule and report failures to Discord
+
+name: Daily CI
+
+on:
+  schedule:
+    # 06:00 UTC every day
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: daily-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  RUST_BACKTRACE: 1
+  RUSTFLAGS: -Dwarnings
+
+jobs:
+  test-freebsd:
+    # see https://github.com/actions/runner/issues/385
+    # use https://github.com/vmactions/freebsd-vm for now
+    name: test on freebsd
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: test on freebsd
+        uses: vmactions/freebsd-vm@v1
+        with:
+          usesh: true
+          mem: 4096
+          copyback: false
+          prepare: |
+            pkg install -y curl
+            curl https://sh.rustup.rs -sSf --output rustup.sh
+            sh rustup.sh -y --profile minimal --default-toolchain stable
+          run: |
+            export PATH="$HOME/.cargo/bin:$PATH"
+            echo "===== rustc --version ====="
+            rustc --version
+            echo "===== freebsd-version ====="
+            freebsd-version
+            cargo build --locked --all-targets && cargo test --locked && cargo test --locked -- --ignored stress && cargo test --locked -p iroh-quinn-udp --benches
+
+  test-solaris:
+    name: test on solaris
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: test on Solaris
+        uses: vmactions/solaris-vm@v1
+        with:
+          release: "11.4-gcc"
+          usesh: true
+          mem: 4096
+          copyback: false
+          prepare: |
+            source <(curl -s https://raw.githubusercontent.com/psumbera/solaris-rust/refs/heads/main/sh.rust-web-install)
+            echo "~~~~ rustc --version ~~~~"
+            rustc --version
+            echo "~~~~ Solaris-version ~~~~"
+            uname -a
+          # Unlike others, don't un-ignore stress tests, because they hang on Solaris
+          run: |
+            export PATH=$HOME/.rust_solaris/bin:$PATH
+            # Workaround for https://github.com/quinn-rs/quinn/issues/2218
+            export CARGO_HTTP_MULTIPLEXING=false
+            cargo build --locked --all-targets && cargo test --locked && cargo test --locked -p iroh-quinn-udp --benches
+
+  test-illumos:
+    name: test on illumos
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: test on Illumos
+        uses: vmactions/omnios-vm@v1
+        with:
+          usesh: true
+          mem: 4096
+          copyback: false
+          prepare: |
+            pkg install gcc14 curl pkg-config glib2
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+          run: |
+            . "$HOME/.cargo/env"
+            cargo build --locked --all-targets && cargo test --locked && cargo test --locked -- --ignored stress && cargo test --locked -p iroh-quinn-udp --benches
+
+  features:
+    name: Feature powerset check
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    env:
+      RUSTFLAGS: -Dwarnings
+      # skip FIPS features outside of Linux
+      SKIP_FEATURES: ${{ matrix.os != 'ubuntu-latest' && 'rustls-aws-lc-rs-fips,aws-lc-rs-fips,__rustls-post-quantum-test' || '' }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@cargo-hack
+
+      - run: cargo hack check --feature-powerset --depth 3 --optional-deps --no-dev-deps --ignore-private --skip "${{env.SKIP_FEATURES}}"
+
+  notify:
+    needs: [test-freebsd, test-solaris, test-illumos, features]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Extract test results
+        run: |
+          printf '${{ toJSON(needs) }}\n'
+
+          freebsd_result=$(echo '${{ toJSON(needs) }}' | jq -r '.["test-freebsd"].result')
+          solaris_result=$(echo '${{ toJSON(needs) }}' | jq -r '.["test-solaris"].result')
+          illumos_result=$(echo '${{ toJSON(needs) }}' | jq -r '.["test-illumos"].result')
+          features_result=$(echo '${{ toJSON(needs) }}' | jq -r '.features.result')
+
+          # Check if any failed
+          if [ "$freebsd_result" = "failure" ] || [ "$solaris_result" = "failure" ] || [ "$illumos_result" = "failure" ] || [ "$features_result" = "failure" ]; then
+            echo "TESTS_RESULT=failure" >>"$GITHUB_ENV"
+          else
+            echo "TESTS_RESULT=success" >>"$GITHUB_ENV"
+          fi
+
+          # Build failure details
+          details=""
+          [ "$freebsd_result" = "failure" ] && details="${details}- FreeBSD tests failed\n"
+          [ "$solaris_result" = "failure" ] && details="${details}- Solaris tests failed\n"
+          [ "$illumos_result" = "failure" ] && details="${details}- Illumos tests failed\n"
+          [ "$features_result" = "failure" ] && details="${details}- Feature powerset check failed\n"
+
+          echo "FAILURE_DETAILS<<EOF" >>"$GITHUB_ENV"
+          echo -e "$details" >>"$GITHUB_ENV"
+          echo "EOF" >>"$GITHUB_ENV"
+
+      - name: Notify discord on failure
+        uses: n0-computer/discord-webhook-notify@v1
+        if: ${{ env.TESTS_RESULT == 'failure' }}
+        with:
+          severity: warn
+          details: |
+            Daily CI failures in **${{ github.repository }}**:
+            ${{ env.FAILURE_DETAILS }}
+            See https://github.com/${{ github.repository }}/actions/workflows/daily.yaml
+          webhookUrl: ${{ secrets.DISCORD_N0_GITHUB_CHANNEL_WEBHOOK_URL }}
