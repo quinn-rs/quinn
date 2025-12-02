@@ -62,7 +62,7 @@ impl PathId {
         Self(inner)
     }
 
-    /// Saturating integer substraction. Computes self - rhs, saturating at the numeric bounds
+    /// Saturating integer subtraction. Computes self - rhs, saturating at the numeric bounds
     /// instead of overflowing.
     pub fn saturating_sub(self, rhs: impl Into<Self>) -> Self {
         let rhs = rhs.into();
@@ -802,7 +802,7 @@ pub enum PathEvent {
     /// The remote changed the status of the path
     ///
     /// The local status is not changed because of this event. It is up to the application
-    /// to update the local status, wihch is used for packet scheduling, when the remote
+    /// to update the local status, which is used for packet scheduling, when the remote
     /// changes the status.
     RemoteStatus {
         /// Path which has changed status

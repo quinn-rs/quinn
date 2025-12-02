@@ -450,7 +450,7 @@ impl TransportConfig {
     /// Sets the maximum number of nat traversal addresses this endpoint allows the remote to
     /// advertise
     ///
-    /// Setting this to any nonzero value will enable Iroh's holepunching, losely based in the Nat
+    /// Setting this to any nonzero value will enable Iroh's holepunching, loosely based in the Nat
     /// Traversal Extension for QUIC, see
     /// <https://www.ietf.org/archive/id/draft-seemann-quic-nat-traversal-02.html>
     ///

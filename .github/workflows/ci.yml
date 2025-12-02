@@ -295,4 +295,4 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - run: pip install --user codespell[toml]
-      - run: codespell --ignore-words-list=ans,atmost,crate,inout,ser,worl --skip=CHANGELOG.md,*.lock
+      - run: codespell --ignore-words-list=ans,atmost,crate,ect,inout,keep-alives,ser,te,worl --skip=CHANGELOG.md,*.lock

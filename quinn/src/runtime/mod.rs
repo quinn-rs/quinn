@@ -91,7 +91,7 @@ pub trait UdpSender: Send + Sync + Debug + 'static {
     /// Quinn will create multiple [`UdpSender`]s, one for each task it's using it from. Thus it's
     /// important to poll the underlying socket in a way that doesn't overwrite wakers.
     ///
-    /// A single [`UdpSender`] will be re-used, even if `poll_send` returns `Poll::Ready` once,
+    /// A single [`UdpSender`] will be reused, even if `poll_send` returns `Poll::Ready` once,
     /// unlike [`Future::poll`], so calling it again after readiness should not panic.
     fn poll_send(
         self: Pin<&mut Self>,

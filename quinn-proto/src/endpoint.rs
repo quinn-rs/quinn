@@ -1124,7 +1124,7 @@ impl ConnectionIndex {
             return None;
         }
         // For stateless resets the PathId is meaningless since it closes the entire
-        // connection regarldess of path.  So use PathId::ZERO.
+        // connection regardless of path.  So use PathId::ZERO.
         self.connection_reset_tokens
             .get(addresses.remote, &data[data.len() - RESET_TOKEN_SIZE..])
             .cloned()

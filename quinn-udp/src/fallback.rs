@@ -60,7 +60,7 @@ impl UdpSocketState {
     ) -> io::Result<usize> {
         // Safety: both `IoSliceMut` and `MaybeUninitSlice` promise to have the
         // same layout, that of `iovec`/`WSABUF`. Furthermore `recv_vectored`
-        // promises to not write unitialised bytes to the `bufs` and pass it
+        // promises to not write uninitialised bytes to the `bufs` and pass it
         // directly to the `recvmsg` system call, so this is safe.
         let bufs = unsafe {
             &mut *(bufs as *mut [IoSliceMut<'_>] as *mut [socket2::MaybeUninitSlice<'_>])

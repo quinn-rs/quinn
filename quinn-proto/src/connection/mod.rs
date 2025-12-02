@@ -2583,7 +2583,7 @@ impl Connection {
     ///
     /// - We received an ACK packet.
     /// - The [`PathTimer::LossDetection`] timer expired. So there is an un-acknowledged packet
-    ///   that was followed by an acknowleged packet. The loss timer for this
+    ///   that was followed by an acknowledged packet. The loss timer for this
     ///   un-acknowledged packet expired and we need to detect that packet as lost.
     ///
     /// Packets are lost if they are both (See RFC9002 §6.1):
@@ -2640,8 +2640,8 @@ impl Connection {
             }
 
             // Packets sent before now - loss_delay are deemed lost.
-            // However, we avoid substraction as it can panic and there's no
-            // saturating equivalent of this substraction operation with a Duration.
+            // However, we avoid subtraction as it can panic and there's no
+            // saturating equivalent of this subtraction operation with a Duration.
             let packet_too_old = now.saturating_duration_since(info.time_sent) >= loss_delay;
             if packet_too_old || largest_acked_packet >= packet + packet_threshold {
                 // The packet should be declared lost.
@@ -4568,7 +4568,7 @@ impl Connection {
 
                     if !client_state.check_remote_address(&addr) {
                         // if the address is not valid we flag it, but update anyway
-                        warn!(?addr, "server sent ilegal ADD_ADDRESS frame");
+                        warn!(?addr, "server sent illegal ADD_ADDRESS frame");
                     }
 
                     match client_state.add_remote_address(addr) {
@@ -6311,7 +6311,7 @@ impl From<ConnectionError> for io::Error {
 #[derive(Debug, Error, PartialEq, Eq, Clone, Copy)]
 pub enum PathError {
     /// The extension was not negotiated with the peer
-    #[error("multipath extention not negotiated")]
+    #[error("multipath extension not negotiated")]
     MultipathNotNegotiated,
     /// Paths can only be opened client-side
     #[error("the server side may not open a path")]
@@ -6319,7 +6319,7 @@ pub enum PathError {
     /// Current limits do not allow us to open more paths
     #[error("maximum number of concurrent paths reached")]
     MaxPathIdReached,
-    /// No remote CIDs avaiable to open a new path
+    /// No remote CIDs available to open a new path
     #[error("remoted CIDs exhausted")]
     RemoteCidsExhausted,
     /// Path could not be validated and will be abandoned

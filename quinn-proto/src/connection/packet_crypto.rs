@@ -84,7 +84,7 @@ pub(super) fn decrypt_packet_body(
     let space = packet.header.space();
 
     if path_id != PathId::ZERO && space != SpaceId::Data {
-        // do not try to decrypt ilegal multipath packets
+        // do not try to decrypt illegal multipath packets
         return Err(Some(TransportError::PROTOCOL_VIOLATION(
             "multipath packet on non Data packet number space",
         )));

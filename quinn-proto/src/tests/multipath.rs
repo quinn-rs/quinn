@@ -664,7 +664,7 @@ fn per_path_observed_address() {
     assert_matches!(conn.poll(), Some(Event::Path(PathEvent::ObservedAddr{id: PathId::ZERO, addr})) if addr == expected_addr);
     assert_matches!(conn.poll(), None);
 
-    // simulate a rebind on thte client
+    // simulate a rebind on the client
     pair.client_conn_mut(client_ch).local_address_changed();
     pair.client
         .addr

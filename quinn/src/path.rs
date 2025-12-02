@@ -21,7 +21,7 @@ pub struct OpenPath(OpenPathInner);
 enum OpenPathInner {
     /// Opening a path in underway
     ///
-    /// This migth fail later on.
+    /// This might fail later on.
     Ongoing {
         opened: WatchStream<Result<(), PathError>>,
         path_id: PathId,

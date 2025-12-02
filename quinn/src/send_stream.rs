@@ -248,7 +248,7 @@ impl SendStream {
         async move {
             loop {
                 // The `Notify::notified` future needs to be created while the lock is being held,
-                // otherwise a wakeup could be missed if triggered inbetween releasing the lock
+                // otherwise a wakeup could be missed if triggered in between releasing the lock
                 // and creating the future.
                 // The lock may only be held in a block without `await`s, otherwise the future
                 // becomes `!Send`. `Notify::notified` is lifetime-bound to `Notify`, therefore
