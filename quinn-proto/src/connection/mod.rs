@@ -1441,7 +1441,7 @@ impl Connection {
         }
 
         self.config.qlog_sink.emit_recovery_metrics(
-            self.path_data(path_id).pto_count,
+            path_id,
             &mut self.paths.get_mut(&path_id).unwrap().data,
             now,
             self.initial_dst_cid,
@@ -1791,7 +1791,7 @@ impl Connection {
 
                 if let Some(path) = self.paths.get_mut(&path_id) {
                     self.config.qlog_sink.emit_recovery_metrics(
-                        path.data.pto_count,
+                        path_id,
                         &mut path.data,
                         now,
                         self.initial_dst_cid,
@@ -1898,7 +1898,7 @@ impl Connection {
                         PathTimer::LossDetection => {
                             self.on_loss_detection_timeout(now, path_id);
                             self.config.qlog_sink.emit_recovery_metrics(
-                                self.path_data(path_id).pto_count,
+                                path_id,
                                 &mut self.paths.get_mut(&path_id).unwrap().data,
                                 now,
                                 self.initial_dst_cid,
@@ -3245,7 +3245,7 @@ impl Connection {
         }
 
         self.config.qlog_sink.emit_recovery_metrics(
-            self.path_data(path_id).pto_count,
+            path_id,
             &mut self.paths.get_mut(&path_id).unwrap().data,
             now,
             self.initial_dst_cid,

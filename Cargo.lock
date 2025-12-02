@@ -1433,7 +1433,7 @@ dependencies = [
  "hex-literal",
  "identity-hash",
  "lru-slab",
- "qlog",
+ "n0-qlog",
  "rand",
  "rand_pcg",
  "rcgen",
@@ -1671,6 +1671,17 @@ dependencies = [
  "libc",
  "wasi 0.11.1+wasi-snapshot-preview1",
  "windows-sys 0.59.0",
+]
+
+[[package]]
+name = "n0-qlog"
+version = "0.15.2"
+source = "git+https://github.com/n0-computer/n0-qlog?branch=qlog-11-multipath#51bd4e2d93928b8d5c0a09dae6a17ca8269e7428"
+dependencies = [
+ "serde",
+ "serde_json",
+ "serde_with",
+ "smallvec",
 ]
 
 [[package]]
@@ -1946,18 +1957,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b9b4db3d6da204ed77bb26ba83b6122a73aeb2e87e25fbf7ad2e84c4ccbf8f72"
 dependencies = [
  "prost",
-]
-
-[[package]]
-name = "qlog"
-version = "0.15.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0f15b83c59e6b945f2261c95a1dd9faf239187f32ff0a96af1d1d28c4557f919"
-dependencies = [
- "serde",
- "serde_json",
- "serde_with",
- "smallvec",
 ]
 
 [[package]]

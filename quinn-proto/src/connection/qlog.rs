@@ -19,11 +19,10 @@ use std::{
 #[cfg(feature = "qlog")]
 use qlog::{
     events::{
-        Event, EventData, RawInfo,
-        connectivity::ConnectionStarted,
+        Event, EventData, RawInfo, TupleEndpointInfo,
         quic::{
-            AckedRanges, PacketHeader, PacketLost, PacketLostTrigger, PacketReceived, PacketSent,
-            PacketType, QuicFrame, StreamType,
+            AckedRanges, ConnectionStarted, PacketHeader, PacketLost, PacketLostTrigger,
+            PacketReceived, PacketSent, PacketType, QuicFrame, StreamType,
         },
     },
     streamer::QlogStreamer,
@@ -97,17 +96,8 @@ impl QlogSink {
             stream.emit_event(
                 initial_dst_cid,
                 EventData::ConnectionStarted(ConnectionStarted {
-                    ip_version: Some(String::from(match remote.ip() {
-                        IpAddr::V4(_) => "v4",
-                        IpAddr::V6(_) => "v6",
-                    })),
-                    src_ip: local_ip.map(|addr| addr.to_string()).unwrap_or_default(),
-                    dst_ip: remote.ip().to_string(),
-                    protocol: None,
-                    src_port: None,
-                    dst_port: Some(remote.port()),
-                    src_cid: Some(loc_cid.to_string()),
-                    dst_cid: Some(rem_cid.to_string()),
+                    local: tuple_endpoint_info(local_ip, None, loc_cid),
+                    remote: tuple_endpoint_info(Some(remote.ip()), Some(remote.port()), rem_cid),
                 }),
                 now,
             );
@@ -116,7 +106,7 @@ impl QlogSink {
 
     pub(super) fn emit_recovery_metrics(
         &self,
-        pto_count: u32,
+        path_id: PathId,
         path: &mut PathData,
         now: Instant,
         initial_dst_cid: ConnectionId,
@@ -127,7 +117,7 @@ impl QlogSink {
                 return;
             };
 
-            let Some(metrics) = path.qlog_recovery_metrics(pto_count) else {
+            let Some(metrics) = path.qlog_recovery_metrics(path_id) else {
                 return;
             };
 
@@ -164,6 +154,7 @@ impl QlogSink {
                         false => PacketLostTrigger::ReorderingThreshold,
                     },
                 ),
+                is_mtu_probe_packet: None,
             };
 
             stream.emit_event(initial_dst_cid, EventData::PacketLost(event), now);
@@ -229,8 +220,6 @@ impl QlogSentPacket {
     }
 
     /// Adds a frame by pushing a [`Frame`].
-    ///
-    /// This is a no-op if the `qlog` feature is not enabled.
     pub(crate) fn frame(&mut self, frame: &Frame) {
         #[cfg(feature = "qlog")]
         self.frame_raw(frame.to_qlog())
@@ -242,8 +231,11 @@ impl QlogSentPacket {
     pub(crate) fn frame_padding(&mut self, count: usize) {
         #[cfg(feature = "qlog")]
         self.frame_raw(QuicFrame::Padding {
-            length: Some(count as u32),
-            payload_length: count as u32,
+            raw: Some(RawInfo {
+                length: Some(count as u64),
+                payload_length: Some(count as u64),
+                data: None,
+            }),
         });
     }
 
@@ -268,8 +260,7 @@ impl QlogSentPacket {
             ect1: ecn.map(|e| e.ect1),
             ect0: ecn.map(|e| e.ect0),
             ce: ecn.map(|e| e.ce),
-            length: None,
-            payload_length: None,
+            raw: None,
         });
     }
 
@@ -283,7 +274,6 @@ impl QlogSentPacket {
         _ranges: &ArrayRangeSet,
         _ecn: Option<&EcnCounts>,
     ) {
-        // TODO: Add proper support for this frame once we have multipath support in qlog.
         #[cfg(feature = "qlog")]
         self.frame_raw(unknown_frame(&FrameType::PATH_ACK))
     }
@@ -294,8 +284,10 @@ impl QlogSentPacket {
     pub(crate) fn frame_datagram(&mut self, len: u64) {
         #[cfg(feature = "qlog")]
         self.frame_raw(QuicFrame::Datagram {
-            length: len,
-            raw: None,
+            raw: Some(RawInfo {
+                length: Some(len),
+                ..Default::default()
+            }),
         });
     }
 
@@ -306,10 +298,12 @@ impl QlogSentPacket {
         #[cfg(feature = "qlog")]
         self.frame_raw(QuicFrame::Stream {
             stream_id: meta.id.into(),
-            offset: meta.offsets.start,
+            offset: Some(meta.offsets.start),
             fin: Some(meta.fin),
-            length: meta.offsets.end - meta.offsets.start,
-            raw: None,
+            raw: Some(RawInfo {
+                length: Some(meta.offsets.end - meta.offsets.start),
+                ..Default::default()
+            }),
         });
     }
 
@@ -395,8 +389,11 @@ impl QlogRecvPacket {
                 .frames
                 .get_or_insert_default()
                 .push(QuicFrame::Padding {
-                    length: Some(self.padding as u32),
-                    payload_length: self.padding as u32,
+                    raw: Some(RawInfo {
+                        length: Some(self.padding as u64),
+                        payload_length: Some(self.padding as u64),
+                        data: None,
+                    }),
                 });
             self.padding = 0;
         }
@@ -407,8 +404,7 @@ impl QlogRecvPacket {
 fn unknown_frame(frame: &FrameType) -> QuicFrame {
     let ty = frame.to_u64();
     QuicFrame::Unknown {
-        raw_frame_type: ty,
-        frame_type_value: Some(ty),
+        frame_type_bytes: Some(ty),
         raw: Some(RawInfo {
             length: None,
             payload_length: None,
@@ -418,20 +414,20 @@ fn unknown_frame(frame: &FrameType) -> QuicFrame {
 }
 
 #[cfg(feature = "qlog")]
-impl crate::Frame {
+impl Frame {
     /// Converts a [`crate::Frame`] into a [`QuicFrame`].
-    fn to_qlog(&self) -> QuicFrame {
-        use qlog::events::quic::AckedRanges;
+    pub(crate) fn to_qlog(&self) -> QuicFrame {
+        use qlog::events::{ApplicationError, quic::AckedRanges};
 
         match self {
             Self::Padding => QuicFrame::Padding {
-                length: None,
-                payload_length: 1,
+                raw: Some(RawInfo {
+                    length: None,
+                    payload_length: Some(1),
+                    data: None,
+                }),
             },
-            Self::Ping => QuicFrame::Ping {
-                length: None,
-                payload_length: None,
-            },
+            Self::Ping => QuicFrame::Ping { raw: None },
             Self::Ack(ack) => QuicFrame::Ack {
                 ack_delay: Some(ack.delay as f32),
                 acked_ranges: Some(AckedRanges::Double(
@@ -442,25 +438,27 @@ impl crate::Frame {
                 ect1: ack.ecn.as_ref().map(|e| e.ect1),
                 ect0: ack.ecn.as_ref().map(|e| e.ect0),
                 ce: ack.ecn.as_ref().map(|e| e.ce),
-                length: None,
-                payload_length: None,
+                raw: None,
             },
             Self::ResetStream(f) => QuicFrame::ResetStream {
                 stream_id: f.id.into(),
-                error_code: f.error_code.into(),
+                error_code: Some(f.error_code.into_inner()),
                 final_size: f.final_offset.into(),
-                length: None,
-                payload_length: None,
+                error: ApplicationError::Unknown,
+                raw: None,
             },
             Self::StopSending(f) => QuicFrame::StopSending {
                 stream_id: f.id.into(),
-                error_code: f.error_code.into(),
-                length: None,
-                payload_length: None,
+                error_code: Some(f.error_code.into_inner()),
+                error: ApplicationError::Unknown,
+                raw: None,
             },
             Self::Crypto(c) => QuicFrame::Crypto {
                 offset: c.offset,
-                length: c.data.len() as u64,
+                raw: Some(RawInfo {
+                    length: Some(c.data.len() as u64),
+                    ..Default::default()
+                }),
             },
             Self::NewToken(t) => {
                 use ::qlog;
@@ -474,59 +472,81 @@ impl crate::Frame {
                         }),
                         details: None,
                     },
+                    raw: None,
                 }
             }
             Self::Stream(s) => QuicFrame::Stream {
                 stream_id: s.id.into(),
-                offset: s.offset,
-                length: s.data.len() as u64,
+                offset: Some(s.offset),
                 fin: Some(s.fin),
-                raw: None,
+                raw: Some(RawInfo {
+                    length: Some(s.data.len() as u64),
+                    ..Default::default()
+                }),
             },
             Self::MaxData(v) => QuicFrame::MaxData {
                 maximum: (*v).into(),
+                raw: None,
             },
             Self::MaxStreamData { id, offset } => QuicFrame::MaxStreamData {
                 stream_id: (*id).into(),
                 maximum: *offset,
+                raw: None,
             },
             Self::MaxStreams { dir, count } => QuicFrame::MaxStreams {
                 maximum: *count,
                 stream_type: (*dir).into(),
+                raw: None,
             },
-            Self::DataBlocked { offset } => QuicFrame::DataBlocked { limit: *offset },
+            Self::DataBlocked { offset } => QuicFrame::DataBlocked {
+                limit: *offset,
+                raw: None,
+            },
             Self::StreamDataBlocked { id, offset } => QuicFrame::StreamDataBlocked {
                 stream_id: (*id).into(),
                 limit: *offset,
+                raw: None,
             },
             Self::StreamsBlocked { dir, limit } => QuicFrame::StreamsBlocked {
                 stream_type: (*dir).into(),
                 limit: *limit,
+                raw: None,
             },
             Self::NewConnectionId(f) => QuicFrame::NewConnectionId {
-                sequence_number: f.sequence as u32,
-                retire_prior_to: f.retire_prior_to as u32,
+                sequence_number: f.sequence,
+                retire_prior_to: f.retire_prior_to,
                 connection_id_length: Some(f.id.len() as u8),
                 connection_id: format!("{}", f.id),
                 stateless_reset_token: Some(format!("{}", f.reset_token)),
+                raw: None,
             },
             Self::RetireConnectionId(f) => QuicFrame::RetireConnectionId {
-                sequence_number: f.sequence as u32,
+                sequence_number: f.sequence,
+                raw: None,
             },
-            Self::PathChallenge(_) => QuicFrame::PathChallenge { data: None },
-            Self::PathResponse(_) => QuicFrame::PathResponse { data: None },
+            Self::PathChallenge(_) => QuicFrame::PathChallenge {
+                data: None,
+                raw: None,
+            },
+            Self::PathResponse(_) => QuicFrame::PathResponse {
+                data: None,
+                raw: None,
+            },
             Self::Close(close) => QuicFrame::ConnectionClose {
                 error_space: None,
+                error: None,
                 error_code: Some(close.error_code()),
-                error_code_value: None,
                 reason: None,
+                reason_bytes: None,
                 trigger_frame_type: None,
             },
             Self::Datagram(d) => QuicFrame::Datagram {
-                length: d.data.len() as u64,
-                raw: None,
+                raw: Some(RawInfo {
+                    length: Some(d.data.len() as u64),
+                    ..Default::default()
+                }),
             },
-            Self::HandshakeDone => QuicFrame::HandshakeDone,
+            Self::HandshakeDone => QuicFrame::HandshakeDone { raw: None },
             // Extensions and unsupported frames.
             Self::AckFrequency(_)
             | Self::ImmediateAck
@@ -575,4 +595,26 @@ fn packet_type(space: SpaceId, is_0rtt: bool) -> PacketType {
 #[cfg(feature = "qlog")]
 fn stringify_cid(cid: ConnectionId) -> String {
     format!("{cid}")
+}
+
+#[cfg(feature = "qlog")]
+fn tuple_endpoint_info(
+    ip: Option<IpAddr>,
+    port: Option<u16>,
+    cid: ConnectionId,
+) -> TupleEndpointInfo {
+    let (ip_v4, port_v4, ip_v6, port_v6) = match ip {
+        Some(addr) => match addr {
+            IpAddr::V4(ipv4_addr) => (Some(ipv4_addr.to_string()), port, None, None),
+            IpAddr::V6(ipv6_addr) => (None, None, Some(ipv6_addr.to_string()), port),
+        },
+        None => (None, None, None, None),
+    };
+    TupleEndpointInfo {
+        ip_v4,
+        port_v4,
+        ip_v6,
+        port_v6,
+        connection_ids: Some(vec![cid.to_string()]),
+    }
 }

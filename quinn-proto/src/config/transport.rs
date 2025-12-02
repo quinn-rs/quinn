@@ -751,21 +751,16 @@ impl QlogConfig {
 
         let writer = self.writer?;
         let trace = qlog::TraceSeq::new(
-            self.vantage_point,
             self.title.clone(),
             self.description.clone(),
-            Some(qlog::Configuration {
-                time_offset: Some(0.0),
-                original_uris: None,
-            }),
             None,
+            Some(self.vantage_point),
+            vec![],
         );
 
         let mut streamer = QlogStreamer::new(
-            qlog::QLOG_VERSION.into(),
             self.title,
             self.description,
-            None,
             self.start_time,
             trace,
             qlog::events::EventImportance::Extra,
