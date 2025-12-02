@@ -227,7 +227,7 @@ jobs:
       - name: Install Strawberry Perl
         run: |
           Invoke-WebRequest -Uri "https://github.com/StrawberryPerl/Perl-Dist-Strawberry/releases/download/SP_53822_64bit/strawberry-perl-5.38.2.2-64bit-portable.zip" -OutFile perl.zip
-          Expand-Archive perl.zip -DestinationPath C:\Strawberry
+          Expand-Archive perl.zip -DestinationPath C:\Strawberry -Force
           echo "C:\Strawberry\perl\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
           echo "C:\Strawberry\c\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
@@ -276,6 +276,11 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@nightly
+      - name: Install Go (required for aws-lc-rs FIPS)
+        uses: actions/setup-go@v5
+        with:
+          go-version: "stable"
+          cache: false
       - name: cargo check
         run: |
           rm -f Cargo.lock
@@ -300,6 +305,8 @@ jobs:
       # Using self-hosted runners so use local cache for sccache and
       # not SCCACHE_GHA_ENABLED.
       RUSTC_WRAPPER: "sccache"
+      # Force clang/bindgen to use MSVC target to avoid mingw headers from msys2
+      BINDGEN_EXTRA_CLANG_ARGS: "--target=x86_64-pc-windows-msvc"
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -319,7 +326,39 @@ jobs:
         with:
           release: false
 
+      - name: Install cmake
+        uses: lukka/get-cmake@latest
+
+      - name: Install NASM
+        uses: ilammy/setup-nasm@v1
+
+      - name: Install Strawberry Perl
+        run: |
+          Invoke-WebRequest -Uri "https://github.com/StrawberryPerl/Perl-Dist-Strawberry/releases/download/SP_53822_64bit/strawberry-perl-5.38.2.2-64bit-portable.zip" -OutFile perl.zip
+          Expand-Archive perl.zip -DestinationPath C:\Strawberry -Force
+          echo "C:\Strawberry\perl\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          echo "C:\Strawberry\c\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Install Go (required for aws-lc-rs FIPS)
+        uses: actions/setup-go@v5
+        with:
+          go-version: "stable"
+          cache: false
+
+      # Install LLVM for libclang (required by bindgen for aws-lc-fips-sys)
+      - name: Install LLVM
+        run: |
+          $llvmUrl = "https://github.com/llvm/llvm-project/releases/download/llvmorg-17.0.6/LLVM-17.0.6-win64.exe"
+          Invoke-WebRequest -Uri $llvmUrl -OutFile llvm-installer.exe
+          Start-Process -FilePath .\llvm-installer.exe -ArgumentList "/S" -Wait
+          echo "C:\Program Files\LLVM\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          echo "LIBCLANG_PATH=C:\Program Files\LLVM\bin" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      # Set up MSVC environment to ensure clang/bindgen uses MSVC headers instead of mingw
+      - name: Setup MSVC dev environment
+        uses: ilammy/msvc-dev-cmd@v1
+
       - name: cargo check
         run: |
           rm -Force Cargo.lock
-          cargo +nightly check -Z minimal-versions --workspace --all-features --lib --bins
+          cargo +nightly check -Z minimal-versions --workspace --exclude fuzz --all-features --lib --bins

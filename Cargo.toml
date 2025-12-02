@@ -26,7 +26,7 @@ fastbloom = "0.14"
 futures-io = "0.3.19"
 getrandom = { version = "0.3", default-features = false }
 hdrhistogram = { version = "7.2", default-features = false }
-hex-literal = "1"
+hex-literal = "0.4"
 identity-hash = "0.1.0"
 lru-slab = "0.1.2"
 log = "0.4"
@@ -55,12 +55,18 @@ url = "2"
 wasm-bindgen-test = { version = "0.3.45" }
 web-time = "1"
 windows-sys = { version = ">=0.52, <=0.61", features = ["Win32_Foundation", "Win32_System_IO", "Win32_Networking_WinSock"] }
-cfg_aliases = "0.2"
+cfg_aliases = "0.2.1"
 
 # Fix minimal dependencies for indirect deps
 async-global-executor = "2.4.1"
 async-fs = "2.1"
 async-executor = "1.13.0"
+aws-lc-fips-sys = "0.13.10"
+aws-lc-sys = "0.34.0"
+gcc = "0.3.55"
+http = "1.1.0"
+lazy_static = "1.5.0"
+sharded-slab = "0.1.7"
 
 [profile.bench]
 debug = true

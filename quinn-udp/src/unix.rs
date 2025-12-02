@@ -34,7 +34,7 @@ pub(crate) struct msghdr_x {
 }
 
 #[cfg(apple_fast)]
-extern "C" {
+unsafe extern "C" {
     fn recvmsg_x(
         s: libc::c_int,
         msgp: *const msghdr_x,

@@ -249,13 +249,13 @@ jobs:
         uses: mozilla-actions/sccache-action@v0.0.9
 
       - name: clippy check (all features)
-        run: cargo clippy --workspace --all-features --all-targets --lib --bins --tests --benches --examples -- -D warnings
+        run: cargo clippy --workspace --exclude fuzz --all-features --all-targets --lib --bins --tests --benches --examples -- -D warnings
 
       - name: clippy check (no features)
-        run: cargo clippy --workspace --no-default-features --all-targets --lib --bins --tests --benches --examples -- -D warnings
+        run: cargo clippy --workspace --exclude fuzz --no-default-features --all-targets --lib --bins --tests --benches --examples -- -D warnings
 
       - name: clippy check (default features)
-        run: cargo clippy --workspace --all-targets --lib --bins --tests --benches --examples -- -D warnings
+        run: cargo clippy --workspace --exclude fuzz --all-targets --lib --bins --tests --benches --examples -- -D warnings
 
   msrv:
     if: "github.event_name != 'pull_request' || ! contains(github.event.pull_request.labels.*.name, 'flaky-test')"
@@ -275,7 +275,7 @@ jobs:
 
       - name: Check MSRV all features
         run: |
-          cargo +$MSRV check --workspace --all-targets
+          cargo +$MSRV check --workspace --exclude fuzz --all-targets
 
   cargo_deny:
     timeout-minutes: 30

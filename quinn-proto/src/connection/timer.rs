@@ -197,7 +197,7 @@ where
     {
         let mut to_remove = [false; SIZE];
         for (i, el) in self.stack.iter_mut().enumerate() {
-            if let Some((ref key, ref mut value)) = el {
+            if let Some((key, value)) = el {
                 to_remove[i] = !f(key, value);
             }
         }

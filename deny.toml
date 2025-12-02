@@ -1,3 +1,9 @@
+[advisories]
+ignore = [
+    # gcc is only included as a minimal-versions workaround, not actually used
+    "RUSTSEC-2025-0121",
+]
+
 [licenses]
 allow = [
     "Apache-2.0",
@@ -9,16 +15,32 @@ allow = [
     "NCSA",
     "OpenSSL",
     "Unicode-3.0",
-    "Unicode-DFS-2016",
 ]
 private = { ignore = true }
 
-[[licenses.clarify]]
-name = "ring"
-expression = "ISC AND MIT AND OpenSSL"
-license-files = [{ path = "LICENSE", hash = 0xbd0eed23 }]
-
-[sources]
-allow-git = [
-    "https://github.com/n0-computer/rustls"
+[bans]
+multiple-versions = "warn"
+skip = [
+    # aws-lc-rs 1.x uses aws-lc-sys 0.32.x, our workaround deps use 0.34.x
+    { crate = "aws-lc-sys", reason = "aws-lc-rs uses 0.32.x, minimal-versions workaround uses 0.34.x" },
+    # hdrhistogram uses base64 0.21, newer crates use 0.22
+    { crate = "base64", reason = "hdrhistogram uses 0.21, newer crates use 0.22" },
+    # ring uses getrandom 0.2, newer crates use 0.3
+    { crate = "getrandom", reason = "ring depends on 0.2, newer ecosystem uses 0.3" },
+    # jni and redox_users use thiserror 1.x
+    { crate = "thiserror", reason = "transitive deps use thiserror 1.x" },
+    { crate = "thiserror-impl", reason = "follows thiserror" },
+    # follows getrandom versions
+    { crate = "wasi", reason = "follows getrandom version split" },
+    # various transitive deps require different windows-sys versions
+    { crate = "windows-sys", reason = "transitive deps require different versions" },
+    { crate = "windows-targets", reason = "follows windows-sys" },
+    { crate = "windows_aarch64_gnullvm", reason = "follows windows-sys" },
+    { crate = "windows_aarch64_msvc", reason = "follows windows-sys" },
+    { crate = "windows_i686_gnu", reason = "follows windows-sys" },
+    { crate = "windows_i686_gnullvm", reason = "follows windows-sys" },
+    { crate = "windows_i686_msvc", reason = "follows windows-sys" },
+    { crate = "windows_x86_64_gnu", reason = "follows windows-sys" },
+    { crate = "windows_x86_64_gnullvm", reason = "follows windows-sys" },
+    { crate = "windows_x86_64_msvc", reason = "follows windows-sys" },
 ]

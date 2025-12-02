@@ -2705,7 +2705,7 @@ impl Connection {
             .for_path(path_id)
             .sent_packets
             .iter()
-            .filter(|(&pn, _info)| Some(pn) != in_flight_mtu_probe)
+            .filter(|(pn, _info)| Some(**pn) != in_flight_mtu_probe)
             .map(|(pn, info)| {
                 size_of_lost_packets += info.size as u64;
                 *pn

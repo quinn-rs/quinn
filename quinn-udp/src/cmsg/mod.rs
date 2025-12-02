@@ -31,7 +31,7 @@ impl<'a, M: MsgHdr> Encoder<'a, M> {
     /// - The `Encoder` must be dropped before `hdr` is passed to a system call, and must not be leaked.
     pub(crate) unsafe fn new(hdr: &'a mut M) -> Self {
         Self {
-            cmsg: hdr.cmsg_first_hdr().as_mut(),
+            cmsg: unsafe { hdr.cmsg_first_hdr().as_mut() },
             hdr,
             len: 0,
         }
@@ -84,7 +84,7 @@ impl<M: MsgHdr> Drop for Encoder<'_, M> {
 pub(crate) unsafe fn decode<T: Copy, C: CMsgHdr>(cmsg: &impl CMsgHdr) -> T {
     assert!(mem::align_of::<T>() <= mem::align_of::<C>());
     debug_assert_eq!(cmsg.len(), C::cmsg_len(mem::size_of::<T>()));
-    ptr::read(cmsg.cmsg_data() as *const T)
+    unsafe { ptr::read(cmsg.cmsg_data() as *const T) }
 }
 
 pub(crate) struct Iter<'a, M: MsgHdr> {
@@ -101,7 +101,7 @@ impl<'a, M: MsgHdr> Iter<'a, M> {
     pub(crate) unsafe fn new(hdr: &'a M) -> Self {
         Self {
             hdr,
-            cmsg: hdr.cmsg_first_hdr().as_ref(),
+            cmsg: unsafe { hdr.cmsg_first_hdr().as_ref() },
         }
     }
 }

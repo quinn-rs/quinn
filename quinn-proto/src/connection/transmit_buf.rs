@@ -227,7 +227,7 @@ unsafe impl BufMut for TransmitBuf<'_> {
     }
 
     unsafe fn advance_mut(&mut self, cnt: usize) {
-        self.buf.advance_mut(cnt);
+        unsafe { self.buf.advance_mut(cnt) };
     }
 
     fn chunk_mut(&mut self) -> &mut bytes::buf::UninitSlice {
