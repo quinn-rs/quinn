@@ -96,7 +96,7 @@ impl Incoming {
 
     /// The original destination CID when initiating the connection
     pub fn orig_dst_cid(&self) -> ConnectionId {
-        *self.0.as_ref().unwrap().inner.orig_dst_cid()
+        self.0.as_ref().unwrap().inner.orig_dst_cid()
     }
 }
 

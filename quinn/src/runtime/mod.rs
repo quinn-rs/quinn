@@ -1,10 +1,11 @@
+#[cfg(any(feature = "runtime-tokio", feature = "runtime-smol"))]
+use std::sync::Arc;
 use std::{
     fmt::{self, Debug},
     future::Future,
     io::{self, IoSliceMut},
     net::SocketAddr,
     pin::Pin,
-    sync::Arc,
     task::{Context, Poll},
 };
 
@@ -17,6 +18,7 @@ pub trait Runtime: Send + Sync + Debug + 'static {
     /// Construct a timer that will expire at `i`
     fn new_timer(&self, i: Instant) -> Pin<Box<dyn AsyncTimer>>;
     /// Drive `future` to completion in the background
+    #[track_caller]
     fn spawn(&self, future: Pin<Box<dyn Future<Output = ()> + Send>>);
     /// Convert `t` into the socket type used by this runtime
     #[cfg(not(wasm_browser))]
@@ -218,6 +220,7 @@ trait UdpSenderHelperSocket: Send + Sync + 'static {
 /// If `runtime-tokio` is enabled and this function is called from within a Tokio runtime context,
 /// then `TokioRuntime` is returned. Otherwise, if `runtime-smol` is enabled, `SmolRuntime` is
 /// returned. Otherwise, `None` is returned.
+#[cfg(any(feature = "runtime-tokio", feature = "runtime-smol"))]
 #[allow(clippy::needless_return)] // Be sure we return the right thing
 pub fn default_runtime() -> Option<Arc<dyn Runtime>> {
     #[cfg(feature = "runtime-tokio")]
@@ -238,12 +241,10 @@ pub fn default_runtime() -> Option<Arc<dyn Runtime>> {
 
 #[cfg(feature = "runtime-tokio")]
 mod tokio;
-// Due to MSRV, we must specify `self::` where there's crate/module ambiguity
 #[cfg(feature = "runtime-tokio")]
-pub use self::tokio::TokioRuntime;
+pub use tokio::TokioRuntime;
 
-#[cfg(feature = "async-io")]
-mod async_io;
-// Due to MSRV, we must specify `self::` where there's crate/module ambiguity
 #[cfg(feature = "runtime-smol")]
-pub use self::async_io::*;
+mod smol;
+#[cfg(feature = "runtime-smol")]
+pub use smol::*;

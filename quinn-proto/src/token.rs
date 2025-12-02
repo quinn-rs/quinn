@@ -247,9 +247,8 @@ impl Token {
     fn decode(key: &dyn HandshakeTokenKey, raw_token_bytes: &[u8]) -> Option<Self> {
         // Decrypt
 
-        // MSRV: split_at_checked requires 1.80.0
         let nonce_slice_start = raw_token_bytes.len().checked_sub(size_of::<u128>())?;
-        let (sealed_token, nonce_bytes) = raw_token_bytes.split_at(nonce_slice_start);
+        let (sealed_token, nonce_bytes) = raw_token_bytes.split_at_checked(nonce_slice_start)?;
 
         let nonce = u128::from_le_bytes(nonce_bytes.try_into().unwrap());
 

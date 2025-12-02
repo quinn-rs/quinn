@@ -10,7 +10,7 @@ Quinn is a pure-rust, async-compatible implementation of the IETF
   [rustls][rustls] and [*ring*][ring]
 - Application-layer datagrams for small, unreliable messages
 - Future-based async API
-- Minimum supported Rust version of 1.83
+- Minimum supported Rust version of 1.83.0
 
 This is a fork incorporating some changes for use in iroh.  The aim is
 to contribute back any generally useful changes into upstream Quinn,

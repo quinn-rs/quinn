@@ -6,99 +6,74 @@ on:
   pull_request:
 
 jobs:
-#   test-freebsd:
-#   # see https://github.com/actions/runner/issues/385
-#   # use https://github.com/vmactions/freebsd-vm for now
-#     name: test on freebsd
-#     runs-on: ubuntu-latest
-#     steps:
-#       - uses: actions/checkout@v5
-#       - name: test on freebsd
-#         uses: vmactions/freebsd-vm@v1
-#         with:
-#           usesh: true
-#           mem: 4096
-#           copyback: false
-#           prepare: |
-#             pkg install -y curl
-#             curl https://sh.rustup.rs -sSf --output rustup.sh
-#             sh rustup.sh -y --profile minimal --default-toolchain stable
-#           run: |
-#             export PATH="$HOME/.cargo/bin:$PATH"
-#             echo "===== rustc --version ====="
-#             rustc --version
-#             echo "===== freebsd-version ====="
-#             freebsd-version
+  test-freebsd:
+  # see https://github.com/actions/runner/issues/385
+  # use https://github.com/vmactions/freebsd-vm for now
+    name: test on freebsd
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: test on freebsd
+        uses: vmactions/freebsd-vm@v1
+        with:
+          usesh: true
+          mem: 4096
+          copyback: false
+          prepare: |
+            pkg install -y curl
+            curl https://sh.rustup.rs -sSf --output rustup.sh
+            sh rustup.sh -y --profile minimal --default-toolchain stable
+          run: |
+            export PATH="$HOME/.cargo/bin:$PATH"
+            echo "===== rustc --version ====="
+            rustc --version
+            echo "===== freebsd-version ====="
+            freebsd-version
 
   #           cargo build --locked --all-targets && cargo test --locked && cargo test --locked -- --ignored stress && cargo test --locked --manifest-path fuzz/Cargo.toml && cargo test --locked -p iroh-quinn-udp --benches
 
-  # test-netbsd:
-  #   name: test on netbsd
-  #   runs-on: ubuntu-latest
-  #   steps:
-  #     - uses: actions/checkout@v5
-  #     - name: test on netbsd
-  #       uses: vmactions/netbsd-vm@v1
-  #       with:
-  #         usesh: true
-  #         mem: 4096
-  #         copyback: false
-  #         prepare: |
-  #           export PATH="/usr/sbin:/sbin:$PATH"
-  #           pkg_add curl
-  #           curl https://sh.rustup.rs -sSf --output rustup.sh
-  #           sh rustup.sh -y --profile minimal --default-toolchain stable
-  #         run: |
-  #           export PATH="$HOME/.cargo/bin:$PATH"
-  #           echo "===== rustc --version ====="
-  #           rustc --version
-  #           echo "===== uname -a        ====="
-  #           uname -a
+  test-solaris:
+    name: test on solaris
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: test on Solaris
+        uses: vmactions/solaris-vm@v1
+        with:
+          release: "11.4-gcc"
+          usesh: true
+          mem: 4096
+          copyback: false
+          prepare: |
+            source <(curl -s https://raw.githubusercontent.com/psumbera/solaris-rust/refs/heads/main/sh.rust-web-install)
+            echo "~~~~ rustc --version ~~~~"
+            rustc --version
+            echo "~~~~ Solaris-version ~~~~"
+            uname -a
+          # Unlike others, don't un-ignore stress tests, because they hang on Solaris
+          run: |
+            export PATH=$HOME/.rust_solaris/bin:$PATH
+            # Workaround for https://github.com/quinn-rs/quinn/issues/2218
+            export CARGO_HTTP_MULTIPLEXING=false
+            cargo build --locked --all-targets && cargo test --locked --manifest-path fuzz/Cargo.toml && cargo test --locked -p iroh-quinn-udp --benches
 
-  #           cargo build --locked --all-targets && cargo test --locked && cargo test --locked -- --ignored stress && cargo test --locked --manifest-path fuzz/Cargo.toml && cargo test --locked -p iroh-quinn-udp --benches
-
-  # test-solaris:
-  #   name: test on solaris
-  #   runs-on: ubuntu-latest
-  #   steps:
-  #     - uses: actions/checkout@v5
-  #     - name: test on Solaris
-  #       uses: vmactions/solaris-vm@v1
-  #       with:
-  #         release: "11.4-gcc"
-  #         usesh: true
-  #         mem: 4096
-  #         copyback: false
-  #         prepare: |
-  #           source <(curl -s https://raw.githubusercontent.com/psumbera/solaris-rust/refs/heads/main/sh.rust-web-install)
-  #           echo "~~~~ rustc --version ~~~~"
-  #           rustc --version
-  #           echo "~~~~ Solaris-version ~~~~"
-  #           uname -a
-  #         # Unlike others, don't un-ignore stress tests, because they hang on Solaris
-  #         run: |
-  #           export PATH=$HOME/.rust_solaris/bin:$PATH
-  #           # Workaround for https://github.com/quinn-rs/quinn/issues/2218
-  #           export CARGO_HTTP_MULTIPLEXING=false
-  #           cargo build --locked --all-targets && cargo test --locked --manifest-path fuzz/Cargo.toml && cargo test --locked -p quinn-udp --benches
-  #
-  # test-illumos:
-  #   name: test on illumos
-  #   runs-on: ubuntu-latest
-  #   steps:
-  #     - uses: actions/checkout@v5
-  #     - name: test on Illumos
-  #       uses: vmactions/omnios-vm@v1
-  #       with:
-  #         usesh: true
-  #         mem: 4096
-  #         copyback: false
-  #         prepare: |
-  #           pkg install gcc14 curl pkg-config glib2
-  #           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
-  #         run: |
-  #           . "$HOME/.cargo/env"
-  #           cargo build --locked --all-targets && cargo test --locked && cargo test --locked -- --ignored stress && cargo test --locked --manifest-path fuzz/Cargo.toml && cargo test --locked -p iroh-quinn-udp --benches
+  test-illumos:
+    name: test on illumos
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: test on Illumos
+        uses: vmactions/omnios-vm@v1
+        with:
+          usesh: true
+          mem: 4096
+          copyback: false
+          prepare: |
+            pkg install gcc14 curl pkg-config glib2
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+          run: |
+            . "$HOME/.cargo/env"
+            cargo build --locked --all-targets && cargo test --locked && cargo test --locked -- --ignored stress && cargo test --locked --manifest-path fuzz/Cargo.toml && cargo test --locked -p iroh-quinn-udp --benches
 
   test:
     strategy:
@@ -119,7 +94,7 @@ jobs:
       SCCACHE_GHA_ENABLED: "on"
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - uses: mozilla-actions/sccache-action@v0.0.9
       - uses: dtolnay/rust-toolchain@master
         with:
@@ -139,24 +114,26 @@ jobs:
   test-aws-lc-rs:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       # Prevent feature unification from selecting *ring* as the crypto provider
       - run: RUST_BACKTRACE=1 cargo test --locked --manifest-path quinn-proto/Cargo.toml --no-default-features --features rustls-aws-lc-rs
       - run: RUST_BACKTRACE=1 cargo test --locked --manifest-path quinn/Cargo.toml --no-default-features --features rustls-aws-lc-rs,runtime-tokio
+      - run: RUST_BACKTRACE=1 cargo test --locked --manifest-path quinn/Cargo.toml --no-default-features --features rustls-aws-lc-rs,runtime-tokio,__rustls-post-quantum-test
       # FIPS
       - run: RUST_BACKTRACE=1 cargo test --locked --manifest-path quinn-proto/Cargo.toml --no-default-features --features rustls-aws-lc-rs-fips
       - run: RUST_BACKTRACE=1 cargo test --locked --manifest-path quinn/Cargo.toml --no-default-features --features rustls-aws-lc-rs-fips,runtime-tokio
+      - run: RUST_BACKTRACE=1 cargo test --locked --manifest-path quinn/Cargo.toml --no-default-features --features rustls-aws-lc-rs-fips,__rustls-post-quantum-test,runtime-tokio
 
   wasm_test:
     name: test wasm32-unknown-unknown
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
       - run: rustup target add wasm32-unknown-unknown
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: 20
       - uses: bytecodealliance/actions/wasm-tools/setup@v1
@@ -164,7 +141,7 @@ jobs:
 
       - run: cargo test --locked -p iroh-quinn-proto --target wasm32-unknown-unknown --no-run
       - run: cargo check --locked -p iroh-quinn-udp --target wasm32-unknown-unknown --no-default-features --features=tracing,log
-      - run: cargo rustc --locked -p iroh-quinn --target wasm32-unknown-unknown --no-default-features --features=log,platform-verifier,rustls-ring --crate-type=cdylib
+      - run: cargo rustc --locked -p iroh-quinn --target wasm32-unknown-unknown --no-default-features --features=tracing-log,platform-verifier,rustls-ring --crate-type=cdylib
 
       # If the Wasm file contains any 'import "env"' declarations, then
       # some non-Wasm-compatible code made it into the final code.
@@ -175,7 +152,8 @@ jobs:
         run: |
           ! wasm-tools print --skeleton target/wasm32-unknown-unknown/debug/iroh_quinn.wasm | grep 'import "env"'
 
-      - run: cargo binstall wasm-bindgen-cli --locked --no-confirm
+      # Match the version of wasm-bindgen used in `Cargo.lock`
+      - run: cargo binstall wasm-bindgen-cli@0.2.106 --locked --no-confirm
       - run: cargo test --locked -p iroh-quinn-proto --target wasm32-unknown-unknown
 
   msrv:
@@ -184,7 +162,7 @@ jobs:
       RUSTC_WRAPPER: "sccache"
       SCCACHE_GHA_ENABLED: "on"
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - uses: mozilla-actions/sccache-action@v0.0.9
       # Note that we must also update the README when changing the MSRV
       - uses: dtolnay/rust-toolchain@1.83
@@ -197,7 +175,7 @@ jobs:
       RUSTC_WRAPPER: "sccache"
       SCCACHE_GHA_ENABLED: "on"
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - uses: mozilla-actions/sccache-action@v0.0.9
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -220,7 +198,7 @@ jobs:
   audit:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v5
+    - uses: actions/checkout@v6
     - uses: EmbarkStudios/cargo-deny-action@v2
 
   test-android:
@@ -242,7 +220,7 @@ jobs:
       run: echo "API_LEVEL=${{ matrix.api-level }}" >> $GITHUB_ENV
 
     - name: Checkout code
-      uses: actions/checkout@v5
+      uses: actions/checkout@v6
 
     - name: Install JDK
       uses: actions/setup-java@v5
@@ -284,17 +262,18 @@ jobs:
         api-level: ${{ matrix.api-level }}
         arch: ${{ matrix.emulator-arch }}
         script: .github/workflows/rust-android-run-tests-on-emulator.sh
-  # features:
-  #   strategy:
-  #     matrix:
-  #       os: [ubuntu-latest, macos-latest, windows-latest]
-  #   runs-on: ${{ matrix.os }}
-  #   env:
-  #     RUSTFLAGS: -Dwarnings
-  #     # skip FIPS features outside of Linux
-  #     SKIP_FEATURES: ${{ matrix.os != 'ubuntu-latest' && 'rustls-aws-lc-rs-fips,aws-lc-rs-fips' || '' }}
-  #   steps:
-  #     - uses: actions/checkout@v5
-  #     - uses: dtolnay/rust-toolchain@stable
-  #     - uses: taiki-e/install-action@cargo-hack
-  #     - run: cargo hack check --feature-powerset --depth 3 --optional-deps --no-dev-deps --ignore-private --skip "${{env.SKIP_FEATURES}}"
+
+  features:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    env:
+      RUSTFLAGS: -Dwarnings
+      # skip FIPS features outside of Linux
+      SKIP_FEATURES: ${{ matrix.os != 'ubuntu-latest' && 'rustls-aws-lc-rs-fips,aws-lc-rs-fips,__rustls-post-quantum-test' || '' }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@cargo-hack
+      - run: cargo hack check --feature-powerset --depth 3 --optional-deps --no-dev-deps --ignore-private --skip "${{env.SKIP_FEATURES}}"

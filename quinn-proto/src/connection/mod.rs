@@ -25,6 +25,7 @@ use crate::{
     coding::BufMutExt,
     config::{ServerConfig, TransportConfig},
     congestion::Controller,
+    connection::spaces::LostPacket,
     connection::timer::{ConnTimer, PathTimer},
     crypto::{self, KeyPair, Keys, PacketKey},
     frame::{self, Close, Datagram, FrameStruct, NewToken, ObservedAddr},
@@ -337,7 +338,7 @@ impl Connection {
         let mut rng = StdRng::from_seed(rng_seed);
         let initial_space = {
             let mut space = PacketSpace::new(now, SpaceId::Initial, &mut rng);
-            space.crypto = Some(crypto.initial_keys(&init_cid, side));
+            space.crypto = Some(crypto.initial_keys(init_cid, side));
             space
         };
         let handshake_space = PacketSpace::new(now, SpaceId::Handshake, &mut rng);
@@ -1074,7 +1075,7 @@ impl Connection {
                         trace!(
                             ?space_id,
                             %path_id,
-                            ?next_path_id,
+                            %next_path_id,
                             "nothing to send on path"
                         );
                         path_id = *next_path_id;
@@ -2288,6 +2289,12 @@ impl Connection {
             }
         };
 
+        if self.detect_spurious_loss(&ack, space, path) {
+            self.path_data_mut(path)
+                .congestion
+                .on_spurious_congestion_event();
+        }
+
         // Avoid DoS from unreasonably huge ack ranges by filtering out just the new acks.
         let mut newly_acked = ArrayRangeSet::new();
         for range in ack.iter() {
@@ -2396,6 +2403,43 @@ impl Connection {
         Ok(())
     }
 
+    fn detect_spurious_loss(&mut self, ack: &frame::Ack, space: SpaceId, path: PathId) -> bool {
+        let lost_packets = &mut self.spaces[space].for_path(path).lost_packets;
+
+        if lost_packets.is_empty() {
+            return false;
+        }
+
+        for range in ack.iter() {
+            let spurious_losses: Vec<u64> = lost_packets
+                .range(range.clone())
+                .map(|(pn, _info)| pn)
+                .copied()
+                .collect();
+
+            for pn in spurious_losses {
+                lost_packets.remove(&pn);
+            }
+        }
+
+        // If this ACK frame acknowledged all deemed lost packets,
+        // then we have raised a spurious congestion event in the past.
+        // We cannot conclude when there are remaining packets,
+        // but future ACK frames might indicate a spurious loss detection.
+        lost_packets.is_empty()
+    }
+
+    /// Drain lost packets that we reasonably think will never arrive
+    ///
+    /// The current criterion is copied from `msquic`:
+    /// discard packets that were sent earlier than 2 probe timeouts ago.
+    fn drain_lost_packets(&mut self, now: Instant, space: SpaceId, path: PathId) {
+        let two_pto = 2 * self.path_data(path).rtt.pto_base();
+
+        let lost_packets = &mut self.spaces[space].for_path(path).lost_packets;
+        lost_packets.retain(|_pn, info| now.saturating_duration_since(info.time_sent) <= two_pto);
+    }
+
     /// Process a new ECN block from an in-order ACK
     fn process_ecn(
         &mut self,
@@ -2425,6 +2469,7 @@ impl Connection {
                     now,
                     largest_sent_time,
                     false,
+                    true,
                     0,
                 );
             }
@@ -2581,8 +2626,9 @@ impl Connection {
         // InPersistentCongestion: Determine if all packets in the time period before the newest
         // lost packet, including the edges, are marked lost. PTO computation must always
         // include max ACK delay, i.e. operate as if in Data space (see RFC9001 §7.6.1).
-        let congestion_period =
-            self.pto(SpaceId::Data, path_id) * self.config.persistent_congestion_threshold;
+        let congestion_period = self
+            .pto(SpaceId::Data, path_id)
+            .saturating_mul(self.config.persistent_congestion_threshold);
         let mut persistent_congestion_start: Option<Instant> = None;
         let mut prev_packet = None;
         let space = self.spaces[pn_space].for_path(path_id);
@@ -2716,6 +2762,9 @@ impl Connection {
             },
             "lost_packets must be sorted"
         );
+
+        self.drain_lost_packets(now, pn_space, path_id);
+
         // OnPacketsLost
         if let Some(largest_lost) = lost_packets.last().cloned() {
             let old_bytes_in_flight = self.path_data_mut(path_id).in_flight.bytes;
@@ -2731,17 +2780,6 @@ impl Connection {
                 "packets lost",
             );
 
-            // Packets sent before this time are deemed lost.
-            // We avoid computing this value above, since it's possible for this to panic
-            // if the `loss_delay` value internally stores a bigger `Duration` than the
-            // `Duration` that's stored inside the `Instant`, because some platforms may
-            // implement the `Instant` with a counter relative to system or even process
-            // startup (Wasm is one such case).
-            // If we're at this point, then it must be possible to have instants that are
-            // longer ago than `loss_delay` (see the `packet_too_old` computation
-            // above).
-            let lost_send_time = now.checked_sub(loss_delay).unwrap();
-
             for &packet in &lost_packets {
                 let Some(info) = self.spaces[pn_space].for_path(path_id).take(packet) else {
                     continue;
@@ -2749,7 +2787,7 @@ impl Connection {
                 self.config.qlog_sink.emit_packet_lost(
                     packet,
                     &info,
-                    lost_send_time,
+                    loss_delay,
                     pn_space,
                     now,
                     self.orig_rem_cid,
@@ -2758,6 +2796,7 @@ impl Connection {
                     .get_mut(&path_id)
                     .unwrap()
                     .remove_in_flight(&info);
+
                 for frame in info.stream_frames {
                     self.streams.retransmit(frame);
                 }
@@ -2765,6 +2804,13 @@ impl Connection {
                 self.path_data_mut(path_id)
                     .mtud
                     .on_non_probe_lost(packet, info.size);
+
+                self.spaces[pn_space].for_path(path_id).lost_packets.insert(
+                    packet,
+                    LostPacket {
+                        time_sent: info.time_sent,
+                    },
+                );
             }
 
             let path = self.path_data_mut(path_id);
@@ -2792,6 +2838,7 @@ impl Connection {
                     now,
                     largest_lost_sent,
                     in_persistent_congestion,
+                    false,
                     size_of_lost_packets,
                 );
             }
@@ -3656,7 +3703,7 @@ impl Connection {
                     .map(|cids| cids.active())
                     .map(|orig_dst_cid| {
                         self.crypto.is_valid_retry(
-                            &orig_dst_cid,
+                            orig_dst_cid,
                             &packet.header_data,
                             &packet.payload,
                         )
@@ -3695,7 +3742,7 @@ impl Connection {
                 // any retransmitted Initials
                 self.spaces[SpaceId::Initial] = {
                     let mut space = PacketSpace::new(now, SpaceId::Initial, &mut self.rng);
-                    space.crypto = Some(self.crypto.initial_keys(&rem_cid, self.side.side()));
+                    space.crypto = Some(self.crypto.initial_keys(rem_cid, self.side.side()));
                     space.crypto_offset = client_hello.len() as u64;
                     space.for_path(path_id).next_packet_number = self.spaces[SpaceId::Initial]
                         .for_path(path_id)
@@ -3771,6 +3818,7 @@ impl Connection {
                                 code: TransportErrorCode::crypto(0x6d),
                                 frame: None,
                                 reason: "transport parameters missing".into(),
+                                crypto: None,
                             })?;
 
                     if self.has_0rtt() {
@@ -3809,6 +3857,8 @@ impl Connection {
                     // Server-only
                     self.spaces[SpaceId::Data].pending.handshake_done = true;
                     self.discard_space(now, SpaceId::Handshake);
+                    self.events.push_back(Event::HandshakeConfirmed);
+                    trace!("handshake confirmed");
                 }
 
                 self.events.push_back(Event::Connected);
@@ -3859,6 +3909,7 @@ impl Connection {
                                 code: TransportErrorCode::crypto(0x6d),
                                 frame: None,
                                 reason: "transport parameters missing".into(),
+                                crypto: None,
                             })?;
                     self.handle_peer_params(params, loc_cid, rem_cid)?;
                     self.issue_first_cids(now);
@@ -4332,6 +4383,8 @@ impl Connection {
                     if self.spaces[SpaceId::Handshake].crypto.is_some() {
                         self.discard_space(now, SpaceId::Handshake);
                     }
+                    self.events.push_back(Event::HandshakeConfirmed);
+                    trace!("handshake confirmed");
                 }
                 Frame::ObservedAddr(observed) => {
                     // check if params allows the peer to send report and this node to receive it
@@ -6301,6 +6354,8 @@ pub enum Event {
     HandshakeDataReady,
     /// The connection was successfully established
     Connected,
+    /// The TLS handshake was confirmed
+    HandshakeConfirmed,
     /// The connection was lost
     ///
     /// Emitted if the peer closes the connection or an error is encountered.
