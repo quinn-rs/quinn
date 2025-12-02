@@ -7,6 +7,8 @@ use std::{
 use std::{io, sync::Mutex, time::Instant};
 
 #[cfg(feature = "qlog")]
+pub use qlog::VantagePointType;
+#[cfg(feature = "qlog")]
 use qlog::streamer::QlogStreamer;
 
 #[cfg(feature = "qlog")]
@@ -703,6 +705,7 @@ pub struct QlogConfig {
     title: Option<String>,
     description: Option<String>,
     start_time: Instant,
+    vantage_point: qlog::VantagePoint,
 }
 
 #[cfg(feature = "qlog")]
@@ -731,17 +734,24 @@ impl QlogConfig {
         self
     }
 
+    /// Vantage point for this trace
+    pub fn vantage_point(
+        &mut self,
+        vantage_point: VantagePointType,
+        name: Option<String>,
+    ) -> &mut Self {
+        self.vantage_point.name = name;
+        self.vantage_point.ty = vantage_point;
+        self
+    }
+
     /// Construct the [`QlogStream`] described by this configuration
     pub fn into_stream(self) -> Option<QlogStream> {
         use tracing::warn;
 
         let writer = self.writer?;
         let trace = qlog::TraceSeq::new(
-            qlog::VantagePoint {
-                name: None,
-                ty: qlog::VantagePointType::Unknown,
-                flow: None,
-            },
+            self.vantage_point,
             self.title.clone(),
             self.description.clone(),
             Some(qlog::Configuration {
@@ -758,7 +768,7 @@ impl QlogConfig {
             None,
             self.start_time,
             trace,
-            qlog::events::EventImportance::Core,
+            qlog::events::EventImportance::Extra,
             writer,
         );
 
@@ -780,6 +790,11 @@ impl Default for QlogConfig {
             title: None,
             description: None,
             start_time: Instant::now(),
+            vantage_point: qlog::VantagePoint {
+                name: None,
+                ty: qlog::VantagePointType::Unknown,
+                flow: None,
+            },
         }
     }
 }

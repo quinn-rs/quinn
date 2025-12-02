@@ -475,6 +475,17 @@ impl Header {
             VersionNegotiate { .. } => false,
         }
     }
+
+    #[cfg(feature = "qlog")]
+    pub(crate) fn src_cid(&self) -> Option<ConnectionId> {
+        match self {
+            Self::Initial(initial_header) => Some(initial_header.src_cid),
+            Self::Long { src_cid, .. } => Some(*src_cid),
+            Self::Retry { src_cid, .. } => Some(*src_cid),
+            Self::Short { .. } => None,
+            Self::VersionNegotiate { src_cid, .. } => Some(*src_cid),
+        }
+    }
 }
 
 pub(crate) struct PartialEncode {

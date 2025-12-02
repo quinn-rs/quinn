@@ -58,12 +58,12 @@ pub use rustls;
 mod config;
 #[cfg(doc)]
 pub use config::DEFAULT_CONCURRENT_MULTIPATH_PATHS_WHEN_ENABLED;
-#[cfg(feature = "qlog")]
-pub use config::QlogConfig;
 pub use config::{
     AckFrequencyConfig, ClientConfig, ConfigError, EndpointConfig, IdleTimeout, MtuDiscoveryConfig,
     ServerConfig, StdSystemTime, TimeSource, TransportConfig, ValidationTokenConfig,
 };
+#[cfg(feature = "qlog")]
+pub use config::{QlogConfig, VantagePointType};
 
 pub mod crypto;
 
