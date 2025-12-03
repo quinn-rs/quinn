@@ -142,9 +142,12 @@ impl DatagramState {
 
     /// Discard outgoing datagrams with a payload larger than `max_payload` bytes
     ///
+    /// Returns whether any datagrams were dropped.
+    ///
     /// Used to ensure that reductions in MTU don't get us stuck in a state where we have a datagram
     /// queued but can't send it.
-    pub(super) fn drop_oversized(&mut self, max_payload: usize) {
+    pub(super) fn drop_oversized(&mut self, max_payload: usize) -> bool {
+        let mut dropped_any = false;
         self.outgoing.retain(|datagram| {
             let result = datagram.data.len() < max_payload;
             if !result {
@@ -154,9 +157,11 @@ impl DatagramState {
                     max_payload
                 );
                 self.outgoing_total -= datagram.data.len();
+                dropped_any = true;
             }
             result
         });
+        dropped_any
     }
 
     /// Attempt to write a datagram frame into `buf`, consuming it from `self.outgoing`
