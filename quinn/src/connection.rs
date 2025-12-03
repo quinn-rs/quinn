@@ -48,16 +48,20 @@ impl Connecting {
     ) -> Self {
         let (on_handshake_data_send, on_handshake_data_recv) = oneshot::channel();
         let (on_connected_send, on_connected_recv) = oneshot::channel();
-        let conn = ConnectionRef::new(
-            handle,
-            conn,
-            endpoint_events,
-            conn_events,
-            on_handshake_data_send,
-            on_connected_send,
-            sender,
-            runtime.clone(),
-        );
+
+        let conn = ConnectionRef(Arc::new(ConnectionInner {
+            state: Mutex::new(State::new(
+                conn,
+                handle,
+                endpoint_events,
+                conn_events,
+                on_handshake_data_send,
+                on_connected_send,
+                sender,
+                runtime.clone(),
+            )),
+            shared: Shared::default(),
+        }));
 
         let driver = ConnectionDriver(conn.clone());
         runtime.spawn(Box::pin(
@@ -906,44 +910,6 @@ impl Future for SendDatagram<'_> {
 pub(crate) struct ConnectionRef(Arc<ConnectionInner>);
 
 impl ConnectionRef {
-    #[allow(clippy::too_many_arguments)]
-    fn new(
-        handle: ConnectionHandle,
-        conn: proto::Connection,
-        endpoint_events: mpsc::UnboundedSender<(ConnectionHandle, EndpointEvent)>,
-        conn_events: mpsc::UnboundedReceiver<ConnectionEvent>,
-        on_handshake_data: oneshot::Sender<()>,
-        on_connected: oneshot::Sender<bool>,
-        sender: Pin<Box<dyn UdpSender>>,
-        runtime: Arc<dyn Runtime>,
-    ) -> Self {
-        Self(Arc::new(ConnectionInner {
-            state: Mutex::new(State {
-                inner: conn,
-                driver: None,
-                handle,
-                on_handshake_data: Some(on_handshake_data),
-                on_connected: Some(on_connected),
-                connected: false,
-                handshake_confirmed: false,
-                timer: None,
-                timer_deadline: None,
-                conn_events,
-                endpoint_events,
-                blocked_writers: FxHashMap::default(),
-                blocked_readers: FxHashMap::default(),
-                stopped: FxHashMap::default(),
-                error: None,
-                ref_count: 0,
-                sender,
-                runtime,
-                send_buffer: Vec::new(),
-                buffered_transmit: None,
-            }),
-            shared: Shared::default(),
-        }))
-    }
-
     fn stable_id(&self) -> usize {
         &*self.0 as *const _ as usize
     }
@@ -1025,6 +991,41 @@ pub(crate) struct State {
 }
 
 impl State {
+    #[allow(clippy::too_many_arguments)]
+    fn new(
+        inner: proto::Connection,
+        handle: ConnectionHandle,
+        endpoint_events: mpsc::UnboundedSender<(ConnectionHandle, EndpointEvent)>,
+        conn_events: mpsc::UnboundedReceiver<ConnectionEvent>,
+        on_handshake_data: oneshot::Sender<()>,
+        on_connected: oneshot::Sender<bool>,
+        sender: Pin<Box<dyn UdpSender>>,
+        runtime: Arc<dyn Runtime>,
+    ) -> Self {
+        Self {
+            inner,
+            driver: None,
+            handle,
+            on_handshake_data: Some(on_handshake_data),
+            on_connected: Some(on_connected),
+            connected: false,
+            handshake_confirmed: false,
+            timer: None,
+            timer_deadline: None,
+            conn_events,
+            endpoint_events,
+            blocked_writers: FxHashMap::default(),
+            blocked_readers: FxHashMap::default(),
+            stopped: FxHashMap::default(),
+            error: None,
+            ref_count: 0,
+            sender,
+            runtime,
+            send_buffer: Vec::new(),
+            buffered_transmit: None,
+        }
+    }
+
     fn drive_transmit(&mut self, cx: &mut Context) -> io::Result<bool> {
         let now = self.runtime.now();
         let mut transmits = 0;
