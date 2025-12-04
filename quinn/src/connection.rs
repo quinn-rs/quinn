@@ -910,7 +910,7 @@ impl Connection {
 
     /// Get the current local nat traversal addresses
     pub fn get_local_nat_traversal_addresses(&self) -> Result<Vec<SocketAddr>, iroh_hp::Error> {
-        let conn = self.0.state.lock("get_remote_nat_traversal_addresses");
+        let conn = self.0.state.lock("get_local_nat_traversal_addresses");
         conn.inner.get_local_nat_traversal_addresses()
     }
 
