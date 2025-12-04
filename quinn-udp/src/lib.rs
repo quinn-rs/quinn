@@ -258,6 +258,27 @@ impl EcnCodepoint {
     }
 }
 
+/// Pre-sets Apple fast path availability from external code.
+///
+/// Must be called before any socket operations that would trigger the internal
+/// probe. Returns the effective value after the set attempt: if already
+/// initialized, returns the existing value; otherwise returns the newly set value.
+///
+/// # Example
+///
+/// ```c
+/// // In C++ code:
+/// extern "C" bool quinn_udp_set_apple_fast_path_available(bool available);
+///
+/// bool probeResult = PerformAppleFastDatapathProbe();
+/// bool effective = quinn_udp_set_apple_fast_path_available(probeResult);
+/// ```
+#[cfg(apple_fast)]
+#[no_mangle]
+pub extern "C" fn quinn_udp_set_apple_fast_path_available(available: bool) -> bool {
+    imp::set_apple_fast_path_available(available)
+}
+
 #[cfg(test)]
 mod tests {
     use std::net::Ipv4Addr;
