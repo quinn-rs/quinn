@@ -98,6 +98,9 @@ pub struct NatTraversalEndpoint {
     local_peer_id: PeerId,
     /// Timeout configuration
     timeout_config: crate::config::nat_timeouts::TimeoutConfig,
+    /// Track peers for which ConnectionEstablished has already been emitted
+    /// This prevents duplicate events from being sent multiple times for the same connection
+    emitted_established_events: Arc<std::sync::RwLock<std::collections::HashSet<PeerId>>>,
 }
 
 /// Configuration for NAT traversal behavior
@@ -865,6 +868,8 @@ impl NatTraversalEndpoint {
             );
         }
 
+        let emitted_established_events = Arc::new(std::sync::RwLock::new(std::collections::HashSet::new()));
+
         let endpoint = Self {
             quinn_endpoint: Some(quinn_endpoint.clone()),
             config: config.clone(),
@@ -878,6 +883,7 @@ impl NatTraversalEndpoint {
             connections: Arc::new(std::sync::RwLock::new(HashMap::new())),
             local_peer_id: Self::generate_local_peer_id(),
             timeout_config: config.timeouts.clone(),
+            emitted_established_events: emitted_established_events.clone(),
         };
 
         // For bootstrap nodes, start accepting connections immediately
@@ -889,6 +895,7 @@ impl NatTraversalEndpoint {
             let shutdown_clone = endpoint.shutdown.clone();
             let event_tx_clone = event_tx.clone();
             let connections_clone = endpoint.connections.clone();
+            let emitted_events_clone = emitted_established_events.clone();
 
             tokio::spawn(async move {
                 Self::accept_connections(
@@ -896,6 +903,7 @@ impl NatTraversalEndpoint {
                     shutdown_clone,
                     event_tx_clone,
                     connections_clone,
+                    emitted_events_clone,
                 )
                 .await;
             });
@@ -1556,9 +1564,10 @@ impl NatTraversalEndpoint {
             .unwrap_or_else(|| panic!("event transmitter should be initialized"))
             .clone();
         let connections_clone = self.connections.clone();
+        let emitted_events_clone = self.emitted_established_events.clone();
 
         tokio::spawn(async move {
-            Self::accept_connections(endpoint_clone, shutdown_clone, event_tx, connections_clone)
+            Self::accept_connections(endpoint_clone, shutdown_clone, event_tx, connections_clone, emitted_events_clone)
                 .await;
         });
 
@@ -1571,12 +1580,14 @@ impl NatTraversalEndpoint {
         shutdown: Arc<AtomicBool>,
         event_tx: mpsc::UnboundedSender<NatTraversalEvent>,
         connections: Arc<std::sync::RwLock<HashMap<PeerId, QuinnConnection>>>,
+        emitted_events: Arc<std::sync::RwLock<std::collections::HashSet<PeerId>>>,
     ) {
         while !shutdown.load(Ordering::Relaxed) {
             match endpoint.accept().await {
                 Some(connecting) => {
                     let event_tx = event_tx.clone();
                     let connections = connections.clone();
+                    let emitted_events = emitted_events.clone();
                     tokio::spawn(async move {
                         match connecting.await {
                             Ok(connection) => {
@@ -1592,10 +1603,19 @@ impl NatTraversalEndpoint {
                                     conns.insert(peer_id, connection.clone());
                                 }
 
-                                let _ = event_tx.send(NatTraversalEvent::ConnectionEstablished {
-                                    peer_id,
-                                    remote_address: connection.remote_address(),
-                                });
+                                // Only emit ConnectionEstablished if we haven't already for this peer
+                                let should_emit = if let Ok(mut emitted) = emitted_events.write() {
+                                    emitted.insert(peer_id) // Returns true if this is a new peer
+                                } else {
+                                    true // If lock fails, emit anyway
+                                };
+
+                                if should_emit {
+                                    let _ = event_tx.send(NatTraversalEvent::ConnectionEstablished {
+                                        peer_id,
+                                        remote_address: connection.remote_address(),
+                                    });
+                                }
 
                                 // Handle connection streams
                                 Self::handle_connection(peer_id, connection, event_tx).await;
@@ -2013,11 +2033,19 @@ impl NatTraversalEndpoint {
 
         let remote_address = connection.remote_address();
 
-        // Emit ConnectionEstablished event
-        let _ = event_tx.send(NatTraversalEvent::ConnectionEstablished {
-            peer_id,
-            remote_address,
-        });
+        // Only emit ConnectionEstablished if we haven't already for this peer
+        let should_emit = if let Ok(mut emitted) = self.emitted_established_events.write() {
+            emitted.insert(peer_id) // Returns true if this is a new peer
+        } else {
+            true // If lock fails, emit anyway
+        };
+
+        if should_emit {
+            let _ = event_tx.send(NatTraversalEvent::ConnectionEstablished {
+                peer_id,
+                remote_address,
+            });
+        }
 
         // Spawn connection monitoring task
         tokio::spawn(async move {
@@ -2032,6 +2060,11 @@ impl NatTraversalEndpoint {
         &self,
         peer_id: &PeerId,
     ) -> Result<Option<QuinnConnection>, NatTraversalError> {
+        // Clear emitted event tracking so reconnections can generate new events
+        if let Ok(mut emitted) = self.emitted_established_events.write() {
+            emitted.remove(peer_id);
+        }
+
         let mut connections = self.connections.write().map_err(|_| {
             NatTraversalError::ProtocolError("Connections lock poisoned".to_string())
         })?;
