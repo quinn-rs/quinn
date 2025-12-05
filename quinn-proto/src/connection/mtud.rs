@@ -70,7 +70,10 @@ impl MtuDiscovery {
         self.current_mtu
     }
 
-    /// Returns the amount of bytes that should be sent as an MTU probe, if any
+    /// Returns the amount of bytes that should be sent as an MTU probe, if any.
+    ///
+    /// Returns [`None`] if MTUD discovery is disabled. Otherwise delegates to
+    /// [`EnabledMtuDiscovery::poll_transmit`].
     pub(crate) fn poll_transmit(&mut self, now: Instant, next_pn: u64) -> Option<u16> {
         self.state
             .as_mut()
@@ -184,7 +187,14 @@ impl EnabledMtuDiscovery {
         }
     }
 
-    /// Returns the amount of bytes that should be sent as an MTU probe, if any
+    /// Returns the amount of bytes that should be sent as an MTU probe, if any.
+    ///
+    /// A probe only needs to be sent if:
+    ///
+    /// - There is no current in-flight probe.
+    /// - A search for a new MTU is in progress.
+    /// - The MTU discovery was completed but the [`MtuDiscoveryConfig::interval`] expired,
+    ///   this re-starts a n MTU search.
     fn poll_transmit(&mut self, now: Instant, current_mtu: u16, next_pn: u64) -> Option<u16> {
         if let Phase::Initial = &self.phase {
             // Start the first search

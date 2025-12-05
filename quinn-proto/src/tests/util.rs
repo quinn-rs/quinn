@@ -164,7 +164,9 @@ impl Pair {
         }
     }
 
-    /// Drive both endpoints optionally preventing them from receiving traffic
+    /// Drive both endpoints once, optionally preventing them from receiving traffic.
+    ///
+    /// Returns `false` if the connection is idle after the step.
     pub(super) fn blackhole_step(
         &mut self,
         server_blackhole: bool,

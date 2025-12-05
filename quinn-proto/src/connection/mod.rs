@@ -1107,7 +1107,8 @@ impl Connection {
                         trace!(
                             ?space_id,
                             %path_id,
-                            "nothing to send on path, no more paths"
+                            next_path_id=?None::<PathId>,
+                            "nothing to send on path"
                         );
                         break;
                     }
@@ -1450,21 +1451,48 @@ impl Connection {
         self.app_limited = transmit.is_empty() && !congestion_blocked;
 
         // Send MTU probe if necessary
-        // TODO(multipath): We need to send MTUD probes on all paths.  But because of how
-        //    the loop is written now we only send an MTUD probe on the last open path.
         if transmit.is_empty() && self.state.is_established() {
-            if let Some(active_cid) = self.rem_cids.get(&path_id).map(CidQueue::active) {
-                let space_id = SpaceId::Data;
-                let next_pn = self.spaces[space_id].for_path(path_id).peek_tx_number();
-                let probe_size = self
-                    .path_data_mut(path_id)
-                    .mtud
-                    .poll_transmit(now, next_pn)?;
-
+            path_id = *self.paths.first_key_value().expect("one path must exist").0;
+            let probe_data = loop {
+                // We MTU probe all paths for which all of the following is true:
+                // - We have an active destination CID for the path.
+                // - The remote address *and* path are validated.
+                // - The path is not abandoned.
+                // - The MTU Discovery subsystem wants to probe the path.
+                let active_cid = self.rem_cids.get(&path_id).map(CidQueue::active);
+                let eligible = self.path_data(path_id).validated
+                    && !self.path_data(path_id).is_validating_path()
+                    && !self.abandoned_paths.contains(&path_id);
+                let probe_size = eligible
+                    .then(|| {
+                        let next_pn = self.spaces[SpaceId::Data]
+                            .for_path(path_id)
+                            .peek_tx_number();
+                        self.path_data_mut(path_id).mtud.poll_transmit(now, next_pn)
+                    })
+                    .flatten();
+                match (active_cid, probe_size) {
+                    (Some(active_cid), Some(probe_size)) => {
+                        // Let's send an MTUD probe!
+                        break Some((active_cid, probe_size));
+                    }
+                    _ => {
+                        // Find the next path to check if it needs an MTUD probe.
+                        match self.paths.keys().find(|&&next| next > path_id) {
+                            Some(next) => {
+                                path_id = *next;
+                                continue;
+                            }
+                            None => break None,
+                        }
+                    }
+                }
+            };
+            if let Some((active_cid, probe_size)) = probe_data {
+                // We are definitely sending a DPLPMTUD probe.
                 debug_assert_eq!(transmit.num_datagrams(), 0);
                 transmit.start_new_datagram_with_size(probe_size as usize);
 
-                debug_assert_eq!(transmit.datagram_start_offset(), 0);
                 let mut qlog = QlogSentPacket::default();
                 let mut builder = PacketBuilder::new(
                     now,
@@ -4208,6 +4236,7 @@ impl Connection {
                         // mark the path as open from the application perspective now that Opened
                         // event has been queued
                         if !std::mem::replace(&mut path.data.open, true) {
+                            trace!("path opened");
                             if let Some(observed) = path.data.last_observed_addr_report.as_ref() {
                                 self.events.push_back(Event::Path(PathEvent::ObservedAddr {
                                     id: path_id,
@@ -5090,7 +5119,7 @@ impl Connection {
             path.challenges_sent.insert(token, now);
             sent.non_retransmits = true;
             sent.requires_padding = true;
-            trace!("PATH_CHALLENGE {:08x}", token);
+            trace!(%token, "PATH_CHALLENGE");
             buf.write(frame::FrameType::PATH_CHALLENGE);
             buf.write(token);
             qlog.frame(&Frame::PathChallenge(token));
@@ -5135,7 +5164,7 @@ impl Connection {
             if let Some(token) = path.path_responses.pop_on_path(path.remote) {
                 sent.non_retransmits = true;
                 sent.requires_padding = true;
-                trace!("PATH_RESPONSE {:08x}", token);
+                trace!(?token, "PATH_RESPONSE");
                 buf.write(frame::FrameType::PATH_RESPONSE);
                 buf.write(token);
                 qlog.frame(&Frame::PathResponse(token));
@@ -5923,8 +5952,8 @@ impl Connection {
 
     /// Returns the detected maximum udp payload size for the current path
     #[cfg(test)]
-    pub(crate) fn path_mtu(&self) -> u16 {
-        self.path_data(PathId::ZERO).current_mtu()
+    pub(crate) fn path_mtu(&self, path_id: PathId) -> u16 {
+        self.path_data(path_id).current_mtu()
     }
 
     /// Triggers path validation on all paths

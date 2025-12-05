@@ -693,3 +693,80 @@ fn per_path_observed_address() {
     assert!(opened);
     assert_matches!(conn.poll(), Some(Event::Path(PathEvent::ObservedAddr{id: PathId(1), addr})) if addr == our_addr);
 }
+
+#[test]
+fn mtud_on_two_paths() {
+    let _guard = subscribe();
+
+    // Manual pair setup because we need to disable the max_idle_timeout.
+    let multipath_transport_cfg = Arc::new(TransportConfig {
+        max_concurrent_multipath_paths: NonZeroU32::new(MAX_PATHS),
+        initial_rtt: Duration::from_millis(10),
+        max_idle_timeout: None,
+        ..TransportConfig::default()
+    });
+    let server_cfg = Arc::new(ServerConfig {
+        transport: multipath_transport_cfg.clone(),
+        ..server_config()
+    });
+    let server = Endpoint::new(Default::default(), Some(server_cfg), true, None);
+    let client = Endpoint::new(Default::default(), None, true, None);
+
+    let mut pair = Pair::new_from_endpoint(client, server);
+    pair.mtu = 1200; // Start with a small MTU
+    let client_cfg = ClientConfig {
+        transport: multipath_transport_cfg,
+        ..client_config()
+    };
+    let (client_ch, _server_ch) = pair.connect_with(client_cfg);
+    pair.drive();
+    info!("connected");
+
+    assert_eq!(pair.client_conn_mut(client_ch).path_mtu(PathId::ZERO), 1200);
+
+    // Open a 2nd path.
+    let now = pair.time;
+    let server_addr = pair.server.addr;
+    let path_id = pair
+        .client_conn_mut(client_ch)
+        .open_path(server_addr, PathStatus::Available, now)
+        .unwrap();
+    pair.drive();
+    let client_conn = pair.client_conn_mut(client_ch);
+
+    // Ensure the path opened correctly.
+    assert_matches!(
+        client_conn.poll().unwrap(),
+        Event::Path(crate::PathEvent::Opened { id  }) if id == path_id
+    );
+    let server_conn = pair.server_conn_mut(client_ch);
+    assert_matches!(
+        server_conn.poll().unwrap(),
+        Event::Path(crate::PathEvent::Opened { id  }) if id == path_id
+    );
+
+    // MTU should be 1200 for both paths.
+    assert_eq!(pair.client_conn_mut(client_ch).path_mtu(PathId::ZERO), 1200);
+    assert_eq!(pair.client_conn_mut(client_ch).path_mtu(path_id), 1200);
+
+    // The default MtuDiscoveryConfig::upper_bound is 1452, the default
+    // MtuDiscoveryConfig::interval is 600s.
+    pair.mtu = 1452;
+    pair.time += Duration::from_secs(600);
+    info!("Bumping MTU to: {}", pair.mtu);
+    pair.drive();
+
+    info!(
+        "MTU Path 0: {}",
+        pair.client_conn_mut(client_ch).path_mtu(PathId::ZERO)
+    );
+    info!(
+        "MTU Path {}: {}",
+        path_id,
+        pair.client_conn_mut(client_ch).path_mtu(path_id)
+    );
+
+    // Both paths should have found the new MTU.
+    assert_eq!(pair.client_conn_mut(client_ch).path_mtu(PathId::ZERO), 1452);
+    assert_eq!(pair.client_conn_mut(client_ch).path_mtu(path_id), 1452);
+}

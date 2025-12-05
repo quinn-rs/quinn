@@ -2483,8 +2483,14 @@ fn connect_detects_mtu() {
         let (client_ch, server_ch) = pair.connect();
         pair.drive();
 
-        assert_eq!(pair.client_conn_mut(client_ch).path_mtu(), expected_mtu);
-        assert_eq!(pair.server_conn_mut(server_ch).path_mtu(), expected_mtu);
+        assert_eq!(
+            pair.client_conn_mut(client_ch).path_mtu(PathId::ZERO),
+            expected_mtu
+        );
+        assert_eq!(
+            pair.server_conn_mut(server_ch).path_mtu(PathId::ZERO),
+            expected_mtu
+        );
     }
 }
 
@@ -2516,8 +2522,8 @@ fn migrate_detects_new_mtu_and_respects_original_peer_max_udp_payload_size() {
 
     // Sanity check: MTUD ran to completion (the numbers differ because binary search stops when
     // changes are smaller than 20, otherwise both endpoints would converge at the same MTU of 1300)
-    assert_eq!(pair.client_conn_mut(client_ch).path_mtu(), 1293);
-    assert_eq!(pair.server_conn_mut(server_ch).path_mtu(), 1300);
+    assert_eq!(pair.client_conn_mut(client_ch).path_mtu(PathId::ZERO), 1293);
+    assert_eq!(pair.server_conn_mut(server_ch).path_mtu(PathId::ZERO), 1300);
 
     // Migrate client to a different port (and simulate a higher path MTU)
     pair.mtu = 1500;
@@ -2537,13 +2543,13 @@ fn migrate_detects_new_mtu_and_respects_original_peer_max_udp_payload_size() {
 
     // MTU detection has successfully run after migrating
     assert_eq!(
-        pair.server_conn_mut(server_ch).path_mtu(),
+        pair.server_conn_mut(server_ch).path_mtu(PathId::ZERO),
         client_max_udp_payload_size
     );
 
     // Sanity check: the client keeps the old MTU, because migration is triggered by incoming
     // packets from a different address
-    assert_eq!(pair.client_conn_mut(client_ch).path_mtu(), 1293);
+    assert_eq!(pair.client_conn_mut(client_ch).path_mtu(PathId::ZERO), 1293);
 }
 
 #[test]
@@ -2569,12 +2575,12 @@ fn connect_runs_mtud_again_after_600_seconds() {
     // Sanity check: the mtu has been discovered
     let client_conn = pair.client_conn_mut(client_ch);
     let client_path_stats = client_conn.path_stats(PathId::ZERO).unwrap();
-    assert_eq!(client_conn.path_mtu(), 1389);
+    assert_eq!(client_conn.path_mtu(PathId::ZERO), 1389);
     assert_eq!(client_path_stats.sent_plpmtud_probes, 5);
     assert_eq!(client_path_stats.lost_plpmtud_probes, 3);
     let server_conn = pair.server_conn_mut(server_ch);
     let server_path_stats = server_conn.path_stats(PathId::ZERO).unwrap();
-    assert_eq!(server_conn.path_mtu(), 1389);
+    assert_eq!(server_conn.path_mtu(PathId::ZERO), 1389);
     assert_eq!(server_path_stats.sent_plpmtud_probes, 5);
     assert_eq!(server_path_stats.lost_plpmtud_probes, 3);
 
@@ -2582,16 +2588,16 @@ fn connect_runs_mtud_again_after_600_seconds() {
     // higher udp payload size
     pair.mtu = 1500;
     pair.drive();
-    assert_eq!(pair.client_conn_mut(client_ch).path_mtu(), 1389);
-    assert_eq!(pair.server_conn_mut(server_ch).path_mtu(), 1389);
+    assert_eq!(pair.client_conn_mut(client_ch).path_mtu(PathId::ZERO), 1389);
+    assert_eq!(pair.server_conn_mut(server_ch).path_mtu(PathId::ZERO), 1389);
 
     // The MTU changes after 600 seconds, because now MTUD runs for the second time
     pair.time += Duration::from_secs(600);
     pair.drive();
     assert!(!pair.client_conn_mut(client_ch).is_closed());
     assert!(!pair.server_conn_mut(client_ch).is_closed());
-    assert_eq!(pair.client_conn_mut(client_ch).path_mtu(), 1452);
-    assert_eq!(pair.server_conn_mut(server_ch).path_mtu(), 1452);
+    assert_eq!(pair.client_conn_mut(client_ch).path_mtu(PathId::ZERO), 1452);
+    assert_eq!(pair.server_conn_mut(server_ch).path_mtu(PathId::ZERO), 1452);
 }
 
 #[test]
@@ -2603,8 +2609,8 @@ fn blackhole_after_mtu_change_repairs_itself() {
     pair.drive();
 
     // Sanity check
-    assert_eq!(pair.client_conn_mut(client_ch).path_mtu(), 1452);
-    assert_eq!(pair.server_conn_mut(server_ch).path_mtu(), 1452);
+    assert_eq!(pair.client_conn_mut(client_ch).path_mtu(PathId::ZERO), 1452);
+    assert_eq!(pair.server_conn_mut(server_ch).path_mtu(PathId::ZERO), 1452);
 
     // Back to the base MTU
     pair.mtu = 1200;
