@@ -3,7 +3,6 @@
 //! This test suite performs basic validation of PQC functionality
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
-
 #![cfg(feature = "pqc")]
 
 use ant_quic::crypto::pqc::{

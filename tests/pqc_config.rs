@@ -1,7 +1,6 @@
 //! Tests for Post-Quantum Cryptography configuration API
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
-
 #![cfg(feature = "pqc")]
 
 use ant_quic::crypto::pqc::{HybridPreference, PqcConfig, PqcMode};

@@ -4,7 +4,6 @@
 //! and meet the acceptance criteria for production release.
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
-
 #![cfg(feature = "pqc")]
 
 use ant_quic::{

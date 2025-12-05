@@ -3,7 +3,6 @@
 //! These tests verify that the metrics system works correctly with the prometheus feature.
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
-
 #![cfg(feature = "prometheus")]
 
 use ant_quic::{
