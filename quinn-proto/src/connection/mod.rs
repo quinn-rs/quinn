@@ -4214,6 +4214,13 @@ impl Connection {
                     if remote == path.remote {
                         // PATH_CHALLENGE on active path, possible off-path packet forwarding
                         // attack. Send a non-probing packet to recover the active path.
+                        // TODO(flub): No longer true! We now path_challege also to validate
+                        //    the path if the path is new, without an RFC9000-style
+                        //    migration involved. This means we add in an extra
+                        //    IMMEDIATE_ACK on some challenges. It isn't really wrong to do
+                        //    so, but it still is something untidy. We should instead
+                        //    suppress this when we know the remote is still validating the
+                        //    path.
                         match self.peer_supports_ack_frequency() {
                             true => self.immediate_ack(path_id),
                             false => {
