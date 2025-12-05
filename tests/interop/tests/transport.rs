@@ -1,3 +1,5 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 /// Transport Features Tests
 ///
 /// Tests QUIC transport features including streams, flow control, congestion control, and loss recovery

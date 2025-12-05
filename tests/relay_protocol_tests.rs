@@ -1,5 +1,7 @@
 //! Comprehensive unit tests for the relay protocol implementation.
 
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 use ant_quic::relay::session_manager::SessionEvent;
 use ant_quic::relay::{
     RelayAuthenticator, RelayConnection, RelayConnectionConfig, RelayError, RelayResult,

@@ -1,5 +1,7 @@
 //! Integration test: NAT traversal RFC frame config + RFC 7250 raw public keys with PQC/hybrid
 
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 #[cfg(feature = "pqc")]
 mod pqc_integration {
     use ant_quic::VarInt;

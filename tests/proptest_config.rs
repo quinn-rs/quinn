@@ -3,6 +3,8 @@
 //! This module provides comprehensive property testing strategies and configurations
 //! to ensure the robustness and correctness of the QUIC implementation.
 
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 use proptest::prelude::*;
 use proptest::prop_oneof;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};

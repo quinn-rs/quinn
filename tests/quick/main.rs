@@ -3,6 +3,8 @@
 //! This test suite contains fast unit and integration tests that provide
 //! rapid feedback during development. These tests are run on every push.
 
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 // Re-export test modules
 mod auth_tests;
 mod auto_binding_integration;

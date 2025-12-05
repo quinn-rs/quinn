@@ -3,6 +3,8 @@
 //! This module provides shared functionality for integration tests,
 //! including crypto provider initialization.
 
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 use std::sync::Once;
 
 /// Initialize cryptographic provider once for all tests

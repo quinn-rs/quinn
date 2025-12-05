@@ -3,6 +3,8 @@
 //! These tests verify that NAT traversal works correctly with both
 //! IPv4 and IPv6 addresses, including dual-stack scenarios.
 
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 use ant_quic::{
     ClientConfig, Endpoint, ServerConfig,
     crypto::rustls::{QuicClientConfig, QuicServerConfig},

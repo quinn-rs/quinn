@@ -1,5 +1,7 @@
 //! Tests for token_v2 binding to (PeerId || CID || nonce)
 
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 use ant_quic::{nat_traversal_api::PeerId, shared::ConnectionId};
 
 #[test]

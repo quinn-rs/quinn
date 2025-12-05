@@ -14,7 +14,7 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, UdpSocket};
 
 use super::port::{
     BoundSocket, EndpointConfigError, EndpointPortConfig, IpMode, PortBinding, PortConfigResult,
-    PortRetryBehavior, SocketOptions,
+    PortRetryBehavior, SocketOptions, buffer_defaults,
 };
 
 /// Validate port number
@@ -37,6 +37,66 @@ fn validate_port_range(start: u16, end: u16) -> PortConfigResult<()> {
         return Err(EndpointConfigError::PermissionDenied(start));
     }
     Ok(())
+}
+
+/// Try to set send buffer size with graceful fallback
+///
+/// If the kernel rejects the requested size, tries progressively smaller sizes
+/// until it succeeds or reaches the minimum buffer size.
+fn try_set_send_buffer(socket: &socket2::Socket, requested: usize) -> std::io::Result<usize> {
+    let mut size = requested;
+    while size >= buffer_defaults::MIN_BUFFER_SIZE {
+        if socket.set_send_buffer_size(size).is_ok() {
+            // Return actual size that was set
+            return socket.send_buffer_size();
+        }
+        // Try half the size
+        size /= 2;
+        tracing::debug!(
+            "Send buffer size {} rejected, trying {} bytes",
+            size * 2,
+            size
+        );
+    }
+    // Last resort: try minimum size
+    if socket
+        .set_send_buffer_size(buffer_defaults::MIN_BUFFER_SIZE)
+        .is_ok()
+    {
+        return socket.send_buffer_size();
+    }
+    // Accept whatever the OS gives us
+    socket.send_buffer_size()
+}
+
+/// Try to set receive buffer size with graceful fallback
+///
+/// If the kernel rejects the requested size, tries progressively smaller sizes
+/// until it succeeds or reaches the minimum buffer size.
+fn try_set_recv_buffer(socket: &socket2::Socket, requested: usize) -> std::io::Result<usize> {
+    let mut size = requested;
+    while size >= buffer_defaults::MIN_BUFFER_SIZE {
+        if socket.set_recv_buffer_size(size).is_ok() {
+            // Return actual size that was set
+            return socket.recv_buffer_size();
+        }
+        // Try half the size
+        size /= 2;
+        tracing::debug!(
+            "Recv buffer size {} rejected, trying {} bytes",
+            size * 2,
+            size
+        );
+    }
+    // Last resort: try minimum size
+    if socket
+        .set_recv_buffer_size(buffer_defaults::MIN_BUFFER_SIZE)
+        .is_ok()
+    {
+        return socket.recv_buffer_size();
+    }
+    // Accept whatever the OS gives us
+    socket.recv_buffer_size()
 }
 
 /// Create a socket with specified options
@@ -76,16 +136,26 @@ fn create_socket(addr: &SocketAddr, opts: &SocketOptions) -> PortConfigResult<Ud
         }
     }
 
+    // Apply buffer sizes with graceful fallback
+    // If the kernel rejects the requested size, try progressively smaller sizes
     if let Some(size) = opts.send_buffer_size {
-        socket
-            .set_send_buffer_size(size)
-            .map_err(|e| EndpointConfigError::BindFailed(e.to_string()))?;
+        if let Err(e) = try_set_send_buffer(&socket, size) {
+            tracing::warn!(
+                "Failed to set send buffer to {} bytes: {}. Using OS default.",
+                size,
+                e
+            );
+        }
     }
 
     if let Some(size) = opts.recv_buffer_size {
-        socket
-            .set_recv_buffer_size(size)
-            .map_err(|e| EndpointConfigError::BindFailed(e.to_string()))?;
+        if let Err(e) = try_set_recv_buffer(&socket, size) {
+            tracing::warn!(
+                "Failed to set recv buffer to {} bytes: {}. Using OS default.",
+                size,
+                e
+            );
+        }
     }
 
     // Bind the socket

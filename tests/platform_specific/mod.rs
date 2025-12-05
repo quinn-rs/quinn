@@ -2,6 +2,8 @@
 //!
 //! These tests verify platform-specific functionality and behavior
 
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 #[cfg(test)]
 mod platform_common {
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};

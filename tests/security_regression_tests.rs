@@ -3,6 +3,8 @@
 //! Tests for specific security improvements made in recent commits to ensure
 //! they don't regress and that the system handles security-sensitive scenarios safely.
 
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 use ant_quic::nat_traversal_api::{EndpointRole, NatTraversalConfig, NatTraversalEndpoint};
 use std::time::Duration;
 

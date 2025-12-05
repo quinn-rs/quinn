@@ -3,6 +3,8 @@
 //! This benchmark suite measures the performance of the RelayQueue implementation
 //! to identify bottlenecks and validate optimization improvements.
 
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 use std::{
     collections::VecDeque,
     time::{Duration, Instant},

@@ -1,3 +1,5 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 /// Integration test for QUIC interoperability framework
 ///
 /// This test validates the interoperability test infrastructure

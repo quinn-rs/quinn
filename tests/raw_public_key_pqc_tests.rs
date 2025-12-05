@@ -1,5 +1,7 @@
 //! Integration tests for PQC raw public key support
 
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 #[cfg(feature = "pqc")]
 mod pqc_raw_public_key_tests {
     use ant_quic::crypto::pqc::{

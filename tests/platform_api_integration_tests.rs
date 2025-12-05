@@ -2,6 +2,8 @@
 //!
 //! These tests verify that platform-specific APIs work correctly on each OS
 
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 use ant_quic::candidate_discovery::NetworkInterfaceDiscovery;
 
 #[cfg(target_os = "windows")]

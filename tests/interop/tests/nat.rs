@@ -1,3 +1,5 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 /// NAT Traversal Tests
 ///
 /// Tests NAT traversal features including address discovery, hole punching, and keepalive

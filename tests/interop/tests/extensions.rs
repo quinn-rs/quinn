@@ -1,3 +1,5 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 /// Extensions Tests
 ///
 /// Tests QUIC extensions including transport parameters, frame types, and error codes

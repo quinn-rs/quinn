@@ -1,5 +1,7 @@
 //! Protocol compliance tests
 
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 // Re-export common test utilities
 pub use crate::utils::*;
 

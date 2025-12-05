@@ -2,6 +2,8 @@
 //!
 //! These tests verify the NAT traversal endpoint API using the actual public interfaces.
 
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 use ant_quic::{
     crypto::raw_public_keys::key_utils::{
         derive_peer_id_from_public_key, generate_ed25519_keypair,

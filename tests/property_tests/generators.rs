@@ -1,5 +1,7 @@
 //! Property test generators for ant-quic types
 
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 use ant_quic::{VarInt, frame::{Ack, EcnCounts, FrameType}};
 use proptest::prelude::*;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};

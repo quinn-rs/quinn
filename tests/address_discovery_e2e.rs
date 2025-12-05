@@ -3,6 +3,8 @@
 //! These tests verify the complete address discovery flow using
 //! the public APIs available in ant-quic.
 
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 mod common;
 
 use ant_quic::{
@@ -68,13 +70,16 @@ fn create_server_endpoint() -> Endpoint {
     let socket = create_configured_socket(addr).unwrap();
 
     // Configure endpoint with smaller MTU for Windows compatibility
-    let mut endpoint_config = EndpointConfig::default();
     #[cfg(target_os = "windows")]
-    {
+    let endpoint_config = {
+        let mut config = EndpointConfig::default();
         // Use smaller MTU on Windows to avoid buffer size issues
         // This prevents WSAEMSGSIZE (error 10040) on Windows CI
-        endpoint_config.max_udp_payload_size(1200).unwrap();
-    }
+        config.max_udp_payload_size(1200).unwrap();
+        config
+    };
+    #[cfg(not(target_os = "windows"))]
+    let endpoint_config = EndpointConfig::default();
 
     // Use Endpoint::new() to create endpoint with custom socket configuration
     let runtime = default_runtime().unwrap();
@@ -88,12 +93,15 @@ fn create_client_endpoint() -> Endpoint {
     let socket = create_configured_socket(addr).unwrap();
 
     // Configure endpoint with smaller MTU for Windows compatibility
-    let mut endpoint_config = EndpointConfig::default();
     #[cfg(target_os = "windows")]
-    {
+    let endpoint_config = {
+        let mut config = EndpointConfig::default();
         // Use smaller MTU on Windows to avoid buffer size issues
-        endpoint_config.max_udp_payload_size(1200).unwrap();
-    }
+        config.max_udp_payload_size(1200).unwrap();
+        config
+    };
+    #[cfg(not(target_os = "windows"))]
+    let endpoint_config = EndpointConfig::default();
 
     // Use Endpoint::new() to create endpoint with custom socket configuration
     let runtime = default_runtime().unwrap();

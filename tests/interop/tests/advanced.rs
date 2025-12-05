@@ -1,3 +1,5 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 /// Advanced Features Tests
 ///
 /// Tests advanced QUIC features including 0-RTT, connection migration, multipath, and ECN

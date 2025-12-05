@@ -1,5 +1,7 @@
 //! Comprehensive tests for ML-KEM-768 implementation
 
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 #[cfg(all(test, feature = "pqc"))]
 mod ml_kem_768_tests {
     use ant_quic::crypto::pqc::MlKem768;

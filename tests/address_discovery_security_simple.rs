@@ -2,6 +2,8 @@
 //!
 //! These tests validate security properties of the address discovery implementation
 
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 use ant_quic::{
     auth::AuthConfig,
     nat_traversal_api::EndpointRole,

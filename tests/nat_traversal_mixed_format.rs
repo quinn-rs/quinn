@@ -1,5 +1,7 @@
 //! Integration tests for NAT traversal with mixed RFC and legacy endpoints
 
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 use ant_quic::{
     ClientConfig, Endpoint, ServerConfig, TransportConfig, VarInt,
     crypto::{rustls::QuicClientConfig, rustls::QuicServerConfig},

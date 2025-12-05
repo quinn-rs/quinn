@@ -3,6 +3,8 @@
 //! These tests verify that OBSERVED_ADDRESS frames are properly
 //! sent and received during connection establishment.
 
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 use ant_quic::{
     ClientConfig, Endpoint, ServerConfig,
     crypto::rustls::{QuicClientConfig, QuicServerConfig},

@@ -3,6 +3,8 @@
 //! This module provides fuzz targets to test NAT traversal frame parsing
 //! with malformed and edge-case inputs to ensure robustness.
 
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 use ant_quic::VarInt;
 use ant_quic::coding::BufExt;
 use bytes::{Buf, BufMut, BytesMut};

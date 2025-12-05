@@ -1,6 +1,8 @@
 //! Standard test suite for ant-quic
 //! These tests run in < 5 minutes and include integration and protocol tests
 
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 pub mod utils {
     use std::time::Duration;
 

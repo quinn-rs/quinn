@@ -1,5 +1,7 @@
 //! Benchmarks for PQC memory pool
 
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 #[cfg(feature = "pqc")]
 use ant_quic::crypto::pqc::memory_pool::{PoolConfig, PqcMemoryPool};
 #[cfg(feature = "pqc")]

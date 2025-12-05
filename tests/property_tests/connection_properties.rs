@@ -1,5 +1,7 @@
 //! Property tests for connection state machine
 
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 use super::config::*;
 use super::generators::*;
 use proptest::prelude::*;

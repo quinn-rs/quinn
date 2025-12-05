@@ -3,6 +3,8 @@
 //! This module tests the NAT traversal functionality through the public API,
 //! focusing on overall system behavior and the high-level interfaces.
 
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 use std::error::Error;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::time::Duration;

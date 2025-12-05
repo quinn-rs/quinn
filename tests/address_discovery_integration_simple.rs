@@ -2,6 +2,8 @@
 //!
 //! These tests verify basic address discovery functionality.
 
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 use ant_quic::{
     ClientConfig, Endpoint, ServerConfig,
     crypto::rustls::{QuicClientConfig, QuicServerConfig},

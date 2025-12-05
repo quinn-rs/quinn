@@ -1,5 +1,7 @@
 //! Server-side validation tests for token_v2 semantics.
 
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 use ant_quic::{nat_traversal_api::PeerId, shared::ConnectionId};
 
 #[test]

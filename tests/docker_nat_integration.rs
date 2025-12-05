@@ -5,6 +5,8 @@
 //!
 //! These tests are always compiled but will be skipped at runtime if Docker is not available.
 
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 #[cfg(all(test, not(target_os = "windows")))]
 mod docker_nat_tests {
     use std::process::Command;

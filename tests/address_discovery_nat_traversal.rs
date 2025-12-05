@@ -3,6 +3,8 @@
 //! These tests verify that the OBSERVED_ADDRESS frame implementation properly
 //! integrates with the NAT traversal system to improve connectivity.
 
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 use std::{
     net::SocketAddr,
     time::{Duration, Instant},

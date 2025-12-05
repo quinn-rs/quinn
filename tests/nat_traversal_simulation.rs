@@ -3,6 +3,8 @@
 //! These tests create simulated NAT environments to verify that the
 //! OBSERVED_ADDRESS implementation improves connectivity.
 
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 use std::{
     collections::HashMap,
     net::{IpAddr, Ipv4Addr, SocketAddr},

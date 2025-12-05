@@ -1,6 +1,8 @@
 //! Long-running test suite for ant-quic
 //! These tests take > 5 minutes and include stress, performance, and comprehensive tests
 
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 use std::time::Duration;
 
 pub mod utils {

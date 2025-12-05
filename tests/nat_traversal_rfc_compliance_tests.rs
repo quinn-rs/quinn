@@ -3,6 +3,8 @@
 //! These tests verify exact compliance with draft-seemann-quic-nat-traversal-02.
 //! They test both encoding and decoding to ensure byte-for-byte accuracy.
 
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 use ant_quic::{
     VarInt,
     coding::{BufExt, BufMutExt, UnexpectedEnd},

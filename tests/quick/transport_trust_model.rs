@@ -4,6 +4,8 @@
 //! transport trust work. They are added before implementation (TDD) and will
 //! initially fail to compile until the corresponding modules are introduced.
 
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 use ant_quic as quic;
 
 use sha2::{Digest, Sha256};

@@ -3,6 +3,8 @@
 //! This benchmark suite measures the performance of address candidate discovery,
 //! priority calculation, and candidate pair generation algorithms.
 
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 use std::{
     collections::HashMap,
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},

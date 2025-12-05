@@ -1,5 +1,7 @@
 //! Infrastructure tests to validate test setup without full connectivity
 
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 use ant_quic::{
     auth::AuthConfig,
     crypto::raw_public_keys::key_utils::{

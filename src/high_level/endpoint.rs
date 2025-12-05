@@ -92,6 +92,18 @@ impl Endpoint {
                 tracing::debug!(%e, "unable to make socket dual-stack");
             }
         }
+
+        // Apply platform-appropriate buffer sizes to avoid WSAEMSGSIZE errors on Windows
+        // and ensure reliable QUIC connections, especially with PQC
+        use crate::config::buffer_defaults;
+        let buffer_size = buffer_defaults::PLATFORM_DEFAULT;
+        if let Err(e) = socket.set_send_buffer_size(buffer_size) {
+            tracing::debug!(%e, "unable to set send buffer size to {}", buffer_size);
+        }
+        if let Err(e) = socket.set_recv_buffer_size(buffer_size) {
+            tracing::debug!(%e, "unable to set recv buffer size to {}", buffer_size);
+        }
+
         socket.bind(&addr.into())?;
         let runtime =
             default_runtime().ok_or_else(|| io::Error::other("no async runtime found"))?;

@@ -2,6 +2,8 @@
 //!
 //! These tests verify basic compliance with draft-seemann-quic-nat-traversal-02.
 
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 use ant_quic::VarInt;
 
 // Frame type constants from the RFC

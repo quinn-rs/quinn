@@ -1,3 +1,5 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 /// Standalone NAT traversal frame encoding/decoding tests
 /// This test file is independent of the main codebase compilation issues

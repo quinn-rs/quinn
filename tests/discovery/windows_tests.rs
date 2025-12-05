@@ -3,6 +3,8 @@
 //! This module contains tests for the Windows network interface discovery implementation.
 //! It tests the IP Helper API integration with various network configurations.
 
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 use std::net::{IpAddr, SocketAddr};
 use std::time::Duration;
 

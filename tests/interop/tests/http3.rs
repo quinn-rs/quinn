@@ -1,3 +1,5 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 /// HTTP/3 Compatibility Tests
 /// 
 /// Tests HTTP/3 functionality including request/response, server push, and QPACK

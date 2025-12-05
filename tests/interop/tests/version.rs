@@ -1,3 +1,5 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 /// Version Negotiation Tests
 ///
 /// Tests QUIC version negotiation including compatible versions, incompatible versions, and downgrades

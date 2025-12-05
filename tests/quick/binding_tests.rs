@@ -1,5 +1,7 @@
 //! Channel binding tests using Ed25519 as a stand-in for PQ signatures.
 
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 use ant_quic::{
     config::{ClientConfig, ServerConfig},
     high_level::Endpoint,

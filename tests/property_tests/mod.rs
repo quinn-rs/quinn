@@ -3,6 +3,8 @@
 //! This module contains property-based tests that verify invariants
 //! and properties of the QUIC protocol implementation.
 
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 #[cfg(test)]
 pub mod frame_properties;
 

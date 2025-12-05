@@ -451,6 +451,7 @@ impl fmt::Display for ResetToken {
 }
 
 #[cfg(all(test, any(feature = "aws-lc-rs", feature = "ring")))]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod test {
     use super::*;
     #[cfg(all(feature = "aws-lc-rs", not(feature = "ring")))]

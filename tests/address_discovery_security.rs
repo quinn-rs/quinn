@@ -6,6 +6,8 @@
 //! - Information leak prevention
 //! - Penetration testing scenarios
 
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 use ant_quic::{
     auth::AuthConfig,
     nat_traversal_api::EndpointRole,

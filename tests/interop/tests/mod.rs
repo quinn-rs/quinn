@@ -1,3 +1,5 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 /// Interoperability Test Categories and Cases
 use ant_quic::high_level::Endpoint;
 use anyhow::Result;

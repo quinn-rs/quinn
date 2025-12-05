@@ -7,6 +7,8 @@
 //! - Performance under various conditions
 //! - Security and edge case handling
 
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 use ant_quic::{
     auth::AuthConfig,
     chat::ChatMessage,

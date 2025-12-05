@@ -1,5 +1,7 @@
 //! Comprehensive tests for ML-DSA-65 implementation
 
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 #[cfg(all(test, feature = "pqc"))]
 mod ml_dsa_65_tests {
     use ant_quic::crypto::pqc::MlDsa65;

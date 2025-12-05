@@ -1,5 +1,7 @@
 //! Integration tests for automatic channel binding on connect and NEW_TOKEN v2 issuance.
 
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 use std::sync::{Arc, Mutex};
 use tokio::time::{Duration, timeout};
 

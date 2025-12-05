@@ -3,6 +3,8 @@
 //! This benchmark suite measures the performance of connection tracking,
 //! resource management, and connection state transitions.
 
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 use std::{
     collections::{HashMap, VecDeque},
     net::SocketAddr,

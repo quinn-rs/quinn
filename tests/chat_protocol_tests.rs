@@ -2,6 +2,8 @@
 //!
 //! This module tests the chat messaging system over QUIC streams.
 
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 use ant_quic::{
     auth::AuthConfig,
     chat::{ChatError, ChatMessage, MAX_MESSAGE_SIZE, PeerInfo},

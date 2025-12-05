@@ -7,6 +7,8 @@
 //! - Protocol vulnerabilities
 //! - Side-channel attacks
 
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 use ant_quic::{
     auth::{AuthConfig, AuthManager, AuthMessage},
     crypto::raw_public_keys::key_utils::{

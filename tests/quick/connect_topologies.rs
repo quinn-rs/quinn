@@ -4,6 +4,8 @@
 //! - Connection error scenarios: Tests timeout, certificate validation, and connection failure handling
 //! - Connection lifecycle test: Tests graceful connection establishment, data exchange, and cleanup (each uses the others' endpoints)
 
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 use ant_quic::{
     config::{ClientConfig, ServerConfig},
     high_level::Endpoint,

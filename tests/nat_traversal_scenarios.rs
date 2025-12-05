@@ -2,6 +2,8 @@
 //!
 //! Tests various NAT type combinations and hole-punching scenarios
 
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 use ant_quic::{
     auth::AuthConfig,
     crypto::raw_public_keys::key_utils::{

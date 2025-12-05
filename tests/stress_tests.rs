@@ -2,6 +2,8 @@
 //!
 //! Run these tests with: cargo test --release --test stress_tests -- --ignored
 
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 // Placeholder test to prevent empty module error
 #[test]
 #[ignore]

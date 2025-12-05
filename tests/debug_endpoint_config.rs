@@ -1,5 +1,7 @@
 //! Debug test to verify endpoint configuration
 
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 mod common;
 
 use ant_quic::{EndpointRole, QuicNodeConfig, QuicP2PNode, auth::AuthConfig};

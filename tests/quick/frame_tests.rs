@@ -1,5 +1,7 @@
 //! Quick frame parsing tests
 
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::time::Duration;
 

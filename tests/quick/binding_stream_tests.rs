@@ -1,5 +1,7 @@
 //! On-wire binding exchange tests using a unidirectional stream.
 
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 use ant_quic::{
     config::{ClientConfig, ServerConfig},
     high_level::Endpoint,

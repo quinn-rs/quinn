@@ -3,6 +3,8 @@
 //! This test file validates the Phase 1-3 Raw Public Key functionality
 //! without depending on the full codebase compilation.
 
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 #![cfg(feature = "rustls-ring")]
 
 use ant_quic::crypto::{

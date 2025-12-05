@@ -1,5 +1,7 @@
 //! Integration tests for relay protocol end-to-end functionality.
 
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 use ant_quic::relay::session_manager::SessionEvent;
 use ant_quic::relay::{
     RelayAuthenticator, RelayConnection, RelayConnectionConfig, RelayError, RelayResult,

@@ -1,3 +1,5 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 /// Basic Connectivity Tests
 /// 
 /// Tests fundamental QUIC connectivity including handshake, data transfer, and connection closure

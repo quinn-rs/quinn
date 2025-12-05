@@ -3,6 +3,8 @@
 //! These tests verify the complete flow of address discovery from
 //! connection establishment through frame exchange to NAT traversal integration.
 
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 use ant_quic::{
     ClientConfig, Endpoint, ServerConfig,
     crypto::rustls::{QuicClientConfig, QuicServerConfig},

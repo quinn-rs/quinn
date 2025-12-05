@@ -42,7 +42,7 @@ pub mod timeouts;
 pub mod port;
 pub use port::{
     BoundSocket, EndpointConfigError, EndpointPortConfig, IpMode, PortBinding, PortConfigResult,
-    PortRetryBehavior, SocketOptions,
+    PortRetryBehavior, SocketOptions, buffer_defaults,
 };
 
 // Port binding implementation

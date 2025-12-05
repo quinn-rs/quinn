@@ -5,6 +5,8 @@
 //!
 //! Based on: ANT_QUIC_COMPREHENSIVE_SPEC.md
 
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 use ant_quic::{
     EndpointRole, NatTraversalEvent, PeerId, QuicNodeConfig, QuicP2PNode, auth::AuthConfig,
 };

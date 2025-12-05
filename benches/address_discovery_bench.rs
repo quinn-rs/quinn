@@ -3,6 +3,8 @@
 //! These benchmarks measure the performance impact of the OBSERVED_ADDRESS
 //! frame processing and NAT traversal integration.
 
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use std::net::SocketAddr;
 

@@ -1,5 +1,7 @@
 //! Tests for QUIC packet handling with PQC support
 
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 #[cfg(all(test, feature = "pqc"))]
 mod pqc_packet_tests {
     // Removed unused imports - they will be added back when functionality is implemented

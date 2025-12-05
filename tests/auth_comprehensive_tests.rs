@@ -8,6 +8,8 @@
 //! - Failure modes and recovery
 //! - Integration behavior
 
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 use ant_quic::{
     auth::{AuthConfig, AuthError, AuthManager, AuthMessage},
     crypto::raw_public_keys::key_utils::{

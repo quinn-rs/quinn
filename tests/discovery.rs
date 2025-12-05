@@ -1,6 +1,8 @@
 //! Discovery Integration Tests
 //! Tests for network interface and address discovery across platforms
 
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 use ant_quic::candidate_discovery::{CandidateDiscoveryManager, DiscoveryConfig};
 use ant_quic::{DiscoveryError, ValidatedCandidate};
 use std::time::Duration;

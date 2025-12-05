@@ -96,6 +96,48 @@ pub struct SocketOptions {
     pub reuse_port: bool,
 }
 
+impl SocketOptions {
+    /// Create SocketOptions with platform-appropriate defaults
+    ///
+    /// This uses optimal buffer sizes for the current platform to ensure
+    /// reliable QUIC connections, especially on Windows where defaults
+    /// may be too small.
+    #[must_use]
+    pub fn with_platform_defaults() -> Self {
+        Self {
+            send_buffer_size: Some(buffer_defaults::PLATFORM_DEFAULT),
+            recv_buffer_size: Some(buffer_defaults::PLATFORM_DEFAULT),
+            reuse_address: false,
+            reuse_port: false,
+        }
+    }
+
+    /// Create SocketOptions optimized for PQC handshakes
+    ///
+    /// Post-Quantum Cryptography requires larger buffer sizes due to
+    /// the increased key sizes in ML-KEM and ML-DSA.
+    #[must_use]
+    pub fn with_pqc_defaults() -> Self {
+        Self {
+            send_buffer_size: Some(buffer_defaults::PQC_BUFFER_SIZE),
+            recv_buffer_size: Some(buffer_defaults::PQC_BUFFER_SIZE),
+            reuse_address: false,
+            reuse_port: false,
+        }
+    }
+
+    /// Create SocketOptions with custom buffer sizes
+    #[must_use]
+    pub fn with_buffer_sizes(send: usize, recv: usize) -> Self {
+        Self {
+            send_buffer_size: Some(send),
+            recv_buffer_size: Some(recv),
+            reuse_address: false,
+            reuse_port: false,
+        }
+    }
+}
+
 /// Retry behavior on port binding failures
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum PortRetryBehavior {
@@ -230,6 +272,51 @@ impl From<std::io::Error> for EndpointConfigError {
 
 /// Result type for port configuration operations
 pub type PortConfigResult<T> = Result<T, EndpointConfigError>;
+
+/// Platform-specific UDP buffer size defaults
+///
+/// These constants help ensure reliable QUIC connections, especially with
+/// Post-Quantum Cryptography (PQC) which requires larger handshake packets.
+pub mod buffer_defaults {
+    /// Minimum buffer size for QUIC (covers standard handshakes)
+    pub const MIN_BUFFER_SIZE: usize = 64 * 1024; // 64KB
+
+    /// Default buffer size for classical crypto
+    pub const CLASSICAL_BUFFER_SIZE: usize = 256 * 1024; // 256KB
+
+    /// Buffer size for PQC (larger due to ML-KEM/ML-DSA key sizes)
+    /// PQC handshakes can be 5-8KB vs classical 2-3KB
+    pub const PQC_BUFFER_SIZE: usize = 4 * 1024 * 1024; // 4MB
+
+    /// Platform-recommended default buffer size
+    #[cfg(target_os = "windows")]
+    pub const PLATFORM_DEFAULT: usize = 256 * 1024; // 256KB - Windows needs explicit sizing
+
+    /// Platform-recommended default buffer size
+    #[cfg(target_os = "linux")]
+    pub const PLATFORM_DEFAULT: usize = 2 * 1024 * 1024; // 2MB - Linux usually allows large buffers
+
+    /// Platform-recommended default buffer size
+    #[cfg(target_os = "macos")]
+    pub const PLATFORM_DEFAULT: usize = 512 * 1024; // 512KB - macOS middle ground
+
+    /// Platform-recommended default buffer size
+    #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
+    pub const PLATFORM_DEFAULT: usize = 256 * 1024; // 256KB fallback
+
+    /// Get recommended buffer size based on crypto mode
+    ///
+    /// Returns larger buffer sizes when PQC is enabled to accommodate
+    /// the larger key exchange messages.
+    #[must_use]
+    pub fn recommended_buffer_size(pqc_enabled: bool) -> usize {
+        if pqc_enabled {
+            PQC_BUFFER_SIZE
+        } else {
+            PLATFORM_DEFAULT.max(CLASSICAL_BUFFER_SIZE)
+        }
+    }
+}
 
 /// Bound socket information after successful binding
 #[derive(Debug, Clone)]

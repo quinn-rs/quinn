@@ -3,6 +3,8 @@
 //! These tests measure the improvement in connection establishment success
 //! when using the OBSERVED_ADDRESS frame implementation.
 
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 use std::time::{Duration, Instant};
 use tracing::{debug, info};
 

@@ -4,6 +4,8 @@
 //! simulating scenarios where hundreds or thousands of clients attempt
 //! to connect simultaneously.
 
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 use ant_quic::{
     Endpoint, EndpointConfig, ServerConfig, ClientConfig,
     TransportConfig, VarInt,

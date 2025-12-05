@@ -1,5 +1,7 @@
 //! Property tests for QUIC frame encoding/decoding
 
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 use super::config::*;
 use super::generators::*;
 use ant_quic::{

@@ -1,3 +1,5 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 use std::process::Command;
 use std::time::{Duration, Instant};
 use std::{env, path::PathBuf};

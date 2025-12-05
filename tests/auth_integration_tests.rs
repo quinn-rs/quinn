@@ -1,5 +1,7 @@
 //! Integration tests for authenticated P2P connections
 
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 use ant_quic::{
     auth::AuthConfig,
     nat_traversal_api::{EndpointRole, PeerId},

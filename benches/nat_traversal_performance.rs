@@ -1,3 +1,5 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 /// NAT Traversal Performance Benchmarks
 ///
 /// Benchmarks for measuring NAT traversal performance under various conditions
