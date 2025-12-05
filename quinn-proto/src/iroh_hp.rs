@@ -5,7 +5,9 @@ use std::{
     net::{IpAddr, SocketAddr},
 };
 
+use identity_hash::IntMap;
 use rustc_hash::{FxHashMap, FxHashSet};
+use tracing::trace;
 
 use crate::{
     PathId, Side, VarInt,
@@ -43,17 +45,6 @@ pub(crate) struct NatTraversalRound {
     pub(crate) addresses_to_probe: Vec<(IpAddr, u16)>,
     /// [`PathId`]s of the cancelled round
     pub(crate) prev_round_path_ids: Vec<PathId>,
-}
-
-pub(crate) struct RandDataNeeded {
-    /// Destination address of the hole punching random data
-    pub(crate) ip: IpAddr,
-    /// Destination port of the hole punching random data
-    pub(crate) port: u16,
-    /// Round to which this hole punching random data belongs to
-    pub(crate) round: VarInt,
-    /// Whether this starts a new round
-    pub(crate) is_new_round: bool,
 }
 
 /// Event emitted when the client receives ADD_ADDRESS or REMOVE_ADDRESS frames.
@@ -220,7 +211,7 @@ pub(crate) struct ServerState {
     max_local_addresses: usize,
     /// Candidate addresses the server reports as potentially reachable, to use for nat
     /// traversal attempts.
-    local_addresses: FxHashMap<(IpAddr, u16), VarInt>,
+    local_addresses: FxHashMap<IpPort, VarInt>,
     /// The next id to use for local addresses sent to the client.
     next_local_addr_id: VarInt,
     /// Current nat holepunching round
@@ -228,8 +219,12 @@ pub(crate) struct ServerState {
     /// Servers keep track of the client's most recent round and cancel probing related to previous
     /// rounds.
     round: VarInt,
-    /// Addresses to which random data needs to be sent by servers to attempt to hole punch to clients
-    server_sent_rand_data: FxHashSet<(IpAddr, u16)>,
+    /// Addresses to which PATH_CHALLENGES need to be sent.
+    pending_probes: FxHashSet<IpPort>,
+    /// Sent PATH_CHALLENGES for this round.
+    ///
+    /// This is used to validate the remotes assigned to each token.
+    active_probes: IntMap<u64, IpPort>,
 }
 
 impl ServerState {
@@ -240,7 +235,8 @@ impl ServerState {
             local_addresses: Default::default(),
             next_local_addr_id: Default::default(),
             round: Default::default(),
-            server_sent_rand_data: Default::default(),
+            pending_probes: Default::default(),
+            active_probes: Default::default(),
         }
     }
 
@@ -268,31 +264,56 @@ impl ServerState {
     /// whether this starts a new nat traversal round.
     ///
     /// If this frame was ignored, it returns `None`.
-    pub(crate) fn handle_reach_out(
-        &mut self,
-        reach_out: ReachOut,
-    ) -> Result<Option<RandDataNeeded>, Error> {
+    pub(crate) fn handle_reach_out(&mut self, reach_out: ReachOut) -> Result<(), Error> {
         let ReachOut { round, ip, port } = reach_out;
 
-        if round >= self.round {
-            let is_new_round = round > self.round;
-            if is_new_round {
-                self.server_sent_rand_data.clear();
-            }
-            if self.server_sent_rand_data.len() >= self.max_remote_addresses {
-                return Err(Error::TooManyAddresses);
-            }
-            self.server_sent_rand_data.insert((ip, port));
-            let info = RandDataNeeded {
-                ip,
-                port,
-                round,
-                is_new_round,
-            };
-            return Ok(Some(info));
+        if round < self.round {
+            trace!(current_round=%self.round, "ignoring REACH_OUT for previous round");
+            return Ok(());
         }
 
-        Ok(None)
+        if round > self.round {
+            self.pending_probes.clear();
+            // TODO(@divma): This log is here because I'm not sure if dropping the challenges
+            // without further interaction with the connection is going to cause issues.
+            for (token, remote) in self.active_probes.drain() {
+                let remote: SocketAddr = remote.into();
+                trace!(token=format!("{:08x}", token), %remote, "dropping nat traversal challenge pending response");
+            }
+        } else if self.pending_probes.len() >= self.max_remote_addresses {
+            return Err(Error::TooManyAddresses);
+        }
+        self.pending_probes.insert((ip, port));
+        Ok(())
+    }
+
+    pub(crate) fn next_probe(&mut self) -> Option<ServerProbing<'_>> {
+        self.pending_probes
+            .iter()
+            .next()
+            .copied()
+            .map(|remote| ServerProbing {
+                remote,
+                pending_probes: &mut self.pending_probes,
+                active_probes: &mut self.active_probes,
+            })
+    }
+}
+
+pub(crate) struct ServerProbing<'a> {
+    remote: IpPort,
+    pending_probes: &'a mut FxHashSet<IpPort>,
+    active_probes: &'a mut IntMap<u64, IpPort>,
+}
+
+impl<'a> ServerProbing<'a> {
+    pub(crate) fn finish(self, token: u64) {
+        self.pending_probes.remove(&self.remote);
+        self.active_probes.insert(token, self.remote);
+    }
+
+    pub(crate) fn remote(&self) -> SocketAddr {
+        self.remote.into()
     }
 }
 
