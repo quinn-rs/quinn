@@ -3412,13 +3412,47 @@ fn oversized_datagrams_trigger_unblock() {
         }
     }
     // Set the MTU to a smaller value so the queued datagrams cannot be sent.
-    // This should trigger a black hole detection and cause the queued datagrams to be dropped.
     pair.mtu = 1200;
-    pair.drive();
-    // We expect all datagrams to be dropped (they all exceed the new MTU).
+
+    // Drive the pair until black hole detection kicks in and the path MTU is adjusted.
+    while pair.step() {
+        let err = loop {
+            if let Err(e) = pair
+                .client_datagrams(client_ch)
+                .send(data.clone().into(), false)
+            {
+                break e;
+            }
+        };
+        match err {
+            SendDatagramError::Blocked(_) => {
+                // continue with the next step but drain the DatagramsUnblocked events
+                // emitted datagrams were sent out.
+                while let Some(event) = pair.client_conn_mut(client_ch).poll() {
+                    tracing::info!("ignoring connection event: {event:?}");
+                }
+            }
+            SendDatagramError::TooLarge => {
+                // mtu adjusted, break the loop
+                break;
+            }
+            _ => panic!("unexpected error: {err}"),
+        }
+    }
+
+    assert_eq!(
+        pair.client_conn_mut(client_ch)
+            .stats()
+            .path
+            .black_holes_detected,
+        1,
+        "expected a black hole to have been detected",
+    );
+
     assert_eq!(
         pair.client_datagrams(client_ch).send_buffer_space(),
-        send_buffer_size
+        send_buffer_size,
+        "expected the send buffer to be empty after too large datagrams were dropped",
     );
     match pair.client_conn_mut(client_ch).poll() {
         Some(Event::DatagramsUnblocked) => {}
