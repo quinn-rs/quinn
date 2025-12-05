@@ -14,7 +14,7 @@ use std::net::SocketAddr;
 use thiserror::Error;
 
 /// Port binding strategy for QUIC endpoints
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum PortBinding {
     /// Let OS assign random available port (port 0)
     ///
@@ -27,6 +27,7 @@ pub enum PortBinding {
     ///
     /// let port = PortBinding::OsAssigned;
     /// ```
+    #[default]
     OsAssigned,
 
     /// Bind to specific port
@@ -50,14 +51,8 @@ pub enum PortBinding {
     Range(u16, u16),
 }
 
-impl Default for PortBinding {
-    fn default() -> Self {
-        Self::OsAssigned
-    }
-}
-
 /// IP stack configuration for endpoint binding
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum IpMode {
     /// IPv4 only (bind to 0.0.0.0:port)
     ///
@@ -65,6 +60,7 @@ pub enum IpMode {
     /// - Works on all platforms
     /// - Avoids dual-stack conflicts
     /// - Simplifies configuration
+    #[default]
     IPv4Only,
 
     /// IPv6 only (bind to [::]:port)
@@ -85,12 +81,6 @@ pub enum IpMode {
         /// Port binding for IPv6
         ipv6_port: PortBinding,
     },
-}
-
-impl Default for IpMode {
-    fn default() -> Self {
-        Self::IPv4Only
-    }
 }
 
 /// Socket-level options for endpoint binding
