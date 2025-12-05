@@ -1739,8 +1739,8 @@ fn cid_retirement() {
     let (client_ch, server_ch) = pair.connect();
 
     // Server retires current active remote CIDs
-    pair.server_conn_mut(server_ch)
-        .rotate_local_cid(1, Instant::now());
+    let now = pair.time;
+    pair.server_conn_mut(server_ch).rotate_local_cid(1, now);
     pair.drive();
     // Any unexpected behavior may trigger TransportError::CONNECTION_ID_LIMIT_ERROR
     assert!(!pair.client_conn_mut(client_ch).is_closed());
@@ -1752,11 +1752,12 @@ fn cid_retirement() {
     let mut active_cid_num = CidQueue::LEN as u64;
     active_cid_num = active_cid_num.min(LOC_CID_COUNT);
 
+    let now = pair.time;
     let next_retire_prior_to = active_cid_num + 1;
     pair.client_conn_mut(client_ch).ping();
     // Server retires all valid remote CIDs
     pair.server_conn_mut(server_ch)
-        .rotate_local_cid(next_retire_prior_to, Instant::now());
+        .rotate_local_cid(next_retire_prior_to, now);
     pair.drive();
     assert!(!pair.client_conn_mut(client_ch).is_closed());
     assert!(!pair.server_conn_mut(server_ch).is_closed());
