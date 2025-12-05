@@ -69,9 +69,6 @@ jobs:
 
     - uses: Swatinem/rust-cache@v2
 
-    - name: Install proptest dependencies
-      run: cargo install proptest --quiet
-
     - name: Run property tests
       run: cargo test --features property_testing --quiet
 
@@ -149,7 +146,7 @@ jobs:
       run: cargo install cargo-mutants --quiet
 
     - name: Run mutation testing
-      run: cargo mutants --quiet --no-shuffle --timeout-multiplier 2.0
+      run: cargo mutants --no-shuffle --timeout-multiplier 2.0
 
   # Performance benchmarks
   benchmarks:

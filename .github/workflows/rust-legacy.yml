@@ -21,7 +21,7 @@ jobs:
           mem: 4096
           copyback: false
           prepare: |
-            pkg install -y curl
+            pkg install -y curl cmake
             curl https://sh.rustup.rs -sSf --output rustup.sh
             sh rustup.sh -y --profile minimal --default-toolchain stable
           run: |

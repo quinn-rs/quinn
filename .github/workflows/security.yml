@@ -25,15 +25,15 @@ on:
 
 permissions:
   contents: read
-  security-events: write
-  id-token: write
-  actions: read
 
 jobs:
   # Vulnerability scanning with cargo-audit
   vulnerability-scan:
     name: Vulnerability Scan
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
     steps:
       - uses: actions/checkout@v4
         if: ${{ !startsWith(runner.name, 'nektos/act') }}
@@ -179,8 +179,10 @@ jobs:
     runs-on: ubuntu-latest
     if: github.event_name != 'pull_request'
     permissions:
+      contents: read
       security-events: write
       id-token: write
+      actions: read
     steps:
       - uses: actions/checkout@v4
         if: ${{ !startsWith(runner.name, 'nektos/act') }}
