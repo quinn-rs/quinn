@@ -107,20 +107,15 @@ pub struct SocketOptions {
 }
 
 /// Retry behavior on port binding failures
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum PortRetryBehavior {
     /// Fail immediately if port unavailable
+    #[default]
     FailFast,
     /// Fall back to OS-assigned port on conflict
     FallbackToOsAssigned,
     /// Try next port in range (only for Range binding)
     TryNext,
-}
-
-impl Default for PortRetryBehavior {
-    fn default() -> Self {
-        Self::FailFast
-    }
 }
 
 /// Configuration for endpoint port binding
