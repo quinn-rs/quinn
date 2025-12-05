@@ -2,7 +2,6 @@
 title = "ant-quic Documentation"
 authors = ["ant-quic contributors"]
 language = "en"
-multilingual = false
 src = "src"
 
 [build]

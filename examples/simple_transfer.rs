@@ -33,15 +33,14 @@ use std::{
 use tracing::info;
 
 /// Generate self-signed certificate for testing
-fn generate_test_cert() -> (
+fn generate_test_cert() -> anyhow::Result<(
     rustls::pki_types::CertificateDer<'static>,
     rustls::pki_types::PrivateKeyDer<'static>,
-) {
-    let cert = rcgen::generate_simple_self_signed(vec!["localhost".to_string()])
-        .expect("Failed to generate certificate");
+)> {
+    let cert = rcgen::generate_simple_self_signed(vec!["localhost".to_string()])?;
     let cert_der = cert.cert.into();
     let key_der = rustls::pki_types::PrivateKeyDer::Pkcs8(cert.signing_key.serialize_der().into());
-    (cert_der, key_der)
+    Ok((cert_der, key_der))
 }
 
 /// Certificate verifier that accepts any certificate (testing only)
@@ -91,7 +90,7 @@ async fn run_server(addr: SocketAddr) -> anyhow::Result<()> {
     info!("🚀 Starting server on {}", addr);
 
     // Generate certificate
-    let (cert, key) = generate_test_cert();
+    let (cert, key) = generate_test_cert()?;
 
     // Create server
     let mut server_crypto = rustls::ServerConfig::builder()
@@ -137,27 +136,22 @@ async fn run_server(addr: SocketAddr) -> anyhow::Result<()> {
     info!("📥 Receiving data...");
 
     // Receive and echo data
-    loop {
-        match recv.read(&mut buf).await? {
-            Some(n) => {
-                total_received += n as u64;
+    while let Some(n) = recv.read(&mut buf).await? {
+        total_received += n as u64;
 
-                // Echo back
-                send.write_all(&buf[..n]).await?;
+        // Echo back
+        send.write_all(&buf[..n]).await?;
 
-                // Progress report every 100ms
-                if last_report.elapsed() > Duration::from_millis(100) {
-                    let elapsed = start.elapsed().as_secs_f64();
-                    let throughput_mbps = (total_received as f64 * 8.0) / elapsed / 1_000_000.0;
-                    info!(
-                        "   📊 Received: {} KB ({:.1} Mbps)",
-                        total_received / 1024,
-                        throughput_mbps
-                    );
-                    last_report = Instant::now();
-                }
-            }
-            None => break,
+        // Progress report every 100ms
+        if last_report.elapsed() > Duration::from_millis(100) {
+            let elapsed = start.elapsed().as_secs_f64();
+            let throughput_mbps = (total_received as f64 * 8.0) / elapsed / 1_000_000.0;
+            info!(
+                "   📊 Received: {} KB ({:.1} Mbps)",
+                total_received / 1024,
+                throughput_mbps
+            );
+            last_report = Instant::now();
         }
     }
 
@@ -268,13 +262,8 @@ async fn run_client(server_addr: SocketAddr) -> anyhow::Result<()> {
     let mut total_received = 0u64;
     let mut buf = vec![0u8; 16384];
 
-    loop {
-        match recv.read(&mut buf).await? {
-            Some(n) => {
-                total_received += n as u64;
-            }
-            None => break,
-        }
+    while let Some(n) = recv.read(&mut buf).await? {
+        total_received += n as u64;
     }
 
     let recv_elapsed = recv_start.elapsed();

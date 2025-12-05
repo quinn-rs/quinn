@@ -23,14 +23,14 @@ use std::{
 use tracing::{info, warn};
 
 /// Generate self-signed certificate for testing
-fn generate_test_cert() -> (
+fn generate_test_cert() -> anyhow::Result<(
     rustls::pki_types::CertificateDer<'static>,
     rustls::pki_types::PrivateKeyDer<'static>,
-) {
-    let cert = rcgen::generate_simple_self_signed(vec!["localhost".to_string()]).unwrap();
+)> {
+    let cert = rcgen::generate_simple_self_signed(vec!["localhost".to_string()])?;
     let cert_der = cert.cert.into();
     let key_der = rustls::pki_types::PrivateKeyDer::Pkcs8(cert.signing_key.serialize_der().into());
-    (cert_der, key_der)
+    Ok((cert_der, key_der))
 }
 
 /// Certificate verifier that accepts any certificate (testing only)
@@ -86,7 +86,7 @@ async fn main() -> anyhow::Result<()> {
     info!("=== Ant-QUIC Throughput Test ===");
 
     // Generate certificate
-    let (cert, key) = generate_test_cert();
+    let (cert, key) = generate_test_cert()?;
 
     // Create server
     let mut server_crypto = rustls::ServerConfig::builder()
@@ -257,21 +257,16 @@ async fn main() -> anyhow::Result<()> {
     let mut total_received = 0u64;
     let mut buf = vec![0u8; 65536];
 
-    loop {
-        match recv.read(&mut buf).await? {
-            Some(n) => {
-                total_received += n as u64;
+    while let Some(n) = recv.read(&mut buf).await? {
+        total_received += n as u64;
 
-                if total_received % (10 * 1024 * 1024) == 0 {
-                    info!(
-                        "Received {} MB / {} MB ({:.1}%)",
-                        total_received / (1024 * 1024),
-                        total_bytes / (1024 * 1024),
-                        (total_received as f64 / total_bytes as f64) * 100.0
-                    );
-                }
-            }
-            None => break,
+        if total_received % (10 * 1024 * 1024) == 0 {
+            info!(
+                "Received {} MB / {} MB ({:.1}%)",
+                total_received / (1024 * 1024),
+                total_bytes / (1024 * 1024),
+                (total_received as f64 / total_bytes as f64) * 100.0
+            );
         }
     }
 
