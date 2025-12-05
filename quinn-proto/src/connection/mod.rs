@@ -992,8 +992,12 @@ impl Connection {
                     // Locally we should have refused to open this path, the remote should
                     // have given us CIDs for this path before opening it.  So we can always
                     // abandon this here.
-                    self.close_path(now, path_id, TransportErrorCode::NO_CID_AVAILABLE.into())
-                        .ok();
+                    self.close_path(
+                        now,
+                        path_id,
+                        TransportErrorCode::NO_CID_AVAILABLE_FOR_PATH.into(),
+                    )
+                    .ok();
                     self.spaces[SpaceId::Data]
                         .pending
                         .path_cids_blocked
@@ -1965,7 +1969,7 @@ impl Connection {
                             if let Err(err) = self.close_path(
                                 now,
                                 path_id,
-                                TransportErrorCode::UNSTABLE_INTERFACE.into(),
+                                TransportErrorCode::PATH_UNSTABLE_OR_POOR.into(),
                             ) {
                                 warn!(?err, "failed closing path");
                             }
@@ -6182,8 +6186,11 @@ impl Connection {
                 .unwrap_or(false);
 
             if !validated {
-                let _ =
-                    self.close_path(now, path_id, TransportErrorCode::APPLICATION_ABANDON.into());
+                let _ = self.close_path(
+                    now,
+                    path_id,
+                    TransportErrorCode::APPLICATION_ABANDON_PATH.into(),
+                );
             }
         }
 
