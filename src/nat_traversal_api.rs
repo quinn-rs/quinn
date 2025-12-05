@@ -868,7 +868,8 @@ impl NatTraversalEndpoint {
             );
         }
 
-        let emitted_established_events = Arc::new(std::sync::RwLock::new(std::collections::HashSet::new()));
+        let emitted_established_events =
+            Arc::new(std::sync::RwLock::new(std::collections::HashSet::new()));
 
         let endpoint = Self {
             quinn_endpoint: Some(quinn_endpoint.clone()),
@@ -1567,8 +1568,14 @@ impl NatTraversalEndpoint {
         let emitted_events_clone = self.emitted_established_events.clone();
 
         tokio::spawn(async move {
-            Self::accept_connections(endpoint_clone, shutdown_clone, event_tx, connections_clone, emitted_events_clone)
-                .await;
+            Self::accept_connections(
+                endpoint_clone,
+                shutdown_clone,
+                event_tx,
+                connections_clone,
+                emitted_events_clone,
+            )
+            .await;
         });
 
         Ok(())
@@ -1611,10 +1618,11 @@ impl NatTraversalEndpoint {
                                 };
 
                                 if should_emit {
-                                    let _ = event_tx.send(NatTraversalEvent::ConnectionEstablished {
-                                        peer_id,
-                                        remote_address: connection.remote_address(),
-                                    });
+                                    let _ =
+                                        event_tx.send(NatTraversalEvent::ConnectionEstablished {
+                                            peer_id,
+                                            remote_address: connection.remote_address(),
+                                        });
                                 }
 
                                 // Handle connection streams

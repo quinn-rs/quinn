@@ -118,7 +118,9 @@ async fn run_server(addr: SocketAddr) -> anyhow::Result<()> {
     info!("");
 
     // Accept connection
-    let incoming = server.accept().await
+    let incoming = server
+        .accept()
+        .await
         .ok_or_else(|| anyhow::anyhow!("No incoming connection"))?;
 
     let connection = incoming.await?;
@@ -147,8 +149,11 @@ async fn run_server(addr: SocketAddr) -> anyhow::Result<()> {
                 if last_report.elapsed() > Duration::from_millis(100) {
                     let elapsed = start.elapsed().as_secs_f64();
                     let throughput_mbps = (total_received as f64 * 8.0) / elapsed / 1_000_000.0;
-                    info!("   📊 Received: {} KB ({:.1} Mbps)",
-                        total_received / 1024, throughput_mbps);
+                    info!(
+                        "   📊 Received: {} KB ({:.1} Mbps)",
+                        total_received / 1024,
+                        throughput_mbps
+                    );
                     last_report = Instant::now();
                 }
             }
@@ -162,8 +167,11 @@ async fn run_server(addr: SocketAddr) -> anyhow::Result<()> {
     info!("");
     info!("✅ Transfer complete!");
     info!("📊 Statistics:");
-    info!("   Total received: {} KB ({} MB)",
-        total_received / 1024, total_received / (1024 * 1024));
+    info!(
+        "   Total received: {} KB ({} MB)",
+        total_received / 1024,
+        total_received / (1024 * 1024)
+    );
     info!("   Time: {:.2}s", elapsed.as_secs_f64());
     info!("   Throughput: {:.2} Mbps", throughput_mbps);
 
@@ -175,7 +183,10 @@ async fn run_server(addr: SocketAddr) -> anyhow::Result<()> {
     info!("🔍 Efficiency Metrics:");
     info!("   Application data: {} bytes", total_received);
     info!("   UDP bytes received: {} bytes", stats.udp_rx.bytes);
-    info!("   Protocol overhead: {} bytes", stats.udp_rx.bytes.saturating_sub(total_received));
+    info!(
+        "   Protocol overhead: {} bytes",
+        stats.udp_rx.bytes.saturating_sub(total_received)
+    );
     info!("   Efficiency: {:.2}%", efficiency);
 
     send.finish()?;
@@ -193,12 +204,7 @@ async fn run_client(server_addr: SocketAddr) -> anyhow::Result<()> {
     let client_socket = std::net::UdpSocket::bind(SocketAddr::from((Ipv4Addr::LOCALHOST, 0)))?;
     let runtime = default_runtime().ok_or_else(|| anyhow::anyhow!("Failed to create runtime"))?;
 
-    let mut client = Endpoint::new(
-        EndpointConfig::default(),
-        None,
-        client_socket,
-        runtime,
-    )?;
+    let mut client = Endpoint::new(EndpointConfig::default(), None, client_socket, runtime)?;
 
     // Configure client crypto
     let mut client_crypto = rustls::ClientConfig::builder()
@@ -207,15 +213,12 @@ async fn run_client(server_addr: SocketAddr) -> anyhow::Result<()> {
         .with_no_client_auth();
     client_crypto.alpn_protocols = vec![b"transfer".to_vec()];
 
-    let client_config =
-        ClientConfig::new(Arc::new(QuicClientConfig::try_from(client_crypto)?));
+    let client_config = ClientConfig::new(Arc::new(QuicClientConfig::try_from(client_crypto)?));
 
     client.set_default_client_config(client_config);
 
     // Connect
-    let connection = client
-        .connect(server_addr, "localhost")?
-        .await?;
+    let connection = client.connect(server_addr, "localhost")?.await?;
 
     info!("✅ Connected to server");
 
@@ -224,8 +227,12 @@ async fn run_client(server_addr: SocketAddr) -> anyhow::Result<()> {
     let total_size: u64 = 1024 * 1024; // 1 MB total
     let num_chunks = (total_size / chunk_size as u64) as usize;
 
-    info!("📤 Transferring {} KB in {} chunks of {} bytes",
-        total_size / 1024, num_chunks, chunk_size);
+    info!(
+        "📤 Transferring {} KB in {} chunks of {} bytes",
+        total_size / 1024,
+        num_chunks,
+        chunk_size
+    );
     info!("");
 
     // Open stream
@@ -282,10 +289,21 @@ async fn run_client(server_addr: SocketAddr) -> anyhow::Result<()> {
     info!("📊 Results:");
     info!("   Sent: {} KB", total_size / 1024);
     info!("   Received: {} KB", total_received / 1024);
-    info!("   Send time: {:.2}s ({:.2} Mbps)", send_elapsed.as_secs_f64(), send_throughput);
-    info!("   Receive time: {:.2}s ({:.2} Mbps)", recv_elapsed.as_secs_f64(), recv_throughput);
+    info!(
+        "   Send time: {:.2}s ({:.2} Mbps)",
+        send_elapsed.as_secs_f64(),
+        send_throughput
+    );
+    info!(
+        "   Receive time: {:.2}s ({:.2} Mbps)",
+        recv_elapsed.as_secs_f64(),
+        recv_throughput
+    );
     info!("   Round-trip: {:.2}s", round_trip.as_secs_f64());
-    info!("   Average: {:.2} Mbps", (send_throughput + recv_throughput) / 2.0);
+    info!(
+        "   Average: {:.2} Mbps",
+        (send_throughput + recv_throughput) / 2.0
+    );
 
     // Get connection stats
     let stats = connection.stats();
@@ -295,7 +313,10 @@ async fn run_client(server_addr: SocketAddr) -> anyhow::Result<()> {
     info!("🔍 Efficiency Metrics:");
     info!("   Application data: {} bytes", total_size);
     info!("   UDP bytes sent: {} bytes", stats.udp_tx.bytes);
-    info!("   Protocol overhead: {} bytes", stats.udp_tx.bytes.saturating_sub(total_size));
+    info!(
+        "   Protocol overhead: {} bytes",
+        stats.udp_tx.bytes.saturating_sub(total_size)
+    );
     info!("   Efficiency: {:.2}%", efficiency);
 
     // Close connection

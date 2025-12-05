@@ -121,7 +121,10 @@ async fn main() -> anyhow::Result<()> {
                 }
             };
 
-            info!("Server: Connection established from {}", connection.remote_address());
+            info!(
+                "Server: Connection established from {}",
+                connection.remote_address()
+            );
 
             tokio::spawn(async move {
                 // Accept bidirectional stream
@@ -154,7 +157,8 @@ async fn main() -> anyhow::Result<()> {
                         }
 
                         let elapsed = start.elapsed();
-                        let throughput = (total_received as f64 * 8.0) / elapsed.as_secs_f64() / 1_000_000.0;
+                        let throughput =
+                            (total_received as f64 * 8.0) / elapsed.as_secs_f64() / 1_000_000.0;
 
                         info!(
                             "Server: Received {} bytes in {:.2}s ({:.2} Mbps)",
@@ -186,12 +190,7 @@ async fn main() -> anyhow::Result<()> {
     // Create client
     let client_socket = std::net::UdpSocket::bind(SocketAddr::from((Ipv4Addr::LOCALHOST, 0)))?;
 
-    let mut client = Endpoint::new(
-        EndpointConfig::default(),
-        None,
-        client_socket,
-        runtime,
-    )?;
+    let mut client = Endpoint::new(EndpointConfig::default(), None, client_socket, runtime)?;
 
     // Configure client crypto (skip verification for testing)
     let mut client_crypto = rustls::ClientConfig::builder()
@@ -200,17 +199,14 @@ async fn main() -> anyhow::Result<()> {
         .with_no_client_auth();
     client_crypto.alpn_protocols = vec![b"test".to_vec()];
 
-    let client_config =
-        ClientConfig::new(Arc::new(QuicClientConfig::try_from(client_crypto)?));
+    let client_config = ClientConfig::new(Arc::new(QuicClientConfig::try_from(client_crypto)?));
 
     client.set_default_client_config(client_config);
 
     info!("Client connecting to {}", server_addr);
 
     // Connect
-    let connection = client
-        .connect(server_addr, "localhost")?
-        .await?;
+    let connection = client.connect(server_addr, "localhost")?.await?;
 
     info!("Client: Connection established");
 
@@ -219,8 +215,12 @@ async fn main() -> anyhow::Result<()> {
     let total_bytes: u64 = 10 * 1024 * 1024; // 10 MB total
     let num_chunks = (total_bytes as usize) / chunk_size;
 
-    info!("Starting data transfer: {} chunks of {} bytes ({} MB total)",
-          num_chunks, chunk_size, total_bytes / (1024 * 1024));
+    info!(
+        "Starting data transfer: {} chunks of {} bytes ({} MB total)",
+        num_chunks,
+        chunk_size,
+        total_bytes / (1024 * 1024)
+    );
 
     // Open bidirectional stream
     let (mut send, mut recv) = connection.open_bi().await?;
@@ -233,8 +233,12 @@ async fn main() -> anyhow::Result<()> {
         send.write_all(&chunk).await?;
 
         if i % 100 == 0 {
-            info!("Sent {} / {} chunks ({:.1}%)",
-                  i, num_chunks, (i as f64 / num_chunks as f64) * 100.0);
+            info!(
+                "Sent {} / {} chunks ({:.1}%)",
+                i,
+                num_chunks,
+                (i as f64 / num_chunks as f64) * 100.0
+            );
         }
 
         // Small delay to allow flow control
@@ -259,10 +263,12 @@ async fn main() -> anyhow::Result<()> {
                 total_received += n as u64;
 
                 if total_received % (10 * 1024 * 1024) == 0 {
-                    info!("Received {} MB / {} MB ({:.1}%)",
-                          total_received / (1024 * 1024),
-                          total_bytes / (1024 * 1024),
-                          (total_received as f64 / total_bytes as f64) * 100.0);
+                    info!(
+                        "Received {} MB / {} MB ({:.1}%)",
+                        total_received / (1024 * 1024),
+                        total_bytes / (1024 * 1024),
+                        (total_received as f64 / total_bytes as f64) * 100.0
+                    );
                 }
             }
             None => break,
@@ -277,14 +283,25 @@ async fn main() -> anyhow::Result<()> {
     let round_trip_time = send_elapsed + recv_elapsed;
 
     info!("\n=== Results ===");
-    info!("Total sent: {} bytes ({} MB)", total_bytes, total_bytes / (1024 * 1024));
-    info!("Total received: {} bytes ({} MB)", total_received, total_received / (1024 * 1024));
+    info!(
+        "Total sent: {} bytes ({} MB)",
+        total_bytes,
+        total_bytes / (1024 * 1024)
+    );
+    info!(
+        "Total received: {} bytes ({} MB)",
+        total_received,
+        total_received / (1024 * 1024)
+    );
     info!("Send time: {:.2}s", send_elapsed.as_secs_f64());
     info!("Receive time: {:.2}s", recv_elapsed.as_secs_f64());
     info!("Round-trip time: {:.2}s", round_trip_time.as_secs_f64());
     info!("Send throughput: {:.2} Mbps", send_throughput);
     info!("Receive throughput: {:.2} Mbps", recv_throughput);
-    info!("Average throughput: {:.2} Mbps", (send_throughput + recv_throughput) / 2.0);
+    info!(
+        "Average throughput: {:.2} Mbps",
+        (send_throughput + recv_throughput) / 2.0
+    );
 
     // Get connection stats
     let stats = connection.stats();
