@@ -9,4 +9,3 @@ build-dir = "book"
 
 [output.html]
 git-repository-url = "https://github.com/dirvine/ant-quic"
-git-repository-icon = "fa-github"
