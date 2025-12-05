@@ -263,6 +263,41 @@ impl Frame {
             Self::Ack(_) | Self::PathAck(_) | Self::Padding | Self::Close(_)
         )
     }
+
+    /// Returns `true` if this frame MUST be sent in 1-RTT space
+    pub(crate) fn is_1rtt(&self) -> bool {
+        // See also https://www.ietf.org/archive/id/draft-ietf-quic-multipath-17.html#section-4-1:
+        // > All frames defined in this document MUST only be sent in 1-RTT packets.
+        // > If an endpoint receives a multipath-specific frame in a different packet type, it MUST close the
+        // > connection with an error of type PROTOCOL_VIOLATION.
+
+        self.is_multipath_frame() || self.is_qad_frame()
+    }
+
+    fn is_qad_frame(&self) -> bool {
+        matches!(*self, Self::ObservedAddr(_))
+    }
+
+    fn is_multipath_frame(&self) -> bool {
+        matches!(
+            *self,
+            Self::PathAck(_)
+                | Self::PathAbandon(_)
+                | Self::PathBackup(_)
+                | Self::PathAvailable(_)
+                | Self::MaxPathId(_)
+                | Self::PathsBlocked(_)
+                | Self::PathCidsBlocked(_)
+                | Self::NewConnectionId(NewConnectionId {
+                    path_id: Some(_),
+                    ..
+                })
+                | Self::RetireConnectionId(RetireConnectionId {
+                    path_id: Some(_),
+                    ..
+                })
+        )
+    }
 }
 
 #[derive(Debug, PartialEq, Eq)]

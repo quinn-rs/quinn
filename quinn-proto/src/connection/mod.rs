@@ -1207,7 +1207,7 @@ impl Connection {
                 // especially important with ack delay, since the peer might not
                 // have gotten any other ACK for the data earlier on.
                 let mut sent_frames = SentFrames::default();
-                let is_multipath_enabled = self.is_multipath_negotiated();
+                let is_multipath_negotiated = self.is_multipath_negotiated();
                 for path_id in self.spaces[space_id]
                     .number_spaces
                     .iter()
@@ -1215,17 +1215,14 @@ impl Connection {
                     .map(|(&path_id, _)| path_id)
                     .collect::<Vec<_>>()
                 {
-                    debug_assert!(
-                        is_multipath_enabled || path_id == PathId::ZERO,
-                        "Only PathId::ZERO allowed without multipath (have {path_id:?})"
-                    );
                     Self::populate_acks(
                         now,
                         self.receiving_ecn,
                         &mut sent_frames,
                         path_id,
+                        space_id,
                         &mut self.spaces[space_id],
-                        is_multipath_enabled,
+                        is_multipath_negotiated,
                         &mut builder.frame_space_mut(),
                         &mut self.stats,
                         &mut qlog,
@@ -4070,6 +4067,12 @@ impl Connection {
             ack_eliciting |= frame.is_ack_eliciting();
 
             // Process frames
+            if frame.is_1rtt() && packet.header.space() != SpaceId::Data {
+                return Err(TransportError::PROTOCOL_VIOLATION(
+                    "illegal frame type in handshake",
+                ));
+            }
+
             match frame {
                 Frame::Padding | Frame::Ping => {}
                 Frame::Crypto(frame) => {
@@ -4160,7 +4163,13 @@ impl Connection {
                             "illegal frame type in 0-RTT",
                         ));
                     }
-                    _ => {}
+                    _ => {
+                        if frame.is_1rtt() {
+                            return Err(TransportError::PROTOCOL_VIOLATION(
+                                "illegal frame type in 0-RTT",
+                            ));
+                        }
+                    }
                 }
             }
             ack_eliciting |= frame.is_ack_eliciting();
@@ -4176,6 +4185,7 @@ impl Connection {
                     is_probing_packet = false;
                 }
             }
+
             match frame {
                 Frame::Crypto(frame) => {
                     self.read_crypto(SpaceId::Data, &frame, payload_len)?;
@@ -5024,6 +5034,7 @@ impl Connection {
 
         // ACK
         // TODO(flub): Should this sends acks for this path anyway?
+
         if !path_exclusive_only {
             for path_id in space
                 .number_spaces
@@ -5032,15 +5043,12 @@ impl Connection {
                 .map(|(&path_id, _)| path_id)
                 .collect::<Vec<_>>()
             {
-                debug_assert!(
-                    is_multipath_negotiated || path_id == PathId::ZERO,
-                    "Only PathId::ZERO allowed without multipath (have {path_id:?})"
-                );
                 Self::populate_acks(
                     now,
                     self.receiving_ecn,
                     &mut sent,
                     path_id,
+                    space_id,
                     space,
                     is_multipath_negotiated,
                     buf,
@@ -5543,14 +5551,26 @@ impl Connection {
         receiving_ecn: bool,
         sent: &mut SentFrames,
         path_id: PathId,
+        space_id: SpaceId,
         space: &mut PacketSpace,
-        send_path_acks: bool,
+        is_multipath_negotiated: bool,
         buf: &mut impl BufMut,
         stats: &mut ConnectionStats,
         #[allow(unused)] qlog: &mut QlogSentPacket,
     ) {
         // 0-RTT packets must never carry acks (which would have to be of handshake packets)
         debug_assert!(space.crypto.is_some(), "tried to send ACK in 0-RTT");
+
+        debug_assert!(
+            is_multipath_negotiated || path_id == PathId::ZERO,
+            "Only PathId::ZERO allowed without multipath (have {path_id:?})"
+        );
+        if is_multipath_negotiated {
+            debug_assert!(
+                space_id == SpaceId::Data || path_id == PathId::ZERO,
+                "path acks must be sent in 1RTT space (have {space_id:?})"
+            );
+        }
 
         let pns = space.for_path(path_id);
         let ranges = pns.pending_acks.ranges();
@@ -5569,7 +5589,7 @@ impl Connection {
         let ack_delay_exp = TransportParameters::default().ack_delay_exponent;
         let delay = delay_micros >> ack_delay_exp.into_inner();
 
-        if send_path_acks {
+        if is_multipath_negotiated && space_id == SpaceId::Data {
             if !ranges.is_empty() {
                 trace!("PATH_ACK {path_id:?} {ranges:?}, Delay = {delay_micros}us");
                 frame::PathAck::encode(path_id, delay as _, ranges, ecn, buf);
