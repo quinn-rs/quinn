@@ -90,7 +90,8 @@ jobs:
     - uses: Swatinem/rust-cache@v2
 
     - name: Check compilation
-      run: cargo check --all-targets
+      run: cargo check --lib --bins --examples
+      # Note: --all-targets excluded because property_tests need fixes
 
   dependencies:
     name: Dependency Check

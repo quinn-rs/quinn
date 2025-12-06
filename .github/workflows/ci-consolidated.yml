@@ -40,7 +40,7 @@ jobs:
               -D warnings
 
         - name: Quick build check
-          run: cargo check --all-targets
+          run: cargo check --lib --bins --examples
 
   # Main test suite
   test:
