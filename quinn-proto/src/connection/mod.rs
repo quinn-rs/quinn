@@ -26,7 +26,7 @@ use crate::{
     config::{ServerConfig, TransportConfig},
     congestion::Controller,
     connection::{
-        qlog::{QlogRecvPacket, QlogSentPacket},
+        qlog::{QlogRecvPacket, QlogSentPacket, QlogSink},
         spaces::LostPacket,
         timer::{ConnTimer, PathTimer},
     },
@@ -315,6 +315,7 @@ pub struct Connection {
     abandoned_paths: FxHashSet<PathId>,
 
     iroh_hp: iroh_hp::State,
+    qlog: QlogSink,
 }
 
 impl Connection {
@@ -333,6 +334,7 @@ impl Connection {
         allow_mtud: bool,
         rng_seed: [u8; 32],
         side_args: SideArgs,
+        qlog: QlogSink,
     ) -> Self {
         let pref_addr_cid = side_args.pref_addr_cid();
         let path_validated = side_args.path_validated();
@@ -456,6 +458,7 @@ impl Connection {
 
             // iroh's nat traversal
             iroh_hp: Default::default(),
+            qlog,
         };
         if path_validated {
             this.on_path_validated(PathId::ZERO);
@@ -463,16 +466,9 @@ impl Connection {
         if side.is_client() {
             // Kick off the connection
             this.write_crypto();
-            this.init_0rtt();
+            this.init_0rtt(now);
         }
-        this.config.qlog_sink.emit_connection_started(
-            now,
-            loc_cid,
-            rem_cid,
-            remote,
-            local_ip,
-            this.initial_dst_cid,
-        );
+        this.qlog.emit_new_path(PathId::ZERO, remote, now);
         this
     }
 
@@ -666,6 +662,7 @@ impl Connection {
         self.timers.set(
             Timer::PerPath(path_id, PathTimer::PathNotAbandoned),
             now + 3 * self.pto_max_path(SpaceId::Data),
+            self.qlog.with_time(now),
         );
 
         Ok(())
@@ -836,8 +833,11 @@ impl Connection {
         data.validated = validated;
 
         let pto = self.ack_frequency.max_ack_delay_for_pto() + data.rtt.pto_base();
-        self.timers
-            .set(Timer::PerPath(path_id, PathTimer::PathOpen), now + 3 * pto);
+        self.timers.set(
+            Timer::PerPath(path_id, PathTimer::PathOpen),
+            now + 3 * pto,
+            self.qlog.with_time(now),
+        );
 
         // for the path to be opened we need to send a packet on the path. Sending a challenge
         // guarantees this
@@ -852,6 +852,7 @@ impl Connection {
         self.spaces[SpaceId::Data]
             .number_spaces
             .insert(path_id, pn_space);
+        self.qlog.emit_new_path(path_id, remote, now);
         &mut path.data
     }
 
@@ -1372,8 +1373,10 @@ impl Connection {
                     .for_path(*path_id)
                     .pending_acks
                     .acks_sent();
-                self.timers
-                    .stop(Timer::PerPath(*path_id, PathTimer::MaxAckDelay));
+                self.timers.stop(
+                    Timer::PerPath(*path_id, PathTimer::MaxAckDelay),
+                    self.qlog.with_time(now),
+                );
             }
 
             // Now we need to finish the packet.  Before we do so we need to know if we will
@@ -1455,11 +1458,10 @@ impl Connection {
             );
         }
 
-        self.config.qlog_sink.emit_recovery_metrics(
-            self.path_data(path_id).pto_count,
+        self.qlog.emit_recovery_metrics(
+            path_id,
             &mut self.paths.get_mut(&path_id).unwrap().data,
             now,
-            self.initial_dst_cid,
         );
 
         self.app_limited = transmit.is_empty() && !congestion_blocked;
@@ -1660,8 +1662,11 @@ impl Connection {
 
         // Pacing check.
         if let Some(delay) = self.path_data_mut(path_id).pacing_delay(bytes_to_send, now) {
-            self.timers
-                .set(Timer::PerPath(path_id, PathTimer::Pacing), delay);
+            self.timers.set(
+                Timer::PerPath(path_id, PathTimer::Pacing),
+                delay,
+                self.qlog.with_time(now),
+            );
             // Loss probes and CONNECTION_CLOSE should be subject to pacing, even though
             // they are not congestion controlled.
             trace!(?space_id, %path_id, "blocked by pacing");
@@ -1832,12 +1837,8 @@ impl Connection {
                 }
 
                 if let Some(path) = self.paths.get_mut(&path_id) {
-                    self.config.qlog_sink.emit_recovery_metrics(
-                        path.data.pto_count,
-                        &mut path.data,
-                        now,
-                        self.initial_dst_cid,
-                    );
+                    self.qlog
+                        .emit_recovery_metrics(path_id, &mut path.data, now);
                 }
 
                 if was_anti_amplification_blocked {
@@ -1860,7 +1861,7 @@ impl Connection {
                     self.spaces[SpaceId::Data].pending.new_cids.push(frame);
                 });
                 // Always update Timer::PushNewCid
-                self.reset_cid_retirement();
+                self.reset_cid_retirement(now);
             }
         }
     }
@@ -1875,7 +1876,7 @@ impl Connection {
     /// `Instant` that was output by `poll_timeout`; however spurious extra calls will simply
     /// no-op and therefore are safe.
     pub fn handle_timeout(&mut self, now: Instant) {
-        while let Some((timer, _time)) = self.timers.expire_before(now) {
+        while let Some((timer, _time)) = self.timers.expire_before(now, &self.qlog) {
             // TODO(@divma): remove `at` when the unicorn is born
             trace!(?timer, at=?now, "timeout");
             match timer {
@@ -1939,19 +1940,20 @@ impl Connection {
                         }
                         PathTimer::LossDetection => {
                             self.on_loss_detection_timeout(now, path_id);
-                            self.config.qlog_sink.emit_recovery_metrics(
-                                self.path_data(path_id).pto_count,
+                            self.qlog.emit_recovery_metrics(
+                                path_id,
                                 &mut self.paths.get_mut(&path_id).unwrap().data,
                                 now,
-                                self.initial_dst_cid,
                             );
                         }
                         PathTimer::PathValidation => {
                             let Some(path) = self.paths.get_mut(&path_id) else {
                                 continue;
                             };
-                            self.timers
-                                .stop(Timer::PerPath(path_id, PathTimer::PathChallengeLost));
+                            self.timers.stop(
+                                Timer::PerPath(path_id, PathTimer::PathChallengeLost),
+                                self.qlog.with_time(now),
+                            );
                             debug!("path validation failed");
                             if let Some((_, prev)) = path.prev.take() {
                                 path.data = prev;
@@ -1998,7 +2000,7 @@ impl Connection {
                         PathTimer::PathAbandoned => {
                             // The path was abandoned and 3*PTO has expired since.  Clean up all
                             // remaining state and install stateless reset token.
-                            self.timers.stop_per_path(path_id);
+                            self.timers.stop_per_path(path_id, self.qlog.with_time(now));
                             if let Some(loc_cid_state) = self.local_cid_state.remove(&path_id) {
                                 let (min_seq, max_seq) = loc_cid_state.active_seq();
                                 for seq in min_seq..=max_seq {
@@ -2586,6 +2588,7 @@ impl Connection {
         self.timers.set(
             Timer::Conn(ConnTimer::KeyDiscard),
             start + self.pto_max_path(space) * 3,
+            self.qlog.with_time(now),
         );
     }
 
@@ -2848,14 +2851,8 @@ impl Connection {
                 let Some(info) = self.spaces[pn_space].for_path(path_id).take(packet) else {
                     continue;
                 };
-                self.config.qlog_sink.emit_packet_lost(
-                    packet,
-                    &info,
-                    loss_delay,
-                    pn_space,
-                    now,
-                    self.initial_dst_cid,
-                );
+                self.qlog
+                    .emit_packet_lost(packet, &info, loss_delay, pn_space, now);
                 self.paths
                     .get_mut(&path_id)
                     .unwrap()
@@ -3040,19 +3037,27 @@ impl Connection {
 
         if let Some((loss_time, _)) = self.loss_time_and_space(path_id) {
             // Time threshold loss detection.
-            self.timers
-                .set(Timer::PerPath(path_id, PathTimer::LossDetection), loss_time);
+            self.timers.set(
+                Timer::PerPath(path_id, PathTimer::LossDetection),
+                loss_time,
+                self.qlog.with_time(now),
+            );
             return;
         }
 
         // Determine which PN space to arm PTO for.
         // Calculate PTO duration
         if let Some((timeout, _)) = self.pto_time_and_space(now, path_id) {
-            self.timers
-                .set(Timer::PerPath(path_id, PathTimer::LossDetection), timeout);
+            self.timers.set(
+                Timer::PerPath(path_id, PathTimer::LossDetection),
+                timeout,
+                self.qlog.with_time(now),
+            );
         } else {
-            self.timers
-                .stop(Timer::PerPath(path_id, PathTimer::LossDetection));
+            self.timers.stop(
+                Timer::PerPath(path_id, PathTimer::LossDetection),
+                self.qlog.with_time(now),
+            );
         }
     }
 
@@ -3154,22 +3159,32 @@ impl Connection {
         // First reset the global idle timeout.
         if let Some(timeout) = self.idle_timeout {
             if self.state.is_closed() {
-                self.timers.stop(Timer::Conn(ConnTimer::Idle));
+                self.timers
+                    .stop(Timer::Conn(ConnTimer::Idle), self.qlog.with_time(now));
             } else {
                 let dt = cmp::max(timeout, 3 * self.pto_max_path(space));
-                self.timers.set(Timer::Conn(ConnTimer::Idle), now + dt);
+                self.timers.set(
+                    Timer::Conn(ConnTimer::Idle),
+                    now + dt,
+                    self.qlog.with_time(now),
+                );
             }
         }
 
         // Now handle the per-path state
         if let Some(timeout) = self.path_data(path_id).idle_timeout {
             if self.state.is_closed() {
-                self.timers
-                    .stop(Timer::PerPath(path_id, PathTimer::PathIdle));
+                self.timers.stop(
+                    Timer::PerPath(path_id, PathTimer::PathIdle),
+                    self.qlog.with_time(now),
+                );
             } else {
                 let dt = cmp::max(timeout, 3 * self.pto(space, path_id));
-                self.timers
-                    .set(Timer::PerPath(path_id, PathTimer::PathIdle), now + dt);
+                self.timers.set(
+                    Timer::PerPath(path_id, PathTimer::PathIdle),
+                    now + dt,
+                    self.qlog.with_time(now),
+                );
             }
         }
     }
@@ -3181,22 +3196,30 @@ impl Connection {
         }
 
         if let Some(interval) = self.config.keep_alive_interval {
-            self.timers
-                .set(Timer::Conn(ConnTimer::KeepAlive), now + interval);
+            self.timers.set(
+                Timer::Conn(ConnTimer::KeepAlive),
+                now + interval,
+                self.qlog.with_time(now),
+            );
         }
 
         if let Some(interval) = self.path_data(path_id).keep_alive {
             self.timers.set(
                 Timer::PerPath(path_id, PathTimer::PathKeepAlive),
                 now + interval,
+                self.qlog.with_time(now),
             );
         }
     }
 
     /// Sets the timer for when a previously issued CID should be retired next
-    fn reset_cid_retirement(&mut self) {
+    fn reset_cid_retirement(&mut self, now: Instant) {
         if let Some((_path, t)) = self.next_cid_retirement() {
-            self.timers.set(Timer::Conn(ConnTimer::PushNewCid), t);
+            self.timers.set(
+                Timer::Conn(ConnTimer::PushNewCid),
+                t,
+                self.qlog.with_time(now),
+            );
         }
     }
 
@@ -3248,7 +3271,7 @@ impl Connection {
         let packet: Packet = packet.into();
 
         let mut qlog = QlogRecvPacket::new(len);
-        qlog.header(&packet.header, Some(packet_number));
+        qlog.header(&packet.header, Some(packet_number), path_id);
 
         self.process_decrypted_packet(
             now,
@@ -3258,22 +3281,21 @@ impl Connection {
             packet,
             &mut qlog,
         )?;
-        self.config.qlog_sink.emit_packet_received(self, qlog, now);
+        self.qlog.emit_packet_received(qlog, now);
         if let Some(data) = remaining {
             self.handle_coalesced(now, remote, path_id, ecn, data);
         }
 
-        self.config.qlog_sink.emit_recovery_metrics(
-            self.path_data(path_id).pto_count,
+        self.qlog.emit_recovery_metrics(
+            path_id,
             &mut self.paths.get_mut(&path_id).unwrap().data,
             now,
-            self.initial_dst_cid,
         );
 
         Ok(())
     }
 
-    fn init_0rtt(&mut self) {
+    fn init_0rtt(&mut self, now: Instant) {
         let (header, packet) = match self.crypto.early_crypto() {
             Some(x) => x,
             None => return,
@@ -3297,6 +3319,7 @@ impl Connection {
                         ..params
                     };
                     self.set_peer_params(params);
+                    self.qlog.emit_peer_transport_params_restored(self, now);
                 }
                 Err(e) => {
                     error!("session ticket has malformed transport parameters: {}", e);
@@ -3587,7 +3610,7 @@ impl Connection {
                 }
             }
             Ok((packet, number)) => {
-                qlog.header(&packet.header, number);
+                qlog.header(&packet.header, number, path_id);
                 let span = match number {
                     Some(pn) => trace_span!("recv", space = ?packet.header.space(), pn),
                     None => trace_span!("recv", space = ?packet.header.space()),
@@ -3599,12 +3622,12 @@ impl Connection {
                     .map(|pns| &mut pns.dedup);
                 if number.zip(dedup).is_some_and(|(n, d)| d.insert(n)) {
                     debug!("discarding possible duplicate packet");
-                    self.config.qlog_sink.emit_packet_received(self, qlog, now);
+                    self.qlog.emit_packet_received(qlog, now);
                     return;
                 } else if self.state.is_handshake() && packet.header.is_short() {
                     // TODO: SHOULD buffer these to improve reordering tolerance.
                     trace!("dropping short packet during handshake");
-                    self.config.qlog_sink.emit_packet_received(self, qlog, now);
+                    self.qlog.emit_packet_received(qlog, now);
                     return;
                 } else {
                     if let Header::Initial(InitialHeader { ref token, .. }) = packet.header {
@@ -3614,7 +3637,7 @@ impl Connection {
                                 // packets can be spoofed, so we discard rather than killing the
                                 // connection.
                                 warn!("discarding Initial with invalid retry token");
-                                self.config.qlog_sink.emit_packet_received(self, qlog, now);
+                                self.qlog.emit_packet_received(qlog, now);
                                 return;
                             }
                         }
@@ -3646,7 +3669,7 @@ impl Connection {
                     let res = self
                         .process_decrypted_packet(now, remote, path_id, number, packet, &mut qlog);
 
-                    self.config.qlog_sink.emit_packet_received(self, qlog, now);
+                    self.qlog.emit_packet_received(qlog, now);
                     res
                 }
             }
@@ -3693,7 +3716,8 @@ impl Connection {
             self.endpoint_events.push_back(EndpointEventInner::Drained);
             // Close timer may have been started previously, e.g. if we sent a close and got a
             // stateless reset in response
-            self.timers.stop(Timer::Conn(ConnTimer::Close));
+            self.timers
+                .stop(Timer::Conn(ConnTimer::Close), self.qlog.with_time(now));
         }
 
         // Transmit CONNECTION_CLOSE if necessary
@@ -3933,7 +3957,7 @@ impl Connection {
                         self.endpoint_events
                             .push_back(EndpointEventInner::ResetToken(path_id, remote, token));
                     }
-                    self.handle_peer_params(params, loc_cid, rem_cid)?;
+                    self.handle_peer_params(params, loc_cid, rem_cid, now)?;
                     self.issue_first_cids(now);
                 } else {
                     // Server-only
@@ -3993,9 +4017,9 @@ impl Connection {
                                 reason: "transport parameters missing".into(),
                                 crypto: None,
                             })?;
-                    self.handle_peer_params(params, loc_cid, rem_cid)?;
+                    self.handle_peer_params(params, loc_cid, rem_cid, now)?;
                     self.issue_first_cids(now);
-                    self.init_0rtt();
+                    self.init_0rtt(now);
                 }
                 Ok(())
             }
@@ -4226,15 +4250,21 @@ impl Connection {
                     if remote != path.data.remote {
                         debug!(token, "ignoring invalid PATH_RESPONSE");
                     } else if let Some(&challenge_sent) = path.data.challenges_sent.get(&token) {
-                        self.timers
-                            .stop(Timer::PerPath(path_id, PathTimer::PathValidation));
-                        self.timers
-                            .stop(Timer::PerPath(path_id, PathTimer::PathChallengeLost));
+                        self.timers.stop(
+                            Timer::PerPath(path_id, PathTimer::PathValidation),
+                            self.qlog.with_time(now),
+                        );
+                        self.timers.stop(
+                            Timer::PerPath(path_id, PathTimer::PathChallengeLost),
+                            self.qlog.with_time(now),
+                        );
                         if !path.data.validated {
                             trace!("new path validated");
                         }
-                        self.timers
-                            .stop(Timer::PerPath(path_id, PathTimer::PathOpen));
+                        self.timers.stop(
+                            Timer::PerPath(path_id, PathTimer::PathOpen),
+                            self.qlog.with_time(now),
+                        );
                         path.data.challenges_sent.clear();
                         path.data.send_new_challenge = false;
                         path.data.validated = true;
@@ -4470,8 +4500,11 @@ impl Connection {
                             .pending_acks
                             .max_ack_delay_timeout(self.ack_frequency.max_ack_delay)
                         {
-                            self.timers
-                                .set(Timer::PerPath(*path_id, PathTimer::MaxAckDelay), timeout);
+                            self.timers.set(
+                                Timer::PerPath(*path_id, PathTimer::MaxAckDelay),
+                                timeout,
+                                self.qlog.with_time(now),
+                            );
                         }
                     }
                 }
@@ -4568,10 +4601,13 @@ impl Connection {
                         self.timers.set(
                             Timer::PerPath(path_id, PathTimer::PathAbandoned),
                             now + delay,
+                            self.qlog.with_time(now),
                         );
                     }
-                    self.timers
-                        .stop(Timer::PerPath(path_id, PathTimer::PathNotAbandoned));
+                    self.timers.stop(
+                        Timer::PerPath(path_id, PathTimer::PathNotAbandoned),
+                        self.qlog.with_time(now),
+                    );
                 }
                 Frame::PathAvailable(info) => {
                     span.record("path", tracing::field::debug(&info.path_id));
@@ -4736,6 +4772,7 @@ impl Connection {
                 self.timers.set(
                     Timer::PerPath(path_id, PathTimer::MaxAckDelay),
                     now + self.ack_frequency.max_ack_delay,
+                    self.qlog.with_time(now),
                 );
             }
         }
@@ -4830,6 +4867,7 @@ impl Connection {
         self.timers.set(
             Timer::PerPath(path_id, PathTimer::PathValidation),
             now + 3 * cmp::max(self.pto(SpaceId::Data, path_id), prev_pto),
+            self.qlog.with_time(now),
         );
     }
 
@@ -5103,6 +5141,7 @@ impl Connection {
             self.timers.set(
                 Timer::PerPath(path_id, PathTimer::PathChallengeLost),
                 now + pto,
+                self.qlog.with_time(now),
             );
 
             if is_multipath_negotiated && !path.validated && path.send_new_challenge {
@@ -5610,6 +5649,7 @@ impl Connection {
         self.timers.set(
             Timer::Conn(ConnTimer::Close),
             now + 3 * self.pto_max_path(self.highest_space),
+            self.qlog.with_time(now),
         );
     }
 
@@ -5622,6 +5662,7 @@ impl Connection {
         params: TransportParameters,
         loc_cid: ConnectionId,
         rem_cid: ConnectionId,
+        now: Instant,
     ) -> Result<(), TransportError> {
         if Some(self.orig_rem_cid) != params.initial_src_cid
             || (self.side.is_client()
@@ -5639,6 +5680,7 @@ impl Connection {
         }
 
         self.set_peer_params(params);
+        self.qlog.emit_peer_transport_params_received(self, now);
 
         Ok(())
     }

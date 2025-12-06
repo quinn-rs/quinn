@@ -16,7 +16,7 @@ use crate::{
 };
 
 #[cfg(feature = "qlog")]
-use qlog::events::quic::MetricsUpdated;
+use qlog::events::quic::RecoveryMetricsUpdated;
 
 /// Id representing different paths when using multipath extension
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Default)]
@@ -368,7 +368,10 @@ impl PathData {
     }
 
     #[cfg(feature = "qlog")]
-    pub(super) fn qlog_recovery_metrics(&mut self, pto_count: u32) -> Option<MetricsUpdated> {
+    pub(super) fn qlog_recovery_metrics(
+        &mut self,
+        path_id: PathId,
+    ) -> Option<RecoveryMetricsUpdated> {
         let controller_metrics = self.congestion.metrics();
 
         let metrics = RecoveryMetrics {
@@ -376,7 +379,7 @@ impl PathData {
             smoothed_rtt: Some(self.rtt.get()),
             latest_rtt: Some(self.rtt.latest),
             rtt_variance: Some(self.rtt.var),
-            pto_count: Some(pto_count),
+            pto_count: Some(self.pto_count),
             bytes_in_flight: Some(self.in_flight.bytes),
             packets_in_flight: Some(self.in_flight.ack_eliciting),
 
@@ -385,7 +388,7 @@ impl PathData {
             pacing_rate: controller_metrics.pacing_rate,
         };
 
-        let event = metrics.to_qlog_event(&self.recovery_metrics);
+        let event = metrics.to_qlog_event(path_id, &self.recovery_metrics);
         self.recovery_metrics = metrics;
         event
     }
@@ -496,14 +499,14 @@ impl RecoveryMetrics {
     }
 
     /// Emit a `MetricsUpdated` event containing only updated values
-    fn to_qlog_event(&self, previous: &Self) -> Option<MetricsUpdated> {
+    fn to_qlog_event(&self, path_id: PathId, previous: &Self) -> Option<RecoveryMetricsUpdated> {
         let updated = self.retain_updated(previous);
 
         if updated == Self::default() {
             return None;
         }
 
-        Some(MetricsUpdated {
+        Some(RecoveryMetricsUpdated {
             min_rtt: updated.min_rtt.map(|rtt| rtt.as_secs_f32()),
             smoothed_rtt: updated.smoothed_rtt.map(|rtt| rtt.as_secs_f32()),
             latest_rtt: updated.latest_rtt.map(|rtt| rtt.as_secs_f32()),
@@ -516,6 +519,7 @@ impl RecoveryMetrics {
             congestion_window: updated.congestion_window,
             ssthresh: updated.ssthresh,
             pacing_rate: updated.pacing_rate,
+            path_id: Some(path_id.as_u32() as u64),
         })
     }
 }

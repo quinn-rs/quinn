@@ -70,7 +70,7 @@ pub use proto::{
     VarIntBoundsExceeded, Written, congestion, crypto,
 };
 #[cfg(feature = "qlog")]
-pub use proto::{QlogConfig, QlogStream};
+pub use proto::{QlogConfig, QlogFactory, QlogFileFactory};
 #[cfg(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring"))]
 pub use rustls;
 pub use udp;

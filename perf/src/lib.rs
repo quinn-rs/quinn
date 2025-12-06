@@ -1,11 +1,9 @@
 #[cfg(feature = "qlog")]
-use std::{fs::File, io::BufWriter, path::PathBuf};
+use std::path::PathBuf;
 use std::{io, net::SocketAddr, num::ParseIntError, str::FromStr, sync::Arc, time::Duration};
 
 use anyhow::{Context, Result};
 use clap::{Parser, ValueEnum};
-#[cfg(feature = "qlog")]
-use quinn::QlogConfig;
 use quinn::{
     AckFrequencyConfig, TransportConfig, VarInt,
     congestion::{self, ControllerFactory},
@@ -82,10 +80,12 @@ pub struct CommonOpt {
     /// Max UDP payload size in bytes
     #[clap(long, default_value = "1472")]
     pub max_udp_payload_size: u16,
-    /// qlog output file
+    /// qlog output directory
+    ///
+    /// Alternatively you can set the `QLOGDIR` environment variable.
     #[cfg(feature = "qlog")]
     #[clap(long = "qlog")]
-    pub qlog_file: Option<PathBuf>,
+    pub qlog_dir: Option<PathBuf>,
 }
 
 impl CommonOpt {
@@ -123,12 +123,10 @@ impl CommonOpt {
         }
 
         #[cfg(feature = "qlog")]
-        if let Some(qlog_file) = &self.qlog_file {
-            let mut qlog = QlogConfig::default();
-            let file = File::create(qlog_file)?;
-            let writer = BufWriter::new(file);
-            qlog.writer(Box::new(writer)).title(Some(name.into()));
-            transport.qlog_stream(qlog.into_stream());
+        if let Some(qlog_dir) = &self.qlog_dir {
+            transport.qlog_from_path(qlog_dir, name);
+        } else {
+            transport.qlog_from_env(name);
         }
 
         Ok(transport)

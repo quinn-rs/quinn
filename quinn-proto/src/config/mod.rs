@@ -25,10 +25,13 @@ use crate::{
     shared::ConnectionId,
 };
 
-mod transport;
-pub use transport::{AckFrequencyConfig, IdleTimeout, MtuDiscoveryConfig, TransportConfig};
 #[cfg(feature = "qlog")]
-pub use transport::{QlogConfig, VantagePointType};
+mod qlog;
+mod transport;
+
+#[cfg(feature = "qlog")]
+pub use qlog::{QlogConfig, QlogFactory, QlogFileFactory};
+pub use transport::{AckFrequencyConfig, IdleTimeout, MtuDiscoveryConfig, TransportConfig};
 
 #[cfg(doc)]
 pub use transport::DEFAULT_CONCURRENT_MULTIPATH_PATHS_WHEN_ENABLED;

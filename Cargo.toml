@@ -31,7 +31,7 @@ identity-hash = "0.1.0"
 lru-slab = "0.1.2"
 log = "0.4"
 pin-project-lite = "0.2"
-qlog = "0.15.2"
+qlog = { package = "n0-qlog", version = "0.1.0" }
 rand = "0.9"
 rcgen = "0.14"
 ring = "0.17"

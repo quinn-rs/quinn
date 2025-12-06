@@ -1,6 +1,9 @@
 use identity_hash::{IdentityHashable, IntMap};
 
-use crate::Instant;
+use crate::{
+    Instant,
+    connection::qlog::{QlogSink, QlogSinkWithTime},
+};
 
 use super::PathId;
 
@@ -250,7 +253,7 @@ impl PathTimerTable {
 
 impl TimerTable {
     /// Sets the timer unconditionally
-    pub(super) fn set(&mut self, timer: Timer, time: Instant) {
+    pub(super) fn set(&mut self, timer: Timer, time: Instant, qlog: QlogSinkWithTime<'_>) {
         match timer {
             Timer::Conn(timer) => {
                 self.generic[timer as usize] = Some(time);
@@ -266,9 +269,10 @@ impl TimerTable {
                 }
             },
         }
+        qlog.emit_timer_set(timer, time);
     }
 
-    pub(super) fn stop(&mut self, timer: Timer) {
+    pub(super) fn stop(&mut self, timer: Timer, qlog: QlogSinkWithTime<'_>) {
         match timer {
             Timer::Conn(timer) => {
                 self.generic[timer as usize] = None;
@@ -279,13 +283,15 @@ impl TimerTable {
                 }
             }
         }
+        qlog.emit_timer_stop(timer);
     }
 
     /// Stops all per-path timers
-    pub(super) fn stop_per_path(&mut self, path_id: PathId) {
+    pub(super) fn stop_per_path(&mut self, path_id: PathId, qlog: QlogSinkWithTime<'_>) {
         for timer in PathTimer::VALUES {
             if let Some(e) = self.path_timers.get_mut(&path_id) {
                 e.stop(timer);
+                qlog.emit_timer_stop(Timer::PerPath(path_id, timer));
             }
         }
     }
@@ -310,7 +316,17 @@ impl TimerTable {
     }
 
     /// Remove the next timer up until `now`, including it
-    pub(super) fn expire_before(&mut self, now: Instant) -> Option<(Timer, Instant)> {
+    pub(super) fn expire_before(
+        &mut self,
+        now: Instant,
+        qlog: &QlogSink,
+    ) -> Option<(Timer, Instant)> {
+        let (timer, instant) = self.expire_before_inner(now)?;
+        qlog.with_time(now).emit_timer_expire(timer);
+        Some((timer, instant))
+    }
+
+    fn expire_before_inner(&mut self, now: Instant) -> Option<(Timer, Instant)> {
         // TODO: this is currently linear in the number of paths
 
         for timer in ConnTimer::VALUES {
@@ -370,6 +386,8 @@ impl TimerTable {
 mod tests {
     use std::time::Duration;
 
+    use crate::connection::qlog::QlogSink;
+
     use super::*;
 
     #[test]
@@ -377,19 +395,27 @@ mod tests {
         let mut timers = TimerTable::default();
         let sec = Duration::from_secs(1);
         let now = Instant::now() + Duration::from_secs(10);
-        timers.set(Timer::Conn(ConnTimer::Idle), now - 3 * sec);
-        timers.set(Timer::Conn(ConnTimer::Close), now - 2 * sec);
+        timers.set(
+            Timer::Conn(ConnTimer::Idle),
+            now - 3 * sec,
+            QlogSink::default().with_time(now),
+        );
+        timers.set(
+            Timer::Conn(ConnTimer::Close),
+            now - 2 * sec,
+            QlogSink::default().with_time(now),
+        );
 
         assert_eq!(timers.peek(), Some(now - 3 * sec));
         assert_eq!(
-            timers.expire_before(now),
+            timers.expire_before(now, &QlogSink::default()),
             Some((Timer::Conn(ConnTimer::Idle), now - 3 * sec))
         );
         assert_eq!(
-            timers.expire_before(now),
+            timers.expire_before(now, &QlogSink::default()),
             Some((Timer::Conn(ConnTimer::Close), now - 2 * sec))
         );
-        assert_eq!(timers.expire_before(now), None);
+        assert_eq!(timers.expire_before(now, &QlogSink::default()), None);
     }
 
     #[test]

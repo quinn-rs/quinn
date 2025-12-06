@@ -169,6 +169,7 @@ impl<'a, 'b> PacketBuilder<'a, 'b> {
             Some(exact_number),
             space_id,
             space_id == SpaceId::Data && conn.spaces[SpaceId::Data].crypto.is_none(),
+            path_id,
         );
 
         Some(Self {
@@ -311,7 +312,7 @@ impl<'a, 'b> PacketBuilder<'a, 'b> {
         let packet_len = self.buf.len() - encode_start;
         trace!(size = %packet_len, short_header = %self.short_header, "wrote packet");
         qlog.finalize(packet_len);
-        conn.config.qlog_sink.emit_packet_sent(conn, qlog, now);
+        conn.qlog.emit_packet_sent(qlog, now);
         (packet_len, pad)
     }
 

@@ -49,8 +49,6 @@ pub use crate::connection::{
     SendStream, SetPathStatusError, ShouldTransmit, StreamEvent, Streams, UdpStats, WriteError,
     Written,
 };
-#[cfg(feature = "qlog")]
-pub use connection::qlog::QlogStream;
 
 #[cfg(feature = "rustls")]
 pub use rustls;
@@ -63,7 +61,7 @@ pub use config::{
     ServerConfig, StdSystemTime, TimeSource, TransportConfig, ValidationTokenConfig,
 };
 #[cfg(feature = "qlog")]
-pub use config::{QlogConfig, VantagePointType};
+pub use config::{QlogConfig, QlogFactory, QlogFileFactory};
 
 pub mod crypto;
 
