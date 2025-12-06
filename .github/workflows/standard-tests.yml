@@ -155,7 +155,7 @@ jobs:
 
   summary:
     name: Standard Tests Summary
-    needs: [test, integration-tests, doc-tests, feature-combinations, wasm-check, coverage]
+    needs: [test, integration-tests, doc-tests, feature-combinations, coverage]
     if: always()
     runs-on: ubuntu-latest
     steps:
