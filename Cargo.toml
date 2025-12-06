@@ -51,7 +51,7 @@ network-discovery = ["dep:socket2", "dep:nix"]
 
 # Runtime features
 runtime-tokio = []
-runtime-smol = ["dep:smol"]
+runtime-smol = ["dep:smol", "dep:async-io"]
 
 # Additional features
 arbitrary = ["dep:arbitrary"]
