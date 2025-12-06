@@ -285,5 +285,5 @@ jobs:
       - uses: taiki-e/install-action@cargo-hack
       # Skip aws-lc-rs combinations (code requires ring unconditionally)
       # Skip pqc (has hardcoded ring deps) and property_testing (has compile errors)
-      # Use --include-features to ensure rustls-ring is always included
-      - run: cargo hack check --feature-powerset --depth 2 --optional-deps --no-dev-deps --ignore-private --skip "${{env.SKIP_FEATURES}}" --include-features rustls-ring
+      # Include rustls-ring in all combinations (--include-features incompatible with --optional-deps)
+      - run: cargo hack check --feature-powerset --depth 2 --no-dev-deps --ignore-private --skip "${{env.SKIP_FEATURES}}" --include-features rustls-ring
