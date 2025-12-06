@@ -479,7 +479,7 @@ pub fn perform_channel_binding_from_exporter(
 
 /// Send a binding message over a unidirectional stream using Ed25519.
 ///
-/// Format: u16 spki_len | exporter[32] | sig[64] | spki bytes.
+/// Format: `u16 spki_len | exporter[32] | sig[64] | spki bytes`.
 pub async fn send_binding_ed25519(
     conn: &Connection,
     exporter: &[u8; 32],

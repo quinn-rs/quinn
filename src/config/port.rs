@@ -63,7 +63,7 @@ pub enum IpMode {
     #[default]
     IPv4Only,
 
-    /// IPv6 only (bind to [::]:port)
+    /// IPv6 only (bind to `[::]`:port)
     IPv6Only,
 
     /// Both IPv4 and IPv6 on same port
