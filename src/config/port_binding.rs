@@ -12,9 +12,11 @@
 
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, UdpSocket};
 
+#[cfg(feature = "network-discovery")]
+use super::port::buffer_defaults;
 use super::port::{
     BoundSocket, EndpointConfigError, EndpointPortConfig, IpMode, PortBinding, PortConfigResult,
-    PortRetryBehavior, SocketOptions, buffer_defaults,
+    PortRetryBehavior, SocketOptions,
 };
 
 /// Validate port number
@@ -39,139 +41,187 @@ fn validate_port_range(start: u16, end: u16) -> PortConfigResult<()> {
     Ok(())
 }
 
-/// Try to set send buffer size with graceful fallback
-///
-/// If the kernel rejects the requested size, tries progressively smaller sizes
-/// until it succeeds or reaches the minimum buffer size.
-fn try_set_send_buffer(socket: &socket2::Socket, requested: usize) -> std::io::Result<usize> {
-    let mut size = requested;
-    while size >= buffer_defaults::MIN_BUFFER_SIZE {
-        if socket.set_send_buffer_size(size).is_ok() {
-            // Return actual size that was set
+// socket2-based implementation for advanced socket options (buffer sizing, etc.)
+#[cfg(feature = "network-discovery")]
+mod socket2_impl {
+    use super::*;
+
+    /// Try to set send buffer size with graceful fallback
+    ///
+    /// If the kernel rejects the requested size, tries progressively smaller sizes
+    /// until it succeeds or reaches the minimum buffer size.
+    fn try_set_send_buffer(socket: &socket2::Socket, requested: usize) -> std::io::Result<usize> {
+        let mut size = requested;
+        while size >= buffer_defaults::MIN_BUFFER_SIZE {
+            if socket.set_send_buffer_size(size).is_ok() {
+                // Return actual size that was set
+                return socket.send_buffer_size();
+            }
+            // Try half the size
+            size /= 2;
+            tracing::debug!(
+                "Send buffer size {} rejected, trying {} bytes",
+                size * 2,
+                size
+            );
+        }
+        // Last resort: try minimum size
+        if socket
+            .set_send_buffer_size(buffer_defaults::MIN_BUFFER_SIZE)
+            .is_ok()
+        {
             return socket.send_buffer_size();
         }
-        // Try half the size
-        size /= 2;
-        tracing::debug!(
-            "Send buffer size {} rejected, trying {} bytes",
-            size * 2,
-            size
-        );
+        // Accept whatever the OS gives us
+        socket.send_buffer_size()
     }
-    // Last resort: try minimum size
-    if socket
-        .set_send_buffer_size(buffer_defaults::MIN_BUFFER_SIZE)
-        .is_ok()
-    {
-        return socket.send_buffer_size();
-    }
-    // Accept whatever the OS gives us
-    socket.send_buffer_size()
-}
 
-/// Try to set receive buffer size with graceful fallback
-///
-/// If the kernel rejects the requested size, tries progressively smaller sizes
-/// until it succeeds or reaches the minimum buffer size.
-fn try_set_recv_buffer(socket: &socket2::Socket, requested: usize) -> std::io::Result<usize> {
-    let mut size = requested;
-    while size >= buffer_defaults::MIN_BUFFER_SIZE {
-        if socket.set_recv_buffer_size(size).is_ok() {
-            // Return actual size that was set
+    /// Try to set receive buffer size with graceful fallback
+    ///
+    /// If the kernel rejects the requested size, tries progressively smaller sizes
+    /// until it succeeds or reaches the minimum buffer size.
+    fn try_set_recv_buffer(socket: &socket2::Socket, requested: usize) -> std::io::Result<usize> {
+        let mut size = requested;
+        while size >= buffer_defaults::MIN_BUFFER_SIZE {
+            if socket.set_recv_buffer_size(size).is_ok() {
+                // Return actual size that was set
+                return socket.recv_buffer_size();
+            }
+            // Try half the size
+            size /= 2;
+            tracing::debug!(
+                "Recv buffer size {} rejected, trying {} bytes",
+                size * 2,
+                size
+            );
+        }
+        // Last resort: try minimum size
+        if socket
+            .set_recv_buffer_size(buffer_defaults::MIN_BUFFER_SIZE)
+            .is_ok()
+        {
             return socket.recv_buffer_size();
         }
-        // Try half the size
-        size /= 2;
-        tracing::debug!(
-            "Recv buffer size {} rejected, trying {} bytes",
-            size * 2,
-            size
-        );
+        // Accept whatever the OS gives us
+        socket.recv_buffer_size()
     }
-    // Last resort: try minimum size
-    if socket
-        .set_recv_buffer_size(buffer_defaults::MIN_BUFFER_SIZE)
-        .is_ok()
-    {
-        return socket.recv_buffer_size();
+
+    /// Create a socket with specified options using socket2 for advanced features
+    pub fn create_socket(addr: &SocketAddr, opts: &SocketOptions) -> PortConfigResult<UdpSocket> {
+        let socket = socket2::Socket::new(
+            if addr.is_ipv4() {
+                socket2::Domain::IPV4
+            } else {
+                socket2::Domain::IPV6
+            },
+            socket2::Type::DGRAM,
+            Some(socket2::Protocol::UDP),
+        )
+        .map_err(|e| EndpointConfigError::BindFailed(e.to_string()))?;
+
+        // Set socket to non-blocking mode
+        socket
+            .set_nonblocking(true)
+            .map_err(|e| EndpointConfigError::BindFailed(e.to_string()))?;
+
+        // Apply socket options
+        if opts.reuse_address {
+            socket
+                .set_reuse_address(true)
+                .map_err(|e| EndpointConfigError::BindFailed(e.to_string()))?;
+        }
+
+        // SO_REUSEPORT support is platform-specific and optional
+        // We'll skip it for now to ensure cross-platform compatibility
+        #[allow(clippy::collapsible_if)]
+        if opts.reuse_port {
+            #[cfg(all(unix, not(target_os = "solaris"), not(target_os = "illumos")))]
+            {
+                // On supported Unix platforms, try to set SO_REUSEPORT
+                // This is a best-effort attempt - failure is not critical
+                tracing::debug!("SO_REUSEPORT requested but skipped for compatibility");
+            }
+        }
+
+        // Apply buffer sizes with graceful fallback
+        // If the kernel rejects the requested size, try progressively smaller sizes
+        if let Some(size) = opts.send_buffer_size {
+            if let Err(e) = try_set_send_buffer(&socket, size) {
+                tracing::warn!(
+                    "Failed to set send buffer to {} bytes: {}. Using OS default.",
+                    size,
+                    e
+                );
+            }
+        }
+
+        if let Some(size) = opts.recv_buffer_size {
+            if let Err(e) = try_set_recv_buffer(&socket, size) {
+                tracing::warn!(
+                    "Failed to set recv buffer to {} bytes: {}. Using OS default.",
+                    size,
+                    e
+                );
+            }
+        }
+
+        // Bind the socket
+        socket.bind(&socket2::SockAddr::from(*addr)).map_err(|e| {
+            if e.kind() == std::io::ErrorKind::AddrInUse {
+                EndpointConfigError::PortInUse(addr.port())
+            } else if e.kind() == std::io::ErrorKind::PermissionDenied {
+                EndpointConfigError::PermissionDenied(addr.port())
+            } else {
+                EndpointConfigError::BindFailed(e.to_string())
+            }
+        })?;
+
+        // Convert to std::net::UdpSocket
+        let std_socket: UdpSocket = socket.into();
+        Ok(std_socket)
     }
-    // Accept whatever the OS gives us
-    socket.recv_buffer_size()
+}
+
+// Fallback implementation using std::net when socket2 is not available
+#[cfg(not(feature = "network-discovery"))]
+mod std_impl {
+    use super::*;
+
+    /// Create a socket with specified options using std::net
+    /// Note: Buffer size options are ignored as std::net doesn't support them
+    pub fn create_socket(addr: &SocketAddr, opts: &SocketOptions) -> PortConfigResult<UdpSocket> {
+        // Note: reuse_address, reuse_port, and buffer sizes are not supported
+        // with std::net::UdpSocket. These options will be silently ignored.
+        let _ = opts; // Suppress unused warning
+
+        let socket = UdpSocket::bind(addr).map_err(|e| {
+            if e.kind() == std::io::ErrorKind::AddrInUse {
+                EndpointConfigError::PortInUse(addr.port())
+            } else if e.kind() == std::io::ErrorKind::PermissionDenied {
+                EndpointConfigError::PermissionDenied(addr.port())
+            } else {
+                EndpointConfigError::BindFailed(e.to_string())
+            }
+        })?;
+
+        socket
+            .set_nonblocking(true)
+            .map_err(|e| EndpointConfigError::BindFailed(e.to_string()))?;
+
+        Ok(socket)
+    }
 }
 
 /// Create a socket with specified options
 fn create_socket(addr: &SocketAddr, opts: &SocketOptions) -> PortConfigResult<UdpSocket> {
-    let socket = socket2::Socket::new(
-        if addr.is_ipv4() {
-            socket2::Domain::IPV4
-        } else {
-            socket2::Domain::IPV6
-        },
-        socket2::Type::DGRAM,
-        Some(socket2::Protocol::UDP),
-    )
-    .map_err(|e| EndpointConfigError::BindFailed(e.to_string()))?;
-
-    // Set socket to non-blocking mode
-    socket
-        .set_nonblocking(true)
-        .map_err(|e| EndpointConfigError::BindFailed(e.to_string()))?;
-
-    // Apply socket options
-    if opts.reuse_address {
-        socket
-            .set_reuse_address(true)
-            .map_err(|e| EndpointConfigError::BindFailed(e.to_string()))?;
+    #[cfg(feature = "network-discovery")]
+    {
+        socket2_impl::create_socket(addr, opts)
     }
-
-    // SO_REUSEPORT support is platform-specific and optional
-    // We'll skip it for now to ensure cross-platform compatibility
-    #[allow(clippy::collapsible_if)]
-    if opts.reuse_port {
-        #[cfg(all(unix, not(target_os = "solaris"), not(target_os = "illumos")))]
-        {
-            // On supported Unix platforms, try to set SO_REUSEPORT
-            // This is a best-effort attempt - failure is not critical
-            tracing::debug!("SO_REUSEPORT requested but skipped for compatibility");
-        }
+    #[cfg(not(feature = "network-discovery"))]
+    {
+        std_impl::create_socket(addr, opts)
     }
-
-    // Apply buffer sizes with graceful fallback
-    // If the kernel rejects the requested size, try progressively smaller sizes
-    if let Some(size) = opts.send_buffer_size {
-        if let Err(e) = try_set_send_buffer(&socket, size) {
-            tracing::warn!(
-                "Failed to set send buffer to {} bytes: {}. Using OS default.",
-                size,
-                e
-            );
-        }
-    }
-
-    if let Some(size) = opts.recv_buffer_size {
-        if let Err(e) = try_set_recv_buffer(&socket, size) {
-            tracing::warn!(
-                "Failed to set recv buffer to {} bytes: {}. Using OS default.",
-                size,
-                e
-            );
-        }
-    }
-
-    // Bind the socket
-    socket.bind(&socket2::SockAddr::from(*addr)).map_err(|e| {
-        if e.kind() == std::io::ErrorKind::AddrInUse {
-            EndpointConfigError::PortInUse(addr.port())
-        } else if e.kind() == std::io::ErrorKind::PermissionDenied {
-            EndpointConfigError::PermissionDenied(addr.port())
-        } else {
-            EndpointConfigError::BindFailed(e.to_string())
-        }
-    })?;
-
-    // Convert to std::net::UdpSocket
-    let std_socket: UdpSocket = socket.into();
-    Ok(std_socket)
 }
 
 /// Bind a single socket to the given port and IP mode

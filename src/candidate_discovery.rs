@@ -3289,19 +3289,24 @@ impl DiscoveryCache {
 
 /// Create platform-specific network interface discovery
 pub(crate) fn create_platform_interface_discovery() -> Box<dyn NetworkInterfaceDiscovery + Send> {
-    #[cfg(target_os = "windows")]
+    #[cfg(all(target_os = "windows", feature = "network-discovery"))]
     return Box::new(WindowsInterfaceDiscovery::new());
 
-    #[cfg(target_os = "linux")]
+    #[cfg(all(target_os = "linux", feature = "network-discovery"))]
     return Box::new(LinuxInterfaceDiscovery::new());
 
     #[cfg(all(target_os = "macos", feature = "network-discovery"))]
     return Box::new(MacOSInterfaceDiscovery::new());
 
-    #[cfg(all(target_os = "macos", not(feature = "network-discovery")))]
-    return Box::new(GenericInterfaceDiscovery::new());
-
-    #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
+    // Fallback to generic implementation when:
+    // - Platform doesn't have a specific implementation
+    // - network-discovery feature is disabled
+    #[cfg(any(
+        all(target_os = "windows", not(feature = "network-discovery")),
+        all(target_os = "linux", not(feature = "network-discovery")),
+        all(target_os = "macos", not(feature = "network-discovery")),
+        not(any(target_os = "windows", target_os = "linux", target_os = "macos"))
+    ))]
     return Box::new(GenericInterfaceDiscovery::new());
 }
 
