@@ -326,6 +326,7 @@ impl Endpoint {
         config: ClientConfig,
         remote: SocketAddr,
         server_name: &str,
+        interface_mtu_constraint: Option<u16>,
     ) -> Result<(ConnectionHandle, Connection), ConnectError> {
         if self.cids_exhausted() {
             return Err(ConnectError::CidsExhausted);
@@ -371,6 +372,7 @@ impl Endpoint {
                 token_store: config.token_store,
                 server_name: server_name.into(),
             },
+            interface_mtu_constraint,
         );
         Ok((ch, conn))
     }
@@ -630,6 +632,7 @@ impl Endpoint {
                 pref_addr_cid,
                 path_validated: remote_address_validated,
             },
+            None, // Interface MTU constraint not available for server connections
         );
         self.index.insert_initial(dst_cid, ch);
 
@@ -794,6 +797,7 @@ impl Endpoint {
         tls: Box<dyn crypto::Session>,
         transport_config: Arc<TransportConfig>,
         side_args: SideArgs,
+        interface_mtu_constraint: Option<u16>,
     ) -> Connection {
         let mut rng_seed = [0; 32];
         self.rng.fill_bytes(&mut rng_seed);
@@ -814,6 +818,7 @@ impl Endpoint {
             self.allow_mtud,
             rng_seed,
             side_args,
+            interface_mtu_constraint,
         );
 
         let mut cids_issued = 0;

@@ -21,6 +21,7 @@ impl MtuDiscovery {
         min_mtu: u16,
         peer_max_udp_payload_size: Option<u16>,
         config: MtuDiscoveryConfig,
+        interface_mtu_constraint: Option<u16>,
     ) -> Self {
         debug_assert!(
             initial_plpmtu >= min_mtu,
@@ -30,7 +31,7 @@ impl MtuDiscovery {
         let mut mtud = Self::with_state(
             initial_plpmtu,
             min_mtu,
-            Some(EnabledMtuDiscovery::new(config)),
+            Some(EnabledMtuDiscovery::new(config, interface_mtu_constraint)),
         );
 
         // We might be migrating an existing connection to a new path, in which case the transport
@@ -59,7 +60,7 @@ impl MtuDiscovery {
     pub(super) fn reset(&mut self, current_mtu: u16, min_mtu: u16) {
         self.current_mtu = current_mtu;
         if let Some(state) = self.state.take() {
-            self.state = Some(EnabledMtuDiscovery::new(state.config));
+            self.state = Some(EnabledMtuDiscovery::new(state.config, state.interface_mtu_constraint));
             self.on_peer_max_udp_payload_size_received(state.peer_max_udp_payload_size);
         }
         self.black_hole_detector = BlackHoleDetector::new(min_mtu);
@@ -173,14 +174,16 @@ struct EnabledMtuDiscovery {
     phase: Phase,
     peer_max_udp_payload_size: u16,
     config: MtuDiscoveryConfig,
+    interface_mtu_constraint: Option<u16>,
 }
 
 impl EnabledMtuDiscovery {
-    fn new(config: MtuDiscoveryConfig) -> Self {
+    fn new(config: MtuDiscoveryConfig, interface_mtu_constraint: Option<u16>) -> Self {
         Self {
             phase: Phase::Initial,
             peer_max_udp_payload_size: MAX_UDP_PAYLOAD,
             config,
+            interface_mtu_constraint,
         }
     }
 
@@ -192,6 +195,7 @@ impl EnabledMtuDiscovery {
                 current_mtu,
                 self.peer_max_udp_payload_size,
                 &self.config,
+                self.interface_mtu_constraint,
             ));
         } else if let Phase::Complete(next_mtud_activation) = &self.phase {
             if now < *next_mtud_activation {
@@ -203,6 +207,7 @@ impl EnabledMtuDiscovery {
                 current_mtu,
                 self.peer_max_udp_payload_size,
                 &self.config,
+                self.interface_mtu_constraint,
             ));
         }
 
@@ -304,11 +309,16 @@ impl SearchState {
         mut lower_bound: u16,
         peer_max_udp_payload_size: u16,
         config: &MtuDiscoveryConfig,
+        interface_mtu_constraint: Option<u16>,
     ) -> Self {
         lower_bound = lower_bound.min(peer_max_udp_payload_size);
-        let upper_bound = config
+        // Apply interface MTU constraint as an additional limit on the upper bound
+        // This layers on top of user configuration rather than replacing it
+        let effective_upper_bound = config
             .upper_bound
-            .clamp(lower_bound, peer_max_udp_payload_size);
+            .min(interface_mtu_constraint.unwrap_or(u16::MAX))
+            .min(peer_max_udp_payload_size);
+        let upper_bound = effective_upper_bound.clamp(lower_bound, peer_max_udp_payload_size);
 
         Self {
             in_flight_probe: None,
@@ -530,7 +540,7 @@ mod tests {
 
     fn default_mtud() -> MtuDiscovery {
         let config = MtuDiscoveryConfig::default();
-        MtuDiscovery::new(1_200, 1_200, None, config)
+        MtuDiscovery::new(1_200, 1_200, None, config, None)
     }
 
     fn completed(mtud: &MtuDiscovery) -> bool {
@@ -655,7 +665,7 @@ mod tests {
     fn mtu_discovery_after_complete_reactivates_when_interval_elapsed() {
         let mut config = MtuDiscoveryConfig::default();
         config.upper_bound(9_000);
-        let mut mtud = MtuDiscovery::new(1_200, 1_200, None, config);
+        let mut mtud = MtuDiscovery::new(1_200, 1_200, None, config, None);
         let now = Instant::now();
         drive_to_completion(&mut mtud, now, 1_500);
 
@@ -724,7 +734,7 @@ mod tests {
 
     #[test]
     fn mtu_discovery_with_previous_peer_max_udp_payload_size_clamps_upper_bound() {
-        let mut mtud = MtuDiscovery::new(1500, 1_200, Some(1400), MtuDiscoveryConfig::default());
+        let mut mtud = MtuDiscovery::new(1500, 1_200, Some(1400), MtuDiscoveryConfig::default(), None);
 
         assert_eq!(mtud.current_mtu, 1400);
         assert_eq!(mtud.state.as_ref().unwrap().peer_max_udp_payload_size, 1400);
@@ -765,7 +775,7 @@ mod tests {
     fn mtu_discovery_with_1500_limit_and_10000_upper_bound() {
         let mut config = MtuDiscoveryConfig::default();
         config.upper_bound(10_000);
-        let mut mtud = MtuDiscovery::new(1_200, 1_200, None, config);
+        let mut mtud = MtuDiscovery::new(1_200, 1_200, None, config, None);
 
         let probed_sizes = drive_to_completion(&mut mtud, Instant::now(), 1500);
 
@@ -782,7 +792,7 @@ mod tests {
     fn mtu_discovery_no_lost_probes_finds_maximum_udp_payload() {
         let mut config = MtuDiscoveryConfig::default();
         config.upper_bound(MAX_UDP_PAYLOAD);
-        let mut mtud = MtuDiscovery::new(1200, 1200, None, config);
+        let mut mtud = MtuDiscovery::new(1200, 1200, None, config, None);
 
         drive_to_completion(&mut mtud, Instant::now(), u16::MAX);
 
@@ -794,7 +804,7 @@ mod tests {
     fn mtu_discovery_lost_half_of_probes_finds_maximum_udp_payload() {
         let mut config = MtuDiscoveryConfig::default();
         config.upper_bound(MAX_UDP_PAYLOAD);
-        let mut mtud = MtuDiscovery::new(1200, 1200, None, config);
+        let mut mtud = MtuDiscovery::new(1200, 1200, None, config, None);
 
         let now = Instant::now();
         let mut iterations = 0;
@@ -842,7 +852,7 @@ mod tests {
         let mut config = MtuDiscoveryConfig::default();
         config.upper_bound(1400);
 
-        let state = SearchState::new(1500, u16::MAX, &config);
+        let state = SearchState::new(1500, u16::MAX, &config, None);
         assert_eq!(state.lower_bound, 1500);
         assert_eq!(state.upper_bound, 1500);
     }
@@ -852,7 +862,7 @@ mod tests {
         let mut config = MtuDiscoveryConfig::default();
         config.upper_bound(9000);
 
-        let state = SearchState::new(1500, 1300, &config);
+        let state = SearchState::new(1500, 1300, &config, None);
         assert_eq!(state.lower_bound, 1300);
         assert_eq!(state.upper_bound, 1300);
     }
@@ -862,9 +872,42 @@ mod tests {
         let mut config = MtuDiscoveryConfig::default();
         config.upper_bound(9000);
 
-        let state = SearchState::new(1200, 1450, &config);
+        let state = SearchState::new(1200, 1450, &config, None);
         assert_eq!(state.lower_bound, 1200);
         assert_eq!(state.upper_bound, 1450);
+    }
+
+    #[test]
+    fn search_state_interface_mtu_constraint_clamps_upper_bound() {
+        let mut config = MtuDiscoveryConfig::default();
+        config.upper_bound(9000);
+
+        // Interface MTU constraint should limit the upper bound even if config allows higher
+        let state = SearchState::new(1200, u16::MAX, &config, Some(1300));
+        assert_eq!(state.lower_bound, 1200);
+        assert_eq!(state.upper_bound, 1300);
+    }
+
+    #[test]
+    fn search_state_interface_mtu_constraint_respects_user_config() {
+        let mut config = MtuDiscoveryConfig::default();
+        config.upper_bound(1400);
+
+        // User config should take precedence if it's more restrictive
+        let state = SearchState::new(1200, u16::MAX, &config, Some(1500));
+        assert_eq!(state.lower_bound, 1200);
+        assert_eq!(state.upper_bound, 1400);
+    }
+
+    #[test]
+    fn search_state_interface_mtu_constraint_respects_peer_limit() {
+        let mut config = MtuDiscoveryConfig::default();
+        config.upper_bound(9000);
+
+        // Peer limit should take precedence if it's most restrictive
+        let state = SearchState::new(1200, 1250, &config, Some(1500));
+        assert_eq!(state.lower_bound, 1200);
+        assert_eq!(state.upper_bound, 1250);
     }
 
     // Loss of packets larger than have been acknowledged should indicate a black hole

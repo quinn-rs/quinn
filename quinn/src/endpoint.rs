@@ -236,9 +236,22 @@ impl Endpoint {
             addr
         };
 
+        // Query interface MTU for the destination IP as an additional constraint
+        let interface_mtu_constraint = mtu::interface_and_mtu(addr.ip())
+            .ok()
+            .and_then(|(_interface, interface_mtu)| {
+                // Convert interface MTU to UDP payload size (subtract IP + UDP headers)
+                // IPv4: 20 bytes IP header + 8 bytes UDP header = 28 bytes
+                // IPv6: 40 bytes IP header + 8 bytes UDP header = 48 bytes
+                let header_overhead = if addr.is_ipv6() { 48 } else { 28 };
+                let udp_payload_size = interface_mtu.saturating_sub(header_overhead);
+                // Convert usize to u16, clamping to u16::MAX if too large
+                u16::try_from(udp_payload_size).ok()
+            });
+
         let (ch, conn) = endpoint
             .inner
-            .connect(self.runtime.now(), config, addr, server_name)?;
+            .connect(self.runtime.now(), config, addr, server_name, interface_mtu_constraint)?;
 
         let sender = endpoint.socket.create_sender();
         endpoint.stats.outgoing_handshakes += 1;
