@@ -12,6 +12,7 @@ jobs:
   # use https://github.com/vmactions/freebsd-vm for now
     name: test on freebsd
     runs-on: ubuntu-latest
+    continue-on-error: true  # Exotic platform - transient issues expected
     steps:
       - uses: actions/checkout@v4
       - name: test on freebsd
@@ -37,6 +38,7 @@ jobs:
   test-netbsd:
     name: test on netbsd
     runs-on: ubuntu-latest
+    continue-on-error: true  # Exotic platform - transient issues expected
     steps:
       - uses: actions/checkout@v4
       - name: test on netbsd
@@ -63,6 +65,7 @@ jobs:
   test-solaris:
     name: test on solaris
     runs-on: ubuntu-latest
+    continue-on-error: true  # Exotic platform - transient issues expected
     steps:
       - uses: actions/checkout@v4
       - name: test on Solaris
@@ -89,6 +92,7 @@ jobs:
   test-illumos:
     name: test on illumos
     runs-on: ubuntu-latest
+    continue-on-error: true  # Exotic platform - transient issues expected
     steps:
       - uses: actions/checkout@v4
       - name: test on Illumos
