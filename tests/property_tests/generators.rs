@@ -2,7 +2,10 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use ant_quic::{VarInt, frame::{Ack, EcnCounts, FrameType}};
+use ant_quic::{
+    VarInt,
+    frame::{Ack, EcnCounts, FrameType},
+};
 use proptest::prelude::*;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::time::Duration;
@@ -71,7 +74,7 @@ pub fn arb_connection_id() -> impl Strategy<Value = Vec<u8>> {
 pub fn arb_frame_type() -> impl Strategy<Value = FrameType> {
     use ant_quic::coding::Codec;
     use bytes::BytesMut;
-    
+
     // Generate common frame type values
     prop_oneof![
         Just(0x00u64), // PADDING
@@ -114,18 +117,16 @@ pub fn arb_frame_type() -> impl Strategy<Value = FrameType> {
 /// Generate arbitrary ACK frames
 pub fn arb_ack() -> impl Strategy<Value = Ack> {
     (
-        any::<u64>(), // largest
-        0u64..=1000,  // delay
+        any::<u64>(),     // largest
+        0u64..=1000,      // delay
         arb_bytes(0..32), // additional
         proptest::option::of(arb_ecn_counts()),
     )
-        .prop_map(|(largest, delay, additional, ecn)| {
-            Ack {
-                largest,
-                delay,
-                additional: additional.into(),
-                ecn,
-            }
+        .prop_map(|(largest, delay, additional, ecn)| Ack {
+            largest,
+            delay,
+            additional: additional.into(),
+            ecn,
         })
 }
 
@@ -133,7 +134,7 @@ pub fn arb_ack() -> impl Strategy<Value = Ack> {
 pub fn arb_ecn_counts() -> impl Strategy<Value = EcnCounts> {
     (
         any::<u64>(), // ect0
-        any::<u64>(), // ect1 
+        any::<u64>(), // ect1
         any::<u64>(), // ce
     )
         .prop_map(|(ect0, ect1, ce)| EcnCounts { ect0, ect1, ce })
