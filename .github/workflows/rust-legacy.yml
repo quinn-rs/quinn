@@ -171,7 +171,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all -- --check
       # Check and clippy excluding broken property_tests
-      - run: cargo check --locked --lib --bins --examples --no-default-features
+      # Note: --no-default-features alone fails (no crypto provider), so we add rustls-ring
+      - run: cargo check --locked --lib --bins --examples --no-default-features --features rustls-ring
       - run: cargo clippy --locked --lib --bins --examples -- -D warnings
       - uses: dtolnay/rust-toolchain@stable
         with:
