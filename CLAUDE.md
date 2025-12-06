@@ -30,7 +30,7 @@ ant-quic is a QUIC transport protocol implementation with advanced NAT traversal
 # Build the project
 cargo build --release
 
-# Run all tests (comprehensive suite with 266+ tests)
+# Run all tests (comprehensive suite with 580+ tests)
 cargo test
 
 # Run tests with output (useful for debugging)
@@ -239,10 +239,11 @@ cargo test -- --ignored stress
 - Transport parameter 0x1f00 for address discovery configuration
 - Post-Quantum Cryptography (v0.5.0) with ML-KEM-768 and ML-DSA-65
 - Hybrid (classical + PQC) and pure PQC modes
+- CI Consolidated workflow passing (v0.10.4)
 
 ### In Progress 🚧
 - Session state machine polling in `nat_traversal_api.rs` (line 2022)
-- Windows and Linux ARM builds in GitHub Actions (failing)
+- Cross-platform builds for ARM targets
 
 ### Architecture Notes
 - Bootstrap "registration" happens automatically via QUIC connections (per spec)

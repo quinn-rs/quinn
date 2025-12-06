@@ -11,7 +11,6 @@ A QUIC transport protocol implementation with advanced NAT traversal capabilitie
 [![Build Status](https://github.com/dirvine/ant-quic/actions/workflows/ci-consolidated.yml/badge.svg)](https://github.com/dirvine/ant-quic/actions/workflows/ci-consolidated.yml)
 [![Security Audit](https://github.com/dirvine/ant-quic/actions/workflows/security.yml/badge.svg)](https://github.com/dirvine/ant-quic/actions/workflows/security.yml)
 [![Cross-Platform](https://github.com/dirvine/ant-quic/actions/workflows/cross-platform.yml/badge.svg)](https://github.com/dirvine/ant-quic/actions/workflows/cross-platform.yml)
-[![Coverage](https://codecov.io/gh/dirvine/ant-quic/branch/main/graph/badge.svg)](https://codecov.io/gh/dirvine/ant-quic)
 
 ## 📚 Documentation
 
@@ -229,8 +228,6 @@ Our PQC implementation complies with:
 - SP 800-56C Rev. 2 (Key Derivation)
 - draft-ietf-tls-hybrid-design-10
 - draft-connolly-tls-mlkem-key-agreement-04
-
-- **WASM**: Experimental support via `quinn-proto`
 
 ## Key Capabilities
 
