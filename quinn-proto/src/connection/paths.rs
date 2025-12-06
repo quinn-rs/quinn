@@ -99,6 +99,7 @@ impl<T: Into<u32>> From<T> for PathId {
 /// involuntary. We need to keep the [`PathData`] of the previously used such path available
 /// in order to defend against migration attacks (see RFC9000 §9.3.1, §9.3.2 and §9.3.3) as
 /// well as to support path probing (RFC9000 §9.1).
+#[derive(Debug)]
 pub(super) struct PathState {
     pub(super) data: PathData,
     pub(super) prev: Option<(ConnectionId, PathData)>,
@@ -120,6 +121,7 @@ impl PathState {
 }
 
 /// Description of a particular network path
+#[derive(Debug)]
 pub(super) struct PathData {
     pub(super) remote: SocketAddr,
     pub(super) rtt: RttEstimator,
@@ -309,18 +311,6 @@ impl PathData {
         !self.challenges_sent.is_empty() || self.send_new_challenge
     }
 
-    /// Resets RTT, congestion control and MTU states.
-    ///
-    /// This is useful when it is known the underlying path has changed.
-    pub(super) fn reset(&mut self, now: Instant, config: &TransportConfig) {
-        self.rtt = RttEstimator::new(config.initial_rtt);
-        self.congestion = config
-            .congestion_controller_factory
-            .clone()
-            .build(now, config.get_initial_mtu());
-        self.mtud.reset(config.get_initial_mtu(), config.min_mtu);
-    }
-
     /// Indicates whether we're a server that hasn't validated the peer's address and hasn't
     /// received enough data from the peer to permit sending `bytes_to_send` additional bytes
     pub(super) fn anti_amplification_blocked(&self, bytes_to_send: u64) -> bool {
@@ -462,7 +452,7 @@ impl PathData {
 ///
 /// [`recovery_metrics_updated`]: https://datatracker.ietf.org/doc/html/draft-ietf-quic-qlog-quic-events.html#name-recovery_metrics_updated
 #[cfg(feature = "qlog")]
-#[derive(Default, Clone, PartialEq)]
+#[derive(Default, Clone, PartialEq, Debug)]
 #[non_exhaustive]
 struct RecoveryMetrics {
     pub min_rtt: Option<Duration>,
@@ -531,7 +521,7 @@ impl RecoveryMetrics {
 }
 
 /// RTT estimation for a particular network path
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub struct RttEstimator {
     /// The most recent RTT measurement made when receiving an ack for a previously unacked packet
     latest: Duration,
@@ -598,7 +588,7 @@ impl RttEstimator {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub(crate) struct PathResponses {
     pending: Vec<PathResponse>,
 }
@@ -656,7 +646,7 @@ impl PathResponses {
     }
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 struct PathResponse {
     /// The packet number the corresponding PATH_CHALLENGE was received in
     packet: u64,
@@ -668,6 +658,7 @@ struct PathResponse {
 
 /// Summary statistics of packets that have been sent on a particular path, but which have not yet
 /// been acked or deemed lost
+#[derive(Debug)]
 pub(super) struct InFlight {
     /// Sum of the sizes of all sent packets considered "in flight" by congestion control
     ///

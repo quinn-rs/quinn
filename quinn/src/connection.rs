@@ -738,8 +738,8 @@ impl Connection {
     }
 
     /// Current best estimate of this connection's latency (round-trip-time)
-    pub fn rtt(&self) -> Duration {
-        self.0.state.lock("rtt").inner.rtt()
+    pub fn rtt(&self, path_id: PathId) -> Option<Duration> {
+        self.0.state.lock("rtt").inner.rtt(path_id)
     }
 
     /// Returns connection statistics
@@ -753,13 +753,13 @@ impl Connection {
     }
 
     /// Current state of the congestion control algorithm, for debugging purposes
-    pub fn congestion_state(&self) -> Box<dyn Controller> {
+    pub fn congestion_state(&self, path_id: PathId) -> Option<Box<dyn Controller>> {
         self.0
             .state
             .lock("congestion_state")
             .inner
-            .congestion_state()
-            .clone_box()
+            .congestion_state(path_id)
+            .map(|c| c.clone_box())
     }
 
     /// Parameters negotiated during the handshake
@@ -1299,30 +1299,6 @@ impl WeakConnectionHandle {
         self.0
             .upgrade()
             .map(|inner| Connection(ConnectionRef::from_arc(inner)))
-    }
-
-    /// Resets path-specific state.
-    ///
-    /// This resets several subsystems keeping state for a specific network path.  It is
-    /// useful if it is known that the underlying network path changed substantially.
-    ///
-    /// Currently resets:
-    /// - RTT Estimator
-    /// - Congestion Controller
-    /// - MTU Discovery
-    ///
-    /// # Returns
-    ///
-    /// `true` if the connection still existed and the congestion controller state was
-    /// reset.  `false` otherwise.
-    pub fn network_path_changed(&self) -> bool {
-        if let Some(inner) = self.0.upgrade() {
-            let mut inner_state = inner.state.lock("reset-congestion-state");
-            inner_state.inner.path_changed(Instant::now());
-            true
-        } else {
-            false
-        }
     }
 }
 

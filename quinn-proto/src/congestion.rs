@@ -14,7 +14,7 @@ pub use cubic::{Cubic, CubicConfig};
 pub use new_reno::{NewReno, NewRenoConfig};
 
 /// Common interface for different congestion controllers
-pub trait Controller: Send + Sync {
+pub trait Controller: Send + Sync + std::fmt::Debug {
     /// One or more packets were just sent
     #[allow(unused_variables)]
     fn on_sent(&mut self, now: Instant, bytes: u64, last_packet_number: u64) {}
@@ -92,7 +92,7 @@ pub trait Controller: Send + Sync {
 }
 
 /// Common congestion controller metrics
-#[derive(Default)]
+#[derive(Default, Debug)]
 #[non_exhaustive]
 pub struct ControllerMetrics {
     /// Congestion window (bytes)
