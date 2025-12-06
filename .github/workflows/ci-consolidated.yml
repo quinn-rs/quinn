@@ -91,34 +91,29 @@ jobs:
       - name: Check dependencies
         run: cargo tree --duplicates
 
-  # NAT tests integration (simplified)
+  # NAT tests integration
   nat-tests:
      name: NAT Tests
      needs: quick-checks
      runs-on: ubuntu-latest
-     timeout-minutes: 10
+     timeout-minutes: 15
      steps:
        - uses: actions/checkout@v4
-       - name: Run simplified NAT tests
+       - uses: dtolnay/rust-toolchain@stable
+       - uses: Swatinem/rust-cache@v2
+
+       - name: Run NAT traversal tests
          run: |
-           echo "Running simplified NAT connectivity tests..."
-           # Create test results
-           mkdir -p test-results
-           echo "NAT Test Results" > test-results/nat-summary.txt
-           echo "=================" >> test-results/nat-summary.txt
-           echo "Date: $(date)" >> test-results/nat-summary.txt
-           echo "" >> test-results/nat-summary.txt
-           echo "✓ NAT type detection: Full Cone" >> test-results/nat-summary.txt
-           echo "✓ Port mapping: Successful" >> test-results/nat-summary.txt
-           echo "✓ Address discovery: Working" >> test-results/nat-summary.txt
-           echo "✓ Connection establishment: Successful" >> test-results/nat-summary.txt
-           echo "" >> test-results/nat-summary.txt
-           echo "All NAT tests passed" >> test-results/nat-summary.txt
-       - name: Upload NAT test results
-         uses: actions/upload-artifact@v4
-         with:
-           name: nat-test-results
-           path: test-results/
+           echo "Running NAT traversal tests..."
+           cargo test nat_traversal --features test-utils -- --test-threads=2
+
+       - name: Run candidate discovery tests
+         run: |
+           cargo test candidate_discovery --features test-utils -- --test-threads=2
+
+       - name: Run connection establishment tests
+         run: |
+           cargo test connection_establishment --features test-utils -- --test-threads=2
 
   # Coverage (only on main builds)
   coverage:

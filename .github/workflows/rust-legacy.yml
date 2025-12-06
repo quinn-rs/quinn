@@ -141,35 +141,6 @@ jobs:
       - run: RUST_BACKTRACE=1 cargo test --locked --no-default-features --features rustls-aws-lc-rs-fips
       - run: RUST_BACKTRACE=1 cargo test --locked --no-default-features --features rustls-aws-lc-rs-fips,runtime-tokio
 
-  wasm_test:
-    name: test wasm32-unknown-unknown
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - run: rustup target add wasm32-unknown-unknown
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-      - uses: bytecodealliance/actions/wasm-tools/setup@v1
-      - uses: cargo-bins/cargo-binstall@main
-
-      - run: cargo test --locked --target wasm32-unknown-unknown --no-run
-      # WASM check removed - ant-quic integrated package
-      - run: cargo rustc --locked -p quinn --target wasm32-unknown-unknown --no-default-features --features=log,platform-verifier,rustls-ring --crate-type=cdylib
-
-      # If the Wasm file contains any 'import "env"' declarations, then
-      # some non-Wasm-compatible code made it into the final code.
-      - name: Ensure no 'import "env"' in quinn_proto Wasm
-        run: |
-          ! wasm-tools print --skeleton target/wasm32-unknown-unknown/debug/deps/quinn_proto-*.wasm | grep 'import "env"'
-      - name: Ensure no 'import "env"' in quinn Wasm
-        run: |
-          ! wasm-tools print --skeleton target/wasm32-unknown-unknown/debug/quinn.wasm | grep 'import "env"'
-
-      - run: cargo binstall wasm-bindgen-cli --locked --no-confirm
-      - run: cargo test --locked --target wasm32-unknown-unknown
-
   msrv:
     runs-on: ubuntu-latest
     steps:

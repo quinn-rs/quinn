@@ -54,8 +54,7 @@ jobs:
       
       - name: Run quick property tests
         run: |
-          echo "Property tests are currently disabled - skipping"
-          # cargo test --test property_tests --release -- --test-threads=4
+          cargo test --test property_tests --release -- --test-threads=4
         env:
           PROPTEST_CASES: 100
       
@@ -90,8 +89,7 @@ jobs:
       
       - name: Run standard property tests
         run: |
-          echo "Property tests are currently disabled - skipping"
-          # cargo test --test property_tests --release
+          cargo test --test property_tests --release
         env:
           PROPTEST_CASES: ${{ env.PROPTEST_CASES }}
       
@@ -120,18 +118,16 @@ jobs:
       
       - name: Run extended property tests
         run: |
-          echo "Property tests are currently disabled - skipping extended tests"
-          # echo "Running extended property tests with 1024 cases"
-          # cargo test --test property_tests --release -- --test-threads=8
+          echo "Running extended property tests with 1024 cases"
+          cargo test --test property_tests --release -- --test-threads=8
         env:
           PROPTEST_CASES: 1024
           PROPTEST_MAX_SHRINK_ITERS: 50000
       
       - name: Generate coverage for property tests
         run: |
-          echo "Property tests are currently disabled - skipping coverage"
-          # cargo install cargo-tarpaulin
-          # cargo tarpaulin --test property_tests --out Html --output-dir coverage
+          cargo install cargo-tarpaulin || true
+          cargo tarpaulin --test property_tests --out Html --output-dir coverage || true
       
       - name: Upload coverage report
         uses: actions/upload-artifact@v4
@@ -156,10 +152,8 @@ jobs:
       - name: Run hybrid tests
         run: |
           # Run property tests with fuzzer-generated inputs
-          echo "Property tests are currently disabled - skipping hybrid tests"
-          # echo "Running hybrid property-fuzz tests"
-          # This would integrate with fuzzing infrastructure
-          # cargo test --test property_tests --features fuzzing
+          echo "Running hybrid property-fuzz tests"
+          cargo test --test property_tests --release || true
 
   property-test-matrix:
     name: Property Test Matrix
@@ -187,9 +181,8 @@ jobs:
       
       - name: Run property tests for ${{ matrix.feature }}
         run: |
-          echo "Property tests are currently disabled - skipping matrix tests"
-          # cargo test --test property_tests --no-default-features --features ${{ matrix.feature }} \
-          #   ${{ matrix.test_suite }} --release
+          cargo test --test property_tests --no-default-features --features ${{ matrix.feature }} \
+            ${{ matrix.test_suite }} --release
         env:
           PROPTEST_CASES: 256
 

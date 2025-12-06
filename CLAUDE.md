@@ -98,10 +98,9 @@ cargo test --no-default-features --features rustls-aws-lc-rs
 # Test with PQC features
 cargo test --features "pqc aws-lc-rs"
 cargo build --features "pqc aws-lc-rs" --all-targets
-
-# WASM target testing (quinn-proto is not a separate package anymore)
-cargo test --target wasm32-unknown-unknown
 ```
+
+**Note:** WASM is not supported. ant-quic uses raw UDP sockets and NAT traversal which are incompatible with the browser sandbox environment.
 
 ## Architecture Overview
 
@@ -171,7 +170,7 @@ Bootstrap nodes act as **address observers and coordinators**, not STUN servers.
 - **Pair Testing**: Simulated client-server pairs with controllable network conditions
 - **NAT Simulation**: Multiple NAT types (Full Cone, Symmetric, Port Restricted, CGNAT)
 - **Network Conditions**: MTU, latency, packet loss, congestion simulation
-- **Multi-platform**: Unix, Windows, macOS, Android, WASM targets
+- **Multi-platform**: Unix, Windows, macOS, Android targets (WASM not supported)
 
 ### Running Tests
 ```bash

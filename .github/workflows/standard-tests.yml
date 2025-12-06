@@ -118,26 +118,6 @@ jobs:
           cargo test --no-default-features --features "rustls-ring"
           cargo test --no-default-features --features "rustls-aws-lc-rs"
 
-  wasm-check:
-    name: WASM Compatibility
-    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call' }}
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        if: ${{ !startsWith(runner.name, 'nektos/act') }}
-      
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: wasm32-unknown-unknown
-      
-      - uses: Swatinem/rust-cache@v2
-      
-      - name: Check WASM compilation
-        run: |
-          cargo check --target wasm32-unknown-unknown -p ant-quic-proto
-          cargo check --target wasm32-unknown-unknown -p ant-quic --no-default-features
-
   coverage:
     name: Code Coverage
     if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call' }}

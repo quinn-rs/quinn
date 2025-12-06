@@ -294,7 +294,6 @@ jobs:
           echo "- ✅ Linux musl targets" >> report.md
           echo "- ✅ iOS targets" >> report.md
           echo "- ✅ Android targets" >> report.md
-          echo "- ✅ WASM32" >> report.md
           echo "" >> report.md
           
           echo "### Tier 3 (Experimental)" >> report.md

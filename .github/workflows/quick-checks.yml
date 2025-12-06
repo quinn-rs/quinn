@@ -46,8 +46,8 @@ jobs:
         cargo clippy --all-features --lib --bins --examples -- \
           -D warnings
 
-    - name: Run clippy (tests — advisory)
-      run: cargo clippy --all-features --tests || true
+    - name: Run clippy (tests)
+      run: cargo clippy --all-features --tests -- -D warnings
 
   quick-test:
     name: Quick Tests (<30s)
@@ -67,7 +67,8 @@ jobs:
 
     - name: Run quick tests
       run: |
-        cargo test --test quick || true
+        cargo test --lib --release -- --test-threads=4
+      timeout-minutes: 5
 
   check:
     name: Cargo Check
