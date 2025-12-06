@@ -134,6 +134,7 @@ jobs:
       # Fast apple datapath tests removed - ant-quic integrated package
       - run: cargo test --locked --lib -- --ignored stress
       - name: Test fuzz (if exists)
+        shell: bash
         run: |
           if [ -f "fuzz/Cargo.toml" ]; then
             cargo test --locked --manifest-path fuzz/Cargo.toml
