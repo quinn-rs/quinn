@@ -266,6 +266,10 @@ name = "long"
 path = "tests/long/main.rs"
 harness = false  # Custom test runner for long tests
 
+[[test]]
+name = "property_tests"
+path = "tests/property_tests/main.rs"
+
 [package.metadata.docs.rs]
 features = ["rustls-aws-lc-rs", "rustls-ring", "platform-verifier", "log"]
 # Note: "prometheus" feature is intentionally excluded to avoid docs.rs compilation issues
