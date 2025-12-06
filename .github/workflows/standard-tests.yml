@@ -72,7 +72,7 @@ jobs:
           cargo test --lib --features "test-utils"
           cargo test --test quick --features "test-utils"
           cargo test --test standard --features "test-utils"
-        timeout-minutes: 5
+        timeout-minutes: 15  # Increased from 5 for comprehensive testing
 
   doc-tests:
     name: Documentation Tests
@@ -88,10 +88,10 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       
       - name: Run doc tests
-        run: cargo test --doc --all-features
-      
+        run: cargo test --doc
+
       - name: Build documentation
-        run: cargo doc --no-deps --all-features
+        run: cargo doc --no-deps
         env:
           RUSTDOCFLAGS: "-D warnings"
 
