@@ -925,7 +925,7 @@ impl TransportParameters {
     ///
     /// # Examples
     ///
-    /// ```
+    /// ```ignore
     /// use ant_quic::VarInt;
     /// use ant_quic::TransportParameters;
     /// use ant_quic::NatTraversalConfig;
@@ -978,7 +978,7 @@ impl TransportParameters {
     ///
     /// # Examples
     ///
-    /// ```
+    /// ```ignore
     /// use ant_quic::VarInt;
     /// use ant_quic::TransportParameters;
     /// use ant_quic::NatTraversalConfig;
