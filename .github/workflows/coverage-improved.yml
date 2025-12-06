@@ -42,7 +42,7 @@ jobs:
     - name: Install cargo-llvm-cov
       run: |
         # Use llvm-cov instead of tarpaulin to avoid segfaults
-        cargo install cargo-llvm-cov --locked
+        cargo install cargo-llvm-cov --locked --force || true
         
     - name: Run tests with llvm-cov coverage
       run: |
