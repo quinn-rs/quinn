@@ -32,7 +32,7 @@ socket2 = { workspace = true }
 windows-sys = { workspace = true }
 
 [dev-dependencies]
-criterion = { version = "0.7", default-features = false, features = ["async_tokio"] }
+criterion = { version = "0.8", default-features = false, features = ["async_tokio"] }
 tokio = { workspace = true, features = ["rt", "rt-multi-thread", "net"] }
 
 [build-dependencies]
