@@ -5013,6 +5013,7 @@ impl Connection {
                         .get_or_insert_with(|| (*round, Default::default()));
                     sent_reachouts.1.push(local_addr);
                     self.stats.frame_tx.reach_out = self.stats.frame_tx.reach_out.saturating_add(1);
+                    qlog.frame(&Frame::ReachOut(reach_out));
                 } else {
                     addresses.push(local_addr);
                     break;
@@ -5555,6 +5556,7 @@ impl Connection {
                     .add_address
                     .insert(added_address);
                 self.stats.frame_tx.add_address = self.stats.frame_tx.add_address.saturating_add(1);
+                qlog.frame(&Frame::AddAddress(added_address));
             } else {
                 break;
             }
@@ -5571,6 +5573,7 @@ impl Connection {
                     .insert(removed_address);
                 self.stats.frame_tx.remove_address =
                     self.stats.frame_tx.remove_address.saturating_add(1);
+                qlog.frame(&Frame::RemoveAddress(removed_address));
             } else {
                 break;
             }
