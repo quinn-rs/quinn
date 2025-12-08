@@ -246,7 +246,7 @@ impl Endpoint {
                 let header_overhead = if addr.is_ipv6() { 48 } else { 28 };
                 let udp_payload_size = interface_mtu.saturating_sub(header_overhead);
                 // Convert usize to u16, clamping to u16::MAX if too large
-                u16::try_from(udp_payload_size).ok()
+                Some((udp_payload_size.min(u16::MAX as usize)) as u16)
             });
 
         let (ch, conn) = endpoint
