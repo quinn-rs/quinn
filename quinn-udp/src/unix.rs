@@ -1,4 +1,4 @@
-#[cfg(not(any(apple, target_os = "openbsd", solarish)))]
+#[cfg(not(any(apple, target_os = "openbsd", target_os = "dragonfly", solarish)))]
 use std::ptr;
 use std::{
     io::{self, IoSliceMut},
@@ -58,6 +58,18 @@ const IPV6_DONTFRAG: libc::c_int = 62;
 #[cfg(not(any(target_os = "openbsd", target_os = "netbsd")))]
 const IPV6_DONTFRAG: libc::c_int = libc::IPV6_DONTFRAG;
 
+// Defined in netinet/in.h on DragonFly (since 4th December 2020) but not exported
+// via Rust's libc crate.
+#[cfg(any(target_os = "dragonfly"))]
+const IP_RECVTOS: libc::c_int = 68;
+#[cfg(not(any(
+    target_os = "openbsd",
+    target_os = "netbsd",
+    target_os = "dragonfly",
+    solarish
+)))]
+const IP_RECVTOS: libc::c_int = libc::IP_RECVTOS;
+
 #[cfg(target_os = "freebsd")]
 type IpTosTy = libc::c_uchar;
 #[cfg(not(any(target_os = "freebsd", target_os = "netbsd")))]
@@ -112,17 +124,10 @@ impl UdpSocketState {
         let is_ipv4 = addr.family() == libc::AF_INET as libc::sa_family_t;
 
         // mac and ios do not support IP_RECVTOS on dual-stack sockets :(
-        // older macos versions also don't have the flag and will error out if we don't ignore it
-        #[cfg(not(any(
-            target_os = "openbsd",
-            target_os = "netbsd",
-            target_os = "dragonfly",
-            solarish
-        )))]
+        // older macos versions also don't have the flag and will error out if we don't ignore it.
+        #[cfg(not(any(target_os = "openbsd", target_os = "netbsd", solarish)))]
         if is_ipv4 || !io.only_v6()? {
-            if let Err(_err) =
-                set_socket_option(&*io, libc::IPPROTO_IP, libc::IP_RECVTOS, OPTION_ON)
-            {
+            if let Err(_err) = set_socket_option(&*io, libc::IPPROTO_IP, IP_RECVTOS, OPTION_ON) {
                 crate::log::debug!("Ignoring error setting IP_RECVTOS on socket: {_err:?}");
             }
         }
@@ -654,7 +659,7 @@ fn prepare_msg(
                     };
                     encoder.push(libc::IPPROTO_IP, libc::IP_PKTINFO, pktinfo);
                 }
-                #[cfg(any(bsd, apple, solarish))]
+                #[cfg(any(bsd, apple, solarish, target_os = "dragonfly"))]
                 {
                     if encode_src_ip {
                         let addr = libc::in_addr {
@@ -732,13 +737,8 @@ fn decode_recv(
                 ecn_bits = cmsg::decode::<u8, libc::cmsghdr>(cmsg);
             },
             // FreeBSD uses IP_RECVTOS here, and we can be liberal because cmsgs are opt-in.
-            #[cfg(not(any(
-                target_os = "openbsd",
-                target_os = "netbsd",
-                target_os = "dragonfly",
-                solarish
-            )))]
-            (libc::IPPROTO_IP, libc::IP_RECVTOS) => unsafe {
+            #[cfg(not(any(target_os = "openbsd", target_os = "netbsd", solarish)))]
+            (libc::IPPROTO_IP, IP_RECVTOS) => unsafe {
                 ecn_bits = cmsg::decode::<u8, libc::cmsghdr>(cmsg);
             },
             (libc::IPPROTO_IPV6, libc::IPV6_TCLASS) => unsafe {
