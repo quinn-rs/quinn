@@ -238,3 +238,23 @@ impl EcnCodepoint {
         })
     }
 }
+
+#[cfg(target_os = "linux")]
+#[derive(Clone, Debug, Copy)]
+pub struct IcmpError {
+    pub dst: SocketAddr,
+    pub kind: IcmpErrorKind,
+}
+
+#[cfg(not(target_os = "linux"))]
+pub struct IcmpError;
+
+#[cfg(target_os = "linux")]
+#[derive(Clone, Debug, Copy, PartialEq, Eq)]
+pub enum IcmpErrorKind {
+    NetworkUnreachable,
+    HostUnreachable,
+    PortUnreachable,
+    PacketTooBig,
+    Other { icmp_type: u8, icmp_code: u8 },
+}
