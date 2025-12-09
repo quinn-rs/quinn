@@ -1443,6 +1443,7 @@ dependencies = [
  "rustls-pki-types",
  "rustls-platform-verifier",
  "slab",
+ "sorted-index-buffer",
  "thiserror 2.0.17",
  "tinyvec",
  "tracing",
@@ -2395,6 +2396,12 @@ dependencies = [
  "libc",
  "windows-sys 0.59.0",
 ]
+
+[[package]]
+name = "sorted-index-buffer"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2d96a9d278ef78c991bf2faabd578b41199037846ff96fbb093f84bb50adaa00"
 
 [[package]]
 name = "stable_deref_trait"

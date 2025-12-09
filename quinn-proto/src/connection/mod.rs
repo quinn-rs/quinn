@@ -2343,7 +2343,7 @@ impl Connection {
             let space = &mut self.spaces[space].for_path(path);
             if space.largest_acked_packet.is_none_or(|pn| ack.largest > pn) {
                 space.largest_acked_packet = Some(ack.largest);
-                if let Some(info) = space.sent_packets.get(&ack.largest) {
+                if let Some(info) = space.sent_packets.get(ack.largest) {
                     // This should always succeed, but a misbehaving peer might ACK a packet we
                     // haven't sent. At worst, that will result in us spuriously reducing the
                     // congestion window.
@@ -2365,7 +2365,11 @@ impl Connection {
         let mut newly_acked = ArrayRangeSet::new();
         for range in ack.iter() {
             self.spaces[space].for_path(path).check_ack(range.clone())?;
-            for (&pn, _) in self.spaces[space].for_path(path).sent_packets.range(range) {
+            for (pn, _) in self.spaces[space]
+                .for_path(path)
+                .sent_packets
+                .iter_range(range)
+            {
                 newly_acked.insert_one(pn);
             }
         }
@@ -2478,13 +2482,12 @@ impl Connection {
 
         for range in ack.iter() {
             let spurious_losses: Vec<u64> = lost_packets
-                .range(range.clone())
+                .iter_range(range.clone())
                 .map(|(pn, _info)| pn)
-                .copied()
                 .collect();
 
             for pn in spurious_losses {
-                lost_packets.remove(&pn);
+                lost_packets.remove(pn);
             }
         }
 
@@ -2700,7 +2703,7 @@ impl Connection {
         let mut prev_packet = None;
         let space = self.spaces[pn_space].for_path(path_id);
 
-        for (&packet, info) in space.sent_packets.range(0..largest_acked_packet) {
+        for (packet, info) in space.sent_packets.iter_range(0..largest_acked_packet) {
             if prev_packet != Some(packet.wrapping_sub(1)) {
                 // An intervening packet was acknowledged
                 persistent_congestion_start = None;
@@ -2772,10 +2775,10 @@ impl Connection {
             .for_path(path_id)
             .sent_packets
             .iter()
-            .filter(|(pn, _info)| Some(**pn) != in_flight_mtu_probe)
+            .filter(|(pn, _info)| Some(*pn) != in_flight_mtu_probe)
             .map(|(pn, info)| {
                 size_of_lost_packets += info.size as u64;
-                *pn
+                pn
             })
             .collect();
 
@@ -2835,8 +2838,12 @@ impl Connection {
         // OnPacketsLost
         if let Some(largest_lost) = lost_packets.last().cloned() {
             let old_bytes_in_flight = self.path_data_mut(path_id).in_flight.bytes;
-            let largest_lost_sent =
-                self.spaces[pn_space].for_path(path_id).sent_packets[&largest_lost].time_sent;
+            let largest_lost_sent = self.spaces[pn_space]
+                .for_path(path_id)
+                .sent_packets
+                .get(largest_lost)
+                .unwrap()
+                .time_sent;
             let path_stats = self.path_stats.entry(path_id).or_default();
             path_stats.lost_packets += lost_packets.len() as u64;
             path_stats.lost_bytes += size_of_lost_packets;
@@ -3463,7 +3470,7 @@ impl Connection {
         pns.loss_probes = 0;
         let sent_packets = mem::take(&mut pns.sent_packets);
         let path = self.paths.get_mut(&PathId::ZERO).unwrap();
-        for packet in sent_packets.into_values() {
+        for (_, packet) in sent_packets.into_iter() {
             path.data.remove_in_flight(&packet);
         }
 
@@ -3866,7 +3873,7 @@ impl Connection {
                         .for_path(PathId::ZERO)
                         .sent_packets,
                 );
-                for info in zero_rtt.into_values() {
+                for (_, info) in zero_rtt.into_iter() {
                     self.paths
                         .get_mut(&PathId::ZERO)
                         .unwrap()
@@ -3938,7 +3945,7 @@ impl Connection {
                             let sent_packets = mem::take(
                                 &mut self.spaces[SpaceId::Data].for_path(path_id).sent_packets,
                             );
-                            for packet in sent_packets.into_values() {
+                            for (_, packet) in sent_packets.into_iter() {
                                 self.paths
                                     .get_mut(&path_id)
                                     .unwrap()
