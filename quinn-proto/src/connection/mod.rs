@@ -647,6 +647,23 @@ impl Connection {
             .path_abandon
             .insert(path_id, error_code.into());
 
+        // Remove pending NEW CIDs for this path
+        let pending_space = &mut self.spaces[SpaceId::Data].pending;
+        pending_space.new_cids.retain(|cid| cid.path_id != path_id);
+        pending_space.path_cids_blocked.retain(|&id| id != path_id);
+        pending_space.path_status.retain(|&id| id != path_id);
+
+        // Cleanup in retransmits as well
+        if let Some(space) = self.spaces[SpaceId::Data].path_space_mut(path_id) {
+            for sent_packet in space.sent_packets.values_mut() {
+                if let Some(retransmits) = sent_packet.retransmits.get_mut() {
+                    retransmits.new_cids.retain(|cid| cid.path_id != path_id);
+                    retransmits.path_cids_blocked.retain(|&id| id != path_id);
+                    retransmits.path_status.retain(|&id| id != path_id);
+                }
+            }
+        }
+
         // Consider remotely issued CIDs as retired.
         // Technically we don't have to do this just yet.  We only need to do this *after*
         // the ABANDON_PATH frame is sent, allowing us to still send it on the
@@ -4357,15 +4374,23 @@ impl Connection {
                     if let Some(ref path_id) = path_id {
                         span.record("path", tracing::field::debug(&path_id));
                     }
-                    match self.local_cid_state.get_mut(&path_id.unwrap_or_default()) {
+                    let path_id = path_id.unwrap_or_default();
+                    match self.local_cid_state.get_mut(&path_id) {
                         None => error!(?path_id, "RETIRE_CONNECTION_ID for unknown path"),
                         Some(cid_state) => {
                             let allow_more_cids = cid_state
                                 .on_cid_retirement(sequence, self.peer_params.issue_cids_limit())?;
+
+                            // If the path has closed, we do not issue more CIDs for this path
+                            // For details see  https://www.ietf.org/archive/id/draft-ietf-quic-multipath-17.html#section-3.2.2
+                            // > an endpoint SHOULD provide new connection IDs for that path, if still open, using PATH_NEW_CONNECTION_ID frames.
+                            let has_path = !self.abandoned_paths.contains(&path_id);
+                            let allow_more_cids = allow_more_cids && has_path;
+
                             self.endpoint_events
                                 .push_back(EndpointEventInner::RetireConnectionId(
                                     now,
-                                    path_id.unwrap_or_default(),
+                                    path_id,
                                     sequence,
                                     allow_more_cids,
                                 ));
@@ -5406,10 +5431,8 @@ impl Connection {
                 .local_cid_state
                 .get(&issued.path_id)
                 .map(|cid_state| cid_state.retire_prior_to())
-                .unwrap_or_else(|| {
-                    error!(path_id = ?issued.path_id, "Missing local CID state");
-                    0
-                });
+                .unwrap_or_else(|| panic!("missing local CID state for path={}", issued.path_id));
+
             let cid_path_id = match is_multipath_negotiated {
                 true => {
                     trace!(

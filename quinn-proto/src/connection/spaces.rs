@@ -652,6 +652,11 @@ impl ThinRetransmits {
         self.retransmits.as_deref()
     }
 
+    /// Returns a mutable reference to the retransmits stored in this box
+    pub(super) fn get_mut(&mut self) -> Option<&mut Retransmits> {
+        self.retransmits.as_deref_mut()
+    }
+
     /// Returns a mutable reference to the stored retransmits
     ///
     /// This function will allocate a backing storage if required.
