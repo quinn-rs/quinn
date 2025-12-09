@@ -61,17 +61,6 @@ impl fmt::Display for Error {
 
 impl std::error::Error for Error {}
 
-impl From<Code> for Error {
-    fn from(x: Code) -> Self {
-        Self {
-            code: x,
-            frame: None,
-            reason: "".to_string(),
-            crypto: None,
-        }
-    }
-}
-
 /// Transport-level error code
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub struct Code(u64);
@@ -116,12 +105,7 @@ macro_rules! errors {
         impl Error {
             $(
             pub(crate) fn $name<T>(reason: T) -> Self where T: Into<String> {
-                Self {
-                    code: Code::$name,
-                    frame: None,
-                    reason: reason.into(),
-                    crypto: None,
-                }
+                Self::new(Code::$name, reason.into())
             }
             )*
         }

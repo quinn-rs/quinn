@@ -75,7 +75,11 @@ impl State {
                     let error = match remote_reason.clone().into() {
                         ConnectionError::ConnectionClosed(close) => {
                             if close.error_code == TransportErrorCode::PROTOCOL_VIOLATION {
-                                ConnectionError::TransportError(close.error_code.into())
+                                ConnectionError::TransportError(TransportError::new(
+                                    close.error_code,
+                                    std::string::String::from_utf8_lossy(&close.reason[..])
+                                        .to_string(),
+                                ))
                             } else {
                                 ConnectionError::ConnectionClosed(close)
                             }
