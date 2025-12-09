@@ -102,7 +102,10 @@ use timer::{Timer, TimerTable};
 mod transmit_buf;
 use transmit_buf::TransmitBuf;
 
+#[cfg(not(test))]
 mod state;
+#[cfg(test)]
+pub(crate) mod state;
 
 #[cfg(not(fuzzing))]
 use state::State;
@@ -1562,9 +1565,11 @@ impl Connection {
             return None;
         }
 
+        let destination = self.path_data(path_id).remote;
         trace!(
             segment_size = transmit.segment_size(),
             last_datagram_len = transmit.len() % transmit.segment_size(),
+            ?destination,
             "sending {} bytes in {} datagrams",
             transmit.len(),
             transmit.num_datagrams()
@@ -1577,7 +1582,7 @@ impl Connection {
             .on_sent(transmit.num_datagrams() as u64, transmit.len());
 
         Some(Transmit {
-            destination: self.path_data(path_id).remote,
+            destination,
             size: transmit.len(),
             ecn: if self.path_data(path_id).sending_ecn {
                 Some(EcnCodepoint::Ect0)
@@ -5858,6 +5863,11 @@ impl Connection {
         self.spaces[self.highest_space]
             .for_path(path_id)
             .immediate_ack_pending = true;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn state(&mut self) -> &mut State {
+        &mut self.state
     }
 
     /// Decodes a packet, returning its decrypted payload, so it can be inspected in tests

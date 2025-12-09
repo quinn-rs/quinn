@@ -36,6 +36,10 @@ mod util;
 use util::*;
 
 mod multipath;
+#[cfg(not(all(target_family = "wasm", target_os = "unknown")))]
+mod proptest;
+#[cfg(not(all(target_family = "wasm", target_os = "unknown")))]
+mod random_interaction;
 mod token;
 
 #[cfg(all(target_family = "wasm", target_os = "unknown"))]
@@ -1086,7 +1090,7 @@ fn key_update_reordered() {
 
     const MSG1: &[u8] = b"1";
     pair.client_send(client_ch, s).write(MSG1).unwrap();
-    pair.client.drive(pair.time, pair.server.addr);
+    pair.client.drive(pair.time);
     assert!(!pair.client.outbound.is_empty());
     pair.client.delay_outbound();
 
@@ -1095,7 +1099,7 @@ fn key_update_reordered() {
 
     const MSG2: &[u8] = b"two";
     pair.client_send(client_ch, s).write(MSG2).unwrap();
-    pair.client.drive(pair.time, pair.server.addr);
+    pair.client.drive(pair.time);
     pair.client.finish_delay();
     pair.drive();
 
@@ -1141,7 +1145,7 @@ fn initial_retransmit() {
     let _guard = subscribe();
     let mut pair = Pair::default();
     let client_ch = pair.begin_connect(client_config());
-    pair.client.drive(pair.time, pair.server.addr);
+    pair.client.drive(pair.time);
     pair.client.outbound.clear(); // Drop initial
     pair.drive();
     assert_matches!(
@@ -1217,7 +1221,7 @@ fn instant_server_close() {
     info!("connecting");
     pair.begin_connect(client_config());
     pair.drive_client();
-    pair.server.drive_incoming(pair.time, pair.client.addr);
+    pair.server.drive_incoming(pair.time);
     let server_ch = pair.server.assert_accept();
     info!("closing");
     pair.server
@@ -1779,7 +1783,7 @@ fn finish_stream_flow_control_reordered() {
     const MSG: &[u8] = b"hello";
     pair.client_send(client_ch, s).write(MSG).unwrap();
     pair.drive_client(); // Send stream data
-    pair.server.drive(pair.time, pair.client.addr); // Receive
+    pair.server.drive(pair.time); // Receive
 
     // Issue flow control credit
     let mut recv = pair.server_recv(server_ch, s);
@@ -1790,12 +1794,12 @@ fn finish_stream_flow_control_reordered() {
     );
     let _ = chunks.finalize();
 
-    pair.server.drive(pair.time, pair.client.addr);
+    pair.server.drive(pair.time);
     pair.server.delay_outbound(); // Delay it
 
     pair.client_send(client_ch, s).finish().unwrap();
     pair.drive_client(); // Send FIN
-    pair.server.drive(pair.time, pair.client.addr); // Acknowledge
+    pair.server.drive(pair.time); // Acknowledge
     pair.server.finish_delay(); // Add flow control packets after
     pair.drive();
 
@@ -1826,7 +1830,7 @@ fn handshake_1rtt_handling() {
     let server_ch = pair.server.assert_accept();
     // Server now has 1-RTT keys, but remains in Handshake state until the TLS CFIN has
     // authenticated the client. Delay the final client handshake flight so that doesn't happen yet.
-    pair.client.drive(pair.time, pair.server.addr);
+    pair.client.drive(pair.time);
     pair.client.delay_outbound();
 
     // Send some 1-RTT data which will be received first.
@@ -1834,7 +1838,7 @@ fn handshake_1rtt_handling() {
     const MSG: &[u8] = b"hello";
     pair.client_send(client_ch, s).write(MSG).unwrap();
     pair.client_send(client_ch, s).finish().unwrap();
-    pair.client.drive(pair.time, pair.server.addr);
+    pair.client.drive(pair.time);
 
     // Add the handshake flight back on.
     pair.client.finish_delay();
@@ -2621,7 +2625,7 @@ fn blackhole_after_mtu_change_repairs_itself() {
     let payload = vec![42; 1300];
     let s = pair.client_streams(client_ch).open(Dir::Uni).unwrap();
     pair.client_send(client_ch, s).write(&payload).unwrap();
-    let out_of_bounds = pair.drive_bounded();
+    let out_of_bounds = pair.drive_bounded(100);
 
     if out_of_bounds {
         panic!("Connections never reached an idle state");
@@ -2677,7 +2681,7 @@ fn packet_splitting_with_default_mtu() {
     let s = pair.client_streams(client_ch).open(Dir::Uni).unwrap();
 
     pair.client_send(client_ch, s).write(&payload).unwrap();
-    pair.client.drive(pair.time, pair.server.addr);
+    pair.client.drive(pair.time);
     assert_eq!(pair.client.outbound.len(), 2);
 
     pair.drive_client();
@@ -2698,7 +2702,7 @@ fn packet_splitting_not_necessary_after_higher_mtu_discovered() {
     let s = pair.client_streams(client_ch).open(Dir::Uni).unwrap();
 
     pair.client_send(client_ch, s).write(&payload).unwrap();
-    pair.client.drive(pair.time, pair.server.addr);
+    pair.client.drive(pair.time);
     assert_eq!(pair.client.outbound.len(), 1);
 
     pair.drive_client();
@@ -3436,7 +3440,7 @@ fn pad_to_mtu() {
     pair.client_datagrams(client_ch)
         .send(vec![0; LEN_2].into(), false)
         .unwrap();
-    pair.client.drive(pair.time, pair.server.addr);
+    pair.client.drive(pair.time);
 
     // Check padding
     assert_eq!(pair.client.outbound.len(), 2);

@@ -31,6 +31,7 @@ identity-hash = "0.1.0"
 lru-slab = "0.1.2"
 log = "0.4"
 pin-project-lite = "0.2"
+proptest = "1.9.0"
 qlog = { package = "n0-qlog", version = "0.1.0" }
 rand = "0.9"
 rcgen = "0.14"
@@ -46,6 +47,7 @@ slab = "0.4.9"
 smol = "2"
 socket2 = ">=0.5, <0.7"
 sorted-index-buffer = { version = "0.2.0" }
+test-strategy = "0.4.3"
 thiserror = "2.0.3"
 tinyvec = { version = "1.1", features = ["alloc"] }
 tokio = { version = "1.28.1", features = ["sync"] }

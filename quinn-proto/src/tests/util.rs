@@ -12,12 +12,13 @@ use std::{
 
 use assert_matches::assert_matches;
 use bytes::BytesMut;
+use rand::{SeedableRng, rngs::StdRng};
 use rustls::{
     KeyLogFile,
     client::WebPkiServerVerifier,
     pki_types::{CertificateDer, PrivateKeyDer},
 };
-use tracing::{info_span, trace};
+use tracing::{debug, info_span, trace};
 
 use super::crypto::rustls::{QuicClientConfig, QuicServerConfig, configured_provider};
 use super::*;
@@ -40,10 +41,51 @@ pub(super) struct Pair {
     pub(super) latency: Duration,
     /// Number of spin bit flips
     pub(super) spins: u64,
+    /// The routing table used for resolving addresses observed for incoming packets
+    /// and determining whether they should get lost.
+    pub(super) routes: Option<RoutingTable>,
     last_spin: bool,
 }
 
 impl Pair {
+    /// Creates an endpoint pair that'll run deterministically with hardcoded addresses.
+    pub(super) fn seeded(seed: [u8; 32]) -> Self {
+        let mut rng = StdRng::from_seed(seed);
+        let mut client_seed = [0u8; 32];
+        let mut server_seed = [0u8; 32];
+        rng.fill_bytes(&mut client_seed);
+        rng.fill_bytes(&mut server_seed);
+
+        let mut cfg = server_config();
+        let mut transport = TransportConfig::default();
+        transport.deterministic_packet_numbers(true);
+        cfg.transport = Arc::new(transport);
+
+        let mut client_config = EndpointConfig::default();
+        let mut server_config = EndpointConfig::default();
+        client_config.rng_seed(Some(client_seed));
+        server_config.rng_seed(Some(server_seed));
+
+        let server = Endpoint::new(Arc::new(client_config), Some(Arc::new(cfg)), true, None);
+        let client = Endpoint::new(Arc::new(server_config), None, true, None);
+
+        let server_addr = SocketAddr::new(Ipv6Addr::LOCALHOST.into(), 4433);
+        let client_addr = SocketAddr::new(Ipv6Addr::LOCALHOST.into(), 44433);
+        let now = Instant::now();
+        Self {
+            server: TestEndpoint::new(server, server_addr),
+            client: TestEndpoint::new(client, client_addr),
+            epoch: now,
+            time: now,
+            mtu: DEFAULT_MTU,
+            latency: Duration::from_millis(1),
+            spins: 0,
+            last_spin: false,
+            congestion_experienced: false,
+            routes: None,
+        }
+    }
+
     pub(super) fn default_with_deterministic_pns() -> Self {
         let mut cfg = server_config();
         let mut transport = TransportConfig::default();
@@ -84,6 +126,7 @@ impl Pair {
             spins: 0,
             last_spin: false,
             congestion_experienced: false,
+            routes: None,
         }
     }
 
@@ -101,8 +144,8 @@ impl Pair {
     ///
     /// Returns true if the amount of steps exceeds the bounds, because the connections never became
     /// idle
-    pub(super) fn drive_bounded(&mut self) -> bool {
-        for _ in 0..100 {
+    pub(super) fn drive_bounded(&mut self, iters: usize) -> bool {
+        for _ in 0..iters {
             if !self.step() {
                 return false;
             }
@@ -114,7 +157,7 @@ impl Pair {
     pub(super) fn drive_client(&mut self) {
         let span = info_span!("client");
         let _guard = span.enter();
-        self.client.drive(self.time, self.server.addr);
+        self.client.drive(self.time);
         for (packet, buffer) in self.client.outbound.drain(..) {
             let packet_size = packet_size(&packet, &buffer);
             if packet_size > self.mtu {
@@ -129,13 +172,20 @@ impl Pair {
             if let Some(ref socket) = self.client.socket {
                 socket.send_to(&buffer, packet.destination).unwrap();
             }
-            if self.server.addr == packet.destination {
+            let client_addr = match &self.routes {
+                Some(table) => table.resolve_client_to_server(packet.destination),
+                None => (self.server.addr == packet.destination).then_some(self.client.addr),
+            };
+            if let Some(client_addr) = client_addr {
                 let ecn = set_congestion_experienced(packet.ecn, self.congestion_experienced);
                 self.server.inbound.push_back((
                     self.time + self.latency,
                     ecn,
                     buffer.as_ref().into(),
+                    client_addr,
                 ));
+            } else {
+                debug!(?packet.destination, "packet from server to client lost");
             }
         }
     }
@@ -143,7 +193,7 @@ impl Pair {
     pub(super) fn drive_server(&mut self) {
         let span = info_span!("server");
         let _guard = span.enter();
-        self.server.drive(self.time, self.client.addr);
+        self.server.drive(self.time);
         for (packet, buffer) in self.server.outbound.drain(..) {
             let packet_size = packet_size(&packet, &buffer);
             if packet_size > self.mtu {
@@ -153,13 +203,20 @@ impl Pair {
             if let Some(ref socket) = self.server.socket {
                 socket.send_to(&buffer, packet.destination).unwrap();
             }
-            if self.client.addr == packet.destination {
+            let server_addr = match &self.routes {
+                Some(table) => table.resolve_server_to_client(packet.destination),
+                None => (self.client.addr == packet.destination).then_some(self.server.addr),
+            };
+            if let Some(server_addr) = server_addr {
                 let ecn = set_congestion_experienced(packet.ecn, self.congestion_experienced);
                 self.client.inbound.push_back((
                     self.time + self.latency,
                     ecn,
                     buffer.as_ref().into(),
+                    server_addr,
                 ));
+            } else {
+                debug!(?packet.destination, "packet from server to client lost");
             }
         }
     }
@@ -184,6 +241,10 @@ impl Pair {
             return false;
         }
 
+        self.advance_time()
+    }
+
+    pub(super) fn advance_time(&mut self) -> bool {
         let client_t = self.client.next_wakeup();
         let server_t = self.server.next_wakeup();
         match min_opt(client_t, server_t) {
@@ -315,9 +376,10 @@ pub(super) struct TestEndpoint {
     timeout: Option<Instant>,
     pub(super) outbound: VecDeque<(Transmit, Bytes)>,
     delayed: VecDeque<(Transmit, Bytes)>,
-    pub(super) inbound: VecDeque<(Instant, Option<EcnCodepoint>, BytesMut)>,
+    pub(super) inbound: VecDeque<(Instant, Option<EcnCodepoint>, BytesMut, SocketAddr)>,
     pub(super) accepted: Option<Result<ConnectionHandle, ConnectionError>>,
     pub(super) connections: HashMap<ConnectionHandle, Connection>,
+    drained_connections: HashSet<ConnectionHandle>,
     conn_events: HashMap<ConnectionHandle, VecDeque<ConnectionEvent>>,
     pub(super) captured_packets: Vec<Vec<u8>>,
     pub(super) capture_inbound_packets: bool,
@@ -362,6 +424,7 @@ impl TestEndpoint {
             inbound: VecDeque::new(),
             accepted: None,
             connections: HashMap::default(),
+            drained_connections: HashSet::default(),
             conn_events: HashMap::default(),
             captured_packets: Vec::new(),
             capture_inbound_packets: false,
@@ -370,12 +433,12 @@ impl TestEndpoint {
         }
     }
 
-    pub(super) fn drive(&mut self, now: Instant, remote: SocketAddr) {
-        self.drive_incoming(now, remote);
+    pub(super) fn drive(&mut self, now: Instant) {
+        self.drive_incoming(now);
         self.drive_outgoing(now);
     }
 
-    pub(super) fn drive_incoming(&mut self, now: Instant, remote: SocketAddr) {
+    pub(super) fn drive_incoming(&mut self, now: Instant) {
         if let Some(ref socket) = self.socket {
             loop {
                 let mut buf = [0; 8192];
@@ -388,7 +451,7 @@ impl TestEndpoint {
         let mut buf = Vec::with_capacity(buffer_size);
 
         while self.inbound.front().is_some_and(|x| x.0 <= now) {
-            let (recv_time, ecn, packet) = self.inbound.pop_front().unwrap();
+            let (recv_time, ecn, packet, remote) = self.inbound.pop_front().unwrap();
             if let Some(event) = self
                 .endpoint
                 .handle(recv_time, remote, None, ecn, packet, &mut buf)
@@ -462,6 +525,14 @@ impl TestEndpoint {
             }
 
             for (ch, event) in endpoint_events {
+                if !event.is_drained() && self.drained_connections.contains(&ch) {
+                    // Calling self.endpoint.handle_event with a drained connection panics.
+                    // For some reason, some tests rely on the fact that the drained event is handled twice?
+                    continue;
+                }
+                if event.is_drained() {
+                    self.drained_connections.insert(ch);
+                }
                 if let Some(event) = self.handle_event(ch, event) {
                     if let Some(conn) = self.connections.get_mut(&ch) {
                         conn.handle_event(event);
@@ -476,7 +547,7 @@ impl TestEndpoint {
         min_opt(self.timeout, next_inbound)
     }
 
-    fn is_idle(&self) -> bool {
+    pub(super) fn is_idle(&self) -> bool {
         self.connections.values().all(|x| x.is_idle())
     }
 
@@ -773,5 +844,97 @@ impl TokenLog for SimpleTokenLog {
         } else {
             Err(TokenReuseError)
         }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub(super) struct RoutingTable {
+    client_routes: Vec<(SocketAddr, usize)>,
+    server_routes: Vec<(SocketAddr, usize)>,
+}
+
+impl RoutingTable {
+    pub(super) fn from_routes(
+        client_routes: Vec<(SocketAddr, usize)>,
+        server_routes: Vec<(SocketAddr, usize)>,
+    ) -> Self {
+        for (_, idx) in client_routes.iter() {
+            assert!(*idx < server_routes.len(), "routing table corrupt");
+        }
+        for (_, idx) in server_routes.iter() {
+            assert!(*idx < client_routes.len(), "routing table corrupt");
+        }
+        Self {
+            client_routes,
+            server_routes,
+        }
+    }
+
+    pub(super) fn simple_symmetric(
+        client_addrs: impl IntoIterator<Item = SocketAddr>,
+        server_addrs: impl IntoIterator<Item = SocketAddr>,
+    ) -> Self {
+        let mut client_routes = Vec::new();
+        let mut server_routes = Vec::new();
+
+        for (idx, (client_addr, server_addr)) in
+            client_addrs.into_iter().zip(server_addrs).enumerate()
+        {
+            client_routes.push((client_addr, idx));
+            server_routes.push((server_addr, idx));
+        }
+
+        Self {
+            client_routes,
+            server_routes,
+        }
+    }
+
+    /// Returns the client address a server would see on an incoming packet if
+    /// sent to given server address.
+    ///
+    /// Returns none if the packet would not find a route and get lost.
+    fn resolve_client_to_server(&self, server_addr: SocketAddr) -> Option<SocketAddr> {
+        let (_, client_addr_idx) = self
+            .server_routes
+            .iter()
+            .find(|(addr, _)| *addr == server_addr)?;
+        let (client_addr, _) = self.client_routes.get(*client_addr_idx)?;
+        Some(*client_addr)
+    }
+
+    /// Returns the server address a client would see on an incoming packet if
+    /// sent to given client address.
+    ///
+    /// Returns none if the packet would not find a route and get lost.
+    fn resolve_server_to_client(&self, client_addr: SocketAddr) -> Option<SocketAddr> {
+        let (_, server_addr_idx) = self
+            .client_routes
+            .iter()
+            .find(|(addr, _)| *addr == client_addr)?;
+        let (server_addr, _) = self.server_routes.get(*server_addr_idx)?;
+        Some(*server_addr)
+    }
+
+    /// Adds a new route from an existing server address (identified by index) to a new client address.
+    pub(super) fn add_client_route(&mut self, client_addr: SocketAddr, server_addr_idx: usize) {
+        assert!(server_addr_idx < self.server_routes.len());
+        self.client_routes.push((client_addr, server_addr_idx));
+    }
+
+    /// Adds a new route from an existing client address (identified by index) to a new server address.
+    pub(super) fn add_server_route(&mut self, server_addr: SocketAddr, client_addr_idx: usize) {
+        assert!(client_addr_idx < self.client_routes.len());
+        self.server_routes.push((server_addr, client_addr_idx));
+    }
+
+    pub(super) fn client_addr(&self, idx: usize) -> Option<SocketAddr> {
+        let (addr, _) = self.client_routes.get(idx)?;
+        Some(*addr)
+    }
+
+    pub(super) fn server_addr(&self, idx: usize) -> Option<SocketAddr> {
+        let (addr, _) = self.server_routes.get(idx)?;
+        Some(*addr)
     }
 }
