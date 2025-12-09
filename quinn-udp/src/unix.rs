@@ -712,10 +712,9 @@ fn prepare_recv(
     hdr.msg_datalen = buf.len();
 }
 
-fn decode_recv(
+fn decode_recv<M: cmsg::MsgHdr<ControlMessage = libc::cmsghdr>>(
     name: &MaybeUninit<libc::sockaddr_storage>,
-    #[cfg(not(apple_fast))] hdr: &libc::msghdr,
-    #[cfg(apple_fast)] hdr: &msghdr_x,
+    hdr: &M,
     len: usize,
 ) -> io::Result<RecvMeta> {
     let name = unsafe { name.assume_init() };
