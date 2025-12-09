@@ -2392,10 +2392,9 @@ impl Connection {
                     // retransmit if some of our earlier ACKs were lost, but allows for
                     // simpler state tracking. See discussion at
                     // https://www.rfc-editor.org/rfc/rfc9000.html#name-limiting-ranges-by-tracking
-                    self.spaces[space]
-                        .for_path(*acked_path_id)
-                        .pending_acks
-                        .subtract_below(*acked_pn);
+                    if let Some(pns) = self.spaces[space].path_space_mut(*acked_path_id) {
+                        pns.pending_acks.subtract_below(*acked_pn);
+                    }
                 }
                 ack_eliciting_acked |= info.ack_eliciting;
 
