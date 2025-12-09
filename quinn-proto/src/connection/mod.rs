@@ -257,6 +257,7 @@ impl Connection {
         allow_mtud: bool,
         rng_seed: [u8; 32],
         side_args: SideArgs,
+        interface_mtu_constraint: Option<u16>,
     ) -> Self {
         let pref_addr_cid = side_args.pref_addr_cid();
         let path_validated = side_args.path_validated();
@@ -283,7 +284,7 @@ impl Connection {
                 now,
                 if pref_addr_cid.is_some() { 2 } else { 1 },
             ),
-            path: PathData::new(remote, allow_mtud, None, 0, now, &config),
+            path: PathData::new(remote, allow_mtud, None, 0, now, &config, interface_mtu_constraint),
             path_counter: 0,
             allow_mtud,
             local_ip,
@@ -3122,6 +3123,7 @@ impl Connection {
                 self.path_counter,
                 now,
                 &self.config,
+                None, // Interface MTU constraint not available for path migration
             )
         };
         new_path.challenge = Some(self.rng.random());
