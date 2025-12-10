@@ -242,7 +242,7 @@ impl QlogSink {
         }
     }
 
-    pub(super) fn emit_new_path(&self, path_id: PathId, remote: SocketAddr, now: Instant) {
+    pub(super) fn emit_tuple_assigned(&self, path_id: PathId, remote: SocketAddr, now: Instant) {
         #[cfg(feature = "qlog")]
         {
             let Some(stream) = self.stream.as_ref() else {

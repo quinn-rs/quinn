@@ -471,7 +471,7 @@ impl Connection {
             this.write_crypto();
             this.init_0rtt(now);
         }
-        this.qlog.emit_new_path(PathId::ZERO, remote, now);
+        this.qlog.emit_tuple_assigned(PathId::ZERO, remote, now);
         this
     }
 
@@ -872,7 +872,7 @@ impl Connection {
         self.spaces[SpaceId::Data]
             .number_spaces
             .insert(path_id, pn_space);
-        self.qlog.emit_new_path(path_id, remote, now);
+        self.qlog.emit_tuple_assigned(path_id, remote, now);
         &mut path.data
     }
 
@@ -3592,6 +3592,7 @@ impl Connection {
                     if hs.allow_server_migration {
                         trace!(?remote, prev = ?self.path_data(path_id).remote, "server migrated to new remote");
                         self.path_data_mut(path_id).remote = remote;
+                        self.qlog.emit_tuple_assigned(path_id, remote, now);
                     } else {
                         debug!("discarding packet with unexpected remote during handshake");
                         return;
@@ -4893,6 +4894,9 @@ impl Connection {
 
             known_path.prev = Some((self.rem_cids.get(&path_id).unwrap().active(), prev));
         }
+
+        // We need to re-assign the correct remote to this path in qlog
+        self.qlog.emit_tuple_assigned(path_id, remote, now);
 
         self.timers.set(
             Timer::PerPath(path_id, PathTimer::PathValidation),
