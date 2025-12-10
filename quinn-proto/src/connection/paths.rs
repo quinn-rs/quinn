@@ -549,6 +549,9 @@ impl RttEstimator {
 
     /// Resets the estimator using a new initial_rtt value.
     ///
+    /// This only resets the initial_rtt **if** no samples have been recorded yet. If there
+    /// are any recorded samples the initial estimate can not be adjusted after the fact.
+    ///
     /// This is useful when you receive a PATH_RESPONSE in the first packet received on a
     /// new path. In this case you can use the delay of the PATH_CHALLENGE-PATH_RESPONSE as
     /// the initial RTT to get a better expected estimation.
@@ -556,11 +559,12 @@ impl RttEstimator {
     /// A PATH_CHALLENGE-PATH_RESPONSE pair later in the connection should not be used
     /// explicitly as an estimation since PATH_CHALLENGE is an ACK-eliciting packet itself
     /// already.
-    pub(crate) fn reset(&mut self, initial_rtt: Duration) {
-        self.latest = initial_rtt;
-        self.smoothed = None;
-        self.var = initial_rtt / 2;
-        self.min = initial_rtt;
+    pub(crate) fn reset_initial_rtt(&mut self, initial_rtt: Duration) {
+        if self.smoothed.is_none() {
+            self.latest = initial_rtt;
+            self.var = initial_rtt / 2;
+            self.min = initial_rtt;
+        }
     }
 
     /// The current best RTT estimation.
