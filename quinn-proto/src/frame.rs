@@ -180,8 +180,8 @@ pub(crate) enum Frame {
     StreamsBlocked { dir: Dir, limit: u64 },
     NewConnectionId(NewConnectionId),
     RetireConnectionId(RetireConnectionId),
-    PathChallenge(u64),
-    PathResponse(u64),
+    PathChallenge(PathChallenge),
+    PathResponse(PathResponse),
     Close(Close),
     Datagram(Datagram),
     AckFrequency(AckFrequency),
@@ -292,6 +292,45 @@ impl Frame {
                     ..
                 })
         )
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, derive_more::Display)]
+pub(crate) struct PathChallenge(#[display("PATH_CHALLENGE({:08x})")] pub(crate) u64);
+
+impl PathChallenge {
+    pub(crate) const SIZE_BOUND: usize = 9;
+}
+impl coding::Codec for PathChallenge {
+    /// Decode [`Self`] from the buffer, provided that the frame type has been verified
+    fn decode<B: Buf>(buf: &mut B) -> coding::Result<Self> {
+        Ok(Self(buf.get()?))
+    }
+
+    /// Encode [`Self`] into the given buffer
+    fn encode<B: BufMut>(&self, buf: &mut B) {
+        buf.write(FrameType::PATH_CHALLENGE);
+        buf.write(self.0);
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, derive_more::Display)]
+pub(crate) struct PathResponse(#[display("PATH_RESPONSE({:08x})")] pub(crate) u64);
+
+impl PathResponse {
+    pub(crate) const SIZE_BOUND: usize = 9;
+}
+
+impl coding::Codec for PathResponse {
+    /// Decode [`Self`] from the buffer, provided that the frame type has been verified
+    fn decode<B: Buf>(buf: &mut B) -> coding::Result<Self> {
+        Ok(Self(buf.get()?))
+    }
+
+    /// Encode [`Self`] into the given buffer
+    fn encode<B: BufMut>(&self, buf: &mut B) {
+        buf.write(FrameType::PATH_RESPONSE);
+        buf.write(self.0);
     }
 }
 

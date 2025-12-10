@@ -59,6 +59,7 @@ sorted-index-buffer = { workspace = true }
 thiserror = { workspace = true }
 tinyvec = { workspace = true, features = ["alloc"] }
 tracing = { workspace = true }
+derive_more = { version = "2.1.0", features = ["debug", "display"] }
 
 # Feature flags & dependencies for wasm
 # wasm-bindgen is assumed for a wasm*-*-unknown target
