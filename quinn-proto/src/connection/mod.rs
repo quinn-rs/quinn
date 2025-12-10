@@ -653,8 +653,8 @@ impl Connection {
         pending_space.path_cids_blocked.retain(|&id| id != path_id);
         pending_space.path_status.retain(|&id| id != path_id);
 
-        // Cleanup in retransmits as well
-        if let Some(space) = self.spaces[SpaceId::Data].path_space_mut(path_id) {
+        // Cleanup retransmits across ALL paths (CIDs for path_id may have been transmitted on other paths)
+        for space in self.spaces[SpaceId::Data].iter_paths_mut() {
             for sent_packet in space.sent_packets.values_mut() {
                 if let Some(retransmits) = sent_packet.retransmits.get_mut() {
                     retransmits.new_cids.retain(|cid| cid.path_id != path_id);
