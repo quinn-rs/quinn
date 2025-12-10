@@ -547,6 +547,22 @@ impl RttEstimator {
         }
     }
 
+    /// Resets the estimator using a new initial_rtt value.
+    ///
+    /// This is useful when you receive a PATH_RESPONSE in the first packet received on a
+    /// new path. In this case you can use the delay of the PATH_CHALLENGE-PATH_RESPONSE as
+    /// the initial RTT to get a better expected estimation.
+    ///
+    /// A PATH_CHALLENGE-PATH_RESPONSE pair later in the connection should not be used
+    /// explicitly as an estimation since PATH_CHALLENGE is an ACK-eliciting packet itself
+    /// already.
+    pub(crate) fn reset(&mut self, initial_rtt: Duration) {
+        self.latest = initial_rtt;
+        self.smoothed = None;
+        self.var = initial_rtt / 2;
+        self.min = initial_rtt;
+    }
+
     /// The current best RTT estimation.
     pub fn get(&self) -> Duration {
         self.smoothed.unwrap_or(self.latest)
@@ -565,14 +581,16 @@ impl RttEstimator {
         self.min
     }
 
-    // PTO computed as described in RFC9002#6.2.1
+    /// PTO computed as described in RFC9002#6.2.1.
     pub(crate) fn pto_base(&self) -> Duration {
         self.get() + cmp::max(4 * self.var, TIMER_GRANULARITY)
     }
 
+    /// Records an RTT sample.
     pub(crate) fn update(&mut self, ack_delay: Duration, rtt: Duration) {
         self.latest = rtt;
-        // min_rtt ignores ack delay.
+        // https://www.rfc-editor.org/rfc/rfc9002.html#section-5.2-3:
+        // min_rtt does not adjust for ack_delay to avoid underestimating.
         self.min = cmp::min(self.min, self.latest);
         // Based on RFC6298.
         if let Some(smoothed) = self.smoothed {

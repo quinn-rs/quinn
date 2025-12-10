@@ -4291,10 +4291,16 @@ impl Connection {
                         path.data.challenges_sent.clear();
                         path.data.send_new_challenge = false;
                         path.data.validated = true;
-                        path.data.rtt.update(
-                            Duration::ZERO,
-                            now.saturating_duration_since(challenge_sent),
-                        );
+                        if path.data.total_recvd == 0 {
+                            // This RTT can only be used for the initial RTT, not as a
+                            // normal sample:
+                            // https://www.rfc-editor.org/rfc/rfc9002#section-6.2.2-2. Hence
+                            // only use this RTT if this is the very first packet received
+                            // on this path.
+                            let rtt = now.saturating_duration_since(challenge_sent);
+                            trace!(?rtt, "resetting initial RTT from PATH_RESPONSE");
+                            path.data.rtt.reset(rtt);
+                        }
                         self.events
                             .push_back(Event::Path(PathEvent::Opened { id: path_id }));
                         // mark the path as open from the application perspective now that Opened
