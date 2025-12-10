@@ -1103,7 +1103,7 @@ impl Connection {
                 trace!(?space_id, %path_id, ?send_blocked, "congestion blocked");
                 congestion_blocked = true;
             }
-            if send_blocked == PathBlocked::Congestion && space_id < SpaceId::Data {
+            if send_blocked != PathBlocked::No && space_id < SpaceId::Data {
                 // Higher spaces might still have tail-loss probes to send, which are not
                 // congestion blocked.
                 space_id = space_id.next();
