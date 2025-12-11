@@ -719,12 +719,12 @@ impl InFlight {
     }
 }
 
-/// State for QUIC-MULTIPATH PATH_AVAILABLE and PATH_BACKUP frames
+/// State for QUIC-MULTIPATH PATH_STATUS_AVAILABLE and PATH_STATUS_BACKUP frames
 #[derive(Debug, Clone, Default)]
 pub(super) struct PathStatusState {
     /// The local status
     local_status: PathStatus,
-    /// Local sequence number, for both PATH_AVAIALABLE and PATH_BACKUP
+    /// Local sequence number, for both PATH_STATUS_AVAILABLE and PATH_STATUS_BACKUP
     ///
     /// This is the number of the *next* path status frame to be sent.
     local_seq: VarInt,
@@ -733,7 +733,7 @@ pub(super) struct PathStatusState {
 }
 
 impl PathStatusState {
-    /// To be called on received PATH_AVAILABLE/PATH_BACKUP frames
+    /// To be called on received PATH_STATUS_AVAILABLE/PATH_STATUS_BACKUP frames
     pub(super) fn remote_update(&mut self, status: PathStatus, seq: VarInt) {
         if self.remote_status.is_some_and(|(curr, _)| curr >= seq) {
             return trace!(%seq, "ignoring path status update");

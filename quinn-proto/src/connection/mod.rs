@@ -4639,7 +4639,7 @@ impl Connection {
                         self.qlog.with_time(now),
                     );
                 }
-                Frame::PathAvailable(info) => {
+                Frame::PathStatusAvailable(info) => {
                     span.record("path", tracing::field::debug(&info.path_id));
                     if self.is_multipath_negotiated() {
                         self.on_path_status(
@@ -4649,17 +4649,17 @@ impl Connection {
                         );
                     } else {
                         return Err(TransportError::PROTOCOL_VIOLATION(
-                            "received PATH_AVAILABLE frame when multipath was not negotiated",
+                            "received PATH_STATUS_AVAILABLE frame when multipath was not negotiated",
                         ));
                     }
                 }
-                Frame::PathBackup(info) => {
+                Frame::PathStatusBackup(info) => {
                     span.record("path", tracing::field::debug(&info.path_id));
                     if self.is_multipath_negotiated() {
                         self.on_path_status(info.path_id, PathStatus::Backup, info.status_seq_no);
                     } else {
                         return Err(TransportError::PROTOCOL_VIOLATION(
-                            "received PATH_BACKUP frame when multipath was not negotiated",
+                            "received PATH_STATUS_BACKUP frame when multipath was not negotiated",
                         ));
                     }
                 }
@@ -5322,10 +5322,10 @@ impl Connection {
                 .or_insert(error_code);
         }
 
-        // PATH_AVAILABLE & PATH_BACKUP
+        // PATH_STATUS_AVAILABLE & PATH_STATUS_BACKUP
         while !path_exclusive_only
             && space_id == SpaceId::Data
-            && frame::PathAvailable::SIZE_BOUND <= buf.remaining_mut()
+            && frame::PathStatusAvailable::SIZE_BOUND <= buf.remaining_mut()
         {
             let Some(path_id) = space.pending.path_status.pop_first() else {
                 break;
@@ -5339,24 +5339,24 @@ impl Connection {
             sent.retransmits.get_or_create().path_status.insert(path_id);
             match path.local_status() {
                 PathStatus::Available => {
-                    let frame = frame::PathAvailable {
+                    let frame = frame::PathStatusAvailable {
                         path_id,
                         status_seq_no: seq,
                     };
                     frame.encode(buf);
-                    qlog.frame(&Frame::PathAvailable(frame));
-                    self.stats.frame_tx.path_available += 1;
-                    trace!(%path_id, %seq, "PATH_AVAILABLE")
+                    qlog.frame(&Frame::PathStatusAvailable(frame));
+                    self.stats.frame_tx.path_status_available += 1;
+                    trace!(%path_id, %seq, "PATH_STATUS_AVAILABLE")
                 }
                 PathStatus::Backup => {
-                    let frame = frame::PathBackup {
+                    let frame = frame::PathStatusBackup {
                         path_id,
                         status_seq_no: seq,
                     };
                     frame.encode(buf);
-                    qlog.frame(&Frame::PathBackup(frame));
-                    self.stats.frame_tx.path_backup += 1;
-                    trace!(%path_id, %seq, "PATH_BACKUP")
+                    qlog.frame(&Frame::PathStatusBackup(frame));
+                    self.stats.frame_tx.path_status_backup += 1;
+                    trace!(%path_id, %seq, "PATH_STATUS_BACKUP")
                 }
             }
         }
@@ -6165,12 +6165,12 @@ impl Connection {
         }
     }
 
-    /// Handle new path status information: PATH_AVAILABLE, PATH_BACKUP
+    /// Handle new path status information: PATH_STATUS_AVAILABLE, PATH_STATUS_BACKUP
     fn on_path_status(&mut self, path_id: PathId, status: PathStatus, status_seq_no: VarInt) {
         if let Some(path) = self.paths.get_mut(&path_id) {
             path.data.status.remote_update(status, status_seq_no);
         } else {
-            debug!("PATH_AVAILABLE received unknown path {:?}", path_id);
+            debug!("PATH_STATUS_AVAILABLE received unknown path {:?}", path_id);
         }
         self.events.push_back(
             PathEvent::RemoteStatus {

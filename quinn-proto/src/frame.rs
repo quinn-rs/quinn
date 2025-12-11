@@ -143,8 +143,8 @@ frame_types! {
     PATH_ACK = 0x15228c00,
     PATH_ACK_ECN = 0x15228c01,
     PATH_ABANDON = 0x15228c05,
-    PATH_BACKUP = 0x15228c07,
-    PATH_AVAILABLE = 0x15228c08,
+    PATH_STATUS_BACKUP = 0x15228c07,
+    PATH_STATUS_AVAILABLE = 0x15228c08,
     PATH_NEW_CONNECTION_ID = 0x15228c09,
     PATH_RETIRE_CONNECTION_ID = 0x15228c0a,
     MAX_PATH_ID = 0x15228c0c,
@@ -189,8 +189,8 @@ pub(crate) enum Frame {
     HandshakeDone,
     ObservedAddr(ObservedAddr),
     PathAbandon(PathAbandon),
-    PathAvailable(PathAvailable),
-    PathBackup(PathBackup),
+    PathStatusAvailable(PathStatusAvailable),
+    PathStatusBackup(PathStatusBackup),
     MaxPathId(MaxPathId),
     PathsBlocked(PathsBlocked),
     PathCidsBlocked(PathCidsBlocked),
@@ -241,8 +241,8 @@ impl Frame {
             HandshakeDone => FrameType::HANDSHAKE_DONE,
             ObservedAddr(ref observed) => observed.get_type(),
             PathAbandon(_) => FrameType::PATH_ABANDON,
-            PathAvailable(_) => FrameType::PATH_AVAILABLE,
-            PathBackup(_) => FrameType::PATH_BACKUP,
+            PathStatusAvailable(_) => FrameType::PATH_STATUS_AVAILABLE,
+            PathStatusBackup(_) => FrameType::PATH_STATUS_BACKUP,
             MaxPathId(_) => FrameType::MAX_PATH_ID,
             PathsBlocked(_) => FrameType::PATHS_BLOCKED,
             PathCidsBlocked(_) => FrameType::PATH_CIDS_BLOCKED,
@@ -278,8 +278,8 @@ impl Frame {
             *self,
             Self::PathAck(_)
                 | Self::PathAbandon(_)
-                | Self::PathBackup(_)
-                | Self::PathAvailable(_)
+                | Self::PathStatusBackup(_)
+                | Self::PathStatusAvailable(_)
                 | Self::MaxPathId(_)
                 | Self::PathsBlocked(_)
                 | Self::PathCidsBlocked(_)
@@ -1045,10 +1045,12 @@ impl Iter {
                 Frame::ObservedAddr(observed)
             }
             FrameType::PATH_ABANDON => Frame::PathAbandon(PathAbandon::decode(&mut self.bytes)?),
-            FrameType::PATH_AVAILABLE => {
-                Frame::PathAvailable(PathAvailable::decode(&mut self.bytes)?)
+            FrameType::PATH_STATUS_AVAILABLE => {
+                Frame::PathStatusAvailable(PathStatusAvailable::decode(&mut self.bytes)?)
             }
-            FrameType::PATH_BACKUP => Frame::PathBackup(PathBackup::decode(&mut self.bytes)?),
+            FrameType::PATH_STATUS_BACKUP => {
+                Frame::PathStatusBackup(PathStatusBackup::decode(&mut self.bytes)?)
+            }
             FrameType::MAX_PATH_ID => Frame::MaxPathId(MaxPathId::decode(&mut self.bytes)?),
             FrameType::PATHS_BLOCKED => Frame::PathsBlocked(PathsBlocked::decode(&mut self.bytes)?),
             FrameType::PATH_CIDS_BLOCKED => {
@@ -1498,14 +1500,14 @@ impl PathAbandon {
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub(crate) struct PathAvailable {
+pub(crate) struct PathStatusAvailable {
     pub(crate) path_id: PathId,
     pub(crate) status_seq_no: VarInt,
 }
 
-impl PathAvailable {
-    const TYPE: FrameType = FrameType::PATH_AVAILABLE;
-    pub(crate) const SIZE_BOUND: usize = VarInt(FrameType::PATH_AVAILABLE.0).size() + 8 + 8;
+impl PathStatusAvailable {
+    const TYPE: FrameType = FrameType::PATH_STATUS_AVAILABLE;
+    pub(crate) const SIZE_BOUND: usize = VarInt(FrameType::PATH_STATUS_AVAILABLE.0).size() + 8 + 8;
 
     /// Encode [`Self`] into the given buffer
     pub(crate) fn encode<W: BufMut>(&self, buf: &mut W) {
@@ -1524,13 +1526,13 @@ impl PathAvailable {
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub(crate) struct PathBackup {
+pub(crate) struct PathStatusBackup {
     pub(crate) path_id: PathId,
     pub(crate) status_seq_no: VarInt,
 }
 
-impl PathBackup {
-    const TYPE: FrameType = FrameType::PATH_BACKUP;
+impl PathStatusBackup {
+    const TYPE: FrameType = FrameType::PATH_STATUS_BACKUP;
 
     /// Encode [`Self`] into the given buffer
     pub(crate) fn encode<W: BufMut>(&self, buf: &mut W) {
@@ -1908,35 +1910,35 @@ mod test {
     }
 
     #[test]
-    fn test_path_available_roundtrip() {
-        let path_avaiable = PathAvailable {
+    fn test_path_status_available_roundtrip() {
+        let path_status_available = PathStatusAvailable {
             path_id: PathId(42),
             status_seq_no: VarInt(73),
         };
         let mut buf = Vec::new();
-        path_avaiable.encode(&mut buf);
+        path_status_available.encode(&mut buf);
 
         let mut decoded = frames(buf);
         assert_eq!(decoded.len(), 1);
         match decoded.pop().expect("non empty") {
-            Frame::PathAvailable(decoded) => assert_eq!(decoded, path_avaiable),
+            Frame::PathStatusAvailable(decoded) => assert_eq!(decoded, path_status_available),
             x => panic!("incorrect frame {x:?}"),
         }
     }
 
     #[test]
-    fn test_path_backup_roundtrip() {
-        let path_backup = PathBackup {
+    fn test_path_status_backup_roundtrip() {
+        let path_status_backup = PathStatusBackup {
             path_id: PathId(42),
             status_seq_no: VarInt(73),
         };
         let mut buf = Vec::new();
-        path_backup.encode(&mut buf);
+        path_status_backup.encode(&mut buf);
 
         let mut decoded = frames(buf);
         assert_eq!(decoded.len(), 1);
         match decoded.pop().expect("non empty") {
-            Frame::PathBackup(decoded) => assert_eq!(decoded, path_backup),
+            Frame::PathStatusBackup(decoded) => assert_eq!(decoded, path_status_backup),
             x => panic!("incorrect frame {x:?}"),
         }
     }

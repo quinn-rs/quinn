@@ -531,7 +531,7 @@ pub struct Retransmits {
     pub(super) new_tokens: Vec<SocketAddr>,
     /// Paths which need to be abandoned
     pub(super) path_abandon: BTreeMap<PathId, TransportErrorCode>,
-    /// If a [`frame::PathAvailable`] and [`frame::PathBackup`] need to be sent for a path
+    /// If a [`frame::PathStatusAvailable`] and [`frame::PathStatusBackup`] need to be sent for a path
     pub(super) path_status: BTreeSet<PathId>,
     /// If a PATH_CIDS_BLOCKED frame needs to be sent for a path
     pub(super) path_cids_blocked: Vec<PathId>,

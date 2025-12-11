@@ -788,12 +788,12 @@ impl Frame {
                 error_code: frame.error_code.into(),
                 raw: None,
             },
-            Self::PathAvailable(frame) => QuicFrame::PathStatusAvailable {
+            Self::PathStatusAvailable(frame) => QuicFrame::PathStatusAvailable {
                 path_id: frame.path_id.as_u32().into(),
                 path_status_sequence_number: frame.status_seq_no.into(),
                 raw: None,
             },
-            Self::PathBackup(frame) => QuicFrame::PathStatusBackup {
+            Self::PathStatusBackup(frame) => QuicFrame::PathStatusBackup {
                 path_id: frame.path_id.as_u32().into(),
                 path_status_sequence_number: frame.status_seq_no.into(),
                 raw: None,
