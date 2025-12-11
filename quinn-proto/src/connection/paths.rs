@@ -120,6 +120,14 @@ impl PathState {
     }
 }
 
+#[derive(Debug)]
+pub(super) struct SentChallengeInfo {
+    /// When was the challenge sent on the wire.
+    pub(super) sent_instant: Instant,
+    /// The remote to which this path challenge was sent.
+    pub(super) remote: SocketAddr,
+}
+
 /// Description of a particular network path
 #[derive(Debug)]
 pub(super) struct PathData {
@@ -131,9 +139,9 @@ pub(super) struct PathData {
     pub(super) congestion: Box<dyn congestion::Controller>,
     /// Pacing state
     pub(super) pacing: Pacer,
-    /// Actually sent challenges (on the wire)
-    pub(super) challenges_sent: IntMap<u64, Instant>,
-    /// Whether to *immediately* trigger another PATH_CHALLENGE (via Connection::can_send)
+    /// Actually sent challenges (on the wire).
+    pub(super) challenges_sent: IntMap<u64, SentChallengeInfo>,
+    /// Whether to *immediately* trigger another PATH_CHALLENGE (via [`super::Connection::can_send`])
     pub(super) send_new_challenge: bool,
     /// Pending responses to PATH_CHALLENGE frames
     pub(super) path_responses: PathResponses,
