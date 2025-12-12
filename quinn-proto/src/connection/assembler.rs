@@ -108,7 +108,7 @@ impl Assembler {
         let mut buffers = old.into_sorted_vec();
         self.buffered = 0;
         let mut fragmented_buffered = 0;
-        let mut offset = 0;
+        let mut offset = self.bytes_read;
         for chunk in buffers.iter_mut().rev() {
             chunk.try_mark_defragment(offset);
             let size = chunk.bytes.len();
@@ -120,7 +120,7 @@ impl Assembler {
         }
         self.allocated = self.buffered;
         let mut buffer = BytesMut::with_capacity(fragmented_buffered);
-        let mut offset = 0;
+        let mut offset = self.bytes_read;
         for chunk in buffers.into_iter().rev() {
             if chunk.defragmented {
                 // bytes might be empty after try_mark_defragment
@@ -648,11 +648,196 @@ mod test {
         assert_eq!(x.read(3, false), None);
     }
 
+    #[test]
+    fn no_duplicate_after_mode_switch() {
+        // Regression test: bytes read in ordered mode should not be returned again in unordered mode
+        let mut x = Assembler::new();
+        x.insert(0, Bytes::from_static(b"a"), 1);
+        x.insert(0, Bytes::from_static(b"a"), 1); // duplicate
+        assert_eq!(
+            x.read(1, true),
+            Some(Chunk::new(0, Bytes::from_static(b"a")))
+        );
+        x.ensure_ordering(false).unwrap();
+        assert_eq!(x.read(1, false), None); // should be None, byte 0 already returned
+    }
+
     fn next_unordered(x: &mut Assembler) -> Chunk {
         x.read(usize::MAX, false).unwrap()
     }
 
     fn next(x: &mut Assembler, size: usize) -> Option<Bytes> {
         x.read(size, true).map(|chunk| chunk.bytes)
+    }
+}
+
+#[cfg(all(test, not(target_family = "wasm")))]
+mod proptests {
+    use proptest::prelude::*;
+    use test_strategy::{Arbitrary, proptest};
+
+    use super::*;
+
+    const MAX_OFFSET: u64 = 512;
+    const MAX_LEN: usize = 64;
+
+    #[derive(Debug, Clone, Arbitrary)]
+    enum Op {
+        #[weight(10)]
+        Insert {
+            #[strategy(0..MAX_OFFSET)]
+            offset: u64,
+            #[strategy(1..MAX_LEN)]
+            len: usize,
+        },
+        #[weight(10)]
+        Read {
+            #[strategy(1..MAX_LEN)]
+            max_len: usize,
+        },
+        #[weight(1)]
+        EnsureOrdering { ordered: bool },
+        #[weight(1)]
+        Defragment,
+    }
+
+    /// Tracks the state of the assembler for verification
+    struct RefState {
+        received: Vec<bool>,
+        returned: Vec<bool>,
+        ordered: bool,
+    }
+
+    fn set_range(bits: &mut [bool], start: u64, len: usize) {
+        for i in start..(start + len as u64).min(bits.len() as u64) {
+            bits[i as usize] = true;
+        }
+    }
+
+    impl RefState {
+        fn new() -> Self {
+            Self {
+                received: vec![false; MAX_OFFSET as usize],
+                returned: vec![false; MAX_OFFSET as usize],
+                ordered: true,
+            }
+        }
+
+        fn insert(&mut self, offset: u64, len: usize) {
+            set_range(&mut self.received, offset, len);
+        }
+
+        fn ensure_ordering(&mut self, ordered: bool) -> bool {
+            if ordered && !self.ordered {
+                return false;
+            }
+            self.ordered = ordered;
+            true
+        }
+
+        fn bytes_read(&self) -> u64 {
+            self.returned.iter().filter(|&&x| x).count() as u64
+        }
+    }
+
+    fn make_data() -> Vec<u8> {
+        use rand::{Rng, SeedableRng};
+        let mut rng = rand::rngs::StdRng::seed_from_u64(0xDEADBEEF);
+        let mut data = vec![0u8; MAX_OFFSET as usize];
+        rng.fill(data.as_mut_slice());
+        data
+    }
+
+    fn get_slice(data: &[u8], offset: u64, len: usize) -> Bytes {
+        let start = offset as usize;
+        let end = (start + len).min(data.len());
+        Bytes::copy_from_slice(&data[start..end])
+    }
+
+    fn verify_chunk(data: &[u8], chunk: &Chunk) -> bool {
+        let start = chunk.offset as usize;
+        chunk.bytes[..] == data[start..start + chunk.bytes.len()]
+    }
+
+    #[proptest]
+    fn assembler_matches_reference(
+        #[strategy(proptest::collection::vec(any::<Op>(), 1..100))] ops: Vec<Op>,
+    ) {
+        let data = make_data();
+        let mut asm = Assembler::new();
+        let mut reference = RefState::new();
+
+        for op in ops {
+            match op {
+                Op::Insert { offset, len } => {
+                    let bytes = get_slice(&data, offset, len);
+                    asm.insert(offset, bytes, len);
+                    reference.insert(offset, len);
+                }
+                Op::Read { max_len } => {
+                    let ordered = reference.ordered;
+                    let actual = asm.read(max_len, ordered);
+
+                    match actual {
+                        None => {
+                            // Should only be None if no unreturned received bytes available
+                            let has_available = if ordered {
+                                // In ordered mode, check if the first unreturned byte is received
+                                reference
+                                    .returned
+                                    .iter()
+                                    .position(|&x| !x)
+                                    .is_some_and(|pos| reference.received[pos])
+                            } else {
+                                // In unordered mode, check if any unreturned received byte exists
+                                reference
+                                    .received
+                                    .iter()
+                                    .zip(&reference.returned)
+                                    .any(|(&r, &ret)| r && !ret)
+                            };
+                            prop_assert!(
+                                !has_available,
+                                "read returned None but data was available"
+                            );
+                        }
+                        Some(chunk) => {
+                            prop_assert!(chunk.bytes.len() <= max_len, "chunk exceeds max_len");
+                            prop_assert!(verify_chunk(&data, &chunk), "data corruption");
+                            // Mark as returned, check for duplicates
+                            for i in 0..chunk.bytes.len() {
+                                let offset = chunk.offset as usize + i;
+                                prop_assert!(
+                                    reference.received[offset],
+                                    "returned unreceived byte at {offset}"
+                                );
+                                prop_assert!(
+                                    !reference.returned[offset],
+                                    "duplicate byte at {offset}"
+                                );
+                                reference.returned[offset] = true;
+                            }
+                        }
+                    }
+                }
+                Op::EnsureOrdering { ordered } => {
+                    let actual = asm.ensure_ordering(ordered).is_ok();
+                    let expected = reference.ensure_ordering(ordered);
+                    prop_assert_eq!(actual, expected, "ensure_ordering result mismatch");
+                }
+                Op::Defragment => {
+                    if asm.state.is_ordered() {
+                        asm.defragment();
+                    }
+                }
+            }
+        }
+
+        // Invariant: bytes_read matches
+        prop_assert_eq!(
+            asm.bytes_read(),
+            reference.bytes_read(),
+            "bytes_read mismatch"
+        );
     }
 }
