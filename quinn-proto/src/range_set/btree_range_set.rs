@@ -1,6 +1,5 @@
 use std::{
-    cmp,
-    cmp::Ordering,
+    cmp::{Ordering, max},
     collections::{BTreeMap, btree_map},
     ops::{
         Bound::{Excluded, Included},
@@ -69,14 +68,17 @@ impl RangeSet {
                 x.start = start;
             }
         }
-        while let Some((next_start, next_end)) = self.succ(x.start) {
-            if next_start > x.end {
-                break;
-            }
-            // Overlaps with successor
-            self.0.remove(&next_start);
-            x.end = cmp::max(next_end, x.end);
+
+        let existing_end = self
+            .0
+            .extract_if((Excluded(x.start), Included(x.end)), |_, _| true)
+            .last()
+            .map(|(_start, end)| end);
+
+        if let Some(existing_end) = existing_end {
+            x.end = max(x.end, existing_end);
         }
+
         self.0.insert(x.start, x.end);
         true
     }
@@ -377,5 +379,62 @@ mod tests {
         assert_eq!(set.replace(0..2).collect::<Vec<_>>(), &[]);
         assert_eq!(set.len(), 1);
         assert_eq!(set.peek_min().unwrap(), 0..4);
+    }
+
+    #[test]
+    fn insert_merges_abutting_range() {
+        // given
+        let mut set = RangeSet::new();
+        set.insert(10..20);
+
+        // when
+        set.insert(5..10);
+
+        // then
+        let expected_inner = BTreeMap::from_iter([(5, 20)]);
+        assert_eq!(set.0, expected_inner, "Ranges should have merged.");
+    }
+
+    #[test]
+    fn insert_merges_existing_crossing_range() {
+        // given
+        let mut set = RangeSet::new();
+        set.insert(10..20);
+
+        // when
+        set.insert(12..25);
+
+        // then
+        let expected_inner = BTreeMap::from_iter([(10, 25)]);
+        assert_eq!(set.0, expected_inner, "Ranges should have merged.");
+    }
+
+    #[test]
+    fn insert_ignored_if_wholly_contained() {
+        // given
+        let mut set = RangeSet::new();
+        set.insert(10..20);
+
+        // when
+        set.insert(12..15);
+
+        // then
+        let expected_inner = BTreeMap::from_iter([(10, 20)]);
+        assert_eq!(set.0, expected_inner, "Ranges should have merged.");
+    }
+
+    #[test]
+    fn insert_bridges_disjoint_ranges() {
+        // given
+        let mut set = RangeSet::new();
+        set.insert(0..10);
+        set.insert(20..30);
+
+        // when
+        set.insert(10..20);
+
+        // then
+        let expected_inner = BTreeMap::from_iter([(0, 30)]);
+        assert_eq!(set.0, expected_inner, "Ranges should have merged.");
     }
 }
