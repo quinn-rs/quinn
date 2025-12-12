@@ -1,6 +1,5 @@
 use std::{
-    cmp,
-    cmp::Ordering,
+    cmp::{Ordering, max},
     collections::{BTreeMap, btree_map},
     ops::{
         Bound::{Excluded, Included},
@@ -69,14 +68,17 @@ impl RangeSet {
                 x.start = start;
             }
         }
-        while let Some((next_start, next_end)) = self.succ(x.start) {
-            if next_start > x.end {
-                break;
-            }
-            // Overlaps with successor
-            self.0.remove(&next_start);
-            x.end = cmp::max(next_end, x.end);
+
+        let existing_end = self
+            .0
+            .extract_if((Excluded(x.start), Included(x.end)), |_, _| true)
+            .last()
+            .map(|(_start, end)| end);
+
+        if let Some(existing_end) = existing_end {
+            x.end = max(x.end, existing_end);
         }
+
         self.0.insert(x.start, x.end);
         true
     }
@@ -119,18 +121,24 @@ impl RangeSet {
             }
             Some(_) | None => false,
         };
+
+        let removed_end = self
+            .0
+            .extract_if((Excluded(x.start), Excluded(x.end)), |_, _| true)
+            .last()
+            .map(|(_start, end)| end);
+
         let mut after = false;
-        while let Some((start, end)) = self.succ(x.start) {
-            if start >= x.end {
-                break;
-            }
+
+        if let Some(removed_end) = removed_end {
             after = true;
-            self.0.remove(&start);
-            if end > x.end {
-                self.0.insert(x.end, end);
-                break;
+
+            let over_removed = removed_end > x.end;
+            if over_removed {
+                self.0.insert(x.end, removed_end);
             }
         }
+
         before || after
     }
 
@@ -377,5 +385,232 @@ mod tests {
         assert_eq!(set.replace(0..2).collect::<Vec<_>>(), &[]);
         assert_eq!(set.len(), 1);
         assert_eq!(set.peek_min().unwrap(), 0..4);
+    }
+
+    #[test]
+    fn insert_extends_prev_joint_range() {
+        // given
+        let mut set = RangeSet::new();
+        set.insert(0..10);
+
+        // when
+        set.insert(10..20);
+
+        // then
+        let expected_inner = BTreeMap::from_iter([(0, 20)]);
+        assert_eq!(set.0, expected_inner, "ranges should have merged");
+    }
+
+    #[test]
+    fn insert_merges_touching_range() {
+        // given
+        let mut set = RangeSet::new();
+        set.insert(10..20);
+
+        // when
+        set.insert(5..10);
+
+        // then
+        let expected_inner = BTreeMap::from_iter([(5, 20)]);
+        assert_eq!(set.0, expected_inner, "ranges should have merged.");
+    }
+
+    #[test]
+    fn insert_merges_existing_crossing_range() {
+        // given
+        let mut set = RangeSet::new();
+        set.insert(10..20);
+
+        // when
+        set.insert(12..25);
+
+        // then
+        let expected_inner = BTreeMap::from_iter([(10, 25)]);
+        assert_eq!(set.0, expected_inner, "ranges should have merged.");
+    }
+
+    #[test]
+    fn insert_ignored_if_wholly_contained() {
+        // given
+        let mut set = RangeSet::new();
+        set.insert(10..20);
+
+        // when
+        let insert_result = set.insert(14..16);
+
+        // then
+        let expected_inner = BTreeMap::from_iter([(10, 20)]);
+        assert_eq!(set.0, expected_inner, "insertion should be ignored");
+        assert!(
+            !insert_result,
+            "insert should return false when inserting an already contained range"
+        );
+    }
+
+    #[test]
+    fn insert_bridges_disjoint_ranges() {
+        // given
+        let mut set = RangeSet::new();
+        set.insert(0..10);
+        set.insert(20..30);
+
+        // when
+        set.insert(10..20);
+
+        // then
+        let expected_inner = BTreeMap::from_iter([(0, 30)]);
+        assert_eq!(set.0, expected_inner, "existing ranges should have merged");
+    }
+
+    #[test]
+    fn remove_splits_contained_range() {
+        // given
+        let mut set = RangeSet::new();
+        set.insert(0..10);
+
+        // when
+        let changed = set.remove(2..8);
+
+        // then
+        assert!(changed);
+        let expected_inner = BTreeMap::from_iter([(0, 2), (8, 10)]);
+        assert_eq!(set.0, expected_inner, "range should have split into two");
+    }
+
+    #[test]
+    fn remove_trims_start_of_range() {
+        // given
+        let mut set = RangeSet::new();
+        set.insert(10..20);
+
+        // when
+        let changed = set.remove(5..15);
+
+        // then
+        assert!(changed);
+        let expected_inner = BTreeMap::from_iter([(15, 20)]);
+        assert_eq!(
+            set.0, expected_inner,
+            "start of range should have been trimmed"
+        );
+    }
+
+    #[test]
+    fn remove_trims_end_of_range() {
+        // given
+        let mut set = RangeSet::new();
+        set.insert(0..10);
+
+        // when
+        let changed = set.remove(5..15);
+
+        // then
+        assert!(changed);
+        let expected_inner = BTreeMap::from_iter([(0, 5)]);
+        assert_eq!(
+            set.0, expected_inner,
+            "end of range should have been trimmed"
+        );
+    }
+
+    #[test]
+    fn remove_swallows_multiple_ranges() {
+        // given
+        let mut set = RangeSet::new();
+        set.insert(0..5);
+        set.insert(10..15);
+        set.insert(20..25);
+
+        // when
+        let changed = set.remove(0..25);
+
+        // then
+        assert!(changed);
+        let expected_inner = BTreeMap::new();
+        assert_eq!(
+            set.0, expected_inner,
+            "all ranges should be gone as the removal swallowed them"
+        );
+    }
+
+    #[test]
+    fn remove_specific_range_in_set() {
+        // given
+        let mut set = RangeSet::new();
+        set.insert(10..20);
+
+        // when
+        let changed = set.remove(10..20);
+
+        // then
+        assert!(changed);
+        let expected_inner = BTreeMap::new();
+        assert_eq!(set.0, expected_inner, "set should be empty");
+    }
+
+    #[test]
+    fn removing_range_touching_existing_ranges_is_ignored() {
+        // given
+        let mut set = RangeSet::new();
+        set.insert(10..20);
+
+        // when
+        let changed_start = set.remove(0..10);
+        let changed_end = set.remove(20..30);
+
+        // then
+        assert!(!changed_start);
+        assert!(!changed_end);
+        let expected_inner = BTreeMap::from_iter([(10, 20)]);
+        assert_eq!(
+            set.0, expected_inner,
+            "touching ranges should not remove anything."
+        );
+    }
+
+    #[test]
+    fn removing_range_crossing_existing_ranges_that_should_be_trimmed() {
+        // given
+        let mut set = RangeSet::new();
+        set.insert(0..5);
+        set.insert(10..15);
+
+        // when
+        let changed = set.remove(4..11);
+
+        // then
+        assert!(changed);
+        let expected_inner = BTreeMap::from_iter([(0, 4), (11, 15)]);
+        assert_eq!(set.0, expected_inner, "existing ranges should be trimmed");
+    }
+
+    #[test]
+    fn remove_crossing_range_trims_start() {
+        // given
+        let mut set = RangeSet::new();
+        set.insert(10..20);
+
+        // when
+        let changed = set.remove(9..12);
+
+        // then
+        assert!(changed);
+        let expected_inner = BTreeMap::from_iter([(12, 20)]);
+        assert_eq!(set.0, expected_inner);
+    }
+
+    #[test]
+    fn remove_no_overlap_before_and_after() {
+        // given
+        let mut set = RangeSet::new();
+        set.insert(10..20);
+
+        // when
+        let changed = set.remove(0..5);
+
+        // then
+        assert!(!changed);
+        let expected_inner = BTreeMap::from_iter([(10, 20)]);
+        assert_eq!(set.0, expected_inner, "disjoint removals should be ignored");
     }
 }
