@@ -68,13 +68,14 @@ impl ArrayRangeSet {
         false
     }
 
-    pub fn subtract(&mut self, other: &Self) {
-        // TODO: This can potentially be made more efficient, since the we know
-        // individual ranges are not overlapping, and the next range must start
-        // after the last one finished
-        for range in &other.0 {
-            self.remove(range.clone());
-        }
+    pub fn iter_range(&self, range: Range<u64>) -> impl Iterator<Item = Range<u64>> + '_ {
+        self.iter().filter_map(move |r| {
+            if r.end > range.start && r.start < range.end {
+                Some(r.start.max(range.start)..r.end.min(range.end))
+            } else {
+                None
+            }
+        })
     }
 
     pub fn insert_one(&mut self, x: u64) -> bool {

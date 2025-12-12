@@ -6,7 +6,7 @@ use std::{
 
 use bytes::{Buf, Bytes, BytesMut};
 
-use crate::range_set::RangeSet;
+use crate::range_set::ArrayRangeSet;
 
 /// Helper to assemble unordered stream frames into an ordered stream
 #[derive(Debug, Default)]
@@ -46,7 +46,7 @@ impl Assembler {
                 // Get rid of possible duplicates
                 self.defragment();
             }
-            let mut recvd = RangeSet::new();
+            let mut recvd = ArrayRangeSet::new();
             recvd.insert(0..self.bytes_read);
             for chunk in &self.data {
                 recvd.insert(chunk.offset..chunk.offset + chunk.bytes.len() as u64);
@@ -157,7 +157,8 @@ impl Assembler {
         self.end = self.end.max(offset + bytes.len() as u64);
         if let State::Unordered { ref mut recvd } = self.state {
             // Discard duplicate data
-            for duplicate in recvd.replace(offset..offset + bytes.len() as u64) {
+            let range = offset..offset + bytes.len() as u64;
+            for duplicate in recvd.iter_range(range.clone()) {
                 if duplicate.start > offset {
                     let buffer = Buffer::new(
                         offset,
@@ -172,6 +173,7 @@ impl Assembler {
                 bytes.advance((duplicate.end - offset) as usize);
                 offset = duplicate.end;
             }
+            recvd.insert(range);
         } else if offset < self.bytes_read {
             if (offset + bytes.len() as u64) <= self.bytes_read {
                 return;
@@ -321,7 +323,7 @@ enum State {
     Unordered {
         /// The set of offsets that have been received from the peer, including portions not yet
         /// read by the application.
-        recvd: RangeSet,
+        recvd: ArrayRangeSet,
     },
 }
 
