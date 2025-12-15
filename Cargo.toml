@@ -65,6 +65,7 @@ debug = true
 elided_lifetimes_in_paths = "warn"
 # https://rust-fuzz.github.io/book/cargo-fuzz/guide.html#cfgfuzzing
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(fuzzing)'] }
+unnameable_types = "warn"
 unreachable_pub = "warn"
 
 [workspace.lints.clippy]

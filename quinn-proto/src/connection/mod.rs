@@ -4011,7 +4011,7 @@ impl State {
 mod state {
     use super::*;
 
-    #[allow(unreachable_pub)] // fuzzing only
+    #[allow(unnameable_types, unreachable_pub)] // fuzzing only
     #[derive(Clone)]
     pub struct Handshake {
         /// Whether the remote CID has been set by the peer yet
@@ -4028,7 +4028,7 @@ mod state {
         pub(super) client_hello: Option<Bytes>,
     }
 
-    #[allow(unreachable_pub)] // fuzzing only
+    #[allow(unnameable_types, unreachable_pub)] // fuzzing only
     #[derive(Clone)]
     pub struct Closed {
         pub(super) reason: Close,
