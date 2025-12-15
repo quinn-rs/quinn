@@ -388,6 +388,20 @@ fn send(
 
 #[cfg(apple_fast)]
 fn send(state: &UdpSocketState, io: SockRef<'_>, transmit: &Transmit<'_>) -> io::Result<()> {
+    if probe::is_fast_path_available() {
+        send_via_sendmsg_x(state, io, transmit)
+    } else {
+        send_single(state, io, transmit)
+    }
+}
+
+/// Send using the fast `sendmsg_x` API.
+#[cfg(apple_fast)]
+fn send_via_sendmsg_x(
+    state: &UdpSocketState,
+    io: SockRef<'_>,
+    transmit: &Transmit<'_>,
+) -> io::Result<()> {
     let mut hdrs = unsafe { mem::zeroed::<[msghdr_x; BATCH_SIZE]>() };
     let mut iovs = unsafe { mem::zeroed::<[libc::iovec; BATCH_SIZE]>() };
     let mut ctrls = [cmsg::Aligned([0u8; CMSG_LEN]); BATCH_SIZE];
@@ -401,7 +415,7 @@ fn send(state: &UdpSocketState, io: SockRef<'_>, transmit: &Transmit<'_>) -> io:
         .enumerate()
         .take(BATCH_SIZE)
     {
-        prepare_msg(
+        prepare_msg_x(
             &Transmit {
                 destination: transmit.destination,
                 ecn: transmit.ecn,
@@ -437,6 +451,11 @@ fn send(state: &UdpSocketState, io: SockRef<'_>, transmit: &Transmit<'_>) -> io:
 
 #[cfg(any(target_os = "openbsd", target_os = "netbsd", apple_slow))]
 fn send(state: &UdpSocketState, io: SockRef<'_>, transmit: &Transmit<'_>) -> io::Result<()> {
+    send_single(state, io, transmit)
+}
+
+#[cfg(any(target_os = "openbsd", target_os = "netbsd", apple))]
+fn send_single(state: &UdpSocketState, io: SockRef<'_>, transmit: &Transmit<'_>) -> io::Result<()> {
     let mut hdr: libc::msghdr = unsafe { mem::zeroed() };
     let mut iov: libc::iovec = unsafe { mem::zeroed() };
     let mut ctrl = cmsg::Aligned([0u8; CMSG_LEN]);
@@ -516,6 +535,20 @@ fn recv(io: SockRef<'_>, bufs: &mut [IoSliceMut<'_>], meta: &mut [RecvMeta]) -> 
 
 #[cfg(apple_fast)]
 fn recv(io: SockRef<'_>, bufs: &mut [IoSliceMut<'_>], meta: &mut [RecvMeta]) -> io::Result<usize> {
+    if probe::is_fast_path_available() {
+        recv_via_recvmsg_x(io, bufs, meta)
+    } else {
+        recv_single(io, bufs, meta)
+    }
+}
+
+/// Receive using the fast `recvmsg_x` API.
+#[cfg(apple_fast)]
+fn recv_via_recvmsg_x(
+    io: SockRef<'_>,
+    bufs: &mut [IoSliceMut<'_>],
+    meta: &mut [RecvMeta],
+) -> io::Result<usize> {
     let mut names = [MaybeUninit::<libc::sockaddr_storage>::uninit(); BATCH_SIZE];
     // MacOS 10.15 `recvmsg_x` does not override the `msghdr_x`
     // `msg_controllen`. Thus, after the call to `recvmsg_x`, one does not know
@@ -527,7 +560,7 @@ fn recv(io: SockRef<'_>, bufs: &mut [IoSliceMut<'_>], meta: &mut [RecvMeta]) -> 
     let mut hdrs = unsafe { mem::zeroed::<[msghdr_x; BATCH_SIZE]>() };
     let max_msg_count = bufs.len().min(BATCH_SIZE);
     for i in 0..max_msg_count {
-        prepare_recv(&mut bufs[i], &mut names[i], &mut ctrls[i], &mut hdrs[i]);
+        prepare_recv_x(&mut bufs[i], &mut names[i], &mut ctrls[i], &mut hdrs[i]);
     }
     let msg_count = loop {
         let n = unsafe { recvmsg_x(io.as_raw_fd(), hdrs.as_mut_ptr(), max_msg_count as _, 0) };
@@ -557,6 +590,21 @@ fn recv(io: SockRef<'_>, bufs: &mut [IoSliceMut<'_>], meta: &mut [RecvMeta]) -> 
     apple_slow
 ))]
 fn recv(io: SockRef<'_>, bufs: &mut [IoSliceMut<'_>], meta: &mut [RecvMeta]) -> io::Result<usize> {
+    recv_single(io, bufs, meta)
+}
+
+#[cfg(any(
+    target_os = "openbsd",
+    target_os = "netbsd",
+    target_os = "dragonfly",
+    solarish,
+    apple
+))]
+fn recv_single(
+    io: SockRef<'_>,
+    bufs: &mut [IoSliceMut<'_>],
+    meta: &mut [RecvMeta],
+) -> io::Result<usize> {
     let mut name = MaybeUninit::<libc::sockaddr_storage>::uninit();
     let mut ctrl = cmsg::Aligned(MaybeUninit::<[u8; CMSG_LEN]>::uninit());
     let mut hdr = unsafe { mem::zeroed::<libc::msghdr>() };
@@ -588,8 +636,7 @@ const CMSG_LEN: usize = 88;
 fn prepare_msg(
     transmit: &Transmit<'_>,
     dst_addr: &socket2::SockAddr,
-    #[cfg(not(apple_fast))] hdr: &mut libc::msghdr,
-    #[cfg(apple_fast)] hdr: &mut msghdr_x,
+    hdr: &mut libc::msghdr,
     iov: &mut libc::iovec,
     ctrl: &mut cmsg::Aligned<[u8; CMSG_LEN]>,
     #[allow(unused_variables)] // only used on FreeBSD & macOS
@@ -679,7 +726,66 @@ fn prepare_msg(
     encoder.finish();
 }
 
-#[cfg(not(apple_fast))]
+/// Prepares an `msghdr_x` for use with `sendmsg_x`.
+#[cfg(apple_fast)]
+fn prepare_msg_x(
+    transmit: &Transmit<'_>,
+    dst_addr: &socket2::SockAddr,
+    hdr: &mut msghdr_x,
+    iov: &mut libc::iovec,
+    ctrl: &mut cmsg::Aligned<[u8; CMSG_LEN]>,
+    #[allow(unused_variables)] encode_src_ip: bool,
+    sendmsg_einval: bool,
+) {
+    iov.iov_base = transmit.contents.as_ptr() as *const _ as *mut _;
+    iov.iov_len = transmit.contents.len();
+
+    let name = dst_addr.as_ptr() as *mut libc::c_void;
+    let namelen = dst_addr.len();
+    hdr.msg_name = name as *mut _;
+    hdr.msg_namelen = namelen;
+    hdr.msg_iov = iov;
+    hdr.msg_iovlen = 1;
+
+    hdr.msg_control = ctrl.0.as_mut_ptr() as _;
+    hdr.msg_controllen = CMSG_LEN as _;
+    let mut encoder = unsafe { cmsg::Encoder::new(hdr) };
+    let ecn = transmit.ecn.map_or(0, |x| x as libc::c_int);
+    let is_ipv4 = transmit.destination.is_ipv4()
+        || matches!(transmit.destination.ip(), IpAddr::V6(addr) if addr.to_ipv4_mapped().is_some());
+    if is_ipv4 {
+        if !sendmsg_einval {
+            encoder.push(libc::IPPROTO_IP, libc::IP_TOS, ecn as IpTosTy);
+        }
+    } else {
+        encoder.push(libc::IPPROTO_IPV6, libc::IPV6_TCLASS, ecn);
+    }
+
+    if let Some(ip) = &transmit.src_ip {
+        match ip {
+            IpAddr::V4(v4) => {
+                if encode_src_ip {
+                    let addr = libc::in_addr {
+                        s_addr: u32::from_ne_bytes(v4.octets()),
+                    };
+                    encoder.push(libc::IPPROTO_IP, libc::IP_RECVDSTADDR, addr);
+                }
+            }
+            IpAddr::V6(v6) => {
+                let pktinfo = libc::in6_pktinfo {
+                    ipi6_ifindex: 0,
+                    ipi6_addr: libc::in6_addr {
+                        s6_addr: v6.octets(),
+                    },
+                };
+                encoder.push(libc::IPPROTO_IPV6, libc::IPV6_PKTINFO, pktinfo);
+            }
+        }
+    }
+
+    encoder.finish();
+}
+
 fn prepare_recv(
     buf: &mut IoSliceMut,
     name: &mut MaybeUninit<libc::sockaddr_storage>,
@@ -695,8 +801,9 @@ fn prepare_recv(
     hdr.msg_flags = 0;
 }
 
+/// Prepares an `msghdr_x` for receiving with `recvmsg_x`.
 #[cfg(apple_fast)]
-fn prepare_recv(
+fn prepare_recv_x(
     buf: &mut IoSliceMut,
     name: &mut MaybeUninit<libc::sockaddr_storage>,
     ctrl: &mut cmsg::Aligned<[u8; CMSG_LEN]>,
@@ -712,109 +819,131 @@ fn prepare_recv(
     hdr.msg_datalen = buf.len();
 }
 
-fn decode_recv(
+/// Decoded metadata from control messages.
+struct DecodedCmsg {
+    ecn_bits: u8,
+    dst_ip: Option<IpAddr>,
+    interface_index: Option<u32>,
+    stride: usize,
+}
+
+impl DecodedCmsg {
+    fn new(len: usize) -> Self {
+        Self {
+            ecn_bits: 0,
+            dst_ip: None,
+            interface_index: None,
+            stride: len,
+        }
+    }
+}
+
+/// Decodes a control message and updates the decoded state.
+fn decode_cmsg(cmsg: &libc::cmsghdr, decoded: &mut DecodedCmsg) {
+    match (cmsg.cmsg_level, cmsg.cmsg_type) {
+        (libc::IPPROTO_IP, libc::IP_TOS) => unsafe {
+            decoded.ecn_bits = cmsg::decode::<u8, libc::cmsghdr>(cmsg);
+        },
+        // FreeBSD uses IP_RECVTOS here, and we can be liberal because cmsgs are opt-in.
+        #[cfg(not(any(
+            target_os = "openbsd",
+            target_os = "netbsd",
+            target_os = "dragonfly",
+            solarish
+        )))]
+        (libc::IPPROTO_IP, libc::IP_RECVTOS) => unsafe {
+            decoded.ecn_bits = cmsg::decode::<u8, libc::cmsghdr>(cmsg);
+        },
+        (libc::IPPROTO_IPV6, libc::IPV6_TCLASS) => unsafe {
+            // Temporary hack around broken macos ABI. Remove once upstream fixes it.
+            // https://bugreport.apple.com/web/?problemID=48761855
+            #[allow(clippy::unnecessary_cast)] // cmsg.cmsg_len defined as size_t
+            if cfg!(apple)
+                && cmsg.cmsg_len as usize == libc::CMSG_LEN(mem::size_of::<u8>() as _) as usize
+            {
+                decoded.ecn_bits = cmsg::decode::<u8, libc::cmsghdr>(cmsg);
+            } else {
+                decoded.ecn_bits = cmsg::decode::<libc::c_int, libc::cmsghdr>(cmsg) as u8;
+            }
+        },
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        (libc::IPPROTO_IP, libc::IP_PKTINFO) => {
+            let pktinfo = unsafe { cmsg::decode::<libc::in_pktinfo, libc::cmsghdr>(cmsg) };
+            decoded.dst_ip = Some(IpAddr::V4(Ipv4Addr::from(
+                pktinfo.ipi_addr.s_addr.to_ne_bytes(),
+            )));
+            decoded.interface_index = Some(pktinfo.ipi_ifindex as u32);
+        }
+        #[cfg(any(bsd, apple))]
+        (libc::IPPROTO_IP, libc::IP_RECVDSTADDR) => {
+            let in_addr = unsafe { cmsg::decode::<libc::in_addr, libc::cmsghdr>(cmsg) };
+            decoded.dst_ip = Some(IpAddr::V4(Ipv4Addr::from(in_addr.s_addr.to_ne_bytes())));
+        }
+        (libc::IPPROTO_IPV6, libc::IPV6_PKTINFO) => {
+            let pktinfo = unsafe { cmsg::decode::<libc::in6_pktinfo, libc::cmsghdr>(cmsg) };
+            decoded.dst_ip = Some(IpAddr::V6(Ipv6Addr::from(pktinfo.ipi6_addr.s6_addr)));
+            decoded.interface_index = Some(pktinfo.ipi6_ifindex as u32);
+        }
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        (libc::SOL_UDP, gro::UDP_GRO) => unsafe {
+            decoded.stride = cmsg::decode::<libc::c_int, libc::cmsghdr>(cmsg) as usize;
+        },
+        _ => {}
+    }
+}
+
+fn decode_recv<M: cmsg::MsgHdr<ControlMessage = libc::cmsghdr>>(
     name: &MaybeUninit<libc::sockaddr_storage>,
-    #[cfg(not(apple_fast))] hdr: &libc::msghdr,
-    #[cfg(apple_fast)] hdr: &msghdr_x,
+    hdr: &M,
     len: usize,
 ) -> io::Result<RecvMeta> {
     let name = unsafe { name.assume_init() };
-    let mut ecn_bits = 0;
-    let mut dst_ip = None;
-    let mut interface_index = None;
-    #[allow(unused_mut)] // only mutable on Linux
-    let mut stride = len;
+    let mut decoded = DecodedCmsg::new(len);
 
     let cmsg_iter = unsafe { cmsg::Iter::new(hdr) };
     for cmsg in cmsg_iter {
-        match (cmsg.cmsg_level, cmsg.cmsg_type) {
-            (libc::IPPROTO_IP, libc::IP_TOS) => unsafe {
-                ecn_bits = cmsg::decode::<u8, libc::cmsghdr>(cmsg);
-            },
-            // FreeBSD uses IP_RECVTOS here, and we can be liberal because cmsgs are opt-in.
-            #[cfg(not(any(
-                target_os = "openbsd",
-                target_os = "netbsd",
-                target_os = "dragonfly",
-                solarish
-            )))]
-            (libc::IPPROTO_IP, libc::IP_RECVTOS) => unsafe {
-                ecn_bits = cmsg::decode::<u8, libc::cmsghdr>(cmsg);
-            },
-            (libc::IPPROTO_IPV6, libc::IPV6_TCLASS) => unsafe {
-                // Temporary hack around broken macos ABI. Remove once upstream fixes it.
-                // https://bugreport.apple.com/web/?problemID=48761855
-                #[allow(clippy::unnecessary_cast)] // cmsg.cmsg_len defined as size_t
-                if cfg!(apple)
-                    && cmsg.cmsg_len as usize == libc::CMSG_LEN(mem::size_of::<u8>() as _) as usize
-                {
-                    ecn_bits = cmsg::decode::<u8, libc::cmsghdr>(cmsg);
-                } else {
-                    ecn_bits = cmsg::decode::<libc::c_int, libc::cmsghdr>(cmsg) as u8;
-                }
-            },
-            #[cfg(any(target_os = "linux", target_os = "android"))]
-            (libc::IPPROTO_IP, libc::IP_PKTINFO) => {
-                let pktinfo = unsafe { cmsg::decode::<libc::in_pktinfo, libc::cmsghdr>(cmsg) };
-                dst_ip = Some(IpAddr::V4(Ipv4Addr::from(
-                    pktinfo.ipi_addr.s_addr.to_ne_bytes(),
-                )));
-                interface_index = Some(pktinfo.ipi_ifindex as u32);
-            }
-            #[cfg(any(bsd, apple))]
-            (libc::IPPROTO_IP, libc::IP_RECVDSTADDR) => {
-                let in_addr = unsafe { cmsg::decode::<libc::in_addr, libc::cmsghdr>(cmsg) };
-                dst_ip = Some(IpAddr::V4(Ipv4Addr::from(in_addr.s_addr.to_ne_bytes())));
-            }
-            (libc::IPPROTO_IPV6, libc::IPV6_PKTINFO) => {
-                let pktinfo = unsafe { cmsg::decode::<libc::in6_pktinfo, libc::cmsghdr>(cmsg) };
-                dst_ip = Some(IpAddr::V6(Ipv6Addr::from(pktinfo.ipi6_addr.s6_addr)));
-                interface_index = Some(pktinfo.ipi6_ifindex as u32);
-            }
-            #[cfg(any(target_os = "linux", target_os = "android"))]
-            (libc::SOL_UDP, gro::UDP_GRO) => unsafe {
-                stride = cmsg::decode::<libc::c_int, libc::cmsghdr>(cmsg) as usize;
-            },
-            _ => {}
-        }
+        decode_cmsg(cmsg, &mut decoded);
     }
 
-    let addr = match libc::c_int::from(name.ss_family) {
+    let addr = decode_sockaddr(&name)?;
+
+    Ok(RecvMeta {
+        len,
+        stride: decoded.stride,
+        addr,
+        ecn: EcnCodepoint::from_bits(decoded.ecn_bits),
+        dst_ip: decoded.dst_ip,
+        interface_index: decoded.interface_index,
+    })
+}
+
+/// Decodes a `sockaddr_storage` into a `SocketAddr`.
+fn decode_sockaddr(name: &libc::sockaddr_storage) -> io::Result<SocketAddr> {
+    match libc::c_int::from(name.ss_family) {
         libc::AF_INET => {
             // Safety: if the ss_family field is AF_INET then storage must be a sockaddr_in.
             let addr: &libc::sockaddr_in =
-                unsafe { &*(&name as *const _ as *const libc::sockaddr_in) };
-            SocketAddr::V4(SocketAddrV4::new(
+                unsafe { &*(name as *const _ as *const libc::sockaddr_in) };
+            Ok(SocketAddr::V4(SocketAddrV4::new(
                 Ipv4Addr::from(addr.sin_addr.s_addr.to_ne_bytes()),
                 u16::from_be(addr.sin_port),
-            ))
+            )))
         }
         libc::AF_INET6 => {
             // Safety: if the ss_family field is AF_INET6 then storage must be a sockaddr_in6.
             let addr: &libc::sockaddr_in6 =
-                unsafe { &*(&name as *const _ as *const libc::sockaddr_in6) };
-            SocketAddr::V6(SocketAddrV6::new(
+                unsafe { &*(name as *const _ as *const libc::sockaddr_in6) };
+            Ok(SocketAddr::V6(SocketAddrV6::new(
                 Ipv6Addr::from(addr.sin6_addr.s6_addr),
                 u16::from_be(addr.sin6_port),
                 addr.sin6_flowinfo,
                 addr.sin6_scope_id,
-            ))
+            )))
         }
-        f => {
-            return Err(io::Error::other(format!(
-                "expected AF_INET or AF_INET6, got {f} in decode_recv"
-            )));
-        }
-    };
-
-    Ok(RecvMeta {
-        len,
-        stride,
-        addr,
-        ecn: EcnCodepoint::from_bits(ecn_bits),
-        dst_ip,
-        interface_index,
-    })
+        f => Err(io::Error::other(format!(
+            "expected AF_INET or AF_INET6, got {f}"
+        ))),
+    }
 }
 
 #[cfg(not(apple_slow))]
@@ -997,7 +1126,11 @@ mod gso {
     pub(super) fn max_gso_segments() -> usize {
         #[cfg(apple_fast)]
         {
-            BATCH_SIZE
+            if probe::is_fast_path_available() {
+                BATCH_SIZE
+            } else {
+                1
+            }
         }
         #[cfg(not(apple_fast))]
         {
@@ -1005,11 +1138,7 @@ mod gso {
         }
     }
 
-    pub(super) fn set_segment_size(
-        #[cfg(not(apple_fast))] _encoder: &mut cmsg::Encoder<libc::msghdr>,
-        #[cfg(apple_fast)] _encoder: &mut cmsg::Encoder<msghdr_x>,
-        _segment_size: u16,
-    ) {
+    pub(super) fn set_segment_size(_encoder: &mut cmsg::Encoder<libc::msghdr>, _segment_size: u16) {
     }
 }
 
@@ -1091,5 +1220,173 @@ const OPTION_ON: libc::c_int = 1;
 mod gro {
     pub(super) fn gro_segments() -> usize {
         1
+    }
+}
+
+/// Runtime probe to verify that the private `sendmsg_x`/`recvmsg_x` APIs are available.
+///
+/// These are private Apple kernel APIs that may not be available on all OS versions.
+/// Using them on unsupported systems causes a crash. This module forks a child process
+/// to test the APIs safely: if the child crashes, the parent disables the fast path.
+#[cfg(apple_fast)]
+mod probe {
+    use std::{
+        mem,
+        net::{Ipv4Addr, UdpSocket},
+        os::unix::io::AsRawFd,
+        sync::OnceLock,
+    };
+
+    use super::{msghdr_x, recvmsg_x, sendmsg_x};
+
+    /// Cached result of the probe.
+    static FAST_PATH_AVAILABLE: OnceLock<bool> = OnceLock::new();
+
+    /// Returns `true` if `sendmsg_x`/`recvmsg_x` are available on this system.
+    pub(super) fn is_fast_path_available() -> bool {
+        *FAST_PATH_AVAILABLE.get_or_init(run_probe)
+    }
+
+    /// Runs the probe by forking a child process to test the private APIs.
+    fn run_probe() -> bool {
+        match probe(fast_path_available) {
+            Ok(success) => {
+                if success {
+                    crate::log::debug!("Apple fast path enabled");
+                } else {
+                    crate::log::info!("Apple fast path disabled");
+                }
+                success
+            }
+            Err(_e) => {
+                crate::log::info!("Apple fast path disabled");
+                false
+            }
+        }
+    }
+
+    /// Forks a child process and runs the provided test function.
+    ///
+    /// The child runs `test_fn` and exits with status 0 on success, 1 on failure.
+    /// If the child crashes (e.g., due to calling an unavailable API), the parent
+    /// detects this via the child's exit status.
+    ///
+    /// Returns `Ok(true)` if the child exited successfully with status 0,
+    /// `Ok(false)` if the child exited with non-zero status or was killed by a signal,
+    /// and `Err` if `fork` or `waitpid` failed.
+    fn probe(test_fn: fn(&UdpSocket) -> bool) -> Result<bool, std::io::Error> {
+        let socket = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0))?;
+        let addr = socket.local_addr()?;
+        socket.connect(addr)?;
+
+        // Safety: fork() is unsafe because it can cause issues with threads and locks.
+        // We're careful here to only use async-signal-safe operations in the child.
+        let pid = unsafe { libc::fork() };
+        match pid {
+            -1 => Err(std::io::Error::last_os_error()), // Fork failed
+            0 => unsafe { libc::_exit(if test_fn(&socket) { 0 } else { 1 }) }, // Child process: run the test
+            child_pid => {
+                // Parent process: wait for child and check exit status
+                let mut status: libc::c_int = 0;
+                if unsafe { libc::waitpid(child_pid, &mut status, 0) } == -1 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                // Check if child exited normally with status 0
+                Ok(libc::WIFEXITED(status) && libc::WEXITSTATUS(status) == 0)
+            }
+        }
+    }
+
+    /// Tests sendmsg_x and recvmsg_x on the given socket.
+    /// Returns true if both calls succeed.
+    fn fast_path_available(socket: &UdpSocket) -> bool {
+        use std::io::IoSliceMut;
+
+        use super::{CMSG_LEN, cmsg, prepare_msg_x, prepare_recv_x};
+        use crate::Transmit;
+
+        const TEST_DATA: &[u8] = b"QUINN";
+        let addr = match socket.local_addr() {
+            Ok(addr) => addr,
+            Err(_) => return false,
+        };
+
+        // Test sendmsg_x
+        let transmit = Transmit {
+            destination: addr,
+            ecn: None,
+            contents: TEST_DATA,
+            segment_size: None,
+            src_ip: None,
+        };
+        let dst_addr = socket2::SockAddr::from(addr);
+        let mut iov: libc::iovec = unsafe { mem::zeroed() };
+        let mut ctrl = cmsg::Aligned([0u8; CMSG_LEN]);
+        let mut hdr: msghdr_x = unsafe { mem::zeroed() };
+        prepare_msg_x(
+            &transmit, &dst_addr, &mut hdr, &mut iov, &mut ctrl, false, false,
+        );
+        hdr.msg_datalen = TEST_DATA.len();
+        if unsafe { sendmsg_x(socket.as_raw_fd(), &hdr, 1, 0) } < 1 {
+            return false;
+        }
+
+        // Test recvmsg_x
+        let mut recv_buf = [0u8; 32];
+        let mut buf = IoSliceMut::new(&mut recv_buf);
+        let mut name = mem::MaybeUninit::<libc::sockaddr_storage>::uninit();
+        let mut recv_ctrl = cmsg::Aligned([0u8; CMSG_LEN]);
+        let mut recv_hdr: msghdr_x = unsafe { mem::zeroed() };
+        prepare_recv_x(&mut buf, &mut name, &mut recv_ctrl, &mut recv_hdr);
+        if unsafe { recvmsg_x(socket.as_raw_fd(), &recv_hdr, 1, 0) } < 1 {
+            return false;
+        }
+
+        // Verify we received the correct data
+        let received_len = recv_hdr.msg_datalen;
+        received_len == TEST_DATA.len() && recv_buf[..received_len] == *TEST_DATA
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        /// Test that the probe correctly detects when a child is killed by a signal.
+        #[test]
+        fn probe_detects_signal() {
+            fn signaled_test(_socket: &UdpSocket) -> bool {
+                unsafe { libc::kill(libc::getpid(), libc::SIGKILL) };
+                true // unreachable
+            }
+            let result = probe(signaled_test).expect("fork should succeed");
+            assert!(!result, "probe should return false when child is killed");
+        }
+
+        /// Test that the probe correctly detects when a child returns false.
+        #[test]
+        fn probe_detects_failure() {
+            fn failing_test(_socket: &UdpSocket) -> bool {
+                false
+            }
+            let result = probe(failing_test).expect("fork should succeed");
+            assert!(!result, "probe should return false when test returns false");
+        }
+
+        /// Test that the probe correctly detects when a child succeeds.
+        #[test]
+        fn probe_detects_success() {
+            fn successful_test(_socket: &UdpSocket) -> bool {
+                true
+            }
+            let result = probe(successful_test).expect("fork should succeed");
+            assert!(result, "probe should return true when test returns true");
+        }
+
+        /// Test the actual fast path availability
+        #[test]
+        fn probe_fast_path() {
+            let result = probe(fast_path_available).expect("fork should succeed");
+            assert!(result, "probe should return true on current Apple systems");
+        }
     }
 }
