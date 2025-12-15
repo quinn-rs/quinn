@@ -12,7 +12,7 @@ use std::{error::Error, net::SocketAddr, sync::Arc};
 ///
 /// - server_certs: list of trusted certificates.
 #[allow(unused)]
-pub fn make_client_endpoint(
+pub(crate) fn make_client_endpoint(
     bind_addr: SocketAddr,
     server_certs: &[&[u8]],
 ) -> Result<Endpoint, Box<dyn Error + Send + Sync + 'static>> {
@@ -30,7 +30,7 @@ pub fn make_client_endpoint(
 /// - a stream of incoming QUIC connections
 /// - server certificate serialized into DER format
 #[allow(unused)]
-pub fn make_server_endpoint(
+pub(crate) fn make_server_endpoint(
     bind_addr: SocketAddr,
 ) -> Result<(Endpoint, CertificateDer<'static>), Box<dyn Error + Send + Sync + 'static>> {
     let (server_config, server_cert) = configure_server()?;
@@ -70,4 +70,4 @@ fn configure_server()
 }
 
 #[allow(unused)]
-pub const ALPN_QUIC_HTTP: &[&[u8]] = &[b"hq-29"];
+pub(crate) const ALPN_QUIC_HTTP: &[&[u8]] = &[b"hq-29"];

@@ -233,9 +233,9 @@ impl CipherSuite {
     pub fn as_rustls(self) -> rustls::SupportedCipherSuite {
         use rustls::crypto::ring::cipher_suite;
         match self {
-            CipherSuite::Aes128 => cipher_suite::TLS13_AES_128_GCM_SHA256,
-            CipherSuite::Aes256 => cipher_suite::TLS13_AES_256_GCM_SHA384,
-            CipherSuite::Chacha20 => cipher_suite::TLS13_CHACHA20_POLY1305_SHA256,
+            Self::Aes128 => cipher_suite::TLS13_AES_128_GCM_SHA256,
+            Self::Aes256 => cipher_suite::TLS13_AES_256_GCM_SHA384,
+            Self::Chacha20 => cipher_suite::TLS13_CHACHA20_POLY1305_SHA256,
         }
     }
 }
@@ -245,9 +245,9 @@ impl FromStr for CipherSuite {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
-            "aes128" => Ok(CipherSuite::Aes128),
-            "aes256" => Ok(CipherSuite::Aes256),
-            "chacha20" => Ok(CipherSuite::Chacha20),
+            "aes128" => Ok(Self::Aes128),
+            "aes256" => Ok(Self::Aes256),
+            "chacha20" => Ok(Self::Chacha20),
             _ => Err(anyhow::anyhow!("Unknown cipher suite {}", s)),
         }
     }

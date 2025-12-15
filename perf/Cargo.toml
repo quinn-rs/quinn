@@ -40,3 +40,6 @@ socket2 = { workspace = true }
 tokio = { workspace = true, features = ["rt", "macros", "signal", "net"] }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
+
+[lints]
+workspace = true
