@@ -3488,7 +3488,7 @@ impl Connection {
             delay_micros
         );
 
-        frame::Ack::encode(delay as _, space.pending_acks.ranges(), ecn, buf);
+        frame::Ack::encode(delay, space.pending_acks.ranges(), ecn, buf);
         stats.frame_tx.acks += 1;
     }
 

@@ -70,8 +70,8 @@ impl CMsgHdr for libc::cmsghdr {
     }
 
     fn set(&mut self, level: c_int, ty: c_int, len: usize) {
-        self.cmsg_level = level as _;
-        self.cmsg_type = ty as _;
+        self.cmsg_level = level;
+        self.cmsg_type = ty;
         self.cmsg_len = len as _;
     }
 

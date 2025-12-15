@@ -74,7 +74,7 @@ impl<'a, M: MsgHdr> Encoder<'a, M> {
 // by `sendmsg` like API.
 impl<M: MsgHdr> Drop for Encoder<'_, M> {
     fn drop(&mut self) {
-        self.hdr.set_control_len(self.len as _);
+        self.hdr.set_control_len(self.len);
     }
 }
 
