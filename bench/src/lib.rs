@@ -1,3 +1,4 @@
+use core::str;
 use std::{
     convert::TryInto,
     net::{IpAddr, Ipv6Addr, SocketAddr},
@@ -88,11 +89,12 @@ pub async fn connect_client(
     Ok((endpoint, connection))
 }
 
-pub async fn drain_stream(stream: &mut quinn::RecvStream, read_unordered: bool) -> Result<usize> {
+pub async fn drain_stream(mut stream: quinn::RecvStream, read_unordered: bool) -> Result<usize> {
     let mut read = 0;
 
     if read_unordered {
-        while let Some(chunk) = stream.read_chunk(usize::MAX, false).await? {
+        let mut stream = stream.into_unordered();
+        while let Some(chunk) = stream.read_chunk(usize::MAX).await? {
             read += chunk.bytes.len();
         }
     } else {

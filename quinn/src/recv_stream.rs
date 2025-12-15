@@ -57,6 +57,12 @@ pub struct RecvStream {
     reset: Option<VarInt>,
 }
 
+#[derive(Debug)]
+#[repr(transparent)]
+pub struct UnorderedRecvStream {
+    inner: RecvStream,
+}
+
 impl RecvStream {
     pub(crate) fn new(conn: ConnectionRef, stream: StreamId, is_0rtt: bool) -> Self {
         Self {
@@ -159,25 +165,20 @@ impl RecvStream {
     /// Read the next segment of data
     ///
     /// Yields `None` if the stream was finished. Otherwise, yields a segment of data and its
-    /// offset in the stream. If `ordered` is `true`, the chunk's offset will be immediately after
-    /// the last data yielded by `read()` or `read_chunk()`. If `ordered` is `false`, segments may
-    /// be received in any order, and the `Chunk`'s `offset` field can be used to determine
-    /// ordering in the caller. Unordered reads are less prone to head-of-line blocking within a
-    /// stream, but require the application to manage reassembling the original data.
+    /// offset in the stream. The chunk's offset will be immediately after
+    /// the last data yielded by `read()` or `read_chunk()`.
+    ///
+    /// For unordered reads, convert the stream into an unordered stream using `Self::into_unordered`.
     ///
     /// Slightly more efficient than `read` due to not copying. Chunk boundaries do not correspond
     /// to peer writes, and hence cannot be used as framing.
     ///
     /// This operation is cancel-safe.
-    pub async fn read_chunk(
-        &mut self,
-        max_length: usize,
-        ordered: bool,
-    ) -> Result<Option<Chunk>, ReadError> {
+    pub async fn read_chunk(&mut self, max_length: usize) -> Result<Option<Chunk>, ReadError> {
         ReadChunk {
             stream: self,
             max_length,
-            ordered,
+            ordered: true,
         }
         .await
     }
@@ -407,6 +408,67 @@ impl RecvStream {
                 }
             },
         }
+    }
+
+    /// Convert this stream into an unordered stream
+    pub fn into_unordered(self) -> UnorderedRecvStream {
+        UnorderedRecvStream { inner: self }
+    }
+}
+
+impl UnorderedRecvStream {
+    /// Read the next segment of data
+    ///
+    /// Yields `None` if the stream was finished. Otherwise, yields a segment of data and its
+    /// offset in the stream. Segments may be received in any order, and the `Chunk`'s `offset`
+    /// field can be used to determine ordering in the caller. Unordered reads are less prone
+    /// to head-of-line blocking within a stream, but require the application to manage
+    /// reassembling the original data.
+    ///
+    /// Slightly more efficient than `read` due to not copying. Chunk boundaries do not correspond
+    /// to peer writes, and hence cannot be used as framing.
+    ///
+    /// This operation is cancel-safe.
+    pub async fn read_chunk(&mut self, max_length: usize) -> Result<Option<Chunk>, ReadError> {
+        ReadChunk {
+            stream: &mut self.inner,
+            max_length,
+            ordered: false,
+        }
+        .await
+    }
+
+    /// Get the identity of this stream
+    pub fn id(&self) -> StreamId {
+        self.inner.id()
+    }
+
+    /// Check if this stream has been opened during 0-RTT.
+    ///
+    /// In which case any non-idempotent request should be considered dangerous at the application
+    /// level. Because read data is subject to replay attacks.
+    pub fn is_0rtt(&self) -> bool {
+        self.inner.is_0rtt()
+    }
+
+    /// Stop accepting data
+    ///
+    /// Discards unread data and notifies the peer to stop transmitting. Once stopped, further
+    /// attempts to operate on a stream will yield `ClosedStream` errors.
+    pub fn stop(&mut self, error_code: VarInt) -> Result<(), ClosedStream> {
+        self.inner.stop(error_code)
+    }
+
+    /// Completes when the stream has been reset by the peer or otherwise closed
+    ///
+    /// Yields `Some` with the reset error code when the stream is reset by the peer. Yields `None`
+    /// when the stream was previously [`stop()`](Self::stop)ed, or when the stream was
+    /// [`finish()`](crate::SendStream::finish)ed by the peer and all data has been received, after
+    /// which it is no longer meaningful for the stream to be reset.
+    ///
+    /// This operation is cancel-safe.
+    pub async fn received_reset(&mut self) -> Result<Option<VarInt>, ResetError> {
+        self.inner.received_reset().await
     }
 }
 

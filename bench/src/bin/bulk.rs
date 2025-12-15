@@ -75,7 +75,7 @@ async fn server(endpoint: quinn::Endpoint, opt: Opt) -> Result<()> {
 
         server_tasks.push(tokio::spawn(async move {
             loop {
-                let (mut send_stream, mut recv_stream) = match connection.accept_bi().await {
+                let (mut send_stream, recv_stream) = match connection.accept_bi().await {
                     Err(quinn::ConnectionError::ApplicationClosed(_)) => break,
                     Err(e) => {
                         eprintln!("accepting stream failed: {e:?}");
@@ -86,7 +86,7 @@ async fn server(endpoint: quinn::Endpoint, opt: Opt) -> Result<()> {
                 trace!("stream established");
 
                 tokio::spawn(async move {
-                    drain_stream(&mut recv_stream, opt.read_unordered).await?;
+                    drain_stream(recv_stream, opt.read_unordered).await?;
                     send_data_on_stream(&mut send_stream, opt.download_size).await?;
                     Ok::<_, anyhow::Error>(())
                 });
@@ -181,7 +181,7 @@ async fn handle_client_stream(
 ) -> Result<(TransferResult, TransferResult)> {
     let start = Instant::now();
 
-    let (mut send_stream, mut recv_stream) = connection
+    let (mut send_stream, recv_stream) = connection
         .open_bi()
         .await
         .context("failed to open stream")?;
@@ -191,7 +191,7 @@ async fn handle_client_stream(
     let upload_result = TransferResult::new(start.elapsed(), upload_size);
 
     let start = Instant::now();
-    let size = drain_stream(&mut recv_stream, read_unordered).await?;
+    let size = drain_stream(recv_stream, read_unordered).await?;
     let download_result = TransferResult::new(start.elapsed(), size as u64);
 
     Ok((upload_result, download_result))
