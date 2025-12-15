@@ -35,7 +35,7 @@ impl AsyncTimer for Timer {
         self.set_at(t)
     }
 
-    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<()> {
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<()> {
         Future::poll(self, cx).map(|_| ())
     }
 }
@@ -60,7 +60,7 @@ impl UdpSenderHelperSocket for UdpSocket {
         self.inner.max_gso_segments()
     }
 
-    fn try_send(&self, transmit: &udp::Transmit) -> io::Result<()> {
+    fn try_send(&self, transmit: &udp::Transmit<'_>) -> io::Result<()> {
         self.inner.send((&self.io).into(), transmit)
     }
 }
@@ -75,7 +75,7 @@ impl AsyncUdpSocket for UdpSocket {
 
     fn poll_recv(
         &mut self,
-        cx: &mut Context,
+        cx: &mut Context<'_>,
         bufs: &mut [io::IoSliceMut<'_>],
         meta: &mut [udp::RecvMeta],
     ) -> Poll<io::Result<usize>> {

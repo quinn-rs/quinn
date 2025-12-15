@@ -107,7 +107,7 @@ impl RecvStream {
     /// [`finish`]: crate::SendStream::finish
     pub fn poll_read(
         &mut self,
-        cx: &mut Context,
+        cx: &mut Context<'_>,
         buf: &mut [u8],
     ) -> Poll<Result<usize, ReadError>> {
         let mut buf = ReadBuf::new(buf);
@@ -129,7 +129,7 @@ impl RecvStream {
     /// [`finish`]: crate::SendStream::finish
     pub fn poll_read_buf(
         &mut self,
-        cx: &mut Context,
+        cx: &mut Context<'_>,
         buf: &mut ReadBuf<'_>,
     ) -> Poll<Result<(), ReadError>> {
         if buf.remaining() == 0 {
@@ -192,7 +192,7 @@ impl RecvStream {
     /// when the stream becomes readable or is closed.
     fn poll_read_chunk(
         &mut self,
-        cx: &mut Context,
+        cx: &mut Context<'_>,
         max_length: usize,
         ordered: bool,
     ) -> Poll<Result<Option<Chunk>, ReadError>> {
@@ -219,7 +219,7 @@ impl RecvStream {
     /// Foundation of [`Self::read_chunks`]
     fn poll_read_chunks(
         &mut self,
-        cx: &mut Context,
+        cx: &mut Context<'_>,
         bufs: &mut [Bytes],
     ) -> Poll<Result<Option<usize>, ReadError>> {
         if bufs.is_empty() {
@@ -347,12 +347,12 @@ impl RecvStream {
     /// reading: the amount of data read, and the status after the final read call.
     fn poll_read_generic<T, U>(
         &mut self,
-        cx: &mut Context,
+        cx: &mut Context<'_>,
         ordered: bool,
         mut read_fn: T,
     ) -> Poll<Result<Option<U>, ReadError>>
     where
-        T: FnMut(&mut Chunks) -> ReadStatus<U>,
+        T: FnMut(&mut Chunks<'_>) -> ReadStatus<U>,
     {
         use proto::ReadError::*;
         if self.all_data_read {
@@ -438,7 +438,7 @@ struct ReadToEnd<'a> {
 
 impl Future for ReadToEnd<'_> {
     type Output = Result<Vec<u8>, ReadToEndError>;
-    fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         loop {
             match ready!(self.stream.poll_read_chunk(cx, usize::MAX, false))? {
                 Some(chunk) => {
@@ -483,7 +483,7 @@ pub enum ReadToEndError {
 impl futures_io::AsyncRead for RecvStream {
     fn poll_read(
         self: Pin<&mut Self>,
-        cx: &mut Context,
+        cx: &mut Context<'_>,
         buf: &mut [u8],
     ) -> Poll<io::Result<usize>> {
         let mut buf = ReadBuf::new(buf);
@@ -619,7 +619,7 @@ struct Read<'a> {
 impl Future for Read<'_> {
     type Output = Result<Option<usize>, ReadError>;
 
-    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = self.get_mut();
         ready!(this.stream.poll_read_buf(cx, &mut this.buf))?;
         match this.buf.filled().len() {
@@ -639,7 +639,7 @@ struct ReadExact<'a> {
 
 impl Future for ReadExact<'_> {
     type Output = Result<(), ReadExactError>;
-    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = self.get_mut();
         let mut remaining = this.buf.remaining();
         while remaining > 0 {
@@ -676,7 +676,7 @@ struct ReadChunk<'a> {
 
 impl Future for ReadChunk<'_> {
     type Output = Result<Option<Chunk>, ReadError>;
-    fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let (max_length, ordered) = (self.max_length, self.ordered);
         self.stream.poll_read_chunk(cx, max_length, ordered)
     }
@@ -692,7 +692,7 @@ struct ReadChunks<'a> {
 
 impl Future for ReadChunks<'_> {
     type Output = Result<Option<usize>, ReadError>;
-    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = self.get_mut();
         this.stream.poll_read_chunks(cx, this.bufs)
     }

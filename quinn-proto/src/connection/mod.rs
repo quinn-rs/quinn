@@ -3813,7 +3813,7 @@ impl Connection {
 }
 
 impl fmt::Debug for Connection {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Connection")
             .field("handshake_cid", &self.handshake_cid)
             .finish()
