@@ -62,6 +62,7 @@ debug = true
 debug = true
 
 [workspace.lints.rust]
+elided_lifetimes_in_paths = "warn"
 # https://rust-fuzz.github.io/book/cargo-fuzz/guide.html#cfgfuzzing
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(fuzzing)'] }
 unreachable_pub = "warn"

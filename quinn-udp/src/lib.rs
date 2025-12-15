@@ -162,7 +162,7 @@ const IO_ERROR_LOG_INTERVAL: Duration = std::time::Duration::from_secs(60);
 fn log_sendmsg_error(
     last_send_error: &Mutex<Instant>,
     err: impl core::fmt::Debug,
-    transmit: &Transmit,
+    transmit: &Transmit<'_>,
 ) {
     let now = Instant::now();
     let last_send_error = &mut *last_send_error.lock().expect("poisend lock");

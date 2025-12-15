@@ -378,7 +378,7 @@ pub(crate) struct EndpointDriver(pub(crate) EndpointRef);
 impl Future for EndpointDriver {
     type Output = Result<(), io::Error>;
 
-    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let mut endpoint = self.0.state.lock().unwrap();
         if endpoint.driver.is_none() {
             endpoint.driver = Some(cx.waker().clone());
@@ -505,7 +505,7 @@ pub(crate) struct Shared {
 }
 
 impl State {
-    fn drive_recv(&mut self, cx: &mut Context, now: Instant) -> Result<bool, io::Error> {
+    fn drive_recv(&mut self, cx: &mut Context<'_>, now: Instant) -> Result<bool, io::Error> {
         let get_time = || self.runtime.now();
         self.recv_state.recv_limiter.start_cycle(get_time);
         if let Some(socket) = &mut self.prev_socket {
@@ -540,7 +540,7 @@ impl State {
         Ok(poll_res.keep_going)
     }
 
-    fn handle_events(&mut self, cx: &mut Context, shared: &Shared) -> bool {
+    fn handle_events(&mut self, cx: &mut Context<'_>, shared: &Shared) -> bool {
         for _ in 0..IO_LOOP_BOUND {
             let (ch, event) = match self.events.poll_recv(cx) {
                 Poll::Ready(Some(x)) => x,
@@ -821,7 +821,7 @@ impl RecvState {
 
     fn poll_socket(
         &mut self,
-        cx: &mut Context,
+        cx: &mut Context<'_>,
         endpoint: &mut proto::Endpoint,
         socket: &mut dyn AsyncUdpSocket,
         sender: &mut Pin<Box<dyn UdpSender>>,
@@ -830,7 +830,7 @@ impl RecvState {
     ) -> Result<PollProgress, io::Error> {
         let mut received_connection_packet = false;
         let mut metas = [RecvMeta::default(); BATCH_SIZE];
-        let mut iovs: [IoSliceMut; BATCH_SIZE] = {
+        let mut iovs: [IoSliceMut<'_>; BATCH_SIZE] = {
             let mut bufs = self
                 .recv_buf
                 .chunks_mut(self.recv_buf.len() / BATCH_SIZE)
@@ -911,7 +911,7 @@ impl RecvState {
 }
 
 impl fmt::Debug for RecvState {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("RecvState")
             .field("incoming", &self.incoming)
             .field("connections", &self.connections)
