@@ -82,7 +82,7 @@ pub struct TransferResult {
 impl TransferResult {
     pub fn new(duration: Duration, size: u64) -> Self {
         let throughput = throughput_bps(duration, size);
-        TransferResult {
+        Self {
             duration,
             size,
             throughput,

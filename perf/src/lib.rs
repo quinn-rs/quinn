@@ -207,9 +207,9 @@ pub enum CongestionAlgorithm {
 impl CongestionAlgorithm {
     pub fn build(self) -> Arc<dyn ControllerFactory + Send + Sync + 'static> {
         match self {
-            CongestionAlgorithm::Cubic => Arc::new(congestion::CubicConfig::default()),
-            CongestionAlgorithm::Bbr => Arc::new(congestion::BbrConfig::default()),
-            CongestionAlgorithm::NewReno => Arc::new(congestion::NewRenoConfig::default()),
+            Self::Cubic => Arc::new(congestion::CubicConfig::default()),
+            Self::Bbr => Arc::new(congestion::BbrConfig::default()),
+            Self::NewReno => Arc::new(congestion::NewRenoConfig::default()),
         }
     }
 }
