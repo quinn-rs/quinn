@@ -333,7 +333,7 @@ impl State {
 
 /// Error indicating that an ordered read was performed on a stream after an unordered read
 #[derive(Debug)]
-pub struct IllegalOrderedRead;
+pub(crate) struct IllegalOrderedRead;
 
 #[cfg(test)]
 mod test {

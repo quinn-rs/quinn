@@ -17,7 +17,7 @@ use tinyvec::TinyVec;
 /// of ranges is usually very low (since ACK numbers are in consecutive fashion
 /// unless reordering or packet loss occur).
 #[derive(Debug, Default)]
-pub struct ArrayRangeSet(TinyVec<[Range<u64>; ARRAY_RANGE_SET_INLINE_CAPACITY]>);
+pub(crate) struct ArrayRangeSet(TinyVec<[Range<u64>; ARRAY_RANGE_SET_INLINE_CAPACITY]>);
 
 /// The capacity of elements directly stored in [`ArrayRangeSet`]
 ///
@@ -40,23 +40,24 @@ impl Clone for ArrayRangeSet {
 }
 
 impl ArrayRangeSet {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Default::default()
     }
 
-    pub fn iter(&self) -> impl DoubleEndedIterator<Item = Range<u64>> + '_ {
+    pub(crate) fn iter(&self) -> impl DoubleEndedIterator<Item = Range<u64>> + '_ {
         self.0.iter().cloned()
     }
 
-    pub fn elts(&self) -> impl Iterator<Item = u64> + '_ {
+    pub(crate) fn elts(&self) -> impl Iterator<Item = u64> + '_ {
         self.iter().flatten()
     }
 
-    pub fn len(&self) -> usize {
+    pub(crate) fn len(&self) -> usize {
         self.0.len()
     }
 
-    pub fn contains(&self, x: u64) -> bool {
+    #[cfg(test)]
+    pub(super) fn contains(&self, x: u64) -> bool {
         for range in self.0.iter() {
             if range.start > x {
                 // We only get here if there was no prior range that contained x
@@ -68,20 +69,11 @@ impl ArrayRangeSet {
         false
     }
 
-    pub fn subtract(&mut self, other: &Self) {
-        // TODO: This can potentially be made more efficient, since the we know
-        // individual ranges are not overlapping, and the next range must start
-        // after the last one finished
-        for range in &other.0 {
-            self.remove(range.clone());
-        }
-    }
-
-    pub fn insert_one(&mut self, x: u64) -> bool {
+    pub(crate) fn insert_one(&mut self, x: u64) -> bool {
         self.insert(x..x + 1)
     }
 
-    pub fn insert(&mut self, x: Range<u64>) -> bool {
+    pub(crate) fn insert(&mut self, x: Range<u64>) -> bool {
         let mut result = false;
 
         if x.is_empty() {
@@ -143,7 +135,7 @@ impl ArrayRangeSet {
         true
     }
 
-    pub fn remove(&mut self, x: Range<u64>) -> bool {
+    pub(crate) fn remove(&mut self, x: Range<u64>) -> bool {
         let mut result = false;
 
         if x.is_empty() {
@@ -187,11 +179,11 @@ impl ArrayRangeSet {
         result
     }
 
-    pub fn is_empty(&self) -> bool {
+    pub(crate) fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
 
-    pub fn pop_min(&mut self) -> Option<Range<u64>> {
+    pub(crate) fn pop_min(&mut self) -> Option<Range<u64>> {
         if !self.0.is_empty() {
             Some(self.0.remove(0))
         } else {
@@ -199,11 +191,12 @@ impl ArrayRangeSet {
         }
     }
 
-    pub fn min(&self) -> Option<u64> {
+    #[cfg(test)]
+    pub(super) fn min(&self) -> Option<u64> {
         self.iter().next().map(|x| x.start)
     }
 
-    pub fn max(&self) -> Option<u64> {
+    pub(crate) fn max(&self) -> Option<u64> {
         self.iter().next_back().map(|x| x.end - 1)
     }
 }
