@@ -134,9 +134,13 @@ impl SendStream {
         Ok(())
     }
 
-    fn execute_poll<F, R>(&mut self, cx: &mut Context, write_fn: F) -> Poll<Result<R, WriteError>>
+    fn execute_poll<F, R>(
+        &mut self,
+        cx: &mut Context<'_>,
+        write_fn: F,
+    ) -> Poll<Result<R, WriteError>>
     where
-        F: FnOnce(&mut proto::SendStream) -> Result<R, proto::WriteError>,
+        F: FnOnce(&mut proto::SendStream<'_>) -> Result<R, proto::WriteError>,
     {
         use proto::WriteError::*;
         let mut conn = self.conn.state.lock("SendStream::poll_write");
@@ -282,7 +286,7 @@ impl SendStream {
     /// stream becomes writable or is closed.
     pub fn poll_write(
         self: Pin<&mut Self>,
-        cx: &mut Context,
+        cx: &mut Context<'_>,
         buf: &[u8],
     ) -> Poll<Result<usize, WriteError>> {
         pin!(self.get_mut().write(buf)).as_mut().poll(cx)
@@ -310,15 +314,19 @@ fn send_stream_stopped(
 
 #[cfg(feature = "futures-io")]
 impl futures_io::AsyncWrite for SendStream {
-    fn poll_write(self: Pin<&mut Self>, cx: &mut Context, buf: &[u8]) -> Poll<io::Result<usize>> {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
         self.poll_write(cx, buf).map_err(Into::into)
     }
 
-    fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context) -> Poll<io::Result<()>> {
+    fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
         Poll::Ready(Ok(()))
     }
 
-    fn poll_close(self: Pin<&mut Self>, _cx: &mut Context) -> Poll<io::Result<()>> {
+    fn poll_close(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
         Poll::Ready(self.get_mut().finish().map_err(Into::into))
     }
 }
@@ -332,11 +340,11 @@ impl tokio::io::AsyncWrite for SendStream {
         self.poll_write(cx, buf).map_err(Into::into)
     }
 
-    fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context) -> Poll<io::Result<()>> {
+    fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
         Poll::Ready(Ok(()))
     }
 
-    fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut Context) -> Poll<io::Result<()>> {
+    fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
         Poll::Ready(self.get_mut().finish().map_err(Into::into))
     }
 }

@@ -1199,7 +1199,7 @@ impl Incoming {
 }
 
 impl fmt::Debug for Incoming {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Incoming")
             .field("addresses", &self.addresses)
             .field("ecn", &self.ecn)

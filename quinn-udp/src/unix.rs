@@ -677,14 +677,14 @@ fn prepare_msg(
 
 #[cfg(not(apple_fast))]
 fn prepare_recv(
-    buf: &mut IoSliceMut,
+    buf: &mut IoSliceMut<'_>,
     name: &mut MaybeUninit<libc::sockaddr_storage>,
     ctrl: &mut cmsg::Aligned<MaybeUninit<[u8; CMSG_LEN]>>,
     hdr: &mut libc::msghdr,
 ) {
     hdr.msg_name = name.as_mut_ptr() as _;
     hdr.msg_namelen = mem::size_of::<libc::sockaddr_storage>() as _;
-    hdr.msg_iov = buf as *mut IoSliceMut as *mut libc::iovec;
+    hdr.msg_iov = buf as *mut IoSliceMut<'_> as *mut libc::iovec;
     hdr.msg_iovlen = 1;
     hdr.msg_control = ctrl.0.as_mut_ptr() as _;
     hdr.msg_controllen = CMSG_LEN as _;
@@ -693,14 +693,14 @@ fn prepare_recv(
 
 #[cfg(apple_fast)]
 fn prepare_recv(
-    buf: &mut IoSliceMut,
+    buf: &mut IoSliceMut<'_>,
     name: &mut MaybeUninit<libc::sockaddr_storage>,
     ctrl: &mut cmsg::Aligned<[u8; CMSG_LEN]>,
     hdr: &mut msghdr_x,
 ) {
     hdr.msg_name = name.as_mut_ptr() as _;
     hdr.msg_namelen = mem::size_of::<libc::sockaddr_storage>() as _;
-    hdr.msg_iov = buf as *mut IoSliceMut as *mut libc::iovec;
+    hdr.msg_iov = buf as *mut IoSliceMut<'_> as *mut libc::iovec;
     hdr.msg_iovlen = 1;
     hdr.msg_control = ctrl.0.as_mut_ptr() as _;
     hdr.msg_controllen = CMSG_LEN as _;
@@ -861,7 +861,10 @@ mod gso {
         }
     }
 
-    pub(crate) fn set_segment_size(encoder: &mut cmsg::Encoder<libc::msghdr>, segment_size: u16) {
+    pub(crate) fn set_segment_size(
+        encoder: &mut cmsg::Encoder<'_, libc::msghdr>,
+        segment_size: u16,
+    ) {
         encoder.push(libc::SOL_UDP, libc::UDP_SEGMENT, segment_size);
     }
 
@@ -995,8 +998,8 @@ mod gso {
     }
 
     pub(super) fn set_segment_size(
-        #[cfg(not(apple_fast))] _encoder: &mut cmsg::Encoder<libc::msghdr>,
-        #[cfg(apple_fast)] _encoder: &mut cmsg::Encoder<msghdr_x>,
+        #[cfg(not(apple_fast))] _encoder: &mut cmsg::Encoder<'_, libc::msghdr>,
+        #[cfg(apple_fast)] _encoder: &mut cmsg::Encoder<'_, msghdr_x>,
         _segment_size: u16,
     ) {
     }
