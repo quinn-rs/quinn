@@ -192,9 +192,8 @@ impl PacketBuilder {
         let exact_number = self.exact_number;
         let space_id = self.space;
         let (size, padded) = self.finish(conn, now, buffer);
-        let sent = match sent {
-            Some(sent) => sent,
-            None => return,
+        let Some(sent) = sent else {
+            return;
         };
 
         let size = match padded || ack_eliciting {
