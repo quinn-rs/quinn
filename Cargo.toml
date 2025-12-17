@@ -71,4 +71,5 @@ unreachable_pub = "warn"
 
 [workspace.lints.clippy]
 manual_let_else = "warn"
+or_fun_call = "warn"
 use_self = "warn"

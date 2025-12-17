@@ -74,7 +74,7 @@ impl Endpoint {
     ) -> Self {
         let rng_seed = rng_seed.or(config.rng_seed);
         Self {
-            rng: rng_seed.map_or(StdRng::from_os_rng(), StdRng::from_seed),
+            rng: rng_seed.map_or_else(StdRng::from_os_rng, StdRng::from_seed),
             index: ConnectionIndex::default(),
             connections: Slab::new(),
             local_cid_generator: (config.connection_id_generator_factory.as_ref())(),
