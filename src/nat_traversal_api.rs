@@ -2091,6 +2091,49 @@ impl NatTraversalEndpoint {
         Ok(result)
     }
 
+    /// Get the external/reflexive address as observed by remote peers
+    ///
+    /// This returns the public address of this endpoint as seen by other peers,
+    /// discovered via OBSERVED_ADDRESS frames during QUIC connections.
+    ///
+    /// Returns the first observed address found from any active connection,
+    /// preferring connections to bootstrap nodes.
+    ///
+    /// Returns `None` if:
+    /// - No connections are active
+    /// - No OBSERVED_ADDRESS frame has been received from any peer
+    pub fn get_observed_external_address(&self) -> Result<Option<SocketAddr>, NatTraversalError> {
+        let connections = self.connections.read().map_err(|_| {
+            NatTraversalError::ProtocolError("Connections lock poisoned".to_string())
+        })?;
+
+        // Check all connections for an observed address
+        // First try to find one from a bootstrap node (more reliable)
+        let bootstrap_addrs: std::collections::HashSet<_> =
+            self.config.bootstrap_nodes.iter().copied().collect();
+
+        // Check bootstrap connections first
+        for (_peer_id, connection) in connections.iter() {
+            if bootstrap_addrs.contains(&connection.remote_address()) {
+                if let Some(addr) = connection.observed_address() {
+                    debug!("Found observed external address {} from bootstrap connection", addr);
+                    return Ok(Some(addr));
+                }
+            }
+        }
+
+        // Fall back to any connection with an observed address
+        for (_peer_id, connection) in connections.iter() {
+            if let Some(addr) = connection.observed_address() {
+                debug!("Found observed external address {} from peer connection", addr);
+                return Ok(Some(addr));
+            }
+        }
+
+        debug!("No observed external address available from any connection");
+        Ok(None)
+    }
+
     /// Handle incoming data from a connection
     pub async fn handle_connection_data(
         &self,

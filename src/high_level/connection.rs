@@ -625,6 +625,20 @@ impl Connection {
         self.0.state.lock("remote_address").inner.remote_address()
     }
 
+    /// The external/reflexive address observed by the remote peer
+    ///
+    /// Returns the address that the remote peer has observed for this connection,
+    /// as reported via OBSERVED_ADDRESS frames. This is useful for NAT traversal
+    /// to learn the public address of this endpoint as seen by others.
+    ///
+    /// Returns `None` if:
+    /// - Address discovery is not enabled
+    /// - No OBSERVED_ADDRESS frame has been received yet
+    /// - The connection hasn't completed the handshake
+    pub fn observed_address(&self) -> Option<SocketAddr> {
+        self.0.state.lock("observed_address").inner.observed_address()
+    }
+
     /// The local IP address which was used when the peer established
     /// the connection
     ///

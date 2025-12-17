@@ -729,6 +729,22 @@ impl QuicP2PNode {
         self.nat_endpoint.get_nat_stats()
     }
 
+    /// Get the external/reflexive address as observed by remote peers
+    ///
+    /// This returns the public address of this endpoint as seen by other peers,
+    /// discovered via OBSERVED_ADDRESS frames during QUIC connections.
+    ///
+    /// Returns `None` if:
+    /// - No connections are active
+    /// - No OBSERVED_ADDRESS frame has been received from any peer
+    pub fn get_observed_external_address(
+        &self,
+    ) -> Result<Option<std::net::SocketAddr>, Box<dyn std::error::Error + Send + Sync>> {
+        self.nat_endpoint
+            .get_observed_external_address()
+            .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
+    }
+
     // OBSERVED_ADDRESS integration is handled within the connection; manual injection removed
 
     /// Get connection metrics for a specific peer
