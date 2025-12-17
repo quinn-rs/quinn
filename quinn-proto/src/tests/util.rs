@@ -683,9 +683,8 @@ const MAX_DATAGRAMS: usize = 10;
 
 fn split_transmit(transmit: Transmit, buffer: &[u8]) -> Vec<(Transmit, Bytes)> {
     let mut buffer = Bytes::copy_from_slice(buffer);
-    let segment_size = match transmit.segment_size {
-        Some(segment_size) => segment_size,
-        _ => return vec![(transmit, buffer)],
+    let Some(segment_size) = transmit.segment_size else {
+        return vec![(transmit, buffer)];
     };
 
     let mut transmits = Vec::new();

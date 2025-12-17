@@ -38,9 +38,8 @@ impl BandwidthEstimation {
         self.prev_acked_time = self.acked_time;
         self.acked_time = Some(now);
 
-        let prev_sent_time = match self.prev_sent_time {
-            Some(prev_sent_time) => prev_sent_time,
-            None => return,
+        let Some(prev_sent_time) = self.prev_sent_time else {
+            return;
         };
 
         let send_rate = match self.sent_time {

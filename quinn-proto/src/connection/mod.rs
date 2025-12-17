@@ -1676,12 +1676,9 @@ impl Connection {
             return;
         }
 
-        let (_, space) = match self.pto_time_and_space(now) {
-            Some(x) => x,
-            None => {
-                error!("PTO expired while unset");
-                return;
-            }
+        let Some((_, space)) = self.pto_time_and_space(now) else {
+            error!("PTO expired while unset");
+            return;
         };
         trace!(
             in_flight = self.path.in_flight.bytes,
@@ -1884,9 +1881,9 @@ impl Connection {
                 // Include max_ack_delay and backoff for ApplicationData.
                 duration += self.ack_frequency.max_ack_delay_for_pto() * backoff;
             }
-            let last_ack_eliciting = match self.spaces[space].time_of_last_ack_eliciting_packet {
-                Some(time) => time,
-                None => continue,
+            let Some(last_ack_eliciting) = self.spaces[space].time_of_last_ack_eliciting_packet
+            else {
+                continue;
             };
             let pto = last_ack_eliciting + duration;
             if result.map_or(true, |(earliest_pto, _)| pto < earliest_pto) {
@@ -1978,9 +1975,8 @@ impl Connection {
             }
         }
 
-        let packet = match packet {
-            Some(x) => x,
-            None => return,
+        let Some(packet) = packet else {
+            return;
         };
         if self.side.is_server() {
             if self.spaces[SpaceId::Initial].crypto.is_some() && space_id == SpaceId::Handshake {
@@ -2010,9 +2006,8 @@ impl Connection {
     }
 
     fn reset_idle_timeout(&mut self, now: Instant, space: SpaceId) {
-        let timeout = match self.idle_timeout {
-            None => return,
-            Some(dur) => dur,
+        let Some(timeout) = self.idle_timeout else {
+            return;
         };
         if self.state.is_closed() {
             self.timers.stop(Timer::Idle);
@@ -2087,9 +2082,8 @@ impl Connection {
     }
 
     fn init_0rtt(&mut self) {
-        let (header, packet) = match self.crypto.early_crypto() {
-            Some(x) => x,
-            None => return,
+        let Some((header, packet)) = self.crypto.early_crypto() else {
+            return;
         };
         if self.side.is_client() {
             match self.crypto.transport_parameters() {
@@ -3152,9 +3146,8 @@ impl Connection {
 
     /// Switch to a previously unused remote connection ID, if possible
     fn update_rem_cid(&mut self) {
-        let (reset_token, retired) = match self.rem_cids.next() {
-            Some(x) => x,
-            None => return,
+        let Some((reset_token, retired)) = self.rem_cids.next() else {
+            return;
         };
 
         // Retire the current remote CID and any CIDs we had to skip.
@@ -3301,9 +3294,8 @@ impl Connection {
 
         // CRYPTO
         while buf.len() + frame::Crypto::SIZE_BOUND < max_size && !is_0rtt {
-            let mut frame = match space.pending.crypto.pop_front() {
-                Some(x) => x,
-                None => break,
+            let Some(mut frame) = space.pending.crypto.pop_front() else {
+                break;
             };
 
             // Calculate the maximum amount of crypto data we can store in the buffer.
@@ -3353,9 +3345,8 @@ impl Connection {
 
         // NEW_CONNECTION_ID
         while buf.len() + NewConnectionId::SIZE_BOUND < max_size {
-            let issued = match space.pending.new_cids.pop() {
-                Some(x) => x,
-                None => break,
+            let Some(issued) = space.pending.new_cids.pop() else {
+                break;
             };
             trace!(
                 sequence = issued.sequence,
@@ -3375,9 +3366,8 @@ impl Connection {
 
         // RETIRE_CONNECTION_ID
         while buf.len() + frame::RETIRE_CONNECTION_ID_SIZE_BOUND < max_size {
-            let seq = match space.pending.retire_cids.pop() {
-                Some(x) => x,
-                None => break,
+            let Some(seq) = space.pending.retire_cids.pop() else {
+                break;
             };
             trace!(sequence = seq, "RETIRE_CONNECTION_ID");
             buf.write(frame::FrameType::RETIRE_CONNECTION_ID);
@@ -3555,9 +3545,8 @@ impl Connection {
             self.next_crypto.as_ref(),
         )?;
 
-        let result = match result {
-            Some(r) => r,
-            None => return Ok(None),
+        let Some(result) = result else {
+            return Ok(None);
         };
 
         if result.outgoing_key_update_acked {
@@ -3621,13 +3610,13 @@ impl Connection {
     /// Decodes a packet, returning its decrypted payload, so it can be inspected in tests
     #[cfg(test)]
     pub(crate) fn decode_packet(&self, event: &ConnectionEvent) -> Option<Vec<u8>> {
-        let (first_decode, remaining) = match &event.0 {
-            ConnectionEventInner::Datagram(DatagramConnectionEvent {
-                first_decode,
-                remaining,
-                ..
-            }) => (first_decode, remaining),
-            _ => return None,
+        let ConnectionEventInner::Datagram(DatagramConnectionEvent {
+            first_decode,
+            remaining,
+            ..
+        }) = &event.0
+        else {
+            return None;
         };
 
         if remaining.is_some() {
