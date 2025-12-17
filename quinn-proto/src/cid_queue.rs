@@ -40,9 +40,8 @@ impl CidQueue {
         cid: NewConnectionId,
     ) -> Result<Option<(Range<u64>, ResetToken)>, InsertError> {
         // Position of new CID wrt. the current active CID
-        let index = match cid.sequence.checked_sub(self.offset) {
-            None => return Err(InsertError::Retired),
-            Some(x) => x,
+        let Some(index) = cid.sequence.checked_sub(self.offset) else {
+            return Err(InsertError::Retired);
         };
 
         let retired_count = cid.retire_prior_to.saturating_sub(self.offset);

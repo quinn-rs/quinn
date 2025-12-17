@@ -69,4 +69,5 @@ unnameable_types = "warn"
 unreachable_pub = "warn"
 
 [workspace.lints.clippy]
+manual_let_else = "warn"
 use_self = "warn"

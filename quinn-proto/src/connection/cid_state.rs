@@ -62,15 +62,13 @@ impl CidState {
 
     /// Track the lifetime of issued cids in `retire_timestamp`
     fn track_lifetime(&mut self, new_cid_seq: u64, now: Instant) {
-        let lifetime = match self.cid_lifetime {
-            Some(lifetime) => lifetime,
-            None => return,
+        let Some(lifetime) = self.cid_lifetime else {
+            return;
         };
 
         let expire_timestamp = now.checked_add(lifetime);
-        let expire_at = match expire_timestamp {
-            Some(expire_at) => expire_at,
-            None => return,
+        let Some(expire_at) = expire_timestamp else {
+            return;
         };
 
         let last_record = self.retire_timestamp.back_mut();
@@ -134,9 +132,8 @@ impl CidState {
     /// Update cid state when `NewIdentifiers` event is received
     pub(crate) fn new_cids(&mut self, ids: &[IssuedCid], now: Instant) {
         // `ids` could be `None` once active_connection_id_limit is set to 1 by peer
-        let last_cid = match ids.last() {
-            Some(cid) => cid,
-            None => return,
+        let Some(last_cid) = ids.last() else {
+            return;
         };
         self.issued += ids.len() as u64;
         // Record the timestamp of CID with the largest seq number
