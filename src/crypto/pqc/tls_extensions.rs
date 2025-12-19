@@ -34,10 +34,11 @@ pub enum NamedGroup {
     MlKem768 = 0x0201,  // ML-KEM-768 (NIST Level 3)
     MlKem1024 = 0x0202, // ML-KEM-1024 (NIST Level 5)
 
-    // Hybrid groups (Classical + PQC)
-    X25519MlKem768 = 0x4F2A, // X25519 + ML-KEM-768
-    P256MlKem768 = 0x4F2B,   // P-256 + ML-KEM-768
-    P384MlKem1024 = 0x4F2C,  // P-384 + ML-KEM-1024
+    // Hybrid groups (IANA assigned - Classical + PQC)
+    // https://www.iana.org/assignments/tls-parameters/tls-parameters.xhtml
+    P256MlKem768 = 0x11EB,   // SecP256r1MLKEM768 (4587 decimal)
+    X25519MlKem768 = 0x11EC, // X25519MLKEM768 (4588 decimal)
+    P384MlKem1024 = 0x11ED,  // SecP384r1MLKEM1024 (4589 decimal)
 }
 
 impl NamedGroup {
@@ -89,9 +90,9 @@ impl NamedGroup {
             0x0200 => Some(Self::MlKem512),
             0x0201 => Some(Self::MlKem768),
             0x0202 => Some(Self::MlKem1024),
-            0x4F2A => Some(Self::X25519MlKem768),
-            0x4F2B => Some(Self::P256MlKem768),
-            0x4F2C => Some(Self::P384MlKem1024),
+            0x11EB => Some(Self::P256MlKem768),
+            0x11EC => Some(Self::X25519MlKem768),
+            0x11ED => Some(Self::P384MlKem1024),
             _ => None,
         }
     }
@@ -364,9 +365,9 @@ mod tests {
         assert_eq!(NamedGroup::from_u16(0x0201), Some(NamedGroup::MlKem768));
 
         // Test hybrid groups
-        assert_eq!(NamedGroup::X25519MlKem768.to_u16(), 0x4F2A);
+        assert_eq!(NamedGroup::X25519MlKem768.to_u16(), 0x11EC);
         assert_eq!(
-            NamedGroup::from_u16(0x4F2A),
+            NamedGroup::from_u16(0x11EC),
             Some(NamedGroup::X25519MlKem768)
         );
     }
@@ -426,10 +427,10 @@ mod tests {
 
     #[test]
     fn test_wire_format_serialization() {
-        // Test NamedGroup
+        // Test NamedGroup (IANA assigned X25519MLKEM768 = 0x11EC)
         let group = NamedGroup::X25519MlKem768;
         let bytes = group.to_bytes();
-        assert_eq!(bytes, [0x4F, 0x2A]);
+        assert_eq!(bytes, [0x11, 0xEC]);
         assert_eq!(NamedGroup::from_bytes(&bytes).unwrap(), group);
 
         // Test SignatureScheme

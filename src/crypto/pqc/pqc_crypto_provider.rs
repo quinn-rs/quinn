@@ -84,15 +84,19 @@ fn create_pqc_provider(config: &PqcConfig) -> Result<Arc<CryptoProvider>, PqcErr
 
 /// Check if a NamedGroup contains PQC components
 fn is_pqc_kx_group(group: rustls::NamedGroup) -> bool {
-    // ML-KEM named groups (IANA assignments)
-    // Pure ML-KEM groups
-    const MLKEM512: u16 = 0x0200;
-    const MLKEM768: u16 = 0x0201;
-    const MLKEM1024: u16 = 0x0202;
+    // ML-KEM named groups (IANA TLS Supported Groups Registry)
+    // https://www.iana.org/assignments/tls-parameters/tls-parameters.xhtml
 
-    // Hybrid groups (X25519 + ML-KEM, etc.)
-    const X25519_MLKEM768: u16 = 0x4588; // X25519MLKEM768 from rustls-post-quantum
-    const SECP256R1_MLKEM768: u16 = 0x4589;
+    // Pure ML-KEM groups (FIPS 203)
+    const MLKEM512: u16 = 0x0200; // 512 decimal
+    const MLKEM768: u16 = 0x0201; // 513 decimal
+    const MLKEM1024: u16 = 0x0202; // 514 decimal
+
+    // Hybrid groups (IANA assigned codes)
+    const SECP256R1_MLKEM768: u16 = 0x11EB; // 4587 decimal - SecP256r1MLKEM768
+    const X25519_MLKEM768: u16 = 0x11EC; // 4588 decimal - X25519MLKEM768
+    const SECP384R1_MLKEM1024: u16 = 0x11ED; // 4589 decimal - SecP384r1MLKEM1024
+    const CURVESM2_MLKEM768: u16 = 0x11EE; // 4590 decimal - curveSM2MLKEM768
 
     let group_code = u16::from(group);
     matches!(
@@ -100,11 +104,10 @@ fn is_pqc_kx_group(group: rustls::NamedGroup) -> bool {
         MLKEM512
             | MLKEM768
             | MLKEM1024
-            | X25519_MLKEM768
             | SECP256R1_MLKEM768
-            | 0x4F2A // Alternative X25519+ML-KEM-768 code
-            | 0x4F2B // P-256+ML-KEM-768
-            | 0x4F2C // P-384+ML-KEM-1024
+            | X25519_MLKEM768
+            | SECP384R1_MLKEM1024
+            | CURVESM2_MLKEM768
     )
 }
 
@@ -170,7 +173,7 @@ mod tests {
         let result = validate_negotiated_group(rustls::NamedGroup::Unknown(0x0201));
         assert!(result.is_ok(), "ML-KEM-768 should be accepted");
 
-        let result = validate_negotiated_group(rustls::NamedGroup::Unknown(0x4588));
+        let result = validate_negotiated_group(rustls::NamedGroup::Unknown(0x11EC));
         assert!(result.is_ok(), "X25519MLKEM768 should be accepted");
     }
 
@@ -181,8 +184,14 @@ mod tests {
         assert!(!is_pqc_kx_group(rustls::NamedGroup::secp256r1));
         assert!(!is_pqc_kx_group(rustls::NamedGroup::secp384r1));
 
-        // ML-KEM groups should return true
-        assert!(is_pqc_kx_group(rustls::NamedGroup::Unknown(0x0201))); // ML-KEM-768
-        assert!(is_pqc_kx_group(rustls::NamedGroup::Unknown(0x4588))); // X25519MLKEM768
+        // Pure ML-KEM groups should return true
+        assert!(is_pqc_kx_group(rustls::NamedGroup::Unknown(0x0200))); // MLKEM512
+        assert!(is_pqc_kx_group(rustls::NamedGroup::Unknown(0x0201))); // MLKEM768
+        assert!(is_pqc_kx_group(rustls::NamedGroup::Unknown(0x0202))); // MLKEM1024
+
+        // Hybrid groups should return true (IANA assigned codes)
+        assert!(is_pqc_kx_group(rustls::NamedGroup::Unknown(0x11EB))); // SecP256r1MLKEM768
+        assert!(is_pqc_kx_group(rustls::NamedGroup::Unknown(0x11EC))); // X25519MLKEM768
+        assert!(is_pqc_kx_group(rustls::NamedGroup::Unknown(0x11ED))); // SecP384r1MLKEM1024
     }
 }

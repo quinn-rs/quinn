@@ -74,8 +74,8 @@ fn test_validate_negotiated_group_ml_kem() {
     let result = validate_negotiated_group(rustls::NamedGroup::Unknown(0x0201));
     assert!(result.is_ok(), "ML-KEM-768 should be accepted");
 
-    // X25519MLKEM768 hybrid code point (0x4588) should be accepted
-    let result = validate_negotiated_group(rustls::NamedGroup::Unknown(0x4588));
+    // X25519MLKEM768 hybrid code point (0x11EC - IANA assigned) should be accepted
+    let result = validate_negotiated_group(rustls::NamedGroup::Unknown(0x11EC));
     assert!(result.is_ok(), "X25519MLKEM768 should be accepted");
 }
 
@@ -91,8 +91,8 @@ fn test_is_pqc_group() {
     // ML-KEM-768 code point (0x0201)
     assert!(is_pqc_group(rustls::NamedGroup::Unknown(0x0201)));
 
-    // X25519MLKEM768 hybrid code point (0x4588)
-    assert!(is_pqc_group(rustls::NamedGroup::Unknown(0x4588)));
+    // X25519MLKEM768 hybrid code point (0x11EC - IANA assigned)
+    assert!(is_pqc_group(rustls::NamedGroup::Unknown(0x11EC)));
 }
 
 /// Test that provider only includes PQC groups
@@ -154,6 +154,6 @@ fn test_validate_pqc_connection() {
     let result = validate_pqc_connection(rustls::NamedGroup::Unknown(0x0201));
     assert!(result.is_ok(), "ML-KEM-768 should be accepted");
 
-    let result = validate_pqc_connection(rustls::NamedGroup::Unknown(0x4588));
+    let result = validate_pqc_connection(rustls::NamedGroup::Unknown(0x11EC));
     assert!(result.is_ok(), "X25519MLKEM768 should be accepted");
 }
