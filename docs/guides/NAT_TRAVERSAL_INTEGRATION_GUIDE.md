@@ -1,57 +1,77 @@
 # NAT Traversal Integration Guide
 
-This guide explains how to integrate ant-quic's NAT traversal capabilities into your application, including the QUIC Address Discovery extension for improved connectivity.
+This guide explains how to integrate ant-quic's NAT traversal capabilities into your application using the v0.13.0+ symmetric P2P architecture.
 
 ## Table of Contents
 1. [Overview](#overview)
 2. [Basic Integration](#basic-integration)
-3. [Advanced Configuration](#advanced-configuration)
-4. [Address Discovery Integration](#address-discovery-integration)
-5. [Bootstrap Node Setup](#bootstrap-node-setup)
-6. [Connection Establishment Flow](#connection-establishment-flow)
+3. [Configuration Options](#configuration-options)
+4. [Address Discovery](#address-discovery)
+5. [Connection Establishment Flow](#connection-establishment-flow)
+6. [Event Handling](#event-handling)
 7. [Best Practices](#best-practices)
 8. [Performance Optimization](#performance-optimization)
 
 ## Overview
 
-ant-quic provides comprehensive NAT traversal capabilities through:
-- **QUIC-native NAT traversal** (draft-seemann-quic-nat-traversal)
-- **QUIC Address Discovery** (draft-ietf-quic-address-discovery)
+ant-quic v0.13.0+ provides NAT traversal through native QUIC protocol extensions:
+
+- **QUIC-native NAT traversal** (draft-seemann-quic-nat-traversal-02)
+- **QUIC Address Discovery** (draft-ietf-quic-address-discovery-00)
 - **ICE-like candidate pairing** for optimal path selection
 - **Coordinated hole punching** for symmetric NATs
 
-The system achieves ~90% connection success rates across various NAT types, with the Address Discovery extension providing a 27% improvement over baseline NAT traversal.
+### Key Concepts
+
+**Symmetric P2P Model**: All nodes are identical. Every node can:
+- Initiate connections (like a "client")
+- Accept connections (like a "server")
+- Observe external addresses of connecting peers
+- Coordinate NAT traversal for other peers
+- Relay traffic when direct connection fails
+
+**No Special Roles**: There are no "bootstrap nodes" as special infrastructure. The term "known peers" refers to addresses you connect to first for address discovery.
+
+**100% PQC**: All connections use Post-Quantum Cryptography (ML-KEM-768 + ML-DSA-65) by default.
 
 ## Basic Integration
 
-### Step 1: Create a NAT-Enabled Endpoint
+### Step 1: Create a P2P Endpoint
 
 ```rust
-use ant_quic::{
-    nat_traversal_api::{NatTraversalEndpoint, NatTraversalConfig, EndpointRole},
-    nat_traversal_api::PeerId,
-};
+use ant_quic::{P2pEndpoint, P2pConfig, NatConfig};
 use std::time::Duration;
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Configure NAT traversal
-    let config = NatTraversalConfig {
-        role: EndpointRole::Client,
-        bootstrap_nodes: vec![
-            "quic.saorsalabs.com:9000".parse()?
-        ],
-        max_candidates: 10,
-        coordination_timeout: Duration::from_secs(15),
-        discovery_timeout: Duration::from_secs(5),
-    };
+async fn main() -> anyhow::Result<()> {
+    // Configure P2P endpoint
+    let config = P2pConfig::builder()
+        // Connect to known peers for address discovery
+        .known_peer("peer1.example.com:9000".parse()?)
+        .known_peer("peer2.example.com:9000".parse()?)
+        // NAT traversal configuration
+        .nat(NatConfig {
+            max_candidates: 10,
+            coordination_timeout: Duration::from_secs(15),
+            discovery_timeout: Duration::from_secs(5),
+            enable_symmetric_nat: true,
+            ..Default::default()
+        })
+        .build()?;
 
-    // Create endpoint (address discovery enabled by default)
-    let endpoint = NatTraversalEndpoint::new(config).await?;
+    // Create endpoint
+    let endpoint = P2pEndpoint::new(config).await?;
 
-    // Your peer ID is automatically generated
-    let my_peer_id = endpoint.peer_id();
-    println!("My Peer ID: {:?}", my_peer_id);
+    // Your peer ID is automatically generated from your Ed25519 key
+    println!("My Peer ID: {:?}", endpoint.peer_id());
+
+    // Connect to known peers to learn your external address
+    endpoint.connect_bootstrap().await?;
+
+    // Check your discovered external address
+    if let Some(addr) = endpoint.external_address() {
+        println!("External address: {}", addr);
+    }
 
     Ok(())
 }
@@ -60,289 +80,326 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 ### Step 2: Connect to Peers
 
 ```rust
-// Connect to a peer using their peer ID
-let target_peer_id = PeerId([0x12; 32]); // Replace with actual peer ID
-let connection = endpoint.connect_to_peer(target_peer_id).await?;
+use ant_quic::PeerId;
 
-// Send data
-let data = b"Hello, peer!";
-endpoint.send_to_peer(&target_peer_id, data).await?;
+// Connect to a peer by their address
+let connection = endpoint.connect("192.168.1.100:9000".parse()?).await?;
 
-// Receive data
-let (sender_id, received_data) = endpoint.receive().await?;
-println!("Received from {:?}: {:?}", sender_id, received_data);
+// Or connect to a peer by their ID through a known peer
+let peer_id = PeerId::from_hex("abcd1234...")?;
+let connection = endpoint.connect_via_peer(peer_id, known_peer_addr).await?;
+
+// Send data on the connection
+let (mut send, mut recv) = connection.open_bi().await?;
+send.write_all(b"Hello, peer!").await?;
+send.finish()?;
+
+// Receive response
+let response = recv.read_to_end(1024).await?;
+println!("Response: {:?}", response);
 ```
 
-## Advanced Configuration
+## Configuration Options
 
-### Configuring Address Discovery
-
-Address discovery is enabled by default but can be customized:
+### P2pConfig Builder
 
 ```rust
-use ant_quic::config::{EndpointConfig, AddressDiscoveryConfig};
+use ant_quic::{P2pConfig, NatConfig, MtuConfig, PqcConfig};
 
-let mut endpoint_config = EndpointConfig::default();
+let config = P2pConfig::builder()
+    // Bind address (optional)
+    .bind_addr("0.0.0.0:9000".parse()?)
 
-// Configure address discovery
-endpoint_config.set_address_discovery_enabled(true);
-endpoint_config.set_max_observation_rate(30); // 30 observations/second
-endpoint_config.set_observe_all_paths(false); // Only observe primary path
+    // Known peers for initial connections
+    .known_peer("peer1.example.com:9000".parse()?)
+    .known_peer("peer2.example.com:9000".parse()?)
 
-// Create endpoint with custom config
-let nat_config = NatTraversalConfig {
-    role: EndpointRole::Client,
-    bootstrap_nodes: vec!["quic.saorsalabs.com:9000".parse()?],
-    endpoint_config: Some(endpoint_config),
-    ..Default::default()
-};
+    // NAT traversal tuning
+    .nat(NatConfig {
+        max_candidates: 10,
+        coordination_timeout: Duration::from_secs(15),
+        discovery_timeout: Duration::from_secs(5),
+        enable_symmetric_nat: true,
+        hole_punch_retries: 5,
+        ..Default::default()
+    })
+
+    // MTU configuration for PQC
+    .mtu(MtuConfig {
+        initial: 1200,
+        min: 1200,
+        max: 1500,
+    })
+
+    // PQC tuning (always enabled)
+    .pqc(PqcConfig::builder()
+        .ml_kem(true)
+        .ml_dsa(true)
+        .memory_pool_size(10)
+        .build()?)
+
+    // Connection limits
+    .max_connections(100)
+
+    .build()?;
 ```
 
-### Environment Variable Configuration
+### NatConfig Parameters
 
-You can override address discovery settings via environment variables:
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `max_candidates` | `usize` | `10` | Maximum address candidates per peer |
+| `coordination_timeout` | `Duration` | `15s` | Timeout for hole punch coordination |
+| `discovery_timeout` | `Duration` | `5s` | Timeout for candidate discovery |
+| `enable_symmetric_nat` | `bool` | `true` | Enable port prediction for symmetric NAT |
+| `hole_punch_retries` | `u32` | `5` | Number of hole punch attempts |
 
-```bash
-# Disable address discovery
-export ANT_QUIC_ADDRESS_DISCOVERY_ENABLED=false
+## Address Discovery
 
-# Set maximum observation rate
-export ANT_QUIC_MAX_OBSERVATION_RATE=60
+### How It Works
 
-# Run your application
-./your_app
-```
+Any connected peer can observe your external address and report it back:
 
-## Address Discovery Integration
+1. **You connect** to a peer
+2. **Peer observes** your source address from incoming packets
+3. **Peer sends** OBSERVED_ADDRESS frame (0x9f81a6 IPv4, 0x9f81a7 IPv6)
+4. **You learn** your external address without STUN servers
 
-### Understanding Address Discovery
-
-The QUIC Address Discovery extension allows endpoints to learn their external addresses as seen by peers. This is crucial for NAT traversal as it provides accurate reflexive addresses without STUN servers.
+This is defined in draft-ietf-quic-address-discovery-00.
 
 ### Monitoring Discovered Addresses
 
 ```rust
-// Get all discovered addresses
+// Get all discovered external addresses
 let addresses = endpoint.discovered_addresses();
 for addr in addresses {
     println!("Discovered address: {}", addr);
 }
 
-// Set up callback for address changes
-endpoint.set_address_change_callback(|old_addr, new_addr| {
-    println!("Address changed from {:?} to {}", old_addr, new_addr);
-});
-
-// Get address discovery statistics
-let stats = endpoint.address_discovery_stats();
-println!("Frames sent: {}", stats.frames_sent);
-println!("Frames received: {}", stats.frames_received);
+// Subscribe to address change events
+let mut events = endpoint.subscribe();
+while let Ok(event) = events.recv().await {
+    match event {
+        P2pEvent::AddressDiscovered { addr } => {
+            println!("New external address: {}", addr);
+        }
+        P2pEvent::AddressChanged { old, new } => {
+            println!("Address changed: {} -> {}", old, new);
+        }
+        _ => {}
+    }
+}
 ```
 
 ### Integration with NAT Traversal
 
-Discovered addresses automatically become high-priority candidates for NAT traversal:
+Discovered addresses automatically become high-priority candidates:
 
 ```rust
-// The NAT traversal system automatically uses discovered addresses
-// No manual integration needed - it just works!
-
-// You can verify this by checking candidate sources
+// Get local candidates including discovered addresses
 let candidates = endpoint.get_local_candidates();
 for candidate in candidates {
     match candidate.source {
         CandidateSource::Observed => {
-            println!("QUIC-discovered address: {}", candidate.addr);
+            println!("QUIC-discovered address: {} (high priority)", candidate.addr);
         }
         CandidateSource::Local => {
-            println!("Local interface address: {}", candidate.addr);
+            println!("Local interface: {}", candidate.addr);
         }
-        _ => {}
+        CandidateSource::Predicted => {
+            println!("Symmetric NAT prediction: {}", candidate.addr);
+        }
     }
 }
 ```
-
-## Bootstrap Node Setup
-
-### Running a Bootstrap Node
-
-Bootstrap nodes help with peer discovery and coordinate NAT traversal:
-
-```rust
-use ant_quic::nat_traversal_api::{NatTraversalEndpoint, NatTraversalConfig, EndpointRole};
-
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Configure as bootstrap/coordinator
-    let config = NatTraversalConfig {
-        role: EndpointRole::Server { can_coordinate: true },
-        bootstrap_nodes: vec![], // Bootstrap nodes don't need other bootstraps
-        bind_addr: Some("0.0.0.0:9000".parse()?),
-        ..Default::default()
-    };
-
-    let endpoint = NatTraversalEndpoint::new(config).await?;
-
-    println!("Bootstrap node running on :9000");
-    println!("Peer ID: {:?}", endpoint.peer_id());
-
-    // Bootstrap nodes automatically:
-    // - Use aggressive address observation (5x rate)
-    // - Coordinate hole punching between clients
-    // - Help with peer discovery
-
-    // Keep running
-    loop {
-        tokio::time::sleep(Duration::from_secs(60)).await;
-    }
-}
-```
-
-### Bootstrap Node Best Practices
-
-1. **Geographic Distribution**: Deploy bootstrap nodes in different regions
-2. **High Availability**: Use multiple bootstrap nodes for redundancy
-3. **Public Accessibility**: Ensure bootstrap nodes have public IPs
-4. **Resource Planning**: Bootstrap nodes use more bandwidth due to coordination
 
 ## Connection Establishment Flow
 
-### Complete Flow with Address Discovery
+### Symmetric P2P Connection
 
-```rust
-use ant_quic::quic_node::{QuicP2PNode, QuicNodeConfig};
-use ant_quic::auth::AuthConfig;
+```mermaid
+sequenceDiagram
+    participant Peer A
+    participant Peer C (any known peer)
+    participant Peer B
 
-// 1. Create P2P node
-let config = QuicNodeConfig {
-    role: EndpointRole::Client,
-    bootstrap_nodes: vec!["quic.saorsalabs.com:9000".parse()?],
-    enable_coordinator: false,
-    max_connections: 100,
-    connection_timeout: Duration::from_secs(30),
-    stats_interval: Duration::from_secs(60),
-    auth_config: AuthConfig::default(),
-    bind_addr: None,
-};
+    Peer A->>Peer C: Connect
+    Peer C->>Peer A: OBSERVED_ADDRESS (A's external IP:port)
 
-let node = QuicP2PNode::new(config).await?;
+    Peer B->>Peer C: Connect
+    Peer C->>Peer B: OBSERVED_ADDRESS (B's external IP:port)
 
-// 2. The connection establishment flow:
-// a) Connect to bootstrap nodes (automatic)
-// b) Receive OBSERVED_ADDRESS frames with external address
-// c) Exchange candidate addresses with peers
-// d) Perform coordinated hole punching
-// e) Establish direct P2P connection
+    Peer A->>Peer C: Request connection to Peer B
+    Peer C->>Peer B: Forward A's address candidates
+    Peer C->>Peer A: Forward B's address candidates
 
-// 3. Connect to a specific peer
-let peer_id = PeerId([0xAB; 32]);
-let coordinator = "quic.saorsalabs.com:9000".parse()?;
-node.connect_to_peer(peer_id, coordinator).await?;
+    Peer C->>Peer A: PUNCH_ME_NOW (timing)
+    Peer C->>Peer B: PUNCH_ME_NOW (timing)
 
-// 4. Connection established!
+    Peer A-->>Peer B: Simultaneous packets
+    Peer B-->>Peer A: Simultaneous packets
+
+    Peer A->>Peer B: Direct QUIC connection
 ```
 
-### Handling Connection Events
+### Complete Flow Example
 
 ```rust
-// Monitor NAT traversal events
-use ant_quic::nat_traversal_api::{NatTraversalEvent, SessionEvent};
+use ant_quic::{P2pEndpoint, P2pConfig, P2pEvent};
 
-// Set up event callback
-endpoint.set_event_callback(|event| {
-    match event {
-        NatTraversalEvent::SessionUpdate { peer_id, event } => {
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    // Create P2P endpoint
+    let config = P2pConfig::builder()
+        .known_peer("quic.saorsalabs.com:9000".parse()?)
+        .build()?;
+
+    let endpoint = P2pEndpoint::new(config).await?;
+
+    // 1. Connect to known peer and discover external address
+    endpoint.connect_bootstrap().await?;
+    println!("External address: {:?}", endpoint.external_address());
+
+    // 2. Subscribe to events
+    let mut events = endpoint.subscribe();
+
+    // 3. Accept incoming connections or initiate outbound
+    tokio::spawn(async move {
+        while let Ok(event) = events.recv().await {
             match event {
-                SessionEvent::CandidatesDiscovered { count } => {
-                    println!("Found {} candidates for peer {:?}", count, peer_id);
+                P2pEvent::Connected { peer_id, addr } => {
+                    println!("Connected to {} at {}", peer_id.to_hex(), addr);
                 }
-                SessionEvent::HolePunchingStarted => {
-                    println!("Starting hole punching with {:?}", peer_id);
+                P2pEvent::ConnectionFailed { peer_id, reason } => {
+                    println!("Failed to connect to {}: {}", peer_id.to_hex(), reason);
                 }
-                SessionEvent::ConnectionEstablished { addr } => {
-                    println!("Connected to {:?} at {}", peer_id, addr);
+                P2pEvent::HolePunchStarted { peer_id } => {
+                    println!("Hole punching with {}", peer_id.to_hex());
+                }
+                P2pEvent::HolePunchSucceeded { peer_id, addr } => {
+                    println!("Direct connection to {} at {}", peer_id.to_hex(), addr);
                 }
                 _ => {}
             }
         }
-        _ => {}
+    });
+
+    // 4. Connect to a specific peer
+    let target = "192.168.1.100:9000".parse()?;
+    let connection = endpoint.connect(target).await?;
+    println!("Connection established!");
+
+    Ok(())
+}
+```
+
+## Event Handling
+
+### P2pEvent Types
+
+```rust
+use ant_quic::P2pEvent;
+
+let mut events = endpoint.subscribe();
+while let Ok(event) = events.recv().await {
+    match event {
+        // Connection events
+        P2pEvent::Connected { peer_id, addr } => {
+            println!("Connected: {} at {}", peer_id.to_hex(), addr);
+        }
+        P2pEvent::Disconnected { peer_id, reason } => {
+            println!("Disconnected: {} - {}", peer_id.to_hex(), reason);
+        }
+        P2pEvent::ConnectionFailed { peer_id, reason } => {
+            println!("Connection failed: {} - {}", peer_id.to_hex(), reason);
+        }
+
+        // Address discovery events
+        P2pEvent::AddressDiscovered { addr } => {
+            println!("Discovered external address: {}", addr);
+        }
+        P2pEvent::AddressChanged { old, new } => {
+            println!("Address changed: {} -> {}", old, new);
+        }
+
+        // NAT traversal events
+        P2pEvent::HolePunchStarted { peer_id } => {
+            println!("Starting hole punch with {}", peer_id.to_hex());
+        }
+        P2pEvent::HolePunchSucceeded { peer_id, addr } => {
+            println!("Hole punch succeeded: {} at {}", peer_id.to_hex(), addr);
+        }
+        P2pEvent::HolePunchFailed { peer_id, reason } => {
+            println!("Hole punch failed: {} - {}", peer_id.to_hex(), reason);
+        }
+
+        // Candidate events
+        P2pEvent::CandidatesDiscovered { peer_id, count } => {
+            println!("Found {} candidates for {}", count, peer_id.to_hex());
+        }
     }
-});
+}
 ```
 
 ## Best Practices
 
-### 1. Bootstrap Node Selection
+### 1. Use Multiple Known Peers
 
 ```rust
-// Use multiple bootstrap nodes for reliability
-let bootstrap_nodes = vec![
-    "primary.bootstrap.com:9000".parse()?,
-    "secondary.bootstrap.com:9000".parse()?,
-    "tertiary.bootstrap.com:9000".parse()?,
-];
-
-// The system will try all bootstrap nodes
-let config = NatTraversalConfig {
-    bootstrap_nodes,
-    // Automatic fallback to next bootstrap if one fails
-    ..Default::default()
-};
+// Multiple known peers improve address discovery reliability
+let config = P2pConfig::builder()
+    .known_peer("us-east.example.com:9000".parse()?)
+    .known_peer("eu-west.example.com:9000".parse()?)
+    .known_peer("asia.example.com:9000".parse()?)
+    .build()?;
 ```
 
-### 2. Connection Timeout Handling
+### 2. Handle Connection Timeouts
 
 ```rust
 use tokio::time::timeout;
 
-// Set reasonable timeouts for connection attempts
 let connection_timeout = Duration::from_secs(30);
 
-match timeout(connection_timeout, endpoint.connect_to_peer(peer_id)).await {
+match timeout(connection_timeout, endpoint.connect(target)).await {
     Ok(Ok(connection)) => {
         println!("Connected successfully");
     }
     Ok(Err(e)) => {
         eprintln!("Connection failed: {}", e);
-        // Try alternative methods or bootstrap nodes
+        // Try alternative peers
     }
     Err(_) => {
         eprintln!("Connection timed out");
-        // Consider retry with different parameters
+        // Retry with different parameters
     }
 }
 ```
 
-### 3. Handling Network Changes
+### 3. Monitor Network Changes
 
 ```rust
-// Monitor for address changes
-endpoint.set_address_change_callback(|old_addr, new_addr| {
-    println!("Network change detected: {:?} -> {}", old_addr, new_addr);
-
-    // Address discovery automatically handles this
-    // But you may want to:
-    // - Notify connected peers
-    // - Update any cached connection info
-    // - Re-establish failed connections
-});
+let mut events = endpoint.subscribe();
+while let Ok(event) = events.recv().await {
+    match event {
+        P2pEvent::AddressChanged { old, new } => {
+            println!("Network change: {} -> {}", old, new);
+            // Re-establish connections if needed
+            // Notify connected peers of address change
+        }
+        _ => {}
+    }
+}
 ```
 
-### 4. Resource Management
+### 4. Graceful Cleanup
 
 ```rust
-// Configure connection limits
-let config = QuicNodeConfig {
-    max_connections: 100, // Limit total connections
-    connection_timeout: Duration::from_secs(30),
-    // Address discovery uses minimal resources:
-    // - ~100 bytes per path for tracking
-    // - ~15ns per frame processing
-    ..Default::default()
-};
+// Properly close connections when shutting down
+endpoint.close_all_connections().await;
 
-// Clean up when done
-drop(endpoint); // Properly closes all connections
+// Or close specific connection
+connection.close(0u32.into(), b"goodbye").await;
 ```
 
 ## Performance Optimization
@@ -350,90 +407,81 @@ drop(endpoint); // Properly closes all connections
 ### 1. Optimize Candidate Discovery
 
 ```rust
-// Reduce discovery time by limiting candidates
-let config = NatTraversalConfig {
-    max_candidates: 8, // Default is 10, reduce for faster setup
-    discovery_timeout: Duration::from_secs(3), // Reduce from 5s default
-    ..Default::default()
-};
+let config = P2pConfig::builder()
+    .nat(NatConfig {
+        max_candidates: 8,       // Reduce from default 10
+        discovery_timeout: Duration::from_secs(3), // Faster timeout
+        ..Default::default()
+    })
+    .build()?;
 ```
 
-### 2. Tune Address Discovery Rates
-
-```rust
-// For high-throughput applications
-endpoint_config.set_max_observation_rate(60); // Increase from default 30
-
-// For battery-sensitive applications
-endpoint_config.set_max_observation_rate(10); // Reduce observation rate
-endpoint_config.set_observe_all_paths(false); // Only primary path
-```
-
-### 3. Connection Pooling
+### 2. Connection Pooling
 
 ```rust
 use std::collections::HashMap;
-use tokio::sync::Mutex;
+use tokio::sync::RwLock;
 
 struct ConnectionPool {
-    connections: Arc<Mutex<HashMap<PeerId, Connection>>>,
+    connections: RwLock<HashMap<SocketAddr, Connection>>,
 }
 
 impl ConnectionPool {
-    async fn get_or_create(&self,
-                          endpoint: &NatTraversalEndpoint,
-                          peer_id: PeerId) -> Result<Connection, Error> {
-        let mut conns = self.connections.lock().await;
-
-        if let Some(conn) = conns.get(&peer_id) {
-            if conn.is_alive() {
+    async fn get_or_create(
+        &self,
+        endpoint: &P2pEndpoint,
+        addr: SocketAddr,
+    ) -> anyhow::Result<Connection> {
+        // Check existing connection
+        if let Some(conn) = self.connections.read().await.get(&addr) {
+            if !conn.is_closed() {
                 return Ok(conn.clone());
             }
         }
 
         // Create new connection
-        let conn = endpoint.connect_to_peer(peer_id).await?;
-        conns.insert(peer_id, conn.clone());
+        let conn = endpoint.connect(addr).await?;
+        self.connections.write().await.insert(addr, conn.clone());
         Ok(conn)
     }
 }
 ```
 
-### 4. Monitoring and Metrics
+### 3. Monitoring
 
 ```rust
-// Regular monitoring for production systems
 tokio::spawn(async move {
     let mut interval = tokio::time::interval(Duration::from_secs(60));
 
     loop {
         interval.tick().await;
 
-        // Get current stats
-        let stats = endpoint.address_discovery_stats();
-        let discovered = endpoint.discovered_addresses();
-
-        // Log or send to monitoring system
-        println!("Address Discovery Stats:");
-        println!("  Addresses discovered: {}", discovered.len());
-        println!("  Observation frames sent: {}", stats.frames_sent);
-        println!("  Observation frames received: {}", stats.frames_received);
-        println!("  Current observation rate: {}/s", stats.observation_rate);
-
-        // Check connection health
-        let connections = endpoint.active_connections();
-        println!("  Active connections: {}", connections.len());
+        // Get statistics
+        let stats = endpoint.stats();
+        println!("NAT Traversal Stats:");
+        println!("  Active connections: {}", stats.active_connections);
+        println!("  Discovered addresses: {}", stats.discovered_addresses);
+        println!("  Successful hole punches: {}", stats.successful_hole_punches);
+        println!("  Failed hole punches: {}", stats.failed_hole_punches);
     }
 });
 ```
 
 ## Summary
 
-ant-quic's NAT traversal with QUIC Address Discovery provides:
+ant-quic v0.13.0+ NAT traversal provides:
+- **Symmetric P2P model** - all nodes are equal
 - **Automatic address detection** without STUN servers
-- **High success rates** (90%+ with address discovery)
-- **Fast connection establishment** (7x improvement)
-- **Minimal overhead** (<15ns per frame)
-- **Seamless integration** with existing QUIC connections
+- **High success rates** (~90% with address discovery)
+- **100% PQC** - quantum-resistant by default
+- **Seamless integration** with standard QUIC connections
 
-The system is designed to work out-of-the-box with sensible defaults while providing extensive configuration options for advanced use cases.
+The system works out-of-the-box with sensible defaults while providing configuration options for advanced use cases.
+
+## References
+
+- [draft-seemann-quic-nat-traversal-02](../../rfcs/draft-seemann-quic-nat-traversal-02.txt)
+- [draft-ietf-quic-address-discovery-00](../../rfcs/draft-ietf-quic-address-discovery-00.txt)
+- [NAT Traversal Guide](../NAT_TRAVERSAL_GUIDE.md)
+- [API Guide](../API_GUIDE.md)
+- [Troubleshooting Guide](../TROUBLESHOOTING.md)

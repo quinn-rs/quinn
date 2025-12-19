@@ -1,6 +1,7 @@
 //! Property test generators for ant-quic types
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
+#![allow(dead_code)] // Generators may be used in future tests
 
 use ant_quic::{
     VarInt,
@@ -60,7 +61,7 @@ pub fn arb_socket_addr() -> impl Strategy<Value = SocketAddr> {
 
 /// Generate arbitrary durations within reasonable bounds
 pub fn arb_duration() -> impl Strategy<Value = Duration> {
-    (0u64..=3600_000) // 0 to 1 hour in milliseconds
+    (0u64..=3_600_000) // 0 to 1 hour in milliseconds
         .prop_map(Duration::from_millis)
 }
 

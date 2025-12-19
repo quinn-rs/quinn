@@ -7,11 +7,8 @@
 
 use std::{any::Any, io, str, sync::Arc};
 
-#[cfg(all(feature = "aws-lc-rs", not(feature = "ring")))]
 use aws_lc_rs::aead;
 use bytes::BytesMut;
-#[cfg(feature = "ring")]
-use ring::aead;
 pub use rustls::Error;
 use rustls::{
     self, CipherSuite,
@@ -39,6 +36,8 @@ use crate::{
     },
     transport_parameters::TransportParameters,
 };
+
+use crate::crypto::pqc::PqcConfig;
 
 impl From<Side> for rustls::Side {
     fn from(s: Side) -> Self {
@@ -312,12 +311,11 @@ pub struct QuicClientConfig {
 
 impl QuicClientConfig {
     #[cfg(feature = "platform-verifier")]
-    #[allow(clippy::panic)]
     pub(crate) fn with_platform_verifier() -> Result<Self, Error> {
         // Keep in sync with `inner()` below
         let mut inner = rustls::ClientConfig::builder_with_provider(configured_provider())
             .with_protocol_versions(&[&rustls::version::TLS13])
-            .unwrap_or_else(|_| panic!("default providers should support TLS 1.3"))
+            .map_err(|_| Error::General("default providers should support TLS 1.3".into()))?
             .with_platform_verifier()?
             .with_no_client_auth();
 
@@ -325,7 +323,7 @@ impl QuicClientConfig {
         Ok(Self {
             // We're confident that the *ring* default provider contains TLS13_AES_128_GCM_SHA256
             initial: initial_suite_from_provider(inner.crypto_provider())
-                .unwrap_or_else(|| panic!("no initial cipher suite found")),
+                .ok_or_else(|| Error::General("no initial cipher suite found".into()))?,
             inner: Arc::new(inner),
             extension_context: None,
         })
@@ -335,15 +333,15 @@ impl QuicClientConfig {
     ///
     /// QUIC requires that TLS 1.3 be enabled. Advanced users can use any [`rustls::ClientConfig`] that
     /// satisfies this requirement.
-    pub(crate) fn new(verifier: Arc<dyn ServerCertVerifier>) -> Self {
-        let inner = Self::inner(verifier);
-        Self {
+    pub(crate) fn new(verifier: Arc<dyn ServerCertVerifier>) -> Result<Self, Error> {
+        let inner = Self::inner(verifier)?;
+        Ok(Self {
             // We're confident that the *ring* default provider contains TLS13_AES_128_GCM_SHA256
             initial: initial_suite_from_provider(inner.crypto_provider())
-                .unwrap_or_else(|| panic!("no initial cipher suite found")),
+                .ok_or_else(|| Error::General("no initial cipher suite found".into()))?,
             inner: Arc::new(inner),
             extension_context: None,
-        }
+        })
     }
 
     /// Initialize a QUIC-compatible TLS client configuration with a separate initial cipher suite
@@ -369,18 +367,19 @@ impl QuicClientConfig {
         self
     }
 
-    #[allow(clippy::panic)]
-    pub(crate) fn inner(verifier: Arc<dyn ServerCertVerifier>) -> rustls::ClientConfig {
+    pub(crate) fn inner(
+        verifier: Arc<dyn ServerCertVerifier>,
+    ) -> Result<rustls::ClientConfig, Error> {
         // Keep in sync with `with_platform_verifier()` above
         let mut config = rustls::ClientConfig::builder_with_provider(configured_provider())
             .with_protocol_versions(&[&rustls::version::TLS13])
-            .unwrap_or_else(|_| panic!("The default providers support TLS 1.3"))
+            .map_err(|_| Error::General("default providers should support TLS 1.3".into()))?
             .dangerous()
             .with_custom_certificate_verifier(verifier)
             .with_no_client_auth();
 
         config.enable_early_data = true;
-        config
+        Ok(config)
     }
 }
 
@@ -683,15 +682,50 @@ pub(crate) fn initial_suite_from_provider(
 }
 
 pub(crate) fn configured_provider() -> Arc<rustls::crypto::CryptoProvider> {
-    #[cfg(all(feature = "rustls-aws-lc-rs", not(feature = "rustls-ring")))]
-    let provider = {
-        // Mark KEM-only intent for tests; group restriction wiring follows.
-        DEBUG_KEM_ONLY.store(true, Ordering::Relaxed);
-        rustls::crypto::aws_lc_rs::default_provider()
-    };
-    #[cfg(feature = "rustls-ring")]
-    let provider = rustls::crypto::ring::default_provider();
+    // Mark KEM-only intent for tests; group restriction wiring follows.
+    DEBUG_KEM_ONLY.store(true, Ordering::Relaxed);
+    let provider = rustls::crypto::aws_lc_rs::default_provider();
     Arc::new(provider)
+}
+
+/// Create a CryptoProvider with PQC support
+///
+/// v0.13.0+: PQC is always enabled. When a `PqcConfig` is provided, this function
+/// creates a provider that uses only PQC key exchange groups (ML-KEM-768 or hybrid
+/// groups containing ML-KEM). Classical algorithms like X25519 are excluded.
+pub fn configured_provider_with_pqc(
+    config: Option<&PqcConfig>,
+) -> Arc<rustls::crypto::CryptoProvider> {
+    // v0.13.0+: Always use PQC
+    DEBUG_KEM_ONLY.store(true, Ordering::Relaxed);
+
+    match config {
+        Some(pqc_config) => {
+            // Use the PQC crypto provider factory
+            match crate::crypto::pqc::create_crypto_provider(pqc_config) {
+                Ok(provider) => provider,
+                Err(e) => {
+                    tracing::warn!(
+                        "Failed to create PQC provider: {:?}, falling back to default",
+                        e
+                    );
+                    configured_provider()
+                }
+            }
+        }
+        None => configured_provider(),
+    }
+}
+
+/// Validate that a connection used PQC algorithms
+///
+/// v0.13.0+: After a TLS handshake completes, this validates that the
+/// negotiated key exchange group is a PQC group. All connections must
+/// use PQC in v0.13.0+.
+pub fn validate_pqc_connection(
+    negotiated_group: rustls::NamedGroup,
+) -> Result<(), crate::crypto::pqc::PqcError> {
+    crate::crypto::pqc::validate_negotiated_group(negotiated_group)
 }
 
 /// Returns true if the runtime was configured to run in a KEM-only

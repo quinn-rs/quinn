@@ -33,7 +33,7 @@ fn mk_client_config(chain: &[CertificateDer<'static>]) -> ClientConfig {
 async fn mk_server() -> (Endpoint, std::net::SocketAddr, Vec<CertificateDer<'static>>) {
     #[cfg(feature = "rustls-aws-lc-rs")]
     let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
-    #[cfg(all(not(feature = "rustls-aws-lc-rs"), feature = "rustls-ring"))]
+    #[cfg(all(not(feature = "rustls-aws-lc-rs"), feature = "rustls-aws-lc-rs"))]
     let _ = rustls::crypto::ring::default_provider().install_default();
 
     let (chain, key) = gen_self_signed_cert();

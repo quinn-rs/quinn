@@ -53,7 +53,8 @@ use ack_frequency::AckFrequencyState;
 
 pub(crate) mod nat_traversal;
 use nat_traversal::NatTraversalState;
-pub(crate) use nat_traversal::{CoordinationPhase, NatTraversalError, NatTraversalRole};
+// v0.13.0: NatTraversalRole removed - all nodes are symmetric P2P nodes
+pub(crate) use nat_traversal::{CoordinationPhase, NatTraversalError};
 
 mod assembler;
 pub use assembler::Chunk;
@@ -1065,11 +1066,15 @@ impl Connection {
                 let peer_supports = self.peer_params.address_discovery.is_some();
 
                 if let Some(state) = &mut self.address_discovery_state {
-                    let frames = state.check_for_address_observations(0, peer_supports, now);
-                    self.spaces[space_id]
-                        .pending
-                        .observed_addresses
-                        .extend(frames);
+                    if peer_supports {
+                        if let Some(frame) = state.queue_observed_address_frame(0, self.path.remote)
+                        {
+                            self.spaces[space_id]
+                                .pending
+                                .outbound_observations
+                                .push(frame);
+                        }
+                    }
                 }
             }
 
@@ -1293,10 +1298,7 @@ impl Connection {
             "PATH_CHALLENGE queued without 1-RTT keys"
         );
 
-        #[cfg(feature = "pqc")]
         buf.reserve(self.pqc_state.min_initial_size() as usize);
-        #[cfg(not(feature = "pqc"))]
-        buf.reserve(MIN_INITIAL_SIZE as usize);
         let buf_capacity = buf.capacity();
 
         let mut builder = PacketBuilder::new(
@@ -1318,10 +1320,7 @@ impl Connection {
         buf.write(challenge);
         self.stats.frame_tx.path_challenge += 1;
 
-        #[cfg(feature = "pqc")]
         let min_size = self.pqc_state.min_initial_size();
-        #[cfg(not(feature = "pqc"))]
-        let min_size = MIN_INITIAL_SIZE;
         builder.pad_to(min_size);
         builder.finish_and_track(now, self, None, buf);
 
@@ -1389,10 +1388,7 @@ impl Connection {
             "PATH_CHALLENGE queued without 1-RTT keys"
         );
 
-        #[cfg(feature = "pqc")]
         buf.reserve(self.pqc_state.min_initial_size() as usize);
-        #[cfg(not(feature = "pqc"))]
-        buf.reserve(MIN_INITIAL_SIZE as usize);
         let buf_capacity = buf.capacity();
 
         // Use current connection ID for NAT traversal PATH_CHALLENGE
@@ -1416,10 +1412,7 @@ impl Connection {
         self.stats.frame_tx.path_challenge += 1;
 
         // PATH_CHALLENGE frames must be padded to at least 1200 bytes
-        #[cfg(feature = "pqc")]
         let min_size = self.pqc_state.min_initial_size();
-        #[cfg(not(feature = "pqc"))]
-        let min_size = MIN_INITIAL_SIZE;
         builder.pad_to(min_size);
 
         builder.finish_and_track(now, self, None, buf);
@@ -1453,10 +1446,7 @@ impl Connection {
             SpaceId::Data,
             "PATH_CHALLENGE queued without 1-RTT keys"
         );
-        #[cfg(feature = "pqc")]
         buf.reserve(self.pqc_state.min_initial_size() as usize);
-        #[cfg(not(feature = "pqc"))]
-        buf.reserve(MIN_INITIAL_SIZE as usize);
 
         let buf_capacity = buf.capacity();
 
@@ -1484,10 +1474,7 @@ impl Connection {
         // to at least the smallest allowed maximum datagram size of 1200 bytes,
         // unless the anti-amplification limit for the path does not permit
         // sending a datagram of this size
-        #[cfg(feature = "pqc")]
         let min_size = self.pqc_state.min_initial_size();
-        #[cfg(not(feature = "pqc"))]
-        let min_size = MIN_INITIAL_SIZE;
         builder.pad_to(min_size);
 
         builder.finish(self, buf);
@@ -1744,13 +1731,6 @@ impl Connection {
             return;
         }
         self.update_keys(None, false);
-    }
-
-    // Compatibility wrapper for quinn < 0.11.7. Remove for 0.12.
-    #[doc(hidden)]
-    #[deprecated]
-    pub fn initiate_key_update(&mut self) {
-        self.force_key_update();
     }
 
     /// Get a session reference
@@ -2550,18 +2530,15 @@ impl Connection {
         }
 
         // Detect PQC usage from CRYPTO frame data before processing
-        #[cfg(feature = "pqc")]
-        {
-            self.pqc_state.detect_pqc_from_crypto(&crypto.data, space);
+        self.pqc_state.detect_pqc_from_crypto(&crypto.data, space);
 
-            // Check if we should trigger MTU discovery for PQC
-            if self.pqc_state.should_trigger_mtu_discovery() {
-                // Request larger MTU for PQC handshakes
-                self.path
-                    .mtud
-                    .reset(self.pqc_state.min_initial_size(), self.config.min_mtu);
-                trace!("Triggered MTU discovery for PQC handshake");
-            }
+        // Check if we should trigger MTU discovery for PQC
+        if self.pqc_state.should_trigger_mtu_discovery() {
+            // Request larger MTU for PQC handshakes
+            self.path
+                .mtud
+                .reset(self.pqc_state.min_initial_size(), self.config.min_mtu);
+            trace!("Triggered MTU discovery for PQC handshake");
         }
 
         let space = &mut self.spaces[space];
@@ -2617,23 +2594,17 @@ impl Connection {
             trace!("wrote {} {:?} CRYPTO bytes", outgoing.len(), space);
 
             // Use PQC-aware fragmentation for large CRYPTO data
-            #[cfg(feature = "pqc")]
             let use_pqc_fragmentation = self.pqc_state.using_pqc && outgoing.len() > 1200;
-            #[cfg(not(feature = "pqc"))]
-            let use_pqc_fragmentation = false;
 
             if use_pqc_fragmentation {
                 // Fragment large CRYPTO data for PQC handshakes
-                #[cfg(feature = "pqc")]
-                {
-                    let frames = self.pqc_state.packet_handler.fragment_crypto_data(
-                        &outgoing,
-                        offset,
-                        self.pqc_state.min_initial_size() as usize,
-                    );
-                    for frame in frames {
-                        self.spaces[space].pending.crypto.push_back(frame);
-                    }
+                let frames = self.pqc_state.packet_handler.fragment_crypto_data(
+                    &outgoing,
+                    offset,
+                    self.pqc_state.min_initial_size() as usize,
+                );
+                for frame in frames {
+                    self.spaces[space].pending.crypto.push_back(frame);
                 }
             } else {
                 // Normal CRYPTO frame for non-PQC or small data
@@ -3900,12 +3871,9 @@ impl Connection {
             // Use PQC-aware sizing for CRYPTO frames
             let available_space = max_size - buf.len();
             let remaining_data = frame.data.len();
-            #[cfg(feature = "pqc")]
             let optimal_size = self
                 .pqc_state
                 .calculate_crypto_frame_size(available_space, remaining_data);
-            #[cfg(not(feature = "pqc"))]
-            let optimal_size = available_space.min(remaining_data);
 
             let len = frame
                 .data
@@ -4131,7 +4099,7 @@ impl Connection {
         // OBSERVED_ADDRESS frames
         while buf.len() + frame::ObservedAddress::SIZE_BOUND < max_size && space_id == SpaceId::Data
         {
-            let observed_address = match space.pending.observed_addresses.pop() {
+            let observed_address = match space.pending.outbound_observations.pop() {
                 Some(x) => x,
                 None => break,
             };
@@ -4142,7 +4110,7 @@ impl Connection {
             observed_address.encode(buf);
             sent.retransmits
                 .get_or_create()
-                .observed_addresses
+                .outbound_observations
                 .push(observed_address);
             self.stats.frame_tx.observed_address += 1;
         }
@@ -4261,23 +4229,20 @@ impl Connection {
         self.negotiate_address_discovery(&params);
 
         // Update PQC state based on peer parameters
-        #[cfg(feature = "pqc")]
-        {
-            self.pqc_state.update_from_peer_params(&params);
+        self.pqc_state.update_from_peer_params(&params);
 
-            // If PQC is enabled, adjust MTU discovery configuration
-            if self.pqc_state.enabled && self.pqc_state.using_pqc {
-                trace!("PQC enabled, adjusting MTU discovery for larger handshake packets");
-                // When PQC is enabled, we need to handle larger packets during handshake
-                // The actual MTU discovery will probe up to the peer's max_udp_payload_size
-                // or the PQC handshake MTU, whichever is smaller
-                let current_mtu = self.path.mtud.current_mtu();
-                if current_mtu < self.pqc_state.handshake_mtu {
-                    trace!(
-                        "Current MTU {} is less than PQC handshake MTU {}, will rely on MTU discovery",
-                        current_mtu, self.pqc_state.handshake_mtu
-                    );
-                }
+        // If PQC is enabled, adjust MTU discovery configuration
+        if self.pqc_state.enabled && self.pqc_state.using_pqc {
+            trace!("PQC enabled, adjusting MTU discovery for larger handshake packets");
+            // When PQC is enabled, we need to handle larger packets during handshake
+            // The actual MTU discovery will probe up to the peer's max_udp_payload_size
+            // or the PQC handshake MTU, whichever is smaller
+            let current_mtu = self.path.mtud.current_mtu();
+            if current_mtu < self.pqc_state.handshake_mtu {
+                trace!(
+                    "Current MTU {} is less than PQC handshake MTU {}, will rely on MTU discovery",
+                    current_mtu, self.pqc_state.handshake_mtu
+                );
             }
         }
 
@@ -4485,59 +4450,28 @@ impl Connection {
     }
 
     /// Initialize NAT traversal with negotiated configuration
+    ///
+    /// v0.13.0: All nodes are symmetric P2P nodes - no role distinction.
+    /// Every node can observe addresses, discover candidates, and handle coordination.
     fn init_nat_traversal_with_negotiated_config(
         &mut self,
-        config: &crate::transport_parameters::NatTraversalConfig,
+        _config: &crate::transport_parameters::NatTraversalConfig,
     ) {
-        // With the simplified transport parameter, we use default values for detailed configuration
-        // The actual role is determined by who initiated the connection (client/server)
-        let (role, _concurrency_limit) = match config {
-            crate::transport_parameters::NatTraversalConfig::ClientSupport => {
-                // We're operating as a client
-                (NatTraversalRole::Client, 10) // Default concurrency
-            }
-            crate::transport_parameters::NatTraversalConfig::ServerSupport {
-                concurrency_limit,
-            } => {
-                // We're operating as a server - default to non-relay server
-                (
-                    NatTraversalRole::Server { can_relay: false },
-                    concurrency_limit.into_inner() as u32,
-                )
-            }
-        };
-
-        // Use sensible defaults for parameters not in the transport parameter
+        // v0.13.0: All nodes are symmetric P2P nodes - no role-based configuration
+        // Use sensible defaults for all nodes
         let max_candidates = 50; // Default maximum candidates
         let coordination_timeout = Duration::from_secs(10); // Default 10 second timeout
 
-        // Initialize NAT traversal state
-        self.nat_traversal = Some(NatTraversalState::new(
-            role,
-            max_candidates,
-            coordination_timeout,
-        ));
+        // Initialize NAT traversal state (no role parameter - all nodes are symmetric)
+        self.nat_traversal = Some(NatTraversalState::new(max_candidates, coordination_timeout));
 
-        trace!(
-            "NAT traversal initialized with negotiated config: role={:?}",
-            role
-        );
+        trace!("NAT traversal initialized for symmetric P2P node");
 
-        // Perform role-specific initialization
-        match role {
-            NatTraversalRole::Bootstrap => {
-                // Bootstrap nodes should be ready to observe addresses
-                self.prepare_address_observation();
-            }
-            NatTraversalRole::Client => {
-                // Clients should start candidate discovery
-                self.schedule_candidate_discovery();
-            }
-            NatTraversalRole::Server { .. } => {
-                // Servers should be ready to accept coordination requests
-                self.prepare_coordination_handling();
-            }
-        }
+        // v0.13.0: All nodes perform all initialization - no role-specific branching
+        // All nodes can observe addresses, discover candidates, and coordinate
+        self.prepare_address_observation();
+        self.schedule_candidate_discovery();
+        self.prepare_coordination_handling();
     }
 
     /// Initiate NAT traversal process for client endpoints
@@ -4703,19 +4637,16 @@ impl Connection {
     }
 
     /// Force enable NAT traversal for testing purposes
+    ///
+    /// v0.13.0: Role parameter removed - all nodes are symmetric P2P nodes.
     #[cfg(test)]
     #[allow(dead_code)]
-    pub(crate) fn force_enable_nat_traversal(&mut self, role: NatTraversalRole) {
+    pub(crate) fn force_enable_nat_traversal(&mut self) {
         use crate::transport_parameters::NatTraversalConfig;
 
-        // Create appropriate config based on role
-        let config = match role {
-            NatTraversalRole::Client => NatTraversalConfig::ClientSupport,
-            NatTraversalRole::Server { .. } | NatTraversalRole::Bootstrap => {
-                NatTraversalConfig::ServerSupport {
-                    concurrency_limit: VarInt::from_u32(5),
-                }
-            }
+        // v0.13.0: All nodes use ServerSupport (can coordinate)
+        let config = NatTraversalConfig::ServerSupport {
+            concurrency_limit: VarInt::from_u32(5),
         };
 
         self.peer_params.nat_traversal = Some(config.clone());
@@ -4725,7 +4656,8 @@ impl Connection {
             transport_config
         });
 
-        self.nat_traversal = Some(NatTraversalState::new(role, 8, Duration::from_secs(10)));
+        // v0.13.0: No role parameter - all nodes are symmetric
+        self.nat_traversal = Some(NatTraversalState::new(8, Duration::from_secs(10)));
     }
 
     /// Queue an ADD_ADDRESS frame to be sent to the peer
@@ -4788,6 +4720,8 @@ impl Connection {
     }
 
     /// Handle PunchMeNow frame from peer (via coordinator)
+    ///
+    /// v0.13.0: All nodes can coordinate - no role check needed.
     fn handle_punch_me_now(
         &mut self,
         punch_me_now: &crate::frame::PunchMeNow,
@@ -4798,10 +4732,11 @@ impl Connection {
             punch_me_now.round, punch_me_now.paired_with_sequence_number, punch_me_now.address
         );
 
-        // Check if we're a bootstrap node that should coordinate this
+        // v0.13.0: All nodes can coordinate - try coordination first
         if let Some(nat_state) = &self.nat_traversal {
-            if matches!(nat_state.role, NatTraversalRole::Bootstrap) {
-                // We're a bootstrap node - process coordination request
+            // All nodes have bootstrap_coordinator now (v0.13.0)
+            if nat_state.bootstrap_coordinator.is_some() {
+                // Process coordination request
                 let from_peer_id = self.derive_peer_id_from_connection();
 
                 // Clone the frame to avoid borrow checker issues
@@ -4819,7 +4754,7 @@ impl Connection {
                         now,
                     ) {
                     Ok(Some(coordination_frame)) => {
-                        trace!("Bootstrap node coordinating PUNCH_ME_NOW between peers");
+                        trace!("Node coordinating PUNCH_ME_NOW between peers");
 
                         // Send coordination frame to target peer via endpoint
                         if let Some(target_peer_id) = punch_me_now.target_peer_id {
@@ -4834,11 +4769,11 @@ impl Connection {
                         return Ok(());
                     }
                     Ok(None) => {
-                        trace!("Bootstrap coordination completed or no action needed");
+                        trace!("Coordination completed or no action needed");
                         return Ok(());
                     }
                     Err(e) => {
-                        warn!("Bootstrap coordination failed: {}", e);
+                        warn!("Coordination failed: {}", e);
                         return Ok(());
                     }
                 }
@@ -4918,6 +4853,10 @@ impl Connection {
         observed_address: &crate::frame::ObservedAddress,
         now: Instant,
     ) -> Result<(), TransportError> {
+        println!(
+            "DEBUG: handle_observed_address_frame: received address {}",
+            observed_address.address
+        );
         // Get the address discovery state
         let state = self.address_discovery_state.as_mut().ok_or_else(|| {
             TransportError::PROTOCOL_VIOLATION(
@@ -5057,7 +4996,7 @@ impl Connection {
         };
         self.spaces[SpaceId::Data]
             .pending
-            .observed_addresses
+            .outbound_observations
             .push(observed_address);
         trace!("Queued ObservedAddress frame: addr={}", address);
     }
@@ -5087,7 +5026,7 @@ impl Connection {
                 // Queue the frame for sending
                 self.spaces[SpaceId::Data]
                     .pending
-                    .observed_addresses
+                    .outbound_observations
                     .push(frame);
 
                 // Record that we sent the observation
@@ -5169,13 +5108,12 @@ impl Connection {
     }
 
     /// Get current NAT traversal state information
-    pub fn nat_traversal_state(&self) -> Option<(NatTraversalRole, usize, usize)> {
+    ///
+    /// v0.13.0: Returns (local_candidates, remote_candidates) - role removed since all
+    /// nodes are symmetric P2P nodes.
+    pub fn nat_traversal_state(&self) -> Option<(usize, usize)> {
         self.nat_traversal.as_ref().map(|state| {
-            (
-                state.role,
-                state.local_candidates.len(),
-                state.remote_candidates.len(),
-            )
+            (state.local_candidates.len(), state.remote_candidates.len())
         })
     }
 
@@ -5406,10 +5344,7 @@ impl Connection {
         self.nat_traversal.is_some()
     }
 
-    /// Get the current NAT traversal role for this connection
-    pub fn get_nat_traversal_role(&self) -> Option<NatTraversalRole> {
-        self.nat_traversal.as_ref().map(|state| state.role)
-    }
+    // v0.13.0: get_nat_traversal_role() removed - all nodes are symmetric P2P nodes
 
     /// Negotiate address discovery parameters with peer
     fn negotiate_address_discovery(&mut self, peer_params: &TransportParameters) {
@@ -6158,6 +6093,9 @@ impl PqcState {
 
     /// Detect PQC from CRYPTO frame data
     fn detect_pqc_from_crypto(&mut self, crypto_data: &[u8], space: SpaceId) {
+        if !self.enabled {
+            return;
+        }
         if self.packet_handler.detect_pqc_handshake(crypto_data, space) {
             self.using_pqc = true;
             // Update handshake MTU based on PQC detection
@@ -6202,7 +6140,6 @@ impl PqcState {
     }
 }
 
-#[cfg(feature = "pqc")]
 impl Default for PqcState {
     fn default() -> Self {
         Self::new()
@@ -6218,18 +6155,22 @@ pub(crate) struct AddressDiscoveryState {
     max_observation_rate: u8,
     /// Whether to observe addresses for all paths or just primary
     observe_all_paths: bool,
-    /// Per-path address information
-    path_addresses: std::collections::HashMap<u64, paths::PathAddressInfo>,
+    /// Per-path local observations (what we saw the peer at, for sending)
+    sent_observations: std::collections::HashMap<u64, paths::PathAddressInfo>,
+    /// Per-path remote observations (what the peer saw us at, for our info)
+    received_observations: std::collections::HashMap<u64, paths::PathAddressInfo>,
     /// Rate limiter for sending observations
     rate_limiter: AddressObservationRateLimiter,
-    /// Addresses we've been told about by peers
-    observed_addresses: Vec<ObservedAddressEvent>,
+    /// Historical record of observations received
+    received_history: Vec<ObservedAddressEvent>,
     /// Whether this connection is in bootstrap mode (aggressive observation)
     bootstrap_mode: bool,
     /// Next sequence number for OBSERVED_ADDRESS frames
     next_sequence_number: VarInt,
     /// Map of path_id to last received sequence number
     last_received_sequence: std::collections::HashMap<u64, VarInt>,
+    /// Total number of observations sent
+    frames_sent: u64,
 }
 
 /// Event for when we receive an OBSERVED_ADDRESS frame
@@ -6278,12 +6219,14 @@ impl AddressDiscoveryState {
             enabled,
             max_observation_rate,
             observe_all_paths,
-            path_addresses: std::collections::HashMap::new(),
+            sent_observations: std::collections::HashMap::new(),
+            received_observations: std::collections::HashMap::new(),
             rate_limiter: AddressObservationRateLimiter::new(max_observation_rate, now),
-            observed_addresses: Vec::new(),
+            received_history: Vec::new(),
             bootstrap_mode: false,
             next_sequence_number: VarInt::from_u32(0),
             last_received_sequence: std::collections::HashMap::new(),
+            frames_sent: 0,
         }
     }
 
@@ -6295,7 +6238,7 @@ impl AddressDiscoveryState {
         }
 
         // Check if this is a new path or if the address has changed
-        let needs_observation = match self.path_addresses.get(&path_id) {
+        let needs_observation = match self.sent_observations.get(&path_id) {
             Some(info) => info.observed_address.is_none() || !info.notified,
             None => true,
         };
@@ -6310,7 +6253,7 @@ impl AddressDiscoveryState {
 
     /// Record that we sent an observation for a path
     fn record_observation_sent(&mut self, path_id: u64) {
-        if let Some(info) = self.path_addresses.get_mut(&path_id) {
+        if let Some(info) = self.sent_observations.get_mut(&path_id) {
             info.mark_notified();
         }
     }
@@ -6321,15 +6264,15 @@ impl AddressDiscoveryState {
             return;
         }
 
-        self.observed_addresses.push(ObservedAddressEvent {
+        self.received_history.push(ObservedAddressEvent {
             address,
             received_at: now,
             path_id,
         });
 
-        // Update or create path info
+        // Update or create path info for received observations
         let info = self
-            .path_addresses
+            .received_observations
             .entry(path_id)
             .or_insert_with(paths::PathAddressInfo::new);
         info.update_observed_address(address, now);
@@ -6337,14 +6280,14 @@ impl AddressDiscoveryState {
 
     /// Get the most recently observed address for a path
     pub(crate) fn get_observed_address(&self, path_id: u64) -> Option<SocketAddr> {
-        self.path_addresses
+        self.received_observations
             .get(&path_id)
             .and_then(|info| info.observed_address)
     }
 
     /// Get all observed addresses across all paths
-    pub(crate) fn get_all_observed_addresses(&self) -> Vec<SocketAddr> {
-        self.path_addresses
+    pub(crate) fn get_all_received_history(&self) -> Vec<SocketAddr> {
+        self.received_observations
             .values()
             .filter_map(|info| info.observed_address)
             .collect()
@@ -6353,10 +6296,10 @@ impl AddressDiscoveryState {
     /// Get statistics for address discovery
     pub(crate) fn stats(&self) -> AddressDiscoveryStats {
         AddressDiscoveryStats {
-            frames_sent: self.observed_addresses.len() as u64, // Using observed_addresses as a proxy
-            frames_received: self.observed_addresses.len() as u64,
+            frames_sent: self.frames_sent,
+            frames_received: self.received_history.len() as u64,
             addresses_discovered: self
-                .path_addresses
+                .received_observations
                 .values()
                 .filter(|info| info.observed_address.is_some())
                 .count() as u64,
@@ -6365,10 +6308,24 @@ impl AddressDiscoveryState {
     }
 
     /// Check if we have any unnotified address changes
+    ///
+    /// This checks both:
+    /// - `sent_observations`: addresses we've observed about peers that need to be sent
+    /// - `received_observations`: addresses peers observed about us that need app notification
     fn has_unnotified_changes(&self) -> bool {
-        self.path_addresses
+        // Check if we have observations to send to peers
+        let has_unsent = self
+            .sent_observations
             .values()
-            .any(|info| info.observed_address.is_some() && !info.notified)
+            .any(|info| info.observed_address.is_some() && !info.notified);
+
+        // Check if we have received observations to notify the app about
+        let has_unreceived = self
+            .received_observations
+            .values()
+            .any(|info| info.observed_address.is_some() && !info.notified);
+
+        has_unsent || has_unreceived
     }
 
     /// Queue an OBSERVED_ADDRESS frame for sending if conditions are met
@@ -6388,7 +6345,7 @@ impl AddressDiscoveryState {
         }
 
         // Check if this path has already been notified
-        if let Some(info) = self.path_addresses.get(&path_id) {
+        if let Some(info) = self.sent_observations.get(&path_id) {
             if info.notified {
                 return None;
             }
@@ -6404,11 +6361,16 @@ impl AddressDiscoveryState {
 
         // Update or create path info
         let info = self
-            .path_addresses
+            .sent_observations
             .entry(path_id)
             .or_insert_with(paths::PathAddressInfo::new);
         info.observed_address = Some(address);
         info.notified = true;
+
+        println!(
+            "DEBUG: queue_observed_address_frame: ACTUALLY QUEUING frame for path {} with address {}",
+            path_id, address
+        );
 
         // Create and return the frame with sequence number
         let sequence_number = self.next_sequence_number;
@@ -6440,7 +6402,7 @@ impl AddressDiscoveryState {
 
         // Collect all paths that need observation frames
         let paths_to_notify: Vec<u64> = self
-            .path_addresses
+            .sent_observations
             .iter()
             .filter_map(|(&path_id, info)| {
                 if info.observed_address.is_some() && !info.notified {
@@ -6464,7 +6426,7 @@ impl AddressDiscoveryState {
             }
 
             // Get the address
-            if let Some(info) = self.path_addresses.get_mut(&path_id) {
+            if let Some(info) = self.sent_observations.get_mut(&path_id) {
                 if let Some(address) = info.observed_address {
                     // Consume a token (bootstrap nodes consume at reduced rate)
                     if self.bootstrap_mode {
@@ -6481,6 +6443,8 @@ impl AddressDiscoveryState {
                     self.next_sequence_number =
                         VarInt::from_u64(self.next_sequence_number.into_inner() + 1)
                             .expect("sequence number overflow");
+
+                    self.frames_sent += 1;
 
                     frames.push(frame::ObservedAddress {
                         sequence_number,
@@ -6517,12 +6481,14 @@ impl AddressDiscoveryState {
                 enabled: false,
                 max_observation_rate: max_rate as u8,
                 observe_all_paths,
-                path_addresses: std::collections::HashMap::new(),
+                sent_observations: std::collections::HashMap::new(),
+                received_observations: std::collections::HashMap::new(),
                 rate_limiter: AddressObservationRateLimiter::new(max_rate as u8, Instant::now()),
-                observed_addresses: Vec::new(),
+                received_history: Vec::new(),
                 bootstrap_mode: false,
                 next_sequence_number: VarInt::from_u32(0),
                 last_received_sequence: std::collections::HashMap::new(),
+                frames_sent: 0,
             };
         }
 
@@ -6644,8 +6610,9 @@ mod tests {
         assert!(state.enabled);
         assert_eq!(state.max_observation_rate, 10);
         assert!(!state.observe_all_paths);
-        assert!(state.path_addresses.is_empty());
-        assert!(state.observed_addresses.is_empty());
+        assert!(state.sent_observations.is_empty());
+        assert!(state.received_observations.is_empty());
+        assert!(state.received_history.is_empty());
         assert_eq!(state.rate_limiter.tokens, 10.0);
     }
 
@@ -6678,7 +6645,7 @@ mod tests {
             now,
         );
         path_info.mark_notified();
-        state.path_addresses.insert(0, path_info);
+        state.sent_observations.insert(0, path_info);
 
         // Should not send if already notified
         assert!(!state.should_send_observation(0, now));
@@ -6725,16 +6692,16 @@ mod tests {
 
         // Handle first observation
         state.handle_observed_address(addr1, 0, now);
-        assert_eq!(state.observed_addresses.len(), 1);
-        assert_eq!(state.observed_addresses[0].address, addr1);
-        assert_eq!(state.observed_addresses[0].path_id, 0);
+        assert_eq!(state.received_history.len(), 1);
+        assert_eq!(state.received_history[0].address, addr1);
+        assert_eq!(state.received_history[0].path_id, 0);
 
         // Handle second observation
         let later = now + Duration::from_millis(100);
         state.handle_observed_address(addr2, 1, later);
-        assert_eq!(state.observed_addresses.len(), 2);
-        assert_eq!(state.observed_addresses[1].address, addr2);
-        assert_eq!(state.observed_addresses[1].path_id, 1);
+        assert_eq!(state.received_history.len(), 2);
+        assert_eq!(state.received_history[1].address, addr2);
+        assert_eq!(state.received_history[1].path_id, 1);
     }
 
     #[test]
@@ -6750,7 +6717,7 @@ mod tests {
         let mut path_info = paths::PathAddressInfo::new();
         let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 80);
         path_info.update_observed_address(addr, now);
-        state.path_addresses.insert(0, path_info);
+        state.received_observations.insert(0, path_info);
 
         // Should return the address
         assert_eq!(state.get_observed_address(0), Some(addr));
@@ -6772,7 +6739,7 @@ mod tests {
             SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)), 8080),
             now,
         );
-        state.path_addresses.insert(0, path_info);
+        state.sent_observations.insert(0, path_info);
 
         // Should have unnotified changes
         assert!(state.has_unnotified_changes());
@@ -6968,8 +6935,9 @@ mod tests {
         assert!(state.enabled);
         assert_eq!(state.max_observation_rate, 30);
         assert!(state.observe_all_paths);
-        assert!(state.path_addresses.is_empty());
-        assert!(state.observed_addresses.is_empty());
+        assert!(state.sent_observations.is_empty());
+        assert!(state.received_observations.is_empty());
+        assert!(state.received_history.is_empty());
     }
 
     // Tests for Task 2.3: Frame Processing Pipeline
@@ -6985,14 +6953,14 @@ mod tests {
         state.handle_observed_address(addr, path_id, now);
 
         // Should have recorded the observation
-        assert_eq!(state.observed_addresses.len(), 1);
-        assert_eq!(state.observed_addresses[0].address, addr);
-        assert_eq!(state.observed_addresses[0].path_id, path_id);
-        assert_eq!(state.observed_addresses[0].received_at, now);
+        assert_eq!(state.received_history.len(), 1);
+        assert_eq!(state.received_history[0].address, addr);
+        assert_eq!(state.received_history[0].path_id, path_id);
+        assert_eq!(state.received_history[0].received_at, now);
 
         // Should have updated path state
-        assert!(state.path_addresses.contains_key(&path_id));
-        let path_info = &state.path_addresses[&path_id];
+        assert!(state.received_observations.contains_key(&path_id));
+        let path_info = &state.received_observations[&path_id];
         assert_eq!(path_info.observed_address, Some(addr));
         assert_eq!(path_info.last_observed, Some(now));
         assert_eq!(path_info.observation_count, 1);
@@ -7013,10 +6981,10 @@ mod tests {
         state.handle_observed_address(addr2, path_id, now + Duration::from_secs(2));
 
         // Should have all observations in the event list
-        assert_eq!(state.observed_addresses.len(), 3);
+        assert_eq!(state.received_history.len(), 3);
 
         // Path info should reflect the latest observation
-        let path_info = &state.path_addresses[&path_id];
+        let path_info = &state.received_observations[&path_id];
         assert_eq!(path_info.observed_address, Some(addr2));
         assert_eq!(path_info.observation_count, 1); // Reset for new address
     }
@@ -7033,8 +7001,9 @@ mod tests {
         state.handle_observed_address(addr, 0, now);
 
         // Should not record anything
-        assert!(state.observed_addresses.is_empty());
-        assert!(state.path_addresses.is_empty());
+        assert!(state.received_history.is_empty());
+        assert!(state.sent_observations.is_empty());
+        assert!(state.received_observations.is_empty());
     }
 
     #[test]
@@ -7129,7 +7098,7 @@ mod tests {
         assert!(state.has_unnotified_changes());
 
         // After marking as notified
-        state.path_addresses.get_mut(&0).unwrap().notified = true;
+        state.received_observations.get_mut(&0).unwrap().notified = true;
         assert!(!state.has_unnotified_changes());
     }
 
@@ -7299,25 +7268,37 @@ mod tests {
 
         // Set up path addresses so should_send_observation returns true
         state
-            .path_addresses
+            .sent_observations
             .insert(0, paths::PathAddressInfo::new());
         state
-            .path_addresses
+            .sent_observations
             .insert(1, paths::PathAddressInfo::new());
         state
-            .path_addresses
+            .sent_observations
             .insert(2, paths::PathAddressInfo::new());
 
         // Set observed addresses so paths need observation
-        state.path_addresses.get_mut(&0).unwrap().observed_address = Some(SocketAddr::new(
+        state
+            .sent_observations
+            .get_mut(&0)
+            .unwrap()
+            .observed_address = Some(SocketAddr::new(
             IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)),
             8080,
         ));
-        state.path_addresses.get_mut(&1).unwrap().observed_address = Some(SocketAddr::new(
+        state
+            .sent_observations
+            .get_mut(&1)
+            .unwrap()
+            .observed_address = Some(SocketAddr::new(
             IpAddr::V4(Ipv4Addr::new(192, 168, 1, 2)),
             8081,
         ));
-        state.path_addresses.get_mut(&2).unwrap().observed_address = Some(SocketAddr::new(
+        state
+            .sent_observations
+            .get_mut(&2)
+            .unwrap()
+            .observed_address = Some(SocketAddr::new(
             IpAddr::V4(Ipv4Addr::new(192, 168, 1, 3)),
             8082,
         ));
@@ -7327,7 +7308,7 @@ mod tests {
             assert!(state.should_send_observation(0, now));
             state.record_observation_sent(0);
             // Reset notified flag for next check
-            state.path_addresses.get_mut(&0).unwrap().notified = false;
+            state.sent_observations.get_mut(&0).unwrap().notified = false;
         }
 
         // Path 1: consume 2 tokens
@@ -7335,7 +7316,7 @@ mod tests {
             assert!(state.should_send_observation(1, now));
             state.record_observation_sent(1);
             // Reset notified flag for next check
-            state.path_addresses.get_mut(&1).unwrap().notified = false;
+            state.sent_observations.get_mut(&1).unwrap().notified = false;
         }
 
         // Global limit should be hit (5 total)
@@ -7393,19 +7374,21 @@ mod tests {
 
         // First observation should be allowed
         assert!(state.should_send_observation(path_id, now));
-        state.handle_observed_address(addr1, path_id, now);
-        state.record_observation_sent(path_id);
 
-        // Same address, should not send again
+        // Queue the frame (this also marks it as notified in sent_observations)
+        let frame = state.queue_observed_address_frame(path_id, addr1);
+        assert!(frame.is_some());
+
+        // Same path, should not send again (already notified)
         assert!(!state.should_send_observation(path_id, now));
 
-        // Address change should trigger new observation need
-        state.handle_observed_address(addr2, path_id, now);
-        if let Some(info) = state.path_addresses.get_mut(&path_id) {
-            info.notified = false; // Simulate address change detection
+        // Simulate address change detection by marking as not notified
+        if let Some(info) = state.sent_observations.get_mut(&path_id) {
+            info.notified = false;
+            info.observed_address = Some(addr2);
         }
 
-        // Should now allow sending despite rate limit
+        // Should now allow sending for the address change
         assert!(state.should_send_observation(path_id, now));
     }
 
@@ -7504,9 +7487,13 @@ mod tests {
 
         // Set up a path with an address to observe
         state
-            .path_addresses
+            .sent_observations
             .insert(0, paths::PathAddressInfo::new());
-        state.path_addresses.get_mut(&0).unwrap().observed_address = Some(SocketAddr::new(
+        state
+            .sent_observations
+            .get_mut(&0)
+            .unwrap()
+            .observed_address = Some(SocketAddr::new(
             IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)),
             8080,
         ));
@@ -7522,7 +7509,7 @@ mod tests {
             assert!(state.should_send_observation(0, now));
             state.record_observation_sent(0);
             // Reset notified flag for next iteration
-            state.path_addresses.get_mut(&0).unwrap().notified = false;
+            state.sent_observations.get_mut(&0).unwrap().notified = false;
         }
         // 6th should fail (out of tokens)
         assert!(!state.should_send_observation(0, now));
@@ -7536,9 +7523,13 @@ mod tests {
 
         // Set up initial path
         state
-            .path_addresses
+            .sent_observations
             .insert(0, paths::PathAddressInfo::new());
-        state.path_addresses.get_mut(&0).unwrap().observed_address = Some(SocketAddr::new(
+        state
+            .sent_observations
+            .get_mut(&0)
+            .unwrap()
+            .observed_address = Some(SocketAddr::new(
             IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)),
             8080,
         ));
@@ -7548,7 +7539,7 @@ mod tests {
             assert!(state.should_send_observation(0, now));
             state.record_observation_sent(0);
             // Reset notified flag for next iteration
-            state.path_addresses.get_mut(&0).unwrap().notified = false;
+            state.sent_observations.get_mut(&0).unwrap().notified = false;
         }
 
         // We have 5 tokens remaining
@@ -7563,7 +7554,7 @@ mod tests {
             assert!(state.should_send_observation(0, now));
             state.record_observation_sent(0);
             // Reset notified flag for next iteration
-            state.path_addresses.get_mut(&0).unwrap().notified = false;
+            state.sent_observations.get_mut(&0).unwrap().notified = false;
         }
 
         // Should be out of tokens now
@@ -7575,7 +7566,7 @@ mod tests {
             assert!(state.should_send_observation(0, later));
             state.record_observation_sent(0);
             // Reset notified flag for next iteration
-            state.path_addresses.get_mut(&0).unwrap().notified = false;
+            state.sent_observations.get_mut(&0).unwrap().notified = false;
         }
 
         // Should be out of tokens again
@@ -7594,9 +7585,13 @@ mod tests {
         // Set up multiple paths with addresses
         for i in 0..3 {
             state
-                .path_addresses
+                .sent_observations
                 .insert(i, paths::PathAddressInfo::new());
-            state.path_addresses.get_mut(&i).unwrap().observed_address = Some(SocketAddr::new(
+            state
+                .sent_observations
+                .get_mut(&i)
+                .unwrap()
+                .observed_address = Some(SocketAddr::new(
                 IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100 + i as u8)),
                 5000,
             ));
@@ -7610,7 +7605,7 @@ mod tests {
                 if state.should_send_observation(i, now) {
                     state.record_observation_sent(i);
                     // Reset notified flag for next iteration
-                    state.path_addresses.get_mut(&i).unwrap().notified = false;
+                    state.sent_observations.get_mut(&i).unwrap().notified = false;
                 }
             }
         }
@@ -7642,8 +7637,8 @@ mod tests {
         assert_eq!(frame.address, address);
 
         // Should mark path as notified
-        assert!(state.path_addresses.contains_key(&0));
-        assert!(state.path_addresses.get(&0).unwrap().notified);
+        assert!(state.sent_observations.contains_key(&0));
+        assert!(state.sent_observations.get(&0).unwrap().notified);
     }
 
     #[test]
@@ -7744,24 +7739,24 @@ mod tests {
         assert!(frame.is_some());
 
         // Check path info was updated
-        let path_info = state.path_addresses.get(&0).unwrap();
+        let path_info = state.sent_observations.get(&0).unwrap();
         assert_eq!(path_info.observed_address, Some(address));
         assert!(path_info.notified);
 
-        // Note: observed_addresses list is NOT updated by queue_observed_address_frame
+        // Note: received_history list is NOT updated by queue_observed_address_frame
         // That list is for addresses we've received from peers, not ones we're sending
-        assert_eq!(state.observed_addresses.len(), 0);
+        assert_eq!(state.received_history.len(), 0);
     }
 
     #[test]
-    fn retransmits_includes_observed_addresses() {
+    fn retransmits_includes_outbound_observations() {
         use crate::connection::spaces::Retransmits;
 
         // Create a retransmits struct
         let mut retransmits = Retransmits::default();
 
         // Initially should be empty
-        assert!(retransmits.observed_addresses.is_empty());
+        assert!(retransmits.outbound_observations.is_empty());
 
         // Add an observed address frame
         let address = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100)), 5000);
@@ -7769,11 +7764,11 @@ mod tests {
             sequence_number: VarInt::from_u32(1),
             address,
         };
-        retransmits.observed_addresses.push(frame);
+        retransmits.outbound_observations.push(frame);
 
         // Should now have one frame
-        assert_eq!(retransmits.observed_addresses.len(), 1);
-        assert_eq!(retransmits.observed_addresses[0].address, address);
+        assert_eq!(retransmits.outbound_observations.len(), 1);
+        assert_eq!(retransmits.outbound_observations[0].address, address);
     }
 
     #[test]
@@ -7784,9 +7779,13 @@ mod tests {
 
         // Simulate address change on path 0
         state
-            .path_addresses
+            .sent_observations
             .insert(0, paths::PathAddressInfo::new());
-        state.path_addresses.get_mut(&0).unwrap().observed_address = Some(SocketAddr::new(
+        state
+            .sent_observations
+            .get_mut(&0)
+            .unwrap()
+            .observed_address = Some(SocketAddr::new(
             IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100)),
             5000,
         ));
@@ -7807,9 +7806,13 @@ mod tests {
         // Simulate address change on path 0
         let address = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100)), 5000);
         state
-            .path_addresses
+            .sent_observations
             .insert(0, paths::PathAddressInfo::new());
-        state.path_addresses.get_mut(&0).unwrap().observed_address = Some(address);
+        state
+            .sent_observations
+            .get_mut(&0)
+            .unwrap()
+            .observed_address = Some(address);
 
         // Check for observations with peer support
         let frames = state.check_for_address_observations(0, true, now);
@@ -7819,7 +7822,7 @@ mod tests {
         assert_eq!(frames[0].address, address);
 
         // Path should now be marked as notified
-        assert!(state.path_addresses.get(&0).unwrap().notified);
+        assert!(state.sent_observations.get(&0).unwrap().notified);
     }
 
     #[test]
@@ -7831,9 +7834,13 @@ mod tests {
         // Set up a single path with observed address
         let address = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100)), 5000);
         state
-            .path_addresses
+            .sent_observations
             .insert(0, paths::PathAddressInfo::new());
-        state.path_addresses.get_mut(&0).unwrap().observed_address = Some(address);
+        state
+            .sent_observations
+            .get_mut(&0)
+            .unwrap()
+            .observed_address = Some(address);
 
         // Consume all initial tokens (starts with 10)
         for _ in 0..10 {
@@ -7842,21 +7849,21 @@ mod tests {
                 break;
             }
             // Mark path as unnotified again for next iteration
-            state.path_addresses.get_mut(&0).unwrap().notified = false;
+            state.sent_observations.get_mut(&0).unwrap().notified = false;
         }
 
         // Verify we've consumed all tokens
         assert_eq!(state.rate_limiter.tokens, 0.0);
 
         // Mark path as unnotified again to test rate limiting
-        state.path_addresses.get_mut(&0).unwrap().notified = false;
+        state.sent_observations.get_mut(&0).unwrap().notified = false;
 
         // Now check should be rate limited (no tokens left)
         let frames2 = state.check_for_address_observations(0, true, now);
         assert_eq!(frames2.len(), 0);
 
         // Mark path as unnotified again
-        state.path_addresses.get_mut(&0).unwrap().notified = false;
+        state.sent_observations.get_mut(&0).unwrap().notified = false;
 
         // After time passes, should be able to send again
         let later = now + Duration::from_millis(200); // 0.2 seconds = 2 tokens at 10/sec
@@ -7878,14 +7885,22 @@ mod tests {
         let addr2 = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 101)), 5001);
 
         state
-            .path_addresses
+            .sent_observations
             .insert(0, paths::PathAddressInfo::new());
-        state.path_addresses.get_mut(&0).unwrap().observed_address = Some(addr1);
+        state
+            .sent_observations
+            .get_mut(&0)
+            .unwrap()
+            .observed_address = Some(addr1);
 
         state
-            .path_addresses
+            .sent_observations
             .insert(1, paths::PathAddressInfo::new());
-        state.path_addresses.get_mut(&1).unwrap().observed_address = Some(addr2);
+        state
+            .sent_observations
+            .get_mut(&1)
+            .unwrap()
+            .observed_address = Some(addr2);
 
         // Check for observations - should get both since we have tokens
         let frames = state.check_for_address_observations(0, true, now);
@@ -7899,8 +7914,8 @@ mod tests {
         assert!(addresses.contains(&addr2));
 
         // Both paths should be marked as notified
-        assert!(state.path_addresses.get(&0).unwrap().notified);
-        assert!(state.path_addresses.get(&1).unwrap().notified);
+        assert!(state.sent_observations.get(&0).unwrap().notified);
+        assert!(state.sent_observations.get(&1).unwrap().notified);
     }
 
     // Tests for Task 2.4: Rate Limiter Configuration
@@ -8126,7 +8141,8 @@ mod tests {
         let mut state = AddressDiscoveryState::new(&config, now);
 
         // Simulate path creation (path_id = 0)
-        assert!(state.path_addresses.is_empty());
+        assert!(state.sent_observations.is_empty());
+        assert!(state.received_observations.is_empty());
 
         // When we first check if we should send observation, it should create path entry
         let should_send = state.should_send_observation(0, now);
@@ -8173,20 +8189,20 @@ mod tests {
         state.handle_observed_address(observed_addr, 0, now);
 
         // Verify the address was recorded
-        assert_eq!(state.observed_addresses.len(), 1);
-        assert_eq!(state.observed_addresses[0].address, observed_addr);
-        assert_eq!(state.observed_addresses[0].path_id, 0);
-        assert_eq!(state.observed_addresses[0].received_at, now);
+        assert_eq!(state.received_history.len(), 1);
+        assert_eq!(state.received_history[0].address, observed_addr);
+        assert_eq!(state.received_history[0].path_id, 0);
+        assert_eq!(state.received_history[0].received_at, now);
 
         // Path should also have the observed address
-        let path_info = state.path_addresses.get(&0).unwrap();
+        let path_info = state.received_observations.get(&0).unwrap();
         assert_eq!(path_info.observed_address, Some(observed_addr));
         assert_eq!(path_info.last_observed, Some(now));
         assert_eq!(path_info.observation_count, 1);
     }
 
     #[test]
-    fn test_handle_multiple_observed_addresses() {
+    fn test_handle_multiple_received_history() {
         // Test processing multiple OBSERVED_ADDRESS frames from different paths
         let now = Instant::now();
         let config = AddressDiscoveryConfig::SendAndReceive;
@@ -8202,15 +8218,15 @@ mod tests {
         state.handle_observed_address(addr3, 0, now + Duration::from_millis(100));
 
         // Verify all addresses were recorded
-        assert_eq!(state.observed_addresses.len(), 3);
+        assert_eq!(state.received_history.len(), 3);
 
         // Path 0 should have the most recent address (addr3)
-        let path0_info = state.path_addresses.get(&0).unwrap();
+        let path0_info = state.received_observations.get(&0).unwrap();
         assert_eq!(path0_info.observed_address, Some(addr3));
         assert_eq!(path0_info.observation_count, 1); // Reset to 1 for new address
 
         // Path 1 should have addr2
-        let path1_info = state.path_addresses.get(&1).unwrap();
+        let path1_info = state.received_observations.get(&1).unwrap();
         assert_eq!(path1_info.observed_address, Some(addr2));
         assert_eq!(path1_info.observation_count, 1);
     }
@@ -8252,7 +8268,7 @@ mod tests {
         assert!(state.has_unnotified_changes());
 
         // Mark as notified
-        if let Some(path_info) = state.path_addresses.get_mut(&0) {
+        if let Some(path_info) = state.received_observations.get_mut(&0) {
             path_info.notified = true;
         }
         assert!(!state.has_unnotified_changes());
@@ -8278,7 +8294,7 @@ mod tests {
         state.handle_observed_address(addr, 0, now);
 
         // When disabled, addresses are not recorded
-        assert_eq!(state.observed_addresses.len(), 0);
+        assert_eq!(state.received_history.len(), 0);
 
         // Should not send observations when disabled
         assert!(!state.should_send_observation(0, now));
@@ -8355,9 +8371,13 @@ mod tests {
 
         // Set up path 0 with an address to observe
         state
-            .path_addresses
+            .sent_observations
             .insert(0, paths::PathAddressInfo::new());
-        state.path_addresses.get_mut(&0).unwrap().observed_address = Some(SocketAddr::new(
+        state
+            .sent_observations
+            .get_mut(&0)
+            .unwrap()
+            .observed_address = Some(SocketAddr::new(
             IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)),
             8080,
         ));
@@ -8367,7 +8387,7 @@ mod tests {
             assert!(state.should_send_observation(0, now));
             state.record_observation_sent(0);
             // Reset notified flag for next iteration
-            state.path_addresses.get_mut(&0).unwrap().notified = false;
+            state.sent_observations.get_mut(&0).unwrap().notified = false;
         }
 
         // Now we're out of tokens, so path 0 should be rate limited
@@ -8379,7 +8399,7 @@ mod tests {
         state.record_observation_sent(0);
 
         // Reset notified flag to test again
-        state.path_addresses.get_mut(&0).unwrap().notified = false;
+        state.sent_observations.get_mut(&0).unwrap().notified = false;
 
         // And it's consumed again
         assert!(!state.should_send_observation(0, later));
@@ -8416,9 +8436,13 @@ mod tests {
         // Set up multiple paths with addresses to observe
         for i in 0..12 {
             state
-                .path_addresses
+                .sent_observations
                 .insert(i, paths::PathAddressInfo::new());
-            state.path_addresses.get_mut(&i).unwrap().observed_address = Some(SocketAddr::new(
+            state
+                .sent_observations
+                .get_mut(&i)
+                .unwrap()
+                .observed_address = Some(SocketAddr::new(
                 IpAddr::V4(Ipv4Addr::new(192, 168, 1, (i + 1) as u8)),
                 8080,
             ));
@@ -8483,7 +8507,7 @@ mod tests {
             SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)), 8080),
             now,
         );
-        state.path_addresses.insert(0, path_info);
+        state.sent_observations.insert(0, path_info);
 
         // First observation should succeed
         let frame1 =
@@ -8492,14 +8516,14 @@ mod tests {
         state.record_observation_sent(0);
 
         // Reset notified flag to test rate limiting (simulate address change or new observation opportunity)
-        if let Some(info) = state.path_addresses.get_mut(&0) {
+        if let Some(info) = state.sent_observations.get_mut(&0) {
             info.notified = false;
         }
 
         // We start with 10 tokens, use them all up (minus the 1 we already used)
         for _ in 1..10 {
             // Reset notified flag to allow testing rate limiting
-            if let Some(info) = state.path_addresses.get_mut(&0) {
+            if let Some(info) = state.sent_observations.get_mut(&0) {
                 info.notified = false;
             }
             let frame =
@@ -8509,7 +8533,7 @@ mod tests {
         }
 
         // Now we should be out of tokens
-        if let Some(info) = state.path_addresses.get_mut(&0) {
+        if let Some(info) = state.sent_observations.get_mut(&0) {
             info.notified = false;
         }
         let frame3 =
@@ -8521,7 +8545,7 @@ mod tests {
         state.rate_limiter.update_tokens(later); // Update tokens based on elapsed time
 
         // Reset notified flag to test token replenishment
-        if let Some(info) = state.path_addresses.get_mut(&0) {
+        if let Some(info) = state.sent_observations.get_mut(&0) {
             info.notified = false;
         }
 
@@ -8550,7 +8574,7 @@ mod tests {
         // Should respect rate limiting - we start with 10 tokens
         for i in 0..9 {
             // Reset notified flag to test rate limiting
-            if let Some(info) = state.path_addresses.get_mut(&0) {
+            if let Some(info) = state.sent_observations.get_mut(&0) {
                 info.notified = false;
             }
 
@@ -8560,7 +8584,7 @@ mod tests {
         }
 
         // Reset notified flag one more time
-        if let Some(info) = state.path_addresses.get_mut(&0) {
+        if let Some(info) = state.sent_observations.get_mut(&0) {
             info.notified = false;
         }
 
@@ -8594,7 +8618,7 @@ mod tests {
         assert!(state.has_unnotified_changes());
 
         // Check that we have 3 observation events
-        assert_eq!(state.observed_addresses.len(), 3);
+        assert_eq!(state.received_history.len(), 3);
     }
 
     #[test]
@@ -8632,9 +8656,13 @@ mod tests {
         // Set up multiple paths with addresses to observe
         for i in 0..21 {
             state
-                .path_addresses
+                .sent_observations
                 .insert(i, paths::PathAddressInfo::new());
-            state.path_addresses.get_mut(&i).unwrap().observed_address = Some(SocketAddr::new(
+            state
+                .sent_observations
+                .get_mut(&i)
+                .unwrap()
+                .observed_address = Some(SocketAddr::new(
                 IpAddr::V4(Ipv4Addr::new(192, 168, 1, (i + 1) as u8)),
                 8080,
             ));
@@ -8650,7 +8678,7 @@ mod tests {
         assert!(!state.should_send_observation(10, now));
 
         // Reset path 0 to test if it can send again (it shouldn't)
-        state.path_addresses.get_mut(&0).unwrap().notified = false;
+        state.sent_observations.get_mut(&0).unwrap().notified = false;
         assert!(!state.should_send_observation(0, now)); // Even path 0 can't send again
 
         // After 1 second, we get 10 more tokens (rate is 10/sec)
@@ -8679,9 +8707,13 @@ mod tests {
         state.handle_observed_address(addr1a, 0, now);
         state.handle_observed_address(addr2a, 1, now);
 
-        // Mark as notified
-        state.record_observation_sent(0);
-        state.record_observation_sent(1);
+        // Mark received observations as notified
+        if let Some(info) = state.received_observations.get_mut(&0) {
+            info.notified = true;
+        }
+        if let Some(info) = state.received_observations.get_mut(&1) {
+            info.notified = true;
+        }
         assert!(!state.has_unnotified_changes());
 
         // Change address on path 0
@@ -8693,7 +8725,9 @@ mod tests {
         assert_eq!(state.get_observed_address(1), Some(addr2a));
 
         // Mark path 0 as notified
-        state.record_observation_sent(0);
+        if let Some(info) = state.received_observations.get_mut(&0) {
+            info.notified = true;
+        }
         assert!(!state.has_unnotified_changes());
 
         // Change address on path 1
@@ -8723,8 +8757,8 @@ mod tests {
         assert_eq!(state.get_observed_address(1), Some(addr_new));
 
         // In real implementation, old path would be cleaned up eventually
-        // For now, we just track both
-        assert_eq!(state.path_addresses.len(), 2);
+        // For now, we just track both in received_observations
+        assert_eq!(state.received_observations.len(), 2);
     }
 
     #[test]
@@ -8737,14 +8771,36 @@ mod tests {
         // Enable observation of all paths
         state.observe_all_paths = true;
 
-        // Set up multiple paths with unnotified addresses
+        // Set up multiple paths with addresses to send (sent_observations)
         let addr1 = SocketAddr::from(([192, 168, 1, 1], 5000));
         let addr2 = SocketAddr::from(([10, 0, 0, 1], 6000));
         let addr3 = SocketAddr::from(([172, 16, 0, 1], 7000));
 
-        state.handle_observed_address(addr1, 0, now);
-        state.handle_observed_address(addr2, 1, now);
-        state.handle_observed_address(addr3, 2, now);
+        // Set up sent_observations for testing check_for_address_observations
+        state
+            .sent_observations
+            .insert(0, paths::PathAddressInfo::new());
+        state
+            .sent_observations
+            .get_mut(&0)
+            .unwrap()
+            .observed_address = Some(addr1);
+        state
+            .sent_observations
+            .insert(1, paths::PathAddressInfo::new());
+        state
+            .sent_observations
+            .get_mut(&1)
+            .unwrap()
+            .observed_address = Some(addr2);
+        state
+            .sent_observations
+            .insert(2, paths::PathAddressInfo::new());
+        state
+            .sent_observations
+            .get_mut(&2)
+            .unwrap()
+            .observed_address = Some(addr3);
 
         // Check for observations - should return frames for all unnotified paths
         let frames = state.check_for_address_observations(0, true, now);
@@ -8837,15 +8893,22 @@ mod tests {
         let mut state = AddressDiscoveryState::new(&config, now);
         state.set_bootstrap_mode(true);
 
-        // Add addresses on multiple paths
+        // Add addresses to sent_observations for testing check_for_address_observations
         let addrs = vec![
-            (0, SocketAddr::from(([192, 168, 1, 1], 5000))),
-            (1, SocketAddr::from(([10, 0, 0, 1], 6000))),
-            (2, SocketAddr::from(([172, 16, 0, 1], 7000))),
+            (0u64, SocketAddr::from(([192, 168, 1, 1], 5000))),
+            (1u64, SocketAddr::from(([10, 0, 0, 1], 6000))),
+            (2u64, SocketAddr::from(([172, 16, 0, 1], 7000))),
         ];
 
         for (path_id, addr) in &addrs {
-            state.handle_observed_address(*addr, *path_id, now);
+            state
+                .sent_observations
+                .insert(*path_id, paths::PathAddressInfo::new());
+            state
+                .sent_observations
+                .get_mut(path_id)
+                .unwrap()
+                .observed_address = Some(*addr);
         }
 
         // Bootstrap nodes should observe all paths despite config
@@ -8930,16 +8993,23 @@ mod tests {
         state.set_bootstrap_mode(true);
 
         // Simulate multiple peer connections (using different path IDs)
-        let peer_addresses = vec![
+        let peer_addresses: Vec<(u64, SocketAddr)> = vec![
             (0, SocketAddr::from(([192, 168, 1, 1], 5000))), // Peer 1
             (1, SocketAddr::from(([10, 0, 0, 1], 6000))),    // Peer 2
             (2, SocketAddr::from(([172, 16, 0, 1], 7000))),  // Peer 3
             (3, SocketAddr::from(([192, 168, 2, 1], 8000))), // Peer 4
         ];
 
-        // Add all peer addresses
+        // Add all peer addresses to sent_observations
         for (path_id, addr) in &peer_addresses {
-            state.handle_observed_address(*addr, *path_id, now);
+            state
+                .sent_observations
+                .insert(*path_id, paths::PathAddressInfo::new());
+            state
+                .sent_observations
+                .get_mut(path_id)
+                .unwrap()
+                .observed_address = Some(*addr);
         }
 
         // Bootstrap should observe all peers

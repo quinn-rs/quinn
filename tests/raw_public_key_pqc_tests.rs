@@ -2,7 +2,6 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-#[cfg(feature = "pqc")]
 mod pqc_raw_public_key_tests {
     use ant_quic::crypto::pqc::{
         MlDsaOperations,
@@ -243,13 +242,5 @@ mod pqc_raw_public_key_tests {
 
         // Should be identical
         assert_eq!(original_spki, extended_spki);
-    }
-}
-
-#[cfg(not(feature = "pqc"))]
-mod pqc_raw_public_key_tests {
-    #[test]
-    fn test_pqc_feature_required() {
-        println!("PQC raw public key tests require 'pqc' feature");
     }
 }

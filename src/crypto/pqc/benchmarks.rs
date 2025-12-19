@@ -9,21 +9,21 @@
 
 use std::time::Duration;
 
-#[cfg(all(test, feature = "pqc"))]
+#[cfg(test)]
 #[allow(missing_docs)]
 #[allow(dead_code)]
 pub struct PqcBenchmarks {
     iterations: usize,
 }
 
-#[cfg(all(test, feature = "pqc"))]
+#[cfg(test)]
 #[allow(missing_docs)]
 #[allow(dead_code)]
 pub struct BenchmarkResult {
     name: String,
 }
 
-#[cfg(all(test, feature = "pqc"))]
+#[cfg(test)]
 impl BenchmarkResult {
     #[allow(missing_docs)]
     pub fn new(name: &str) -> Self {
@@ -38,7 +38,7 @@ impl BenchmarkResult {
     }
 }
 
-#[cfg(all(test, feature = "pqc"))]
+#[cfg(test)]
 impl PqcBenchmarks {
     #[allow(missing_docs)]
     pub fn new(iterations: usize) -> Self {

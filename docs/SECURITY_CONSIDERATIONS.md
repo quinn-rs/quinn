@@ -1,69 +1,100 @@
 # Security Considerations for ant-quic
 
-This document outlines security considerations for ant-quic's NAT traversal and address discovery features.
+This document outlines security considerations for ant-quic v0.13.0+'s NAT traversal, address discovery, and post-quantum cryptography features.
 
 ## Table of Contents
+
 1. [Overview](#overview)
-2. [QUIC Address Discovery Security](#quic-address-discovery-security)
-3. [NAT Traversal Security](#nat-traversal-security)
-4. [Authentication and Identity](#authentication-and-identity)
-5. [Network Attack Vectors](#network-attack-vectors)
-6. [Implementation Security](#implementation-security)
-7. [Best Practices](#best-practices)
-8. [Security Checklist](#security-checklist)
+2. [Post-Quantum Cryptography](#post-quantum-cryptography)
+3. [QUIC Address Discovery Security](#quic-address-discovery-security)
+4. [NAT Traversal Security](#nat-traversal-security)
+5. [Authentication and Identity](#authentication-and-identity)
+6. [Network Attack Vectors](#network-attack-vectors)
+7. [Implementation Security](#implementation-security)
+8. [Best Practices](#best-practices)
+9. [Security Checklist](#security-checklist)
 
 ## Overview
 
-ant-quic implements several security measures to protect against common attack vectors in P2P networks:
-- **Cryptographic authentication** using Ed25519 signatures
-- **Rate limiting** for address observations
-- **Validated connection establishment** before trusting addresses
-- **QUIC's built-in security** (TLS 1.3, encrypted transport)
+ant-quic v0.13.0+ implements comprehensive security measures:
+
+- **Always-On PQC**: Hybrid post-quantum cryptography on every connection
+- **Raw Public Keys**: Ed25519 identity without certificate authorities
+- **Rate Limiting**: Protection against address observation flooding
+- **Validated Connections**: Address validation before trusting
+- **QUIC Security**: TLS 1.3, encrypted transport, connection binding
+
+## Post-Quantum Cryptography
+
+### Always-On Hybrid Cryptography
+
+Every connection uses both classical and post-quantum algorithms:
+
+```
+┌─────────────────────┐     ┌─────────────────────┐
+│    Classical        │     │   Post-Quantum      │
+├─────────────────────┤     ├─────────────────────┤
+│    X25519           │  +  │   ML-KEM-768        │ = Hybrid Key Exchange
+│    Ed25519          │  +  │   ML-DSA-65         │ = Hybrid Signatures
+└─────────────────────┘     └─────────────────────┘
+```
+
+**Security Property**: An attacker must break BOTH algorithm families to compromise security.
+
+### Why Always-On?
+
+1. **"Harvest Now, Decrypt Later"**: Adversaries can record encrypted traffic today and decrypt when quantum computers arrive
+2. **No Configuration Errors**: Users cannot accidentally disable PQC
+3. **Consistent Security**: Every connection has identical protection
+
+### Algorithm Standards
+
+| Algorithm | Standard | Security Level |
+|-----------|----------|----------------|
+| ML-KEM-768 | FIPS 203 | 192-bit classical, 175-bit quantum |
+| ML-DSA-65 | FIPS 204 | 192-bit classical, 175-bit quantum |
+| X25519 | RFC 7748 | 128-bit classical |
+| Ed25519 | RFC 8032 | 128-bit classical |
+
+### Configuration
+
+PQC cannot be disabled. Configuration tunes behavior:
+
+```rust
+let pqc = PqcConfig::builder()
+    .ml_kem(true)
+    .ml_dsa(true)
+    .memory_pool_size(10)
+    .handshake_timeout_multiplier(1.5)
+    .build()?;
+```
 
 ## QUIC Address Discovery Security
 
 ### Address Spoofing Protection
 
-The QUIC Address Discovery extension (draft-ietf-quic-address-discovery) includes several protections against address spoofing:
+The QUIC Address Discovery extension (draft-ietf-quic-address-discovery-00) includes protections:
 
-```rust
-// 1. Addresses are only observed from authenticated QUIC connections
-// 2. Rate limiting prevents observation flooding
-// 3. Addresses must be validated through actual packet receipt
+**Protection 1: Connection-Bound Observations**
+```
+Addresses are only accepted from established QUIC connections:
+- Peer has completed QUIC handshake
+- TLS 1.3 authentication established
+- Connection state prevents injection attacks
 ```
 
-#### Implementation Details
-
-**Protection Mechanism 1: Connection-Bound Observations**
+**Protection 2: Rate Limiting**
 ```rust
-// Addresses are only accepted from established QUIC connections
-// This means:
-// - The peer has completed the QUIC handshake
-// - TLS 1.3 authentication is established
-// - Connection state prevents injection attacks
-```
-
-**Protection Mechanism 2: Rate Limiting**
-```rust
-// Token bucket rate limiting per path
-pub struct RateLimiter {
-    tokens: f64,
-    max_tokens: f64,
-    refill_rate: f64, // tokens per second
-    last_update: Instant,
-}
-
 // Default: 30 observations/second per path
-// Bootstrap nodes: 150 observations/second (5x multiplier)
+// Configurable per deployment
 ```
 
-**Protection Mechanism 3: Address Validation**
-```rust
-// Observed addresses must be validated before use:
-// 1. Address is observed via OBSERVED_ADDRESS frame
-// 2. Address becomes a candidate for NAT traversal
-// 3. PATH_CHALLENGE/PATH_RESPONSE validates the address
-// 4. Only validated addresses are used for data transfer
+**Protection 3: Address Validation**
+```
+1. Address observed via OBSERVED_ADDRESS frame
+2. Address becomes NAT traversal candidate
+3. PATH_CHALLENGE/PATH_RESPONSE validates
+4. Only validated addresses used for data
 ```
 
 ### Privacy Considerations
@@ -71,198 +102,151 @@ pub struct RateLimiter {
 #### Address Disclosure
 - **Risk**: Peers learn your external IP address
 - **Mitigation**: Only share with authenticated peers
-- **Configuration**: Disable address discovery if privacy is critical
-
-```rust
-// Disable address discovery for privacy-sensitive applications
-endpoint_config.set_address_discovery_enabled(false);
-```
+- **Note**: This is inherent to P2P networking
 
 #### Tracking Prevention
-- **Risk**: Addresses could be used for tracking
-- **Mitigation**: Addresses are ephemeral and change with network conditions
-- **Protection**: Connection migration handles address changes gracefully
-
-### Rate Limiting Configuration
-
-Configure rate limiting based on your security requirements:
-
-```rust
-// Conservative rate limiting for public endpoints
-endpoint_config.set_max_observation_rate(10); // 10/second
-
-// Standard rate limiting
-endpoint_config.set_max_observation_rate(30); // Default
-
-// Aggressive rate limiting for trusted networks
-endpoint_config.set_max_observation_rate(60); // 60/second
-```
+- Addresses are ephemeral and change with network conditions
+- Connection migration handles address changes gracefully
 
 ## NAT Traversal Security
 
+### Symmetric P2P Model
+
+In ant-quic v0.13.0+, **all nodes are symmetric**. Every node can:
+- Initiate connections
+- Accept connections
+- Observe external addresses of peers
+- Coordinate NAT traversal for other peers
+
+There are no special "coordinator" or "bootstrap" roles.
+
 ### Hole Punching Security
 
-NAT traversal uses coordinated hole punching which has inherent security properties:
-
-1. **Mutual Authentication**: Both peers must authenticate before hole punching
-2. **Coordinator Validation**: Bootstrap nodes verify peer identities
-3. **Time-Limited Windows**: Hole punching attempts have strict timeouts
+1. **Mutual Authentication**: Both peers authenticate before hole punching
+2. **Peer Validation**: Any peer helping coordinate verifies identities
+3. **Time-Limited Windows**: Hole punching has strict timeouts
 
 ```rust
-// Hole punching is coordinated and time-limited
-let config = NatTraversalConfig {
-    coordination_timeout: Duration::from_secs(10), // Short window
-    max_candidates: 10, // Limit candidate addresses
+let nat = NatConfig {
+    coordination_timeout: Duration::from_secs(15),
+    max_candidates: 10,
+    hole_punch_retries: 5,
     ..Default::default()
 };
 ```
 
 ### Connection Validation
 
-All connections undergo validation before data transfer:
+All connections undergo validation:
 
-```rust
-// Connection establishment flow with security checks:
-// 1. Exchange candidate addresses (signed)
-// 2. Perform coordinated hole punching
-// 3. Validate path with QUIC PATH_CHALLENGE
-// 4. Verify peer identity with Ed25519
-// 5. Establish encrypted QUIC connection
+```
+1. Exchange candidate addresses
+2. Perform coordinated hole punching
+3. Validate path with QUIC PATH_CHALLENGE
+4. Verify peer identity via Raw Public Key
+5. Establish encrypted QUIC connection with PQC
 ```
 
 ## Authentication and Identity
 
-### Ed25519 Peer Authentication
+### Raw Public Keys (RFC 7250)
 
-ant-quic uses Ed25519 signatures for peer authentication:
+ant-quic uses Raw Public Keys instead of X.509 certificates:
 
 ```rust
-use ant_quic::auth::{AuthConfig, AuthManager};
+use ant_quic::key_utils::{generate_ed25519_keypair, derive_peer_id};
 
-// Configure authentication
-let auth_config = AuthConfig {
-    challenge_timeout: Duration::from_secs(30),
-    max_pending_auths: 100,
-    require_authentication: true, // Enforce authentication
-};
+// Generate Ed25519 keypair
+let (private_key, public_key) = generate_ed25519_keypair();
 
-// Authentication flow:
-// 1. Generate Ed25519 keypair
-// 2. Derive peer ID from public key (SHA-256)
-// 3. Sign challenges to prove identity
-// 4. Verify signatures before trusting peer
+// Derive peer ID from public key
+let peer_id = derive_peer_id(&public_key);
 ```
 
-### Challenge-Response Protocol
+**Benefits**:
+- No certificate authorities required
+- Self-sovereign identity
+- Simple trust model (know peer IDs)
+- No certificate expiration issues
 
-The authentication protocol prevents replay attacks:
-
-```rust
-// Challenge structure includes:
-// - Random nonce (prevents replay)
-// - Timestamp (prevents old challenges)
-// - Connection ID (binds to specific connection)
-
-pub struct AuthChallenge {
-    nonce: [u8; 32],
-    timestamp: SystemTime,
-    connection_id: ConnectionId,
-}
-```
-
-### Identity Verification Best Practices
+### Peer Verification
 
 ```rust
-// Always verify peer identity before sensitive operations
-let peer_id = connection.peer_id();
-let verified = auth_manager.verify_peer(&connection).await?;
-
-if !verified {
-    return Err("Peer authentication failed");
+// Verify peer identity
+let mut events = endpoint.subscribe();
+while let Ok(event) = events.recv().await {
+    match event {
+        P2pEvent::Connected { peer_id, .. } => {
+            if trusted_peers.contains(&peer_id) {
+                // Trusted peer connected
+            } else {
+                // Unknown peer - handle appropriately
+            }
+        }
+        _ => {}
+    }
 }
-
-// Now safe to exchange sensitive data
 ```
 
 ## Network Attack Vectors
 
 ### 1. Denial of Service (DoS)
 
-**Attack Vector**: Flooding with connection attempts or observation frames
+**Attack**: Flooding with connection attempts or observation frames
 
 **Mitigations**:
 ```rust
-// Connection limits
-let config = QuicNodeConfig {
-    max_connections: 100, // Limit total connections
-    max_pending_auths: 50, // Limit pending authentications
-    ..Default::default()
-};
-
-// Rate limiting per peer
-pub struct PerPeerRateLimiter {
-    limits: HashMap<PeerId, RateLimiter>,
-    global_limit: RateLimiter,
-}
+let config = P2pConfig::builder()
+    .max_connections(100)           // Limit total connections
+    .connection_timeout(Duration::from_secs(30))
+    .build()?;
 ```
 
 ### 2. Man-in-the-Middle (MITM)
 
-**Attack Vector**: Intercepting connection establishment
+**Attack**: Intercepting connection establishment
 
 **Mitigations**:
 - QUIC uses TLS 1.3 for all connections
-- Ed25519 signatures verify peer identity
-- Certificate or raw public key validation
-
-```rust
-// Configure certificate validation
-let mut transport_config = TransportConfig::default();
-transport_config.max_concurrent_bidi_streams(100u32.into());
-transport_config.max_concurrent_uni_streams(100u32.into());
-```
+- Hybrid PQC key exchange prevents quantum attacks
+- Raw Public Keys verify peer identity
 
 ### 3. Address Injection
 
-**Attack Vector**: Injecting false addresses to redirect connections
+**Attack**: Injecting false addresses to redirect connections
 
 **Mitigations**:
-```rust
-// Addresses are only accepted from:
-// 1. Authenticated QUIC connections
-// 2. After successful handshake
-// 3. With rate limiting applied
-// 4. Must be validated before use
-```
+- Addresses only accepted from authenticated QUIC connections
+- Rate limiting applied
+- Addresses validated before use
 
-### 4. Amplification Attacks
+### 4. Quantum Computer Attacks
 
-**Attack Vector**: Using the service to amplify traffic to victims
+**Attack**: Future quantum computers breaking classical cryptography
 
 **Mitigations**:
-- Response sizes are limited
-- Rate limiting prevents amplification
-- Connection state prevents reflection
+- ML-KEM-768 for post-quantum key exchange
+- ML-DSA-65 for post-quantum signatures
+- Hybrid scheme protects against both classical and quantum attacks
 
 ## Implementation Security
 
 ### Memory Safety
 
-ant-quic is written in Rust, providing:
+ant-quic is written in Rust:
 - Memory safety without garbage collection
 - Thread safety through the type system
 - No buffer overflows or use-after-free
 
 ### Secure Defaults
 
-The implementation uses secure defaults:
-
 ```rust
-// Address discovery: Enabled (improves connectivity)
-// Authentication: Required for all peers
-// Rate limiting: 30 observations/second
-// Connection timeout: 30 seconds
-// Max connections: 100
+// v0.13.0+ secure defaults:
+// - PQC: Always enabled (cannot disable)
+// - Authentication: Raw Public Keys
+// - Rate limiting: 30 observations/second
+// - Connection timeout: 30 seconds
+// - Max connections: 100
 ```
 
 ### Error Handling
@@ -270,131 +254,104 @@ The implementation uses secure defaults:
 Proper error handling prevents information leaks:
 
 ```rust
-// Don't leak internal information in errors
-match connection.connect().await {
-    Ok(_) => Ok(()),
-    Err(_) => Err("Connection failed"), // Generic error
+match endpoint.connect(addr).await {
+    Ok(conn) => handle_connection(conn),
+    Err(_) => {
+        // Don't leak internal details
+        log::warn!("Connection failed");
+    }
 }
 ```
 
 ## Best Practices
 
-### 1. Enable Authentication
-
-Always enable and verify authentication:
+### 1. Use Multiple Known Peers
 
 ```rust
-let auth_config = AuthConfig {
-    require_authentication: true,
-    challenge_timeout: Duration::from_secs(30),
-    ..Default::default()
-};
+let config = P2pConfig::builder()
+    .known_peer("peer1.example.com:9000".parse()?)
+    .known_peer("peer2.example.com:9000".parse()?)
+    .known_peer("peer3.example.com:9000".parse()?)
+    .build()?;
 ```
 
-### 2. Monitor Connection Patterns
-
-Implement monitoring for suspicious patterns:
+### 2. Verify Peer Identities
 
 ```rust
-// Track connection attempts per peer
-let mut connection_attempts: HashMap<SocketAddr, (u32, Instant)> = HashMap::new();
+// Application-level peer verification
+let expected_peers: HashSet<PeerId> = load_trusted_peers();
 
-// Implement exponential backoff for repeated failures
-if attempts > 5 {
-    let backoff = Duration::from_secs(2u64.pow(attempts.min(10)));
-    tokio::time::sleep(backoff).await;
+if !expected_peers.contains(&peer_id) {
+    connection.close(0u32.into(), b"untrusted");
 }
 ```
 
-### 3. Validate All Inputs
+### 3. Monitor Connection Events
 
 ```rust
-// Validate peer IDs
-fn validate_peer_id(peer_id: &PeerId) -> bool {
-    // Check for valid format
-    peer_id.0.iter().any(|&b| b != 0) // Not all zeros
-}
-
-// Validate addresses
-fn validate_address(addr: &SocketAddr) -> bool {
-    match addr {
-        SocketAddr::V4(addr) => {
-            let ip = addr.ip();
-            !ip.is_unspecified() && 
-            !ip.is_loopback() &&
-            !ip.is_multicast()
+let mut events = endpoint.subscribe();
+while let Ok(event) = events.recv().await {
+    match event {
+        P2pEvent::ConnectionFailed { peer_id, reason } => {
+            log::warn!("Connection failed: {} - {}", peer_id.to_hex(), reason);
         }
-        SocketAddr::V6(addr) => {
-            let ip = addr.ip();
-            !ip.is_unspecified() &&
-            !ip.is_loopback() &&
-            !ip.is_multicast()
+        P2pEvent::HolePunchFailed { peer_id, reason } => {
+            log::warn!("NAT traversal failed: {} - {}", peer_id.to_hex(), reason);
         }
+        _ => {}
     }
 }
 ```
 
-### 4. Secure Bootstrap Nodes
-
-Bootstrap nodes require extra security:
+### 4. Configure Appropriate Limits
 
 ```rust
-// For bootstrap nodes:
-// 1. Run on dedicated infrastructure
-// 2. Monitor for abuse patterns
-// 3. Implement IP-based rate limiting
-// 4. Log suspicious activities
-// 5. Regular security updates
+let config = P2pConfig::builder()
+    .max_connections(50)              // Appropriate for your use case
+    .connection_timeout(Duration::from_secs(30))
+    .idle_timeout(Duration::from_secs(120))
+    .build()?;
 ```
 
-### 5. Network Isolation
+### 5. Keep Dependencies Updated
 
-For sensitive deployments:
+```bash
+# Check for security updates
+cargo audit
 
-```rust
-// Create isolated networks
-let config = NatTraversalConfig {
-    bootstrap_nodes: vec!["private-bootstrap.internal:9000".parse()?],
-    // Only connect to allowlisted peers
-    peer_allowlist: Some(vec![trusted_peer_id]),
-    ..Default::default()
-};
+# Update dependencies
+cargo update
 ```
 
 ## Security Checklist
 
 Before deploying ant-quic in production:
 
-- [ ] **Authentication**: Enable peer authentication
-- [ ] **Rate Limiting**: Configure appropriate rate limits
-- [ ] **Connection Limits**: Set max_connections appropriately
-- [ ] **Monitoring**: Implement connection monitoring
+- [ ] **PQC Active**: Verify PQC is enabled (automatic in v0.13.0+)
+- [ ] **Connection Limits**: Set appropriate max_connections
+- [ ] **Monitoring**: Implement event monitoring
 - [ ] **Updates**: Keep ant-quic and dependencies updated
-- [ ] **Network Security**: Use firewalls for bootstrap nodes
+- [ ] **Network Security**: Configure firewalls appropriately
 - [ ] **Logging**: Enable security event logging
 - [ ] **Testing**: Test against common attack patterns
-- [ ] **Documentation**: Document security procedures
 - [ ] **Incident Response**: Have a plan for security incidents
 
 ### Security Audit Recommendations
 
 1. **Regular Updates**
    ```bash
-   # Check for security updates
    cargo audit
-   
-   # Update dependencies
    cargo update
    ```
 
 2. **Penetration Testing**
    - Test DoS resistance
-   - Verify authentication bypass isn't possible
+   - Verify authentication
    - Check for amplification vulnerabilities
    - Test address injection scenarios
 
 3. **Code Review Focus Areas**
-   - Authentication logic
+   - Peer verification logic
    - Rate limiting implementation
    - Address validation
    - Error handling paths
@@ -412,3 +369,13 @@ If you discover a security vulnerability:
    - Suggested fixes (if any)
 
 We aim to respond to security reports within 48 hours.
+
+## References
+
+- [FIPS 203 - ML-KEM](../../rfcs/fips-203-ml-kem.pdf)
+- [FIPS 204 - ML-DSA](../../rfcs/fips-204-ml-dsa.pdf)
+- [RFC 7250 - Raw Public Keys](https://www.rfc-editor.org/rfc/rfc7250)
+- [RFC 9000 - QUIC](https://www.rfc-editor.org/rfc/rfc9000)
+- [draft-seemann-quic-nat-traversal-02](../../rfcs/draft-seemann-quic-nat-traversal-02.txt)
+- [draft-ietf-quic-address-discovery-00](../../rfcs/draft-ietf-quic-address-discovery-00.txt)
+

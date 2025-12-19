@@ -19,12 +19,13 @@
 
 // Re-export public NAT traversal API
 pub use crate::nat_traversal_api::{
-    BootstrapNode, CandidateAddress, EndpointRole, NatTraversalConfig, NatTraversalEndpoint,
+    BootstrapNode, CandidateAddress, NatTraversalConfig, NatTraversalEndpoint,
     NatTraversalError, NatTraversalEvent, NatTraversalStatistics, PeerId,
 };
 
 // Re-export NAT traversal types from connection module
-pub use crate::connection::nat_traversal::{CandidateSource, CandidateState, NatTraversalRole};
+// v0.13.0: NatTraversalRole removed - all nodes are symmetric P2P nodes
+pub use crate::connection::nat_traversal::{CandidateSource, CandidateState};
 
 // Submodules
 pub mod rfc_migration;

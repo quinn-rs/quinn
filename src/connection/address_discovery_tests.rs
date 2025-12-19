@@ -23,7 +23,7 @@ fn test_address_discovery_state_initialization() {
     assert!(state.enabled);
     assert_eq!(state.max_observation_rate, 10); // Default rate
     assert!(!state.observe_all_paths); // Default is primary path only
-    assert!(state.observed_addresses.is_empty());
+    assert!(state.received_history.is_empty());
     assert!(!state.bootstrap_mode);
 }
 
@@ -38,9 +38,9 @@ fn test_handle_observed_address() {
     state.handle_observed_address(observed_addr, 0, now);
     
     // Check that address was recorded
-    assert_eq!(state.observed_addresses.len(), 1);
-    assert_eq!(state.observed_addresses[0].address, observed_addr);
-    assert_eq!(state.observed_addresses[0].path_id, 0);
+    assert_eq!(state.received_history.len(), 1);
+    assert_eq!(state.received_history[0].address, observed_addr);
+    assert_eq!(state.received_history[0].path_id, 0);
 }
 
 #[test]
@@ -59,9 +59,9 @@ fn test_multiple_observations() {
     }
     
     // Should have all addresses
-    assert_eq!(state.observed_addresses.len(), 3);
+    assert_eq!(state.received_history.len(), 3);
     for (i, addr) in addresses.iter().enumerate() {
-        assert_eq!(state.observed_addresses[i].address, *addr);
+        assert_eq!(state.received_history[i].address, *addr);
     }
 }
 
@@ -124,7 +124,7 @@ fn test_disabled_state() {
     state.handle_observed_address(addr, 0, now);
     
     // No addresses should be stored when disabled
-    assert_eq!(state.observed_addresses.len(), 0);
+    assert_eq!(state.received_history.len(), 0);
 }
 
 #[test]
@@ -155,9 +155,9 @@ fn test_ipv6_address_handling() {
         state.handle_observed_address(*addr, i as u64, now);
     }
     
-    assert_eq!(state.observed_addresses.len(), 3);
+    assert_eq!(state.received_history.len(), 3);
     for (i, addr) in ipv6_addresses.iter().enumerate() {
-        assert_eq!(state.observed_addresses[i].address, *addr);
+        assert_eq!(state.received_history[i].address, *addr);
     }
 }
 

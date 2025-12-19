@@ -5,7 +5,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use ant_quic::{
-    ClientConfig, Endpoint, ServerConfig,
+    ClientConfig, Endpoint, ServerConfig, TransportConfig,
     crypto::rustls::{QuicClientConfig, QuicServerConfig},
 };
 use std::{
@@ -17,16 +17,15 @@ use tracing::info;
 
 // Ensure crypto provider is installed for tests
 fn ensure_crypto_provider() {
-    // Try to install the crypto provider, ignore if already installed
-    #[cfg(feature = "rustls-aws-lc-rs")]
+    // Install the aws-lc-rs crypto provider
     let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+}
 
-    #[cfg(feature = "rustls-ring")]
-    let _ = rustls::crypto::ring::default_provider().install_default();
-
-    // If neither feature is enabled, use default
-    #[cfg(not(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring")))]
-    let _ = rustls::crypto::ring::default_provider().install_default();
+fn address_discovery_transport_config() -> Arc<TransportConfig> {
+    let mut transport_config = TransportConfig::default();
+    transport_config.enable_address_discovery(true);
+    transport_config.enable_pqc(false);
+    Arc::new(transport_config)
 }
 
 /// Custom certificate verifier that accepts any certificate (for testing only)
@@ -93,8 +92,12 @@ async fn test_address_discovery_default_enabled() {
         .unwrap();
     server_config.alpn_protocols = vec![b"test".to_vec()];
 
+    let mut quic_server_config =
+        ServerConfig::with_crypto(Arc::new(QuicServerConfig::try_from(server_config).unwrap()));
+    quic_server_config.transport_config(address_discovery_transport_config());
+
     let server = Endpoint::server(
-        ServerConfig::with_crypto(Arc::new(QuicServerConfig::try_from(server_config).unwrap())),
+        quic_server_config,
         SocketAddr::from((Ipv4Addr::LOCALHOST, 0)),
     )
     .unwrap();
@@ -132,8 +135,9 @@ async fn test_address_discovery_default_enabled() {
         .with_no_client_auth();
     client_crypto.alpn_protocols = vec![b"test".to_vec()];
 
-    let client_config =
+    let mut client_config =
         ClientConfig::new(Arc::new(QuicClientConfig::try_from(client_crypto).unwrap()));
+    client_config.transport_config(address_discovery_transport_config());
     client.set_default_client_config(client_config);
 
     let connection = client
@@ -176,8 +180,12 @@ async fn test_concurrent_connections() {
         .unwrap();
     server_config.alpn_protocols = vec![b"test".to_vec()];
 
+    let mut quic_server_config =
+        ServerConfig::with_crypto(Arc::new(QuicServerConfig::try_from(server_config).unwrap()));
+    quic_server_config.transport_config(address_discovery_transport_config());
+
     let server = Endpoint::server(
-        ServerConfig::with_crypto(Arc::new(QuicServerConfig::try_from(server_config).unwrap())),
+        quic_server_config,
         SocketAddr::from((Ipv4Addr::LOCALHOST, 0)),
     )
     .unwrap();
@@ -219,8 +227,9 @@ async fn test_concurrent_connections() {
             .with_no_client_auth();
         client_crypto.alpn_protocols = vec![b"test".to_vec()];
 
-        let client_config =
+        let mut client_config =
             ClientConfig::new(Arc::new(QuicClientConfig::try_from(client_crypto).unwrap()));
+        client_config.transport_config(address_discovery_transport_config());
         client.set_default_client_config(client_config);
 
         let connection = client
@@ -260,8 +269,11 @@ async fn test_with_data_transfer() {
         .unwrap();
     server_config.alpn_protocols = vec![b"test".to_vec()];
 
+    let mut quic_server_config =
+        ServerConfig::with_crypto(Arc::new(QuicServerConfig::try_from(server_config).unwrap()));
+    quic_server_config.transport_config(address_discovery_transport_config());
     let server = Endpoint::server(
-        ServerConfig::with_crypto(Arc::new(QuicServerConfig::try_from(server_config).unwrap())),
+        quic_server_config,
         SocketAddr::from((Ipv4Addr::LOCALHOST, 0)),
     )
     .unwrap();
@@ -299,8 +311,9 @@ async fn test_with_data_transfer() {
         .with_no_client_auth();
     client_crypto.alpn_protocols = vec![b"test".to_vec()];
 
-    let client_config =
+    let mut client_config =
         ClientConfig::new(Arc::new(QuicClientConfig::try_from(client_crypto).unwrap()));
+    client_config.transport_config(address_discovery_transport_config());
     client.set_default_client_config(client_config);
 
     let connection = client

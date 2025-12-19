@@ -26,8 +26,8 @@
 use crate::crypto::pqc::combiners::{ConcatenationCombiner, HybridCombiner};
 use crate::crypto::pqc::types::*;
 use crate::crypto::pqc::{MlDsaOperations, MlKemOperations, ml_dsa::MlDsa65, ml_kem::MlKem768};
-use ring::rand::{self, SecureRandom};
-use ring::signature::{self, Ed25519KeyPair, KeyPair as SignatureKeyPair};
+use aws_lc_rs::rand::{self, SecureRandom};
+use aws_lc_rs::signature::{self, Ed25519KeyPair, KeyPair as SignatureKeyPair};
 use std::sync::Arc;
 use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret};
 
@@ -369,7 +369,7 @@ impl Default for HybridSignature {
 /// If either algorithm is secure, the combined output remains secure.
 #[allow(dead_code)]
 fn combine_shared_secrets(classical: &[u8], pqc: &[u8], info: &[u8]) -> SharedSecret {
-    use ring::digest;
+    use aws_lc_rs::digest;
 
     // Following the hybrid design draft, concatenate classical || pqc
     let mut combined = Vec::with_capacity(classical.len() + pqc.len());
@@ -390,7 +390,7 @@ fn combine_shared_secrets(classical: &[u8], pqc: &[u8], info: &[u8]) -> SharedSe
     SharedSecret(secret)
 }
 
-#[cfg(all(test, feature = "pqc"))]
+#[cfg(test)]
 mod tests {
     use super::*;
 

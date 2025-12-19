@@ -11,8 +11,8 @@
 //! standards for combining classical and post-quantum shared secrets.
 
 use crate::crypto::pqc::types::*;
-use ring::hkdf;
-use ring::hmac;
+use aws_lc_rs::hkdf;
+use aws_lc_rs::hmac;
 
 /// NIST SP 800-56C Rev. 2 Option 1: Concatenation KDF
 ///
@@ -217,7 +217,7 @@ pub fn default_combiner() -> Box<dyn HybridCombiner> {
     Box::new(ConcatenationCombiner)
 }
 
-#[cfg(all(test, feature = "pqc"))]
+#[cfg(test)]
 mod tests {
     use super::*;
 

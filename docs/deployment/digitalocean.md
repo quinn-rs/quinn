@@ -1,6 +1,16 @@
 # Digital Ocean Deployment Guide for ant-quic
 
-This guide provides instructions for deploying ant-quic as a public test instance on Digital Ocean.
+This guide provides instructions for deploying ant-quic as a public node on Digital Ocean.
+
+## Note on Symmetric P2P
+
+In ant-quic v0.13.0+, **all nodes are symmetric** - there are no special "bootstrap" or "coordinator" roles. Every node can:
+- Initiate and accept connections
+- Observe external addresses of connecting peers
+- Coordinate NAT traversal for other peers
+- Relay traffic when needed
+
+The node deployed via this guide simply has a **public IP address** and is configured as a "known peer" for other nodes to connect to first. It runs the same code with the same capabilities as any other node.
 
 ## Prerequisites
 
@@ -67,7 +77,7 @@ vim inventory.ini
 # Set environment variables
 export DOMAIN_NAME="your-domain.com"  # Optional
 export CERTBOT_EMAIL="your-email@example.com"
-export ANT_QUIC_VERSION="v0.4.4"  # Or "latest" to build from source
+export ANT_QUIC_VERSION="v0.13.0"  # Or "latest" to build from source
 
 # Run the playbook
 ansible-playbook -i inventory.ini playbook.yml
@@ -145,8 +155,8 @@ The deployment includes:
 nc -u -z YOUR_DO_IP 9000
 echo $?  # Should return 0
 
-# Using ant-quic client
-ant-quic --connect YOUR_DO_IP:9000
+# Using ant-quic from another node
+ant-quic --known-peer YOUR_DO_IP:9000
 ```
 
 ### 2. Health Check

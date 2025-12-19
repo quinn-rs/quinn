@@ -33,10 +33,10 @@ async fn test_endpoint_has_server_config() -> anyhow::Result<()> {
     let nat_endpoint = node
         .get_nat_endpoint()
         .map_err(|e| anyhow::anyhow!("{}", e))?;
-    let quinn_endpoint = nat_endpoint
-        .get_quinn_endpoint()
-        .ok_or_else(|| anyhow::anyhow!("No Quinn endpoint"))?;
-    let addr = quinn_endpoint.local_addr()?;
+    let quic_endpoint = nat_endpoint
+        .get_endpoint()
+        .ok_or_else(|| anyhow::anyhow!("No QUIC endpoint"))?;
+    let addr = quic_endpoint.local_addr()?;
 
     println!("✅ Node created successfully, listening on: {}", addr);
     println!("Check logs above for 'Creating server config' message");

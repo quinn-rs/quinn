@@ -10,7 +10,7 @@ mod tests {
 
     use crate::{
         ConnectionId, Duration, Instant, Side, TransportError,
-        connection::nat_traversal::NatTraversalRole,
+        // v0.13.0: NatTraversalRole removed - all nodes are symmetric P2P nodes
         frame::FrameType,
         logging::{
             ConnectionEventType, ConnectionInfo, ConnectionRole, DebugContext, ErrorContext,
@@ -75,10 +75,10 @@ mod tests {
         );
 
         // Test NAT traversal logging
+        // v0.13.0: role field removed - all nodes are symmetric P2P nodes
         log_nat_traversal_event(
             NatTraversalEventType::HolePunchingStarted,
             &NatTraversalInfo {
-                role: NatTraversalRole::Client,
                 remote_addr: "192.168.1.100:9000".parse().unwrap(),
                 candidate_count: 4,
             },

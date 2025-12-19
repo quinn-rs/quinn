@@ -167,8 +167,23 @@ pub mod auth;
 pub mod chat;
 // Performance optimization utilities are deprecated; remove module to eliminate dead code
 // pub mod optimization;
-/// High-level QUIC P2P node implementation
-pub mod quic_node;
+
+// ============================================================================
+// P2P API
+// ============================================================================
+
+/// P2P endpoint - the primary API for ant-quic
+///
+/// This module provides the main API for P2P networking with NAT traversal,
+/// connection management, and secure communication.
+pub mod p2p_endpoint;
+
+/// P2P configuration system
+///
+/// This module provides `P2pConfig` with builder pattern support for
+/// configuring endpoints, NAT traversal, MTU, PQC, and other settings.
+pub mod unified_config;
+
 /// Real-time statistics dashboard
 pub mod stats_dashboard;
 /// Terminal user interface components
@@ -192,7 +207,7 @@ pub mod relay;
 pub mod trust;
 
 /// Address-validation tokens bound to (PeerId||CID||nonce)
-#[cfg(any(feature = "ring", feature = "aws-lc-rs"))]
+#[cfg(feature = "aws-lc-rs")]
 pub mod token_v2;
 
 // High-level async API modules (ported from quinn crate)
@@ -215,7 +230,8 @@ pub use candidate_discovery::{
     CandidateDiscoveryManager, DiscoveryConfig, DiscoveryError, DiscoveryEvent, NetworkInterface,
     ValidatedCandidate,
 };
-pub use connection::nat_traversal::{CandidateSource, CandidateState, NatTraversalRole};
+// v0.13.0: NatTraversalRole removed - all nodes are symmetric P2P nodes
+pub use connection::nat_traversal::{CandidateSource, CandidateState};
 pub use connection::{
     Chunk, Chunks, ClosedStream, Connection, ConnectionError, ConnectionStats, Datagrams, Event,
     FinishError, ReadError, ReadableError, RecvStream, SendDatagramError, SendStream, StreamEvent,
@@ -226,10 +242,23 @@ pub use endpoint::{
     Incoming,
 };
 pub use nat_traversal_api::{
-    BootstrapNode, CandidateAddress, EndpointRole, NatTraversalConfig, NatTraversalEndpoint,
+    BootstrapNode, CandidateAddress, NatTraversalConfig, NatTraversalEndpoint,
     NatTraversalError, NatTraversalEvent, NatTraversalStatistics, PeerId,
 };
-pub use quic_node::{NodeStats as QuicNodeStats, QuicNodeConfig, QuicP2PNode};
+
+// ============================================================================
+// P2P API EXPORTS
+// ============================================================================
+
+/// P2P endpoint - the primary entry point for applications
+pub use p2p_endpoint::{
+    ConnectionMetrics, DisconnectReason, EndpointError, EndpointStats, P2pEndpoint, P2pEvent,
+    PeerConnection, TraversalPhase,
+};
+
+/// P2P configuration with builder pattern
+pub use unified_config::{ConfigError, MtuConfig, NatConfig, P2pConfig, P2pConfigBuilder};
+
 pub use relay::{
     AuthToken, RelayAction, RelayAuthenticator, RelayConnection, RelayConnectionConfig, RelayError,
     RelayEvent, RelayResult, SessionId, SessionManager, SessionState,
@@ -440,8 +469,7 @@ pub use config::{
 
 // Post-Quantum Cryptography (PQC) re-exports - always available
 pub use crypto::pqc::{
-    HybridKem, HybridPreference, HybridSignature, MlDsa65, MlKem768, PqcConfig, PqcConfigBuilder,
-    PqcError, PqcMode, PqcResult,
+    HybridKem, HybridSignature, MlDsa65, MlKem768, PqcConfig, PqcConfigBuilder, PqcError, PqcResult,
 };
 pub(crate) use frame::Frame;
 pub use token::TokenStore;

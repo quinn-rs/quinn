@@ -14,7 +14,7 @@ use std::{
 
 use bytes::Bytes;
 use lru_slab::LruSlab;
-use tracing::trace;
+use tracing::{error, trace};
 
 use crate::token::TokenStore;
 
@@ -34,21 +34,27 @@ impl TokenMemoryCache {
 }
 
 impl TokenStore for TokenMemoryCache {
-    #[allow(clippy::panic)]
     fn insert(&self, server_name: &str, token: Bytes) {
         trace!(%server_name, "storing token");
-        self.0
-            .lock()
-            .unwrap_or_else(|_| panic!("token cache mutex should be valid"))
-            .store(server_name, token)
+        let mut state = match self.0.lock() {
+            Ok(state) => state,
+            Err(e) => {
+                error!("Token cache mutex poisoned: {}", e);
+                return;
+            }
+        };
+        state.store(server_name, token);
     }
 
     fn take(&self, server_name: &str) -> Option<Bytes> {
-        let token = self
-            .0
-            .lock()
-            .unwrap_or_else(|_| panic!("token cache mutex should be valid"))
-            .take(server_name);
+        let mut state = match self.0.lock() {
+            Ok(state) => state,
+            Err(e) => {
+                error!("Token cache mutex poisoned: {}", e);
+                return None;
+            }
+        };
+        let token = state.take(server_name);
         trace!(%server_name, found=%token.is_some(), "taking token");
         token
     }
@@ -102,28 +108,25 @@ impl State {
                 let tokens = &mut self.lru.get_mut(*hmap_entry.get()).tokens;
                 if tokens.len() >= self.max_tokens_per_server {
                     debug_assert!(tokens.len() == self.max_tokens_per_server);
-                    tokens
-                        .pop_front()
-                        .unwrap_or_else(|| panic!("tokens should have at least one element"));
+                    if tokens.pop_front().is_none() {
+                        debug_assert!(!tokens.is_empty());
+                    }
                 }
                 tokens.push_back(token);
             }
             hash_map::Entry::Vacant(hmap_entry) => {
                 // key does not yet exist, create a new one, evicting the oldest if necessary
-                let removed_key =
-                    if self.lru.len() >= self.max_server_names {
-                        // unwrap safety: max_server_names is > 0, so there's at least one entry, so
-                        //                lru() is some
-                        Some(
-                            self.lru
-                                .remove(self.lru.lru().unwrap_or_else(|| {
-                                    panic!("LRU should have at least one element")
-                                }))
-                                .server_name,
-                        )
+                let removed_key = if self.lru.len() >= self.max_server_names {
+                    // max_server_names is > 0, so there should be at least one entry
+                    if let Some(lru_key) = self.lru.lru() {
+                        Some(self.lru.remove(lru_key).server_name)
                     } else {
-                        None
-                    };
+                        debug_assert!(false, "LRU should have at least one element");
+                        return;
+                    }
+                } else {
+                    None
+                };
 
                 hmap_entry.insert(self.lru.insert(CacheEntry::new(server_name, token)));
 
@@ -142,10 +145,13 @@ impl State {
         // pop from entry's token queue
         let entry = self.lru.get_mut(slab_key);
         // unwrap safety: we never leave tokens empty
-        let token = entry
-            .tokens
-            .pop_front()
-            .unwrap_or_else(|| panic!("tokens should not be empty"));
+        let token = match entry.tokens.pop_front() {
+            Some(token) => token,
+            None => {
+                debug_assert!(!entry.tokens.is_empty());
+                return None;
+            }
+        };
 
         if entry.tokens.is_empty() {
             // token stack emptied, remove entry

@@ -7,55 +7,34 @@
 
 //! Configuration for Post-Quantum Cryptography (PQC) in QUIC
 //!
-//! This module provides a flexible configuration system for controlling
-//! PQC behavior, including algorithm selection, operation modes, and
+//! v0.13.0+: PQC is always enabled. ML-KEM-768 is used for key encapsulation
+//! on every connection. There is no classical-only or hybrid mode.
+//!
+//! This module provides configuration for algorithm selection and
 //! performance tuning parameters.
 
 use std::fmt;
 
 /// Configuration for Post-Quantum Cryptography behavior
-#[derive(Debug, Clone, PartialEq)]
+///
+/// v0.13.0+: PQC is always enabled. This configuration controls which
+/// specific PQC algorithms are used and performance tuning parameters.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct PqcConfig {
-    /// Operation mode for PQC algorithms
-    pub mode: PqcMode,
     /// Enable ML-KEM-768 for key encapsulation
     pub ml_kem_enabled: bool,
     /// Enable ML-DSA-65 for digital signatures
     pub ml_dsa_enabled: bool,
-    /// Preference for hybrid algorithm selection
-    pub hybrid_preference: HybridPreference,
     /// Size of the memory pool for PQC objects
     pub memory_pool_size: usize,
     /// Multiplier for handshake timeout to account for larger PQC messages
     pub handshake_timeout_multiplier: f32,
 }
 
-/// Operation mode for Post-Quantum Cryptography
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PqcMode {
-    /// Use only classical cryptography (no PQC)
-    ClassicalOnly,
-    /// Use hybrid mode with both classical and PQC (recommended)
-    Hybrid,
-    /// Require PQC algorithms only (no classical fallback)
-    PqcOnly,
-}
-
-/// Preference for algorithm selection in hybrid mode
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum HybridPreference {
-    /// Prefer classical algorithms when both are available
-    PreferClassical,
-    /// No preference, use first mutually supported algorithm
-    Balanced,
-    /// Prefer PQC algorithms when both are available
-    PreferPqc,
-}
-
 /// Error type for PQC configuration
 #[derive(Debug, Clone, PartialEq)]
 pub enum ConfigError {
-    /// No PQC algorithms enabled in PqcOnly mode
+    /// No PQC algorithms enabled
     NoPqcAlgorithmsEnabled,
     /// Invalid memory pool size
     InvalidMemoryPoolSize(usize),
@@ -69,10 +48,7 @@ impl fmt::Display for ConfigError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             ConfigError::NoPqcAlgorithmsEnabled => {
-                write!(
-                    f,
-                    "PqcOnly mode requires at least one PQC algorithm enabled"
-                )
+                write!(f, "At least one PQC algorithm must be enabled")
             }
             ConfigError::InvalidMemoryPoolSize(size) => {
                 write!(
@@ -100,10 +76,9 @@ impl std::error::Error for ConfigError {}
 impl Default for PqcConfig {
     fn default() -> Self {
         Self {
-            mode: PqcMode::Hybrid,
+            // v0.13.0+: Both ML-KEM and ML-DSA enabled by default
             ml_kem_enabled: true,
             ml_dsa_enabled: true,
-            hybrid_preference: HybridPreference::PreferPqc, // Prefer PQC by default
             memory_pool_size: 10,
             handshake_timeout_multiplier: 2.0,
         }
@@ -123,8 +98,8 @@ impl PqcConfig {
 
     /// Validate the configuration
     pub fn validate(&self) -> Result<(), ConfigError> {
-        // PqcOnly mode requires at least one PQC algorithm
-        if self.mode == PqcMode::PqcOnly && !self.ml_kem_enabled && !self.ml_dsa_enabled {
+        // At least one PQC algorithm must be enabled
+        if !self.ml_kem_enabled && !self.ml_dsa_enabled {
             return Err(ConfigError::NoPqcAlgorithmsEnabled);
         }
 
@@ -147,10 +122,8 @@ impl PqcConfig {
 /// Builder for PqcConfig
 #[derive(Debug, Clone)]
 pub struct PqcConfigBuilder {
-    mode: PqcMode,
     ml_kem_enabled: bool,
     ml_dsa_enabled: bool,
-    hybrid_preference: HybridPreference,
     memory_pool_size: usize,
     handshake_timeout_multiplier: f32,
 }
@@ -166,19 +139,11 @@ impl PqcConfigBuilder {
     pub fn new() -> Self {
         let default = PqcConfig::default();
         Self {
-            mode: default.mode,
             ml_kem_enabled: default.ml_kem_enabled,
             ml_dsa_enabled: default.ml_dsa_enabled,
-            hybrid_preference: default.hybrid_preference,
             memory_pool_size: default.memory_pool_size,
             handshake_timeout_multiplier: default.handshake_timeout_multiplier,
         }
-    }
-
-    /// Set the PQC operation mode
-    pub fn mode(mut self, mode: PqcMode) -> Self {
-        self.mode = mode;
-        self
     }
 
     /// Enable or disable ML-KEM-768
@@ -190,12 +155,6 @@ impl PqcConfigBuilder {
     /// Enable or disable ML-DSA-65
     pub fn ml_dsa(mut self, enabled: bool) -> Self {
         self.ml_dsa_enabled = enabled;
-        self
-    }
-
-    /// Set the hybrid algorithm preference
-    pub fn hybrid_preference(mut self, preference: HybridPreference) -> Self {
-        self.hybrid_preference = preference;
         self
     }
 
@@ -214,10 +173,8 @@ impl PqcConfigBuilder {
     /// Build the PqcConfig, validating all settings
     pub fn build(self) -> Result<PqcConfig, ConfigError> {
         let config = PqcConfig {
-            mode: self.mode,
             ml_kem_enabled: self.ml_kem_enabled,
             ml_dsa_enabled: self.ml_dsa_enabled,
-            hybrid_preference: self.hybrid_preference,
             memory_pool_size: self.memory_pool_size,
             handshake_timeout_multiplier: self.handshake_timeout_multiplier,
         };
@@ -227,17 +184,16 @@ impl PqcConfigBuilder {
     }
 }
 
-#[cfg(all(test, feature = "pqc"))]
+#[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn test_default_config() {
         let config = PqcConfig::default();
-        assert_eq!(config.mode, PqcMode::Hybrid);
+        // v0.13.0+: Both ML-KEM and ML-DSA enabled by default
         assert!(config.ml_kem_enabled);
         assert!(config.ml_dsa_enabled);
-        assert_eq!(config.hybrid_preference, HybridPreference::PreferPqc);
         assert_eq!(config.memory_pool_size, 10);
         assert_eq!(config.handshake_timeout_multiplier, 2.0);
         assert!(config.validate().is_ok());
@@ -246,31 +202,24 @@ mod tests {
     #[test]
     fn test_builder_basic() {
         let config = PqcConfig::builder()
-            .mode(PqcMode::PqcOnly)
             .ml_kem(true)
             .ml_dsa(true)
             .build()
             .unwrap();
 
-        assert_eq!(config.mode, PqcMode::PqcOnly);
         assert!(config.ml_kem_enabled);
         assert!(config.ml_dsa_enabled);
     }
 
     #[test]
-    fn test_pqc_only_requires_algorithms() {
+    fn test_requires_at_least_one_algorithm() {
         // Should fail with no algorithms
-        let result = PqcConfig::builder()
-            .mode(PqcMode::PqcOnly)
-            .ml_kem(false)
-            .ml_dsa(false)
-            .build();
+        let result = PqcConfig::builder().ml_kem(false).ml_dsa(false).build();
 
         assert!(matches!(result, Err(ConfigError::NoPqcAlgorithmsEnabled)));
 
         // Should succeed with at least one algorithm
         let config = PqcConfig::builder()
-            .mode(PqcMode::PqcOnly)
             .ml_kem(true)
             .ml_dsa(false)
             .build()
@@ -330,30 +279,5 @@ mod tests {
             .unwrap();
 
         assert_eq!(config.handshake_timeout_multiplier, 3.0);
-    }
-
-    #[test]
-    fn test_classical_only_mode() {
-        let config = PqcConfig::builder()
-            .mode(PqcMode::ClassicalOnly)
-            .ml_kem(false)
-            .ml_dsa(false)
-            .build()
-            .unwrap();
-
-        assert_eq!(config.mode, PqcMode::ClassicalOnly);
-        assert!(!config.ml_kem_enabled);
-        assert!(!config.ml_dsa_enabled);
-    }
-
-    #[test]
-    fn test_hybrid_preferences() {
-        let config = PqcConfig::builder()
-            .mode(PqcMode::Hybrid)
-            .hybrid_preference(HybridPreference::PreferPqc)
-            .build()
-            .unwrap();
-
-        assert_eq!(config.hybrid_preference, HybridPreference::PreferPqc);
     }
 }

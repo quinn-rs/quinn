@@ -636,7 +636,11 @@ impl Connection {
     /// - No OBSERVED_ADDRESS frame has been received yet
     /// - The connection hasn't completed the handshake
     pub fn observed_address(&self) -> Option<SocketAddr> {
-        self.0.state.lock("observed_address").inner.observed_address()
+        self.0
+            .state
+            .lock("observed_address")
+            .inner
+            .observed_address()
     }
 
     /// The local IP address which was used when the peer established
@@ -723,14 +727,7 @@ impl Connection {
     /// configured to run in KEM-only (ML‑KEM) mode. This is a diagnostic aid
     /// for tests and does not itself guarantee group enforcement.
     pub fn debug_kem_only(&self) -> bool {
-        #[cfg(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring"))]
-        {
-            crate::crypto::rustls::debug_kem_only_enabled()
-        }
-        #[cfg(not(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring")))]
-        {
-            false
-        }
+        crate::crypto::rustls::debug_kem_only_enabled()
     }
 
     /// Update traffic keys spontaneously

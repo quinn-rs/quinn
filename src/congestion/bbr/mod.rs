@@ -10,6 +10,7 @@ use std::fmt::Debug;
 use std::sync::Arc;
 
 use rand::{Rng, SeedableRng};
+use tracing::{debug, warn};
 
 use crate::congestion::ControllerMetrics;
 use crate::congestion::bbr::bw_estimation::BandwidthEstimation;
@@ -253,16 +254,19 @@ impl Bbr {
                     const K_PROBE_RTT_TIME: Duration = Duration::from_millis(200);
                     self.exit_probe_rtt_at = Some(now + K_PROBE_RTT_TIME);
                 }
-            } else if is_round_start
-                && now
-                    >= self
-                        .exit_probe_rtt_at
-                        .unwrap_or_else(|| panic!("should be in probe RTT mode"))
-            {
-                if !self.is_at_full_bandwidth {
-                    self.enter_startup_mode();
-                } else {
-                    self.enter_probe_bandwidth_mode(now);
+            } else if is_round_start {
+                match self.exit_probe_rtt_at {
+                    Some(exit_at) if now >= exit_at => {
+                        if !self.is_at_full_bandwidth {
+                            self.enter_startup_mode();
+                        } else {
+                            self.enter_probe_bandwidth_mode(now);
+                        }
+                    }
+                    Some(_) => {}
+                    None => {
+                        warn!("Probe RTT exit time missing while in ProbeRtt mode");
+                    }
                 }
             }
         }
@@ -304,10 +308,11 @@ impl Bbr {
         // Pace at the rate of initial_window / RTT as soon as RTT measurements are
         // available.
         if self.pacing_rate == 0 && self.min_rtt.as_nanos() != 0 {
-            self.pacing_rate = BandwidthEstimation::bw_from_delta(self.init_cwnd, self.min_rtt)
-                .unwrap_or_else(|| {
-                    panic!("should be able to calculate bandwidth from valid parameters")
-                });
+            if let Some(rate) = BandwidthEstimation::bw_from_delta(self.init_cwnd, self.min_rtt) {
+                self.pacing_rate = rate;
+            } else {
+                debug!("Bandwidth estimation unavailable for pacing rate calculation");
+            }
             return;
         }
 

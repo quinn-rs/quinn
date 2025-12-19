@@ -8,7 +8,7 @@
 //! Memory optimization components for ant-quic
 //!
 //! This module provides memory-efficient resource management including:
-//! - Connection pooling for Quinn connections
+//! - Connection pooling for QUIC connections
 //! - Candidate caching with TTL
 //! - Automatic cleanup of expired sessions and state
 //! - Frame batching for reduced packet overhead
@@ -22,14 +22,14 @@ use std::{
 
 use tracing::{debug, info};
 
-use crate::{Endpoint as QuinnEndpoint, HighLevelConnection as QuinnConnection};
+use crate::{Endpoint as QuicEndpoint, HighLevelConnection as QuicConnection};
 
 use crate::{
     VarInt,
     nat_traversal_api::{CandidateAddress, PeerId},
 };
 
-/// Connection pool for reusing Quinn connections
+/// Connection pool for reusing QUIC connections
 #[derive(Debug)]
 pub struct ConnectionPool {
     /// Active connections by peer ID
@@ -60,7 +60,7 @@ pub struct ConnectionPoolConfig {
 /// A pooled connection with metadata
 #[derive(Debug)]
 struct PooledConnection {
-    connection: Arc<QuinnConnection>,
+    connection: Arc<QuicConnection>,
     peer_id: PeerId,
     remote_address: SocketAddr,
     created_at: Instant,
@@ -377,8 +377,8 @@ impl ConnectionPool {
         &self,
         peer_id: PeerId,
         remote_address: SocketAddr,
-        endpoint: &QuinnEndpoint,
-    ) -> Result<Arc<QuinnConnection>, Box<dyn std::error::Error + Send + Sync>> {
+        endpoint: &QuicEndpoint,
+    ) -> Result<Arc<QuicConnection>, Box<dyn std::error::Error + Send + Sync>> {
         // Try to get existing connection
         if let Some(connection) = self
             .try_get_existing_connection(peer_id, remote_address)
@@ -401,7 +401,7 @@ impl ConnectionPool {
         &self,
         peer_id: PeerId,
         remote_address: SocketAddr,
-    ) -> Option<Arc<QuinnConnection>> {
+    ) -> Option<Arc<QuicConnection>> {
         let mut connections = self.active_connections.write().unwrap();
 
         if let Some(pooled) = connections.get_mut(&peer_id) {
@@ -427,8 +427,8 @@ impl ConnectionPool {
         &self,
         peer_id: PeerId,
         remote_address: SocketAddr,
-        endpoint: &QuinnEndpoint,
-    ) -> Result<Arc<QuinnConnection>, Box<dyn std::error::Error + Send + Sync>> {
+        endpoint: &QuicEndpoint,
+    ) -> Result<Arc<QuicConnection>, Box<dyn std::error::Error + Send + Sync>> {
         // Check pool size limit
         {
             let connections = self.active_connections.read().unwrap();

@@ -29,9 +29,9 @@
 
 use crate::crypto::pqc::types::*;
 use crate::crypto::pqc::{MlKemOperations, ml_kem::MlKem768};
-use ring::aead::{self, AES_256_GCM, LessSafeKey, Nonce, UnboundKey};
-use ring::digest;
-use ring::rand::{SecureRandom, SystemRandom};
+use aws_lc_rs::aead::{self, AES_256_GCM, LessSafeKey, Nonce, UnboundKey};
+use aws_lc_rs::digest;
+use aws_lc_rs::rand::{SecureRandom, SystemRandom};
 use std::collections::HashMap;
 
 /// Wire format for encrypted messages
@@ -374,7 +374,7 @@ impl Default for HybridPublicKeyEncryption {
 unsafe impl Send for EncryptedMessage {}
 unsafe impl Sync for EncryptedMessage {}
 
-#[cfg(all(test, feature = "pqc"))]
+#[cfg(test)]
 mod tests {
     use super::*;
 

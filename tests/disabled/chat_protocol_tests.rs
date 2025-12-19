@@ -43,7 +43,7 @@ async fn test_chat_message_exchange() {
     // Ensure crypto provider is installed
     #[cfg(feature = "rustls-aws-lc-rs")]
     let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
-    #[cfg(feature = "rustls-ring")]
+    #[cfg(feature = "rustls-aws-lc-rs")]
     let _ = rustls::crypto::ring::default_provider().install_default();
 
     // Create coordinator node with a bootstrap address (required for Server role)

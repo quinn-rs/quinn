@@ -1,18 +1,19 @@
 //! Security regression tests for ant-quic
 //!
+//! v0.13.0+: Updated for symmetric P2P node architecture - no roles.
 //! Tests for specific security improvements made in recent commits to ensure
 //! they don't regress and that the system handles security-sensitive scenarios safely.
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use ant_quic::nat_traversal_api::{EndpointRole, NatTraversalConfig, NatTraversalEndpoint};
+use ant_quic::nat_traversal_api::{NatTraversalConfig, NatTraversalEndpoint};
 use std::time::Duration;
 
-/// Helper to create a basic client config for testing
-fn test_client_config() -> NatTraversalConfig {
+/// Helper to create a basic peer config for testing
+/// v0.13.0+: No role - all nodes are symmetric P2P nodes
+fn test_peer_config() -> NatTraversalConfig {
     NatTraversalConfig {
-        role: EndpointRole::Client,
-        bootstrap_nodes: vec!["127.0.0.1:9000".parse().unwrap()],
+        known_peers: vec!["127.0.0.1:9000".parse().unwrap()],
         max_candidates: 10,
         coordination_timeout: Duration::from_secs(5),
         enable_symmetric_nat: true,
@@ -20,17 +21,17 @@ fn test_client_config() -> NatTraversalConfig {
         max_concurrent_attempts: 5,
         bind_addr: None, // Let system choose - tests random port functionality
         prefer_rfc_nat_traversal: true,
+        pqc: None,
         timeouts: Default::default(),
+        identity_key: None,
     }
 }
 
-/// Helper to create a server config
+/// Helper to create a server config with bind address
+/// v0.13.0+: No role - all nodes are symmetric P2P nodes
 fn test_server_config() -> NatTraversalConfig {
     NatTraversalConfig {
-        role: EndpointRole::Server {
-            can_coordinate: true,
-        },
-        bootstrap_nodes: vec![],
+        known_peers: vec![],
         max_candidates: 20,
         coordination_timeout: Duration::from_secs(10),
         enable_symmetric_nat: true,
@@ -38,7 +39,9 @@ fn test_server_config() -> NatTraversalConfig {
         max_concurrent_attempts: 10,
         bind_addr: Some("127.0.0.1:0".parse().unwrap()),
         prefer_rfc_nat_traversal: true,
+        pqc: None,
         timeouts: Default::default(),
+        identity_key: None,
     }
 }
 
@@ -49,7 +52,7 @@ async fn test_random_port_binding_no_panic() {
     // This tests the create_random_port_bind_addr() function indirectly
     // by ensuring None bind_addr is handled safely
 
-    let config = test_client_config(); // bind_addr is None
+    let config = test_peer_config(); // bind_addr is None
 
     // This should not panic, even if random port selection fails
     let result = NatTraversalEndpoint::new(config, None).await;
@@ -61,7 +64,7 @@ async fn test_random_port_binding_no_panic() {
     }
 }
 
-/// Test that error conditions don't cause panics  
+/// Test that error conditions don't cause panics
 /// Regression test for commit a7d1de11 - robust error handling
 #[tokio::test]
 async fn test_error_handling_no_panic() {
@@ -69,8 +72,7 @@ async fn test_error_handling_no_panic() {
 
     // Test 1: Zero timeouts
     let config1 = NatTraversalConfig {
-        role: EndpointRole::Client,
-        bootstrap_nodes: vec!["127.0.0.1:9000".parse().unwrap()],
+        known_peers: vec!["127.0.0.1:9000".parse().unwrap()],
         max_candidates: 10,
         coordination_timeout: Duration::from_secs(0), // Zero timeout
         enable_symmetric_nat: true,
@@ -78,7 +80,9 @@ async fn test_error_handling_no_panic() {
         max_concurrent_attempts: 5,
         bind_addr: Some("127.0.0.1:0".parse().unwrap()),
         prefer_rfc_nat_traversal: true,
+        pqc: None,
         timeouts: Default::default(),
+        identity_key: None,
     };
 
     let result1 = NatTraversalEndpoint::new(config1, None).await;
@@ -90,8 +94,7 @@ async fn test_error_handling_no_panic() {
 
     // Test 2: Zero max candidates
     let config2 = NatTraversalConfig {
-        role: EndpointRole::Client,
-        bootstrap_nodes: vec!["127.0.0.1:9000".parse().unwrap()],
+        known_peers: vec!["127.0.0.1:9000".parse().unwrap()],
         max_candidates: 0, // Zero candidates
         coordination_timeout: Duration::from_secs(10),
         enable_symmetric_nat: true,
@@ -99,7 +102,9 @@ async fn test_error_handling_no_panic() {
         max_concurrent_attempts: 5,
         bind_addr: Some("127.0.0.1:0".parse().unwrap()),
         prefer_rfc_nat_traversal: true,
+        pqc: None,
         timeouts: Default::default(),
+        identity_key: None,
     };
 
     let result2 = NatTraversalEndpoint::new(config2, None).await;
@@ -119,7 +124,7 @@ async fn test_concurrent_creation_safety() {
     let handles: Vec<_> = (0..NUM_CONCURRENT)
         .map(|i| {
             tokio::spawn(async move {
-                let mut config = test_client_config();
+                let mut config = test_peer_config();
                 // Use different bind ports to avoid conflicts
                 config.bind_addr = Some(format!("127.0.0.1:{}", 10000 + i).parse().unwrap());
 
@@ -172,10 +177,9 @@ async fn test_statistics_concurrent_access() {
 /// Test that malformed configurations are handled safely
 #[tokio::test]
 async fn test_malformed_config_handling() {
-    // Test bootstrap role without bootstrap nodes
-    let contradictory_config = NatTraversalConfig {
-        role: EndpointRole::Bootstrap,
-        bootstrap_nodes: vec![], // Empty for bootstrap role - contradiction
+    // v0.13.0+: Test a node with no known peers (valid - can be connected to)
+    let no_peers_config = NatTraversalConfig {
+        known_peers: vec![], // No known peers - node waits for incoming connections
         max_candidates: 10,
         coordination_timeout: Duration::from_secs(10),
         enable_symmetric_nat: true,
@@ -183,21 +187,22 @@ async fn test_malformed_config_handling() {
         max_concurrent_attempts: 5,
         bind_addr: Some("127.0.0.1:0".parse().unwrap()),
         prefer_rfc_nat_traversal: true,
+        pqc: None,
         timeouts: Default::default(),
+        identity_key: None,
     };
 
-    let result = NatTraversalEndpoint::new(contradictory_config, None).await;
+    let result = NatTraversalEndpoint::new(no_peers_config, None).await;
 
-    // Should handle contradiction gracefully
+    // Should handle gracefully
     match result {
-        Ok(_) => println!("✓ Bootstrap with no nodes accepted (implementation choice)"),
-        Err(e) => println!("✓ Bootstrap with no nodes rejected safely: {e}"),
+        Ok(_) => println!("✓ No peers config accepted (implementation choice)"),
+        Err(e) => println!("✓ No peers config rejected safely: {e}"),
     }
 
     // Test extremely large values that could cause overflow
     let extreme_config = NatTraversalConfig {
-        role: EndpointRole::Client,
-        bootstrap_nodes: vec!["127.0.0.1:9000".parse().unwrap()],
+        known_peers: vec!["127.0.0.1:9000".parse().unwrap()],
         max_candidates: usize::MAX, // Maximum possible value
         coordination_timeout: Duration::from_secs(u64::MAX / 1000), // Very large timeout
         enable_symmetric_nat: true,
@@ -205,7 +210,9 @@ async fn test_malformed_config_handling() {
         max_concurrent_attempts: usize::MAX,
         bind_addr: Some("127.0.0.1:0".parse().unwrap()),
         prefer_rfc_nat_traversal: true,
+        pqc: None,
         timeouts: Default::default(),
+        identity_key: None,
     };
 
     let result2 = NatTraversalEndpoint::new(extreme_config, None).await;
@@ -219,14 +226,13 @@ async fn test_malformed_config_handling() {
 /// Test input sanitization for potential security issues
 #[tokio::test]
 async fn test_input_sanitization() {
-    // Test with many bootstrap nodes (potential DoS vector)
-    let many_bootstraps: Vec<_> = (9000..9200)
+    // Test with many known peers (potential DoS vector)
+    let many_peers: Vec<_> = (9000..9200)
         .map(|port| format!("127.0.0.1:{port}").parse().unwrap())
         .collect();
 
-    let large_bootstrap_config = NatTraversalConfig {
-        role: EndpointRole::Client,
-        bootstrap_nodes: many_bootstraps, // 200 bootstrap nodes
+    let large_peer_config = NatTraversalConfig {
+        known_peers: many_peers, // 200 known peers
         max_candidates: 10,
         coordination_timeout: Duration::from_secs(10),
         enable_symmetric_nat: true,
@@ -234,12 +240,14 @@ async fn test_input_sanitization() {
         max_concurrent_attempts: 5,
         bind_addr: Some("127.0.0.1:0".parse().unwrap()),
         prefer_rfc_nat_traversal: true,
+        pqc: None,
         timeouts: Default::default(),
+        identity_key: None,
     };
 
     // This should either work or fail gracefully, not exhaust memory or panic
     let start_time = std::time::Instant::now();
-    let result = NatTraversalEndpoint::new(large_bootstrap_config, None).await;
+    let result = NatTraversalEndpoint::new(large_peer_config, None).await;
     let duration = start_time.elapsed();
 
     // Should complete within reasonable time
@@ -249,8 +257,8 @@ async fn test_input_sanitization() {
     );
 
     match result {
-        Ok(_) => println!("✓ Large bootstrap list handled successfully in {duration:?}"),
-        Err(e) => println!("✓ Large bootstrap list rejected safely in {duration:?}: {e}"),
+        Ok(_) => println!("✓ Large peer list handled successfully in {duration:?}"),
+        Err(e) => println!("✓ Large peer list rejected safely in {duration:?}: {e}"),
     }
 }
 
@@ -259,7 +267,7 @@ async fn test_input_sanitization() {
 async fn test_resource_cleanup() {
     // Create and drop many endpoints to test for resource leaks
     for i in 0..20 {
-        let mut config = test_client_config();
+        let mut config = test_peer_config();
         config.bind_addr = Some(format!("127.0.0.1:{}", 11000 + i).parse().unwrap());
 
         let endpoint_result = NatTraversalEndpoint::new(config, None).await;
@@ -289,8 +297,7 @@ mod specific_regression_tests {
         // when bind_addr is None
 
         let config_with_none = NatTraversalConfig {
-            role: EndpointRole::Client,
-            bootstrap_nodes: vec!["127.0.0.1:9000".parse().unwrap()],
+            known_peers: vec!["127.0.0.1:9000".parse().unwrap()],
             max_candidates: 10,
             coordination_timeout: Duration::from_secs(10),
             enable_symmetric_nat: true,
@@ -298,7 +305,9 @@ mod specific_regression_tests {
             max_concurrent_attempts: 5,
             bind_addr: None, // This should trigger random port binding
             prefer_rfc_nat_traversal: true,
+            pqc: None,
             timeouts: Default::default(),
+            identity_key: None,
         };
 
         // Should not panic and should handle random port selection
@@ -307,8 +316,8 @@ mod specific_regression_tests {
         match result {
             Ok(endpoint) => {
                 // If we can get the endpoint, verify it has a proper address
-                if let Some(quinn_ep) = endpoint.get_quinn_endpoint() {
-                    if let Ok(addr) = quinn_ep.local_addr() {
+                if let Some(quic_ep) = endpoint.get_endpoint() {
+                    if let Ok(addr) = quic_ep.local_addr() {
                         assert_ne!(addr.port(), 0, "Should have assigned port");
                         assert_eq!(
                             addr.ip().to_string(),
@@ -331,12 +340,9 @@ mod specific_regression_tests {
     async fn test_commit_a7d1de11_robust_error_handling() {
         // Test scenarios that previously could cause panics due to unwrap() usage
 
-        // Scenario 1: Configuration that might cause mutex lock issues
+        // v0.13.0+: Problematic config test - zeros for everything
         let problematic_config = NatTraversalConfig {
-            role: EndpointRole::Server {
-                can_coordinate: false,
-            }, // Server that can't coordinate
-            bootstrap_nodes: vec!["127.0.0.1:9000".parse().unwrap()], // But has bootstrap nodes
+            known_peers: vec!["127.0.0.1:9000".parse().unwrap()],
             max_candidates: 0,
             coordination_timeout: Duration::from_secs(0),
             enable_symmetric_nat: false,
@@ -344,7 +350,9 @@ mod specific_regression_tests {
             max_concurrent_attempts: 0,
             bind_addr: None,
             prefer_rfc_nat_traversal: true,
+            pqc: None,
             timeouts: Default::default(),
+            identity_key: None,
         };
 
         // Should not panic, even if configuration is inconsistent

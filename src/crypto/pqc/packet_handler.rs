@@ -8,8 +8,9 @@
 
 //! PQC-aware packet handling for larger handshakes
 //!
-//! This module extends QUIC packet handling to accommodate the larger handshake
-//! messages required by post-quantum cryptography. It provides:
+//! v0.13.0+: PQC is always enabled. This module extends QUIC packet handling
+//! to accommodate the larger handshake messages required by post-quantum
+//! cryptography. It provides:
 //!
 //! - Detection of PQC handshakes based on TLS extensions
 //! - Dynamic MTU adjustment for PQC handshakes
@@ -19,7 +20,7 @@
 use crate::{
     MAX_UDP_PAYLOAD, MtuDiscoveryConfig, TransportError,
     connection::Connection,
-    crypto::pqc::{config::PqcMode, types::*},
+    crypto::pqc::types::*,
     frame::{self, Crypto},
     packet::{PacketNumber, SpaceId},
 };
@@ -42,12 +43,12 @@ pub const PQC_RECOMMENDED_MTU: u16 = 4096;
 pub const MAX_CRYPTO_FRAME_SIZE: u16 = 1200;
 
 /// PQC-aware packet handler
+///
+/// v0.13.0+: PQC is always enabled on every connection.
 #[derive(Debug, Clone)]
 pub struct PqcPacketHandler {
     /// Whether PQC is detected in the current handshake
     pqc_detected: bool,
-    /// The PQC mode being used
-    pqc_mode: Option<PqcMode>,
     /// Current estimated handshake size
     estimated_handshake_size: u32,
     /// Whether we've initiated MTU discovery for PQC
@@ -56,16 +57,20 @@ pub struct PqcPacketHandler {
 
 impl PqcPacketHandler {
     /// Create a new PQC packet handler
+    ///
+    /// v0.13.0+: PQC is always enabled on every connection.
     pub fn new() -> Self {
         Self {
             pqc_detected: false,
-            pqc_mode: None,
             estimated_handshake_size: 0,
             mtu_discovery_triggered: false,
         }
     }
 
     /// Detect if the handshake is using PQC based on TLS extensions
+    ///
+    /// v0.13.0+: PQC is always enabled, so this always returns true for valid
+    /// handshakes. The detection is used for MTU optimization purposes.
     pub fn detect_pqc_handshake(&mut self, crypto_data: &[u8], space: SpaceId) -> bool {
         // Only check in Initial and Handshake spaces
         if !matches!(space, SpaceId::Initial | SpaceId::Handshake) {
@@ -85,12 +90,12 @@ impl PqcPacketHandler {
             return self.pqc_detected;
         }
         if msg_type == 1 || msg_type == 2 {
-            // Parse for supported groups extension (0x000a) or signature algorithms (0x000d)
-            if let Some(mode) = self.parse_pqc_extensions(crypto_data) {
-                debug!("Detected PQC handshake with mode: {:?}", mode);
+            // v0.13.0+: All handshakes use PQC, detect based on message size
+            if self.detect_pqc_in_extensions(crypto_data) {
+                debug!("Detected PQC handshake");
                 self.pqc_detected = true;
-                self.pqc_mode = Some(mode);
-                self.estimated_handshake_size = self.estimate_handshake_size(mode);
+                // v0.13.0+: Always use PQC handshake size estimate
+                self.estimated_handshake_size = Self::pqc_handshake_size();
                 return true;
             }
         }
@@ -98,28 +103,21 @@ impl PqcPacketHandler {
         self.pqc_detected
     }
 
-    /// Parse TLS extensions to detect PQC usage
-    fn parse_pqc_extensions(&self, data: &[u8]) -> Option<PqcMode> {
-        // This is a simplified parser - in production, use a proper TLS parser
-        // Look for hybrid group codepoints (0x2F39, 0x2F3A, etc.)
-
-        // For now, return a mode based on heuristics
-        // In real implementation, parse the extensions properly
-        if data.len() > 100 {
-            // Larger handshakes likely indicate PQC
-            Some(PqcMode::Hybrid)
-        } else {
-            None
-        }
+    /// Detect PQC usage in TLS extensions
+    ///
+    /// v0.13.0+: Simplified detection - all connections use PQC.
+    fn detect_pqc_in_extensions(&self, data: &[u8]) -> bool {
+        // Larger handshakes indicate PQC usage
+        // v0.13.0+: All connections should be using PQC
+        data.len() > 100
     }
 
-    /// Estimate the total handshake size based on PQC mode
-    fn estimate_handshake_size(&self, mode: PqcMode) -> u32 {
-        match mode {
-            PqcMode::ClassicalOnly => 4096, // Standard TLS handshake
-            PqcMode::Hybrid => 16384,       // Hybrid handshake
-            PqcMode::PqcOnly => 12288,      // PQC-only handshake
-        }
+    /// Get the estimated handshake size for PQC connections
+    ///
+    /// v0.13.0+: Always returns the PQC handshake size.
+    fn pqc_handshake_size() -> u32 {
+        // PQC handshake with ML-KEM-768 hybrid key exchange
+        16384
     }
 
     /// Check if MTU discovery should be triggered for PQC
@@ -246,7 +244,6 @@ impl PqcPacketHandler {
     /// Reset handler state (e.g., on retry)
     pub fn reset(&mut self) {
         self.pqc_detected = false;
-        self.pqc_mode = None;
         self.estimated_handshake_size = 0;
         self.mtu_discovery_triggered = false;
     }
@@ -273,7 +270,7 @@ pub trait PqcPacketHandling {
     fn get_pqc_optimal_packet_size(&self, space: SpaceId) -> u16;
 }
 
-#[cfg(all(test, feature = "pqc"))]
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -356,15 +353,9 @@ mod tests {
     }
 
     #[test]
-    fn test_pqc_mode_estimation() {
-        let handler = PqcPacketHandler::new();
-
-        assert_eq!(
-            handler.estimate_handshake_size(PqcMode::ClassicalOnly),
-            4096
-        );
-        assert_eq!(handler.estimate_handshake_size(PqcMode::Hybrid), 16384);
-        assert_eq!(handler.estimate_handshake_size(PqcMode::PqcOnly), 12288);
+    fn test_pqc_handshake_size() {
+        // v0.13.0+: All connections use PQC
+        assert_eq!(PqcPacketHandler::pqc_handshake_size(), 16384);
     }
 
     #[test]
@@ -402,14 +393,12 @@ mod tests {
     fn test_handler_reset() {
         let mut handler = PqcPacketHandler::new();
         handler.pqc_detected = true;
-        handler.pqc_mode = Some(PqcMode::Hybrid);
         handler.estimated_handshake_size = 16384;
         handler.mtu_discovery_triggered = true;
 
         handler.reset();
 
         assert!(!handler.pqc_detected);
-        assert!(handler.pqc_mode.is_none());
         assert_eq!(handler.estimated_handshake_size, 0);
         assert!(!handler.mtu_discovery_triggered);
     }

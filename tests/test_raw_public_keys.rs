@@ -4,7 +4,7 @@
 //! without depending on the full codebase compilation.
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
-#![cfg(feature = "rustls-ring")]
+#![cfg(feature = "rustls-aws-lc-rs")]
 
 use ant_quic::crypto::{
     certificate_negotiation::{CertificateNegotiationManager, NegotiationConfig},

@@ -2,7 +2,7 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-#[cfg(all(test, feature = "pqc"))]
+#[cfg(test)]
 mod ml_dsa_65_tests {
     use ant_quic::crypto::pqc::MlDsa65;
     use ant_quic::crypto::pqc::MlDsaOperations;
@@ -302,7 +302,7 @@ mod ml_dsa_65_tests {
     }
 }
 
-#[cfg(all(test, feature = "pqc"))]
+#[cfg(test)]
 mod ml_dsa_65_api_tests {
     use ant_quic::crypto::pqc::MlDsa65;
     use ant_quic::crypto::pqc::MlDsaOperations;

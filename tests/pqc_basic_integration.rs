@@ -1,60 +1,58 @@
 //! Basic integration tests for PQC implementation
 //!
-//! This test suite performs basic validation of PQC functionality
+//! v0.13.0+: PQC is always enabled (100% PQC, no classical crypto).
+//! This test suite performs basic validation of PQC functionality.
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
-#![cfg(feature = "pqc")]
 
 use ant_quic::crypto::pqc::{
-    HybridPreference, PqcConfigBuilder, PqcMode,
+    PqcConfigBuilder,
     types::{PqcError, PqcResult},
 };
 
 #[test]
 fn test_pqc_config_builder() {
-    // Test default configuration
+    // v0.13.0+: PQC is always on
     let config = PqcConfigBuilder::default()
         .build()
         .expect("Failed to build default config");
 
-    assert_eq!(config.mode, PqcMode::Hybrid);
-    assert_eq!(config.hybrid_preference, HybridPreference::PreferPqc);
     assert!(config.ml_kem_enabled);
     assert!(config.ml_dsa_enabled);
-
-    // Test PQC-only mode
-    let pqc_only_config = PqcConfigBuilder::default()
-        .mode(PqcMode::PqcOnly)
-        .build()
-        .expect("Failed to build PQC-only config");
-
-    assert_eq!(pqc_only_config.mode, PqcMode::PqcOnly);
-
-    // Test classical-only mode
-    let classical_config = PqcConfigBuilder::default()
-        .mode(PqcMode::ClassicalOnly)
-        .build()
-        .expect("Failed to build classical config");
-
-    assert_eq!(classical_config.mode, PqcMode::ClassicalOnly);
 }
 
 #[test]
-fn test_hybrid_preferences() {
-    let preferences = [
-        HybridPreference::PreferClassical,
-        HybridPreference::Balanced,
-        HybridPreference::PreferPqc,
-    ];
+fn test_pqc_config_with_algorithms() {
+    // Test ML-KEM only
+    let ml_kem_config = PqcConfigBuilder::default()
+        .ml_kem(true)
+        .ml_dsa(false)
+        .build()
+        .expect("Failed to build ML-KEM only config");
 
-    for pref in &preferences {
-        let config = PqcConfigBuilder::default()
-            .hybrid_preference(*pref)
-            .build()
-            .expect("Failed to build config with preference");
+    assert!(ml_kem_config.ml_kem_enabled);
+    assert!(!ml_kem_config.ml_dsa_enabled);
 
-        assert_eq!(config.hybrid_preference, *pref);
-    }
+    // Test ML-DSA only
+    let ml_dsa_config = PqcConfigBuilder::default()
+        .ml_kem(false)
+        .ml_dsa(true)
+        .build()
+        .expect("Failed to build ML-DSA only config");
+
+    assert!(!ml_dsa_config.ml_kem_enabled);
+    assert!(ml_dsa_config.ml_dsa_enabled);
+}
+
+#[test]
+fn test_pqc_requires_at_least_one_algorithm() {
+    // v0.13.0+: Must have at least one PQC algorithm
+    let result = PqcConfigBuilder::default()
+        .ml_kem(false)
+        .ml_dsa(false)
+        .build();
+
+    assert!(result.is_err(), "Config without algorithms should fail");
 }
 
 #[test]
@@ -78,6 +76,7 @@ fn test_algorithm_selection() {
     // Test disabling ML-KEM
     let config = PqcConfigBuilder::default()
         .ml_kem(false)
+        .ml_dsa(true)
         .build()
         .expect("Failed to build config");
 
@@ -86,21 +85,13 @@ fn test_algorithm_selection() {
 
     // Test disabling ML-DSA
     let config = PqcConfigBuilder::default()
+        .ml_kem(true)
         .ml_dsa(false)
         .build()
         .expect("Failed to build config");
 
     assert!(config.ml_kem_enabled);
     assert!(!config.ml_dsa_enabled);
-
-    // Test that PqcOnly mode requires at least one algorithm
-    let result = PqcConfigBuilder::default()
-        .mode(PqcMode::PqcOnly)
-        .ml_kem(false)
-        .ml_dsa(false)
-        .build();
-
-    assert!(result.is_err());
 }
 
 #[test]
@@ -144,21 +135,17 @@ fn test_timeout_multiplier() {
 
 #[test]
 fn test_config_validation() {
-    // Test that we can build a comprehensive config
+    // v0.13.0+: PQC is always on, verify comprehensive config
     let config = PqcConfigBuilder::default()
-        .mode(PqcMode::Hybrid)
         .ml_kem(true)
         .ml_dsa(true)
-        .hybrid_preference(HybridPreference::PreferPqc)
         .memory_pool_size(20)
         .handshake_timeout_multiplier(1.2)
         .build()
         .expect("Failed to build comprehensive config");
 
-    assert_eq!(config.mode, PqcMode::Hybrid);
     assert!(config.ml_kem_enabled);
     assert!(config.ml_dsa_enabled);
-    assert_eq!(config.hybrid_preference, HybridPreference::PreferPqc);
     assert_eq!(config.memory_pool_size, 20);
     assert_eq!(config.handshake_timeout_multiplier, 1.2);
 }
@@ -174,43 +161,51 @@ fn test_pqc_error_types() {
     let _err: PqcResult<()> = Err(PqcError::CryptoError("test".to_string()));
 }
 
-/// Test that verifies release readiness
+/// Test that verifies release readiness for v0.13.0+
 #[test]
 fn test_release_criteria() {
-    println!("\n=== PQC Basic Integration Test ===\n");
+    println!("\n=== PQC Basic Integration Test (v0.13.0+) ===\n");
 
     // Verify configuration system works
     let config = PqcConfigBuilder::default().build().unwrap();
-    println!("✓ Configuration system operational");
-    println!("  - Default mode: {:?}", config.mode);
+    println!("Configuration system operational");
     println!("  - ML-KEM enabled: {}", config.ml_kem_enabled);
     println!("  - ML-DSA enabled: {}", config.ml_dsa_enabled);
+    println!("  - Memory pool: {}", config.memory_pool_size);
+    println!("  - Timeout multiplier: {}", config.handshake_timeout_multiplier);
 
-    // Verify all modes are available
-    let modes = [PqcMode::ClassicalOnly, PqcMode::Hybrid, PqcMode::PqcOnly];
-    for mode in &modes {
-        let _ = PqcConfigBuilder::default().mode(*mode).build().unwrap();
-    }
-    println!("\n✓ All PQC modes available");
+    // Verify algorithm selection
+    let ml_kem_only = PqcConfigBuilder::default()
+        .ml_kem(true)
+        .ml_dsa(false)
+        .build()
+        .unwrap();
+    assert!(ml_kem_only.ml_kem_enabled);
+    assert!(!ml_kem_only.ml_dsa_enabled);
 
-    // Verify all preferences work
-    let prefs = [
-        HybridPreference::PreferClassical,
-        HybridPreference::Balanced,
-        HybridPreference::PreferPqc,
-    ];
-    for pref in &prefs {
-        let _ = PqcConfigBuilder::default()
-            .hybrid_preference(*pref)
-            .build()
-            .unwrap();
-    }
-    println!("✓ All hybrid preferences available");
+    let ml_dsa_only = PqcConfigBuilder::default()
+        .ml_kem(false)
+        .ml_dsa(true)
+        .build()
+        .unwrap();
+    assert!(!ml_dsa_only.ml_kem_enabled);
+    assert!(ml_dsa_only.ml_dsa_enabled);
+    println!("\nAlgorithm selection validated");
 
-    println!("\n✓ Basic PQC integration complete");
+    // Verify performance tuning
+    let perf_config = PqcConfigBuilder::default()
+        .memory_pool_size(100)
+        .handshake_timeout_multiplier(3.0)
+        .build()
+        .unwrap();
+    assert_eq!(perf_config.memory_pool_size, 100);
+    assert_eq!(perf_config.handshake_timeout_multiplier, 3.0);
+    println!("Performance tuning options working");
+
+    println!("\n=== v0.13.0+ Basic PQC Integration Complete ===");
     println!("  - Configuration validated");
     println!("  - Error types available");
-    println!("  - Feature flags working");
+    println!("  - PQC always enabled");
 
     println!("\n=== Tests Passed ===\n");
 }

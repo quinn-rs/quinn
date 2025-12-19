@@ -7,15 +7,17 @@ This directory contains a comprehensive Docker-based testing environment for sim
 The testing environment simulates:
 - Multiple NAT types (Full Cone, Symmetric, Port Restricted, CGNAT)
 - Various network conditions (latency, packet loss, bandwidth limits)
-- Multi-client scenarios behind different NAT configurations
+- Multi-node scenarios behind different NAT configurations
 - Automated test execution and result collection
 
 ## Architecture
 
+In ant-quic v0.13.0+, **all nodes are symmetric** - every node can both initiate and accept connections, coordinate NAT traversal, and relay traffic. There are no special "bootstrap" or "coordinator" roles. The "Known Peer" in the diagram is simply a node with a public IP that other nodes connect to first for address discovery.
+
 ```
 ┌─────────────────┐
-│   Bootstrap     │ 203.0.113.10:9000
-│  (Coordinator)  │ (Public Internet)
+│   Known Peer    │ 203.0.113.10:9000
+│   (Public IP)   │ (Public Internet)
 └────────┬────────┘
          │
     ┌────┴────┬──────────┬──────────┐
@@ -27,10 +29,12 @@ The testing environment simulates:
 └───┬──┘  └──┬───┘  └──┬───┘  └──┬───┘
     │        │          │          │
 ┌───▼──┐  ┌──▼───┐  ┌──▼───┐  ┌──▼───┐
-│Client│  │Client│  │Client│  │Client│
+│ Node │  │ Node │  │ Node │  │ Node │
 │  1   │  │  2   │  │  3   │  │  4   │
 └──────┘  └──────┘  └──────┘  └──────┘
 ```
+
+**Note**: Each node runs identical code with identical capabilities. The "Known Peer" is simply a node that has a public IP address and is known to other nodes at startup.
 
 ## Quick Start
 
@@ -58,12 +62,12 @@ The testing environment simulates:
 
 ### Docker Compose Services
 
-1. **bootstrap**: Public coordinator node
+1. **known_peer**: Public node with stable IP (all nodes are symmetric)
 2. **nat1_gateway**: Full Cone NAT
-3. **nat2_gateway**: Symmetric NAT  
+3. **nat2_gateway**: Symmetric NAT
 4. **nat3_gateway**: Port Restricted NAT
 5. **nat4_gateway**: Carrier Grade NAT (CGNAT)
-6. **client1-4**: Clients behind each NAT type
+6. **node1-4**: Nodes behind each NAT type
 7. **network_sim**: Network condition simulator
 
 ### Scripts
@@ -105,16 +109,16 @@ The testing environment simulates:
 
 ### Basic Connectivity Test
 ```bash
-docker exec ant-quic-client1 ant-quic --ping 203.0.113.10:9000
+docker exec ant-quic-node1 ant-quic --ping 203.0.113.10:9000
 ```
 
 ### NAT Traversal Test
 ```bash
-# Terminal 1: Start receiver
-docker exec -it ant-quic-client2 ant-quic --listen 0.0.0.0:9001
+# Terminal 1: Start a node listening
+docker exec -it ant-quic-node2 ant-quic --listen 0.0.0.0:9001
 
-# Terminal 2: Connect from different NAT
-docker exec -it ant-quic-client1 ant-quic --connect <discovered-address>
+# Terminal 2: Connect from a node behind different NAT
+docker exec -it ant-quic-node1 ant-quic --connect <discovered-address>
 ```
 
 ### Apply Network Conditions
@@ -132,7 +136,7 @@ docker exec nat3_gateway tc qdisc add dev eth0 root tbf rate 1mbit burst 32kbit 
 ## Test Scenarios
 
 ### 1. Basic NAT Traversal
-Tests connectivity between clients behind different NAT types under normal conditions.
+Tests connectivity between nodes behind different NAT types under normal conditions.
 
 ### 2. Stressed NAT Traversal
 Tests with added network impairments:
@@ -199,7 +203,7 @@ TEST_DURATION=600 ./docker/scripts/run-nat-tests.sh
 - Verify port 9000 is available
 
 ### NAT traversal fails
-- Check bootstrap node is accessible
+- Check known peer is accessible
 - Verify iptables rules with `docker exec <nat-gateway> iptables -L -n`
 - Check connection tracking: `docker exec <nat-gateway> conntrack -L`
 

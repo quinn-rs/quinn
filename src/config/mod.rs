@@ -12,9 +12,9 @@ use std::{
     sync::Arc,
 };
 
-#[cfg(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring"))]
+#[cfg(feature = "rustls-aws-lc-rs")]
 use rustls::client::WebPkiServerVerifier;
-#[cfg(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring"))]
+#[cfg(feature = "rustls-aws-lc-rs")]
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use thiserror::Error;
 
@@ -22,7 +22,7 @@ use thiserror::Error;
 use crate::NoneTokenLog;
 #[cfg(not(feature = "bloom"))]
 use crate::NoneTokenLog;
-#[cfg(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring"))]
+#[cfg(feature = "rustls-aws-lc-rs")]
 use crate::crypto::rustls::{QuicServerConfig, configured_provider};
 use crate::{
     DEFAULT_SUPPORTED_VERSIONS, Duration, MAX_CID_SIZE, RandomConnectionIdGenerator, SystemTime,
@@ -289,7 +289,7 @@ impl EndpointConfig {
     /// use ant_quic::config::{EndpointConfig, EndpointPortConfig, PortBinding};
     /// use std::sync::Arc;
     ///
-    /// # #[cfg(any(feature = "aws-lc-rs", feature = "ring"))]
+    /// # #[cfg(feature = "aws-lc-rs")]
     /// # {
     /// let mut config = EndpointConfig::default();
     /// config.port_config(EndpointPortConfig {
@@ -331,14 +331,11 @@ impl fmt::Debug for EndpointConfig {
     }
 }
 
-#[cfg(any(feature = "aws-lc-rs", feature = "ring"))]
+#[cfg(feature = "aws-lc-rs")]
 impl Default for EndpointConfig {
     fn default() -> Self {
-        #[cfg(all(feature = "aws-lc-rs", not(feature = "ring")))]
         use aws_lc_rs::hmac;
         use rand::RngCore;
-        #[cfg(feature = "ring")]
-        use ring::hmac;
 
         let mut reset_key = [0; 64];
         rand::thread_rng().fill_bytes(&mut reset_key);
@@ -542,7 +539,7 @@ impl ServerConfig {
     }
 }
 
-#[cfg(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring"))]
+#[cfg(feature = "rustls-aws-lc-rs")]
 impl ServerConfig {
     /// Create a server config with the given certificate chain to be presented to clients
     ///
@@ -557,17 +554,14 @@ impl ServerConfig {
     }
 }
 
-#[cfg(any(feature = "aws-lc-rs", feature = "ring"))]
+#[cfg(feature = "aws-lc-rs")]
 impl ServerConfig {
     /// Create a server config with the given [`crypto::ServerConfig`]
     ///
     /// Uses a randomized handshake token key.
     pub fn with_crypto(crypto: Arc<dyn crypto::ServerConfig>) -> Self {
-        #[cfg(all(feature = "aws-lc-rs", not(feature = "ring")))]
         use aws_lc_rs::hkdf;
         use rand::RngCore;
-        #[cfg(feature = "ring")]
-        use ring::hkdf;
 
         let rng = &mut rand::thread_rng();
         let mut master_key = [0u8; 64];
@@ -784,16 +778,8 @@ impl ClientConfig {
     }
 }
 
-#[cfg(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring"))]
+#[cfg(feature = "rustls-aws-lc-rs")]
 impl ClientConfig {
-    /// Create a client configuration that trusts the platform's native roots
-    #[deprecated(since = "0.11.13", note = "use `try_with_platform_verifier()` instead")]
-    #[cfg(feature = "platform-verifier")]
-    #[allow(clippy::expect_used)]
-    pub fn with_platform_verifier() -> Self {
-        Self::try_with_platform_verifier().expect("use try_with_platform_verifier() instead")
-    }
-
     /// Create a client configuration that trusts the platform's native roots
     #[cfg(feature = "platform-verifier")]
     pub fn try_with_platform_verifier() -> Result<Self, rustls::Error> {
@@ -805,10 +791,12 @@ impl ClientConfig {
     /// Create a client configuration that trusts specified trust anchors
     pub fn with_root_certificates(
         roots: Arc<rustls::RootCertStore>,
-    ) -> Result<Self, rustls::client::VerifierBuilderError> {
+    ) -> Result<Self, rustls::Error> {
         Ok(Self::new(Arc::new(crypto::rustls::QuicClientConfig::new(
-            WebPkiServerVerifier::builder_with_provider(roots, configured_provider()).build()?,
-        ))))
+            WebPkiServerVerifier::builder_with_provider(roots, configured_provider())
+                .build()
+                .map_err(|e| rustls::Error::General(e.to_string()))?,
+        )?)))
     }
 }
 

@@ -2,7 +2,7 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-#[cfg(all(test, feature = "pqc"))]
+#[cfg(test)]
 mod ml_kem_768_tests {
     use ant_quic::crypto::pqc::MlKem768;
     use ant_quic::crypto::pqc::MlKemOperations;
@@ -278,7 +278,7 @@ mod ml_kem_768_tests {
     }
 }
 
-#[cfg(all(test, feature = "pqc"))]
+#[cfg(test)]
 mod ml_kem_768_api_tests {
     use ant_quic::crypto::pqc::MlKem768;
     use ant_quic::crypto::pqc::MlKemOperations;

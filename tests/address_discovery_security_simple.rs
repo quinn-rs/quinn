@@ -4,31 +4,10 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use ant_quic::{
-    auth::AuthConfig,
-    nat_traversal_api::EndpointRole,
-    quic_node::{QuicNodeConfig, QuicP2PNode},
-};
 use std::{
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
-    sync::Arc,
     time::Duration,
 };
-use tokio::time::sleep;
-
-// Ensure crypto provider is installed for tests
-fn ensure_crypto_provider() {
-    // Try to install the crypto provider, ignore if already installed
-    #[cfg(feature = "rustls-aws-lc-rs")]
-    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
-
-    #[cfg(feature = "rustls-ring")]
-    let _ = rustls::crypto::ring::default_provider().install_default();
-
-    // If neither feature is enabled, use default
-    #[cfg(not(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring")))]
-    let _ = rustls::crypto::ring::default_provider().install_default();
-}
 
 /// Test timing attack resistance in address processing
 #[tokio::test]
@@ -264,94 +243,5 @@ fn test_rate_limiting_math() {
     assert!(
         (9..=11).contains(&allowed_after_wait),
         "Should allow ~10 more after 1 second: {allowed_after_wait}"
-    );
-}
-
-/// Test connection isolation with real nodes
-#[tokio::test]
-async fn test_connection_isolation() {
-    ensure_crypto_provider();
-    let _ = tracing_subscriber::fmt::try_init();
-
-    // Create bootstrap node
-    let bootstrap_config = QuicNodeConfig {
-        role: EndpointRole::Bootstrap,
-        bootstrap_nodes: vec![],
-        enable_coordinator: true,
-        max_connections: 100,
-        connection_timeout: Duration::from_secs(30),
-        stats_interval: Duration::from_secs(60),
-        auth_config: AuthConfig {
-            require_authentication: true,
-            auth_timeout: Duration::from_secs(5),
-            challenge_validity: Duration::from_secs(30),
-            max_auth_attempts: 3,
-        },
-        bind_addr: Some("127.0.0.1:0".parse().unwrap()),
-    };
-
-    let bootstrap_node = match QuicP2PNode::new(bootstrap_config).await {
-        Ok(node) => Arc::new(node),
-        Err(e) => {
-            eprintln!("Failed to create bootstrap node: {e}");
-            return; // Skip test if node creation fails
-        }
-    };
-
-    // For testing, use a fixed bootstrap address since we can't get the actual address easily
-    let bootstrap_addr: SocketAddr = "127.0.0.1:9000".parse().unwrap();
-
-    // Create two client nodes
-    let mut client_nodes = Vec::new();
-
-    for i in 0..2 {
-        let client_config = QuicNodeConfig {
-            role: EndpointRole::Client,
-            bootstrap_nodes: vec![bootstrap_addr],
-            enable_coordinator: false,
-            max_connections: 10,
-            connection_timeout: Duration::from_secs(10),
-            stats_interval: Duration::from_secs(60),
-            auth_config: AuthConfig {
-                require_authentication: true,
-                auth_timeout: Duration::from_secs(5),
-                challenge_validity: Duration::from_secs(30),
-                max_auth_attempts: 3,
-            },
-            bind_addr: None,
-        };
-
-        match QuicP2PNode::new(client_config).await {
-            Ok(node) => client_nodes.push(Arc::new(node)),
-            Err(e) => {
-                eprintln!("Failed to create client {i}: {e}");
-                return;
-            }
-        }
-    }
-
-    // Wait for connections to establish
-    sleep(Duration::from_secs(3)).await;
-
-    // Check isolation - each client should only see bootstrap
-    for (i, client) in client_nodes.iter().enumerate() {
-        let stats = client.get_stats().await;
-        eprintln!("Client {i} stats: {stats:?}");
-        // Note: In the current implementation, clients may not immediately
-        // establish persistent connections to bootstrap nodes
-        // Just verify stats are available
-        assert!(
-            stats.active_connections <= 1,
-            "Client {i} should see at most bootstrap connection"
-        );
-    }
-
-    // Bootstrap should see connections from clients
-    let bootstrap_stats = bootstrap_node.get_stats().await;
-    eprintln!("Bootstrap stats: {bootstrap_stats:?}");
-    // Note: Connections may be transient for address discovery
-    assert!(
-        bootstrap_stats.active_connections <= 2,
-        "Bootstrap should see at most both client connections"
     );
 }

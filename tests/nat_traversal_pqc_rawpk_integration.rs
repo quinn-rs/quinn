@@ -2,7 +2,6 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-#[cfg(feature = "pqc")]
 mod pqc_integration {
     use ant_quic::VarInt;
     use ant_quic::crypto::pqc::types::MlDsaPublicKey;
@@ -43,7 +42,7 @@ mod pqc_integration {
         let (_ed25519_signing, ed25519_verify) =
             ant_quic::crypto::raw_public_keys::key_utils::generate_ed25519_keypair();
         let ed25519_spki = create_ed25519_subject_public_key_info(&ed25519_verify);
-        let verifier = PqcRawPublicKeyVerifier::new(vec![]);
+        let verifier = PqcRawPublicKeyVerifier::allow_any();
         // Allow-any verifier should accept any SPKI form and return the parsed ExtendedRawPublicKey
         let recovered = verifier
             .verify_cert(&ed25519_spki)

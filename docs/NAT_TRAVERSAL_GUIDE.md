@@ -1,5 +1,7 @@
 # NAT Traversal Testing and Configuration Guide
 
+> **v0.13.0+ Note**: ant-quic uses a symmetric P2P architecture where all nodes have equal capabilities. There are no "client", "server", or "bootstrap" roles. Every node can connect to other nodes, accept connections, and coordinate NAT traversal for peers.
+
 This guide provides detailed information on testing and configuring NAT traversal in ant-quic, including setup instructions for different NAT types and troubleshooting common issues.
 
 ## Table of Contents
@@ -146,12 +148,13 @@ The `docker-compose.yml` defines multiple services simulating different NAT scen
 version: '3.8'
 
 services:
-  bootstrap:
+  # v0.13.0+: All nodes are symmetric - no "bootstrap" role distinction
+  peer-1:
     build: .
     networks:
       public_net:
         ipv4_address: 172.20.0.10
-    command: ["/app/ant-quic", "--force-coordinator", "--listen", "0.0.0.0:9000"]
+    command: ["/app/ant-quic", "--listen", "0.0.0.0:9000"]
 
   nat-gateway-1:
     build:
@@ -167,14 +170,15 @@ services:
     environment:
       NAT_TYPE: "full_cone"
 
-  client-1:
+  # v0.13.0+: Uses --connect instead of --bootstrap
+  peer-2:
     build: .
     networks:
       private_net_1:
         ipv4_address: 10.1.0.10
     depends_on:
       - nat-gateway-1
-    command: ["/app/ant-quic", "--bootstrap", "172.20.0.10:9000"]
+    command: ["/app/ant-quic", "--connect", "172.20.0.10:9000"]
 
 networks:
   public_net:
@@ -239,15 +243,21 @@ sysctl -w net.ipv4.ip_forward=1
 Configure NAT traversal behavior in ant-quic:
 
 ```rust
-// Enable NAT traversal extension
-const NAT_TRAVERSAL_PARAMETER_ID: u64 = 0x58;
+// v0.13.0+: All nodes are symmetric - no role configuration needed
+// Transport Parameters for NAT traversal:
+// - 0x3d7e9f0bca12fea6: NAT traversal capability
+// - 0x3d7e9f0bca12fea8: RFC-compliant frame format
+// - 0x9f81a176: Address discovery
 
-// Configure in TransportConfig
-let mut config = TransportConfig::default();
-config.enable_nat_traversal(true);
-config.set_nat_traversal_role(NatTraversalRole::Client);
-config.set_max_candidates(10);
-config.set_punch_timeout(Duration::from_secs(5));
+// Configure via P2pConfig
+let config = P2pConfig::builder()
+    .known_peer("peer.example.com:9000".parse()?)
+    .nat(NatConfig {
+        max_candidates: 10,
+        enable_symmetric_nat: true,
+        ..Default::default()
+    })
+    .build()?;
 ```
 
 ### Runtime Configuration
@@ -255,15 +265,15 @@ config.set_punch_timeout(Duration::from_secs(5));
 Configure via command-line arguments:
 
 ```bash
-# Client behind NAT
-ant-quic --bootstrap quic.saorsalabs.com:9000 \
+# v0.13.0+: All nodes are symmetric P2P nodes
+# Connect to known peers
+ant-quic --connect quic.saorsalabs.com:9000 \
          --nat-traversal \
          --max-candidates 20 \
          --punch-timeout 10000
 
-# Bootstrap/coordinator node
-ant-quic --force-coordinator \
-         --listen 0.0.0.0:9000 \
+# Listen for incoming connections
+ant-quic --listen 0.0.0.0:9000 \
          --enable-relay
 ```
 
@@ -274,7 +284,7 @@ Create `config.toml`:
 ```toml
 [nat_traversal]
 enabled = true
-role = "client"  # or "server", "bootstrap"
+# v0.13.0+: No role field - all nodes are symmetric P2P nodes
 max_candidates = 10
 punch_timeout_ms = 5000
 enable_address_prediction = true
@@ -283,16 +293,17 @@ prediction_range = 100
 [discovery]
 enable_local_discovery = true
 enable_stun_like_discovery = true
-bootstrap_nodes = [
+# v0.13.0+: Uses known_peers instead of bootstrap_nodes
+known_peers = [
     "quic.saorsalabs.com:9000",
     "backup.example.com:9000"
 ]
 
 [protocols]
-enable_add_address = true      # 0x40
-enable_punch_me_now = true     # 0x41
-enable_remove_address = true   # 0x42
-enable_observed_address = true # 0x43
+enable_add_address = true      # 0x3d7e90-91
+enable_punch_me_now = true     # 0x3d7e92-93
+enable_remove_address = true   # 0x3d7e94
+enable_observed_address = true # 0x9f81a6-a7
 ```
 
 ## Testing Procedures
@@ -300,11 +311,12 @@ enable_observed_address = true # 0x43
 ### Basic Connectivity Test
 
 ```bash
-# 1. Start bootstrap node
-cargo run --bin ant-quic -- --force-coordinator --listen 0.0.0.0:9000
+# v0.13.0+: All nodes are symmetric - no "bootstrap" role distinction
+# 1. Start first peer (listening)
+cargo run --bin ant-quic -- --listen 0.0.0.0:9000
 
-# 2. Start client behind NAT
-cargo run --bin ant-quic -- --bootstrap localhost:9000
+# 2. Start second peer (connecting)
+cargo run --bin ant-quic -- --connect localhost:9000
 
 # 3. Verify connection
 # Look for: "Successfully connected through NAT"
@@ -339,17 +351,18 @@ cargo run --example nat_latency_test
 ### Multi-Node Testing
 
 ```bash
-# Start bootstrap
-ant-quic --force-coordinator --listen 0.0.0.0:9000 --log bootstrap.log &
+# v0.13.0+: All nodes are symmetric P2P nodes
+# Start first peer (as initial connection target)
+ant-quic --listen 0.0.0.0:9000 --log peer-0.log &
 
-# Start multiple clients
+# Start multiple additional peers
 for i in {1..10}; do
-  ant-quic --bootstrap localhost:9000 --client-id "client-$i" \
-           --log "client-$i.log" &
+  ant-quic --connect localhost:9000 --peer-id "peer-$i" \
+           --log "peer-$i.log" &
 done
 
 # Monitor success rate
-grep "NAT traversal successful" client-*.log | wc -l
+grep "NAT traversal successful" peer-*.log | wc -l
 ```
 
 ## Troubleshooting
@@ -374,7 +387,7 @@ sudo iptables -L -n | grep 9000
 ```
 
 **Solutions**:
-- Ensure bootstrap node has public IP
+- Ensure initial peer (known_peer) has reachable IP
 - Check firewall rules on both ends
 - Verify network connectivity
 
@@ -568,13 +581,13 @@ impl NatTraversalStrategy for MobileNetworkStrategy {
 
 ### Protocol Extensions
 
-ant-quic implements QUIC NAT traversal extensions:
+ant-quic implements QUIC NAT traversal extensions per draft-seemann-quic-nat-traversal-02:
 
 - **Transport Parameter 0x58**: Negotiates NAT traversal support
-- **ADD_ADDRESS (0x40)**: Advertise candidate addresses
-- **PUNCH_ME_NOW (0x41)**: Coordinate hole punching
-- **REMOVE_ADDRESS (0x42)**: Remove failed candidates
-- **OBSERVED_ADDRESS (0x43)**: Report observed addresses
+- **ADD_ADDRESS (0x3d7e90-91)**: Advertise candidate addresses
+- **PUNCH_ME_NOW (0x3d7e92-93)**: Coordinate hole punching
+- **REMOVE_ADDRESS (0x3d7e94)**: Remove failed candidates
+- **OBSERVED_ADDRESS (0x9f81a6-a7)**: Report observed addresses (per draft-ietf-quic-address-discovery-00)
 
 ### Integration with Other Protocols
 

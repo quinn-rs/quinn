@@ -8,8 +8,11 @@
 mod common;
 
 use ant_quic::{
-    ClientConfig, Endpoint, EndpointConfig, ServerConfig, VarInt,
-    crypto::rustls::{QuicClientConfig, QuicServerConfig},
+    ClientConfig, Endpoint, EndpointConfig, ServerConfig, TransportConfig, VarInt,
+    crypto::{
+        pqc::PqcConfig,
+        rustls::{QuicClientConfig, QuicServerConfig, configured_provider_with_pqc},
+    },
     high_level::default_runtime,
 };
 use socket2::{Domain, Protocol, Socket, Type};
@@ -41,6 +44,13 @@ fn create_configured_socket(addr: SocketAddr) -> std::io::Result<std::net::UdpSo
     Ok(socket.into())
 }
 
+fn address_discovery_transport_config() -> Arc<TransportConfig> {
+    let mut transport_config = TransportConfig::default();
+    transport_config.enable_address_discovery(true);
+    transport_config.enable_pqc(false);
+    Arc::new(transport_config)
+}
+
 /// Helper to generate self-signed certificate for testing
 fn generate_test_cert() -> (
     rustls::pki_types::CertificateDer<'static>,
@@ -55,15 +65,19 @@ fn generate_test_cert() -> (
 /// Create a test server endpoint with properly configured socket buffers
 fn create_server_endpoint() -> Endpoint {
     let (cert, key) = generate_test_cert();
+    let provider = configured_provider_with_pqc(Some(&PqcConfig::default()));
 
-    let mut server_crypto = rustls::ServerConfig::builder()
+    let mut server_crypto = rustls::ServerConfig::builder_with_provider(provider)
+        .with_protocol_versions(&[&rustls::version::TLS13])
+        .unwrap()
         .with_no_client_auth()
         .with_single_cert(vec![cert], key)
         .unwrap();
     server_crypto.alpn_protocols = vec![b"test".to_vec()];
 
-    let server_config =
+    let mut server_config =
         ServerConfig::with_crypto(Arc::new(QuicServerConfig::try_from(server_crypto).unwrap()));
+    server_config.transport_config(address_discovery_transport_config());
 
     // Create socket with properly configured buffers
     let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, 0));
@@ -71,7 +85,7 @@ fn create_server_endpoint() -> Endpoint {
 
     // Configure endpoint with smaller MTU for Windows compatibility
     #[cfg(target_os = "windows")]
-    let endpoint_config = {
+    let mut endpoint_config = {
         let mut config = EndpointConfig::default();
         // Use smaller MTU on Windows to avoid buffer size issues
         // This prevents WSAEMSGSIZE (error 10040) on Windows CI
@@ -94,7 +108,7 @@ fn create_client_endpoint() -> Endpoint {
 
     // Configure endpoint with smaller MTU for Windows compatibility
     #[cfg(target_os = "windows")]
-    let endpoint_config = {
+    let mut endpoint_config = {
         let mut config = EndpointConfig::default();
         // Use smaller MTU on Windows to avoid buffer size issues
         config.max_udp_payload_size(1200).unwrap();
@@ -165,14 +179,18 @@ async fn test_client_server_address_discovery() {
     let mut client = create_client_endpoint();
 
     // Create client config that skips cert verification for testing
-    let mut client_crypto = rustls::ClientConfig::builder()
+    let provider = configured_provider_with_pqc(Some(&PqcConfig::default()));
+    let mut client_crypto = rustls::ClientConfig::builder_with_provider(provider)
+        .with_protocol_versions(&[&rustls::version::TLS13])
+        .unwrap()
         .dangerous()
         .with_custom_certificate_verifier(Arc::new(SkipServerVerification {}))
         .with_no_client_auth();
     client_crypto.alpn_protocols = vec![b"test".to_vec()];
 
-    let client_config =
+    let mut client_config =
         ClientConfig::new(Arc::new(QuicClientConfig::try_from(client_crypto).unwrap()));
+    client_config.transport_config(address_discovery_transport_config());
 
     // Set the client config on the endpoint
     client.set_default_client_config(client_config);
@@ -262,14 +280,18 @@ async fn test_concurrent_connections_address_discovery() {
     for i in 0..3 {
         let mut client = create_client_endpoint();
 
-        let mut client_crypto = rustls::ClientConfig::builder()
+        let provider = configured_provider_with_pqc(Some(&PqcConfig::default()));
+        let mut client_crypto = rustls::ClientConfig::builder_with_provider(provider)
+            .with_protocol_versions(&[&rustls::version::TLS13])
+            .unwrap()
             .dangerous()
             .with_custom_certificate_verifier(Arc::new(SkipServerVerification {}))
             .with_no_client_auth();
         client_crypto.alpn_protocols = vec![b"test".to_vec()];
 
-        let client_config =
+        let mut client_config =
             ClientConfig::new(Arc::new(QuicClientConfig::try_from(client_crypto).unwrap()));
+        client_config.transport_config(address_discovery_transport_config());
 
         client.set_default_client_config(client_config);
 
@@ -349,14 +371,18 @@ async fn test_address_discovery_during_migration() {
     // Client connects and potentially migrates
     let mut client = create_client_endpoint();
 
-    let mut client_crypto = rustls::ClientConfig::builder()
+    let provider = configured_provider_with_pqc(Some(&PqcConfig::default()));
+    let mut client_crypto = rustls::ClientConfig::builder_with_provider(provider)
+        .with_protocol_versions(&[&rustls::version::TLS13])
+        .unwrap()
         .dangerous()
         .with_custom_certificate_verifier(Arc::new(SkipServerVerification {}))
         .with_no_client_auth();
     client_crypto.alpn_protocols = vec![b"test".to_vec()];
 
-    let client_config =
+    let mut client_config =
         ClientConfig::new(Arc::new(QuicClientConfig::try_from(client_crypto).unwrap()));
+    client_config.transport_config(address_discovery_transport_config());
 
     client.set_default_client_config(client_config);
 
@@ -417,14 +443,18 @@ async fn test_address_discovery_with_data_transfer() {
     // Client sends data
     let mut client = create_client_endpoint();
 
-    let mut client_crypto = rustls::ClientConfig::builder()
+    let provider = configured_provider_with_pqc(Some(&PqcConfig::default()));
+    let mut client_crypto = rustls::ClientConfig::builder_with_provider(provider)
+        .with_protocol_versions(&[&rustls::version::TLS13])
+        .unwrap()
         .dangerous()
         .with_custom_certificate_verifier(Arc::new(SkipServerVerification {}))
         .with_no_client_auth();
     client_crypto.alpn_protocols = vec![b"test".to_vec()];
 
-    let client_config =
+    let mut client_config =
         ClientConfig::new(Arc::new(QuicClientConfig::try_from(client_crypto).unwrap()));
+    client_config.transport_config(address_discovery_transport_config());
 
     client.set_default_client_config(client_config);
 

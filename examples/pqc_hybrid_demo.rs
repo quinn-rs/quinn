@@ -7,34 +7,22 @@
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Hybrid Post-Quantum Key Exchange Demo ===\n");
 
-    // Check if PQC features are enabled
-    #[cfg(not(feature = "pqc"))]
-    {
-        println!("Error: This example requires the 'pqc' feature to be enabled.");
-        println!("Run with: cargo run --example pqc_hybrid_demo --features pqc");
-        Ok(())
-    }
+    // Direct KEM usage
+    direct_kem_demo()?;
 
-    #[cfg(feature = "pqc")]
-    {
-        // Direct KEM usage
-        direct_kem_demo()?;
+    println!("\n{}\n", "=".repeat(50));
 
-        println!("\n{}\n", "=".repeat(50));
+    // Full key exchange protocol
+    key_exchange_protocol_demo()?;
 
-        // Full key exchange protocol
-        key_exchange_protocol_demo()?;
+    println!("\n{}\n", "=".repeat(50));
 
-        println!("\n{}\n", "=".repeat(50));
+    // Hybrid signatures demo
+    demonstrate_hybrid_signatures()?;
 
-        // Hybrid signatures demo
-        demonstrate_hybrid_signatures()?;
-
-        Ok(())
-    }
+    Ok(())
 }
 
-#[cfg(feature = "pqc")]
 fn direct_kem_demo() -> Result<(), Box<dyn std::error::Error>> {
     use ant_quic::crypto::pqc::hybrid::HybridKem;
 
@@ -90,7 +78,6 @@ fn direct_kem_demo() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-#[cfg(feature = "pqc")]
 fn key_exchange_protocol_demo() -> Result<(), Box<dyn std::error::Error>> {
     use ant_quic::crypto::pqc::hybrid_key_exchange::{
         HybridKeyExchange, HybridKeyShare, KeyExchangeRole,
@@ -160,7 +147,6 @@ fn key_exchange_protocol_demo() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-#[cfg(feature = "pqc")]
 fn demonstrate_hybrid_signatures() -> Result<(), Box<dyn std::error::Error>> {
     use ant_quic::crypto::pqc::hybrid::HybridSignature;
 

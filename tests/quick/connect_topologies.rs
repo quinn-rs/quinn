@@ -7,7 +7,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use ant_quic::{
-    config::{ClientConfig, ServerConfig},
+    config::{ClientConfig, ServerConfig, TransportConfig},
     high_level::Endpoint,
 };
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
@@ -23,14 +23,21 @@ fn gen_self_signed_cert() -> (Vec<CertificateDer<'static>>, PrivateKeyDer<'stati
     (vec![cert_der], key_der)
 }
 
+fn transport_config_no_pqc() -> Arc<TransportConfig> {
+    let mut transport = TransportConfig::default();
+    transport.enable_pqc(false);
+    Arc::new(transport)
+}
+
 async fn mk_server() -> (Endpoint, SocketAddr, Vec<CertificateDer<'static>>) {
     #[cfg(feature = "rustls-aws-lc-rs")]
     let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
-    #[cfg(all(not(feature = "rustls-aws-lc-rs"), feature = "rustls-ring"))]
+    #[cfg(all(not(feature = "rustls-aws-lc-rs"), feature = "rustls-aws-lc-rs"))]
     let _ = rustls::crypto::ring::default_provider().install_default();
 
     let (chain, key) = gen_self_signed_cert();
-    let server_cfg = ServerConfig::with_single_cert(chain.clone(), key).expect("server cfg");
+    let mut server_cfg = ServerConfig::with_single_cert(chain.clone(), key).expect("server cfg");
+    server_cfg.transport_config(transport_config_no_pqc());
     let ep = Endpoint::server(server_cfg, ([127, 0, 0, 1], 0).into()).expect("server ep");
     let addr = ep.local_addr().expect("server addr");
     (ep, addr, chain)
@@ -41,7 +48,9 @@ fn mk_client_config(chain: &[CertificateDer<'static>]) -> ClientConfig {
     for c in chain.iter().cloned() {
         roots.add(c).expect("add root");
     }
-    ClientConfig::with_root_certificates(Arc::new(roots)).expect("client cfg")
+    let mut config = ClientConfig::with_root_certificates(Arc::new(roots)).expect("client cfg");
+    config.transport_config(transport_config_no_pqc());
+    config
 }
 
 #[tokio::test]

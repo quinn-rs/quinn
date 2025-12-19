@@ -10,39 +10,40 @@ ant-quic implements the following IETF drafts and custom extensions:
 2. **draft-seemann-quic-nat-traversal-02** - QUIC NAT Traversal
 3. Custom extensions for enhanced P2P connectivity
 
+**v0.13.0+: Symmetric P2P Architecture**
+- All nodes have identical capabilities
+- Any peer can observe addresses and coordinate NAT traversal
+- No client/server/bootstrap role distinctions
+
 ## Transport Parameters
 
-### NAT Traversal Parameters (0x58)
+### NAT Traversal Parameters
 
 Negotiates NAT traversal capabilities during the handshake:
 
 ```
-nat_traversal_enabled (0x58): {
+nat_traversal_capability (0x3d7e9f0bca12fea6): {
     value: varint,  // 1 = enabled, 0 = disabled
+}
+
+rfc_nat_traversal_frames (0x3d7e9f0bca12fea8): {
+    value: varint,  // 1 = RFC-compliant frame format
 }
 ```
 
-### Address Discovery Parameters (0x1f00-0x1f02)
+### Address Discovery Parameters
 
 Configure address discovery behavior:
 
 ```
-observed_address_enabled (0x1f00): {
-    value: varint,  // 1 = enabled, 0 = disabled
-}
-
-max_observed_addresses (0x1f01): {
-    value: varint,  // Maximum addresses to track (default: 10)
-}
-
-address_validation_token (0x1f02): {
-    value: opaque<0..255>,  // Token for address validation
+address_discovery_config (0x9f81a176): {
+    value: varint,  // Configuration flags
 }
 ```
 
 ## Extension Frames
 
-### OBSERVED_ADDRESS Frame (Type=0x43)
+### OBSERVED_ADDRESS Frame (Type=0x9f81a6 IPv4, 0x9f81a7 IPv6)
 
 Informs the peer of their observed network address as seen by the sender.
 
@@ -50,19 +51,17 @@ Informs the peer of their observed network address as seen by the sender.
 
 ```
 OBSERVED_ADDRESS Frame {
-    Type (i) = 0x43,
+    Type (i) = 0x9f81a6 (IPv4) or 0x9f81a7 (IPv6),
     Sequence Number (i),
-    IP Version (8),
-    IP Address (32/128),
+    IP Address (32 for IPv4, 128 for IPv6),
     Port (16),
 }
 ```
 
 #### Fields
 
-- **Type**: Frame type identifier (0x43)
+- **Type**: Frame type identifier (0x9f81a6 for IPv4, 0x9f81a7 for IPv6)
 - **Sequence Number**: Monotonically increasing counter for ordering
-- **IP Version**: 4 for IPv4, 6 for IPv6
 - **IP Address**: 4 bytes for IPv4, 16 bytes for IPv6
 - **Port**: UDP port number (network byte order)
 
@@ -87,7 +86,7 @@ match frame {
 }
 ```
 
-### ADD_ADDRESS Frame (Type=0x40)
+### ADD_ADDRESS Frame (Type=0x3d7e90 IPv4, 0x3d7e91 IPv6)
 
 Advertises additional addresses where the sender can be reached.
 
@@ -95,29 +94,20 @@ Advertises additional addresses where the sender can be reached.
 
 ```
 ADD_ADDRESS Frame {
-    Type (i) = 0x40,
+    Type (i) = 0x3d7e90 (IPv4) or 0x3d7e91 (IPv6),
     Address ID (i),
-    IP Version (8),
-    IP Address (32/128),
+    IP Address (32 for IPv4, 128 for IPv6),
     Port (16),
-    Priority (8),
-    Address Type (8),
-    [Token Length (i)],
-    [Validation Token (...)],
+    Priority (i),
 }
 ```
 
 #### Fields
 
 - **Address ID**: Unique identifier for this address
-- **Priority**: 0-255, higher = preferred
-- **Address Type**: 
-  - 0x00 = Direct
-  - 0x01 = Server Reflexive
-  - 0x02 = Relayed
-  - 0x03 = Predicted
+- **Priority**: Higher values = preferred candidates
 
-### PUNCH_ME_NOW Frame (Type=0x41)
+### PUNCH_ME_NOW Frame (Type=0x3d7e92 IPv4, 0x3d7e93 IPv6)
 
 Coordinates simultaneous hole punching attempts.
 
@@ -125,7 +115,7 @@ Coordinates simultaneous hole punching attempts.
 
 ```
 PUNCH_ME_NOW Frame {
-    Type (i) = 0x41,
+    Type (i) = 0x3d7e92 (IPv4) or 0x3d7e93 (IPv6),
     Round ID (i),
     Target Address Count (i),
     Target Addresses [...] {
@@ -136,14 +126,15 @@ PUNCH_ME_NOW Frame {
 }
 ```
 
-#### Coordination Protocol
+#### Coordination Protocol (Symmetric P2P)
 
-1. **Initiator** sends PUNCH_ME_NOW to coordinator
-2. **Coordinator** forwards to target peer
-3. Both peers simultaneously send packets after specified delay
-4. Success reported via ADD_ADDRESS frame
+1. **Peer A** wants to connect to Peer B
+2. **Any connected peer C** coordinates by forwarding addresses
+3. **Peer C** sends PUNCH_ME_NOW to both A and B with timing
+4. Both peers simultaneously send packets after specified delay
+5. Success reported via ADD_ADDRESS frame
 
-### REMOVE_ADDRESS Frame (Type=0x42)
+### REMOVE_ADDRESS Frame (Type=0x3d7e94)
 
 Removes a previously advertised address.
 
@@ -151,18 +142,10 @@ Removes a previously advertised address.
 
 ```
 REMOVE_ADDRESS Frame {
-    Type (i) = 0x42,
+    Type (i) = 0x3d7e94,
     Address ID (i),
-    Reason (8),
 }
 ```
-
-#### Reason Codes
-
-- 0x00 = Address no longer valid
-- 0x01 = Network interface down
-- 0x02 = NAT mapping expired
-- 0x03 = Administrative removal
 
 ## NAT Traversal Protocol
 
@@ -170,39 +153,45 @@ REMOVE_ADDRESS Frame {
 
 The NAT traversal protocol enables direct peer-to-peer connections through various NAT types without requiring STUN/TURN servers.
 
-### Roles
+### Symmetric P2P Model (v0.13.0+)
 
-1. **Client**: Behind NAT, initiates connections
-2. **Server**: Publicly accessible, can accept connections
-3. **Bootstrap**: Server that also coordinates NAT traversal
+All nodes have identical capabilities:
+- **Connect**: Initiate connections to other peers
+- **Accept**: Accept incoming connections from peers
+- **Observe**: See external addresses of connecting peers
+- **Report**: Send OBSERVED_ADDRESS frames to peers
+- **Coordinate**: Help two other peers establish a connection
+- **Relay**: Forward traffic when direct connection fails
+
+There are no special roles - any peer can perform any function.
 
 ### Connection Establishment Flow
 
 ```mermaid
 sequenceDiagram
-    participant Client A
-    participant Bootstrap
-    participant Client B
-    
-    Client A->>Bootstrap: Connect + NAT traversal enabled
-    Bootstrap->>Client A: OBSERVED_ADDRESS (public IP:port)
-    Client A->>Bootstrap: ADD_ADDRESS (local candidates)
-    
-    Client B->>Bootstrap: Connect + NAT traversal enabled
-    Bootstrap->>Client B: OBSERVED_ADDRESS (public IP:port)
-    Client B->>Bootstrap: ADD_ADDRESS (local candidates)
-    
-    Client A->>Bootstrap: Request connection to Client B
-    Bootstrap->>Client B: Forward request + Client A addresses
-    Bootstrap->>Client A: Send Client B addresses
-    
-    Bootstrap->>Client A: PUNCH_ME_NOW (round 1)
-    Bootstrap->>Client B: PUNCH_ME_NOW (round 1)
-    
-    Client A-->>Client B: Simultaneous packets
-    Client B-->>Client A: Simultaneous packets
-    
-    Client A->>Client B: QUIC handshake
+    participant Peer A
+    participant Peer C (any peer)
+    participant Peer B
+
+    Peer A->>Peer C: Connect + NAT traversal enabled
+    Peer C->>Peer A: OBSERVED_ADDRESS (public IP:port)
+    Peer A->>Peer C: ADD_ADDRESS (local candidates)
+
+    Peer B->>Peer C: Connect + NAT traversal enabled
+    Peer C->>Peer B: OBSERVED_ADDRESS (public IP:port)
+    Peer B->>Peer C: ADD_ADDRESS (local candidates)
+
+    Peer A->>Peer C: Request connection to Peer B
+    Peer C->>Peer B: Forward request + Peer A addresses
+    Peer C->>Peer A: Send Peer B addresses
+
+    Peer C->>Peer A: PUNCH_ME_NOW (round 1)
+    Peer C->>Peer B: PUNCH_ME_NOW (round 1)
+
+    Peer A-->>Peer B: Simultaneous packets
+    Peer B-->>Peer A: Simultaneous packets
+
+    Peer A->>Peer B: Direct QUIC connection
 ```
 
 ### Candidate Types and Priority
@@ -210,8 +199,8 @@ sequenceDiagram
 Candidates are prioritized using a formula similar to ICE:
 
 ```
-priority = (2^24 * type_preference) + 
-           (2^8 * local_preference) + 
+priority = (2^24 * type_preference) +
+           (2^8 * local_preference) +
            (256 - component_id)
 ```
 
@@ -280,12 +269,12 @@ To prevent amplification attacks:
 impl Frame {
     pub fn parse(input: &mut impl Buf) -> Result<Self, FrameError> {
         let frame_type = input.get_var()?;
-        
+
         match frame_type {
-            0x40 => parse_add_address(input),
-            0x41 => parse_punch_me_now(input),
-            0x42 => parse_remove_address(input),
-            0x43 => parse_observed_address(input),
+            0x3d7e90 | 0x3d7e91 => parse_add_address(input, frame_type),
+            0x3d7e92 | 0x3d7e93 => parse_punch_me_now(input, frame_type),
+            0x3d7e94 => parse_remove_address(input),
+            0x9f81a6 | 0x9f81a7 => parse_observed_address(input, frame_type),
             _ => Err(FrameError::UnknownType(frame_type)),
         }
     }
@@ -296,7 +285,7 @@ impl Frame {
 
 ```rust
 struct NatTraversalState {
-    role: NatTraversalRole,
+    // v0.13.0+: No role field - all peers are symmetric
     candidates: HashMap<u64, CandidateAddress>,
     observed_addresses: VecDeque<ObservedAddress>,
     coordination_rounds: HashMap<u64, CoordinationRound>,
@@ -322,10 +311,10 @@ fn test_observed_address_frame_encoding() {
         ip: IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)),
         port: 9000,
     };
-    
+
     let mut buf = BytesMut::new();
     frame.encode(&mut buf);
-    
+
     let decoded = Frame::parse(&mut buf.freeze()).unwrap();
     assert_eq!(frame, decoded);
 }
@@ -370,9 +359,10 @@ RUST_LOG=ant_quic::frame=trace,ant_quic::connection::nat_traversal=debug \
 
 Extension frames in Wireshark:
 
-1. Filter: `quic.frame_type >= 0x40 && quic.frame_type <= 0x43`
-2. Decode as: Custom QUIC frames
-3. Export: JSON format for analysis
+1. Filter: `quic.frame_type == 0x3d7e90` (ADD_ADDRESS IPv4)
+2. Filter: `quic.frame_type == 0x9f81a6` (OBSERVED_ADDRESS IPv4)
+3. Decode as: Custom QUIC frames
+4. Export: JSON format for analysis
 
 ### Common Issues
 
@@ -404,4 +394,4 @@ Planned enhancements:
 - [draft-ietf-quic-address-discovery-00](https://datatracker.ietf.org/doc/draft-ietf-quic-address-discovery/)
 - [draft-seemann-quic-nat-traversal-02](https://datatracker.ietf.org/doc/draft-seemann-quic-nat-traversal/)
 - [RFC 9000 - QUIC Transport Protocol](https://www.rfc-editor.org/rfc/rfc9000.html)
-- [RFC 8445 - ICE](https://www.rfc-editor.org/rfc/rfc8445.html)
+- [RFC 7250 - Raw Public Keys in TLS](https://www.rfc-editor.org/rfc/rfc7250.html)

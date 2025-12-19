@@ -1,393 +1,416 @@
 # Post-Quantum Cryptography Migration Guide
 
-This guide provides a comprehensive roadmap for migrating your ant-quic applications to use Post-Quantum Cryptography.
+This guide provides a comprehensive roadmap for migrating your ant-quic applications to v0.13.0+ with always-on Post-Quantum Cryptography.
 
 ## Table of Contents
 
 1. [Migration Overview](#migration-overview)
-2. [Pre-Migration Checklist](#pre-migration-checklist)
-3. [Migration Phases](#migration-phases)
-4. [Step-by-Step Instructions](#step-by-step-instructions)
-5. [Troubleshooting](#troubleshooting)
-6. [Rollback Procedures](#rollback-procedures)
-7. [Monitoring and Validation](#monitoring-and-validation)
+2. [What Changed in v0.13.0](#what-changed-in-v0130)
+3. [Pre-Migration Checklist](#pre-migration-checklist)
+4. [Migration Steps](#migration-steps)
+5. [Code Changes Required](#code-changes-required)
+6. [Network-Wide Migration](#network-wide-migration)
+7. [Troubleshooting](#troubleshooting)
+8. [Monitoring and Validation](#monitoring-and-validation)
 
 ## Migration Overview
 
-### Why Migrate?
+### Why v0.13.0 Requires Migration
 
-- **Quantum Threat**: Quantum computers pose a future threat to current cryptography
-- **Compliance**: Meeting regulatory requirements for quantum-safe cryptography
-- **Future-Proofing**: Protecting data harvested today from future decryption
-- **Best Practice**: Industry moving towards PQC adoption
+ant-quic v0.13.0 introduced **always-on Post-Quantum Cryptography**. This is a breaking change:
 
-### Migration Timeline
+- **Before v0.13.0**: PQC was optional with `PqcMode::Disabled/Hybrid/Pure`
+- **After v0.13.0**: PQC is always enabled, no way to disable
 
-Typical migration timeline for production systems:
+**All nodes in your network must be upgraded to v0.13.0+ simultaneously** or they will be unable to communicate with nodes running older versions that have PQC disabled.
 
+### Why the Breaking Change?
+
+1. **Security**: "Harvest now, decrypt later" attacks are a real threat
+2. **Simplicity**: No mode confusion, consistent security everywhere
+3. **Future-Proof**: All ant-quic networks are quantum-resistant by default
+4. **Performance**: Modern hardware handles PQC with minimal overhead (~8%)
+
+## What Changed in v0.13.0
+
+### Removed Types and Methods
+
+| Removed | Was Used For | v0.13.0 Equivalent |
+|---------|--------------|-------------------|
+| `PqcMode::Disabled` | Disable PQC | Not available - PQC always on |
+| `PqcMode::Hybrid` | Enable hybrid mode | Default behavior (always hybrid) |
+| `PqcMode::Pure` | PQC-only mode | Not available - always hybrid |
+| `HybridPreference` | Algorithm priority | Not available |
+| `.fallback_enabled(bool)` | Classical fallback | Not available |
+| `.migration_period_days(u32)` | Transition period | Not available |
+| `.with_pqc_mode(PqcMode)` | Set PQC mode | Not available |
+
+### New Configuration
+
+`PqcConfig` is now for tuning only:
+
+```rust
+// v0.13.0+: Tuning parameters only
+let pqc_config = PqcConfig::builder()
+    .ml_kem(true)                      // Enable ML-KEM-768 (default: true)
+    .ml_dsa(true)                      // Enable ML-DSA-65 (default: true)
+    .memory_pool_size(10)              // Key operation buffers
+    .handshake_timeout_multiplier(1.5) // For slow hardware
+    .build()?;
 ```
-Week 1-2:   Assessment and Planning
-Week 3-4:   Development Environment Testing
-Week 5-8:   Staging Environment Rollout
-Week 9-12:  Production Rollout (Phased)
-Week 13-16: Monitoring and Optimization
+
+### New Primary API
+
+v0.13.0 introduced `P2pEndpoint` as the primary API:
+
+```rust
+use ant_quic::{P2pEndpoint, P2pConfig};
+
+let config = P2pConfig::builder()
+    .known_peer("peer.example.com:9000".parse()?)
+    .build()?;
+
+let endpoint = P2pEndpoint::new(config).await?;
 ```
 
 ## Pre-Migration Checklist
 
-Before starting migration, ensure:
+Before starting migration:
 
-- [ ] Current ant-quic version >= 0.5.0
-- [ ] All dependencies support PQC or have upgrade paths
-- [ ] Performance testing environment available
-- [ ] Rollback plan documented
-- [ ] Monitoring infrastructure ready
-- [ ] Team trained on PQC concepts
+- [ ] **Version Check**: Current ant-quic version < 0.13.0
+- [ ] **Network Audit**: Identify all nodes that need upgrading
+- [ ] **Coordination Plan**: Schedule coordinated network upgrade
+- [ ] **Testing Environment**: Available for validation
+- [ ] **Rollback Plan**: Document how to revert if needed
+- [ ] **Performance Baseline**: Record current metrics for comparison
+- [ ] **Hardware Assessment**: Verify hardware can handle PQC overhead
 
-## Migration Phases
+### Hardware Requirements
 
-### Phase 1: Assessment (Weeks 1-2)
+PQC requires more CPU and memory. Minimum recommendations:
 
-1. **Inventory Current Usage**
-   ```bash
-   # Find all QUIC connection points
-   grep -r "QuicP2PNode\|Endpoint" src/
-   ```
+| Resource | Requirement |
+|----------|-------------|
+| CPU | 1 GHz+ with AES-NI |
+| RAM | 512 MB minimum, 1 GB+ recommended |
+| Disk | No additional requirements |
 
-2. **Identify Dependencies**
-   ```bash
-   # Check for version constraints
-   cargo tree | grep -i quic
-   ```
-
-3. **Performance Baseline**
-   ```rust
-   // Measure current performance
-   let start = Instant::now();
-   let connection = node.connect(addr).await?;
-   let baseline_handshake = start.elapsed();
-   ```
-
-### Phase 2: Development Testing (Weeks 3-4)
-
-1. **Enable PQC in Development**
-   ```rust
-   // Start with logging only
-   let config = Config::default()
-       .with_pqc_mode(PqcMode::Disabled)
-       .with_pqc_logging(true);
-   ```
-
-2. **Test Compatibility**
-   ```rust
-   #[cfg(test)]
-   mod pqc_tests {
-       #[test]
-       fn test_pqc_handshake() {
-           // Test both PQC and non-PQC connections
-       }
-   }
-   ```
-
-### Phase 3: Staging Rollout (Weeks 5-8)
-
-1. **Gradual Enablement**
-   ```rust
-   // Week 5-6: Optional PQC
-   let config = PqcConfig::builder()
-       .mode(PqcMode::Hybrid)
-       .hybrid_preference(HybridPreference::PreferClassical)
-       .build();
-   
-   // Week 7-8: Prefer PQC
-   let config = PqcConfig::builder()
-       .mode(PqcMode::Hybrid)
-       .hybrid_preference(HybridPreference::PreferPqc)
-       .build();
-   ```
-
-### Phase 4: Production Rollout (Weeks 9-12)
-
-1. **Canary Deployment**
-   ```rust
-   // Enable for subset of nodes
-   fn should_enable_pqc(node_id: &str) -> bool {
-       // Start with 10% of nodes
-       hash(node_id) % 10 == 0
-   }
-   ```
-
-2. **Progressive Rollout**
-   ```rust
-   // Increase percentage weekly
-   Week 9:  10% of connections
-   Week 10: 25% of connections
-   Week 11: 50% of connections
-   Week 12: 100% of connections
-   ```
-
-## Step-by-Step Instructions
+## Migration Steps
 
 ### Step 1: Update Dependencies
 
+Update `Cargo.toml`:
+
 ```toml
-# Cargo.toml
 [dependencies]
-ant-quic = "0.5.0"  # Minimum version with PQC support
+ant-quic = "0.13.0"  # or later
 ```
 
-### Step 2: Modify Connection Code
-
-**Before:**
-```rust
-use ant_quic::QuicP2PNode;
-
-let node = QuicP2PNode::new(addr).await?;
+Run:
+```bash
+cargo update
+cargo check
 ```
 
-**After:**
+### Step 2: Fix Compilation Errors
+
+The compiler will identify all deprecated API usage. Common fixes:
+
+#### Remove PqcMode References
+
 ```rust
+// BEFORE (will not compile)
+use ant_quic::crypto::pqc::{PqcConfig, PqcMode, HybridPreference};
+
+let config = PqcConfig::builder()
+    .mode(PqcMode::Hybrid)
+    .hybrid_preference(HybridPreference::PreferPqc)
+    .fallback_enabled(true)
+    .build();
+
+// AFTER
+use ant_quic::PqcConfig;
+
+let config = PqcConfig::builder()
+    // Only tuning parameters available
+    .ml_kem(true)
+    .ml_dsa(true)
+    .build()?;
+```
+
+#### Update Endpoint Creation
+
+```rust
+// BEFORE (will not compile)
 use ant_quic::{QuicP2PNode, Config};
-use ant_quic::crypto::pqc::{PqcMode, PqcConfig};
 
-let pqc_config = PqcConfig::default();  // Hybrid mode
 let config = Config::default()
-    .with_pqc_config(pqc_config);
+    .with_pqc_mode(PqcMode::Hybrid);
 
 let node = QuicP2PNode::with_config(config).await?;
+
+// AFTER
+use ant_quic::{P2pEndpoint, P2pConfig};
+
+let config = P2pConfig::builder()
+    .known_peer("peer.example.com:9000".parse()?)
+    .build()?;
+
+let endpoint = P2pEndpoint::new(config).await?;
 ```
 
-### Step 3: Update Client Configuration
+### Step 3: Update Configuration Files
+
+If you have external configuration (TOML, JSON, etc.), remove deprecated fields:
+
+```toml
+# BEFORE
+[pqc]
+mode = "hybrid"
+hybrid_preference = "prefer_pqc"
+fallback_enabled = true
+migration_period_days = 90
+
+# AFTER
+[pqc]
+ml_kem = true
+ml_dsa = true
+memory_pool_size = 10
+```
+
+### Step 4: Test Locally
+
+```bash
+# Build and test
+cargo build --release
+cargo test
+
+# Test PQC specifically
+cargo test pqc
+cargo test ml_kem
+cargo test ml_dsa
+
+# Check for warnings
+cargo clippy --all-targets -- -D warnings
+```
+
+### Step 5: Test in Staging
+
+Deploy to a staging environment before production:
+
+```bash
+# Run with debug logging
+RUST_LOG=ant_quic::crypto::pqc=debug ./target/release/ant-quic
+
+# Verify PQC is active
+# Look for: "PQC handshake completed with ML-KEM-768"
+```
+
+## Code Changes Required
+
+### Common Patterns
+
+#### Pattern 1: Simple Node
 
 ```rust
-// Client with PQC support
-impl MyClient {
-    pub fn new_with_pqc() -> Result<Self> {
-        let config = ClientConfig::builder()
-            .with_pqc_mode(PqcMode::Hybrid)
-            .build()?;
-            
-        Ok(Self { config })
-    }
-}
+// BEFORE
+let node = QuicP2PNode::new(addr).await?;
+
+// AFTER
+let config = P2pConfig::builder().build()?;
+let endpoint = P2pEndpoint::new(config).await?;
 ```
 
-### Step 4: Update Server Configuration
+#### Pattern 2: Node with Bootstrap
 
 ```rust
-// Server accepting both PQC and non-PQC
-impl MyServer {
-    pub fn new_with_pqc() -> Result<Self> {
-        let config = ServerConfig::builder()
-            .with_pqc_mode(PqcMode::Hybrid)
-            .with_fallback_enabled(true)
-            .build()?;
-            
-        Ok(Self { config })
-    }
+// BEFORE
+let node = QuicP2PNode::with_bootstrap(addr, bootstrap_addrs).await?;
+
+// AFTER
+let mut builder = P2pConfig::builder();
+for addr in bootstrap_addrs {
+    builder = builder.known_peer(addr);
 }
+let config = builder.build()?;
+let endpoint = P2pEndpoint::new(config).await?;
+endpoint.connect_bootstrap().await?;
 ```
 
-### Step 5: Add Monitoring
+#### Pattern 3: Custom PQC Configuration
 
 ```rust
-// Monitor PQC usage
-#[derive(Default)]
-struct PqcMetrics {
-    total_connections: AtomicU64,
-    pqc_connections: AtomicU64,
-    classical_connections: AtomicU64,
-    handshake_times: RwLock<Vec<Duration>>,
+// BEFORE
+let pqc = PqcConfig::builder()
+    .mode(PqcMode::Hybrid)
+    .hybrid_preference(HybridPreference::PreferPqc)
+    .migration_period_days(30)
+    .fallback_enabled(false)
+    .build();
+
+let config = Config::default().with_pqc_config(pqc);
+
+// AFTER
+let pqc = PqcConfig::builder()
+    .ml_kem(true)
+    .ml_dsa(true)
+    .handshake_timeout_multiplier(1.5)
+    .build()?;
+
+let config = P2pConfig::builder()
+    .pqc(pqc)
+    .build()?;
+```
+
+#### Pattern 4: Conditional PQC (No Longer Possible)
+
+```rust
+// BEFORE - This pattern is NOT possible in v0.13.0+
+fn create_config(enable_pqc: bool) -> Config {
+    let mode = if enable_pqc {
+        PqcMode::Hybrid
+    } else {
+        PqcMode::Disabled
+    };
+    Config::default().with_pqc_mode(mode)
 }
 
-impl PqcMetrics {
-    fn record_connection(&self, is_pqc: bool, handshake_time: Duration) {
-        self.total_connections.fetch_add(1, Ordering::Relaxed);
-        
-        if is_pqc {
-            self.pqc_connections.fetch_add(1, Ordering::Relaxed);
-        } else {
-            self.classical_connections.fetch_add(1, Ordering::Relaxed);
-        }
-        
-        self.handshake_times.write().unwrap().push(handshake_time);
-    }
+// AFTER - PQC is always enabled
+fn create_config() -> Result<P2pConfig> {
+    P2pConfig::builder().build()
 }
 ```
+
+## Network-Wide Migration
+
+### Coordinated Upgrade Strategy
+
+Because v0.13.0 nodes cannot communicate with pre-v0.13.0 nodes that have PQC disabled:
+
+1. **Audit**: Identify all nodes in your network
+2. **Schedule**: Plan a maintenance window
+3. **Upgrade All**: Update all nodes simultaneously
+4. **Verify**: Test connectivity between all nodes
+
+### Migration Timeline
+
+```
+Hour 0:     Begin maintenance window
+Hour 0-1:   Upgrade all nodes to v0.13.0
+Hour 1-2:   Restart all nodes
+Hour 2-3:   Verify full network connectivity
+Hour 3:     End maintenance window
+```
+
+### For Networks with Mixed Versions
+
+If you cannot upgrade all nodes at once, there is **no migration path**. Options:
+
+1. **Upgrade All**: The recommended approach
+2. **Parallel Networks**: Run v0.12.x and v0.13.0 networks separately
+3. **Gateway**: Custom bridge between networks (not recommended)
 
 ## Troubleshooting
 
-### Common Issues and Solutions
+### Build Errors
 
-#### 1. Connection Failures
+#### Error: `PqcMode` not found
 
-**Symptom**: Connections fail after enabling PQC
+```
+error[E0433]: failed to resolve: use of undeclared type `PqcMode`
+```
 
-**Solution**:
+**Fix**: Remove all `PqcMode` usage. PQC is now always enabled.
+
+#### Error: `with_pqc_mode` not found
+
+```
+error[E0599]: no method named `with_pqc_mode` found
+```
+
+**Fix**: Use `P2pConfig::builder()` instead of the old `Config` API.
+
+### Runtime Errors
+
+#### Connection Failures to Old Nodes
+
+```
+Error: PQC handshake failed: peer does not support PQC
+```
+
+**Fix**: Upgrade the peer to v0.13.0+.
+
+#### Handshake Timeouts
+
+```
+Error: Connection timeout during PQC handshake
+```
+
+**Fix**: Increase timeout multiplier:
 ```rust
-// Enable fallback
-let config = PqcConfig::builder()
-    .mode(PqcMode::Hybrid)
-    .fallback_enabled(true)
-    .build();
+let pqc = PqcConfig::builder()
+    .handshake_timeout_multiplier(2.0)
+    .build()?;
 ```
-
-#### 2. Performance Degradation
-
-**Symptom**: Handshake times increase significantly
-
-**Solutions**:
-```rust
-// 1. Use connection pooling
-let config = Config::default()
-    .with_connection_pool_size(100);
-
-// 2. Enable hardware acceleration
-let config = PqcConfig::builder()
-    .with_hardware_accel(true)
-    .build();
-
-// 3. Tune cache sizes
-let config = PqcConfig::builder()
-    .max_cached_keys(2000)
-    .build();
-```
-
-#### 3. Memory Issues
-
-**Symptom**: Increased memory usage
-
-**Solution**:
-```rust
-// Reduce key cache
-let config = PqcConfig::builder()
-    .max_cached_keys(500)
-    .key_cache_ttl(Duration::from_secs(1800))
-    .build();
-```
-
-#### 4. Compatibility Issues
-
-**Symptom**: Legacy clients cannot connect
-
-**Solution**:
-```rust
-// Maintain compatibility period
-let config = PqcConfig::builder()
-    .mode(PqcMode::Hybrid)
-    .migration_period_days(90)
-    .compatibility_warnings(true)
-    .build();
-```
-
-### Debug Commands
-
-```bash
-# Enable detailed PQC logging
-RUST_LOG=ant_quic::crypto::pqc=debug cargo run
-
-# Trace handshake details
-RUST_LOG=ant_quic::crypto::pqc::negotiation=trace cargo run
-
-# Monitor performance
-RUST_LOG=ant_quic::crypto::pqc::performance=info cargo run
-```
-
-## Rollback Procedures
-
-### Emergency Rollback
-
-If critical issues arise:
-
-1. **Immediate Rollback**
-   ```rust
-   // Disable PQC globally
-   let config = PqcConfig::disabled();
-   ```
-
-2. **Gradual Rollback**
-   ```rust
-   // Reduce PQC usage progressively
-   let config = PqcConfig::builder()
-       .mode(PqcMode::Hybrid)
-       .hybrid_preference(HybridPreference::PreferClassical)
-       .pqc_probability(0.1)  // Only 10% use PQC
-       .build();
-   ```
-
-### Rollback Checklist
-
-- [ ] Document issue encountered
-- [ ] Capture metrics before rollback
-- [ ] Update configuration
-- [ ] Verify connectivity restored
-- [ ] Notify stakeholders
-- [ ] Plan remediation
 
 ## Monitoring and Validation
 
 ### Key Metrics to Monitor
 
+After migration, verify:
+
 1. **Connection Success Rate**
-   ```rust
-   let success_rate = (successful_connections as f64 / total_attempts as f64) * 100.0;
-   assert\!(success_rate > 99.0, "Success rate below threshold");
+   ```bash
+   # Should be > 99%
+   grep "connection established" /var/log/ant-quic.log | wc -l
    ```
 
-2. **Handshake Performance**
-   ```rust
-   let avg_handshake_time = handshake_times.iter().sum::<Duration>() / handshake_times.len() as u32;
-   assert\!(avg_handshake_time < Duration::from_millis(150), "Handshake too slow");
+2. **Handshake Times**
+   ```bash
+   # Look for PQC timing
+   RUST_LOG=ant_quic::crypto::pqc::performance=info ./ant-quic
    ```
 
-3. **PQC Adoption Rate**
-   ```rust
-   let pqc_rate = (pqc_connections as f64 / total_connections as f64) * 100.0;
-   info\!("PQC adoption: {:.1}%", pqc_rate);
+3. **Memory Usage**
+   ```bash
+   # Monitor for increases
+   ps aux | grep ant-quic
    ```
-
-### Validation Tests
-
-```rust
-#[cfg(test)]
-mod migration_validation {
-    #[test]
-    fn validate_pqc_compatibility() {
-        // Test PQC client → non-PQC server
-        // Test non-PQC client → PQC server
-        // Test PQC client → PQC server
-    }
-    
-    #[test]
-    fn validate_performance_targets() {
-        // Ensure < 10% overhead
-        // Ensure memory usage acceptable
-    }
-}
-```
 
 ### Success Criteria
 
 Migration is complete when:
-- ✅ 100% of connections support PQC
-- ✅ Performance overhead < 10%
-- ✅ Zero PQC-related failures in 7 days
-- ✅ All monitoring alerts configured
-- ✅ Team trained on PQC operations
+
+- [ ] All nodes running v0.13.0+
+- [ ] 100% connection success rate
+- [ ] No PQC-related errors in logs
+- [ ] Performance within acceptable bounds (~8% overhead)
+- [ ] All tests passing
+
+### Validation Commands
+
+```bash
+# Verify version
+./ant-quic --version
+
+# Check PQC is active
+RUST_LOG=ant_quic::crypto::pqc=info ./ant-quic 2>&1 | grep -i "pqc\|ml-kem\|ml-dsa"
+
+# Test connection
+./ant-quic --known-peer peer.example.com:9000 --test-connection
+```
 
 ## Additional Resources
 
-- [PQC Configuration Guide](./pqc-configuration.md)
-- [PQC Security Considerations](./pqc-security.md)
-- [Example: pqc_migration_demo.rs](../../examples/pqc_migration_demo.rs)
-- [NIST PQC Standards](https://csrc.nist.gov/projects/post-quantum-cryptography)
+- [PQC Configuration Guide](./pqc-configuration.md) - Detailed configuration options
+- [PQC Security Guide](./pqc-security.md) - Security considerations
+- [CHANGELOG](../../CHANGELOG.md) - Full v0.13.0 release notes
+- [API Guide](../API_GUIDE.md) - Complete API reference
 
 ## Support
 
 For migration support:
 - GitHub Issues: [ant-quic/issues](https://github.com/dirvine/ant-quic/issues)
 - Documentation: [docs.autonomi.org](https://docs.autonomi.org)
-- Community: [Discord/Forum]
 
-Remember: Migration to PQC is a journey, not a destination. Plan carefully, test thoroughly, and monitor continuously.
-ENDFILE < /dev/null
+Remember: The move to always-on PQC is essential for long-term security. The short-term migration effort protects your network for decades to come.

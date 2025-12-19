@@ -6,7 +6,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use ant_quic::{
-    ClientConfig, Endpoint, ServerConfig,
+    ClientConfig, Endpoint, ServerConfig, TransportConfig,
     crypto::rustls::{QuicClientConfig, QuicServerConfig},
 };
 use std::{
@@ -22,11 +22,11 @@ fn ensure_crypto_provider() {
     #[cfg(feature = "rustls-aws-lc-rs")]
     let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
 
-    #[cfg(feature = "rustls-ring")]
-    let _ = rustls::crypto::ring::default_provider().install_default();
+    #[cfg(feature = "rustls-aws-lc-rs")]
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
 
-    #[cfg(not(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring")))]
-    let _ = rustls::crypto::ring::default_provider().install_default();
+    #[cfg(not(any(feature = "rustls-aws-lc-rs", feature = "rustls-aws-lc-rs")))]
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
 }
 
 fn generate_test_cert() -> (
@@ -37,6 +37,12 @@ fn generate_test_cert() -> (
     let cert_der = cert.cert.into();
     let key_der = rustls::pki_types::PrivateKeyDer::Pkcs8(cert.signing_key.serialize_der().into());
     (cert_der, key_der)
+}
+
+fn transport_config_no_pqc() -> Arc<TransportConfig> {
+    let mut transport_config = TransportConfig::default();
+    transport_config.enable_pqc(false);
+    Arc::new(transport_config)
 }
 
 /// Test IPv4 NAT traversal
@@ -57,8 +63,9 @@ async fn test_ipv4_nat_traversal() {
         .unwrap();
     server_crypto.alpn_protocols = vec![b"test-ipv4".to_vec()];
 
-    let server_config =
+    let mut server_config =
         ServerConfig::with_crypto(Arc::new(QuicServerConfig::try_from(server_crypto).unwrap()));
+    server_config.transport_config(transport_config_no_pqc());
 
     let server = Endpoint::server(server_config, server_addr).unwrap();
     let server_addr = server.local_addr().unwrap();
@@ -84,8 +91,9 @@ async fn test_ipv4_nat_traversal() {
         .with_no_client_auth();
     client_crypto.alpn_protocols = vec![b"test-ipv4".to_vec()];
 
-    let client_config =
+    let mut client_config =
         ClientConfig::new(Arc::new(QuicClientConfig::try_from(client_crypto).unwrap()));
+    client_config.transport_config(transport_config_no_pqc());
 
     let mut endpoint = Endpoint::client(client_addr).unwrap();
     endpoint.set_default_client_config(client_config);
@@ -124,8 +132,9 @@ async fn test_ipv6_nat_traversal() {
         .unwrap();
     server_crypto.alpn_protocols = vec![b"test-ipv6".to_vec()];
 
-    let server_config =
+    let mut server_config =
         ServerConfig::with_crypto(Arc::new(QuicServerConfig::try_from(server_crypto).unwrap()));
+    server_config.transport_config(transport_config_no_pqc());
 
     // Try to create IPv6 server
     let server_result = Endpoint::server(server_config, server_addr);
@@ -160,8 +169,9 @@ async fn test_ipv6_nat_traversal() {
         .with_no_client_auth();
     client_crypto.alpn_protocols = vec![b"test-ipv6".to_vec()];
 
-    let client_config =
+    let mut client_config =
         ClientConfig::new(Arc::new(QuicClientConfig::try_from(client_crypto).unwrap()));
+    client_config.transport_config(transport_config_no_pqc());
 
     let mut endpoint = Endpoint::client(client_addr).unwrap();
     endpoint.set_default_client_config(client_config);
@@ -200,8 +210,9 @@ async fn test_dual_stack_nat_traversal() {
         .unwrap();
     server_crypto.alpn_protocols = vec![b"test-dual".to_vec()];
 
-    let server_config =
+    let mut server_config =
         ServerConfig::with_crypto(Arc::new(QuicServerConfig::try_from(server_crypto).unwrap()));
+    server_config.transport_config(transport_config_no_pqc());
 
     let server = Arc::new(Endpoint::server(server_config, server_addr).unwrap());
     let server_port = server.local_addr().unwrap().port();
@@ -240,8 +251,9 @@ async fn test_dual_stack_nat_traversal() {
             .with_no_client_auth();
         client_crypto.alpn_protocols = vec![b"test-dual".to_vec()];
 
-        let client_config =
+        let mut client_config =
             ClientConfig::new(Arc::new(QuicClientConfig::try_from(client_crypto).unwrap()));
+        client_config.transport_config(transport_config_no_pqc());
 
         let mut endpoint = Endpoint::client(client_addr).unwrap();
         endpoint.set_default_client_config(client_config);
@@ -270,8 +282,9 @@ async fn test_dual_stack_nat_traversal() {
             .with_no_client_auth();
         client_crypto.alpn_protocols = vec![b"test-dual".to_vec()];
 
-        let client_config =
+        let mut client_config =
             ClientConfig::new(Arc::new(QuicClientConfig::try_from(client_crypto).unwrap()));
+        client_config.transport_config(transport_config_no_pqc());
 
         match Endpoint::client(client_addr) {
             Ok(mut endpoint) => {

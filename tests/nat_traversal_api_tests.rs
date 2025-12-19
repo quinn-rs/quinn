@@ -1,5 +1,6 @@
 //! Tests for NAT traversal API functionality
 //!
+//! v0.13.0+: Updated for symmetric P2P node architecture - no roles.
 //! These tests verify the NAT traversal endpoint API using the actual public interfaces.
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
@@ -8,10 +9,7 @@ use ant_quic::{
     crypto::raw_public_keys::key_utils::{
         derive_peer_id_from_public_key, generate_ed25519_keypair,
     },
-    nat_traversal_api::{
-        EndpointRole, NatTraversalConfig, NatTraversalEndpoint, NatTraversalError,
-        NatTraversalEvent,
-    },
+    nat_traversal_api::{NatTraversalConfig, NatTraversalEndpoint, NatTraversalError, NatTraversalEvent},
 };
 use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr},
@@ -28,9 +26,9 @@ use tokio::{
 use tracing::debug;
 
 /// Test helper to create a NAT traversal endpoint
+/// v0.13.0+: No role parameter - all nodes are symmetric P2P nodes
 async fn create_endpoint(
-    role: EndpointRole,
-    bootstrap_nodes: Vec<SocketAddr>,
+    known_peers: Vec<SocketAddr>,
 ) -> Result<
     (
         Arc<NatTraversalEndpoint>,
@@ -38,25 +36,8 @@ async fn create_endpoint(
     ),
     NatTraversalError,
 > {
-    // For server endpoints that can coordinate, we need bootstrap nodes
-    let bootstrap_nodes = if matches!(
-        role,
-        EndpointRole::Server {
-            can_coordinate: true
-        }
-    ) && bootstrap_nodes.is_empty()
-    {
-        vec![SocketAddr::new(
-            IpAddr::V4(Ipv4Addr::new(203, 0, 113, 1)),
-            8080,
-        )]
-    } else {
-        bootstrap_nodes
-    };
-
     let config = NatTraversalConfig {
-        role,
-        bootstrap_nodes,
+        known_peers,
         ..NatTraversalConfig::default()
     };
 
@@ -72,71 +53,52 @@ async fn create_endpoint(
 // ===== Basic Endpoint Creation Tests =====
 
 #[tokio::test]
-async fn test_create_client_endpoint() {
+async fn test_create_endpoint_without_known_peers() {
     let _ = tracing_subscriber::fmt::try_init();
 
-    // Client endpoints should require bootstrap nodes
+    // v0.13.0+: All nodes are symmetric - can work without known peers (waits for incoming connections)
     let config = NatTraversalConfig {
-        role: EndpointRole::Client,
-        bootstrap_nodes: vec![],
+        known_peers: vec![],
+        bind_addr: Some(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0)),
         ..NatTraversalConfig::default()
     };
 
     let result = NatTraversalEndpoint::new(config, None).await;
-    assert!(
-        result.is_err(),
-        "Client endpoint should fail without bootstrap nodes"
-    );
+    // May succeed or fail based on implementation - just ensure no panic
+    let _ = result;
+}
 
-    // With bootstrap nodes, it should succeed
+#[tokio::test]
+async fn test_create_endpoint_with_known_peers() {
+    let _ = tracing_subscriber::fmt::try_init();
+
     let bootstrap_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(203, 0, 113, 1)), 8080);
     let config = NatTraversalConfig {
-        role: EndpointRole::Client,
-        bootstrap_nodes: vec![bootstrap_addr],
+        known_peers: vec![bootstrap_addr],
         ..NatTraversalConfig::default()
     };
 
     let result = NatTraversalEndpoint::new(config, None).await;
     assert!(
         result.is_ok(),
-        "Client endpoint should succeed with bootstrap nodes"
+        "Endpoint should succeed with known peers"
     );
 }
 
 #[tokio::test]
-async fn test_create_bootstrap_endpoint() {
+async fn test_create_endpoint_with_bind_addr() {
     let _ = tracing_subscriber::fmt::try_init();
 
-    // Bootstrap endpoints might have different requirements
+    // v0.13.0+: Test endpoint with explicit bind address
     let config = NatTraversalConfig {
-        role: EndpointRole::Bootstrap,
-        bootstrap_nodes: vec![],
+        known_peers: vec![],
         bind_addr: Some(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0)),
         ..NatTraversalConfig::default()
     };
 
-    // Bootstrap endpoints might need a bind address specified
     let result = NatTraversalEndpoint::new(config, None).await;
-    // Don't assert success - the actual requirements may vary
     // Just ensure it doesn't panic
     let _ = result;
-}
-
-#[tokio::test]
-async fn test_create_server_endpoint() {
-    let _ = tracing_subscriber::fmt::try_init();
-
-    // Server endpoints can work with or without bootstrap nodes
-    let config = NatTraversalConfig {
-        role: EndpointRole::Server {
-            can_coordinate: false,
-        },
-        bootstrap_nodes: vec![],
-        ..NatTraversalConfig::default()
-    };
-
-    let result = NatTraversalEndpoint::new(config, None).await;
-    assert!(result.is_ok(), "Server endpoint should succeed");
 }
 
 // ===== Listening and Connection Tests =====
@@ -145,14 +107,9 @@ async fn test_create_server_endpoint() {
 async fn test_start_listening() {
     let _ = tracing_subscriber::fmt::try_init();
 
-    let (endpoint, _rx) = create_endpoint(
-        EndpointRole::Server {
-            can_coordinate: false,
-        },
-        vec![],
-    )
-    .await
-    .expect("Failed to create endpoint");
+    let (endpoint, _rx) = create_endpoint(vec![])
+        .await
+        .expect("Failed to create endpoint");
 
     let bind_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0);
     let result = endpoint.start_listening(bind_addr).await;
@@ -164,14 +121,9 @@ async fn test_start_listening() {
 async fn test_shutdown() {
     let _ = tracing_subscriber::fmt::try_init();
 
-    let (endpoint, _rx) = create_endpoint(
-        EndpointRole::Server {
-            can_coordinate: false,
-        },
-        vec![],
-    )
-    .await
-    .expect("Failed to create endpoint");
+    let (endpoint, _rx) = create_endpoint(vec![])
+        .await
+        .expect("Failed to create endpoint");
 
     let bind_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0);
     endpoint.start_listening(bind_addr).await.unwrap();
@@ -188,7 +140,7 @@ async fn test_connection_to_nonexistent_peer() {
     let _ = tracing_subscriber::fmt::try_init();
 
     let bootstrap_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(203, 0, 113, 1)), 8080);
-    let (endpoint, _rx) = create_endpoint(EndpointRole::Client, vec![bootstrap_addr])
+    let (endpoint, _rx) = create_endpoint(vec![bootstrap_addr])
         .await
         .expect("Failed to create endpoint");
 
@@ -214,14 +166,9 @@ async fn test_connection_to_nonexistent_peer() {
 async fn test_list_connections() {
     let _ = tracing_subscriber::fmt::try_init();
 
-    let (endpoint, _rx) = create_endpoint(
-        EndpointRole::Server {
-            can_coordinate: false,
-        },
-        vec![],
-    )
-    .await
-    .expect("Failed to create endpoint");
+    let (endpoint, _rx) = create_endpoint(vec![])
+        .await
+        .expect("Failed to create endpoint");
 
     let connections = endpoint.list_connections();
     assert!(connections.is_ok(), "Should be able to list connections");
@@ -241,10 +188,7 @@ async fn test_event_callback() {
     let event_count_clone = event_count.clone();
 
     let config = NatTraversalConfig {
-        role: EndpointRole::Server {
-            can_coordinate: false,
-        },
-        bootstrap_nodes: vec![],
+        known_peers: vec![],
         ..NatTraversalConfig::default()
     };
 
@@ -275,14 +219,9 @@ async fn test_event_callback() {
 async fn test_double_shutdown() {
     let _ = tracing_subscriber::fmt::try_init();
 
-    let (endpoint, _rx) = create_endpoint(
-        EndpointRole::Server {
-            can_coordinate: false,
-        },
-        vec![],
-    )
-    .await
-    .expect("Failed to create endpoint");
+    let (endpoint, _rx) = create_endpoint(vec![])
+        .await
+        .expect("Failed to create endpoint");
 
     // First shutdown should succeed
     let result1 = endpoint.shutdown().await;
@@ -299,34 +238,32 @@ async fn test_double_shutdown() {
 async fn test_default_config() {
     let config = NatTraversalConfig::default();
 
-    // Default should be Client role
-    assert_eq!(config.role, EndpointRole::Client);
-    assert!(config.bootstrap_nodes.is_empty());
+    // v0.13.0+: No role field - all nodes are symmetric
+    assert!(config.known_peers.is_empty());
     assert!(config.enable_symmetric_nat);
     assert!(config.enable_relay_fallback);
     assert_eq!(config.max_concurrent_attempts, 3);
 }
 
 #[tokio::test]
-async fn test_config_with_multiple_bootstrap_nodes() {
+async fn test_config_with_multiple_known_peers() {
     let _ = tracing_subscriber::fmt::try_init();
 
-    let bootstrap_addrs = vec![
+    let known_peer_addrs = vec![
         SocketAddr::new(IpAddr::V4(Ipv4Addr::new(203, 0, 113, 1)), 8080),
         SocketAddr::new(IpAddr::V4(Ipv4Addr::new(203, 0, 113, 2)), 8080),
         SocketAddr::new(IpAddr::V4(Ipv4Addr::new(203, 0, 113, 3)), 8080),
     ];
 
     let config = NatTraversalConfig {
-        role: EndpointRole::Client,
-        bootstrap_nodes: bootstrap_addrs.clone(),
+        known_peers: known_peer_addrs.clone(),
         ..NatTraversalConfig::default()
     };
 
     let result = NatTraversalEndpoint::new(config, None).await;
     assert!(
         result.is_ok(),
-        "Should create endpoint with multiple bootstrap nodes"
+        "Should create endpoint with multiple known peers"
     );
 }
 
@@ -336,23 +273,13 @@ async fn test_config_with_multiple_bootstrap_nodes() {
 async fn test_peer_id_generation() {
     let _ = tracing_subscriber::fmt::try_init();
 
-    let (endpoint1, _rx1) = create_endpoint(
-        EndpointRole::Server {
-            can_coordinate: false,
-        },
-        vec![],
-    )
-    .await
-    .expect("Failed to create endpoint 1");
+    let (endpoint1, _rx1) = create_endpoint(vec![])
+        .await
+        .expect("Failed to create endpoint 1");
 
-    let (endpoint2, _rx2) = create_endpoint(
-        EndpointRole::Server {
-            can_coordinate: false,
-        },
-        vec![],
-    )
-    .await
-    .expect("Failed to create endpoint 2");
+    let (endpoint2, _rx2) = create_endpoint(vec![])
+        .await
+        .expect("Failed to create endpoint 2");
 
     // Each endpoint is unique
     // Note: peer_id() method doesn't exist in the public API
@@ -371,14 +298,9 @@ async fn test_peer_id_generation() {
 async fn test_get_statistics() {
     let _ = tracing_subscriber::fmt::try_init();
 
-    let (endpoint, _rx) = create_endpoint(
-        EndpointRole::Server {
-            can_coordinate: false,
-        },
-        vec![],
-    )
-    .await
-    .expect("Failed to create endpoint");
+    let (endpoint, _rx) = create_endpoint(vec![])
+        .await
+        .expect("Failed to create endpoint");
 
     let stats = endpoint.get_statistics();
     assert!(stats.is_ok(), "Should be able to get statistics");
@@ -397,14 +319,9 @@ async fn test_get_statistics() {
 async fn test_concurrent_operations() {
     let _ = tracing_subscriber::fmt::try_init();
 
-    let (endpoint, _rx) = create_endpoint(
-        EndpointRole::Server {
-            can_coordinate: false,
-        },
-        vec![],
-    )
-    .await
-    .expect("Failed to create endpoint");
+    let (endpoint, _rx) = create_endpoint(vec![])
+        .await
+        .expect("Failed to create endpoint");
 
     let endpoint1 = endpoint.clone();
     let endpoint2 = endpoint.clone();
@@ -414,11 +331,11 @@ async fn test_concurrent_operations() {
     let r1 = endpoint1.list_connections();
     let r2 = endpoint2.get_statistics();
 
-    // Add a bootstrap node instead
-    let new_bootstrap = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(203, 0, 113, 10)), 8080);
-    let r3 = endpoint3.add_bootstrap_node(new_bootstrap);
+    // Add a known peer
+    let new_peer = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(203, 0, 113, 10)), 8080);
+    let r3 = endpoint3.add_bootstrap_node(new_peer);
 
     assert!(r1.is_ok(), "List connections should succeed");
     assert!(r2.is_ok(), "Get statistics should succeed");
-    assert!(r3.is_ok(), "Add bootstrap node should succeed");
+    assert!(r3.is_ok(), "Add known peer should succeed");
 }

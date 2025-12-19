@@ -19,7 +19,7 @@ use std::{
     task::{Context, Poll, Waker},
 };
 
-#[cfg(all(not(wasm_browser), any(feature = "aws-lc-rs", feature = "ring")))]
+#[cfg(all(not(wasm_browser), feature = "aws-lc-rs"))]
 use super::runtime::default_runtime;
 use super::{
     runtime::{AsyncUdpSocket, Runtime},
@@ -133,7 +133,7 @@ impl Endpoint {
     /// IPv6 address on Windows will not by default be able to communicate with IPv4
     /// addresses. Portable applications should bind an address that matches the family they wish to
     /// communicate within.
-    #[cfg(all(not(wasm_browser), any(feature = "aws-lc-rs", feature = "ring")))] // `EndpointConfig::default()` is only available with these
+    #[cfg(all(not(wasm_browser), feature = "aws-lc-rs"))] // `EndpointConfig::default()` is only available with aws-lc-rs
     pub fn server(config: ServerConfig, addr: SocketAddr) -> io::Result<Self> {
         let socket = std::net::UdpSocket::bind(addr)?;
         let runtime =
@@ -838,11 +838,19 @@ impl RecvState {
         max_receive_segments: usize,
         endpoint: &crate::endpoint::Endpoint,
     ) -> Self {
+        // Use a receive buffer size large enough to handle any incoming packet.
+        // This is especially important for PQC handshakes which can send 4096+ byte datagrams
+        // before transport parameters are exchanged. We use the maximum of:
+        // - The configured max_udp_payload_size (what we expect to receive)
+        // - PQC minimum MTU (4096 bytes) to handle PQC handshakes regardless of config
+        // - Capped at 64KB for practical memory usage
+        const PQC_MIN_RECV_SIZE: u64 = 4096;
+        let configured_size = endpoint.config().get_max_udp_payload_size();
+        let effective_size = configured_size.max(PQC_MIN_RECV_SIZE).min(64 * 1024) as usize;
+
         let recv_buf = vec![
             0;
-            endpoint.config().get_max_udp_payload_size().min(64 * 1024) as usize
-                * max_receive_segments
-                * BATCH_SIZE
+            effective_size * max_receive_segments * BATCH_SIZE
         ];
         Self {
             connections: ConnectionSet {

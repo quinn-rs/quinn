@@ -20,10 +20,12 @@ use crate::{Instant, VarInt};
 ///
 /// This manages address candidate discovery, validation, and coordination
 /// for establishing direct P2P connections through NATs.
+///
+/// v0.13.0: All nodes are symmetric P2P nodes - no role distinction.
+/// Every node can initiate, accept, and coordinate NAT traversal.
 #[derive(Debug)]
 pub(super) struct NatTraversalState {
-    /// Our role in NAT traversal (from transport parameters)
-    pub(super) role: NatTraversalRole,
+    // v0.13.0: role field removed - all nodes are symmetric P2P nodes
     /// Candidate addresses we've advertised to the peer
     pub(super) local_candidates: HashMap<VarInt, AddressCandidate>,
     /// Candidate addresses received from the peer
@@ -50,22 +52,11 @@ pub(super) struct NatTraversalState {
     pub(super) network_monitor: NetworkConditionMonitor,
     /// Resource management and cleanup coordinator
     pub(super) resource_manager: ResourceCleanupCoordinator,
-    /// Bootstrap coordinator (only for Bootstrap role)
+    /// Coordination support - all nodes can coordinate (v0.13.0: always enabled)
     pub(super) bootstrap_coordinator: Option<BootstrapCoordinator>,
 }
-/// Role in NAT traversal coordination
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum NatTraversalRole {
-    /// Client endpoint (initiates connections, on-demand)
-    Client,
-    /// Server endpoint (accepts connections, always reachable)
-    Server {
-        /// Whether this server can relay traffic for other peers
-        can_relay: bool,
-    },
-    /// Bootstrap/relay endpoint (publicly reachable, coordinates traversal)
-    Bootstrap,
-}
+// v0.13.0: NatTraversalRole enum removed - all nodes are symmetric P2P nodes
+// Every node can initiate, accept, and coordinate NAT traversal without role distinction.
 /// Address candidate with metadata
 #[derive(Debug, Clone)]
 pub(super) struct AddressCandidate {
@@ -1803,19 +1794,16 @@ impl NetworkConditionMonitor {
 
 #[allow(dead_code)]
 impl NatTraversalState {
-    /// Create new NAT traversal state with given role and configuration
-    pub(super) fn new(
-        role: NatTraversalRole,
-        max_candidates: u32,
-        coordination_timeout: Duration,
-    ) -> Self {
-        let bootstrap_coordinator = if matches!(role, NatTraversalRole::Bootstrap) {
-            Some(BootstrapCoordinator::new(BootstrapConfig::default()))
-        } else {
-            None
-        };
+    /// Create new NAT traversal state with given configuration
+    ///
+    /// v0.13.0: Role parameter removed - all nodes are symmetric P2P nodes.
+    /// Every node can initiate, accept, and coordinate NAT traversal.
+    pub(super) fn new(max_candidates: u32, coordination_timeout: Duration) -> Self {
+        // v0.13.0: All nodes can coordinate - always create coordinator
+        let bootstrap_coordinator = Some(BootstrapCoordinator::new(BootstrapConfig::default()));
+
         Self {
-            role,
+            // v0.13.0: role field removed - all nodes are symmetric
             local_candidates: HashMap::new(),
             remote_candidates: HashMap::new(),
             candidate_pairs: Vec::new(),
@@ -3043,23 +3031,23 @@ impl NatTraversalState {
         Ok(actions)
     }
 
-    /// Handle address observation for bootstrap nodes
+    /// Handle address observation for P2P nodes
     ///
-    /// This method is called when a peer connects to this bootstrap node,
-    /// allowing the bootstrap to observe the peer's public address.
+    /// This method is called when a peer connects, allowing this node
+    /// to observe the peer's public address. v0.13.0: All nodes can observe
+    /// addresses - no bootstrap role required.
     pub(super) fn handle_address_observation(
         &mut self,
         peer_id: [u8; 32],
         observed_address: SocketAddr,
         connection_id: crate::shared::ConnectionId,
-        peer_role: NatTraversalRole,
         now: Instant,
     ) -> Result<Option<crate::frame::AddAddress>, NatTraversalError> {
         if let Some(bootstrap_coordinator) = &mut self.bootstrap_coordinator {
             let connection_context = ConnectionContext {
                 connection_id,
                 original_destination: observed_address, // For now, use same as observed
-                peer_role,
+                // v0.13.0: peer_role removed - all nodes are symmetric
             };
 
             // Observe the peer's address
@@ -3282,6 +3270,8 @@ pub(crate) struct PeerObservationRecord {
 }
 
 /// Connection context for address observations
+///
+/// v0.13.0: peer_role field removed - all nodes are symmetric P2P nodes.
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
 pub(crate) struct ConnectionContext {
@@ -3289,9 +3279,7 @@ pub(crate) struct ConnectionContext {
     connection_id: ConnectionId,
     /// Original destination address (what peer thought it was connecting to)
     original_destination: SocketAddr,
-    /// NAT traversal role of the connecting peer
-    peer_role: NatTraversalRole,
-    // Transport parameters were unused; removed
+    // v0.13.0: peer_role field removed - all nodes are symmetric P2P nodes
 }
 
 // Transport parameters for NAT traversal removed (legacy)
@@ -3590,9 +3578,9 @@ impl BootstrapCoordinator {
 mod tests {
     use super::*;
 
-    fn create_test_state(role: NatTraversalRole) -> NatTraversalState {
+    // v0.13.0: Role parameter removed - all nodes are symmetric P2P nodes
+    fn create_test_state() -> NatTraversalState {
         NatTraversalState::new(
-            role,
             10,                      // max_candidates
             Duration::from_secs(30), // coordination_timeout
         )
@@ -3601,7 +3589,7 @@ mod tests {
     #[test]
     fn test_add_quic_discovered_address() {
         // Test that QUIC-discovered addresses are properly added as local candidates
-        let mut state = create_test_state(NatTraversalRole::Client);
+        let mut state = create_test_state();
         let now = Instant::now();
 
         // Add a QUIC-discovered address (using add_local_candidate with Observed source)
@@ -3626,7 +3614,7 @@ mod tests {
     #[test]
     fn test_add_multiple_quic_discovered_addresses() {
         // Test adding multiple QUIC-discovered addresses
-        let mut state = create_test_state(NatTraversalRole::Client);
+        let mut state = create_test_state();
         let now = Instant::now();
 
         let addrs = vec![
@@ -3656,7 +3644,7 @@ mod tests {
     #[test]
     fn test_quic_discovered_addresses_in_local_candidates() {
         // Test that QUIC-discovered addresses are included in local candidates
-        let mut state = create_test_state(NatTraversalRole::Client);
+        let mut state = create_test_state();
         let now = Instant::now();
 
         // Add a discovered address
@@ -3675,7 +3663,7 @@ mod tests {
     #[test]
     fn test_quic_discovered_addresses_included_in_hole_punching() {
         // Test that QUIC-discovered addresses are used in hole punching
-        let mut state = create_test_state(NatTraversalRole::Client);
+        let mut state = create_test_state();
         let now = Instant::now();
 
         // Add a local discovered address
@@ -3702,7 +3690,7 @@ mod tests {
     #[test]
     fn test_prioritize_quic_discovered_over_predicted() {
         // Test that QUIC-discovered addresses have higher priority than predicted
-        let mut state = create_test_state(NatTraversalRole::Client);
+        let mut state = create_test_state();
         let now = Instant::now();
 
         // Add a predicted address
@@ -3734,7 +3722,7 @@ mod tests {
     #[test]
     fn test_integration_with_nat_traversal_flow() {
         // Test full integration with NAT traversal flow
-        let mut state = create_test_state(NatTraversalRole::Client);
+        let mut state = create_test_state();
         let now = Instant::now();
 
         // Add both local interface and QUIC-discovered addresses

@@ -171,46 +171,15 @@ pub fn derive_peer_id_from_public_key(public_key: &VerifyingKey) -> [u8; 32] {
     input.extend_from_slice(b"AUTONOMI_PEER_ID_V1:");
     input.extend_from_slice(key_bytes);
 
-    #[cfg(all(feature = "ring", not(feature = "aws-lc-rs")))]
-    {
-        // Use SHA-256 to hash the public key with a domain separator
-        use ring::digest::{SHA256, digest};
+    use aws_lc_rs::digest;
 
-        // Hash the input
-        let hash = digest(&SHA256, &input);
-        let hash_bytes = hash.as_ref();
+    // Hash the input using SHA-256
+    let hash = digest::digest(&digest::SHA256, &input);
+    let hash_bytes = hash.as_ref();
 
-        let mut peer_id_bytes = [0u8; 32];
-        peer_id_bytes.copy_from_slice(hash_bytes);
-        peer_id_bytes
-    }
-
-    #[cfg(feature = "aws-lc-rs")]
-    {
-        use aws_lc_rs::digest;
-
-        // Hash the input
-        let hash = digest::digest(&digest::SHA256, &input);
-        let hash_bytes = hash.as_ref();
-
-        let mut peer_id_bytes = [0u8; 32];
-        peer_id_bytes.copy_from_slice(hash_bytes);
-        peer_id_bytes
-    }
-
-    #[cfg(not(any(feature = "ring", feature = "aws-lc-rs")))]
-    {
-        // Use SHA2 crate as fallback
-        use sha2::{Digest, Sha256};
-
-        let mut hasher = Sha256::new();
-        hasher.update(&input);
-        let result = hasher.finalize();
-
-        let mut peer_id_bytes = [0u8; 32];
-        peer_id_bytes.copy_from_slice(&result);
-        peer_id_bytes
-    }
+    let mut peer_id_bytes = [0u8; 32];
+    peer_id_bytes.copy_from_slice(hash_bytes);
+    peer_id_bytes
 }
 
 /// Verify that a peer ID was correctly derived from a public key

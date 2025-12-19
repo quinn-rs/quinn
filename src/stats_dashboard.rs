@@ -12,9 +12,19 @@
 
 use crate::{
     nat_traversal_api::{NatTraversalEvent, NatTraversalStatistics, PeerId},
-    quic_node::NodeStats,
     terminal_ui,
 };
+
+/// Node statistics for dashboard display
+#[derive(Debug, Clone, Default)]
+pub struct NodeStats {
+    /// Number of currently active connections
+    pub active_connections: usize,
+    /// Total number of successful connections since startup
+    pub successful_connections: usize,
+    /// Total number of failed connections since startup
+    pub failed_connections: usize,
+}
 use std::{
     collections::{HashMap, VecDeque},
     net::SocketAddr,

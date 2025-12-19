@@ -450,15 +450,12 @@ impl fmt::Display for ResetToken {
     }
 }
 
-#[cfg(all(test, any(feature = "aws-lc-rs", feature = "ring")))]
+#[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod test {
     use super::*;
-    #[cfg(all(feature = "aws-lc-rs", not(feature = "ring")))]
     use aws_lc_rs::hkdf;
     use rand::prelude::*;
-    #[cfg(feature = "ring")]
-    use ring::hkdf;
 
     fn token_round_trip(payload: TokenPayload) -> TokenPayload {
         let rng = &mut rand::thread_rng();

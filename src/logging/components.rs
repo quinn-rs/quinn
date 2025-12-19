@@ -210,7 +210,7 @@ pub fn log_nat_traversal_event(event_type: NatTraversalEventType, nat_info: &Nat
     };
 
     let mut fields = HashMap::new();
-    fields.insert("role".to_string(), format!("{:?}", nat_info.role));
+    // v0.13.0: role field removed - all nodes are symmetric P2P nodes
     fields.insert("remote_addr".to_string(), nat_info.remote_addr.to_string());
     fields.insert(
         "candidate_count".to_string(),

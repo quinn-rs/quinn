@@ -1,333 +1,272 @@
 # Post-Quantum Cryptography Configuration Guide
 
-This guide covers everything you need to know about configuring Post-Quantum Cryptography (PQC) in ant-quic.
+This guide covers everything you need to know about Post-Quantum Cryptography (PQC) in ant-quic v0.13.0+.
 
 ## Table of Contents
 
-1. [Quick Start](#quick-start)
-2. [Configuration Options](#configuration-options)
-3. [Operating Modes](#operating-modes)
-4. [Migration Strategies](#migration-strategies)
-5. [Performance Tuning](#performance-tuning)
-6. [Troubleshooting](#troubleshooting)
-7. [Security Considerations](#security-considerations)
+1. [Overview](#overview)
+2. [Always-On PQC](#always-on-pqc)
+3. [Configuration Options](#configuration-options)
+4. [Performance Tuning](#performance-tuning)
+5. [Troubleshooting](#troubleshooting)
+6. [Security Considerations](#security-considerations)
 
-## Quick Start
+## Overview
 
-The simplest way to enable PQC is to use the default configuration:
+**In ant-quic v0.13.0+, Post-Quantum Cryptography is always enabled.** Every connection uses PQC algorithms - there is no classical-only mode and no way to disable PQC.
 
-```rust
-use ant_quic::{QuicP2PNode, Config};
-use ant_quic::crypto::pqc::PqcMode;
+This provides maximum security against both current classical attacks and future quantum computer threats.
 
-// Enable hybrid PQC (recommended)
-let config = Config::default()
-    .with_pqc_mode(PqcMode::Hybrid);
+### Algorithms Used
 
-let node = QuicP2PNode::with_config(config).await?;
-```
+| Algorithm | Standard | Security Level | Purpose |
+|-----------|----------|---------------|---------|
+| ML-KEM-768 | FIPS 203 | NIST Level 3 (192-bit) | Key Encapsulation |
+| ML-DSA-65 | FIPS 204 | NIST Level 3 (192-bit) | Digital Signatures |
 
-This enables hybrid mode which combines classical and post-quantum algorithms for maximum compatibility and security.
+The hybrid approach combines:
+- **Key Exchange**: X25519 + ML-KEM-768
+- **Signatures**: Ed25519 + ML-DSA-65
+
+**Security Property**: An attacker must break BOTH classical and post-quantum algorithms to compromise security.
+
+## Always-On PQC
+
+### Why Always-On?
+
+In v0.13.0, we removed the ability to disable PQC because:
+
+1. **"Harvest Now, Decrypt Later"**: Adversaries can record encrypted traffic today and decrypt it when quantum computers become available
+2. **No Performance Excuse**: Modern implementations have minimal overhead (~8%)
+3. **Simplicity**: No mode selection means fewer configuration errors
+4. **Future-Proof**: All ant-quic networks are quantum-resistant by default
+
+### What Changed from Earlier Versions
+
+If you're upgrading from ant-quic < v0.13.0:
+
+| Removed | Reason |
+|---------|--------|
+| `PqcMode::Disabled` | PQC cannot be disabled |
+| `PqcMode::Hybrid` | Hybrid is now always used |
+| `PqcMode::Pure` | Pure PQC mode removed |
+| `HybridPreference` | No preference selection |
+| `fallback_enabled` | No fallback to classical-only |
+| `migration_period_days` | No migration period needed |
 
 ## Configuration Options
 
-### PqcConfig Builder
+### Basic Usage
 
-The `PqcConfig` struct provides fine-grained control over PQC behavior:
+PQC is enabled by default with no configuration required:
 
 ```rust
-use ant_quic::crypto::pqc::{PqcConfig, PqcMode, HybridPreference};
+use ant_quic::{P2pEndpoint, P2pConfig};
+
+// PQC is automatically enabled
+let config = P2pConfig::builder()
+    .known_peer("peer.example.com:9000".parse()?)
+    .build()?;
+
+let endpoint = P2pEndpoint::new(config).await?;
+```
+
+### PqcConfig for Tuning
+
+The `PqcConfig` struct allows tuning PQC behavior (but not disabling it):
+
+```rust
+use ant_quic::{P2pConfig, PqcConfig};
 
 let pqc_config = PqcConfig::builder()
-    // Set the operating mode
-    .mode(PqcMode::Hybrid)
-    
-    // Control hybrid algorithm preference
-    .hybrid_preference(HybridPreference::PreferPqc)
-    
-    // Set migration period (days)
-    .migration_period_days(30)
-    
-    // Enable compatibility warnings
-    .enable_compatibility_warnings(true)
-    
-    // Build the configuration
-    .build();
+    // Enable/disable specific algorithms (both default to true)
+    .ml_kem(true)           // ML-KEM-768 for key encapsulation
+    .ml_dsa(true)           // ML-DSA-65 for signatures
+
+    // Memory pool for key operations
+    .memory_pool_size(10)
+
+    // Adjust handshake timeout for slower hardware
+    .handshake_timeout_multiplier(1.5)
+    .build()?;
+
+let config = P2pConfig::builder()
+    .pqc(pqc_config)
+    .build()?;
 ```
 
 ### Configuration Parameters
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `mode` | `PqcMode` | `Hybrid` | Operating mode (Disabled/Hybrid/Pure) |
-| `hybrid_preference` | `HybridPreference` | `Balanced` | Algorithm selection preference |
-| `migration_period_days` | `u32` | `90` | Grace period for migration |
-| `compatibility_warnings` | `bool` | `true` | Log warnings for non-PQC peers |
-| `fallback_enabled` | `bool` | `true` | Allow fallback to classical crypto |
+| `ml_kem` | `bool` | `true` | Enable ML-KEM-768 key encapsulation |
+| `ml_dsa` | `bool` | `true` | Enable ML-DSA-65 signatures |
+| `memory_pool_size` | `usize` | `10` | Pre-allocated key operation buffers |
+| `handshake_timeout_multiplier` | `f64` | `1.0` | Multiplier for handshake timeouts |
 
-## Operating Modes
-
-### Disabled Mode
-
-Completely disables PQC support:
-
-```rust
-let config = PqcConfig::disabled();
-```
-
-Use cases:
-- Legacy systems that cannot be upgraded
-- Testing classical cryptography paths
-- Temporary compatibility requirements
-
-### Hybrid Mode (Recommended)
-
-Combines classical and post-quantum algorithms:
-
-```rust
-let config = PqcConfig::default(); // Hybrid is default
-// or explicitly:
-let config = PqcConfig::builder()
-    .mode(PqcMode::Hybrid)
-    .build();
-```
-
-Benefits:
-- Protection against both classical and quantum attacks
-- Maintains compatibility with non-PQC peers
-- Smooth migration path
-- ~8.7% performance overhead
-
-Algorithm combinations:
-- **Key Exchange**: X25519 + ML-KEM-768
-- **Signatures**: Ed25519 + ML-DSA-65
-
-### Pure Mode
-
-Uses only post-quantum algorithms:
-
-```rust
-let config = PqcConfig::builder()
-    .mode(PqcMode::Pure)
-    .build();
-```
-
-Characteristics:
-- Maximum quantum resistance
-- Requires PQC support on both peers
-- No fallback to classical algorithms
-- Slightly higher performance overhead
-
-## Migration Strategies
-
-### Conservative Migration
-
-Start with optional PQC and gradually increase requirements:
-
-```rust
-// Phase 1: Enable logging only
-let phase1 = PqcConfig::builder()
-    .mode(PqcMode::Disabled)
-    .enable_compatibility_warnings(true)
-    .build();
-
-// Phase 2: Optional PQC
-let phase2 = PqcConfig::builder()
-    .mode(PqcMode::Hybrid)
-    .hybrid_preference(HybridPreference::PreferClassical)
-    .migration_period_days(90)
-    .build();
-
-// Phase 3: Prefer PQC
-let phase3 = PqcConfig::builder()
-    .mode(PqcMode::Hybrid)
-    .hybrid_preference(HybridPreference::PreferPqc)
-    .migration_period_days(30)
-    .build();
-
-// Phase 4: Require PQC
-let phase4 = PqcConfig::builder()
-    .mode(PqcMode::Pure)
-    .build();
-```
-
-### Aggressive Migration
-
-Quick transition for controlled environments:
-
-```rust
-// Immediate hybrid adoption
-let config = PqcConfig::builder()
-    .mode(PqcMode::Hybrid)
-    .hybrid_preference(HybridPreference::PreferPqc)
-    .migration_period_days(7)
-    .fallback_enabled(false)
-    .build();
-```
-
-### A/B Testing
-
-Test PQC impact on a subset of connections:
-
-```rust
-use rand::Rng;
-
-fn create_config(peer_id: &str) -> PqcConfig {
-    let mut rng = rand::thread_rng();
-    
-    // Enable PQC for 50% of connections
-    if rng.gen_bool(0.5) {
-        PqcConfig::default()
-    } else {
-        PqcConfig::disabled()
-    }
-}
-```
+**Note**: While `ml_kem` and `ml_dsa` can be set to `false`, at least one must remain `true`. PQC cannot be completely disabled.
 
 ## Performance Tuning
 
 ### Connection Pooling
 
-Reuse PQC handshake results:
+Reuse connections to amortize PQC handshake overhead:
 
 ```rust
-// Enable connection pooling to amortize PQC overhead
-let config = Config::default()
-    .with_pqc_mode(PqcMode::Hybrid)
-    .with_connection_pool_size(100)
-    .with_idle_timeout(Duration::from_secs(300));
+use ant_quic::{P2pConfig, ConnectionPoolConfig};
+
+let config = P2pConfig::builder()
+    .connection_pool(ConnectionPoolConfig {
+        max_idle_connections: 100,
+        idle_timeout: Duration::from_secs(300),
+    })
+    .build()?;
 ```
 
-### Batch Operations
+### Memory Optimization
 
-Process multiple connections together:
+For memory-constrained environments:
 
 ```rust
-// Batch connection establishment
-let futures: Vec<_> = addresses
-    .iter()
-    .map(|addr| node.connect(addr))
-    .collect();
-
-let connections = futures::future::join_all(futures).await;
+let pqc_config = PqcConfig::builder()
+    .memory_pool_size(5)  // Reduce from default 10
+    .build()?;
 ```
 
-### Resource Limits
+### Hardware Acceleration
 
-Control memory usage:
+ant-quic automatically uses hardware acceleration when available:
+- **AVX2/AVX-512** on x86_64 for ML-KEM/ML-DSA operations
+- **NEON** on ARM64 for vector operations
+
+To verify hardware acceleration is active:
+
+```bash
+RUST_LOG=ant_quic::crypto::pqc=debug cargo run 2>&1 | grep -i "hardware\|accel"
+```
+
+### MTU Considerations
+
+PQC increases handshake packet sizes. For networks with small MTUs:
 
 ```rust
-let config = PqcConfig::builder()
-    .mode(PqcMode::Hybrid)
-    .max_cached_keys(1000)
-    .key_cache_ttl(Duration::from_secs(3600))
-    .build();
+use ant_quic::{P2pConfig, MtuConfig};
+
+let config = P2pConfig::builder()
+    .mtu(MtuConfig {
+        initial: 1200,  // Conservative initial MTU
+        min: 1200,      // Minimum MTU
+        max: 1500,      // Maximum MTU
+    })
+    .build()?;
 ```
 
 ## Troubleshooting
 
 ### Common Issues
 
-#### 1. Connection Failures with Legacy Peers
+#### 1. Handshake Timeouts
 
-**Symptom**: Connections fail when PQC is enabled
+**Symptom**: Connections fail with timeout errors
 
-**Solution**:
-```rust
-// Enable fallback for compatibility
-let config = PqcConfig::builder()
-    .mode(PqcMode::Hybrid)
-    .fallback_enabled(true)
-    .build();
-```
-
-#### 2. Performance Degradation
-
-**Symptom**: High CPU usage during handshakes
-
-**Solutions**:
-- Use connection pooling
-- Enable hardware acceleration if available
-- Consider hybrid mode instead of pure PQC
-
-#### 3. Memory Usage
-
-**Symptom**: Increased memory consumption
+**Cause**: PQC operations take longer on slow hardware
 
 **Solution**:
 ```rust
-// Tune cache sizes
-let config = PqcConfig::builder()
-    .max_cached_keys(500)  // Reduce from default 1000
-    .build();
+let pqc_config = PqcConfig::builder()
+    .handshake_timeout_multiplier(2.0)  // Double the timeout
+    .build()?;
 ```
+
+#### 2. High Memory Usage
+
+**Symptom**: Memory consumption increases during high connection rates
+
+**Cause**: ML-KEM/ML-DSA require more memory per operation
+
+**Solution**:
+```rust
+let pqc_config = PqcConfig::builder()
+    .memory_pool_size(5)  // Reduce pre-allocation
+    .build()?;
+```
+
+#### 3. Compatibility with Pre-v0.13.0 Peers
+
+**Symptom**: Cannot connect to older ant-quic nodes
+
+**Cause**: Pre-v0.13.0 nodes may have PQC disabled
+
+**Solution**: Upgrade all peers to v0.13.0+. There is no backward compatibility mode - all nodes must support PQC.
 
 ### Debug Logging
 
 Enable detailed PQC logging:
 
 ```bash
+# Basic PQC logging
 RUST_LOG=ant_quic::crypto::pqc=debug cargo run
+
+# Detailed handshake logging
+RUST_LOG=ant_quic::crypto::pqc=trace cargo run
+
+# Performance metrics only
+RUST_LOG=ant_quic::crypto::pqc::performance=info cargo run
 ```
 
 Log categories:
 - `pqc::negotiation` - Algorithm negotiation
-- `pqc::handshake` - Handshake details
-- `pqc::performance` - Performance metrics
-- `pqc::compatibility` - Compatibility warnings
+- `pqc::handshake` - Handshake operations
+- `pqc::performance` - Timing metrics
+- `pqc::keygen` - Key generation events
 
 ## Security Considerations
 
 ### Algorithm Selection
 
-ant-quic uses NIST-standardized algorithms:
+ant-quic uses NIST-standardized algorithms chosen for their security and performance balance:
 
-| Algorithm | Security Level | Use Case |
-|-----------|---------------|----------|
-| ML-KEM-768 | NIST Level 3 | Key exchange |
-| ML-DSA-65 | NIST Level 3 | Digital signatures |
-| X25519 | 128-bit classical | Hybrid key exchange |
-| Ed25519 | 128-bit classical | Hybrid signatures |
+| Property | ML-KEM-768 | ML-DSA-65 |
+|----------|------------|-----------|
+| Standard | FIPS 203 | FIPS 204 |
+| Security Level | NIST Level 3 | NIST Level 3 |
+| Classical Security | 192 bits | 192 bits |
+| Quantum Security | ~175 bits | ~175 bits |
+| Public Key Size | 1,184 bytes | 1,952 bytes |
+| Ciphertext/Signature | 1,088 bytes | 3,293 bytes |
 
 ### Side-Channel Protection
 
 The implementation includes countermeasures against:
-- Timing attacks
-- Cache-timing attacks
+- Timing attacks (constant-time operations)
+- Cache-timing attacks (memory access patterns)
 - Power analysis (on supporting hardware)
 
 ### Key Management
 
 Best practices:
-1. Rotate keys regularly
-2. Use unique keys per connection
-3. Implement secure key storage
-4. Monitor for quantum computing advances
+1. **Unique Keys**: Each connection uses freshly generated keys
+2. **Secure Deletion**: Key material is zeroized after use
+3. **No Key Reuse**: Ephemeral keys prevent replay attacks
 
 ### Compliance
 
-Ensure your configuration meets regulatory requirements:
-
-```rust
-// FIPS-compliant configuration
-let config = PqcConfig::builder()
-    .mode(PqcMode::Hybrid)
-    .fips_mode(true)
-    .build();
-```
+ant-quic's PQC implementation supports:
+- **FIPS 203/204**: NIST post-quantum standards
+- **SP 800-56C Rev. 2**: Key derivation methods
+- **SP 800-90A Rev. 1**: Random number generation
 
 ## Examples
 
-See the following examples for practical implementations:
-- [`examples/pqc_basic.rs`](../../examples/pqc_basic.rs) - Simple PQC setup
-- [`examples/pqc_hybrid_demo.rs`](../../examples/pqc_hybrid_demo.rs) - Hybrid mode demonstration
-- [`examples/pqc_config_demo.rs`](../../examples/pqc_config_demo.rs) - Advanced configuration
-- [`examples/pqc_migration_demo.rs`](../../examples/pqc_migration_demo.rs) - Migration strategies
+See working examples:
+- [`examples/pqc_demo.rs`](../../examples/pqc_demo.rs) - Basic PQC setup
+- [`examples/simple_chat.rs`](../../examples/simple_chat.rs) - Chat with PQC
 
 ## Further Reading
 
-- [NIST Post-Quantum Cryptography](https://csrc.nist.gov/projects/post-quantum-cryptography)
-- [IETF PQUIC Working Group](https://datatracker.ietf.org/wg/pquic/about/)
-- [ML-KEM Specification (FIPS 203)](https://nvlpubs.nist.gov/nistpubs/FIPS/NIST.FIPS.203.pdf)
-- [ML-DSA Specification (FIPS 204)](https://nvlpubs.nist.gov/nistpubs/FIPS/NIST.FIPS.204.pdf)
-EOF < /dev/null
+- [NIST FIPS 203 - ML-KEM](https://nvlpubs.nist.gov/nistpubs/FIPS/NIST.FIPS.203.pdf)
+- [NIST FIPS 204 - ML-DSA](https://nvlpubs.nist.gov/nistpubs/FIPS/NIST.FIPS.204.pdf)
+- [rfcs/fips-203-ml-kem.pdf](../../rfcs/fips-203-ml-kem.pdf) - Local reference
+- [rfcs/fips-204-ml-dsa.pdf](../../rfcs/fips-204-ml-dsa.pdf) - Local reference
+- [PQC Security Guide](./pqc-security.md) - Security deep dive
+- [PQC Migration Guide](./pqc-migration.md) - Upgrading from older versions

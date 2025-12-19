@@ -21,11 +21,11 @@ fn ensure_crypto_provider() {
     #[cfg(feature = "rustls-aws-lc-rs")]
     let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
 
-    #[cfg(feature = "rustls-ring")]
+    #[cfg(feature = "rustls-aws-lc-rs")]
     let _ = rustls::crypto::ring::default_provider().install_default();
 
     // If neither feature is enabled, use default
-    #[cfg(not(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring")))]
+    #[cfg(not(any(feature = "rustls-aws-lc-rs", feature = "rustls-aws-lc-rs")))]
     let _ = rustls::crypto::ring::default_provider().install_default();
 }
 

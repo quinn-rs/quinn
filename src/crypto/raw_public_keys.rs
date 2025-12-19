@@ -300,10 +300,14 @@ pub struct RawPublicKeyConfigBuilder {
     trusted_keys: Vec<[u8; 32]>,
     allow_any: bool,
     server_key: Option<(Ed25519SecretKey, Ed25519PublicKey)>,
+    /// Client key for mutual authentication (v0.13.0+: symmetric P2P identity)
+    client_key: Option<(Ed25519SecretKey, Ed25519PublicKey)>,
     /// Enable TLS certificate type extensions
     enable_extensions: bool,
     /// Certificate type preferences for negotiation
     cert_type_preferences: Option<super::tls_extensions::CertificateTypePreferences>,
+    /// Post-Quantum Cryptography configuration
+    pqc: Option<super::pqc::PqcConfig>,
 }
 
 impl RawPublicKeyConfigBuilder {
@@ -331,6 +335,17 @@ impl RawPublicKeyConfigBuilder {
         self
     }
 
+    /// Set the client's key pair for mutual authentication
+    ///
+    /// v0.13.0+: In symmetric P2P networks, clients should present their
+    /// identity key so servers can derive a stable peer ID from TLS,
+    /// rather than falling back to address-derived IDs.
+    pub fn with_client_key(mut self, private_key: Ed25519SecretKey) -> Self {
+        let public_key = private_key.verifying_key();
+        self.client_key = Some((private_key, public_key));
+        self
+    }
+
     /// Enable TLS certificate type extensions for negotiation
     pub fn with_certificate_type_extensions(
         mut self,
@@ -349,6 +364,12 @@ impl RawPublicKeyConfigBuilder {
         self
     }
 
+    /// Set PQC configuration
+    pub fn with_pqc(mut self, config: super::pqc::PqcConfig) -> Self {
+        self.pqc = Some(config);
+        self
+    }
+
     /// Build a client configuration with Raw Public Keys
     pub fn build_client_config(self) -> Result<ClientConfig, TlsError> {
         let verifier = if self.allow_any {
@@ -359,7 +380,10 @@ impl RawPublicKeyConfigBuilder {
 
         // Create the client config with Raw Public Key support
         // rustls 0.23.x requires specific configuration for RFC 7250
-        let config = ClientConfig::builder()
+        let provider = super::rustls::configured_provider_with_pqc(self.pqc.as_ref());
+
+        let config = ClientConfig::builder_with_provider(provider)
+            .with_safe_default_protocol_versions()?
             .dangerous()
             .with_custom_certificate_verifier(Arc::new(verifier))
             .with_no_client_auth();
@@ -385,7 +409,10 @@ impl RawPublicKeyConfigBuilder {
 
         let resolver = RawPublicKeyResolver::new(private_key)?;
 
-        let config = ServerConfig::builder()
+        let provider = super::rustls::configured_provider_with_pqc(self.pqc.as_ref());
+
+        let config = ServerConfig::builder_with_provider(provider)
+            .with_safe_default_protocol_versions()?
             .with_no_client_auth()
             .with_cert_resolver(Arc::new(resolver));
 
@@ -460,36 +487,23 @@ pub mod key_utils {
     pub fn derive_peer_id_from_public_key(
         public_key: &Ed25519PublicKey,
     ) -> crate::nat_traversal_api::PeerId {
-        #[cfg(feature = "ring")]
-        {
-            use ring::digest::{SHA256, digest};
+        use aws_lc_rs::digest;
 
-            let key_bytes = public_key.as_bytes();
+        let key_bytes = public_key.as_bytes();
 
-            // Create the input data with domain separator
-            let mut input = Vec::with_capacity(20 + 32); // "AUTONOMI_PEER_ID_V1:" + key_bytes
-            input.extend_from_slice(b"AUTONOMI_PEER_ID_V1:");
-            input.extend_from_slice(key_bytes);
+        // Create the input data with domain separator
+        let mut input = Vec::with_capacity(20 + 32); // "AUTONOMI_PEER_ID_V1:" + key_bytes
+        input.extend_from_slice(b"AUTONOMI_PEER_ID_V1:");
+        input.extend_from_slice(key_bytes);
 
-            // Hash the input
-            let hash = digest(&SHA256, &input);
-            let hash_bytes = hash.as_ref();
+        // Hash the input using SHA-256
+        let hash = digest::digest(&digest::SHA256, &input);
+        let hash_bytes = hash.as_ref();
 
-            let mut peer_id_bytes = [0u8; 32];
-            peer_id_bytes.copy_from_slice(hash_bytes);
+        let mut peer_id_bytes = [0u8; 32];
+        peer_id_bytes.copy_from_slice(hash_bytes);
 
-            crate::nat_traversal_api::PeerId(peer_id_bytes)
-        }
-        #[cfg(not(feature = "ring"))]
-        {
-            // Fallback implementation using direct key bytes (less secure but functional)
-            // In production, should always use ring or another crypto provider
-            let key_bytes = public_key.as_bytes();
-            let mut peer_id_bytes = [0u8; 32];
-            peer_id_bytes.copy_from_slice(key_bytes);
-
-            crate::nat_traversal_api::PeerId(peer_id_bytes)
-        }
+        crate::nat_traversal_api::PeerId(peer_id_bytes)
     }
 
     /// Derive a peer ID from raw public key bytes (32-byte Ed25519 key)
@@ -528,11 +542,7 @@ mod tests {
     fn ensure_crypto_provider() {
         INIT.call_once(|| {
             // Install the crypto provider if not already installed
-            #[cfg(feature = "rustls-aws-lc-rs")]
             let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
-
-            #[cfg(feature = "rustls-ring")]
-            let _ = rustls::crypto::ring::default_provider().install_default();
         });
     }
 

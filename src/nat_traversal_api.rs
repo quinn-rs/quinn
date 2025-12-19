@@ -39,6 +39,41 @@ fn create_random_port_bind_addr() -> SocketAddr {
         .unwrap_or_else(|_| panic!("Random port bind address format is always valid"))
 }
 
+/// Extract Ed25519 public key (32 bytes) from SubjectPublicKeyInfo DER structure.
+///
+/// RFC 7250 Raw Public Keys use SubjectPublicKeyInfo format. For Ed25519, this is:
+/// - SEQUENCE (0x30, 0x2a = 42 bytes total)
+///   - Algorithm identifier SEQUENCE (0x30, 0x05)
+///     - Ed25519 OID: 1.3.101.112 (0x06, 0x03, 0x2b, 0x65, 0x70)
+///   - BIT STRING (0x03, 0x21, 0x00) containing 32-byte public key
+///
+/// Returns Some([u8; 32]) if valid Ed25519 SPKI, None otherwise.
+fn extract_ed25519_from_spki(spki: &[u8]) -> Option<[u8; 32]> {
+    // Ed25519 SPKI is exactly 44 bytes
+    if spki.len() != 44 {
+        return None;
+    }
+
+    // Check for Ed25519 SPKI structure
+    // SEQUENCE tag (0x30), length 42 (0x2a)
+    // Algorithm SEQUENCE (0x30, 0x05)
+    // Ed25519 OID (0x06, 0x03, 0x2b, 0x65, 0x70)
+    let ed25519_header = [0x30, 0x2a, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70];
+    if !spki.starts_with(&ed25519_header) {
+        return None;
+    }
+
+    // BIT STRING header should be at offset 9: 0x03 0x21 0x00
+    if spki[9..12] != [0x03, 0x21, 0x00] {
+        return None;
+    }
+
+    // Public key is at offset 12, exactly 32 bytes
+    let mut public_key = [0u8; 32];
+    public_key.copy_from_slice(&spki[12..44]);
+    Some(public_key)
+}
+
 use tracing::{debug, error, info, warn};
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -54,26 +89,27 @@ use crate::high_level::default_runtime;
 use crate::{
     VarInt,
     candidate_discovery::{CandidateDiscoveryManager, DiscoveryConfig, DiscoveryEvent},
-    connection::nat_traversal::{CandidateSource, CandidateState, NatTraversalRole},
+    // v0.13.0: NatTraversalRole removed - all nodes are symmetric P2P nodes
+    connection::nat_traversal::{CandidateSource, CandidateState},
 };
 
 use crate::{
     ClientConfig, ConnectionError, EndpointConfig, ServerConfig, TransportConfig,
-    high_level::{Connection as QuinnConnection, Endpoint as QuinnEndpoint},
+    high_level::{Connection as InnerConnection, Endpoint as InnerEndpoint},
 };
 
-#[cfg(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring"))]
+#[cfg(feature = "rustls-aws-lc-rs")]
 use crate::{crypto::rustls::QuicClientConfig, crypto::rustls::QuicServerConfig};
 
 use crate::config::validation::{ConfigValidator, ValidationResult};
 
-#[cfg(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring"))]
-use crate::crypto::raw_public_keys::RawPublicKeyConfigBuilder;
+#[cfg(feature = "rustls-aws-lc-rs")]
+use crate::crypto::{pqc::PqcConfig, raw_public_keys::RawPublicKeyConfigBuilder};
 
 /// High-level NAT traversal endpoint for Autonomi P2P networks
 pub struct NatTraversalEndpoint {
-    /// Underlying Quinn endpoint
-    quinn_endpoint: Option<QuinnEndpoint>,
+    /// Underlying QUIC endpoint
+    inner_endpoint: Option<InnerEndpoint>,
     /// Fallback internal endpoint for non-production builds
 
     /// NAT traversal configuration
@@ -93,7 +129,7 @@ pub struct NatTraversalEndpoint {
     /// Receiver for internal event notifications
     event_rx: std::sync::Mutex<mpsc::UnboundedReceiver<NatTraversalEvent>>,
     /// Active connections by peer ID
-    connections: Arc<std::sync::RwLock<HashMap<PeerId, QuinnConnection>>>,
+    connections: Arc<std::sync::RwLock<HashMap<PeerId, InnerConnection>>>,
     /// Local peer ID
     local_peer_id: PeerId,
     /// Timeout configuration
@@ -109,6 +145,14 @@ pub struct NatTraversalEndpoint {
 /// performance, and reliability settings. Recent improvements in version 0.6.1 include
 /// enhanced security through protocol obfuscation and robust error handling.
 ///
+/// # Pure P2P Design (v0.13.0+)
+/// All nodes are now symmetric - they can both connect and accept connections.
+/// The `role` field is deprecated and ignored. Every node automatically:
+/// - Accepts incoming connections
+/// - Initiates outgoing connections
+/// - Coordinates NAT traversal for connected peers
+/// - Discovers its external address from any connected peer
+///
 /// # Security Features (Added in v0.6.1)
 /// - **Protocol Obfuscation**: Random port binding prevents fingerprinting attacks
 /// - **Robust Error Handling**: Panic-free operation with graceful error recovery
@@ -116,14 +160,13 @@ pub struct NatTraversalEndpoint {
 ///
 /// # Example
 /// ```rust
-/// use ant_quic::nat_traversal_api::{NatTraversalConfig, EndpointRole};
+/// use ant_quic::nat_traversal_api::NatTraversalConfig;
 /// use std::time::Duration;
 /// use std::net::SocketAddr;
 ///
-/// // Recommended secure configuration  
+/// // Recommended secure configuration
 /// let config = NatTraversalConfig {
-///     role: EndpointRole::Client,
-///     bootstrap_nodes: vec!["127.0.0.1:9000".parse::<SocketAddr>().unwrap()],
+///     known_peers: vec!["127.0.0.1:9000".parse::<SocketAddr>().unwrap()],
 ///     max_candidates: 10,
 ///     coordination_timeout: Duration::from_secs(10),
 ///     enable_symmetric_nat: true,
@@ -132,14 +175,15 @@ pub struct NatTraversalEndpoint {
 ///     bind_addr: None, // Auto-select for security
 ///     prefer_rfc_nat_traversal: true,
 ///     timeouts: Default::default(),
+///     ..Default::default()
 /// };
 /// ```
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct NatTraversalConfig {
-    /// Role of this endpoint in the network
-    pub role: EndpointRole,
-    /// Bootstrap nodes for coordination and candidate discovery
-    pub bootstrap_nodes: Vec<SocketAddr>,
+    /// Known peer addresses for initial discovery
+    /// These peers are used to discover external addresses and coordinate NAT traversal.
+    /// In v0.13.0+ all nodes are symmetric - any connected peer can help with discovery.
+    pub known_peers: Vec<SocketAddr>,
     /// Maximum number of address candidates to maintain
     pub max_candidates: usize,
     /// Timeout for coordination rounds
@@ -170,34 +214,23 @@ pub struct NatTraversalConfig {
     /// Prefer RFC-compliant NAT traversal frame format
     /// When true, will send RFC-compliant frames if the peer supports it
     pub prefer_rfc_nat_traversal: bool,
+    /// Post-Quantum Cryptography configuration
+    pub pqc: Option<PqcConfig>,
     /// Timeout configuration for NAT traversal operations
     pub timeouts: crate::config::nat_timeouts::TimeoutConfig,
+    /// Identity keypair for TLS authentication (Ed25519)
+    ///
+    /// v0.13.0+: This keypair is used for RFC 7250 Raw Public Key TLS authentication.
+    /// If provided, peers will derive the same PeerId from this key via TLS handshake.
+    /// If None, a random keypair is generated (not recommended for production as it
+    /// won't match the application-layer PeerId).
+    #[serde(skip)]
+    pub identity_key: Option<ed25519_dalek::SigningKey>,
 }
 
-/// Role of an endpoint in the Autonomi network
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub enum EndpointRole {
-    /// Regular client node (most common)
-    Client,
-    /// Server node (always reachable, can coordinate)
-    Server {
-        /// Whether this server can coordinate NAT traversal
-        can_coordinate: bool,
-    },
-    /// Bootstrap node (public, coordinates NAT traversal)
-    Bootstrap,
-}
-
-impl EndpointRole {
-    /// Get a string representation of the role for use in certificate common names
-    pub fn name(&self) -> &'static str {
-        match self {
-            Self::Client => "client",
-            Self::Server { .. } => "server",
-            Self::Bootstrap => "bootstrap",
-        }
-    }
-}
+// v0.13.0: EndpointRole enum has been removed.
+// All nodes are now symmetric P2P nodes - they can connect, accept connections,
+// and coordinate NAT traversal. No role configuration is needed.
 
 /// Unique identifier for a peer in the network
 #[derive(
@@ -289,7 +322,7 @@ pub struct SessionState {
     /// Last state transition time
     pub last_transition: std::time::Instant,
     /// Connection handle if established
-    pub connection: Option<QuinnConnection>,
+    pub connection: Option<InnerConnection>,
     /// Active connection attempts
     pub active_attempts: Vec<(SocketAddr, std::time::Instant)>,
     /// Connection quality metrics
@@ -653,6 +686,13 @@ pub enum NatTraversalEvent {
         /// New connection state
         new_state: ConnectionState,
     },
+    /// External address discovered via QUIC extension
+    ExternalAddressDiscovered {
+        /// The address that reported our address
+        reported_by: SocketAddr,
+        /// Our observed external address
+        address: SocketAddr,
+    },
 }
 
 /// Errors that can occur during NAT traversal
@@ -693,8 +733,7 @@ pub enum NatTraversalError {
 impl Default for NatTraversalConfig {
     fn default() -> Self {
         Self {
-            role: EndpointRole::Client,
-            bootstrap_nodes: Vec::new(),
+            known_peers: Vec::new(),
             max_candidates: 8,
             coordination_timeout: Duration::from_secs(10),
             enable_symmetric_nat: true,
@@ -702,7 +741,11 @@ impl Default for NatTraversalConfig {
             max_concurrent_attempts: 3,
             bind_addr: None,
             prefer_rfc_nat_traversal: true, // Default to RFC format for standards compliance
+            // v0.13.0+: PQC is ALWAYS enabled - default to PqcConfig::default()
+            // This ensures non-PQC handshakes cannot happen
+            pqc: Some(crate::crypto::pqc::PqcConfig::default()),
             timeouts: crate::config::nat_timeouts::TimeoutConfig::default(),
+            identity_key: None, // Generate random key if not provided
         }
     }
 }
@@ -711,31 +754,12 @@ impl ConfigValidator for NatTraversalConfig {
     fn validate(&self) -> ValidationResult<()> {
         use crate::config::validation::*;
 
-        // Validate role-specific requirements
-        match self.role {
-            EndpointRole::Client => {
-                if self.bootstrap_nodes.is_empty() {
-                    return Err(ConfigValidationError::InvalidRole(
-                        "Client endpoints require at least one bootstrap node".to_string(),
-                    ));
-                }
-            }
-            EndpointRole::Server { can_coordinate } => {
-                if can_coordinate && self.bootstrap_nodes.is_empty() {
-                    return Err(ConfigValidationError::InvalidRole(
-                        "Server endpoints with coordination capability require bootstrap nodes"
-                            .to_string(),
-                    ));
-                }
-            }
-            EndpointRole::Bootstrap => {
-                // Bootstrap nodes don't need other bootstrap nodes
-            }
-        }
+        // v0.13.0+: All nodes are symmetric P2P nodes
+        // Role-based validation is removed - any node can connect/accept/coordinate
 
-        // Validate bootstrap nodes
-        if !self.bootstrap_nodes.is_empty() {
-            validate_bootstrap_nodes(&self.bootstrap_nodes)?;
+        // Validate known peers if provided
+        if !self.known_peers.is_empty() {
+            validate_bootstrap_nodes(&self.known_peers)?;
         }
 
         // Validate candidate limits
@@ -761,12 +785,6 @@ impl ConfigValidator for NatTraversalConfig {
         if self.max_concurrent_attempts > self.max_candidates {
             return Err(ConfigValidationError::IncompatibleConfiguration(
                 "max_concurrent_attempts cannot exceed max_candidates".to_string(),
-            ));
-        }
-
-        if self.role == EndpointRole::Bootstrap && self.enable_relay_fallback {
-            return Err(ConfigValidationError::IncompatibleConfiguration(
-                "Bootstrap nodes should not enable relay fallback".to_string(),
             ));
         }
 
@@ -806,24 +824,19 @@ impl NatTraversalEndpoint {
         event_callback: Option<Box<dyn Fn(NatTraversalEvent) + Send + Sync>>,
     ) -> Result<Self, NatTraversalError> {
         // Validate configuration
+        config
+            .validate()
+            .map_err(|e| NatTraversalError::ConfigError(e.to_string()))?;
 
-        {
-            config
-                .validate()
-                .map_err(|e| NatTraversalError::ConfigError(e.to_string()))?;
-        }
-
-        // Fallback validation for non-production builds
-
-        // Initialize bootstrap nodes
+        // Initialize known peers for discovery and coordination
         let bootstrap_nodes = Arc::new(std::sync::RwLock::new(
             config
-                .bootstrap_nodes
+                .known_peers
                 .iter()
                 .map(|&address| BootstrapNode {
                     address,
                     last_seen: std::time::Instant::now(),
-                    can_coordinate: true, // Assume true initially
+                    can_coordinate: true, // All nodes can coordinate in v0.13.0+
                     rtt: None,
                     coordination_count: 0,
                 })
@@ -839,22 +852,15 @@ impl NatTraversalEndpoint {
             ..DiscoveryConfig::default()
         };
 
-        let nat_traversal_role = match config.role {
-            EndpointRole::Client => NatTraversalRole::Client,
-            EndpointRole::Server { can_coordinate } => NatTraversalRole::Server {
-                can_relay: can_coordinate,
-            },
-            EndpointRole::Bootstrap => NatTraversalRole::Bootstrap,
-        };
+        // v0.13.0+: All nodes are symmetric P2P nodes - no role parameter needed
 
         let discovery_manager = Arc::new(std::sync::Mutex::new(CandidateDiscoveryManager::new(
             discovery_config,
         )));
 
         // Create QUIC endpoint with NAT traversal enabled
-        // Create QUIC endpoint with NAT traversal enabled
-        let (quinn_endpoint, event_tx, event_rx, local_addr) =
-            Self::create_quinn_endpoint(&config, nat_traversal_role).await?;
+        let (inner_endpoint, event_tx, event_rx, local_addr) =
+            Self::create_inner_endpoint(&config).await?;
 
         // Update discovery manager with the actual bound address
         {
@@ -872,7 +878,7 @@ impl NatTraversalEndpoint {
             Arc::new(std::sync::RwLock::new(std::collections::HashSet::new()));
 
         let endpoint = Self {
-            quinn_endpoint: Some(quinn_endpoint.clone()),
+            inner_endpoint: Some(inner_endpoint.clone()),
             config: config.clone(),
             bootstrap_nodes,
             active_sessions: Arc::new(std::sync::RwLock::new(HashMap::new())),
@@ -887,12 +893,9 @@ impl NatTraversalEndpoint {
             emitted_established_events: emitted_established_events.clone(),
         };
 
-        // For bootstrap nodes, start accepting connections immediately
-        if matches!(
-            config.role,
-            EndpointRole::Bootstrap | EndpointRole::Server { .. }
-        ) {
-            let endpoint_clone = quinn_endpoint.clone();
+        // v0.13.0+: All nodes are symmetric P2P nodes - always start accepting connections
+        {
+            let endpoint_clone = inner_endpoint.clone();
             let shutdown_clone = endpoint.shutdown.clone();
             let event_tx_clone = event_tx.clone();
             let connections_clone = endpoint.connections.clone();
@@ -909,16 +912,23 @@ impl NatTraversalEndpoint {
                 .await;
             });
 
-            info!("Started accepting connections for {:?} role", config.role);
+            info!("Started accepting connections (symmetric P2P node)");
         }
 
         // Start background discovery polling task
         let discovery_manager_clone = endpoint.discovery_manager.clone();
         let shutdown_clone = endpoint.shutdown.clone();
         let event_tx_clone = event_tx;
+        let connections_clone = endpoint.connections.clone();
 
         tokio::spawn(async move {
-            Self::poll_discovery(discovery_manager_clone, shutdown_clone, event_tx_clone).await;
+            Self::poll_discovery(
+                discovery_manager_clone,
+                shutdown_clone,
+                event_tx_clone,
+                connections_clone,
+            )
+            .await;
         });
 
         info!("Started discovery polling task");
@@ -951,9 +961,9 @@ impl NatTraversalEndpoint {
         Ok(endpoint)
     }
 
-    /// Get the underlying Quinn endpoint
-    pub fn get_quinn_endpoint(&self) -> Option<&crate::high_level::Endpoint> {
-        self.quinn_endpoint.as_ref()
+    /// Get the underlying QUIC endpoint
+    pub fn get_endpoint(&self) -> Option<&crate::high_level::Endpoint> {
+        self.inner_endpoint.as_ref()
     }
 
     /// Get the event callback
@@ -1066,8 +1076,23 @@ impl NatTraversalEndpoint {
                     }
 
                     // Check if any connection attempts succeeded
+                    // First, check the connections HashMap to see if a connection was established
+                    let has_connection = if let Ok(conns) = self.connections.read() {
+                        conns.contains_key(peer_id)
+                    } else {
+                        false
+                    };
 
-                    if let Some(ref _connection) = session.session_state.connection {
+                    if has_connection || session.session_state.connection.is_some() {
+                        // Update session_state.connection from the connections HashMap
+                        if session.session_state.connection.is_none() {
+                            if let Ok(conns) = self.connections.read() {
+                                if let Some(conn) = conns.get(peer_id) {
+                                    session.session_state.connection = Some(conn.clone());
+                                }
+                            }
+                        }
+
                         session.session_state.state = ConnectionState::Connected;
                         session.session_state.last_transition = now;
                         state_changed = true;
@@ -1381,13 +1406,14 @@ impl NatTraversalEndpoint {
 
     // Private implementation methods
 
-    /// Create a Quinn endpoint with NAT traversal configured (async version)
-    async fn create_quinn_endpoint(
+    /// Create a QUIC endpoint with NAT traversal configured (async version)
+    ///
+    /// v0.13.0: role parameter removed - all nodes are symmetric P2P nodes.
+    async fn create_inner_endpoint(
         config: &NatTraversalConfig,
-        _nat_role: NatTraversalRole,
     ) -> Result<
         (
-            QuinnEndpoint,
+            InnerEndpoint,
             mpsc::UnboundedSender<NatTraversalEvent>,
             mpsc::UnboundedReceiver<NatTraversalEvent>,
             SocketAddr,
@@ -1396,74 +1422,89 @@ impl NatTraversalEndpoint {
     > {
         use std::sync::Arc;
 
-        // Create server config if this is a coordinator/bootstrap node
-        let server_config = match config.role {
-            EndpointRole::Bootstrap | EndpointRole::Server { .. } => {
-                info!(
-                    "Creating server config for role: {:?} using Raw Public Keys (RFC 7250)",
-                    config.role
-                );
+        // v0.13.0+: All nodes are symmetric P2P nodes - always create server config
+        let server_config = {
+            info!("Creating server config using Raw Public Keys (RFC 7250) for symmetric P2P node");
 
-                // Generate Ed25519 key pair for this server
-                let (server_key, _public_key) =
+            // Use provided identity key or generate a new one
+            // v0.13.0+: For consistent identity between TLS and application layers,
+            // P2pEndpoint should pass its auth keypair here via config.identity_key
+            let server_key = if let Some(ref key) = config.identity_key {
+                debug!("Using provided identity key for TLS authentication");
+                key.clone()
+            } else {
+                debug!("No identity key provided - generating new keypair (identity mismatch warning)");
+                let (key, _public_key) =
                     crate::crypto::raw_public_keys::key_utils::generate_ed25519_keypair();
+                key
+            };
 
-                // Build RFC 7250 server config with Raw Public Keys
-                let rpk_config = RawPublicKeyConfigBuilder::new()
-                    .with_server_key(server_key)
-                    .allow_any_key() // P2P network - accept any valid Ed25519 key
-                    .build_rfc7250_server_config()
-                    .map_err(|e| {
-                        NatTraversalError::ConfigError(format!("RPK server config failed: {e}"))
-                    })?;
+            // Build RFC 7250 server config with Raw Public Keys
+            let mut rpk_builder = RawPublicKeyConfigBuilder::new()
+                .with_server_key(server_key)
+                .allow_any_key(); // P2P network - accept any valid Ed25519 key
 
-                let server_crypto = QuicServerConfig::try_from(rpk_config.inner().as_ref().clone())
-                    .map_err(|e| NatTraversalError::ConfigError(e.to_string()))?;
-
-                let mut server_config = ServerConfig::with_crypto(Arc::new(server_crypto));
-
-                // Configure transport parameters for NAT traversal
-                let mut transport_config = TransportConfig::default();
-                transport_config
-                    .keep_alive_interval(Some(config.timeouts.nat_traversal.retry_interval));
-                transport_config.max_idle_timeout(Some(crate::VarInt::from_u32(30000).into()));
-
-                // Enable NAT traversal in transport parameters
-                // Per draft-seemann-quic-nat-traversal-02:
-                // - Client sends empty parameter
-                // - Server sends concurrency limit
-                let nat_config = match config.role {
-                    EndpointRole::Client => {
-                        crate::transport_parameters::NatTraversalConfig::ClientSupport
-                    }
-                    EndpointRole::Bootstrap | EndpointRole::Server { .. } => {
-                        crate::transport_parameters::NatTraversalConfig::ServerSupport {
-                            concurrency_limit: VarInt::from_u32(
-                                config.max_concurrent_attempts as u32,
-                            ),
-                        }
-                    }
-                };
-                transport_config.nat_traversal_config(Some(nat_config));
-
-                server_config.transport_config(Arc::new(transport_config));
-
-                Some(server_config)
+            if let Some(ref pqc) = config.pqc {
+                rpk_builder = rpk_builder.with_pqc(pqc.clone());
             }
-            _ => None,
+
+            let rpk_config = rpk_builder.build_rfc7250_server_config().map_err(|e| {
+                NatTraversalError::ConfigError(format!("RPK server config failed: {e}"))
+            })?;
+
+            let server_crypto = QuicServerConfig::try_from(rpk_config.inner().as_ref().clone())
+                .map_err(|e| NatTraversalError::ConfigError(e.to_string()))?;
+
+            let mut server_config = ServerConfig::with_crypto(Arc::new(server_crypto));
+
+            // Configure transport parameters for NAT traversal
+            let mut transport_config = TransportConfig::default();
+            transport_config.enable_address_discovery(true);
+            transport_config
+                .keep_alive_interval(Some(config.timeouts.nat_traversal.retry_interval));
+            transport_config.max_idle_timeout(Some(crate::VarInt::from_u32(30000).into()));
+
+            // v0.13.0+: All nodes use ServerSupport for full P2P capabilities
+            // Per draft-seemann-quic-nat-traversal-02, all nodes can coordinate
+            let nat_config = crate::transport_parameters::NatTraversalConfig::ServerSupport {
+                concurrency_limit: VarInt::from_u32(config.max_concurrent_attempts as u32),
+            };
+            transport_config.nat_traversal_config(Some(nat_config));
+
+            server_config.transport_config(Arc::new(transport_config));
+
+            Some(server_config)
         };
 
         // Create client config for outgoing connections
         let client_config = {
             info!("Creating client config using Raw Public Keys (RFC 7250)");
 
+            // v0.13.0+: For symmetric P2P identity, client MUST also present its key
+            // This allows servers to derive our peer ID from TLS, not from address
+            let client_key = if let Some(ref key) = config.identity_key {
+                debug!("Using provided identity key for client TLS authentication");
+                key.clone()
+            } else {
+                debug!("No identity key provided for client - generating new keypair");
+                let (key, _public_key) =
+                    crate::crypto::raw_public_keys::key_utils::generate_ed25519_keypair();
+                key
+            };
+
             // Build RFC 7250 client config with Raw Public Keys
-            let rpk_config = RawPublicKeyConfigBuilder::new()
-                .allow_any_key() // P2P network - accept any valid Ed25519 key
-                .build_rfc7250_client_config()
-                .map_err(|e| {
-                    NatTraversalError::ConfigError(format!("RPK client config failed: {e}"))
-                })?;
+            // v0.13.0+: Client presents its own key for mutual authentication
+            let mut rpk_builder = RawPublicKeyConfigBuilder::new()
+                .with_client_key(client_key) // Present our identity to servers
+                .allow_any_key(); // P2P network - accept any valid Ed25519 key
+
+            if let Some(ref pqc) = config.pqc {
+                rpk_builder = rpk_builder.with_pqc(pqc.clone());
+            }
+
+            let rpk_config = rpk_builder.build_rfc7250_client_config().map_err(|e| {
+                NatTraversalError::ConfigError(format!("RPK client config failed: {e}"))
+            })?;
 
             let client_crypto = QuicClientConfig::try_from(rpk_config.inner().as_ref().clone())
                 .map_err(|e| NatTraversalError::ConfigError(e.to_string()))?;
@@ -1472,22 +1513,14 @@ impl NatTraversalEndpoint {
 
             // Configure transport parameters for NAT traversal
             let mut transport_config = TransportConfig::default();
+            transport_config.enable_address_discovery(true);
             transport_config.keep_alive_interval(Some(Duration::from_secs(5)));
             transport_config.max_idle_timeout(Some(crate::VarInt::from_u32(30000).into()));
 
-            // Enable NAT traversal in transport parameters
-            // Per draft-seemann-quic-nat-traversal-02:
-            // - Client sends empty parameter
-            // - Server sends concurrency limit
-            let nat_config = match config.role {
-                EndpointRole::Client => {
-                    crate::transport_parameters::NatTraversalConfig::ClientSupport
-                }
-                EndpointRole::Bootstrap | EndpointRole::Server { .. } => {
-                    crate::transport_parameters::NatTraversalConfig::ServerSupport {
-                        concurrency_limit: VarInt::from_u32(config.max_concurrent_attempts as u32),
-                    }
-                }
+            // v0.13.0+: All nodes use ServerSupport for full P2P capabilities
+            // Per draft-seemann-quic-nat-traversal-02, all nodes can coordinate
+            let nat_config = crate::transport_parameters::NatTraversalConfig::ServerSupport {
+                concurrency_limit: VarInt::from_u32(config.max_concurrent_attempts as u32),
             };
             transport_config.nat_traversal_config(Some(nat_config));
 
@@ -1511,19 +1544,19 @@ impl NatTraversalEndpoint {
             NatTraversalError::NetworkError(format!("Failed to convert socket: {e}"))
         })?;
 
-        // Create Quinn endpoint
+        // Create QUIC endpoint
         let runtime = default_runtime().ok_or_else(|| {
             NatTraversalError::ConfigError("No compatible async runtime found".to_string())
         })?;
 
-        let mut endpoint = QuinnEndpoint::new(
+        let mut endpoint = InnerEndpoint::new(
             EndpointConfig::default(),
             server_config,
             std_socket,
             runtime,
         )
         .map_err(|e| {
-            NatTraversalError::ConfigError(format!("Failed to create Quinn endpoint: {e}"))
+            NatTraversalError::ConfigError(format!("Failed to create QUIC endpoint: {e}"))
         })?;
 
         // Set default client config
@@ -1545,8 +1578,8 @@ impl NatTraversalEndpoint {
     /// Start listening for incoming connections (async version)
     #[allow(clippy::panic)]
     pub async fn start_listening(&self, bind_addr: SocketAddr) -> Result<(), NatTraversalError> {
-        let endpoint = self.quinn_endpoint.as_ref().ok_or_else(|| {
-            NatTraversalError::ConfigError("Quinn endpoint not initialized".to_string())
+        let endpoint = self.inner_endpoint.as_ref().ok_or_else(|| {
+            NatTraversalError::ConfigError("QUIC endpoint not initialized".to_string())
         })?;
 
         // Rebind the endpoint to the specified address
@@ -1583,10 +1616,10 @@ impl NatTraversalEndpoint {
 
     /// Accept incoming connections
     async fn accept_connections(
-        endpoint: QuinnEndpoint,
+        endpoint: InnerEndpoint,
         shutdown: Arc<AtomicBool>,
         event_tx: mpsc::UnboundedSender<NatTraversalEvent>,
-        connections: Arc<std::sync::RwLock<HashMap<PeerId, QuinnConnection>>>,
+        connections: Arc<std::sync::RwLock<HashMap<PeerId, InnerConnection>>>,
         emitted_events: Arc<std::sync::RwLock<std::collections::HashSet<PeerId>>>,
     ) {
         while !shutdown.load(Ordering::Relaxed) {
@@ -1600,10 +1633,13 @@ impl NatTraversalEndpoint {
                             Ok(connection) => {
                                 info!("Accepted connection from {}", connection.remote_address());
 
-                                // Generate peer ID from connection address
-                                let peer_id = Self::generate_peer_id_from_address(
-                                    connection.remote_address(),
-                                );
+                                // Prefer peer ID from the authenticated public key when available.
+                                let peer_id = Self::derive_peer_id_from_connection(&connection)
+                                    .unwrap_or_else(|| {
+                                        Self::generate_peer_id_from_address(
+                                            connection.remote_address(),
+                                        )
+                                    });
 
                                 // Store the connection
                                 if let Ok(mut conns) = connections.write() {
@@ -1646,16 +1682,48 @@ impl NatTraversalEndpoint {
     async fn poll_discovery(
         discovery_manager: Arc<std::sync::Mutex<CandidateDiscoveryManager>>,
         shutdown: Arc<AtomicBool>,
-        _event_tx: mpsc::UnboundedSender<NatTraversalEvent>,
+        event_tx: mpsc::UnboundedSender<NatTraversalEvent>,
+        connections: Arc<std::sync::RwLock<HashMap<PeerId, InnerConnection>>>,
     ) {
         use tokio::time::{Duration, interval};
 
         let mut poll_interval = interval(Duration::from_millis(100));
+        let mut emitted_discovery = std::collections::HashSet::new();
 
         while !shutdown.load(Ordering::Relaxed) {
             poll_interval.tick().await;
 
-            // Poll the discovery manager
+            // 1. Check active connections for observed addresses and feed them to discovery
+            if let Ok(conns) = connections.read() {
+                if !conns.is_empty() {
+                    debug!("Polling {} connections for observed addresses", conns.len());
+                }
+                for (peer_id, conn) in conns.iter() {
+                    if let Some(observed_addr) = conn.observed_address() {
+                        debug!(
+                            "Found observed address {} for peer {:?}",
+                            observed_addr, peer_id
+                        );
+
+                        // Emit event if this is the first time this peer reported this address
+                        if emitted_discovery.insert((*peer_id, observed_addr)) {
+                            debug!("Emitting ExternalAddressDiscovered for peer {:?}", peer_id);
+                            let _ = event_tx.send(NatTraversalEvent::ExternalAddressDiscovered {
+                                reported_by: conn.remote_address(),
+                                address: observed_addr,
+                            });
+                        }
+
+                        // Feed the observed address to discovery manager
+                        if let Ok(mut discovery) = discovery_manager.lock() {
+                            let _ =
+                                discovery.accept_quic_discovered_address(*peer_id, observed_addr);
+                        }
+                    }
+                }
+            }
+
+            // 2. Poll the discovery manager
             let events = match discovery_manager.lock() {
                 Ok(mut discovery) => discovery.poll(std::time::Instant::now()),
                 Err(e) => {
@@ -1707,7 +1775,12 @@ impl NatTraversalEndpoint {
                             "Discovered server-reflexive candidate {} via bootstrap {}",
                             candidate.address, bootstrap_node
                         );
-                        // Server-reflexive candidates are stored in the discovery manager
+
+                        // Notify that our external address was discovered
+                        let _ = event_tx.send(NatTraversalEvent::ExternalAddressDiscovered {
+                            reported_by: bootstrap_node,
+                            address: candidate.address,
+                        });
                     }
                     DiscoveryEvent::BootstrapQueryFailed {
                         bootstrap_node,
@@ -1790,7 +1863,7 @@ impl NatTraversalEndpoint {
     /// Handle an established connection
     async fn handle_connection(
         peer_id: PeerId,
-        connection: QuinnConnection,
+        connection: InnerConnection,
         event_tx: mpsc::UnboundedSender<NatTraversalEvent>,
     ) {
         let remote_address = connection.remote_address();
@@ -1877,9 +1950,9 @@ impl NatTraversalEndpoint {
         peer_id: PeerId,
         server_name: &str,
         remote_addr: SocketAddr,
-    ) -> Result<QuinnConnection, NatTraversalError> {
-        let endpoint = self.quinn_endpoint.as_ref().ok_or_else(|| {
-            NatTraversalError::ConfigError("Quinn endpoint not initialized".to_string())
+    ) -> Result<InnerConnection, NatTraversalError> {
+        let endpoint = self.inner_endpoint.as_ref().ok_or_else(|| {
+            NatTraversalError::ConfigError("QUIC endpoint not initialized".to_string())
         })?;
 
         info!("Connecting to peer {:?} at {}", peer_id, remote_addr);
@@ -1916,8 +1989,8 @@ impl NatTraversalEndpoint {
     }
 
     /// Accept incoming connections on the endpoint
-    pub async fn accept_connection(&self) -> Result<(PeerId, QuinnConnection), NatTraversalError> {
-        info!("Waiting for incoming connection via event channel...");
+    pub async fn accept_connection(&self) -> Result<(PeerId, InnerConnection), NatTraversalError> {
+        debug!("Waiting for incoming connection via event channel...");
 
         let timeout_duration = self
             .timeout_config
@@ -2009,7 +2082,7 @@ impl NatTraversalEndpoint {
     pub fn get_connection(
         &self,
         peer_id: &PeerId,
-    ) -> Result<Option<QuinnConnection>, NatTraversalError> {
+    ) -> Result<Option<InnerConnection>, NatTraversalError> {
         let connections = self.connections.read().map_err(|_| {
             NatTraversalError::ProtocolError("Connections lock poisoned".to_string())
         })?;
@@ -2020,7 +2093,7 @@ impl NatTraversalEndpoint {
     pub fn add_connection(
         &self,
         peer_id: PeerId,
-        connection: QuinnConnection,
+        connection: InnerConnection,
     ) -> Result<(), NatTraversalError> {
         let mut connections = self.connections.write().map_err(|_| {
             NatTraversalError::ProtocolError("Connections lock poisoned".to_string())
@@ -2033,7 +2106,7 @@ impl NatTraversalEndpoint {
     pub fn spawn_connection_handler(
         &self,
         peer_id: PeerId,
-        connection: QuinnConnection,
+        connection: InnerConnection,
     ) -> Result<(), NatTraversalError> {
         let event_tx = self.event_tx.as_ref().cloned().ok_or_else(|| {
             NatTraversalError::ConfigError("NAT traversal event channel not configured".to_string())
@@ -2067,7 +2140,7 @@ impl NatTraversalEndpoint {
     pub fn remove_connection(
         &self,
         peer_id: &PeerId,
-    ) -> Result<Option<QuinnConnection>, NatTraversalError> {
+    ) -> Result<Option<InnerConnection>, NatTraversalError> {
         // Clear emitted event tracking so reconnections can generate new events
         if let Ok(mut emitted) = self.emitted_established_events.write() {
             emitted.remove(peer_id);
@@ -2108,15 +2181,18 @@ impl NatTraversalEndpoint {
         })?;
 
         // Check all connections for an observed address
-        // First try to find one from a bootstrap node (more reliable)
-        let bootstrap_addrs: std::collections::HashSet<_> =
-            self.config.bootstrap_nodes.iter().copied().collect();
+        // First try to find one from a known peer (more reliable)
+        let known_peer_addrs: std::collections::HashSet<_> =
+            self.config.known_peers.iter().copied().collect();
 
-        // Check bootstrap connections first
+        // Check known peer connections first
         for (_peer_id, connection) in connections.iter() {
-            if bootstrap_addrs.contains(&connection.remote_address()) {
+            if known_peer_addrs.contains(&connection.remote_address()) {
                 if let Some(addr) = connection.observed_address() {
-                    debug!("Found observed external address {} from bootstrap connection", addr);
+                    debug!(
+                        "Found observed external address {} from known peer connection",
+                        addr
+                    );
                     return Ok(Some(addr));
                 }
             }
@@ -2125,7 +2201,10 @@ impl NatTraversalEndpoint {
         // Fall back to any connection with an observed address
         for (_peer_id, connection) in connections.iter() {
             if let Some(addr) = connection.observed_address() {
-                debug!("Found observed external address {} from peer connection", addr);
+                debug!(
+                    "Found observed external address {} from peer connection",
+                    addr
+                );
                 return Ok(Some(addr));
             }
         }
@@ -2138,7 +2217,7 @@ impl NatTraversalEndpoint {
     pub async fn handle_connection_data(
         &self,
         peer_id: PeerId,
-        connection: &QuinnConnection,
+        connection: &InnerConnection,
     ) -> Result<(), NatTraversalError> {
         info!("Handling connection data from peer {:?}", peer_id);
 
@@ -2252,30 +2331,62 @@ impl NatTraversalEndpoint {
         PeerId(peer_id)
     }
 
-    /// Extract peer ID from connection by deriving it from the peer's public key
-    pub async fn extract_peer_id_from_connection(
-        &self,
-        connection: &QuinnConnection,
-    ) -> Option<PeerId> {
-        // Get the peer's identity from the TLS handshake
+    /// Derive a peer ID from the authenticated raw public key if available.
+    ///
+    /// For rustls, `peer_identity()` returns `Vec<CertificateDer>`. For RFC 7250 Raw Public Keys,
+    /// this contains SubjectPublicKeyInfo (44 bytes for Ed25519). We extract the 32-byte
+    /// Ed25519 public key from bytes 12-44 of the SPKI structure.
+    fn derive_peer_id_from_connection(connection: &InnerConnection) -> Option<PeerId> {
         if let Some(identity) = connection.peer_identity() {
-            // Check if we have an Ed25519 public key from raw public key authentication
-            if let Some(public_key_bytes) = identity.downcast_ref::<[u8; 32]>() {
-                // Derive peer ID from the public key
-                match crate::derive_peer_id_from_key_bytes(public_key_bytes) {
-                    Ok(peer_id) => {
-                        debug!("Derived peer ID from Ed25519 public key");
-                        return Some(peer_id);
+            // rustls returns Vec<CertificateDer> - downcast to that type
+            if let Some(certs) = identity.downcast_ref::<Vec<rustls::pki_types::CertificateDer<'static>>>() {
+                if let Some(cert) = certs.first() {
+                    // For RFC 7250 Raw Public Keys, cert is SubjectPublicKeyInfo (44 bytes for Ed25519)
+                    let spki = cert.as_ref();
+                    if let Some(public_key) = extract_ed25519_from_spki(spki) {
+                        match crate::derive_peer_id_from_key_bytes(&public_key) {
+                            Ok(peer_id) => {
+                                debug!("Derived peer ID from Ed25519 public key in SPKI");
+                                return Some(peer_id);
+                            }
+                            Err(e) => {
+                                warn!("Failed to derive peer ID from public key: {}", e);
+                            }
+                        }
+                    } else {
+                        debug!("Certificate is not Ed25519 SPKI format (len={})", spki.len());
                     }
-                    Err(e) => {
-                        warn!("Failed to derive peer ID from public key: {}", e);
+                }
+            } else {
+                // Fallback: try direct [u8; 32] (for custom crypto implementations)
+                if let Some(public_key_bytes) = identity.downcast_ref::<[u8; 32]>() {
+                    match crate::derive_peer_id_from_key_bytes(public_key_bytes) {
+                        Ok(peer_id) => {
+                            debug!("Derived peer ID from raw Ed25519 public key");
+                            return Some(peer_id);
+                        }
+                        Err(e) => {
+                            warn!("Failed to derive peer ID from public key: {}", e);
+                        }
                     }
                 }
             }
-            // TODO: Handle X.509 certificate case if needed
         }
 
         None
+    }
+
+    /// Extract peer ID from connection by deriving it from the peer's public key
+    ///
+    /// For rustls, `peer_identity()` returns `Vec<CertificateDer>`. For RFC 7250 Raw Public Keys,
+    /// this contains SubjectPublicKeyInfo (44 bytes for Ed25519). We extract the 32-byte
+    /// Ed25519 public key from bytes 12-44 of the SPKI structure.
+    pub async fn extract_peer_id_from_connection(
+        &self,
+        connection: &InnerConnection,
+    ) -> Option<PeerId> {
+        // Delegate to the static method which handles both CertificateDer and raw [u8; 32]
+        Self::derive_peer_id_from_connection(connection)
     }
 
     /// Shutdown the endpoint
@@ -2295,7 +2406,7 @@ impl NatTraversalEndpoint {
         }
 
         // Wait for connection to be closed
-        if let Some(ref endpoint) = self.quinn_endpoint {
+        if let Some(ref endpoint) = self.inner_endpoint {
             endpoint.wait_idle().await;
         }
 
@@ -2453,7 +2564,7 @@ impl NatTraversalEndpoint {
 
         // Attempt hole punching with each candidate pair
 
-        self.attempt_quinn_hole_punching(peer_id, candidate_pairs)
+        self.attempt_quic_hole_punching(peer_id, candidate_pairs)
     }
 
     /// Generate candidate pairs for hole punching based on ICE-like algorithm
@@ -2548,15 +2659,15 @@ impl NatTraversalEndpoint {
             }
     }
 
-    /// Real Quinn-based hole punching implementation
+    /// Real QUIC-based hole punching implementation
     #[allow(dead_code)]
-    fn attempt_quinn_hole_punching(
+    fn attempt_quic_hole_punching(
         &self,
         peer_id: PeerId,
         candidate_pairs: Vec<CandidatePair>,
     ) -> Result<(), NatTraversalError> {
-        let _endpoint = self.quinn_endpoint.as_ref().ok_or_else(|| {
-            NatTraversalError::ConfigError("Quinn endpoint not initialized".to_string())
+        let _endpoint = self.inner_endpoint.as_ref().ok_or_else(|| {
+            NatTraversalError::ConfigError("QUIC endpoint not initialized".to_string())
         })?;
 
         for pair in candidate_pairs {
@@ -2699,19 +2810,19 @@ impl NatTraversalEndpoint {
         candidate: &CandidateAddress,
     ) -> Result<(), NatTraversalError> {
         {
-            let endpoint = self.quinn_endpoint.as_ref().ok_or_else(|| {
-                NatTraversalError::ConfigError("Quinn endpoint not initialized".to_string())
+            let endpoint = self.inner_endpoint.as_ref().ok_or_else(|| {
+                NatTraversalError::ConfigError("QUIC endpoint not initialized".to_string())
             })?;
 
             // Create server name for the connection
             let server_name = format!("peer-{:x}", peer_id.0[0] as u32);
 
             debug!(
-                "Attempting Quinn connection to candidate {} for peer {:?}",
+                "Attempting QUIC connection to candidate {} for peer {:?}",
                 candidate.address, peer_id
             );
 
-            // Use the sync connect method from Quinn endpoint
+            // Use the sync connect method from QUIC endpoint
             match endpoint.connect(candidate.address, &server_name) {
                 Ok(connecting) => {
                     info!(
@@ -3122,7 +3233,8 @@ impl NatTraversalEndpoint {
 
         // For now, simulate the discovery for testing
         // In production, this would be triggered by actual OBSERVED_ADDRESS frames
-        if !connections.is_empty() && self.config.role == EndpointRole::Client {
+        // v0.13.0+: All nodes can discover their external address from any connected peer
+        if !connections.is_empty() {
             // Check if we have any bootstrap connections
             for (_peer_id, connection) in connections.iter() {
                 let remote_addr = connection.remote_address();
@@ -3232,7 +3344,7 @@ impl NatTraversalEndpoint {
 
             // If no existing connection, try to establish one
             info!("Establishing connection to coordinator {}", coordinator);
-            if let Some(endpoint) = &self.quinn_endpoint {
+            if let Some(endpoint) = &self.inner_endpoint {
                 let server_name = format!("bootstrap-{}", coordinator.ip());
                 match endpoint.connect(coordinator, &server_name) {
                     Ok(connecting) => {
@@ -3287,7 +3399,7 @@ impl NatTraversalEndpoint {
                 }
             } else {
                 Err(NatTraversalError::ConfigError(
-                    "Quinn endpoint not initialized".to_string(),
+                    "QUIC endpoint not initialized".to_string(),
                 ))
             }
         }
@@ -3537,7 +3649,7 @@ impl NatTraversalEndpoint {
             if let Ok(connections) = self.connections.read() {
                 if let Some(_conn) = connections.get(peer_id) {
                     // Check if connection is still active
-                    // Note: Quinn's Connection doesn't have is_closed/is_drained methods
+                    // Note: Connection doesn't have is_closed/is_drained methods
                     // We use the closed() future to check if still active
                     return true; // Assume healthy if connection exists in map
                 }
@@ -3747,8 +3859,8 @@ impl NatTraversalEndpoint {
             candidate_address, peer_id
         );
 
-        let endpoint = self.quinn_endpoint.as_ref().ok_or_else(|| {
-            NatTraversalError::ConfigError("Quinn endpoint not initialized".to_string())
+        let endpoint = self.inner_endpoint.as_ref().ok_or_else(|| {
+            NatTraversalError::ConfigError("QUIC endpoint not initialized".to_string())
         })?;
 
         // Attempt connection to the validated address
@@ -3805,7 +3917,7 @@ impl NatTraversalEndpoint {
     ///
     /// This is the bridge between candidate discovery and actual frame transmission.
     /// It finds the connection to the peer and sends an ADD_ADDRESS frame using
-    /// the Quinn extension frame API.
+    /// the QUIC extension frame API.
     async fn send_candidate_advertisement(
         &self,
         peer_id: PeerId,
@@ -3844,7 +3956,7 @@ impl NatTraversalEndpoint {
     /// Send PUNCH_ME_NOW frame to coordinate hole punching
     ///
     /// This method sends hole punching coordination frames using the real
-    /// Quinn extension frame API instead of application-level streams.
+    /// QUIC extension frame API instead of application-level streams.
     #[allow(dead_code)]
     async fn send_punch_coordination(
         &self,
@@ -4045,7 +4157,8 @@ mod tests {
     #[test]
     fn test_nat_traversal_config_default() {
         let config = NatTraversalConfig::default();
-        assert_eq!(config.role, EndpointRole::Client);
+        // v0.13.0+: No role field - all nodes are symmetric P2P nodes
+        assert!(config.known_peers.is_empty());
         assert_eq!(config.max_candidates, 8);
         assert!(config.enable_symmetric_nat);
         assert!(config.enable_relay_fallback);

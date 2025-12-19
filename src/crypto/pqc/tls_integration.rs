@@ -7,14 +7,13 @@
 
 //! Integration of PQC negotiation with rustls TLS handshake
 //!
+//! v0.13.0+: PQC is always on.
 //! This module bridges the PQC negotiation logic with rustls's TLS 1.3
-//! handshake process, ensuring proper algorithm selection and fallback.
+//! handshake process, ensuring proper algorithm selection.
 
 use crate::crypto::pqc::{
-    config::{PqcConfig, PqcMode},
-    negotiation::{
-        NegotiationResult, PqcNegotiator, filter_algorithms_for_mode, order_by_preference,
-    },
+    config::PqcConfig,
+    negotiation::{filter_algorithms, order_by_preference, NegotiationResult, PqcNegotiator},
     tls_extensions::{NamedGroup, SignatureScheme},
     types::*,
 };
@@ -22,10 +21,10 @@ use std::sync::Arc;
 use tracing::{debug, info, warn};
 
 /// TLS handshake extension for PQC negotiation
+///
+/// v0.13.0+: PQC is always enabled on all connections.
 #[derive(Debug, Clone)]
 pub struct PqcHandshakeExtension {
-    /// PQC configuration
-    config: Arc<PqcConfig>,
     /// Negotiator instance
     negotiator: PqcNegotiator,
 }
@@ -34,7 +33,7 @@ impl PqcHandshakeExtension {
     /// Create a new PQC handshake extension
     pub fn new(config: Arc<PqcConfig>) -> Self {
         let negotiator = PqcNegotiator::new((*config).clone());
-        Self { config, negotiator }
+        Self { negotiator }
     }
 
     /// Process ClientHello and filter supported algorithms
@@ -91,12 +90,9 @@ impl PqcHandshakeExtension {
         // Perform negotiation
         let result = self.negotiator.negotiate();
 
-        // Check if we should fail based on mode constraints
+        // Check if we should fail (v0.13.0+: fail if no PQC)
         if self.negotiator.should_fail(&result) {
-            warn!(
-                "Negotiation failed due to mode constraints: {}",
-                result.reason
-            );
+            warn!("Negotiation failed - no PQC algorithms: {}", result.reason);
             return Err(PqcError::NegotiationFailed(result.reason));
         }
 
@@ -104,16 +100,15 @@ impl PqcHandshakeExtension {
         Ok(result)
     }
 
-    /// Get filtered algorithms for client based on mode
+    /// Get filtered algorithms for client (v0.13.0+: PQC only)
     pub fn get_client_algorithms(&self) -> (Vec<u16>, Vec<u16>) {
         let all_groups = Self::all_supported_groups();
         let all_signatures = Self::all_supported_signatures();
 
-        let (mut groups, mut signatures) =
-            filter_algorithms_for_mode(self.config.mode, &all_groups, &all_signatures);
+        let (mut groups, mut signatures) = filter_algorithms(&all_groups, &all_signatures);
 
         // Order by preference
-        order_by_preference(self.config.mode, &mut groups, &mut signatures);
+        order_by_preference(&mut groups, &mut signatures);
 
         // Convert to wire format
         let group_codes: Vec<u16> = groups.iter().map(|g| g.to_u16()).collect();
@@ -125,17 +120,11 @@ impl PqcHandshakeExtension {
     /// Get all supported named groups
     fn all_supported_groups() -> Vec<NamedGroup> {
         vec![
-            // Classical
-            NamedGroup::Secp256r1,
-            NamedGroup::Secp384r1,
-            NamedGroup::Secp521r1,
-            NamedGroup::X25519,
-            NamedGroup::X448,
-            // Hybrid
+            // Hybrid (PQC) groups - these are the only ones we use in v0.13.0+
             NamedGroup::X25519MlKem768,
             NamedGroup::P256MlKem768,
             NamedGroup::P384MlKem1024,
-            // Pure PQC (if supported)
+            // Pure PQC
             NamedGroup::MlKem768,
             NamedGroup::MlKem1024,
         ]
@@ -144,18 +133,11 @@ impl PqcHandshakeExtension {
     /// Get all supported signature schemes
     fn all_supported_signatures() -> Vec<SignatureScheme> {
         vec![
-            // Classical
-            SignatureScheme::EcdsaSecp256r1Sha256,
-            SignatureScheme::EcdsaSecp384r1Sha384,
-            SignatureScheme::Ed25519,
-            SignatureScheme::Ed448,
-            SignatureScheme::RsaPssRsaeSha256,
-            SignatureScheme::RsaPssRsaeSha384,
-            // Hybrid
+            // Hybrid (PQC) signatures - these are the only ones we use in v0.13.0+
             SignatureScheme::EcdsaP256MlDsa65,
             SignatureScheme::EcdsaP384MlDsa87,
             SignatureScheme::Ed25519MlDsa65,
-            // Pure PQC (if supported)
+            // Pure PQC
             SignatureScheme::MlDsa65,
             SignatureScheme::MlDsa87,
         ]
@@ -254,7 +236,7 @@ pub fn estimate_handshake_size(state: &PqcHandshakeState) -> usize {
     size
 }
 
-#[cfg(all(test, feature = "pqc"))]
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -288,34 +270,8 @@ mod tests {
     }
 
     #[test]
-    fn test_get_client_algorithms_classical_only() {
-        let config = Arc::new(
-            PqcConfig::builder()
-                .mode(PqcMode::ClassicalOnly)
-                .build()
-                .unwrap(),
-        );
-        let extension = PqcHandshakeExtension::new(config);
-
-        let (groups, signatures) = extension.get_client_algorithms();
-
-        // Should only contain classical algorithms
-        for &group_code in &groups {
-            if let Some(group) = NamedGroup::from_u16(group_code) {
-                assert!(!group.is_hybrid() && !group.is_pqc());
-            }
-        }
-
-        for &sig_code in &signatures {
-            if let Some(sig) = SignatureScheme::from_u16(sig_code) {
-                assert!(!sig.is_hybrid() && !sig.is_pqc());
-            }
-        }
-    }
-
-    #[test]
     fn test_get_client_algorithms_pqc_only() {
-        let config = Arc::new(PqcConfig::builder().mode(PqcMode::PqcOnly).build().unwrap());
+        let config = Arc::new(PqcConfig::builder().build().unwrap());
         let extension = PqcHandshakeExtension::new(config);
 
         let (groups, signatures) = extension.get_client_algorithms();
@@ -370,7 +326,7 @@ mod tests {
     fn test_estimate_handshake_size() {
         let mut state = PqcHandshakeState::new();
 
-        // Classical only
+        // Base size
         assert_eq!(estimate_handshake_size(&state), 4096);
 
         // With hybrid key exchange

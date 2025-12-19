@@ -2,7 +2,7 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-#[cfg(all(test, feature = "pqc"))]
+#[cfg(test)]
 mod pqc_packet_tests {
     // Removed unused imports - they will be added back when functionality is implemented
 
@@ -447,7 +447,7 @@ mod pqc_packet_tests {
     }
 }
 
-#[cfg(not(all(test, feature = "pqc")))]
+#[cfg(not(test))]
 mod pqc_packet_tests {
     #[test]
     fn test_pqc_feature_required() {

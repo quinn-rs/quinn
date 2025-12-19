@@ -23,6 +23,12 @@ fn init_logging() {
         .try_init();
 }
 
+fn transport_config_no_pqc() -> Arc<TransportConfig> {
+    let mut transport_config = TransportConfig::default();
+    transport_config.enable_pqc(false);
+    Arc::new(transport_config)
+}
+
 /// Create a basic server configuration
 fn server_config() -> ServerConfig {
     let cert = rcgen::generate_simple_self_signed(vec!["localhost".to_string()]).unwrap();
@@ -39,7 +45,7 @@ fn server_config() -> ServerConfig {
 
     let mut config =
         ServerConfig::with_crypto(Arc::new(QuicServerConfig::try_from(crypto).unwrap()));
-    config.transport_config(Arc::new(TransportConfig::default()));
+    config.transport_config(transport_config_no_pqc());
     config
 }
 
@@ -52,7 +58,7 @@ fn client_config() -> ClientConfig {
     crypto.alpn_protocols = vec![b"test".to_vec()];
 
     let mut config = ClientConfig::new(Arc::new(QuicClientConfig::try_from(crypto).unwrap()));
-    config.transport_config(Arc::new(TransportConfig::default()));
+    config.transport_config(transport_config_no_pqc());
     config
 }
 
@@ -128,6 +134,7 @@ async fn legacy_client_rfc_server() {
     // Create a server that supports RFC NAT traversal
     let mut server_config = server_config();
     let mut transport = TransportConfig::default();
+    transport.enable_pqc(false);
     transport.nat_traversal_config(Some(
         NatTraversalConfig::server(VarInt::from_u32(10)).unwrap(),
     ));
@@ -183,6 +190,7 @@ async fn rfc_client_legacy_server() {
     // Create an RFC-aware client
     let mut client_config = client_config();
     let mut transport = TransportConfig::default();
+    transport.enable_pqc(false);
     transport.nat_traversal_config(Some(NatTraversalConfig::ClientSupport));
     client_config.transport_config(Arc::new(transport));
 
@@ -230,6 +238,7 @@ async fn rfc_to_rfc_negotiation() {
     // Create RFC-aware server
     let mut server_config = server_config();
     let mut transport = TransportConfig::default();
+    transport.enable_pqc(false);
     transport.nat_traversal_config(Some(
         NatTraversalConfig::server(VarInt::from_u32(10)).unwrap(),
     ));
@@ -238,6 +247,7 @@ async fn rfc_to_rfc_negotiation() {
     // Create RFC-aware client
     let mut client_config = client_config();
     let mut transport = TransportConfig::default();
+    transport.enable_pqc(false);
     transport.nat_traversal_config(Some(NatTraversalConfig::ClientSupport));
     client_config.transport_config(Arc::new(transport));
 
@@ -288,6 +298,7 @@ async fn nat_traversal_frame_compatibility() {
     // This test verifies basic connectivity with NAT traversal enabled
     let mut server_config = server_config();
     let mut transport = TransportConfig::default();
+    transport.enable_pqc(false);
     transport.nat_traversal_config(Some(
         NatTraversalConfig::server(VarInt::from_u32(5)).unwrap(),
     ));
@@ -295,6 +306,7 @@ async fn nat_traversal_frame_compatibility() {
 
     let mut client_config = client_config();
     let mut transport = TransportConfig::default();
+    transport.enable_pqc(false);
     transport.nat_traversal_config(Some(NatTraversalConfig::ClientSupport));
     client_config.transport_config(Arc::new(transport));
 
@@ -347,6 +359,7 @@ async fn malformed_frame_handling() {
 
     let mut server_config = server_config();
     let mut transport = TransportConfig::default();
+    transport.enable_pqc(false);
     transport.nat_traversal_config(Some(
         NatTraversalConfig::server(VarInt::from_u32(10)).unwrap(),
     ));

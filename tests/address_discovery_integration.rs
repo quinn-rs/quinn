@@ -6,7 +6,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use ant_quic::{
-    ClientConfig, Endpoint, ServerConfig,
+    ClientConfig, Endpoint, ServerConfig, TransportConfig,
     crypto::rustls::{QuicClientConfig, QuicServerConfig},
 };
 use std::{
@@ -23,12 +23,12 @@ fn ensure_crypto_provider() {
     #[cfg(feature = "rustls-aws-lc-rs")]
     let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
 
-    #[cfg(feature = "rustls-ring")]
-    let _ = rustls::crypto::ring::default_provider().install_default();
+    #[cfg(feature = "rustls-aws-lc-rs")]
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
 
     // If neither feature is enabled, use default
-    #[cfg(not(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring")))]
-    let _ = rustls::crypto::ring::default_provider().install_default();
+    #[cfg(not(any(feature = "rustls-aws-lc-rs", feature = "rustls-aws-lc-rs")))]
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
 }
 
 /// Helper to create a test certificate
@@ -42,9 +42,17 @@ fn generate_test_cert() -> (
     (cert_der, key_der)
 }
 
+fn address_discovery_transport_config() -> Arc<TransportConfig> {
+    let mut transport_config = TransportConfig::default();
+    transport_config.enable_address_discovery(true);
+    transport_config.enable_pqc(false);
+    Arc::new(transport_config)
+}
+
 /// Helper to create server and client endpoints with address discovery
 fn create_test_endpoints() -> (Endpoint, Endpoint) {
     let (cert, key) = generate_test_cert();
+    let transport_config = address_discovery_transport_config();
 
     // Create server config
     let mut server_crypto = rustls::ServerConfig::builder()
@@ -54,8 +62,9 @@ fn create_test_endpoints() -> (Endpoint, Endpoint) {
     server_crypto.alpn_protocols = vec![b"test".to_vec()];
 
     // Create server endpoint - address discovery is enabled by default
-    let server_config =
+    let mut server_config =
         ServerConfig::with_crypto(Arc::new(QuicServerConfig::try_from(server_crypto).unwrap()));
+    server_config.transport_config(transport_config.clone());
     let server_addr = SocketAddr::from((Ipv4Addr::LOCALHOST, 0));
     let server = Endpoint::server(server_config, server_addr).unwrap();
 
@@ -72,8 +81,9 @@ fn create_test_endpoints() -> (Endpoint, Endpoint) {
     let mut client = Endpoint::client(client_addr).unwrap();
 
     // Set client config
-    let client_config =
+    let mut client_config =
         ClientConfig::new(Arc::new(QuicClientConfig::try_from(client_crypto).unwrap()));
+    client_config.transport_config(transport_config);
     client.set_default_client_config(client_config);
 
     (server, client)
@@ -269,8 +279,9 @@ async fn test_address_discovery_rate_limiting() {
 
     // Create server with default configuration
     // Rate limiting is enforced internally at the protocol level
-    let server_config =
+    let mut server_config =
         ServerConfig::with_crypto(Arc::new(QuicServerConfig::try_from(server_crypto).unwrap()));
+    server_config.transport_config(address_discovery_transport_config());
     let server_addr = SocketAddr::from((Ipv4Addr::LOCALHOST, 0));
     let server = Endpoint::server(server_config, server_addr).unwrap();
 
@@ -316,8 +327,9 @@ async fn test_address_discovery_rate_limiting() {
     let mut client = Endpoint::client(SocketAddr::from((Ipv4Addr::LOCALHOST, 0))).unwrap();
 
     // Set client config
-    let client_config =
+    let mut client_config =
         ClientConfig::new(Arc::new(QuicClientConfig::try_from(client_crypto).unwrap()));
+    client_config.transport_config(address_discovery_transport_config());
     client.set_default_client_config(client_config);
 
     let connection = client
@@ -357,9 +369,10 @@ async fn test_bootstrap_mode_address_discovery() {
     bootstrap_crypto.alpn_protocols = vec![b"bootstrap".to_vec()];
 
     // Bootstrap nodes have higher observation rates by default
-    let bootstrap_config = ServerConfig::with_crypto(Arc::new(
+    let mut bootstrap_config = ServerConfig::with_crypto(Arc::new(
         QuicServerConfig::try_from(bootstrap_crypto).unwrap(),
     ));
+    bootstrap_config.transport_config(address_discovery_transport_config());
     let bootstrap_addr = SocketAddr::from((Ipv4Addr::LOCALHOST, 0));
     let bootstrap = Endpoint::server(bootstrap_config, bootstrap_addr).unwrap();
 
@@ -425,9 +438,10 @@ async fn test_bootstrap_mode_address_discovery() {
         let mut client = Endpoint::client(SocketAddr::from((Ipv4Addr::LOCALHOST, 0))).unwrap();
 
         // Set client config for each client
-        let client_config = ClientConfig::new(Arc::new(
+        let mut client_config = ClientConfig::new(Arc::new(
             QuicClientConfig::try_from(client_crypto.clone()).unwrap(),
         ));
+        client_config.transport_config(address_discovery_transport_config());
         client.set_default_client_config(client_config);
 
         let connection = client
@@ -478,10 +492,16 @@ async fn test_address_discovery_disabled() {
         .unwrap();
     server_crypto.alpn_protocols = vec![b"test".to_vec()];
 
+    let mut transport_config = TransportConfig::default();
+    transport_config.enable_address_discovery(false);
+    transport_config.enable_pqc(false);
+    let transport_config = Arc::new(transport_config);
+
     // Create server with default settings
     // To disable address discovery would require custom transport parameters
-    let server_config =
+    let mut server_config =
         ServerConfig::with_crypto(Arc::new(QuicServerConfig::try_from(server_crypto).unwrap()));
+    server_config.transport_config(transport_config.clone());
     let server_addr = SocketAddr::from((Ipv4Addr::LOCALHOST, 0));
     let server = Endpoint::server(server_config, server_addr).unwrap();
 
@@ -521,8 +541,9 @@ async fn test_address_discovery_disabled() {
     let mut client = Endpoint::client(SocketAddr::from((Ipv4Addr::LOCALHOST, 0))).unwrap();
 
     // Set client config
-    let client_config =
+    let mut client_config =
         ClientConfig::new(Arc::new(QuicClientConfig::try_from(client_crypto).unwrap()));
+    client_config.transport_config(transport_config);
     client.set_default_client_config(client_config);
 
     let connection = client
@@ -651,9 +672,10 @@ async fn test_nat_traversal_integration() {
     bootstrap_crypto.alpn_protocols = vec![b"bootstrap".to_vec()];
 
     // Bootstrap nodes have higher observation rates
-    let bootstrap_config = ServerConfig::with_crypto(Arc::new(
+    let mut bootstrap_config = ServerConfig::with_crypto(Arc::new(
         QuicServerConfig::try_from(bootstrap_crypto).unwrap(),
     ));
+    bootstrap_config.transport_config(address_discovery_transport_config());
     let bootstrap =
         Endpoint::server(bootstrap_config, SocketAddr::from((Ipv4Addr::LOCALHOST, 0))).unwrap();
 
@@ -702,9 +724,10 @@ async fn test_nat_traversal_integration() {
     let mut client_a = Endpoint::client(SocketAddr::from((Ipv4Addr::LOCALHOST, 0))).unwrap();
 
     // Set client config for client A
-    let client_config_a = ClientConfig::new(Arc::new(
+    let mut client_config_a = ClientConfig::new(Arc::new(
         QuicClientConfig::try_from(client_crypto.clone()).unwrap(),
     ));
+    client_config_a.transport_config(address_discovery_transport_config());
     client_a.set_default_client_config(client_config_a);
 
     let conn_a = client_a
@@ -717,8 +740,9 @@ async fn test_nat_traversal_integration() {
     let mut client_b = Endpoint::client(SocketAddr::from((Ipv4Addr::LOCALHOST, 0))).unwrap();
 
     // Set client config for client B
-    let client_config_b =
+    let mut client_config_b =
         ClientConfig::new(Arc::new(QuicClientConfig::try_from(client_crypto).unwrap()));
+    client_config_b.transport_config(address_discovery_transport_config());
     client_b.set_default_client_config(client_config_b);
 
     let conn_b = client_b

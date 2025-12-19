@@ -3,7 +3,7 @@
 //! This example demonstrates the simplest way to enable PQC in ant-quic
 //! using the QuicP2PNode high-level API.
 
-#[cfg(feature = "pqc")]
+
 use ant_quic::{
     auth::AuthConfig,
     crypto::pqc::{PqcConfig, PqcMode},
@@ -14,9 +14,9 @@ use ant_quic::{
     quic_node::{QuicNodeConfig, QuicP2PNode},
 };
 
-#[cfg(feature = "pqc")]
+
 use std::{net::SocketAddr, sync::Arc, time::Duration};
-#[cfg(feature = "pqc")]
+
 use tracing::{error, info, warn};
 
 #[tokio::main]
@@ -33,14 +33,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .init();
 
     // Check if PQC features are enabled
-    #[cfg(not(feature = "pqc"))]
+    
     {
         println!("Error: This example requires the 'pqc' feature to be enabled.");
         println!("Run with: cargo run --example pqc_basic --features pqc -- <server|client>");
         std::process::exit(1);
     }
 
-    #[cfg(feature = "pqc")]
+    
     {
         // Parse command line arguments
         let args: Vec<String> = std::env::args().collect();
@@ -78,7 +78,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     }
 }
 
-#[cfg(feature = "pqc")]
+
 async fn run_server() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     println!("🚀 Starting PQC-enabled QUIC server...");
 
@@ -88,14 +88,14 @@ async fn run_server() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     println!("📋 Server PeerID: {peer_id:?}");
 
     // Create PQC configuration (configured in the auth layer)
-    #[cfg(feature = "pqc")]
+    
     let pqc_config = PqcConfig::builder()
         .mode(PqcMode::Hybrid)
         .build()
         .map_err(|e| format!("Failed to build PQC config: {}", e))?;
-    #[cfg(feature = "pqc")]
+    
     println!("🔐 PQC Mode: {:?}", pqc_config.mode);
-    #[cfg(not(feature = "pqc"))]
+    
     println!("🔐 PQC disabled - using classical cryptography only");
 
     // Create server configuration
@@ -155,7 +155,7 @@ async fn run_server() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     }
 }
 
-#[cfg(feature = "pqc")]
+
 async fn run_client(
     server_addr: SocketAddr,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -167,14 +167,14 @@ async fn run_client(
     println!("📋 Client PeerID: {peer_id:?}");
 
     // Create PQC configuration
-    #[cfg(feature = "pqc")]
+    
     let pqc_config = PqcConfig::builder()
         .mode(PqcMode::Hybrid)
         .build()
         .map_err(|e| format!("Failed to build PQC config: {}", e))?;
-    #[cfg(feature = "pqc")]
+    
     println!("🔐 PQC Mode: {:?}", pqc_config.mode);
-    #[cfg(not(feature = "pqc"))]
+    
     println!("🔐 PQC disabled - using classical cryptography only");
 
     // Create client configuration

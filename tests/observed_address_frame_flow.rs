@@ -6,7 +6,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use ant_quic::{
-    ClientConfig, Endpoint, ServerConfig,
+    ClientConfig, Endpoint, ServerConfig, TransportConfig,
     crypto::rustls::{QuicClientConfig, QuicServerConfig},
 };
 use std::{
@@ -24,12 +24,18 @@ fn ensure_crypto_provider() {
     #[cfg(feature = "rustls-aws-lc-rs")]
     let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
 
-    #[cfg(feature = "rustls-ring")]
-    let _ = rustls::crypto::ring::default_provider().install_default();
+    #[cfg(feature = "rustls-aws-lc-rs")]
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
 
     // If neither feature is enabled, use default
-    #[cfg(not(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring")))]
-    let _ = rustls::crypto::ring::default_provider().install_default();
+    #[cfg(not(any(feature = "rustls-aws-lc-rs", feature = "rustls-aws-lc-rs")))]
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+}
+
+fn transport_config_no_pqc() -> Arc<TransportConfig> {
+    let mut transport_config = TransportConfig::default();
+    transport_config.enable_pqc(false);
+    Arc::new(transport_config)
 }
 
 /// Mock NAT environment for testing
@@ -446,8 +452,9 @@ fn create_test_server() -> Endpoint {
         .unwrap();
     server_config.alpn_protocols = vec![b"test".to_vec()];
 
-    let server_config =
+    let mut server_config =
         ServerConfig::with_crypto(Arc::new(QuicServerConfig::try_from(server_config).unwrap()));
+    server_config.transport_config(transport_config_no_pqc());
 
     Endpoint::server(server_config, SocketAddr::from((Ipv4Addr::LOCALHOST, 0))).unwrap()
 }
@@ -463,8 +470,9 @@ fn create_test_client() -> Endpoint {
     // Set ALPN protocols to match server
     client_crypto.alpn_protocols = vec![b"test".to_vec()];
 
-    let client_config =
+    let mut client_config =
         ClientConfig::new(Arc::new(QuicClientConfig::try_from(client_crypto).unwrap()));
+    client_config.transport_config(transport_config_no_pqc());
 
     let mut endpoint = Endpoint::client(SocketAddr::from((Ipv4Addr::LOCALHOST, 0))).unwrap();
 

@@ -19,7 +19,8 @@ use tracing::{Level, Span, debug, error, info, trace, warn};
 use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
 
 use crate::{
-    ConnectionId, Duration, Instant, Side, connection::nat_traversal::NatTraversalRole,
+    // v0.13.0: NatTraversalRole removed - all nodes are symmetric P2P nodes
+    ConnectionId, Duration, Instant, Side,
     frame::FrameType, transport_parameters::TransportParameterId,
 };
 
@@ -251,10 +252,11 @@ pub struct TransportParamInfo {
 }
 
 /// NAT traversal information
+///
+/// v0.13.0: role field removed - all nodes are symmetric P2P nodes.
 #[derive(Debug)]
 pub struct NatTraversalInfo {
-    /// NAT traversal role of this endpoint
-    pub role: NatTraversalRole,
+    // v0.13.0: role field removed - all nodes are symmetric P2P nodes
     /// Remote peer address involved in NAT traversal
     pub remote_addr: SocketAddr,
     /// Number of candidate addresses considered

@@ -37,7 +37,7 @@ pub fn init_crypto() {
         {
             let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
         }
-        #[cfg(all(feature = "rustls-ring", not(feature = "rustls-aws-lc-rs")))]
+        #[cfg(all(feature = "rustls-aws-lc-rs", not(feature = "rustls-aws-lc-rs")))]
         {
             let _ = rustls::crypto::ring::default_provider().install_default();
         }

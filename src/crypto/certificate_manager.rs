@@ -227,7 +227,7 @@ impl CertificateManager {
     }
 
     /// Create a server configuration from a certificate bundle
-    #[cfg(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring"))]
+    #[cfg(feature = "rustls-aws-lc-rs")]
     pub fn create_server_config(
         &self,
         bundle: &CertificateBundle,
@@ -245,7 +245,7 @@ impl CertificateManager {
     }
 
     /// Create a client configuration with optional certificate verification
-    #[cfg(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring"))]
+    #[cfg(feature = "rustls-aws-lc-rs")]
     pub fn create_client_config(&self) -> Result<Arc<rustls::ClientConfig>, CertificateError> {
         use rustls::ClientConfig;
 
@@ -328,11 +328,11 @@ impl CertificateManager {
 }
 
 /// Certificate verifier that accepts any certificate (for development/testing only)
-#[cfg(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring"))]
+#[cfg(feature = "rustls-aws-lc-rs")]
 #[derive(Debug)]
 struct NoCertificateVerifier;
 
-#[cfg(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring"))]
+#[cfg(feature = "rustls-aws-lc-rs")]
 impl rustls::client::danger::ServerCertVerifier for NoCertificateVerifier {
     fn verify_server_cert(
         &self,

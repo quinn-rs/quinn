@@ -1,9 +1,10 @@
 [package]
 name = "ant-quic"
-version = "0.10.5"
+version = "0.13.0"
 edition = "2024"
 rust-version = "1.85.0"
 license = "MIT OR Apache-2.0"
+autobins = false
 repository = "https://github.com/dirvine/ant-quic"
 description = "QUIC transport protocol with advanced NAT traversal for P2P networks"
 keywords = ["quic", "nat-traversal", "p2p", "autonomi", "networking"]
@@ -30,15 +31,13 @@ exclude = [
 ]
 
 [features]
-# Default features include only essential functionality
-# Make PQC support enabled by default. Classical-only can be opted in via a feature.
-default = ["platform-verifier", "network-discovery", "runtime-tokio", "rustls-ring", "pqc"]
+# Default features include essential functionality with 100% PQC support
+# v0.12.0: Removed rustls-ring, standardized on aws-lc-rs for PQC
+default = ["platform-verifier", "network-discovery", "runtime-tokio", "rustls-aws-lc-rs"]
 
-# Crypto providers
-rustls-ring = ["dep:rustls", "rustls?/ring", "ring"]
+# Crypto provider - aws-lc-rs only (required for PQC)
 rustls-aws-lc-rs = ["dep:rustls", "rustls?/aws-lc-rs", "aws-lc-rs"]
 aws-lc-rs = ["dep:aws-lc-rs", "aws-lc-rs?/aws-lc-sys", "aws-lc-rs?/prebuilt-nasm"]
-ring = ["dep:ring"]
 
 # Platform-specific certificate verification
 platform-verifier = ["dep:rustls-platform-verifier"]
@@ -58,8 +57,8 @@ arbitrary = ["dep:arbitrary"]
 __qlog = ["dep:qlog"]
 bloom = []
 
-# Post-Quantum Cryptography support
-pqc = ["saorsa-pqc", "aws-lc-rs"]
+# Post-Quantum Cryptography - always enabled in v0.12.0+
+# Note: saorsa-pqc and rustls-post-quantum are now required dependencies
 
 # Zero-cost tracing system
 trace = []
@@ -96,8 +95,8 @@ serde_yaml = "0.9"
 ed25519-dalek = { version = "2.1", features = ["rand_core"] }
 x25519-dalek = { version = "2.0", features = ["static_secrets"] }
 
-# Post-Quantum Cryptography
-saorsa-pqc = { version = "0.3.5", optional = true }
+# Post-Quantum Cryptography - required in v0.12.0+
+saorsa-pqc = { version = "0.3.5" }
 
 # Data structures
 slab = "0.4.11"
@@ -105,11 +104,12 @@ indexmap = "2.0"
 
 lru-slab = "0.1.2"
 
-# Crypto dependencies (optional)
-rustls = { version = "0.23.5", default-features = false, features = ["std"], optional = true }
-ring = { version = "0.17", optional = true }
-aws-lc-rs = { version = "1.9", default-features = false, features = ["unstable"], optional = true }
+# Crypto dependencies
+rustls = { version = "0.23.35", default-features = false, features = ["std"], optional = true }
+aws-lc-rs = { version = "1.12", default-features = false, features = ["unstable"], optional = true }
 rustls-platform-verifier = { version = "0.6", optional = true }
+# PQC crypto - required in v0.12.0+
+rustls-post-quantum = { version = "0.2" }
 
 # Network discovery dependencies (optional)
 socket2 = { version = "0.5", optional = true }
@@ -150,6 +150,7 @@ proptest-derive = { version = "0.5", optional = true }
 # criterion moved to dev-dependencies for benchmarks
 
 # Dependencies for ant-quic binary
+anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 tokio = { version = "1.28.1", features = ["full"] }
 tracing-subscriber = { version = "0.3.0", default-features = false, features = ["env-filter", "fmt", "ansi", "time", "local-time", "json"] }
@@ -207,7 +208,7 @@ proptest-derive = { version = "0.5" }
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(fuzzing)', 'cfg(wasm_browser)', 'cfg(feature, values("arbitrary", "__qlog", "bloom", "low_memory", "prometheus", "runtime-smol"))'] }
 
-# Main binary - unified P2P node with automatic coordinator services
+# Main P2P binary with NAT traversal support
 [[bin]]
 name = "ant-quic"
 path = "src/bin/ant-quic.rs"
@@ -271,7 +272,7 @@ name = "property_tests"
 path = "tests/property_tests/main.rs"
 
 [package.metadata.docs.rs]
-features = ["rustls-aws-lc-rs", "rustls-ring", "platform-verifier", "log"]
+features = ["rustls-aws-lc-rs", "platform-verifier", "log"]
 # Note: "prometheus" feature is intentionally excluded to avoid docs.rs compilation issues
 
  # Realistic clippy configuration - focus on meaningful issues

@@ -10,7 +10,6 @@ mod crypto_properties;
 mod frame_properties;
 mod generators;
 mod nat_properties;
-mod transport_properties;
 
 // Re-export config for use in tests
 pub mod config {

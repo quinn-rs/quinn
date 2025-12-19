@@ -25,7 +25,7 @@ fn init_crypto() {
         {
             let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
         }
-        #[cfg(all(feature = "rustls-ring", not(feature = "rustls-aws-lc-rs")))]
+        #[cfg(all(feature = "rustls-aws-lc-rs", not(feature = "rustls-aws-lc-rs")))]
         {
             let _ = rustls::crypto::ring::default_provider().install_default();
         }
@@ -74,10 +74,10 @@ trait QuicNodeExt {
 impl QuicNodeExt for Arc<QuicP2PNode> {
     fn local_addr(&self) -> anyhow::Result<SocketAddr> {
         let nat_endpoint = box_err!(self.get_nat_endpoint())?;
-        let quinn_endpoint = nat_endpoint
-            .get_quinn_endpoint()
-            .ok_or_else(|| anyhow::anyhow!("No quinn endpoint"))?;
-        Ok(quinn_endpoint.local_addr()?)
+        let quic_endpoint = nat_endpoint
+            .get_endpoint()
+            .ok_or_else(|| anyhow::anyhow!("No QUIC endpoint"))?;
+        Ok(quic_endpoint.local_addr()?)
     }
 }
 
@@ -264,12 +264,12 @@ async fn test_connection_state_inspection() -> anyhow::Result<()> {
     let addr2 = node2.local_addr()?;
 
     let nat_endpoint = box_err!(node1.get_nat_endpoint())?;
-    let quinn_endpoint = nat_endpoint
-        .get_quinn_endpoint()
-        .ok_or_else(|| anyhow::anyhow!("No quinn endpoint"))?;
+    let quic_endpoint = nat_endpoint
+        .get_endpoint()
+        .ok_or_else(|| anyhow::anyhow!("No QUIC endpoint"))?;
 
     println!("=== Before Connect ===");
-    println!("Local addr: {:?}", quinn_endpoint.local_addr());
+    println!("Local addr: {:?}", quic_endpoint.local_addr());
 
     // Connect
     let peer_id = box_err!(node1.connect_to_bootstrap(addr2).await)?;

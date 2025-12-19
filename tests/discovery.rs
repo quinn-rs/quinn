@@ -13,8 +13,14 @@ where
     F: FnOnce() -> R + Send + 'static,
     R: Send + 'static,
 {
-    match tokio::time::timeout(dur, tokio::task::spawn_blocking(f)).await {
-        Ok(join) => join.map_err(|_| "task panicked"),
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(f());
+    });
+
+    match tokio::time::timeout(dur, rx).await {
+        Ok(Ok(result)) => Ok(result),
+        Ok(Err(_)) => Err("task panicked"),
         Err(_elapsed) => Err("timeout"),
     }
 }

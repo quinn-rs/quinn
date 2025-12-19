@@ -23,10 +23,9 @@ fn gen_self_signed_cert() -> (Vec<CertificateDer<'static>>, PrivateKeyDer<'stati
 
 async fn do_connect_classical_tls_loopback() {
     // Install a default crypto provider for rustls.
+    // Use aws-lc-rs as the default provider (only one installation needed)
     #[cfg(feature = "rustls-aws-lc-rs")]
     let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
-    #[cfg(all(not(feature = "rustls-aws-lc-rs"), feature = "rustls-ring"))]
-    let _ = rustls::crypto::ring::default_provider().install_default();
 
     // Server config with a self-signed cert
     let (chain, key) = gen_self_signed_cert();
@@ -85,7 +84,7 @@ async fn connect_classical_tls_loopback() {
 // PQC capability + connection smoke: ensure PQC primitives work and a classical QUIC
 // handshake still succeeds on the same runtime. This validates local readiness for
 // enabling hybrid KEX in CI or dockerized envs.
-#[cfg(feature = "pqc")]
+
 #[tokio::test]
 async fn pqc_capability_plus_connection_smoke() {
     use ant_quic::crypto::pqc::{MlDsa65, MlDsaOperations, MlKem768, MlKemOperations};

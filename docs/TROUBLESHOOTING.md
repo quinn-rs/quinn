@@ -1,6 +1,6 @@
 # Troubleshooting Guide for ant-quic
 
-This guide helps diagnose and resolve common issues with ant-quic's NAT traversal and address discovery features.
+This guide helps diagnose and resolve common issues with ant-quic's v0.13.0+ NAT traversal and address discovery features.
 
 ## Table of Contents
 1. [Connection Issues](#connection-issues)
@@ -8,7 +8,7 @@ This guide helps diagnose and resolve common issues with ant-quic's NAT traversa
 3. [Address Discovery Issues](#address-discovery-issues)
 4. [Performance Problems](#performance-problems)
 5. [Authentication Failures](#authentication-failures)
-6. [Bootstrap Node Issues](#bootstrap-node-issues)
+6. [PQC Issues](#pqc-issues)
 7. [Debugging Tools](#debugging-tools)
 8. [Common Error Messages](#common-error-messages)
 9. [Platform-Specific Issues](#platform-specific-issues)
@@ -34,15 +34,12 @@ This guide helps diagnose and resolve common issues with ant-quic's NAT traversa
    nc -zv quic.saorsalabs.com 9000
    ```
 
-2. **Verify bootstrap nodes are running**
+2. **Verify known peers are running**
    ```rust
-   // Use multiple bootstrap nodes for redundancy
-   let config = NatTraversalConfig {
-       bootstrap_nodes: vec![
-           "quic.saorsalabs.com:9000".parse()?
-       ],
-       ..Default::default()
-   };
+   let config = P2pConfig::builder()
+       .known_peer("peer1.example.com:9000".parse()?)
+       .known_peer("peer2.example.com:9000".parse()?)
+       .build()?;
    ```
 
 3. **Check firewall settings**
@@ -59,7 +56,7 @@ This guide helps diagnose and resolve common issues with ant-quic's NAT traversa
 
 4. **Enable debug logging**
    ```bash
-   RUST_LOG=ant_quic=debug,quinn=debug cargo run
+   RUST_LOG=ant_quic=debug cargo run
    ```
 
 ### Problem: Connections drop after establishment
@@ -73,31 +70,31 @@ This guide helps diagnose and resolve common issues with ant-quic's NAT traversa
 
 1. **Increase connection timeout**
    ```rust
-   let config = QuicNodeConfig {
-       connection_timeout: Duration::from_secs(60), // Increase from 30s
-       ..Default::default()
-   };
+   let config = P2pConfig::builder()
+       .connection_timeout(Duration::from_secs(60))
+       .build()?;
    ```
 
-2. **Check for network instability**
+2. **Monitor connection events**
    ```rust
-   // Monitor connection events
-   endpoint.set_event_callback(|event| {
+   let mut events = endpoint.subscribe();
+   while let Ok(event) = events.recv().await {
        match event {
-           ConnectionEvent::ConnectionLost { reason } => {
-               eprintln!("Connection lost: {:?}", reason);
+           P2pEvent::Disconnected { peer_id, reason } => {
+               eprintln!("Disconnected from {}: {}", peer_id.to_hex(), reason);
            }
            _ => {}
        }
-   });
+   }
    ```
 
-3. **Verify keepalive settings**
+3. **Check keepalive settings**
    ```rust
    // QUIC handles keepalives automatically
-   // But you can adjust transport parameters
-   let mut transport_config = TransportConfig::default();
-   transport_config.keep_alive_interval(Some(Duration::from_secs(15)));
+   // Check that idle timeout is appropriate
+   let config = P2pConfig::builder()
+       .idle_timeout(Duration::from_secs(60))
+       .build()?;
    ```
 
 ## NAT Traversal Problems
@@ -107,33 +104,37 @@ This guide helps diagnose and resolve common issues with ant-quic's NAT traversa
 **Symptoms:**
 - Works on some networks but not others
 - "No viable candidates" error
-- Connection works with relay but not direct
+- Connection works via relay but not direct
 
 **Solutions:**
 
-1. **Enable address discovery (if disabled)**
+1. **Enable address discovery**
    ```rust
-   // Ensure address discovery is enabled
-   endpoint_config.set_address_discovery_enabled(true);
+   // Address discovery is enabled by default in v0.13.0+
+   // Verify with debug logging:
+   RUST_LOG=ant_quic::address_discovery=debug cargo run
    ```
 
 2. **Increase candidate discovery timeout**
    ```rust
-   let config = NatTraversalConfig {
-       discovery_timeout: Duration::from_secs(10), // Increase from 5s
-       max_candidates: 15, // Increase from 10
-       ..Default::default()
-   };
+   let config = P2pConfig::builder()
+       .nat(NatConfig {
+           discovery_timeout: Duration::from_secs(10),
+           max_candidates: 15,
+           enable_symmetric_nat: true,
+           ..Default::default()
+       })
+       .build()?;
    ```
 
-3. **Use more bootstrap nodes**
+3. **Use more known peers**
    ```rust
-   // More bootstrap nodes = better NAT detection
-   let bootstrap_nodes = vec![
-       "us-east.bootstrap.com:9000".parse()?,
-       "eu-west.bootstrap.com:9000".parse()?,
-       "asia-pacific.bootstrap.com:9000".parse()?,
-   ];
+   // More known peers = better address observation
+   let config = P2pConfig::builder()
+       .known_peer("us-east.example.com:9000".parse()?)
+       .known_peer("eu-west.example.com:9000".parse()?)
+       .known_peer("asia.example.com:9000".parse()?)
+       .build()?;
    ```
 
 4. **Check NAT type**
@@ -141,7 +142,7 @@ This guide helps diagnose and resolve common issues with ant-quic's NAT traversa
    // Log discovered addresses to understand NAT behavior
    let addresses = endpoint.discovered_addresses();
    for addr in addresses {
-       println!("Discovered: {} (check if port changes)", addr);
+       println!("Discovered: {} (check if port varies)", addr);
    }
    ```
 
@@ -156,10 +157,13 @@ This guide helps diagnose and resolve common issues with ant-quic's NAT traversa
 
 1. **Increase coordination timeout**
    ```rust
-   let config = NatTraversalConfig {
-       coordination_timeout: Duration::from_secs(20), // Increase from 10s
-       ..Default::default()
-   };
+   let config = P2pConfig::builder()
+       .nat(NatConfig {
+           coordination_timeout: Duration::from_secs(20),
+           hole_punch_retries: 8,
+           ..Default::default()
+       })
+       .build()?;
    ```
 
 2. **Check time synchronization**
@@ -172,14 +176,13 @@ This guide helps diagnose and resolve common issues with ant-quic's NAT traversa
    w32tm /query /status
    ```
 
-3. **Verify bootstrap node connectivity**
+3. **Verify peer connectivity**
    ```rust
-   // Monitor bootstrap connection health
-   for bootstrap in &config.bootstrap_nodes {
-       match endpoint.ping_bootstrap(bootstrap).await {
-           Ok(rtt) => println!("Bootstrap {} RTT: {:?}", bootstrap, rtt),
-           Err(e) => eprintln!("Bootstrap {} unreachable: {}", bootstrap, e),
-       }
+   // Test connection to known peer
+   let connection = endpoint.connect("peer.example.com:9000".parse()?).await;
+   match connection {
+       Ok(_) => println!("Known peer reachable"),
+       Err(e) => eprintln!("Known peer unreachable: {}", e),
    }
    ```
 
@@ -194,12 +197,14 @@ This guide helps diagnose and resolve common issues with ant-quic's NAT traversa
 
 **Solutions:**
 
-1. **Check if address discovery is enabled**
+1. **Connect to known peers first**
    ```rust
-   // Verify configuration
-   if !endpoint_config.address_discovery_enabled() {
-       endpoint_config.set_address_discovery_enabled(true);
-   }
+   // Address discovery requires at least one connection
+   endpoint.connect_bootstrap().await?;
+
+   // Then check addresses
+   let addresses = endpoint.discovered_addresses();
+   println!("Discovered {} addresses", addresses.len());
    ```
 
 2. **Verify transport parameter negotiation**
@@ -208,14 +213,10 @@ This guide helps diagnose and resolve common issues with ant-quic's NAT traversa
    RUST_LOG=ant_quic::transport_parameters=trace cargo run
    ```
 
-3. **Check rate limiting**
-   ```rust
-   // Temporarily increase rate limit for testing
-   endpoint_config.set_max_observation_rate(60);
-
-   // Check statistics
-   let stats = endpoint.address_discovery_stats();
-   println!("Observation rate limited: {}", stats.rate_limited_count);
+3. **Check if peers support address discovery**
+   ```bash
+   # Look for OBSERVED_ADDRESS frames in trace logs
+   RUST_LOG=ant_quic::frame=trace cargo run 2>&1 | grep OBSERVED_ADDRESS
    ```
 
 ### Problem: Wrong addresses being observed
@@ -227,31 +228,31 @@ This guide helps diagnose and resolve common issues with ant-quic's NAT traversa
 
 **Solutions:**
 
-1. **Validate bootstrap node configuration**
-   ```rust
-   // Ensure bootstrap nodes are on public IPs
-   for bootstrap in &bootstrap_nodes {
-       if is_private_ip(bootstrap.ip()) {
-           eprintln!("Warning: Bootstrap {} is on private IP", bootstrap);
-       }
-   }
+1. **Validate peer connectivity**
+   ```bash
+   # Check your actual external IP
+   curl -s https://api.ipify.org
+
+   # Compare with discovered addresses in logs
    ```
 
 2. **Check for proxies or tunnels**
    ```bash
-   # Check if behind proxy
-   curl -s https://api.ipify.org
-
-   # Compare with discovered addresses
+   # Verify you're not behind VPN or proxy
+   traceroute peer.example.com
    ```
 
 3. **Force specific address family**
    ```rust
-   // For IPv4-only networks
-   let socket = std::net::UdpSocket::bind("0.0.0.0:0")?;
+   // For IPv4-only
+   let config = P2pConfig::builder()
+       .bind_addr("0.0.0.0:9000".parse()?)
+       .build()?;
 
-   // For IPv6-only networks
-   let socket = std::net::UdpSocket::bind("[::]:0")?;
+   // For IPv6-only
+   let config = P2pConfig::builder()
+       .bind_addr("[::]:9000".parse()?)
+       .build()?;
    ```
 
 ## Performance Problems
@@ -267,19 +268,12 @@ This guide helps diagnose and resolve common issues with ant-quic's NAT traversa
 
 1. **Reduce connection limits**
    ```rust
-   let config = QuicNodeConfig {
-       max_connections: 50, // Reduce from 100
-       ..Default::default()
-   };
+   let config = P2pConfig::builder()
+       .max_connections(50)
+       .build()?;
    ```
 
-2. **Adjust observation rates**
-   ```rust
-   // Reduce address observation frequency
-   endpoint_config.set_max_observation_rate(10); // Reduce from 30
-   ```
-
-3. **Profile the application**
+2. **Profile the application**
    ```bash
    # Use cargo flamegraph
    cargo install flamegraph
@@ -295,28 +289,22 @@ This guide helps diagnose and resolve common issues with ant-quic's NAT traversa
 
 **Solutions:**
 
-1. **Limit pending operations**
+1. **Tune PQC memory pool**
    ```rust
-   let auth_config = AuthConfig {
-       max_pending_auths: 50, // Reduce from 100
-       ..Default::default()
-   };
+   let config = P2pConfig::builder()
+       .pqc(PqcConfig::builder()
+           .memory_pool_size(5)  // Reduce from default 10
+           .build()?)
+       .build()?;
    ```
 
-2. **Configure buffer sizes**
-   ```rust
-   let mut transport_config = TransportConfig::default();
-   transport_config.stream_receive_window(256 * 1024); // Reduce window
-   transport_config.receive_window(512 * 1024);
-   ```
-
-3. **Monitor for leaks**
+2. **Monitor for leaks**
    ```bash
    # Use valgrind on Linux
-   valgrind --leak-check=full cargo run
+   valgrind --leak-check=full ./ant-quic
 
    # Use heaptrack
-   heaptrack cargo run
+   heaptrack ./ant-quic
    ```
 
 ## Authentication Failures
@@ -332,110 +320,80 @@ This guide helps diagnose and resolve common issues with ant-quic's NAT traversa
 
 1. **Verify key generation**
    ```rust
-   // Check if keys are properly generated
+   use ant_quic::key_utils::{generate_ed25519_keypair, derive_peer_id};
+
    let (private_key, public_key) = generate_ed25519_keypair();
-   let peer_id = derive_peer_id_from_public_key(&public_key);
+   let peer_id = derive_peer_id(&public_key);
    println!("Generated peer ID: {:?}", peer_id);
    ```
 
-2. **Check challenge-response timeout**
+2. **Check Raw Public Key format**
    ```rust
-   let auth_config = AuthConfig {
-       challenge_timeout: Duration::from_secs(60), // Increase timeout
-       ..Default::default()
-   };
+   // ant-quic uses RFC 7250 Raw Public Keys
+   // Ensure you're using Ed25519 keys, not certificates
    ```
 
 3. **Verify time synchronization**
    ```rust
    // Authentication includes timestamps
-   let now = SystemTime::now();
+   let now = std::time::SystemTime::now();
    println!("System time: {:?}", now);
    ```
 
-### Problem: Certificate validation errors
+## PQC Issues
+
+### Problem: PQC handshake fails
 
 **Symptoms:**
-- "Certificate verification failed"
-- "Unknown CA" errors
-- TLS handshake failures
+- "PQC negotiation failed" errors
+- Handshake timeouts
+- Cannot connect to any peers
 
 **Solutions:**
 
-1. **Use raw public keys instead**
-   ```rust
-   // ant-quic supports RFC 7250 raw public keys
-   // No certificate chain needed
+1. **Check peer version compatibility**
+   ```bash
+   # v0.13.0+ requires PQC - older peers may not support it
+   # Ensure all peers are running v0.13.0+
    ```
 
-2. **Check certificate expiry**
+2. **Increase handshake timeout**
    ```rust
-   // For custom certificates
-   let cert = load_certificate()?;
-   if cert.is_expired() {
-       eprintln!("Certificate has expired!");
-   }
+   let config = P2pConfig::builder()
+       .pqc(PqcConfig::builder()
+           .handshake_timeout_multiplier(2.0)
+           .build()?)
+       .build()?;
    ```
 
-## Bootstrap Node Issues
+3. **Check for hardware support**
+   ```bash
+   # Verify CPU supports required instructions
+   RUST_LOG=ant_quic::crypto::pqc=debug cargo run 2>&1 | grep -i "hardware\|simd\|avx"
+   ```
 
-### Problem: Bootstrap node overwhelmed
+### Problem: High PQC overhead
 
 **Symptoms:**
-- Bootstrap node high CPU/memory
-- Slow response times
-- Connection timeouts to bootstrap
+- Slow connection establishment
+- High CPU during handshakes
+- Memory spikes
 
 **Solutions:**
 
-1. **Scale horizontally**
+1. **Tune PQC settings**
    ```rust
-   // Run multiple bootstrap nodes
-   // Load balance using DNS round-robin
+   let config = P2pConfig::builder()
+       .pqc(PqcConfig::builder()
+           .memory_pool_size(10)
+           .build()?)
+       .build()?;
    ```
 
-2. **Adjust bootstrap configuration**
+2. **Use connection pooling**
    ```rust
-   // For bootstrap nodes
-   let config = NatTraversalConfig {
-       role: EndpointRole::Server { can_coordinate: true },
-       max_connections: 1000, // Increase limit
-       ..Default::default()
-   };
-   ```
-
-3. **Implement rate limiting**
-   ```rust
-   // Per-IP rate limiting for bootstrap
-   struct BootstrapRateLimiter {
-       limits: HashMap<IpAddr, RateLimiter>,
-   }
-   ```
-
-### Problem: Bootstrap coordination failures
-
-**Symptoms:**
-- "Coordinator unreachable" errors
-- Hole punching never starts
-- Peers can't find each other
-
-**Solutions:**
-
-1. **Verify coordinator role**
-   ```rust
-   // Ensure bootstrap can coordinate
-   let config = NatTraversalConfig {
-       role: EndpointRole::Server { can_coordinate: true },
-       ..Default::default()
-   };
-   ```
-
-2. **Check coordinator capacity**
-   ```rust
-   // Monitor active coordination sessions
-   let stats = bootstrap_endpoint.coordination_stats();
-   println!("Active sessions: {}", stats.active_sessions);
-   println!("Session capacity: {}", stats.max_sessions);
+   // Reuse connections instead of creating new ones
+   // PQC handshake overhead is amortized over connection lifetime
    ```
 
 ## Debugging Tools
@@ -444,11 +402,12 @@ This guide helps diagnose and resolve common issues with ant-quic's NAT traversa
 
 ```bash
 # Full debug logging
-RUST_LOG=ant_quic=trace,quinn=debug cargo run
+RUST_LOG=ant_quic=trace cargo run
 
 # Specific module logging
 RUST_LOG=ant_quic::nat_traversal=debug cargo run
 RUST_LOG=ant_quic::address_discovery=trace cargo run
+RUST_LOG=ant_quic::crypto::pqc=debug cargo run
 
 # Log to file
 RUST_LOG=debug cargo run 2>&1 | tee debug.log
@@ -462,17 +421,6 @@ sudo tcpdump -i any -w quic.pcap 'udp port 9000'
 
 # Analyze with Wireshark (has QUIC dissector)
 wireshark quic.pcap
-```
-
-### Connection state inspection
-
-```rust
-// Add connection state logging
-endpoint.set_debug_callback(|state| {
-    println!("Connection state: {:?}", state);
-    println!("Active paths: {:?}", state.paths);
-    println!("Discovered addresses: {:?}", state.discovered);
-});
 ```
 
 ### Performance profiling
@@ -491,15 +439,15 @@ heaptrack --analyze heaptrack.cargo.12345.gz
 
 ### "No viable candidates for connection"
 - **Cause**: No valid address pairs found
-- **Fix**: Enable address discovery, add more bootstrap nodes
+- **Fix**: Enable address discovery, add more known peers
 
 ### "Coordination timeout reached"
 - **Cause**: Hole punching coordination failed
-- **Fix**: Increase timeout, check bootstrap connectivity
+- **Fix**: Increase timeout, check peer connectivity
 
-### "Rate limit exceeded for observations"
-- **Cause**: Too many observation frames
-- **Fix**: Normal behavior, adjust rate limit if needed
+### "PQC handshake failed: peer does not support PQC"
+- **Cause**: Connecting to pre-v0.13.0 peer
+- **Fix**: Upgrade peer to v0.13.0+
 
 ### "Authentication challenge expired"
 - **Cause**: Response took too long
@@ -508,10 +456,6 @@ heaptrack --analyze heaptrack.cargo.12345.gz
 ### "Connection migration failed"
 - **Cause**: Network change during connection
 - **Fix**: Normal behavior, connection will retry
-
-### "Bootstrap node connection refused"
-- **Cause**: Bootstrap not running or firewall blocking
-- **Fix**: Verify bootstrap status, check firewall
 
 ## Platform-Specific Issues
 
@@ -538,12 +482,6 @@ sudo /usr/libexec/ApplicationFirewall/socketfilterfw --add $(pwd)/ant-quic
 sudo /usr/libexec/ApplicationFirewall/socketfilterfw --unblockapp $(pwd)/ant-quic
 ```
 
-**Problem**: DNS resolution slow
-```rust
-// Use specific DNS resolver
-std::env::set_var("TRUST_DNS_RESOLVER", "8.8.8.8");
-```
-
 ### Windows
 
 **Problem**: Windows Defender blocking
@@ -555,35 +493,36 @@ Add-MpPreference -ExclusionPath "C:\path\to\ant-quic.exe"
 **Problem**: Network interface detection fails
 ```rust
 // Fallback to manual configuration
-let local_addr = "192.168.1.100:9000".parse()?;
-config.bind_addr = Some(local_addr);
+let config = P2pConfig::builder()
+    .bind_addr("192.168.1.100:9000".parse()?)
+    .build()?;
 ```
 
 ## FAQ
 
 ### Q: Why is address discovery important for NAT traversal?
-**A**: Address discovery provides accurate external addresses without STUN servers, improving connection success rates by 27% and making connections 7x faster.
+**A**: Address discovery provides accurate external addresses without STUN servers, improving connection success rates by ~27% and making connections faster.
 
-### Q: Can I disable address discovery for privacy?
-**A**: Yes, set `endpoint_config.set_address_discovery_enabled(false)`. Note that this may reduce connection success rates.
+### Q: How many known peers should I use?
+**A**: Use at least 3 known peers in different geographic locations for redundancy and accurate address observation.
 
-### Q: How many bootstrap nodes should I use?
-**A**: Use at least 3 bootstrap nodes in different geographic locations for redundancy.
+### Q: What's the overhead of PQC?
+**A**: Approximately 8% compared to classical-only cryptography. Connection pooling minimizes impact.
 
-### Q: What's the overhead of address discovery?
-**A**: Minimal - approximately 15ns per frame processing and 100 bytes per path for tracking.
-
-### Q: Can I use ant-quic without bootstrap nodes?
-**A**: Yes, if peers have public IPs or are on the same local network. Bootstrap nodes are primarily for NAT traversal coordination.
+### Q: Can I use ant-quic without any known peers?
+**A**: Yes, if peers have public IPs or are on the same local network. Known peers are primarily for NAT traversal and address discovery.
 
 ### Q: How do I know what type of NAT I'm behind?
-**A**: Check the discovered addresses - if the port changes between connections, you're likely behind a symmetric NAT.
+**A**: Check discovered addresses - if the port changes between connections to different peers, you're likely behind a symmetric NAT.
 
 ### Q: Why do connections fail even with address discovery?
 **A**: Some network configurations (CGNAT, strict firewalls) may still block direct connections. Consider using a relay as fallback.
 
+### Q: Can I disable PQC for debugging?
+**A**: No. In v0.13.0+, PQC is always enabled. Use debug logging instead to diagnose PQC issues.
+
 ### Q: How can I improve connection reliability?
-**A**: Use multiple bootstrap nodes, enable address discovery, increase timeouts, and implement retry logic with exponential backoff.
+**A**: Use multiple known peers, enable address discovery, increase timeouts, and implement retry logic with exponential backoff.
 
 ## Getting Help
 
@@ -592,10 +531,10 @@ If you've tried the solutions above and still have issues:
 1. **Enable debug logging** and collect logs
 2. **Check GitHub issues** for similar problems
 3. **File a bug report** with:
-   - ant-quic version
+   - ant-quic version (`ant-quic --version`)
    - Platform and OS version
    - Network configuration
    - Debug logs
    - Steps to reproduce
 
-Report issues at: https://github.com/autonomi/ant-quic/issues
+Report issues at: https://github.com/dirvine/ant-quic/issues

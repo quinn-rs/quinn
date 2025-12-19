@@ -847,11 +847,13 @@ impl CandidateDiscoveryManager {
         }
 
         // Check if scanning is complete
-        let scan_complete_result = self
-            .interface_discovery
-            .lock()
-            .unwrap_or_else(|_| panic!("interface discovery mutex should be valid"))
-            .check_scan_complete();
+        let scan_complete_result = match self.interface_discovery.lock() {
+            Ok(mut interface_discovery) => interface_discovery.check_scan_complete(),
+            Err(e) => {
+                error!("Interface discovery mutex poisoned: {}", e);
+                return;
+            }
+        };
         if let Some(interfaces) = scan_complete_result {
             self.process_session_local_interfaces(session, interfaces, events, now);
         }
@@ -1586,7 +1588,7 @@ impl CandidateDiscoveryManager {
         &mut self,
         peer_id: PeerId,
         discovered_address: SocketAddr,
-    ) -> Result<(), DiscoveryError> {
+    ) -> Result<bool, DiscoveryError> {
         // Calculate priority for the discovered address first to avoid borrow issues
         let priority = self.calculate_quic_discovered_priority(&discovered_address);
 
@@ -1608,7 +1610,7 @@ impl CandidateDiscoveryManager {
                 "QUIC-discovered address {} already in candidates",
                 discovered_address
             );
-            return Ok(());
+            return Ok(false);
         }
 
         info!("Accepting QUIC-discovered address: {}", discovered_address);
@@ -1625,7 +1627,7 @@ impl CandidateDiscoveryManager {
         session.discovered_candidates.push(candidate);
         session.statistics.server_reflexive_candidates_found += 1;
 
-        Ok(())
+        Ok(true)
     }
 
     /// Calculate priority for QUIC-discovered addresses
@@ -1758,7 +1760,7 @@ pub struct NetworkInterface {
 #[derive(Debug)]
 #[allow(dead_code)]
 struct BootstrapConnection {
-    /// Quinn connection to the bootstrap node
+    /// QUIC connection to the bootstrap node
     connection: crate::Connection,
     /// Address of the bootstrap node
     address: SocketAddr,
@@ -1780,7 +1782,11 @@ struct AddressObservationRequest {
     capabilities: u32,
 }
 
-/// Server reflexive address discovery coordinator (legacy; compiled out)
+/// Server reflexive address discovery coordinator
+///
+/// NOTE: This is legacy code that is compiled out via `#[cfg(any())]`.
+/// Address discovery is now handled via the OBSERVED_ADDRESS frame mechanism
+/// in the connection module. This code is kept for reference only.
 #[cfg(any())]
 #[derive(Debug)]
 #[allow(dead_code)]
@@ -1792,7 +1798,7 @@ pub(crate) struct ServerReflexiveDiscovery {
     responses: VecDeque<ServerReflexiveResponse>,
     /// Query timeout tracker
     query_timeouts: HashMap<BootstrapNodeId, Instant>,
-    /// Active Quinn connections to bootstrap nodes (production builds)
+    /// Active QUIC connections to bootstrap nodes (production builds)
     active_connections: HashMap<BootstrapNodeId, BootstrapConnection>,
     /// Runtime handle for async operations (production builds)
     runtime_handle: Option<tokio::runtime::Handle>,
@@ -1843,9 +1849,9 @@ impl ServerReflexiveDiscovery {
                 node_id
             );
 
-            // Try to establish real Quinn connection in production
+            // Try to establish real QUIC connection in production
             if let Some(runtime) = &self.runtime_handle {
-                self.start_quinn_query(node_id, runtime.clone(), now);
+                self.start_bootstrap_query(node_id, runtime.clone(), now);
             } else {
                 warn!(
                     "No async runtime available, falling back to simulation for node {:?}",
@@ -1860,9 +1866,9 @@ impl ServerReflexiveDiscovery {
 
     // Removed start_queries_with_addresses; not used in minimal flow
 
-    /// Start a real Quinn-based query to a bootstrap node (production builds)
+    /// Start a real QUIC-based query to a bootstrap node (production builds)
     #[allow(dead_code)]
-    fn start_quinn_query(
+    fn start_bootstrap_query(
         &mut self,
         node_id: BootstrapNodeId,
         _runtime: tokio::runtime::Handle,
@@ -1876,26 +1882,26 @@ impl ServerReflexiveDiscovery {
         let request_id = rand::random::<u64>();
 
         debug!(
-            "Starting Quinn connection to bootstrap node {:?} with request ID {}",
+            "Starting QUIC connection to bootstrap node {:?} with request ID {}",
             node_id, request_id
         );
 
         // In a complete implementation, this would:
-        // 1. Create Quinn endpoint if not exists
+        // 1. Create QUIC endpoint if not exists
         // 2. Connect to bootstrap node address
         // 3. Send AddressObservationRequest message
         // 4. Wait for ADD_ADDRESS frame response
         // 5. Parse response and create ServerReflexiveResponse
 
         // For now, simulate success to maintain compatibility
-        // TODO: Replace with real Quinn connection establishment
+        // TODO: Replace with real QUIC connection establishment
         self.simulate_bootstrap_response(node_id, now);
     }
 
-    // Removed start_quinn_query_with_address; not used in minimal flow
+    // Removed start_bootstrap_query_with_address; not used in minimal flow
 
-    /// Perform the actual Quinn-based bootstrap query (async)
-    // NOTE: This function was written for Quinn's high-level API which we don't have
+    /// Perform the actual QUIC-based bootstrap query (async)
+    // NOTE: This function was written for external Quinn API which we don't have
     // since ant-quic IS a fork of Quinn, not something that uses Quinn.
     // This needs to be rewritten to work with our low-level protocol implementation.
     #[allow(dead_code)]
@@ -1998,14 +2004,17 @@ impl ServerReflexiveDiscovery {
     }
 
     /// Wait for ADD_ADDRESS frame from bootstrap node
+    ///
+    /// NOTE: This legacy function is not used. Address discovery is now handled
+    /// via the OBSERVED_ADDRESS frame mechanism in the connection module.
     #[allow(dead_code)]
     async fn wait_for_add_address_frame(
         _connection: &Connection,
         _expected_request_id: u64,
     ) -> Result<SocketAddr, Box<dyn std::error::Error + Send + Sync>> {
-        // TODO: This function needs to be rewritten to work with low-level Quinn API
-        // The high-level accept_uni() and read_to_end() methods are not available
-        Err("wait_for_add_address_frame not implemented for low-level API".into())
+        // This legacy code path is not used - address discovery now works via
+        // OBSERVED_ADDRESS frames which are processed in connection/mod.rs
+        Err("Legacy function - use OBSERVED_ADDRESS frame mechanism instead".into())
 
         /* Original code that uses high-level API:
         use crate::frame::{Frame, AddAddress};
@@ -2151,7 +2160,11 @@ impl ServerReflexiveDiscovery {
     }
 }
 
-/// Symmetric NAT port prediction engine (legacy; compiled out)
+/// Symmetric NAT port prediction engine
+///
+/// NOTE: This is legacy code that is compiled out via `#[cfg(any())]`.
+/// NAT traversal is now handled via PUNCH_ME_NOW frames and the
+/// hole-punching coordination in the connection module.
 #[cfg(any())]
 #[derive(Debug)]
 pub(crate) struct SymmetricNatPredictor {

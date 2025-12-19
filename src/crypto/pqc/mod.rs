@@ -32,6 +32,7 @@ pub mod ml_kem_impl;
 pub mod negotiation;
 pub mod packet_handler;
 pub mod parallel;
+pub mod pqc_crypto_provider;
 pub mod rustls_provider;
 pub mod security_validation;
 pub mod tls;
@@ -40,7 +41,8 @@ pub mod tls_integration;
 pub mod types;
 
 /// Post-Quantum Cryptography exports - always available
-pub use config::{HybridPreference, PqcConfig, PqcConfigBuilder, PqcMode};
+pub use config::{PqcConfig, PqcConfigBuilder};
+pub use pqc_crypto_provider::{create_crypto_provider, is_pqc_group, validate_negotiated_group};
 pub use types::{PqcError, PqcResult};
 
 // PQC algorithm implementations - always available
@@ -108,7 +110,7 @@ use types::{
     MlKemSecretKey, SharedSecret,
 };
 
-#[cfg(all(test, feature = "pqc"))]
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -127,7 +129,7 @@ mod tests {
     }
 }
 
-#[cfg(all(test, feature = "pqc"))]
+#[cfg(test)]
 mod performance_tests {
     use super::*;
     use std::time::Instant;

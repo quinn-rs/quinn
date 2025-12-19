@@ -5,6 +5,124 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.13.0] - 2025-12-19
+
+### Breaking Changes
+- **100% Post-Quantum Cryptography Always-On** 🔐
+  - PQC is now mandatory on every connection - no classical-only mode
+  - Removed `PqcMode` enum (ClassicalOnly, Hybrid, PqcOnly)
+  - Removed `HybridPreference` enum - always use PQC
+  - All connections use ML-KEM-768 + ML-DSA-65 by default
+  - PqcConfig now only controls tuning parameters, not enable/disable
+
+- **Symmetric P2P Architecture** 🔄
+  - Removed all role distinctions: `EndpointRole`, `NatTraversalRole`
+  - Every node is identical: can connect, accept, and coordinate
+  - Replaced "bootstrap_nodes" with "known_peers" terminology
+  - No client/server distinction - all nodes are full participants
+  - Any connected peer can help with address discovery
+
+### Changed
+- Primary API is now `P2pEndpoint` with `P2pConfig`
+- Configuration uses `known_peers` instead of `bootstrap_nodes`
+- NAT traversal coordination is now symmetric peer-to-peer
+- Frame IDs updated to RFC-compliant values:
+  - ADD_ADDRESS: 0x3d7e90 (IPv4), 0x3d7e91 (IPv6)
+  - PUNCH_ME_NOW: 0x3d7e92 (IPv4), 0x3d7e93 (IPv6)
+  - REMOVE_ADDRESS: 0x3d7e94
+  - OBSERVED_ADDRESS: 0x9f81a6 (IPv4), 0x9f81a7 (IPv6)
+
+### Migration Guide
+```rust
+// Before (v0.12.x and earlier)
+let config = NatTraversalConfig {
+    role: EndpointRole::Client,
+    bootstrap_nodes: vec!["node.example.com:9000".parse()?],
+    pqc_mode: PqcMode::Hybrid,
+    ..Default::default()
+};
+
+// After (v0.13.0+)
+let config = P2pConfig::builder()
+    .known_peer("node.example.com:9000".parse()?)
+    .build()?;
+let endpoint = P2pEndpoint::new(config).await?;
+// PQC is always on - no configuration needed
+```
+
+### Documentation
+- Added `docs/SYMMETRIC_P2P.md` explaining the symmetric node model
+- Added `docs/API_GUIDE.md` with comprehensive API reference
+- Updated all guides for symmetric P2P architecture
+- Enhanced RFC compliance documentation
+
+## [0.12.0] - 2025-12-15
+
+### Changed
+- **PQC Standardization** 🔐
+  - Standardized on aws-lc-rs cryptographic backend
+  - Removed ring crypto provider option
+  - Preparation for 100% PQC in v0.13.0
+  - Updated FIPS 203/204 compliance
+
+### Fixed
+- Compilation with latest Rust 1.85.0
+- PQC handshake reliability improvements
+- Memory pool efficiency for PQC operations
+
+## [0.11.0] - 2025-11-20
+
+### Added
+- **Enhanced NAT Traversal** 🔄
+  - RFC-compliant frame type IDs (0x3d7e90+ for NAT, 0x9f81a6+ for OBSERVED_ADDRESS)
+  - Improved hole punching coordination
+  - Better symmetric NAT detection and handling
+  - Enhanced external address discovery
+
+### Changed
+- Transport parameters updated for RFC compliance
+- Improved NAT traversal success rates
+- Better error messages for connectivity issues
+
+### Fixed
+- Address discovery race conditions
+- NAT traversal state machine edge cases
+- Connection stability improvements
+
+## [0.10.5] - 2025-11-01
+
+### Fixed
+- Updated Cargo.lock for consistent builds
+- Minor dependency updates
+
+## [0.10.4] - 2025-10-25
+
+### Fixed
+- CI Enhanced Testing Suite stabilization
+- Documentation accuracy updates
+- Test reliability improvements
+
+## [0.10.3] - 2025-10-20
+
+### Fixed
+- OBSERVED_ADDRESS frame handling improvements
+- External address exposure through high-level API
+- Minor performance optimizations
+
+## [0.10.2] - 2025-10-15
+
+### Fixed
+- NAT traversal event handling
+- Connection state synchronization
+- Test stability improvements
+
+## [0.10.1] - 2025-10-10
+
+### Fixed
+- Symmetric P2P validation for bidirectional connections
+- Transport parameter encoding edge cases
+- Test reliability on different platforms
+
 ## [0.10.0] - 2025-10-01
 
 ### Added

@@ -25,19 +25,19 @@ use crate::{
     transport_parameters::TransportParameters,
 };
 
-/// Cryptography interface based on *ring*
-#[cfg(any(feature = "aws-lc-rs", feature = "ring"))]
+/// Cryptography interface based on aws-lc-rs
+#[cfg(feature = "aws-lc-rs")]
 pub(crate) mod ring_like;
 /// TLS interface based on rustls
-#[cfg(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring"))]
+#[cfg(feature = "rustls-aws-lc-rs")]
 pub mod rustls;
 
 /// Certificate management
-#[cfg(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring"))]
+#[cfg(feature = "rustls-aws-lc-rs")]
 pub mod certificate_manager;
 
 /// RFC 7250 Raw Public Keys support
-#[cfg(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring"))]
+#[cfg(feature = "rustls-aws-lc-rs")]
 pub mod raw_public_keys;
 
 /// Ed25519 key pair implementation

@@ -271,16 +271,15 @@ mod network_utils {
     }
 }
 
-// Platform-specific crypto tests
-#[cfg(all(test, feature = "rustls-ring"))]
+// Platform-specific crypto tests using aws-lc-rs
+#[cfg(all(test, feature = "rustls-aws-lc-rs"))]
 mod crypto_platform_tests {
     #[test]
-    fn test_ring_crypto_available() {
-        use ring::rand::{SecureRandom, SystemRandom};
+    fn test_crypto_available() {
+        use aws_lc_rs::rand;
 
-        let rng = SystemRandom::new();
         let mut buf = [0u8; 32];
-        rng.fill(&mut buf).expect("Failed to generate random bytes");
+        rand::fill(&mut buf).expect("Failed to generate random bytes");
 
         // Verify randomness (very basic check)
         assert!(!buf.iter().all(|&b| b == 0));

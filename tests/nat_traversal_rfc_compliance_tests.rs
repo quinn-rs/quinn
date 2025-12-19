@@ -29,8 +29,8 @@ struct TestAddAddress {
 impl TestAddAddress {
     fn encode(&self, buf: &mut BytesMut) {
         match self.address {
-            SocketAddr::V4(_) => buf.put_u32(FRAME_TYPE_ADD_ADDRESS_IPV4 as u32),
-            SocketAddr::V6(_) => buf.put_u32(FRAME_TYPE_ADD_ADDRESS_IPV6 as u32),
+            SocketAddr::V4(_) => buf.write_var(FRAME_TYPE_ADD_ADDRESS_IPV4),
+            SocketAddr::V6(_) => buf.write_var(FRAME_TYPE_ADD_ADDRESS_IPV6),
         }
         buf.write_var(u64::from(self.sequence_number));
         match self.address {
@@ -56,8 +56,8 @@ struct TestPunchMeNow {
 impl TestPunchMeNow {
     fn encode(&self, buf: &mut BytesMut) {
         match self.address {
-            SocketAddr::V4(_) => buf.put_u32(FRAME_TYPE_PUNCH_ME_NOW_IPV4 as u32),
-            SocketAddr::V6(_) => buf.put_u32(FRAME_TYPE_PUNCH_ME_NOW_IPV6 as u32),
+            SocketAddr::V4(_) => buf.write_var(FRAME_TYPE_PUNCH_ME_NOW_IPV4),
+            SocketAddr::V6(_) => buf.write_var(FRAME_TYPE_PUNCH_ME_NOW_IPV6),
         }
         buf.write_var(u64::from(self.round));
         buf.write_var(u64::from(self.paired_with_sequence_number));
@@ -81,7 +81,7 @@ struct TestRemoveAddress {
 
 impl TestRemoveAddress {
     fn encode(&self, buf: &mut BytesMut) {
-        buf.put_u32(FRAME_TYPE_REMOVE_ADDRESS as u32);
+        buf.write_var(FRAME_TYPE_REMOVE_ADDRESS);
         buf.write_var(u64::from(self.sequence_number));
     }
 }
@@ -97,8 +97,8 @@ impl RfcAddAddress {
     fn encode(&self, buf: &mut BytesMut) {
         // Frame type determines IPv4 vs IPv6
         match self.address {
-            SocketAddr::V4(_) => buf.put_u32(FRAME_TYPE_ADD_ADDRESS_IPV4 as u32),
-            SocketAddr::V6(_) => buf.put_u32(FRAME_TYPE_ADD_ADDRESS_IPV6 as u32),
+            SocketAddr::V4(_) => buf.write_var(FRAME_TYPE_ADD_ADDRESS_IPV4),
+            SocketAddr::V6(_) => buf.write_var(FRAME_TYPE_ADD_ADDRESS_IPV6),
         }
 
         // Sequence number
@@ -164,8 +164,8 @@ impl RfcPunchMeNow {
     #[allow(dead_code)]
     fn encode(&self, buf: &mut BytesMut) {
         match self.address {
-            SocketAddr::V4(_) => buf.put_u32(FRAME_TYPE_PUNCH_ME_NOW_IPV4 as u32),
-            SocketAddr::V6(_) => buf.put_u32(FRAME_TYPE_PUNCH_ME_NOW_IPV6 as u32),
+            SocketAddr::V4(_) => buf.write_var(FRAME_TYPE_PUNCH_ME_NOW_IPV4),
+            SocketAddr::V6(_) => buf.write_var(FRAME_TYPE_PUNCH_ME_NOW_IPV6),
         }
 
         buf.write_var(u64::from(self.round));
@@ -228,7 +228,7 @@ struct RfcRemoveAddress {
 impl RfcRemoveAddress {
     #[allow(dead_code)]
     fn encode(&self, buf: &mut BytesMut) {
-        buf.put_u32(FRAME_TYPE_REMOVE_ADDRESS as u32);
+        buf.write_var(FRAME_TYPE_REMOVE_ADDRESS);
         buf.write_var(u64::from(self.sequence_number));
     }
 
@@ -376,11 +376,11 @@ fn test_sequence_number_validation() {
 
     // Test valid sequence numbers
     let valid_sequences = vec![
-        VarInt::from_u32(0),                                           // Zero is valid
-        VarInt::from_u32(1),                                           // Small positive
-        VarInt::from_u32(1000),                                        // Medium positive
-        VarInt::from_u32(u32::MAX),                                    // Max u32
-        VarInt::from_u64(u64::MAX).expect("u64::MAX should be valid"), // Max u64
+        VarInt::from_u32(0),        // Zero is valid
+        VarInt::from_u32(1),        // Small positive
+        VarInt::from_u32(1000),     // Medium positive
+        VarInt::from_u32(u32::MAX), // Max u32
+        VarInt::MAX,                // Max VarInt
     ];
 
     for seq in valid_sequences {
@@ -410,7 +410,7 @@ fn test_round_number_validation() {
         VarInt::from_u32(1),
         VarInt::from_u32(100),
         VarInt::from_u32(1000),
-        VarInt::from_u64(u64::MAX).expect("u64::MAX should be valid"),
+        VarInt::MAX,
     ];
 
     for round in positive_rounds {
@@ -432,9 +432,12 @@ fn test_round_number_validation() {
 
     // Test round number wrapping (if applicable)
     let max_u32 = VarInt::from_u32(u32::MAX);
-    let max_u64 = VarInt::from_u64(u64::MAX).expect("u64::MAX should be valid");
+    let max_varint = VarInt::MAX;
 
-    assert!(max_u64 > max_u32, "Max u64 should be greater than max u32");
+    assert!(
+        max_varint > max_u32,
+        "Max VarInt should be greater than max u32"
+    );
 
     // Test round number arithmetic for cancellation logic
     let base_round = VarInt::from_u32(1000);
@@ -489,7 +492,7 @@ fn test_add_address_ipv4_rfc_encoding() {
     // - Address: 192.168.1.100:8080
 
     // Write frame type (VarInt encoding of 0x3d7e90)
-    expected.put_u32(0x3d7e90);
+    expected.write_var(FRAME_TYPE_ADD_ADDRESS_IPV4);
 
     // Write sequence number (VarInt encoding of 42)
     expected.put_u8(0x2a); // 42 as 1-byte VarInt

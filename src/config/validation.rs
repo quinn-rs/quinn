@@ -22,8 +22,7 @@ pub(crate) enum ConfigValidationError {
     #[error("Invalid bootstrap node configuration: {0}")]
     InvalidBootstrapNode(String),
 
-    #[error("Invalid role configuration: {0}")]
-    InvalidRole(String),
+    // v0.13.0: InvalidRole removed - all nodes are symmetric P2P nodes
 
     #[error("Incompatible configuration combination: {0}")]
     IncompatibleConfiguration(String),

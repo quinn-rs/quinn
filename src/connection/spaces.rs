@@ -341,7 +341,7 @@ pub struct Retransmits {
     /// NAT traversal RemoveAddress frames to be sent
     pub(super) remove_addresses: Vec<frame::RemoveAddress>,
     /// OBSERVED_ADDRESS frames to be sent
-    pub(super) observed_addresses: Vec<frame::ObservedAddress>,
+    pub(super) outbound_observations: Vec<frame::ObservedAddress>,
 }
 
 impl Retransmits {
@@ -363,7 +363,7 @@ impl Retransmits {
             && self.add_addresses.is_empty()
             && self.punch_me_now.is_empty()
             && self.remove_addresses.is_empty()
-            && self.observed_addresses.is_empty()
+            && self.outbound_observations.is_empty()
     }
 }
 
@@ -390,8 +390,8 @@ impl ::std::ops::BitOrAssign for Retransmits {
         self.punch_me_now.extend_from_slice(&rhs.punch_me_now);
         self.remove_addresses
             .extend_from_slice(&rhs.remove_addresses);
-        self.observed_addresses
-            .extend_from_slice(&rhs.observed_addresses);
+        self.outbound_observations
+            .extend_from_slice(&rhs.outbound_observations);
     }
 }
 
