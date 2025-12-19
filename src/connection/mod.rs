@@ -5112,9 +5112,9 @@ impl Connection {
     /// v0.13.0: Returns (local_candidates, remote_candidates) - role removed since all
     /// nodes are symmetric P2P nodes.
     pub fn nat_traversal_state(&self) -> Option<(usize, usize)> {
-        self.nat_traversal.as_ref().map(|state| {
-            (state.local_candidates.len(), state.remote_candidates.len())
-        })
+        self.nat_traversal
+            .as_ref()
+            .map(|state| (state.local_candidates.len(), state.remote_candidates.len()))
     }
 
     /// Initiate NAT traversal coordination through a bootstrap node

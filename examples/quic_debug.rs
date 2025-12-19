@@ -8,7 +8,7 @@ use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use tokio::time::{Duration, timeout, interval};
+use tokio::time::{Duration, interval, timeout};
 
 fn gen_self_signed_cert() -> (Vec<CertificateDer<'static>>, PrivateKeyDer<'static>) {
     let cert = rcgen::generate_simple_self_signed(vec!["localhost".to_string()])
@@ -24,31 +24,32 @@ async fn main() {
     tracing_subscriber::fmt()
         .with_env_filter("ant_quic=trace")
         .init();
-    
+
     eprintln!("Starting debug test with tracing...");
-    
+
     // Install crypto provider
     eprintln!("Installing crypto provider...");
     let installed = rustls::crypto::aws_lc_rs::default_provider().install_default();
     eprintln!("Crypto provider installed: {:?}", installed);
-    
+
     // Server config
     eprintln!("Generating certs...");
     let (chain, key) = gen_self_signed_cert();
     eprintln!("Building server config...");
-    let server_cfg = ServerConfig::with_single_cert(chain.clone(), key).expect("failed to build ServerConfig");
-    
+    let server_cfg =
+        ServerConfig::with_single_cert(chain.clone(), key).expect("failed to build ServerConfig");
+
     // Bind server
     eprintln!("Creating server endpoint...");
     let server_addr: SocketAddr = ([127, 0, 0, 1], 0).into();
     let server_ep = Endpoint::server(server_cfg, server_addr).expect("server endpoint");
     let listen_addr = server_ep.local_addr().expect("obtain server local addr");
     eprintln!("Server listening on: {}", listen_addr);
-    
+
     // Track progress
     static SERVER_PROGRESS: AtomicU64 = AtomicU64::new(0);
     static CLIENT_PROGRESS: AtomicU64 = AtomicU64::new(0);
-    
+
     // Spawn server accept
     let accept_task = tokio::spawn(async move {
         eprintln!("[SERVER] Waiting for incoming connection...");
@@ -67,7 +68,7 @@ async fn main() {
         SERVER_PROGRESS.store(3, Ordering::SeqCst);
         conn.remote_address()
     });
-    
+
     // Progress monitor task
     let _monitor = tokio::spawn(async move {
         let mut tick = interval(Duration::from_secs(1));
@@ -78,7 +79,7 @@ async fn main() {
             eprintln!("[MONITOR] Server progress: {}, Client progress: {}", s, c);
         }
     });
-    
+
     // Client config
     eprintln!("Building client config...");
     let mut roots = rustls::RootCertStore::empty();
@@ -86,7 +87,7 @@ async fn main() {
         roots.add(c).expect("add server cert to roots");
     }
     let client_cfg = ClientConfig::with_root_certificates(Arc::new(roots)).expect("client config");
-    
+
     // Client endpoint
     eprintln!("Creating client endpoint...");
     let client_addr: SocketAddr = ([127, 0, 0, 1], 0).into();
@@ -94,7 +95,7 @@ async fn main() {
     client_ep.set_default_client_config(client_cfg);
     let client_local = client_ep.local_addr().expect("client addr");
     eprintln!("Client on: {}", client_local);
-    
+
     // Connect
     eprintln!("[CLIENT] Starting connect to {}...", listen_addr);
     CLIENT_PROGRESS.store(1, Ordering::SeqCst);
@@ -103,7 +104,7 @@ async fn main() {
         .expect("start connect");
     eprintln!("[CLIENT] connect() returned, awaiting handshake...");
     CLIENT_PROGRESS.store(2, Ordering::SeqCst);
-    
+
     let result = timeout(Duration::from_secs(10), connecting).await;
     CLIENT_PROGRESS.store(3, Ordering::SeqCst);
     match result {
@@ -111,13 +112,13 @@ async fn main() {
         Ok(Err(e)) => eprintln!("[CLIENT] Connection error: {:?}", e),
         Err(_) => eprintln!("[CLIENT] TIMEOUT waiting for connection"),
     }
-    
+
     // Wait for server
     eprintln!("Waiting for server task...");
     match accept_task.await {
         Ok(addr) => eprintln!("[SERVER] Task complete, remote: {}", addr),
         Err(e) => eprintln!("[SERVER] Task error: {:?}", e),
     }
-    
+
     eprintln!("Test complete");
 }

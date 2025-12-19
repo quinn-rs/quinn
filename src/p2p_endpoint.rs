@@ -764,9 +764,7 @@ impl P2pEndpoint {
             let mut pending = self.pending_data.write().await;
             for (peer_id, queue) in pending.iter_mut() {
                 if let Some(data) = queue.pop_front() {
-                    if let Some(peer_conn) =
-                        self.connected_peers.write().await.get_mut(peer_id)
-                    {
+                    if let Some(peer_conn) = self.connected_peers.write().await.get_mut(peer_id) {
                         peer_conn.last_activity = Instant::now();
                     }
                     let _ = self.event_tx.send(P2pEvent::DataReceived {
@@ -811,8 +809,7 @@ impl P2pEndpoint {
                 if let Ok(Some(connection)) = self.inner.get_connection(peer_id) {
                     // Try unidirectional stream with calculated per-peer timeout
                     if let Ok(Ok(mut recv_stream)) =
-                        tokio::time::timeout(per_peer_timeout, connection.accept_uni())
-                            .await
+                        tokio::time::timeout(per_peer_timeout, connection.accept_uni()).await
                     {
                         if let Ok(data) = recv_stream.read_to_end(1024 * 1024).await {
                             if !data.is_empty() {
@@ -1154,9 +1151,7 @@ mod tests {
     #[tokio::test]
     async fn test_endpoint_creation() {
         // v0.13.0+: No role - all nodes are symmetric P2P nodes
-        let config = P2pConfig::builder()
-            .build()
-            .expect("valid config");
+        let config = P2pConfig::builder().build().expect("valid config");
 
         let result = P2pEndpoint::new(config).await;
         // May fail in test environment without network, but shouldn't panic

@@ -11,10 +11,7 @@ use ant_quic::{P2pConfig, P2pEndpoint, PqcConfig};
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     // v0.13.0+: PQC is always-on. Configure ML-KEM and ML-DSA.
-    let pqc_config = PqcConfig::builder()
-        .ml_kem(true)
-        .ml_dsa(true)
-        .build()?;
+    let pqc_config = PqcConfig::builder().ml_kem(true).ml_dsa(true).build()?;
 
     // v0.13.0+: No role needed - all nodes are symmetric P2P nodes
     let config = P2pConfig::builder()

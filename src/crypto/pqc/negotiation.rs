@@ -346,10 +346,7 @@ mod tests {
         let mut negotiator = PqcNegotiator::new(config);
 
         // Only classical algorithms available
-        negotiator.set_client_algorithms(
-            vec![NamedGroup::X25519],
-            vec![SignatureScheme::Ed25519],
-        );
+        negotiator.set_client_algorithms(vec![NamedGroup::X25519], vec![SignatureScheme::Ed25519]);
 
         negotiator.set_server_algorithms(vec![NamedGroup::X25519], vec![SignatureScheme::Ed25519]);
 

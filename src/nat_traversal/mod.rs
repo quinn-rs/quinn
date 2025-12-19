@@ -19,8 +19,8 @@
 
 // Re-export public NAT traversal API
 pub use crate::nat_traversal_api::{
-    BootstrapNode, CandidateAddress, NatTraversalConfig, NatTraversalEndpoint,
-    NatTraversalError, NatTraversalEvent, NatTraversalStatistics, PeerId,
+    BootstrapNode, CandidateAddress, NatTraversalConfig, NatTraversalEndpoint, NatTraversalError,
+    NatTraversalEvent, NatTraversalStatistics, PeerId,
 };
 
 // Re-export NAT traversal types from connection module

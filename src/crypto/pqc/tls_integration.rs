@@ -13,7 +13,7 @@
 
 use crate::crypto::pqc::{
     config::PqcConfig,
-    negotiation::{filter_algorithms, order_by_preference, NegotiationResult, PqcNegotiator},
+    negotiation::{NegotiationResult, PqcNegotiator, filter_algorithms, order_by_preference},
     tls_extensions::{NamedGroup, SignatureScheme},
     types::*,
 };

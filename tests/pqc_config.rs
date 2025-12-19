@@ -89,10 +89,7 @@ fn test_pqc_config_builder_chaining() {
 #[test]
 fn test_pqc_config_requires_at_least_one_algorithm() {
     // v0.13.0+: Must have at least one PQC algorithm enabled
-    let result = PqcConfig::builder()
-        .ml_kem(false)
-        .ml_dsa(false)
-        .build();
+    let result = PqcConfig::builder().ml_kem(false).ml_dsa(false).build();
 
     assert!(result.is_err(), "Config without algorithms should fail");
 }

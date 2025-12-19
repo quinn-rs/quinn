@@ -9,7 +9,9 @@ use ant_quic::{
     crypto::raw_public_keys::key_utils::{
         derive_peer_id_from_public_key, generate_ed25519_keypair,
     },
-    nat_traversal_api::{NatTraversalConfig, NatTraversalEndpoint, NatTraversalError, NatTraversalEvent},
+    nat_traversal_api::{
+        NatTraversalConfig, NatTraversalEndpoint, NatTraversalError, NatTraversalEvent,
+    },
 };
 use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr},
@@ -79,10 +81,7 @@ async fn test_create_endpoint_with_known_peers() {
     };
 
     let result = NatTraversalEndpoint::new(config, None).await;
-    assert!(
-        result.is_ok(),
-        "Endpoint should succeed with known peers"
-    );
+    assert!(result.is_ok(), "Endpoint should succeed with known peers");
 }
 
 #[tokio::test]

@@ -11,7 +11,9 @@
 #![cfg(feature = "rustls-aws-lc-rs")]
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use ant_quic::crypto::pqc::{create_crypto_provider, is_pqc_group, validate_negotiated_group, PqcConfig};
+use ant_quic::crypto::pqc::{
+    PqcConfig, create_crypto_provider, is_pqc_group, validate_negotiated_group,
+};
 
 /// Test that PQC provider can be created successfully
 #[test]
@@ -62,10 +64,7 @@ fn test_validate_negotiated_group_x25519() {
 fn test_validate_negotiated_group_secp256r1() {
     // v0.13.0+: SECP256R1 should always fail - PQC is mandatory
     let result = validate_negotiated_group(rustls::NamedGroup::secp256r1);
-    assert!(
-        result.is_err(),
-        "SECP256R1 should be rejected in v0.13.0+"
-    );
+    assert!(result.is_err(), "SECP256R1 should be rejected in v0.13.0+");
 }
 
 /// Test PQC group validation (should always succeed)

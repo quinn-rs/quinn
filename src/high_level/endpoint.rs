@@ -848,10 +848,7 @@ impl RecvState {
         let configured_size = endpoint.config().get_max_udp_payload_size();
         let effective_size = configured_size.max(PQC_MIN_RECV_SIZE).min(64 * 1024) as usize;
 
-        let recv_buf = vec![
-            0;
-            effective_size * max_receive_segments * BATCH_SIZE
-        ];
+        let recv_buf = vec![0; effective_size * max_receive_segments * BATCH_SIZE];
         Self {
             connections: ConnectionSet {
                 senders: FxHashMap::default(),

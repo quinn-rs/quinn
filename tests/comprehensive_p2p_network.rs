@@ -13,11 +13,7 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use ant_quic::{
-    P2pConfig, P2pEndpoint, P2pEvent, PqcConfig,
-    auth::AuthConfig,
-    NatConfig,
-};
+use ant_quic::{NatConfig, P2pConfig, P2pEndpoint, P2pEvent, PqcConfig, auth::AuthConfig};
 use proptest::prelude::*;
 use std::collections::HashSet;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
@@ -102,7 +98,11 @@ mod first_node_tests {
 
         // First node should have a public key
         let public_key = node.public_key_bytes();
-        assert_eq!(public_key.len(), 32, "Ed25519 public key should be 32 bytes");
+        assert_eq!(
+            public_key.len(),
+            32,
+            "Ed25519 public key should be 32 bytes"
+        );
         println!("First node public key: {}", hex::encode(public_key));
 
         node.shutdown().await;
@@ -117,9 +117,8 @@ mod first_node_tests {
 
         // Spawn accept task
         let listener_clone = listener.clone();
-        let accept_handle = tokio::spawn(async move {
-            timeout(SHORT_TIMEOUT, listener_clone.accept()).await
-        });
+        let accept_handle =
+            tokio::spawn(async move { timeout(SHORT_TIMEOUT, listener_clone.accept()).await });
 
         // Give listener time to start
         tokio::time::sleep(Duration::from_millis(100)).await;
@@ -203,9 +202,8 @@ mod bootstrap_tests {
 
         // Spawn accept task on node1
         let node1_clone = node1.clone();
-        let accept_task = tokio::spawn(async move {
-            timeout(SHORT_TIMEOUT, node1_clone.accept()).await
-        });
+        let accept_task =
+            tokio::spawn(async move { timeout(SHORT_TIMEOUT, node1_clone.accept()).await });
 
         // Node2 connects to known peers
         tokio::time::sleep(Duration::from_millis(100)).await;
@@ -304,9 +302,8 @@ mod address_discovery_tests {
 
         let connect_task = tokio::spawn(async move {
             // Observer accepts
-            let accept_handle = tokio::spawn(async move {
-                timeout(SHORT_TIMEOUT, observer_clone.accept()).await
-            });
+            let accept_handle =
+                tokio::spawn(async move { timeout(SHORT_TIMEOUT, observer_clone.accept()).await });
 
             tokio::time::sleep(Duration::from_millis(50)).await;
 
@@ -357,9 +354,8 @@ mod data_transfer_tests {
 
         // Spawn server accept task
         let server_clone = server.clone();
-        let accept_task = tokio::spawn(async move {
-            timeout(SHORT_TIMEOUT, server_clone.accept()).await
-        });
+        let accept_task =
+            tokio::spawn(async move { timeout(SHORT_TIMEOUT, server_clone.accept()).await });
 
         tokio::time::sleep(Duration::from_millis(100)).await;
 
@@ -372,11 +368,8 @@ mod data_transfer_tests {
 
                 // Try to send data
                 let test_data = b"Hello from client!";
-                let send_result = timeout(
-                    SHORT_TIMEOUT,
-                    client.send(&peer_conn.peer_id, test_data),
-                )
-                .await;
+                let send_result =
+                    timeout(SHORT_TIMEOUT, client.send(&peer_conn.peer_id, test_data)).await;
 
                 match send_result {
                     Ok(Ok(())) => {
@@ -412,16 +405,18 @@ mod data_transfer_tests {
 
         // Setup connection
         let node1_clone = node1.clone();
-        let accept_task = tokio::spawn(async move {
-            timeout(SHORT_TIMEOUT, node1_clone.accept()).await
-        });
+        let accept_task =
+            tokio::spawn(async move { timeout(SHORT_TIMEOUT, node1_clone.accept()).await });
 
         tokio::time::sleep(Duration::from_millis(100)).await;
 
         // Connect and test bidirectional transfer
         match timeout(SHORT_TIMEOUT, node2.connect(node1_addr)).await {
             Ok(Ok(peer)) => {
-                println!("Bidirectional connection established with {:?}", peer.peer_id);
+                println!(
+                    "Bidirectional connection established with {:?}",
+                    peer.peer_id
+                );
 
                 // Note: Full bidirectional test would require stream handling
                 // For now, verify connection is established
@@ -451,8 +446,16 @@ mod raw_public_key_tests {
         let (secret_key, public_key) = key_utils::generate_ed25519_keypair();
 
         // Verify key sizes
-        assert_eq!(secret_key.as_bytes().len(), 32, "Secret key should be 32 bytes");
-        assert_eq!(public_key.as_bytes().len(), 32, "Public key should be 32 bytes");
+        assert_eq!(
+            secret_key.as_bytes().len(),
+            32,
+            "Secret key should be 32 bytes"
+        );
+        assert_eq!(
+            public_key.as_bytes().len(),
+            32,
+            "Public key should be 32 bytes"
+        );
 
         // Keys should be different
         assert_ne!(
@@ -477,7 +480,10 @@ mod raw_public_key_tests {
         let (_secret_key2, public_key2) = key_utils::generate_ed25519_keypair();
         let peer_id2 = key_utils::derive_peer_id_from_public_key(&public_key2);
 
-        assert_ne!(peer_id, peer_id2, "Different keys should yield different peer IDs");
+        assert_ne!(
+            peer_id, peer_id2,
+            "Different keys should yield different peer IDs"
+        );
     }
 
     #[test]
@@ -635,7 +641,10 @@ mod nat_traversal_tests {
 
         // Simulate hole punching coordination
         // In real implementation, a coordinator would exchange these addresses
-        println!("Hole punching would exchange: {} <-> {}", node1_external, node2_external);
+        println!(
+            "Hole punching would exchange: {} <-> {}",
+            node1_external, node2_external
+        );
 
         // Verify both nodes can see each other's external address
         assert_ne!(node1_external, node2_external);
@@ -682,9 +691,8 @@ mod nat_traversal_tests {
 
         // Spawn coordinator accept
         let coord_clone = coordinator.clone();
-        let accept_task = tokio::spawn(async move {
-            timeout(SHORT_TIMEOUT, coord_clone.accept()).await
-        });
+        let accept_task =
+            tokio::spawn(async move { timeout(SHORT_TIMEOUT, coord_clone.accept()).await });
 
         tokio::time::sleep(Duration::from_millis(100)).await;
 
@@ -899,7 +907,10 @@ async fn test_comprehensive_integration_summary() {
     let first_addr = first_node.local_addr().expect("First node needs address");
     println!("   First node at: {}", first_addr);
     println!("   Peer ID: {:?}", first_node.peer_id());
-    println!("   Public key: {}", hex::encode(first_node.public_key_bytes()));
+    println!(
+        "   Public key: {}",
+        hex::encode(first_node.public_key_bytes())
+    );
 
     // 2. Second node with bootstrap
     println!("\n2. Testing bootstrap connection...");

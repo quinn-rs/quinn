@@ -172,7 +172,10 @@ fn test_release_criteria() {
     println!("  - ML-KEM enabled: {}", config.ml_kem_enabled);
     println!("  - ML-DSA enabled: {}", config.ml_dsa_enabled);
     println!("  - Memory pool: {}", config.memory_pool_size);
-    println!("  - Timeout multiplier: {}", config.handshake_timeout_multiplier);
+    println!(
+        "  - Timeout multiplier: {}",
+        config.handshake_timeout_multiplier
+    );
 
     // Verify algorithm selection
     let ml_kem_only = PqcConfigBuilder::default()

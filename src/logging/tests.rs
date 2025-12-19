@@ -9,7 +9,11 @@
 mod tests {
 
     use crate::{
-        ConnectionId, Duration, Instant, Side, TransportError,
+        ConnectionId,
+        Duration,
+        Instant,
+        Side,
+        TransportError,
         // v0.13.0: NatTraversalRole removed - all nodes are symmetric P2P nodes
         frame::FrameType,
         logging::{

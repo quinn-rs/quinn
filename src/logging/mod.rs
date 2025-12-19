@@ -20,8 +20,12 @@ use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitEx
 
 use crate::{
     // v0.13.0: NatTraversalRole removed - all nodes are symmetric P2P nodes
-    ConnectionId, Duration, Instant, Side,
-    frame::FrameType, transport_parameters::TransportParameterId,
+    ConnectionId,
+    Duration,
+    Instant,
+    Side,
+    frame::FrameType,
+    transport_parameters::TransportParameterId,
 };
 
 #[cfg(test)]

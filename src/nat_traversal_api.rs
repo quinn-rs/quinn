@@ -1433,7 +1433,9 @@ impl NatTraversalEndpoint {
                 debug!("Using provided identity key for TLS authentication");
                 key.clone()
             } else {
-                debug!("No identity key provided - generating new keypair (identity mismatch warning)");
+                debug!(
+                    "No identity key provided - generating new keypair (identity mismatch warning)"
+                );
                 let (key, _public_key) =
                     crate::crypto::raw_public_keys::key_utils::generate_ed25519_keypair();
                 key
@@ -2339,7 +2341,9 @@ impl NatTraversalEndpoint {
     fn derive_peer_id_from_connection(connection: &InnerConnection) -> Option<PeerId> {
         if let Some(identity) = connection.peer_identity() {
             // rustls returns Vec<CertificateDer> - downcast to that type
-            if let Some(certs) = identity.downcast_ref::<Vec<rustls::pki_types::CertificateDer<'static>>>() {
+            if let Some(certs) =
+                identity.downcast_ref::<Vec<rustls::pki_types::CertificateDer<'static>>>()
+            {
                 if let Some(cert) = certs.first() {
                     // For RFC 7250 Raw Public Keys, cert is SubjectPublicKeyInfo (44 bytes for Ed25519)
                     let spki = cert.as_ref();
@@ -2354,7 +2358,10 @@ impl NatTraversalEndpoint {
                             }
                         }
                     } else {
-                        debug!("Certificate is not Ed25519 SPKI format (len={})", spki.len());
+                        debug!(
+                            "Certificate is not Ed25519 SPKI format (len={})",
+                            spki.len()
+                        );
                     }
                 }
             } else {

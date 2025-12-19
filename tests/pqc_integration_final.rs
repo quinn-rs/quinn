@@ -10,8 +10,8 @@ use ant_quic::{
     Endpoint,
     config::{ClientConfig, ServerConfig},
     crypto::pqc::{
-        HybridKem, HybridSignature, MlDsa65, MlDsaOperations, MlKem768,
-        MlKemOperations, PqcConfigBuilder,
+        HybridKem, HybridSignature, MlDsa65, MlDsaOperations, MlKem768, MlKemOperations,
+        PqcConfigBuilder,
     },
 };
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};

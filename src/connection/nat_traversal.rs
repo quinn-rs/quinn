@@ -3047,7 +3047,7 @@ impl NatTraversalState {
             let connection_context = ConnectionContext {
                 connection_id,
                 original_destination: observed_address, // For now, use same as observed
-                // v0.13.0: peer_role removed - all nodes are symmetric
+                                                        // v0.13.0: peer_role removed - all nodes are symmetric
             };
 
             // Observe the peer's address

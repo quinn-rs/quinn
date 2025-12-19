@@ -242,8 +242,8 @@ pub use endpoint::{
     Incoming,
 };
 pub use nat_traversal_api::{
-    BootstrapNode, CandidateAddress, NatTraversalConfig, NatTraversalEndpoint,
-    NatTraversalError, NatTraversalEvent, NatTraversalStatistics, PeerId,
+    BootstrapNode, CandidateAddress, NatTraversalConfig, NatTraversalEndpoint, NatTraversalError,
+    NatTraversalEvent, NatTraversalStatistics, PeerId,
 };
 
 // ============================================================================
