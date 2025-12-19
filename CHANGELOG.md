@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.13.1] - 2025-12-19
+
+### Fixed
+- **PQC Key Exchange Group Detection** 🔧
+  - Corrected IANA hex codes for ML-KEM hybrid groups
+  - X25519MLKEM768: was 0x4588 (wrong), now 0x11EC (IANA assigned)
+  - SecP256r1MLKEM768: was 0x4F2B, now 0x11EB (IANA assigned)
+  - SecP384r1MLKEM1024: was 0x4F2C, now 0x11ED (IANA assigned)
+  - This fix ensures PQC key exchange works correctly with rustls-post-quantum
+
 ## [0.13.0] - 2025-12-19
 
 ### Breaking Changes
