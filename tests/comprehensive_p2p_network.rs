@@ -495,7 +495,7 @@ mod raw_public_key_tests {
         assert_eq!(key_bytes.len(), 32);
 
         // Test hex encoding (common display format)
-        let hex_encoded = hex::encode(&key_bytes);
+        let hex_encoded = hex::encode(key_bytes);
         assert_eq!(hex_encoded.len(), 64, "Hex encoding should be 64 chars");
 
         // Display public key in various formats
