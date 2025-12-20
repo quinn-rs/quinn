@@ -166,7 +166,7 @@ jobs:
     strategy:
       matrix:
         feature: [
-          "rustls-ring",
+          "rustls-aws-lc-rs",
           "rustls-aws-lc-rs",
           "runtime-tokio"
         ]

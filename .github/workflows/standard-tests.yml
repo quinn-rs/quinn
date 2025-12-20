@@ -109,10 +109,10 @@ jobs:
       
       - uses: Swatinem/rust-cache@v2
       
-      - name: Test minimal features (rustls-ring only)
+      - name: Test minimal features (rustls-aws-lc-rs only)
         run: |
           # Exclude broken property_tests
-          cargo test --lib --no-default-features --features "rustls-ring"
+          cargo test --lib --no-default-features --features "rustls-aws-lc-rs"
 
       - name: Test all-features
         run: |
@@ -123,7 +123,7 @@ jobs:
         run: |
           # Test common feature combinations, excluding broken property_tests
           # Note: PQC crypto has hardcoded ring dependencies, so aws-lc-rs is not compatible
-          cargo test --lib --no-default-features --features "rustls-ring"
+          cargo test --lib --no-default-features --features "rustls-aws-lc-rs"
 
   coverage:
     name: Code Coverage

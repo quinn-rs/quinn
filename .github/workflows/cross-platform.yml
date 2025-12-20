@@ -180,7 +180,7 @@ jobs:
           cargo test --target ${{ matrix.target }} --lib --all-features --verbose -- --skip long_ --skip stress_ --skip performance_
           # Run no-default-features test only on stable rust to save time
           if [ "${{ matrix.rust }}" = "stable" ]; then
-            cargo test --target ${{ matrix.target }} --lib --no-default-features --features rustls-ring --verbose -- --skip long_ --skip stress_ --skip performance_
+            cargo test --target ${{ matrix.target }} --lib --no-default-features --features rustls-aws-lc-rs --verbose -- --skip long_ --skip stress_ --skip performance_
           fi
 
       - name: Run tests (cross)
@@ -195,7 +195,7 @@ jobs:
         run: |
           # Test with different crypto providers only on scheduled runs
           # Use --lib to exclude broken property_tests
-          cargo test --target ${{ matrix.target }} --lib --no-default-features --features rustls-ring -- --skip long_ --skip stress_ --skip performance_
+          cargo test --target ${{ matrix.target }} --lib --no-default-features --features rustls-aws-lc-rs -- --skip long_ --skip stress_ --skip performance_
           cargo test --target ${{ matrix.target }} --lib --no-default-features --features rustls-aws-lc-rs -- --skip long_ --skip stress_ --skip performance_
 
       # Benchmarks (only on stable)
@@ -313,4 +313,4 @@ jobs:
       - name: Check MSRV
         run: |
           cargo check --all-features
-          cargo check --no-default-features --features rustls-ring
+          cargo check --no-default-features --features rustls-aws-lc-rs

@@ -182,8 +182,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all -- --check
       # Check and clippy excluding broken property_tests
-      # Note: --no-default-features alone fails (no crypto provider), so we add rustls-ring
-      - run: cargo check --locked --lib --bins --examples --no-default-features --features rustls-ring
+      # Note: --no-default-features alone fails (no crypto provider), so we add rustls-aws-lc-rs
+      - run: cargo check --locked --lib --bins --examples --no-default-features --features rustls-aws-lc-rs
       - run: cargo clippy --locked --lib --bins --examples -- -D warnings
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -286,5 +286,5 @@ jobs:
       - uses: taiki-e/install-action@cargo-hack
       # Skip aws-lc-rs combinations (code requires ring unconditionally)
       # Skip pqc (has hardcoded ring deps) and property_testing (has compile errors)
-      # Include rustls-ring in all combinations (--include-features incompatible with --optional-deps)
-      - run: cargo hack check --feature-powerset --depth 2 --no-dev-deps --ignore-private --skip "${{env.SKIP_FEATURES}}" --include-features rustls-ring
+      # Include rustls-aws-lc-rs in all combinations (--include-features incompatible with --optional-deps)
+      - run: cargo hack check --feature-powerset --depth 2 --no-dev-deps --ignore-private --skip "${{env.SKIP_FEATURES}}" --include-features rustls-aws-lc-rs

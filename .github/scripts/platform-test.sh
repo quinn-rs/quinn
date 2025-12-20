@@ -93,10 +93,10 @@ run_platform_tests() {
             
             # Test with different async runtimes
             echo -e "\n${GREEN}Testing with tokio runtime...${NC}"
-            cargo test --no-default-features --features runtime-tokio,rustls-ring
+            cargo test --no-default-features --features runtime-tokio,rustls-aws-lc-rs
             
             echo -e "\n${GREEN}Testing with async-std runtime...${NC}"
-            cargo test --no-default-features --features runtime-async-std,rustls-ring
+            cargo test --no-default-features --features runtime-async-std,rustls-aws-lc-rs
             ;;
             
         darwin)
@@ -167,7 +167,7 @@ test_feature_combinations() {
     
     # Different crypto providers
     echo -e "\n${GREEN}Testing with ring crypto...${NC}"
-    cargo test --no-default-features --features rustls-ring,runtime-tokio
+    cargo test --no-default-features --features rustls-aws-lc-rs,runtime-tokio
     
     echo -e "\n${GREEN}Testing with aws-lc-rs crypto...${NC}"
     cargo test --no-default-features --features rustls-aws-lc-rs,runtime-tokio

@@ -33,7 +33,7 @@ jobs:
           # Run coverage with reduced feature set
           # Use --lib to exclude broken property_tests
           cargo llvm-cov \
-            --features="rustls-ring" \
+            --features="rustls-aws-lc-rs" \
             --lib --lcov --output-path lcov.info
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
