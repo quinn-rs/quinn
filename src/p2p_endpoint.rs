@@ -49,7 +49,7 @@
 //! }
 //! ```
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -59,6 +59,7 @@ use tokio::sync::{RwLock, broadcast};
 use tracing::{debug, error, info, warn};
 
 use crate::auth::{AuthManager, AuthMessage, AuthProtocol};
+use crate::bounded_pending_buffer::BoundedPendingBuffer;
 use crate::crypto::raw_public_keys::key_utils::{
     derive_peer_id_from_public_key, generate_ed25519_keypair,
 };
@@ -102,9 +103,10 @@ pub struct P2pEndpoint {
     /// Shutdown flag
     shutdown: Arc<AtomicBool>,
 
-    /// Pending data buffer for data received from non-target peers during authentication
+    /// Bounded pending data buffer for data received during authentication
     /// This prevents data loss when authenticate_peer receives data from other peers
-    pending_data: Arc<RwLock<HashMap<PeerId, VecDeque<Vec<u8>>>>>,
+    /// and enforces memory limits with automatic expiration
+    pending_data: Arc<RwLock<BoundedPendingBuffer>>,
 }
 
 impl std::fmt::Debug for P2pEndpoint {
@@ -323,8 +325,14 @@ pub enum EndpointError {
 impl P2pEndpoint {
     /// Create a new P2P endpoint with the given configuration
     pub async fn new(config: P2pConfig) -> Result<Self, EndpointError> {
-        // Generate Ed25519 keypair for authentication
-        let (secret_key, public_key) = generate_ed25519_keypair();
+        // Use provided keypair or generate a new one
+        let (secret_key, public_key) = if let Some(ref keypair) = config.keypair {
+            // Clone the provided keypair
+            (keypair.clone(), keypair.verifying_key())
+        } else {
+            // Generate a fresh keypair
+            generate_ed25519_keypair()
+        };
         let peer_id = derive_peer_id_from_public_key(&public_key);
 
         info!("Creating P2P endpoint with peer ID: {:?}", peer_id);
@@ -412,7 +420,7 @@ impl P2pEndpoint {
             event_tx,
             peer_id,
             shutdown: Arc::new(AtomicBool::new(false)),
-            pending_data: Arc::new(RwLock::new(HashMap::new())),
+            pending_data: Arc::new(RwLock::new(BoundedPendingBuffer::default())),
         })
     }
 
@@ -762,20 +770,19 @@ impl P2pEndpoint {
         // First, check pending data buffer (data buffered during authentication)
         {
             let mut pending = self.pending_data.write().await;
-            for (peer_id, queue) in pending.iter_mut() {
-                if let Some(data) = queue.pop_front() {
-                    if let Some(peer_conn) = self.connected_peers.write().await.get_mut(peer_id) {
-                        peer_conn.last_activity = Instant::now();
-                    }
-                    let _ = self.event_tx.send(P2pEvent::DataReceived {
-                        peer_id: *peer_id,
-                        bytes: data.len(),
-                    });
-                    return Ok((*peer_id, data));
+            // Run periodic cleanup of expired entries
+            pending.cleanup_expired();
+
+            if let Some((peer_id, data)) = pending.pop_any() {
+                if let Some(peer_conn) = self.connected_peers.write().await.get_mut(&peer_id) {
+                    peer_conn.last_activity = Instant::now();
                 }
+                let _ = self.event_tx.send(P2pEvent::DataReceived {
+                    peer_id,
+                    bytes: data.len(),
+                });
+                return Ok((peer_id, data));
             }
-            // Clean up empty queues
-            pending.retain(|_, queue| !queue.is_empty());
         }
 
         let peers = self.connected_peers.read().await.clone();
@@ -1053,10 +1060,9 @@ impl P2pEndpoint {
                         other_peer_id
                     );
                     let mut pending = self.pending_data.write().await;
-                    pending
-                        .entry(other_peer_id)
-                        .or_insert_with(VecDeque::new)
-                        .push_back(data);
+                    if let Err(e) = pending.push(&other_peer_id, data) {
+                        warn!("Failed to buffer pending data: {}", e);
+                    }
                     continue;
                 }
                 Err(EndpointError::Timeout) => break,

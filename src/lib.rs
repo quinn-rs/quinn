@@ -117,6 +117,51 @@ pub use varint::{VarInt, VarIntBoundsExceeded};
 
 // Removed optional bloom module
 
+/// Bounded pending data buffer with TTL expiration
+pub mod bounded_pending_buffer;
+
+/// RTT-based path selection with hysteresis
+pub mod path_selection;
+
+/// Coordinated shutdown for endpoints
+pub mod shutdown;
+
+/// Watchable state pattern for reactive observation
+pub mod watchable;
+
+/// Fair polling for multiple transports
+pub mod fair_polling;
+
+/// Graceful transport degradation
+pub mod transport_resilience;
+
+/// Discovery trait for stream composition
+pub mod discovery_trait;
+
+/// Structured event logging for observability
+pub mod structured_events;
+
+// ============================================================================
+// SIMPLE API - Zero Configuration P2P
+// ============================================================================
+
+/// Zero-configuration P2P node - THE PRIMARY API
+///
+/// Use [`Node`] for the simplest possible P2P experience:
+/// ```rust,ignore
+/// let node = Node::new().await?;
+/// ```
+pub mod node;
+
+/// Minimal configuration for zero-config P2P nodes
+pub mod node_config;
+
+/// Consolidated node status for observability
+pub mod node_status;
+
+/// Unified events for P2P nodes
+pub mod node_event;
+
 // Core implementation modules
 /// Configuration structures and validation
 pub mod config;
@@ -247,10 +292,26 @@ pub use nat_traversal_api::{
 };
 
 // ============================================================================
-// P2P API EXPORTS
+// SIMPLE API EXPORTS - Zero Configuration P2P (RECOMMENDED)
 // ============================================================================
 
-/// P2P endpoint - the primary entry point for applications
+/// Zero-configuration P2P node - THE PRIMARY API
+pub use node::{Node, NodeError};
+
+/// Minimal configuration for zero-config P2P nodes
+pub use node_config::{NodeConfig, NodeConfigBuilder};
+
+/// Consolidated node status for observability
+pub use node_status::{NatType, NodeStatus};
+
+/// Unified events for P2P nodes
+pub use node_event::{DisconnectReason as NodeDisconnectReason, NodeEvent, TraversalMethod};
+
+// ============================================================================
+// P2P API EXPORTS (for advanced use)
+// ============================================================================
+
+/// P2P endpoint - for advanced use, prefer Node for most applications
 pub use p2p_endpoint::{
     ConnectionMetrics, DisconnectReason, EndpointError, EndpointStats, P2pEndpoint, P2pEvent,
     PeerConnection, TraversalPhase,

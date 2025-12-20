@@ -17,7 +17,7 @@ QUIC transport with NAT traversal for P2P networks. Every node is symmetric - ca
 - **Symmetric P2P Nodes** - Every node is identical: connect, accept, coordinate
 - **Automatic NAT Traversal** - Per [draft-seemann-quic-nat-traversal-02](rfcs/draft-seemann-quic-nat-traversal-02.txt)
 - **External Address Discovery** - Per [draft-ietf-quic-address-discovery-00](rfcs/draft-ietf-quic-address-discovery-00.txt)
-- **Raw Public Key Identity** - Ed25519 identity per [RFC 7250](rfcs/rfc7250.txt)
+- **Hybrid PQC Raw Public Keys** - Ed25519 identity + ML-DSA-65 per [our specification](rfcs/ant-quic-hybrid-pqc-authentication.md)
 - **Zero Configuration Required** - Sensible defaults, just create and connect
 
 ## Quick Start
@@ -168,7 +168,7 @@ let (public_key, secret_key) = generate_ed25519_keypair();
 let peer_id = derive_peer_id_from_public_key(&public_key);
 ```
 
-This follows [RFC 7250](rfcs/rfc7250.txt) for raw public keys in TLS/QUIC.
+This follows our [Hybrid PQC Authentication specification](rfcs/ant-quic-hybrid-pqc-authentication.md), inspired by RFC 7250.
 
 ### Trust Model
 
@@ -285,7 +285,7 @@ ant-quic implements these specifications:
 |---------------|--------|-------|
 | [RFC 9000](rfcs/rfc9000.txt) | Full | QUIC Transport Protocol |
 | [RFC 9001](rfcs/rfc9001.txt) | Full | QUIC TLS |
-| [RFC 7250](rfcs/rfc7250.txt) | Full | Raw Public Keys |
+| [Hybrid PQC Auth](rfcs/ant-quic-hybrid-pqc-authentication.md) | Full | Raw Public Keys + PQC |
 | [draft-seemann-quic-nat-traversal-02](rfcs/draft-seemann-quic-nat-traversal-02.txt) | Full | NAT Traversal |
 | [draft-ietf-quic-address-discovery-00](rfcs/draft-ietf-quic-address-discovery-00.txt) | Full | Address Discovery |
 | [FIPS 203](rfcs/fips-203-ml-kem.pdf) | Full | ML-KEM |

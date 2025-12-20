@@ -152,6 +152,7 @@ proptest-derive = { version = "0.5", optional = true }
 # Dependencies for ant-quic binary
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
+reqwest = { version = "0.12", features = ["json"] }
 tokio = { version = "1.28.1", features = ["full"] }
 tracing-subscriber = { version = "0.3.0", default-features = false, features = ["env-filter", "fmt", "ansi", "time", "local-time", "json"] }
 quinn-udp = { version = "0.5", features = ["log", "tracing"] }
@@ -222,6 +223,11 @@ path = "src/bin/interop-test.rs"
 [[bin]]
 name = "test-public-endpoints"
 path = "src/bin/test_public_endpoints.rs"
+
+# E2E test node with metrics push and data verification
+[[bin]]
+name = "e2e-test-node"
+path = "src/bin/e2e-test-node.rs"
 
 # Benchmarks
 [[bench]]

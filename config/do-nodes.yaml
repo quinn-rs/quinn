@@ -1,0 +1,119 @@
+# Digital Ocean Node Configuration for E2E Testing
+#
+# This file defines the droplets to be used for E2E testing.
+# Each droplet should have the ant-quic binary deployed.
+
+# Dashboard server (runs e2e-dashboard)
+dashboard:
+  # Replace with your dashboard droplet IP
+  host: "your-dashboard-ip"
+  port: 8080
+  user: root
+
+# Test nodes - existing Digital Ocean droplets
+# Update with your actual droplet IPs
+nodes:
+  - id: do-nyc1-1
+    name: "NYC Node 1"
+    ipv4: "your-droplet-1-ipv4"
+    ipv6: "your-droplet-1-ipv6"  # Optional
+    region: nyc1
+    user: root
+    port: 9000
+
+  - id: do-nyc1-2
+    name: "NYC Node 2"
+    ipv4: "your-droplet-2-ipv4"
+    ipv6: "your-droplet-2-ipv6"
+    region: nyc1
+    user: root
+    port: 9000
+
+  - id: do-sfo1-1
+    name: "SFO Node 1"
+    ipv4: "your-droplet-3-ipv4"
+    ipv6: "your-droplet-3-ipv6"
+    region: sfo1
+    user: root
+    port: 9000
+
+  - id: do-ams1-1
+    name: "AMS Node 1"
+    ipv4: "your-droplet-4-ipv4"
+    ipv6: "your-droplet-4-ipv6"
+    region: ams1
+    user: root
+    port: 9000
+
+  - id: do-sgp1-1
+    name: "SGP Node 1"
+    ipv4: "your-droplet-5-ipv4"
+    ipv6: "your-droplet-5-ipv6"
+    region: sgp1
+    user: root
+    port: 9000
+
+  - id: do-lon1-1
+    name: "LON Node 1"
+    ipv4: "your-droplet-6-ipv4"
+    ipv6: "your-droplet-6-ipv6"
+    region: lon1
+    user: root
+    port: 9000
+
+  - id: do-fra1-1
+    name: "FRA Node 1"
+    ipv4: "your-droplet-7-ipv4"
+    ipv6: "your-droplet-7-ipv6"
+    region: fra1
+    user: root
+    port: 9000
+
+  - id: do-tor1-1
+    name: "TOR Node 1"
+    ipv4: "your-droplet-8-ipv4"
+    ipv6: "your-droplet-8-ipv6"
+    region: tor1
+    user: root
+    port: 9000
+
+  - id: do-blr1-1
+    name: "BLR Node 1"
+    ipv4: "your-droplet-9-ipv4"
+    ipv6: "your-droplet-9-ipv6"
+    region: blr1
+    user: root
+    port: 9000
+
+  - id: do-syd1-1
+    name: "SYD Node 1"
+    ipv4: "your-droplet-10-ipv4"
+    ipv6: "your-droplet-10-ipv6"
+    region: syd1
+    user: root
+    port: 9000
+
+# Test parameters
+test:
+  # Data to generate per node (bytes)
+  data_size: 1073741824  # 1 GB
+
+  # Test duration in seconds
+  duration: 1800  # 30 minutes
+
+  # Metrics push interval
+  metrics_interval: 5
+
+  # Chunk size for data transfer
+  chunk_size: 65536
+
+  # Seed node for initial bootstrap
+  seed_node: do-nyc1-1
+
+# Validation criteria
+validation:
+  min_connected_nodes_percent: 100
+  min_nat_success_rate: 90
+  min_throughput_mbps: 100
+  max_verification_failures: 0
+  min_test_duration: 1800

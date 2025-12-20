@@ -25,11 +25,13 @@ ant-quic is a QUIC transport protocol implementation with advanced NAT traversal
 
 ## Key Technical Decisions
 
-### Authentication: Raw Public Keys (NOT Certificates)
+### Authentication: Hybrid PQC with Raw Public Keys
 
-We use **Raw Public Keys (RFC 7250)** instead of X.509 certificates:
-- Reference: `rfcs/rfc7250.txt`
-- Implementation: Ed25519 key pairs for peer authentication
+We use **Hybrid Post-Quantum Cryptography** with raw public keys (inspired by RFC 7250):
+- Reference: `rfcs/ant-quic-hybrid-pqc-authentication.md` (our specification)
+- Identity: Ed25519 key pairs (32-byte peer ID)
+- Key Exchange: X25519 + ML-KEM-768 hybrid (IANA 0x11EC)
+- Signatures: Ed25519 + ML-DSA-65 hybrid (0x0920)
 - No PKI infrastructure, no CA dependency
 - Peers authenticate directly via public key fingerprints
 
@@ -176,7 +178,7 @@ Conventional Commits required (see `cliff.toml`):
 
 ### Core Protocol
 - `rfc9000.txt` - QUIC base protocol
-- `rfc7250.txt` - Raw Public Keys in TLS
+- `ant-quic-hybrid-pqc-authentication.md` - Hybrid PQC Raw Public Keys (our specification)
 
 ### NAT Traversal (Native QUIC)
 - `draft-seemann-quic-nat-traversal-02.txt` - Primary NAT traversal spec
@@ -213,5 +215,5 @@ Conventional Commits required (see `cliff.toml`):
 - 100% PQC always-on (ML-KEM-768, ML-DSA-65)
 - Native QUIC NAT traversal (NO STUN/ICE/TURN)
 - Correct frame IDs (0x3d7e90+, 0x9f81a6+)
-- Raw Public Keys (RFC 7250) - NO certificates
+- Hybrid PQC Raw Public Keys (see `rfcs/ant-quic-hybrid-pqc-authentication.md`)
 - IPv4 and IPv6 dual-stack support

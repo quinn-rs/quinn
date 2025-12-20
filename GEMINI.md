@@ -25,15 +25,17 @@ ant-quic is a QUIC transport protocol implementation with advanced NAT traversal
 
 ## Key Technical Decisions
 
-### Authentication: Raw Public Keys (NOT Certificates)
+### Authentication: Hybrid PQC with Raw Public Keys
 
-We use **Raw Public Keys (RFC 7250)** instead of X.509 certificates:
-- Reference: `rfcs/rfc7250.txt`
-- Implementation: Ed25519 key pairs for peer authentication
+We use **Hybrid Post-Quantum Cryptography** with raw public keys (inspired by RFC 7250):
+- Reference: `rfcs/ant-quic-hybrid-pqc-authentication.md` (our specification)
+- Identity: Ed25519 key pairs (32-byte peer ID)
+- Key Exchange: X25519 + ML-KEM-768 hybrid (IANA 0x11EC)
+- Signatures: Ed25519 + ML-DSA-65 hybrid (0x0920)
 - No PKI infrastructure required
 - No CA dependency - peers authenticate directly via public key fingerprints
 
-This is fundamentally different from traditional TLS which uses certificate chains.
+This uses the RFC 7250 mechanism (SubjectPublicKeyInfo) but with hybrid PQC algorithms.
 
 ### Post-Quantum Cryptography: Always On (v0.13.0+)
 
@@ -90,7 +92,7 @@ All nodes are equal. Any connected peer can:
 src/                    # Core library
   bin/                  # CLI binary (ant-quic)
   connection/           # QUIC connection with NAT traversal extensions
-  crypto/               # TLS 1.3 with Raw Public Keys (RFC 7250)
+  crypto/               # TLS 1.3 with Hybrid PQC Raw Public Keys
   crypto/pqc/           # Post-quantum cryptography (ML-KEM, ML-DSA)
   unified_config.rs     # P2pConfig, NatConfig, MtuConfig
 tests/                  # Integration test suites
@@ -173,7 +175,7 @@ Conventional Commits required:
 
 ### Core Protocol
 - `rfc9000.txt` - QUIC: A UDP-Based Multiplexed and Secure Transport
-- `rfc7250.txt` - **Raw Public Keys in TLS** (our authentication method)
+- `ant-quic-hybrid-pqc-authentication.md` - **Hybrid PQC Raw Public Keys** (our specification)
 
 ### NAT Traversal (Native QUIC - NO STUN/ICE)
 - `draft-seemann-quic-nat-traversal-02.txt` - **QUIC NAT Traversal** (primary spec)
@@ -210,5 +212,5 @@ Conventional Commits required:
 - 100% PQC always-on (ML-KEM-768, ML-DSA-65)
 - Native QUIC NAT traversal (NO STUN/ICE/TURN)
 - Correct frame IDs (0x3d7e90+, 0x9f81a6+)
-- Raw Public Keys (RFC 7250) - NO certificates
+- Hybrid PQC Raw Public Keys (see `rfcs/ant-quic-hybrid-pqc-authentication.md`)
 - IPv4 and IPv6 dual-stack support

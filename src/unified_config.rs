@@ -29,6 +29,7 @@ use std::time::Duration;
 use crate::auth::AuthConfig;
 use crate::config::nat_timeouts::TimeoutConfig;
 use crate::crypto::pqc::PqcConfig;
+use ed25519_dalek::SigningKey;
 
 /// Configuration for ant-quic P2P endpoints
 ///
@@ -71,6 +72,11 @@ pub struct P2pConfig {
 
     /// Interval for collecting and reporting statistics
     pub stats_interval: Duration,
+
+    /// Identity keypair for persistent peer identity.
+    /// If `None`, a fresh keypair is generated on startup.
+    /// Provide this for persistent identity across restarts.
+    pub keypair: Option<SigningKey>,
 }
 // v0.13.0: enable_coordinator removed - all nodes are coordinators
 
@@ -209,6 +215,7 @@ impl Default for P2pConfig {
             pqc: PqcConfig::default(),
             mtu: MtuConfig::default(),
             stats_interval: Duration::from_secs(30),
+            keypair: None,
         }
     }
 }
@@ -262,6 +269,7 @@ pub struct P2pConfigBuilder {
     pqc: Option<PqcConfig>,
     mtu: Option<MtuConfig>,
     stats_interval: Option<Duration>,
+    keypair: Option<SigningKey>,
 }
 
 /// Error type for configuration validation
@@ -389,6 +397,15 @@ impl P2pConfigBuilder {
         self
     }
 
+    /// Set identity keypair for persistent peer ID
+    ///
+    /// If not set, a fresh keypair is generated on startup.
+    /// Provide this for stable identity across restarts.
+    pub fn keypair(mut self, keypair: SigningKey) -> Self {
+        self.keypair = Some(keypair);
+        self
+    }
+
     /// Build the configuration with validation
     pub fn build(self) -> Result<P2pConfig, ConfigError> {
         // Validate max_connections
@@ -410,6 +427,7 @@ impl P2pConfigBuilder {
             pqc: self.pqc.unwrap_or_default(),
             mtu: self.mtu.unwrap_or_default(),
             stats_interval: self.stats_interval.unwrap_or(Duration::from_secs(30)),
+            keypair: self.keypair,
         })
     }
 }
