@@ -34,7 +34,7 @@ use crate::nat_traversal_api::PeerId;
 ///
 /// NAT type affects connectivity - some types are easier to traverse than others.
 /// The node automatically detects its NAT type and adjusts traversal strategies.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum NatType {
     /// No NAT detected - direct public connectivity
     ///
@@ -68,13 +68,8 @@ pub enum NatType {
     /// NAT type not yet determined
     ///
     /// The node hasn't completed NAT detection yet.
+    #[default]
     Unknown,
-}
-
-impl Default for NatType {
-    fn default() -> Self {
-        Self::Unknown
-    }
 }
 
 impl std::fmt::Display for NatType {

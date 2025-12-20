@@ -54,7 +54,7 @@ use ed25519_dalek::SigningKey;
 ///     .known_peer("peer1.example.com:9000".parse()?)
 ///     .build();
 /// ```
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct NodeConfig {
     /// Bind address. Default: 0.0.0.0:0 (random port)
     pub bind_addr: Option<SocketAddr>,
@@ -66,16 +66,6 @@ pub struct NodeConfig {
     /// Identity keypair. Default: fresh generated
     /// Provide for persistent identity across restarts.
     pub keypair: Option<SigningKey>,
-}
-
-impl Default for NodeConfig {
-    fn default() -> Self {
-        Self {
-            bind_addr: None,
-            known_peers: Vec::new(),
-            keypair: None,
-        }
-    }
 }
 
 impl std::fmt::Debug for NodeConfig {

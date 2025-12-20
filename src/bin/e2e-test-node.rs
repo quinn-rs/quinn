@@ -326,7 +326,7 @@ async fn main() -> anyhow::Result<()> {
         info!(
             "Data Generation: {} ({} chunks)",
             format_bytes(args.generate_data),
-            (args.generate_data + args.chunk_size as u64 - 1) / args.chunk_size as u64
+            args.generate_data.div_ceil(args.chunk_size as u64)
         );
     }
 
@@ -528,7 +528,7 @@ async fn main() -> anyhow::Result<()> {
                     // Track peer
                     let mut peers_guard = peers.write().await;
                     peers_guard.insert(
-                        peer.peer_id.clone(),
+                        peer.peer_id,
                         PeerState {
                             peer_id: peer.peer_id,
                             remote_addr: *peer_addr,
@@ -688,7 +688,7 @@ async fn main() -> anyhow::Result<()> {
 
                 let mut peers_guard = peers.write().await;
                 peers_guard.insert(
-                    peer.peer_id.clone(),
+                    peer.peer_id,
                     PeerState {
                         peer_id: peer.peer_id,
                         remote_addr: peer.remote_addr,
