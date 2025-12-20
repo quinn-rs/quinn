@@ -412,75 +412,8 @@ impl SharedSecret {
     }
 }
 
-// Hybrid types for combining classical and PQC algorithms
-
-/// Hybrid KEM public key (classical + ML-KEM)
-#[derive(Clone)]
-pub struct HybridKemPublicKey {
-    /// Classical ECDH public key (e.g., P-256)
-    pub classical: Box<[u8]>,
-    /// ML-KEM-768 public key
-    pub ml_kem: MlKemPublicKey,
-}
-
-/// Hybrid KEM secret key (classical + ML-KEM)
-#[derive(ZeroizeOnDrop)]
-pub struct HybridKemSecretKey {
-    /// Classical ECDH private key
-    pub classical: Box<[u8]>,
-    /// ML-KEM-768 secret key
-    pub ml_kem: MlKemSecretKey,
-}
-
-impl Zeroize for HybridKemSecretKey {
-    fn zeroize(&mut self) {
-        self.classical.as_mut().zeroize();
-        self.ml_kem.zeroize();
-    }
-}
-
-/// Hybrid KEM ciphertext (classical + ML-KEM)
-#[derive(Clone)]
-pub struct HybridKemCiphertext {
-    /// Classical ECDH ephemeral public key
-    pub classical: Box<[u8]>,
-    /// ML-KEM-768 ciphertext
-    pub ml_kem: MlKemCiphertext,
-}
-
-/// Hybrid signature public key (classical + ML-DSA)
-#[derive(Clone)]
-pub struct HybridSignaturePublicKey {
-    /// Classical signature public key (e.g., Ed25519)
-    pub classical: Box<[u8]>,
-    /// ML-DSA-65 public key
-    pub ml_dsa: MlDsaPublicKey,
-}
-
-/// Hybrid signature secret key (classical + ML-DSA)
-#[derive(ZeroizeOnDrop)]
-pub struct HybridSignatureSecretKey {
-    /// Classical signature private key
-    pub classical: Box<[u8]>,
-    /// ML-DSA-65 secret key
-    pub ml_dsa: MlDsaSecretKey,
-}
-
-impl Zeroize for HybridSignatureSecretKey {
-    fn zeroize(&mut self) {
-        self.classical.as_mut().zeroize();
-        self.ml_dsa.zeroize();
-    }
-}
-
-/// Hybrid signature value (classical + ML-DSA signatures)
-#[derive(Clone)]
-pub struct HybridSignatureValue {
-    /// Classical signature (e.g., Ed25519 signature)
-    pub classical: Box<[u8]>,
-    /// ML-DSA-65 signature
-    pub ml_dsa: Box<[u8]>,
-}
+// v0.2: Hybrid types removed - pure PQC only
+// This is a greenfield network with no legacy compatibility requirements.
 
 #[cfg(test)]
 mod tests {

@@ -23,9 +23,10 @@ mod pqc_raw_public_key_tests {
 
                 // Test properties
                 assert_eq!(raw_key.size(), public_key.as_bytes().len());
+                // v2.0: Pure PQC with correct IANA code point for ML-DSA-65
                 assert_eq!(
                     raw_key.supported_signature_schemes(),
-                    vec![SignatureScheme::Unknown(0xFE3C)]
+                    vec![SignatureScheme::Unknown(0x0901)]
                 );
 
                 // Test SPKI encoding
@@ -66,54 +67,7 @@ mod pqc_raw_public_key_tests {
         }
     }
 
-    #[test]
-    fn test_hybrid_raw_public_key() {
-        // Generate Ed25519 key
-        use rand::rngs::OsRng;
-        let ed25519_secret = Ed25519SecretKey::generate(&mut OsRng);
-        let ed25519_public = ed25519_secret.verifying_key();
-
-        // Generate ML-DSA key
-        let ml_dsa = MlDsa65::new();
-        match ml_dsa.generate_keypair() {
-            Ok((ml_dsa_public, _)) => {
-                // Create hybrid key
-                let hybrid_key = ExtendedRawPublicKey::HybridEd25519MlDsa65 {
-                    ed25519: ed25519_public,
-                    ml_dsa: ml_dsa_public,
-                };
-
-                // Test properties
-                assert_eq!(hybrid_key.size(), 32 + 1952); // Ed25519 + ML-DSA sizes
-                assert_eq!(
-                    hybrid_key.supported_signature_schemes(),
-                    vec![SignatureScheme::Unknown(0xFE3D)]
-                );
-
-                // Test SPKI encoding
-                match hybrid_key.to_subject_public_key_info() {
-                    Ok(spki) => {
-                        assert!(spki.starts_with(&[0x30])); // ASN.1 SEQUENCE
-                        assert!(spki.len() > hybrid_key.size());
-                    }
-                    Err(PqcError::OperationNotSupported) => {
-                        // Expected for now
-                    }
-                    Err(e) => {
-                        println!("ML-DSA not yet available: {e:?}");
-                        // This is expected until aws-lc-rs supports ML-DSA
-                    }
-                }
-            }
-            Err(PqcError::OperationNotSupported) => {
-                // Expected until aws-lc-rs support
-            }
-            Err(e) => {
-                println!("ML-DSA not yet available: {e:?}");
-                // This is expected until aws-lc-rs supports ML-DSA
-            }
-        }
-    }
+    // v2.0: Hybrid keys removed - using pure PQC only (ML-DSA-65)
 
     #[test]
     fn test_pqc_verifier_with_mixed_keys() {

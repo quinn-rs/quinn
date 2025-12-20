@@ -98,7 +98,11 @@ pub enum NodeError {
 ///
 /// # Post-Quantum Security
 ///
-/// Every connection uses ML-KEM-768 key exchange with Ed25519 authentication.
+/// v0.2: Every connection uses pure post-quantum cryptography:
+/// - Key Exchange: ML-KEM-768 (FIPS 203)
+/// - Authentication: ML-DSA-65 (FIPS 204)
+/// - Ed25519 is used ONLY for the 32-byte PeerId compact identifier
+///
 /// There is no classical crypto fallback - security is quantum-resistant by default.
 ///
 /// # Example

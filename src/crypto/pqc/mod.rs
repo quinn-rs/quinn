@@ -7,22 +7,21 @@
 
 //! Post-Quantum Cryptography module for ant-quic
 //!
+//! v0.2: Pure PQC - NO hybrid or classical algorithms.
+//!
 //! This module implements NIST-standardized post-quantum algorithms using saorsa-pqc:
-//! - ML-KEM-768 (Module-Lattice-Based Key-Encapsulation Mechanism)
-//! - ML-DSA-65 (Module-Lattice-Based Digital Signature Algorithm)
+//! - ML-KEM-768 (IANA 0x0201) - Key encapsulation for TLS key exchange
+//! - ML-DSA-65 (IANA 0x0901) - Digital signatures for TLS authentication
 //!
-//! The implementation provides hybrid modes combining classical and PQC algorithms
-//! for defense-in-depth against both classical and quantum attacks.
-//!
-//! Uses saorsa-pqc crate for unified PQC implementation instead of direct ml-kem/ml-dsa dependencies.
+//! This is a greenfield network with no legacy compatibility requirements.
+//! Ed25519 is retained ONLY for 32-byte PeerId compact identifier.
 
 pub mod benchmarks;
 pub mod cipher_suites;
 pub mod combiners;
 pub mod config;
 pub mod encryption;
-pub mod hybrid;
-pub mod hybrid_key_exchange;
+// v0.2: Removed hybrid modules - pure PQC only
 pub mod memory_pool;
 pub mod memory_pool_optimized;
 pub mod ml_dsa;
@@ -47,7 +46,7 @@ pub use types::{PqcError, PqcResult};
 
 // PQC algorithm implementations - always available
 pub use encryption::{EncryptedMessage, HybridPublicKeyEncryption};
-pub use hybrid::{HybridKem, HybridSignature};
+// v0.2: Removed HybridKem, HybridSignature - pure PQC only
 pub use memory_pool::{PoolConfig, PqcMemoryPool};
 pub use ml_dsa::MlDsa65;
 pub use ml_kem::MlKem768;

@@ -529,9 +529,8 @@ pub use config::{
 };
 
 // Post-Quantum Cryptography (PQC) re-exports - always available
-pub use crypto::pqc::{
-    HybridKem, HybridSignature, MlDsa65, MlKem768, PqcConfig, PqcConfigBuilder, PqcError, PqcResult,
-};
+// v0.2: Pure PQC only - HybridKem and HybridSignature removed
+pub use crypto::pqc::{MlDsa65, MlKem768, PqcConfig, PqcConfigBuilder, PqcError, PqcResult};
 pub(crate) use frame::Frame;
 pub use token::TokenStore;
 pub(crate) use token::{NoneTokenLog, ResetToken, TokenLog};

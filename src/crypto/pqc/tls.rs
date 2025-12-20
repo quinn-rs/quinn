@@ -5,82 +5,57 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
-//! TLS integration for post-quantum cryptography
+//! TLS integration for Pure Post-Quantum Cryptography
 //!
-//! This module provides TLS extensions for hybrid post-quantum key exchange
-//! and signature schemes, following draft-ietf-tls-hybrid-design.
+//! v0.2: Pure PQC - NO hybrid or classical algorithms.
+//!
+//! This module provides TLS extensions for pure PQC key exchange and signatures:
+//! - Key Exchange: ML-KEM-768 (0x0201) ONLY
+//! - Signatures: ML-DSA-65 (0x0901) ONLY
+//!
+//! This is a greenfield network with no legacy compatibility requirements.
 
 use crate::crypto::pqc::tls_extensions::{NamedGroup, SignatureScheme};
 use crate::crypto::pqc::types::*;
 
-/// TLS extension handler for PQC negotiation
+/// TLS extension handler for Pure PQC negotiation
+///
+/// v0.2: Pure PQC is always enabled. NO hybrid or classical algorithms.
 pub struct PqcTlsExtension {
-    /// Supported named groups in preference order
+    /// Supported named groups in preference order (pure ML-KEM only)
     pub supported_groups: Vec<NamedGroup>,
 
-    /// Supported signature schemes in preference order
+    /// Supported signature schemes in preference order (pure ML-DSA only)
     pub supported_signatures: Vec<SignatureScheme>,
-
-    /// Whether to prefer PQC algorithms
-    pub prefer_pqc: bool,
 }
 
 impl PqcTlsExtension {
-    /// Create a new PQC TLS extension handler
+    /// Create a new Pure PQC TLS extension handler
+    ///
+    /// v0.2: ONLY pure PQC algorithms. NO hybrids, NO classical fallback.
     pub fn new() -> Self {
         Self {
             supported_groups: vec![
-                // Prefer hybrid groups for quantum resistance
-                NamedGroup::X25519MlKem768,
-                NamedGroup::P256MlKem768,
-                // Fall back to classical
-                NamedGroup::X25519,
-                NamedGroup::Secp256r1,
+                // Pure ML-KEM ONLY - ordered by preference (Level 3 first)
+                NamedGroup::MlKem768,  // PRIMARY - NIST Level 3
+                NamedGroup::MlKem1024, // NIST Level 5
+                NamedGroup::MlKem512,  // NIST Level 1
             ],
             supported_signatures: vec![
-                // Prefer hybrid signatures
-                SignatureScheme::Ed25519MlDsa65,
-                SignatureScheme::EcdsaP256MlDsa65,
-                // Fall back to classical
-                SignatureScheme::Ed25519,
-                SignatureScheme::EcdsaSecp256r1Sha256,
+                // Pure ML-DSA ONLY - ordered by preference (Level 3 first)
+                SignatureScheme::MlDsa65, // PRIMARY - NIST Level 3
+                SignatureScheme::MlDsa87, // NIST Level 5
+                SignatureScheme::MlDsa44, // NIST Level 2
             ],
-            prefer_pqc: true,
         }
     }
 
-    /// Create a classical-only configuration
-    pub fn classical_only() -> Self {
-        Self {
-            supported_groups: vec![
-                NamedGroup::X25519,
-                NamedGroup::Secp256r1,
-                NamedGroup::Secp384r1,
-            ],
-            supported_signatures: vec![
-                SignatureScheme::Ed25519,
-                SignatureScheme::EcdsaSecp256r1Sha256,
-                SignatureScheme::EcdsaSecp384r1Sha384,
-            ],
-            prefer_pqc: false,
-        }
-    }
-
-    /// Create a PQC-only configuration (no fallback)
+    /// Alias for new() - pure PQC is the only mode
+    ///
+    /// v0.2: This method is kept for API compatibility.
+    /// Both new() and pqc_only() return the same pure PQC configuration.
     pub fn pqc_only() -> Self {
-        Self {
-            supported_groups: vec![
-                NamedGroup::X25519MlKem768,
-                NamedGroup::P256MlKem768,
-                NamedGroup::P384MlKem1024,
-            ],
-            supported_signatures: vec![
-                SignatureScheme::Ed25519MlDsa65,
-                SignatureScheme::EcdsaP256MlDsa65,
-                SignatureScheme::EcdsaP384MlDsa87,
-            ],
-            prefer_pqc: true,
-        }
+        Self::new()
     }
 
     /// Get supported named groups for TLS negotiation
@@ -121,115 +96,71 @@ impl PqcTlsExtension {
         self.supported_signatures.contains(&scheme)
     }
 
-    /// Perform compatibility-aware group selection
+    /// Negotiate key exchange group (v0.2: Pure PQC ONLY)
     ///
-    /// This method implements smart fallback:
-    /// 1. If peer supports PQC, prefer hybrid groups
-    /// 2. If peer is PQC-unaware, use classical groups
-    /// 3. Detect and handle middlebox interference
+    /// Selects the first mutually supported pure ML-KEM group.
+    /// Classical and hybrid groups are NOT accepted.
     pub fn negotiate_group(&self, peer_groups: &[NamedGroup]) -> NegotiationResult<NamedGroup> {
-        // Check if peer supports any PQC groups
-        let peer_supports_pqc = peer_groups.iter().any(|g| g.is_pqc() || g.is_hybrid());
-
-        if peer_supports_pqc && self.prefer_pqc {
-            // Try PQC groups first
-            let pqc_groups: Vec<NamedGroup> = peer_groups
-                .iter()
-                .filter(|g| g.is_pqc() || g.is_hybrid())
-                .copied()
-                .collect();
-
-            if let Some(group) = self.select_group(&pqc_groups) {
-                return NegotiationResult::Selected(group);
-            }
-        }
-
-        // Try classical fallback
-        let classical_groups: Vec<NamedGroup> = peer_groups
+        // v0.2: ONLY accept pure PQC groups
+        let pqc_groups: Vec<NamedGroup> = peer_groups
             .iter()
-            .filter(|g| g.is_classical())
+            .filter(|g| g.is_pqc())
             .copied()
             .collect();
 
-        if let Some(group) = self.select_group(&classical_groups) {
-            if peer_supports_pqc && self.prefer_pqc {
-                // We wanted PQC but had to fall back
-                return NegotiationResult::Downgraded(group);
-            } else {
-                return NegotiationResult::Selected(group);
-            }
+        if let Some(group) = self.select_group(&pqc_groups) {
+            return NegotiationResult::Selected(group);
         }
 
+        // v0.2: No classical fallback - fail if no pure PQC
         NegotiationResult::Failed
     }
 
-    /// Perform compatibility-aware signature selection
+    /// Negotiate signature scheme (v0.2: Pure PQC ONLY)
+    ///
+    /// Selects the first mutually supported pure ML-DSA scheme.
+    /// Classical and hybrid schemes are NOT accepted.
     pub fn negotiate_signature(
         &self,
         peer_schemes: &[SignatureScheme],
     ) -> NegotiationResult<SignatureScheme> {
-        // Check if peer supports any PQC schemes
-        let peer_supports_pqc = peer_schemes.iter().any(|s| s.is_pqc() || s.is_hybrid());
-
-        if peer_supports_pqc && self.prefer_pqc {
-            // Try PQC schemes first
-            let pqc_schemes: Vec<SignatureScheme> = peer_schemes
-                .iter()
-                .filter(|s| s.is_pqc() || s.is_hybrid())
-                .copied()
-                .collect();
-
-            if let Some(scheme) = self.select_signature(&pqc_schemes) {
-                return NegotiationResult::Selected(scheme);
-            }
-        }
-
-        // Try classical fallback
-        let classical_schemes: Vec<SignatureScheme> = peer_schemes
+        // v0.2: ONLY accept pure PQC schemes
+        let pqc_schemes: Vec<SignatureScheme> = peer_schemes
             .iter()
-            .filter(|s| s.is_classical())
+            .filter(|s| s.is_pqc())
             .copied()
             .collect();
 
-        if let Some(scheme) = self.select_signature(&classical_schemes) {
-            if peer_supports_pqc && self.prefer_pqc {
-                // We wanted PQC but had to fall back
-                return NegotiationResult::Downgraded(scheme);
-            } else {
-                return NegotiationResult::Selected(scheme);
-            }
+        if let Some(scheme) = self.select_signature(&pqc_schemes) {
+            return NegotiationResult::Selected(scheme);
         }
 
+        // v0.2: No classical fallback - fail if no pure PQC
         NegotiationResult::Failed
     }
 }
 
 /// Result of algorithm negotiation
+///
+/// v0.2: Simplified - no Downgraded variant since we don't have fallbacks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NegotiationResult<T> {
-    /// Successfully selected preferred algorithm
+    /// Successfully selected a pure PQC algorithm
     Selected(T),
-    /// Had to downgrade from PQC to classical
-    Downgraded(T),
-    /// No common algorithms found
+    /// No common pure PQC algorithms found
     Failed,
 }
 
 impl<T> NegotiationResult<T> {
     /// Check if negotiation succeeded
     pub fn is_success(&self) -> bool {
-        matches!(self, Self::Selected(_) | Self::Downgraded(_))
-    }
-
-    /// Check if we had to downgrade
-    pub fn is_downgraded(&self) -> bool {
-        matches!(self, Self::Downgraded(_))
+        matches!(self, Self::Selected(_))
     }
 
     /// Get the selected value if any
     pub fn value(&self) -> Option<&T> {
         match self {
-            Self::Selected(v) | Self::Downgraded(v) => Some(v),
+            Self::Selected(v) => Some(v),
             Self::Failed => None,
         }
     }
@@ -345,91 +276,95 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_pqc_extension_default() {
+    fn test_pqc_extension_default_pure_pqc() {
         let ext = PqcTlsExtension::new();
 
-        // Should prefer hybrid groups
-        assert!(ext.supported_groups()[0].is_hybrid());
-        assert!(ext.supported_signatures()[0].is_hybrid());
+        // v0.2: Should only have pure PQC groups
+        assert!(ext.supported_groups()[0].is_pqc());
+        assert!(ext.supported_signatures()[0].is_pqc());
 
-        // Should support both hybrid and classical
-        assert!(ext.supports_group(NamedGroup::X25519MlKem768));
-        assert!(ext.supports_group(NamedGroup::X25519));
-        assert!(ext.supports_signature(SignatureScheme::Ed25519MlDsa65));
-        assert!(ext.supports_signature(SignatureScheme::Ed25519));
+        // Should have ML-KEM-768 as first (PRIMARY)
+        assert_eq!(ext.supported_groups()[0], NamedGroup::MlKem768);
+        assert_eq!(ext.supported_signatures()[0], SignatureScheme::MlDsa65);
+
+        // Should support pure PQC
+        assert!(ext.supports_group(NamedGroup::MlKem768));
+        assert!(ext.supports_group(NamedGroup::MlKem1024));
+        assert!(ext.supports_signature(SignatureScheme::MlDsa65));
+        assert!(ext.supports_signature(SignatureScheme::MlDsa87));
     }
 
     #[test]
-    fn test_pqc_extension_classical_only() {
-        let ext = PqcTlsExtension::classical_only();
+    fn test_pqc_extension_pqc_only_same_as_new() {
+        let ext1 = PqcTlsExtension::new();
+        let ext2 = PqcTlsExtension::pqc_only();
 
-        // Should not support hybrid
-        assert!(!ext.supports_group(NamedGroup::X25519MlKem768));
-        assert!(!ext.supports_signature(SignatureScheme::Ed25519MlDsa65));
-
-        // Should support classical
-        assert!(ext.supports_group(NamedGroup::X25519));
-        assert!(ext.supports_signature(SignatureScheme::Ed25519));
+        // v0.2: Both should return the same pure PQC configuration
+        assert_eq!(ext1.supported_groups, ext2.supported_groups);
+        assert_eq!(ext1.supported_signatures, ext2.supported_signatures);
     }
 
     #[test]
-    fn test_pqc_extension_pqc_only() {
-        let ext = PqcTlsExtension::pqc_only();
-
-        // Should only support hybrid
-        assert!(ext.supports_group(NamedGroup::X25519MlKem768));
-        assert!(ext.supports_signature(SignatureScheme::Ed25519MlDsa65));
-
-        // Should not support classical
-        assert!(!ext.supports_group(NamedGroup::X25519));
-        assert!(!ext.supports_signature(SignatureScheme::Ed25519));
-    }
-
-    #[test]
-    fn test_negotiation_both_support_pqc() {
+    fn test_negotiation_both_support_pure_pqc() {
         let ext = PqcTlsExtension::new();
 
-        // Peer supports PQC
-        let peer_groups = vec![NamedGroup::X25519MlKem768, NamedGroup::X25519];
+        // v0.2: Peer supports pure PQC
+        let peer_groups = vec![NamedGroup::MlKem768, NamedGroup::MlKem1024];
 
         let result = ext.negotiate_group(&peer_groups);
         assert!(result.is_success());
-        assert!(!result.is_downgraded());
-        assert_eq!(result.value(), Some(&NamedGroup::X25519MlKem768));
+        assert_eq!(result.value(), Some(&NamedGroup::MlKem768));
     }
 
     #[test]
-    fn test_negotiation_downgrade() {
-        // Create extension that only supports P256MlKem768 for hybrid
-        let mut ext = PqcTlsExtension::new();
-        ext.supported_groups = vec![
-            NamedGroup::P256MlKem768, // Only this hybrid group
-            NamedGroup::X25519,       // Classical fallback
-            NamedGroup::Secp256r1,
-        ];
+    fn test_negotiation_fails_no_pqc() {
+        let ext = PqcTlsExtension::new();
 
-        // Peer supports different PQC algorithm
-        let peer_groups = vec![
-            NamedGroup::X25519MlKem768, // Different hybrid group we don't support
-            NamedGroup::X25519,         // Classical fallback
-        ];
+        // v0.2: Peer has no pure PQC groups - should fail (no classical fallback)
+        let peer_groups: Vec<NamedGroup> = vec![];
 
         let result = ext.negotiate_group(&peer_groups);
-        assert!(result.is_success());
-        assert!(result.is_downgraded()); // Downgraded because peer supports PQC but we couldn't agree on algorithm
-        assert_eq!(result.value(), Some(&NamedGroup::X25519));
+        assert!(!result.is_success());
+        assert_eq!(result.value(), None);
     }
 
     #[test]
-    fn test_wire_format_encoding() {
+    fn test_negotiation_signature_pure_pqc() {
+        let ext = PqcTlsExtension::new();
+
+        // v0.2: Peer supports pure PQC signatures
+        let peer_schemes = vec![SignatureScheme::MlDsa65, SignatureScheme::MlDsa87];
+
+        let result = ext.negotiate_signature(&peer_schemes);
+        assert!(result.is_success());
+        assert_eq!(result.value(), Some(&SignatureScheme::MlDsa65));
+    }
+
+    #[test]
+    fn test_wire_format_encoding_pure_pqc() {
         use wire_format::*;
 
-        let groups = vec![NamedGroup::X25519, NamedGroup::X25519MlKem768];
+        // v0.2: Use pure PQC groups
+        let groups = vec![NamedGroup::MlKem768, NamedGroup::MlKem1024];
 
         let encoded = encode_supported_groups(&groups);
         assert_eq!(encoded.len(), 2 + 4); // Length + 2 groups
 
         let decoded = decode_supported_groups(&encoded).unwrap();
         assert_eq!(decoded, groups);
+    }
+
+    #[test]
+    fn test_wire_format_signature_schemes() {
+        use wire_format::*;
+
+        // v0.2: Use pure PQC signatures
+        let schemes = vec![SignatureScheme::MlDsa65, SignatureScheme::MlDsa87];
+
+        let encoded = encode_signature_schemes(&schemes);
+        assert_eq!(encoded.len(), 2 + 4); // Length + 2 schemes
+
+        let decoded = decode_signature_schemes(&encoded).unwrap();
+        assert_eq!(decoded, schemes);
     }
 }

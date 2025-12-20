@@ -72,16 +72,7 @@ mod pqc_integration {
             Err(e) => panic!("Unexpected ML-DSA SPKI error: {e:?}"),
         }
 
-        // 2c) Hybrid Ed25519+ML-DSA extended form
-        let ml_dsa_key2 = MlDsaPublicKey::from_bytes(
-            &vec![2u8; ant_quic::crypto::pqc::types::ML_DSA_65_PUBLIC_KEY_SIZE],
-        )
-        .expect("Failed to create ML-DSA public key (hybrid)");
-        let _hybrid_key = ExtendedRawPublicKey::HybridEd25519MlDsa65 {
-            ed25519: ed25519_verify,
-            ml_dsa: ml_dsa_key2,
-        };
-        // We don’t need to fully verify hybrid here; dedicated tests cover it. Presence/size sanity is enough.
+        // v2.0: Hybrid keys removed - using pure PQC only
 
         // 3) Sanity: RFC NAT traversal frame types are available and VarInt encodes as expected
         let v = VarInt::from_u32(123);

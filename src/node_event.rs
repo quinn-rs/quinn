@@ -335,10 +335,7 @@ mod tests {
         let peer_a = PeerId([1u8; 32]);
         let peer_b = PeerId([2u8; 32]);
 
-        let start = NodeEvent::CoordinationStarted {
-            peer_a: peer_a.clone(),
-            peer_b: peer_b.clone(),
-        };
+        let start = NodeEvent::CoordinationStarted { peer_a, peer_b };
 
         let complete = NodeEvent::CoordinationComplete {
             peer_a,

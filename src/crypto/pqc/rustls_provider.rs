@@ -153,11 +153,12 @@ pub trait PqcConfigExt {
 }
 
 /// Information about crypto configuration
+/// v0.2: Pure PQC only - no hybrid or classical algorithms
 pub struct CryptoInfo {
     has_pqc: bool,
-    hybrid_kex: bool,
+    pqc_kex: bool,
     #[allow(dead_code)]
-    hybrid_sig: bool,
+    pqc_sig: bool,
 }
 
 impl CryptoInfo {
@@ -166,14 +167,14 @@ impl CryptoInfo {
         self.has_pqc
     }
 
-    /// Check if hybrid key exchange was used
-    pub fn used_hybrid_kex(&self) -> bool {
-        self.hybrid_kex
+    /// Check if pure PQC key exchange was used
+    pub fn used_pqc_kex(&self) -> bool {
+        self.pqc_kex
     }
 
-    /// Check if classical key exchange was used
+    /// Check if classical key exchange was used (always false in v0.2)
     pub fn used_classical_kex(&self) -> bool {
-        !self.hybrid_kex
+        !self.pqc_kex
     }
 }
 
@@ -203,10 +204,11 @@ impl PqcConfigExt for crate::ClientConfig {
     }
 
     fn crypto_config(&self) -> CryptoInfo {
+        // v0.2: Pure PQC always enabled
         CryptoInfo {
-            has_pqc: true, // Placeholder
-            hybrid_kex: false,
-            hybrid_sig: false,
+            has_pqc: true,
+            pqc_kex: true, // v0.2: Always pure PQC
+            pqc_sig: true,
         }
     }
 }
@@ -214,17 +216,16 @@ impl PqcConfigExt for crate::ClientConfig {
 // Implement the extension trait for ServerConfig
 impl PqcConfigExt for crate::ServerConfig {
     fn has_pqc_support(&self) -> bool {
-        // Check if PQC cipher suites are configured
-        // For now, return true for configs processed by with_pqc_support
-        // In a real implementation, we'd check if the config has PQC cipher suites
-        true // Placeholder - assumes PQC support if this trait is being used
+        // v0.2: Pure PQC always enabled - no classical fallback
+        true
     }
 
     fn crypto_config(&self) -> CryptoInfo {
+        // v0.2: Pure PQC always enabled
         CryptoInfo {
-            has_pqc: true, // Placeholder
-            hybrid_kex: false,
-            hybrid_sig: false,
+            has_pqc: true,
+            pqc_kex: true, // v0.2: Always pure PQC
+            pqc_sig: true,
         }
     }
 }

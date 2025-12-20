@@ -5,8 +5,9 @@
 
 //! Tests for PQC CryptoProvider factory
 //!
-//! v0.13.0+: PQC is always enabled. These tests verify that the CryptoProvider
-//! factory correctly creates providers that only use PQC algorithm selection.
+//! v2.0: Pure PQC - NO hybrid or classical algorithms.
+//! These tests verify that the CryptoProvider factory correctly creates
+//! providers that only use pure ML-KEM groups (0x0200, 0x0201, 0x0202).
 
 #![cfg(feature = "rustls-aws-lc-rs")]
 #![allow(clippy::unwrap_used, clippy::expect_used)]
@@ -67,19 +68,25 @@ fn test_validate_negotiated_group_secp256r1() {
     assert!(result.is_err(), "SECP256R1 should be rejected in v0.13.0+");
 }
 
-/// Test PQC group validation (should always succeed)
+/// Test Pure PQC group validation (v2.0: ONLY pure ML-KEM)
 #[test]
 fn test_validate_negotiated_group_ml_kem() {
-    // ML-KEM-768 code point (0x0201) should be accepted
-    let result = validate_negotiated_group(rustls::NamedGroup::Unknown(0x0201));
-    assert!(result.is_ok(), "ML-KEM-768 should be accepted");
+    // v2.0: Pure ML-KEM groups should be accepted
+    let result = validate_negotiated_group(rustls::NamedGroup::Unknown(0x0200));
+    assert!(result.is_ok(), "ML-KEM-512 (0x0200) should be accepted");
 
-    // X25519MLKEM768 hybrid code point (0x11EC - IANA assigned) should be accepted
+    let result = validate_negotiated_group(rustls::NamedGroup::Unknown(0x0201));
+    assert!(result.is_ok(), "ML-KEM-768 (0x0201) should be accepted");
+
+    let result = validate_negotiated_group(rustls::NamedGroup::Unknown(0x0202));
+    assert!(result.is_ok(), "ML-KEM-1024 (0x0202) should be accepted");
+
+    // v2.0: Hybrid groups should be REJECTED (no longer supported)
     let result = validate_negotiated_group(rustls::NamedGroup::Unknown(0x11EC));
-    assert!(result.is_ok(), "X25519MLKEM768 should be accepted");
+    assert!(result.is_err(), "X25519MLKEM768 hybrid (0x11EC) should be rejected in v2.0");
 }
 
-/// Test PQC group detection
+/// Test PQC group detection (v2.0: ONLY pure ML-KEM)
 #[test]
 fn test_is_pqc_group() {
     // Classical groups should return false
@@ -87,12 +94,13 @@ fn test_is_pqc_group() {
     assert!(!is_pqc_group(rustls::NamedGroup::secp256r1));
     assert!(!is_pqc_group(rustls::NamedGroup::secp384r1));
 
-    // ML-KEM groups should return true
-    // ML-KEM-768 code point (0x0201)
-    assert!(is_pqc_group(rustls::NamedGroup::Unknown(0x0201)));
+    // v2.0: Pure ML-KEM groups should return true (IANA code points)
+    assert!(is_pqc_group(rustls::NamedGroup::Unknown(0x0200))); // ML-KEM-512
+    assert!(is_pqc_group(rustls::NamedGroup::Unknown(0x0201))); // ML-KEM-768
+    assert!(is_pqc_group(rustls::NamedGroup::Unknown(0x0202))); // ML-KEM-1024
 
-    // X25519MLKEM768 hybrid code point (0x11EC - IANA assigned)
-    assert!(is_pqc_group(rustls::NamedGroup::Unknown(0x11EC)));
+    // v2.0: Hybrid groups should return false (no longer supported)
+    assert!(!is_pqc_group(rustls::NamedGroup::Unknown(0x11EC))); // X25519MLKEM768 hybrid
 }
 
 /// Test that provider only includes PQC groups
@@ -141,19 +149,26 @@ fn test_configured_provider_with_pqc() {
     );
 }
 
-/// Test validate_pqc_connection function
+/// Test validate_pqc_connection function (v2.0: Pure PQC ONLY)
 #[test]
 fn test_validate_pqc_connection() {
     use ant_quic::crypto::rustls::validate_pqc_connection;
 
-    // v0.13.0+: Classical groups should always be rejected
+    // v2.0: Classical groups should always be rejected
     let result = validate_pqc_connection(rustls::NamedGroup::X25519);
     assert!(result.is_err(), "X25519 should be rejected");
 
-    // PQC groups should be accepted
+    // v2.0: Pure PQC groups should be accepted
+    let result = validate_pqc_connection(rustls::NamedGroup::Unknown(0x0200));
+    assert!(result.is_ok(), "ML-KEM-512 should be accepted");
+
     let result = validate_pqc_connection(rustls::NamedGroup::Unknown(0x0201));
     assert!(result.is_ok(), "ML-KEM-768 should be accepted");
 
+    let result = validate_pqc_connection(rustls::NamedGroup::Unknown(0x0202));
+    assert!(result.is_ok(), "ML-KEM-1024 should be accepted");
+
+    // v2.0: Hybrid groups should be REJECTED (no longer supported)
     let result = validate_pqc_connection(rustls::NamedGroup::Unknown(0x11EC));
-    assert!(result.is_ok(), "X25519MLKEM768 should be accepted");
+    assert!(result.is_err(), "X25519MLKEM768 hybrid (0x11EC) should be rejected in v2.0");
 }

@@ -25,15 +25,18 @@ ant-quic is a QUIC transport protocol implementation with advanced NAT traversal
 
 ## Key Technical Decisions
 
-### Authentication: Hybrid PQC with Raw Public Keys
+### Authentication: Pure PQC with Raw Public Keys (v0.2)
 
-We use **Hybrid Post-Quantum Cryptography** with raw public keys (inspired by RFC 7250):
+We use **Pure Post-Quantum Cryptography** with raw public keys (inspired by RFC 7250):
 - Reference: `rfcs/ant-quic-hybrid-pqc-authentication.md` (our specification)
-- Identity: Ed25519 key pairs (32-byte peer ID)
-- Key Exchange: X25519 + ML-KEM-768 hybrid (IANA 0x11EC)
-- Signatures: Ed25519 + ML-DSA-65 hybrid (0x0920)
+- Identity: Ed25519 key pairs (32-byte PeerId compact identifier ONLY)
+- Key Exchange: ML-KEM-768 (IANA 0x0201) - FIPS 203
+- Signatures: ML-DSA-65 (IANA 0x0901) - FIPS 204
 - No PKI infrastructure, no CA dependency
 - Peers authenticate directly via public key fingerprints
+
+v0.2: This is a greenfield network - NO hybrid algorithms, NO classical fallback.
+Ed25519 is used ONLY for the 32-byte PeerId identifier, NOT for TLS authentication.
 
 ### Post-Quantum Cryptography: Always On (v0.13.0+)
 
@@ -178,7 +181,7 @@ Conventional Commits required (see `cliff.toml`):
 
 ### Core Protocol
 - `rfc9000.txt` - QUIC base protocol
-- `ant-quic-hybrid-pqc-authentication.md` - Hybrid PQC Raw Public Keys (our specification)
+- `ant-quic-hybrid-pqc-authentication.md` - Pure PQC Raw Public Keys (v0.2 - our specification)
 
 ### NAT Traversal (Native QUIC)
 - `draft-seemann-quic-nat-traversal-02.txt` - Primary NAT traversal spec
@@ -212,8 +215,8 @@ Conventional Commits required (see `cliff.toml`):
 **Keep core technical information consistent across all three files:**
 - Repository independence (not a Quinn fork for contributions)
 - v0.13.0+ symmetric P2P architecture (no roles)
-- 100% PQC always-on (ML-KEM-768, ML-DSA-65)
+- v0.2 Pure PQC: ML-KEM-768 (0x0201) + ML-DSA-65 (0x0901)
 - Native QUIC NAT traversal (NO STUN/ICE/TURN)
 - Correct frame IDs (0x3d7e90+, 0x9f81a6+)
-- Hybrid PQC Raw Public Keys (see `rfcs/ant-quic-hybrid-pqc-authentication.md`)
+- Pure PQC Raw Public Keys (v0.2 - see `rfcs/ant-quic-hybrid-pqc-authentication.md`)
 - IPv4 and IPv6 dual-stack support

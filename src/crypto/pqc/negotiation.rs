@@ -7,12 +7,14 @@
 
 //! PQC algorithm negotiation
 //!
-//! v0.13.0+: PQC is always on. This module implements the negotiation
-//! logic for post-quantum cryptography in TLS 1.3 handshakes. It handles:
+//! v0.2: Pure Post-Quantum Cryptography - NO hybrid or classical algorithms.
 //!
-//! - Algorithm selection with PQC preference
-//! - Client/server negotiation of supported algorithms
-//! - Debugging and logging of negotiation decisions
+//! This module implements the negotiation logic for pure PQC in TLS 1.3 handshakes:
+//! - Key Exchange: ML-KEM-768 (0x0201) ONLY
+//! - Signatures: ML-DSA-65 (0x0901) ONLY
+//! - NO classical fallback, NO hybrid algorithms
+//!
+//! This is a greenfield network with no legacy compatibility requirements.
 
 use crate::crypto::pqc::{
     config::PqcConfig,
@@ -92,31 +94,31 @@ impl PqcNegotiator {
         );
     }
 
-    /// Negotiate algorithms (v0.13.0+: always prefers PQC)
+    /// Negotiate algorithms (v0.2: ONLY pure PQC accepted)
     pub fn negotiate(&self) -> NegotiationResult {
-        debug!("Starting PQC negotiation");
+        debug!("Starting pure PQC negotiation (v0.2)");
 
-        // Negotiate key exchange
+        // Negotiate key exchange - ONLY pure ML-KEM
         let key_exchange_result = self.negotiate_key_exchange();
 
-        // Negotiate signature scheme
+        // Negotiate signature scheme - ONLY pure ML-DSA
         let signature_result = self.negotiate_signature();
 
-        // Determine if PQC was used
+        // v0.2: PQC is used if we have pure PQC algorithms
         let used_pqc = key_exchange_result
             .as_ref()
-            .map(|g| g.is_hybrid() || g.is_pqc())
+            .map(|g| g.is_pqc())
             .unwrap_or(false)
             || signature_result
                 .as_ref()
-                .map(|s| s.is_hybrid() || s.is_pqc())
+                .map(|s| s.is_pqc())
                 .unwrap_or(false);
 
         // Build reason message
         let reason = self.build_reason_message(&key_exchange_result, &signature_result, used_pqc);
 
         info!(
-            "Negotiation complete: key_exchange={:?}, signature={:?}, pqc={}",
+            "Pure PQC negotiation complete: key_exchange={:?}, signature={:?}, pqc={}",
             key_exchange_result, signature_result, used_pqc
         );
 
@@ -128,7 +130,7 @@ impl PqcNegotiator {
         }
     }
 
-    /// Negotiate key exchange group (v0.13.0+: PQC required)
+    /// Negotiate key exchange group (v0.2: Pure PQC ONLY)
     fn negotiate_key_exchange(&self) -> Option<NamedGroup> {
         let client_set: HashSet<_> = self.client_groups.iter().cloned().collect();
         let server_set: HashSet<_> = self.server_groups.iter().cloned().collect();
@@ -139,16 +141,16 @@ impl PqcNegotiator {
             return None;
         }
 
-        // v0.13.0+: Only select PQC algorithms (hybrid or pure)
-        let pqc = common.iter().find(|g| g.is_hybrid() || g.is_pqc()).cloned();
+        // v0.2: ONLY select pure PQC algorithms (NO hybrids)
+        let pqc = common.iter().find(|g| g.is_pqc()).cloned();
 
         if pqc.is_none() {
-            warn!("No PQC key exchange groups available");
+            warn!("No pure PQC key exchange groups available - hybrid and classical rejected");
         }
         pqc
     }
 
-    /// Negotiate signature scheme (v0.13.0+: PQC required)
+    /// Negotiate signature scheme (v0.2: Pure PQC ONLY)
     fn negotiate_signature(&self) -> Option<SignatureScheme> {
         let client_set: HashSet<_> = self.client_signatures.iter().cloned().collect();
         let server_set: HashSet<_> = self.server_signatures.iter().cloned().collect();
@@ -159,11 +161,11 @@ impl PqcNegotiator {
             return None;
         }
 
-        // v0.13.0+: Only select PQC algorithms (hybrid or pure)
-        let pqc = common.iter().find(|s| s.is_hybrid() || s.is_pqc()).cloned();
+        // v0.2: ONLY select pure PQC algorithms (NO hybrids)
+        let pqc = common.iter().find(|s| s.is_pqc()).cloned();
 
         if pqc.is_none() {
-            warn!("No PQC signature schemes available");
+            warn!("No pure PQC signature schemes available - hybrid and classical rejected");
         }
         pqc
     }
@@ -248,39 +250,46 @@ impl PqcNegotiator {
     }
 }
 
-/// Helper to filter algorithms for PQC-only mode
+/// Helper to filter algorithms for pure PQC-only mode
 pub fn filter_algorithms(
     groups: &[NamedGroup],
     signatures: &[SignatureScheme],
 ) -> (Vec<NamedGroup>, Vec<SignatureScheme>) {
-    // v0.13.0+: Only keep PQC algorithms
-    let filtered_groups = groups
-        .iter()
-        .filter(|g| g.is_hybrid() || g.is_pqc())
-        .cloned()
-        .collect();
+    // v0.2: Only keep pure PQC algorithms (NO hybrids)
+    let filtered_groups = groups.iter().filter(|g| g.is_pqc()).cloned().collect();
 
-    let filtered_signatures = signatures
-        .iter()
-        .filter(|s| s.is_hybrid() || s.is_pqc())
-        .cloned()
-        .collect();
+    let filtered_signatures = signatures.iter().filter(|s| s.is_pqc()).cloned().collect();
 
     (filtered_groups, filtered_signatures)
 }
 
-/// Order algorithms by preference (v0.13.0+: PQC first)
+/// Order algorithms by preference (v0.2: Pure PQC only)
 pub fn order_by_preference(groups: &mut Vec<NamedGroup>, signatures: &mut Vec<SignatureScheme>) {
-    // PQC algorithms first, prefer hybrid
-    groups.sort_by_key(|g| match (g.is_hybrid(), g.is_pqc()) {
-        (true, _) => 0,     // Hybrid first
-        (false, true) => 1, // Pure PQC second
-        _ => 2,             // Classical last (shouldn't be present)
+    // v0.2: Only pure PQC algorithms, prefer ML-KEM-768 and ML-DSA-65 (Level 3)
+    groups.sort_by_key(|g| {
+        if g.is_pqc() {
+            // Order by security level: Level 3 (768) preferred, then 5 (1024), then 1 (512)
+            match g.to_u16() {
+                0x0201 => 0, // ML-KEM-768 (PRIMARY)
+                0x0202 => 1, // ML-KEM-1024
+                0x0200 => 2, // ML-KEM-512
+                _ => 3,
+            }
+        } else {
+            99 // Non-PQC at end (shouldn't be present)
+        }
     });
-    signatures.sort_by_key(|s| match (s.is_hybrid(), s.is_pqc()) {
-        (true, _) => 0,
-        (false, true) => 1,
-        _ => 2,
+    signatures.sort_by_key(|s| {
+        if s.is_pqc() {
+            match s.to_u16() {
+                0x0901 => 0, // ML-DSA-65 (PRIMARY)
+                0x0902 => 1, // ML-DSA-87
+                0x0900 => 2, // ML-DSA-44
+                _ => 3,
+            }
+        } else {
+            99 // Non-PQC at end (shouldn't be present)
+        }
     });
 }
 
@@ -297,62 +306,82 @@ mod tests {
     }
 
     #[test]
-    fn test_pqc_negotiation() {
+    fn test_pure_pqc_negotiation() {
         let config = PqcConfig::builder().build().unwrap();
         let mut negotiator = PqcNegotiator::new(config);
 
-        // Set up with PQC algorithms
+        // v0.2: Set up with pure PQC algorithms ONLY
         negotiator.set_client_algorithms(
-            vec![
-                NamedGroup::X25519,
-                NamedGroup::X25519MlKem768,
-                NamedGroup::P256MlKem768,
-            ],
-            vec![
-                SignatureScheme::Ed25519,
-                SignatureScheme::Ed25519MlDsa65,
-                SignatureScheme::EcdsaP256MlDsa65,
-            ],
+            vec![NamedGroup::MlKem768, NamedGroup::MlKem1024],
+            vec![SignatureScheme::MlDsa65, SignatureScheme::MlDsa87],
         );
 
         negotiator.set_server_algorithms(
-            vec![NamedGroup::X25519MlKem768, NamedGroup::P256MlKem768],
-            vec![
-                SignatureScheme::Ed25519MlDsa65,
-                SignatureScheme::EcdsaP256MlDsa65,
-            ],
+            vec![NamedGroup::MlKem768, NamedGroup::MlKem1024],
+            vec![SignatureScheme::MlDsa65, SignatureScheme::MlDsa87],
         );
 
         let result = negotiator.negotiate();
 
-        // Should select PQC algorithms
+        // Should select pure PQC algorithms
         assert!(result.used_pqc);
-        // Should select one of the PQC groups
+        // Should select one of the pure PQC groups
         assert!(matches!(
             result.key_exchange,
-            Some(NamedGroup::X25519MlKem768) | Some(NamedGroup::P256MlKem768)
+            Some(NamedGroup::MlKem768) | Some(NamedGroup::MlKem1024)
         ));
-        // Should select one of the PQC signatures
+        // Should select one of the pure PQC signatures
         assert!(matches!(
             result.signature_scheme,
-            Some(SignatureScheme::Ed25519MlDsa65) | Some(SignatureScheme::EcdsaP256MlDsa65)
+            Some(SignatureScheme::MlDsa65) | Some(SignatureScheme::MlDsa87)
         ));
         assert!(!negotiator.should_fail(&result));
     }
 
     #[test]
-    fn test_negotiation_failure_no_pqc() {
+    fn test_negotiation_primary_algorithms() {
         let config = PqcConfig::builder().build().unwrap();
         let mut negotiator = PqcNegotiator::new(config);
 
-        // Only classical algorithms available
-        negotiator.set_client_algorithms(vec![NamedGroup::X25519], vec![SignatureScheme::Ed25519]);
+        // v0.2: Both sides offer PRIMARY algorithms
+        negotiator.set_client_algorithms(
+            vec![NamedGroup::MlKem768],
+            vec![SignatureScheme::MlDsa65],
+        );
 
-        negotiator.set_server_algorithms(vec![NamedGroup::X25519], vec![SignatureScheme::Ed25519]);
+        negotiator.set_server_algorithms(
+            vec![NamedGroup::MlKem768],
+            vec![SignatureScheme::MlDsa65],
+        );
 
         let result = negotiator.negotiate();
 
-        // Should fail - no PQC available
+        // Should select PRIMARY algorithms
+        assert!(result.used_pqc);
+        assert_eq!(result.key_exchange, Some(NamedGroup::MlKem768));
+        assert_eq!(result.signature_scheme, Some(SignatureScheme::MlDsa65));
+        assert!(!negotiator.should_fail(&result));
+    }
+
+    #[test]
+    fn test_negotiation_failure_no_common() {
+        let config = PqcConfig::builder().build().unwrap();
+        let mut negotiator = PqcNegotiator::new(config);
+
+        // Disjoint sets of pure PQC algorithms
+        negotiator.set_client_algorithms(
+            vec![NamedGroup::MlKem512],
+            vec![SignatureScheme::MlDsa44],
+        );
+
+        negotiator.set_server_algorithms(
+            vec![NamedGroup::MlKem1024],
+            vec![SignatureScheme::MlDsa87],
+        );
+
+        let result = negotiator.negotiate();
+
+        // Should fail - no common PQC available
         assert!(!result.used_pqc);
         assert_eq!(result.key_exchange, None);
         assert_eq!(result.signature_scheme, None);
@@ -360,17 +389,13 @@ mod tests {
     }
 
     #[test]
-    fn test_no_common_algorithms() {
+    fn test_no_algorithms() {
         let config = PqcConfig::default();
         let mut negotiator = PqcNegotiator::new(config);
 
-        // Completely disjoint sets
-        negotiator.set_client_algorithms(vec![NamedGroup::X25519], vec![SignatureScheme::Ed25519]);
-
-        negotiator.set_server_algorithms(
-            vec![NamedGroup::Secp256r1],
-            vec![SignatureScheme::EcdsaSecp256r1Sha256],
-        );
+        // Empty sets
+        negotiator.set_client_algorithms(vec![], vec![]);
+        negotiator.set_server_algorithms(vec![], vec![]);
 
         let result = negotiator.negotiate();
 
@@ -382,43 +407,45 @@ mod tests {
     }
 
     #[test]
-    fn test_filter_algorithms() {
+    fn test_filter_algorithms_pure_pqc() {
         let groups = vec![
-            NamedGroup::X25519,
-            NamedGroup::X25519MlKem768,
-            NamedGroup::Secp256r1,
+            NamedGroup::MlKem512,
+            NamedGroup::MlKem768,
+            NamedGroup::MlKem1024,
         ];
         let signatures = vec![
-            SignatureScheme::Ed25519,
-            SignatureScheme::Ed25519MlDsa65,
-            SignatureScheme::EcdsaSecp256r1Sha256,
+            SignatureScheme::MlDsa44,
+            SignatureScheme::MlDsa65,
+            SignatureScheme::MlDsa87,
         ];
 
         let (filtered_groups, filtered_sigs) = filter_algorithms(&groups, &signatures);
 
-        // Should only keep PQC algorithms
-        assert_eq!(filtered_groups.len(), 1);
-        assert_eq!(filtered_sigs.len(), 1);
-        assert!(filtered_groups.iter().all(|g| g.is_hybrid() || g.is_pqc()));
-        assert!(filtered_sigs.iter().all(|s| s.is_hybrid() || s.is_pqc()));
+        // v0.2: Should keep all pure PQC algorithms
+        assert_eq!(filtered_groups.len(), 3);
+        assert_eq!(filtered_sigs.len(), 3);
+        assert!(filtered_groups.iter().all(|g| g.is_pqc()));
+        assert!(filtered_sigs.iter().all(|s| s.is_pqc()));
     }
 
     #[test]
-    fn test_order_by_preference() {
+    fn test_order_by_preference_pure_pqc() {
         let mut groups = vec![
-            NamedGroup::X25519,
-            NamedGroup::X25519MlKem768,
-            NamedGroup::Secp256r1,
+            NamedGroup::MlKem512,
+            NamedGroup::MlKem1024,
+            NamedGroup::MlKem768,
         ];
         let mut signatures = vec![
-            SignatureScheme::Ed25519,
-            SignatureScheme::Ed25519MlDsa65,
-            SignatureScheme::EcdsaSecp256r1Sha256,
+            SignatureScheme::MlDsa44,
+            SignatureScheme::MlDsa87,
+            SignatureScheme::MlDsa65,
         ];
 
         order_by_preference(&mut groups, &mut signatures);
-        assert_eq!(groups[0], NamedGroup::X25519MlKem768);
-        assert_eq!(signatures[0], SignatureScheme::Ed25519MlDsa65);
+
+        // v0.2: PRIMARY (Level 3) should be first
+        assert_eq!(groups[0], NamedGroup::MlKem768);
+        assert_eq!(signatures[0], SignatureScheme::MlDsa65);
     }
 
     #[test]
@@ -426,8 +453,14 @@ mod tests {
         let config = PqcConfig::default();
         let mut negotiator = PqcNegotiator::new(config);
 
-        negotiator.set_client_algorithms(vec![NamedGroup::X25519], vec![SignatureScheme::Ed25519]);
-        negotiator.set_server_algorithms(vec![NamedGroup::X25519], vec![SignatureScheme::Ed25519]);
+        negotiator.set_client_algorithms(
+            vec![NamedGroup::MlKem768],
+            vec![SignatureScheme::MlDsa65],
+        );
+        negotiator.set_server_algorithms(
+            vec![NamedGroup::MlKem768],
+            vec![SignatureScheme::MlDsa65],
+        );
 
         let debug_info = negotiator.debug_info();
         assert!(debug_info.contains("Client Groups"));

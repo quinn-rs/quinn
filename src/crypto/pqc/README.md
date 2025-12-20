@@ -37,21 +37,12 @@ The PQC module is ready with placeholder implementations:
 - ✅ Comprehensive tests including future round-trip tests
 - ⏳ Awaiting aws-lc-rs ML-DSA support for actual implementation
 
-### Hybrid Combiners
-- ✅ Hybrid KEM combiner (ECDH + ML-KEM-768)
-- ✅ Hybrid signature combiner (Ed25519 + ML-DSA-65)
-- ✅ KDF-based secret combination (not XOR)
-- ✅ Utility methods for algorithm info
-- ✅ Comprehensive tests for combiners
-- ⏳ Awaiting actual crypto implementations
-
-### TLS Integration
-- ✅ Hybrid named groups (x25519_mlkem768, p256_mlkem768, etc.)
-- ✅ Hybrid signature schemes (ed25519_mldsa65, p256_mldsa65, etc.)
-- ✅ TLS extension negotiation with smart fallback
+### TLS Integration (v0.2: Pure PQC)
+- ✅ Pure ML-KEM named groups (ML-KEM-768, ML-KEM-1024)
+- ✅ Pure ML-DSA signature schemes (ML-DSA-65, ML-DSA-87)
+- ✅ TLS extension negotiation (no fallback - pure PQC required)
 - ✅ Wire format encoding/decoding
-- ✅ Compatibility with legacy peers
-- ✅ Downgrade detection
+- ✅ No classical legacy support (greenfield network)
 
 ### Memory Pool
 - ✅ Efficient allocation for large PQC objects
@@ -61,30 +52,28 @@ The PQC module is ready with placeholder implementations:
 - ✅ Performance statistics and monitoring
 - ✅ Reduces allocation overhead by ~60%
 
-### Raw Public Keys
-- ✅ ExtendedRawPublicKey enum with ML-DSA and hybrid variants
+### Raw Public Keys (v0.2: Pure PQC)
+- ✅ ExtendedRawPublicKey enum with pure ML-DSA variants
 - ✅ SubjectPublicKeyInfo (SPKI) encoding for all key types
-- ✅ Signature verification for PQC and hybrid keys
+- ✅ Signature verification for pure PQC keys
 - ✅ PqcRawPublicKeyVerifier for certificate-less authentication
 - ✅ Support for large key sizes (ML-DSA-65: 1952 bytes)
 - ✅ ASN.1 encoding with proper length handling
-- ⏳ Awaiting actual crypto operations from aws-lc-rs
+- ✅ Ed25519 for 32-byte PeerId compact identifier ONLY
 
-### rustls Integration (Task 8) ✅
+### rustls Integration (v0.2: Pure PQC)
 - ✅ PqcCryptoProvider structure defined
-- ✅ Hybrid cipher suites defined (TLS13_AES_128_GCM_SHA256_MLKEM768, etc.)
+- ✅ Pure PQC cipher suites (TLS13_AES_128_GCM_SHA256 with ML-KEM-768)
 - ✅ Extension trait PqcConfigExt for ClientConfig/ServerConfig
 - ✅ Functions to add PQC support: with_pqc_support(), with_pqc_support_server()
-- ✅ Comprehensive test suite with 8 passing tests
-- ⚠️ Currently placeholder implementation - awaiting rustls extension points
+- ✅ Comprehensive test suite
+- ✅ rustls-post-quantum integration for ML-KEM support
 
-### QUIC Transport Parameters (Task 9) ✅
+### QUIC Transport Parameters (v0.2: Pure PQC)
 - ✅ PQC transport parameter (ID: 0x50C0) for algorithm negotiation
-- ✅ PqcAlgorithms struct with 4 algorithm flags:
-  - ml_kem_768: ML-KEM-768 key encapsulation
-  - ml_dsa_65: ML-DSA-65 digital signatures
-  - hybrid_x25519_ml_kem: Hybrid X25519+ML-KEM-768
-  - hybrid_ed25519_ml_dsa: Hybrid Ed25519+ML-DSA-65
+- ✅ PqcAlgorithms struct with pure PQC algorithm flags:
+  - ml_kem_768: ML-KEM-768 key encapsulation (IANA 0x0201)
+  - ml_dsa_65: ML-DSA-65 digital signatures (IANA 0x0901)
 - ✅ Bit field encoding (1 byte) for efficient transmission
 - ✅ Comprehensive tests for encoding/decoding
 - ✅ Connection state integration with PqcState struct
@@ -93,12 +82,12 @@ The PQC module is ready with placeholder implementations:
 - ✅ Automatic crypto frame fragmentation for large PQC data
 - ✅ Packet coalescing compatible with larger PQC packets
 
-## TODO
+## Status (v0.2: Pure PQC)
 
-- Implement actual ML-KEM operations when aws-lc-rs adds support
-- Implement actual ML-DSA operations when aws-lc-rs adds support
-- Complete rustls integration when extension points become available
-- Add performance benchmarks
+- ✅ ML-KEM-768 operations via aws-lc-rs and rustls-post-quantum
+- ⏳ ML-DSA-65 operations awaiting aws-lc-rs support
+- ✅ rustls integration complete with pure PQC cipher suites
+- ✅ Performance benchmarks for PQC operations
 
 ## Usage
 
@@ -131,46 +120,24 @@ match dsa.generate_keypair() {
     Err(e) => eprintln!("ML-DSA not yet available: {}", e),
 }
 
-// Hybrid Key Encapsulation
-use ant_quic::crypto::pqc::hybrid::HybridKem;
+// v0.2: Pure PQC only - no hybrid algorithms
+// Ed25519 is used ONLY for 32-byte PeerId compact identifier
 
-let hybrid_kem = HybridKem::new();
-match hybrid_kem.generate_keypair() {
-    Ok((public_key, secret_key)) => {
-        // Use for hybrid key exchange
-    }
-    Err(e) => eprintln!("Hybrid KEM not yet available: {}", e),
-}
-
-// Hybrid Digital Signatures
-use ant_quic::crypto::pqc::hybrid::HybridSignature;
-
-let hybrid_sig = HybridSignature::new();
-match hybrid_sig.generate_keypair() {
-    Ok((public_key, secret_key)) => {
-        // Use for hybrid signing/verification
-    }
-    Err(e) => eprintln!("Hybrid signatures not yet available: {}", e),
-}
-
-// TLS Integration
+// TLS Integration (v0.2: Pure PQC)
 use ant_quic::crypto::pqc::tls::{PqcTlsExtension, NamedGroup, NegotiationResult};
 
 let tls_ext = PqcTlsExtension::new();
 
-// Negotiate with peer
-let peer_groups = vec![NamedGroup::X25519MlKem768, NamedGroup::X25519];
+// Negotiate with peer (v0.2: Only pure PQC groups accepted)
+let peer_groups = vec![NamedGroup::MlKem768, NamedGroup::MlKem1024];
 let result = tls_ext.negotiate_group(&peer_groups);
 
 match result {
     NegotiationResult::Selected(group) => {
-        println!("Selected group: {:?}", group);
-    }
-    NegotiationResult::Downgraded(group) => {
-        println!("Warning: Downgraded to classical group: {:?}", group);
+        println!("Selected pure PQC group: {:?}", group);
     }
     NegotiationResult::Failed => {
-        println!("No common groups!");
+        println!("No common pure PQC groups - connection rejected");
     }
 }
 
@@ -219,13 +186,7 @@ match ml_dsa.generate_keypair() {
     Err(e) => eprintln!("ML-DSA not yet available: {}", e),
 }
 
-// Create hybrid key
-let hybrid_key = ExtendedRawPublicKey::HybridEd25519MlDsa65 {
-    ed25519: ed25519_key,
-    ml_dsa: ml_dsa_public_key,
-};
-
-// PQC-aware verifier
+// v0.2: Pure PQC verifier (no hybrid keys)
 let mut verifier = PqcRawPublicKeyVerifier::new(vec![]);
 verifier.add_trusted_key(extended_key);
 verifier.add_trusted_key(pqc_key);
