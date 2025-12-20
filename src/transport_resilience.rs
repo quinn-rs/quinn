@@ -168,7 +168,7 @@ impl TransportCapabilities {
 }
 
 /// Fallback strategy for transport failures
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum FallbackStrategy {
     /// Don't retry on failure
     NoRetry,
@@ -182,13 +182,8 @@ pub enum FallbackStrategy {
         initial_delay_ms: u64,
     },
     /// Fall back to relay on direct failure
+    #[default]
     FallbackToRelay,
-}
-
-impl Default for FallbackStrategy {
-    fn default() -> Self {
-        Self::FallbackToRelay
-    }
 }
 
 #[cfg(test)]
