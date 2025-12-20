@@ -57,7 +57,9 @@ use crate::nat_traversal_api::PeerId;
 use crate::node_config::NodeConfig;
 use crate::node_event::{DisconnectReason as NodeDisconnectReason, NodeEvent};
 use crate::node_status::{NatType, NodeStatus};
-use crate::p2p_endpoint::{P2pEndpoint, EndpointError, PeerConnection, P2pEvent, DisconnectReason as P2pDisconnectReason};
+use crate::p2p_endpoint::{
+    DisconnectReason as P2pDisconnectReason, EndpointError, P2pEndpoint, P2pEvent, PeerConnection,
+};
 use crate::unified_config::P2pConfig;
 
 /// Error type for Node operations
@@ -250,10 +252,7 @@ impl Node {
     }
 
     /// Spawn a background task to bridge P2pEvents to NodeEvents
-    fn spawn_event_bridge(
-        endpoint: Arc<P2pEndpoint>,
-        event_tx: broadcast::Sender<NodeEvent>,
-    ) {
+    fn spawn_event_bridge(endpoint: Arc<P2pEndpoint>, event_tx: broadcast::Sender<NodeEvent>) {
         let mut p2p_events = endpoint.subscribe();
 
         tokio::spawn(async move {
@@ -288,12 +287,10 @@ impl Node {
                     direct: true, // P2pEvent doesn't distinguish, assume direct
                 })
             }
-            P2pEvent::PeerDisconnected { peer_id, reason } => {
-                Some(NodeEvent::PeerDisconnected {
-                    peer_id,
-                    reason: Self::convert_disconnect_reason(reason),
-                })
-            }
+            P2pEvent::PeerDisconnected { peer_id, reason } => Some(NodeEvent::PeerDisconnected {
+                peer_id,
+                reason: Self::convert_disconnect_reason(reason),
+            }),
             P2pEvent::ExternalAddressDiscovered { addr } => {
                 Some(NodeEvent::ExternalAddressDiscovered { addr })
             }
@@ -371,10 +368,7 @@ impl Node {
     /// println!("Connected to: {:?}", conn.peer_id);
     /// ```
     pub async fn connect_addr(&self, addr: SocketAddr) -> Result<PeerConnection, NodeError> {
-        self.inner
-            .connect(addr)
-            .await
-            .map_err(NodeError::Endpoint)
+        self.inner.connect(addr).await.map_err(NodeError::Endpoint)
     }
 
     /// Connect to a peer by ID
@@ -459,10 +453,7 @@ impl Node {
 
     /// Receive data from any peer
     pub async fn recv(&self, timeout: Duration) -> Result<(PeerId, Vec<u8>), NodeError> {
-        self.inner
-            .recv(timeout)
-            .await
-            .map_err(NodeError::Endpoint)
+        self.inner.recv(timeout).await.map_err(NodeError::Endpoint)
     }
 
     // === Observability ===
@@ -513,26 +504,25 @@ impl Node {
         };
 
         // Determine if we can help with traversal
-        let can_receive_direct = has_public_ip
-            || nat_type == NatType::FullCone
-            || nat_type == NatType::None;
+        let can_receive_direct =
+            has_public_ip || nat_type == NatType::FullCone || nat_type == NatType::None;
 
         // Check relay status from NAT stats
         // Currently, relay status is indicated by having relayed_connections > 0
         // and active sessions that may be acting as relays
-        let (is_relaying, relay_sessions, relay_bytes_forwarded) =
-            if let Some(ref nat) = nat_stats {
-                // If we have any active sessions and are accepting connections,
-                // we're potentially relaying
-                let relaying = nat.relayed_connections > 0 && can_receive_direct;
-                (
-                    relaying,
-                    if relaying { nat.active_sessions } else { 0 },
-                    0u64, // Not tracked yet - future enhancement
-                )
-            } else {
-                (false, 0, 0)
-            };
+        let (is_relaying, relay_sessions, relay_bytes_forwarded) = if let Some(ref nat) = nat_stats
+        {
+            // If we have any active sessions and are accepting connections,
+            // we're potentially relaying
+            let relaying = nat.relayed_connections > 0 && can_receive_direct;
+            (
+                relaying,
+                if relaying { nat.active_sessions } else { 0 },
+                0u64, // Not tracked yet - future enhancement
+            )
+        } else {
+            (false, 0, 0)
+        };
 
         // Check coordination status
         // Any node with active sessions is acting as a coordinator
@@ -547,9 +537,11 @@ impl Node {
 
         NodeStatus {
             peer_id: self.peer_id(),
-            local_addr: local_addr.unwrap_or_else(|| "0.0.0.0:0".parse().unwrap_or_else(|_| {
-                SocketAddr::new(std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED), 0)
-            })),
+            local_addr: local_addr.unwrap_or_else(|| {
+                "0.0.0.0:0".parse().unwrap_or_else(|_| {
+                    SocketAddr::new(std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED), 0)
+                })
+            }),
             external_addrs,
             nat_type,
             can_receive_direct,
@@ -783,9 +775,9 @@ mod tests {
         let public_key = node.public_key_bytes();
 
         // Peer ID should be derived from public key
-        let derived = derive_peer_id_from_public_key(&ed25519_dalek::VerifyingKey::from_bytes(
-            &public_key,
-        ).unwrap());
+        let derived = derive_peer_id_from_public_key(
+            &ed25519_dalek::VerifyingKey::from_bytes(&public_key).unwrap(),
+        );
         assert_eq!(peer_id, derived);
 
         node.shutdown().await;

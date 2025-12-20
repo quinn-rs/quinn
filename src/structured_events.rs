@@ -532,11 +532,12 @@ mod tests {
 
     #[test]
     fn test_event_builder() {
-        let event = StructuredEvent::builder(EventComponent::Connection, EventKind::ConnectionEstablished)
-            .severity(EventSeverity::Info)
-            .message("Connection established")
-            .addr("192.168.1.1:5000".parse().unwrap())
-            .build();
+        let event =
+            StructuredEvent::builder(EventComponent::Connection, EventKind::ConnectionEstablished)
+                .severity(EventSeverity::Info)
+                .message("Connection established")
+                .addr("192.168.1.1:5000".parse().unwrap())
+                .build();
 
         assert_eq!(event.component, EventComponent::Connection);
         assert_eq!(event.kind, EventKind::ConnectionEstablished);
@@ -547,8 +548,9 @@ mod tests {
 
     #[test]
     fn test_event_builder_defaults() {
-        let event = StructuredEvent::builder(EventComponent::Discovery, EventKind::DiscoveryStarted)
-            .build();
+        let event =
+            StructuredEvent::builder(EventComponent::Discovery, EventKind::DiscoveryStarted)
+                .build();
 
         assert_eq!(event.severity, EventSeverity::Info);
         assert_eq!(event.message, "discovery_started");
@@ -611,13 +613,22 @@ mod tests {
     fn test_event_component_display() {
         assert_eq!(format!("{}", EventComponent::NatTraversal), "nat_traversal");
         assert_eq!(format!("{}", EventComponent::Connection), "connection");
-        assert_eq!(format!("{}", EventComponent::PathSelection), "path_selection");
+        assert_eq!(
+            format!("{}", EventComponent::PathSelection),
+            "path_selection"
+        );
     }
 
     #[test]
     fn test_event_kind_display() {
-        assert_eq!(format!("{}", EventKind::ConnectionEstablished), "connection_established");
-        assert_eq!(format!("{}", EventKind::HolePunchStarted), "hole_punch_started");
+        assert_eq!(
+            format!("{}", EventKind::ConnectionEstablished),
+            "connection_established"
+        );
+        assert_eq!(
+            format!("{}", EventKind::HolePunchStarted),
+            "hole_punch_started"
+        );
         assert_eq!(format!("{}", EventKind::PathSelected), "path_selected");
     }
 
@@ -647,19 +658,21 @@ mod tests {
 
     #[test]
     fn test_event_with_duration() {
-        let event = StructuredEvent::builder(EventComponent::PathSelection, EventKind::PathRttUpdated)
-            .duration(Duration::from_millis(42))
-            .build();
+        let event =
+            StructuredEvent::builder(EventComponent::PathSelection, EventKind::PathRttUpdated)
+                .duration(Duration::from_millis(42))
+                .build();
 
         assert_eq!(event.duration, Some(Duration::from_millis(42)));
     }
 
     #[test]
     fn test_event_with_count() {
-        let event = StructuredEvent::builder(EventComponent::NatTraversal, EventKind::CleanupPerformed)
-            .count(5)
-            .message("Cleaned up 5 expired candidates")
-            .build();
+        let event =
+            StructuredEvent::builder(EventComponent::NatTraversal, EventKind::CleanupPerformed)
+                .count(5)
+                .message("Cleaned up 5 expired candidates")
+                .build();
 
         assert_eq!(event.count, Some(5));
     }

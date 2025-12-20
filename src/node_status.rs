@@ -254,7 +254,10 @@ mod tests {
     fn test_nat_type_display() {
         assert_eq!(format!("{}", NatType::None), "None (Public IP)");
         assert_eq!(format!("{}", NatType::FullCone), "Full Cone");
-        assert_eq!(format!("{}", NatType::AddressRestricted), "Address Restricted");
+        assert_eq!(
+            format!("{}", NatType::AddressRestricted),
+            "Address Restricted"
+        );
         assert_eq!(format!("{}", NatType::PortRestricted), "Port Restricted");
         assert_eq!(format!("{}", NatType::Symmetric), "Symmetric");
         assert_eq!(format!("{}", NatType::Unknown), "Unknown");

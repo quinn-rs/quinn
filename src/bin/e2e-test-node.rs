@@ -28,7 +28,9 @@
 #![allow(clippy::unwrap_used)] // Test binary - panics are acceptable
 #![allow(clippy::expect_used)] // Test binary - panics are acceptable
 
-use ant_quic::{MtuConfig, P2pConfig, P2pEndpoint, P2pEvent, PeerId, TraversalPhase, auth::AuthConfig};
+use ant_quic::{
+    MtuConfig, P2pConfig, P2pEndpoint, P2pEvent, PeerId, TraversalPhase, auth::AuthConfig,
+};
 use clap::Parser;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -43,7 +45,11 @@ use tracing::{debug, error, info, warn};
 /// E2E Test Node - Enhanced P2P node for comprehensive testing
 #[derive(Parser, Debug)]
 #[command(name = "e2e-test-node")]
-#[command(author, version, about = "E2E test node with metrics push and data verification")]
+#[command(
+    author,
+    version,
+    about = "E2E test node with metrics push and data verification"
+)]
 struct Args {
     /// Address to listen on
     #[arg(short, long, default_value = "0.0.0.0:0")]
@@ -218,7 +224,9 @@ fn generate_test_data(size: u64, chunk_size: usize) -> Vec<VerifiedDataChunk> {
 
     while remaining > 0 {
         let this_chunk = std::cmp::min(remaining, chunk_size as u64) as usize;
-        let data: Vec<u8> = (0..this_chunk).map(|i| ((sequence + i as u64) % 256) as u8).collect();
+        let data: Vec<u8> = (0..this_chunk)
+            .map(|i| ((sequence + i as u64) % 256) as u8)
+            .collect();
         chunks.push(VerifiedDataChunk::new(sequence, data));
         remaining -= this_chunk as u64;
         sequence += 1;
@@ -315,9 +323,11 @@ async fn main() -> anyhow::Result<()> {
     }
 
     if args.generate_data > 0 {
-        info!("Data Generation: {} ({} chunks)",
-              format_bytes(args.generate_data),
-              (args.generate_data + args.chunk_size as u64 - 1) / args.chunk_size as u64);
+        info!(
+            "Data Generation: {} ({} chunks)",
+            format_bytes(args.generate_data),
+            (args.generate_data + args.chunk_size as u64 - 1) / args.chunk_size as u64
+        );
     }
 
     info!("═══════════════════════════════════════════════════════════════");
@@ -440,7 +450,9 @@ async fn main() -> anyhow::Result<()> {
                     if verify_data {
                         if let Ok(chunk) = serde_json::from_slice::<VerifiedDataChunk>(&data) {
                             if chunk.verify() {
-                                stats_recv.data_chunks_verified.fetch_add(1, Ordering::SeqCst);
+                                stats_recv
+                                    .data_chunks_verified
+                                    .fetch_add(1, Ordering::SeqCst);
                                 if json {
                                     println!(
                                         r#"{{"event":"chunk_verified","sequence":{},"peer":"{}","size":{}}}"#,
@@ -564,10 +576,7 @@ async fn main() -> anyhow::Result<()> {
                 return;
             }
 
-            info!(
-                "Sending data to {} peer(s)...",
-                connected_peers.len()
-            );
+            info!("Sending data to {} peer(s)...", connected_peers.len());
 
             let send_start = Instant::now();
             let mut chunks_sent = 0u64;
@@ -590,7 +599,12 @@ async fn main() -> anyhow::Result<()> {
                             chunks_sent += 1;
                         }
                         Err(e) => {
-                            debug!("Failed to send chunk {} to {}: {}", idx, format_peer_id(peer_id), e);
+                            debug!(
+                                "Failed to send chunk {} to {}: {}",
+                                idx,
+                                format_peer_id(peer_id),
+                                e
+                            );
                         }
                     }
                 }
@@ -626,7 +640,10 @@ async fn main() -> anyhow::Result<()> {
             if json {
                 println!(
                     r#"{{"event":"data_transfer_complete","chunks_sent":{},"bytes":{},"duration_secs":{:.2},"throughput_mbps":{:.2}}}"#,
-                    chunks_sent, data_size, elapsed.as_secs_f64(), throughput_mbps
+                    chunks_sent,
+                    data_size,
+                    elapsed.as_secs_f64(),
+                    throughput_mbps
                 );
             } else {
                 info!("═══════════════════════════════════════════════════════════════");
@@ -761,7 +778,9 @@ async fn handle_event(
         P2pEvent::NatTraversalProgress { peer_id, phase } => {
             match phase {
                 TraversalPhase::Connected => {
-                    stats.nat_traversals_completed.fetch_add(1, Ordering::SeqCst);
+                    stats
+                        .nat_traversals_completed
+                        .fetch_add(1, Ordering::SeqCst);
                 }
                 TraversalPhase::Failed => {
                     stats.nat_traversals_failed.fetch_add(1, Ordering::SeqCst);
@@ -786,7 +805,11 @@ async fn handle_event(
             stats
                 .bytes_received
                 .fetch_add(*bytes as u64, Ordering::SeqCst);
-            debug!("Data received: {} bytes from {}", bytes, format_peer_id(peer_id));
+            debug!(
+                "Data received: {} bytes from {}",
+                bytes,
+                format_peer_id(peer_id)
+            );
         }
         _ => {
             debug!("Event: {:?}", event);

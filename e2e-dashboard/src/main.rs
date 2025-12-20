@@ -23,8 +23,8 @@ use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
 use tracing::{debug, info};
-use warp::ws::{Message, WebSocket};
 use warp::Filter;
+use warp::ws::{Message, WebSocket};
 
 /// Dashboard CLI arguments
 #[derive(Parser, Debug)]
@@ -211,10 +211,12 @@ impl DashboardState {
 
         // Broadcast update to WebSocket clients
         let _ = self.ws_tx.send(WsUpdate::NodeUpdate { node: state });
-        let _ = self
-            .ws_tx
-            .send(WsUpdate::NetworkSummary { summary: self.network_summary() });
-        let _ = self.ws_tx.send(WsUpdate::Topology { topology: self.topology() });
+        let _ = self.ws_tx.send(WsUpdate::NetworkSummary {
+            summary: self.network_summary(),
+        });
+        let _ = self.ws_tx.send(WsUpdate::Topology {
+            topology: self.topology(),
+        });
 
         if is_new {
             info!("New node registered: {}", report.node_id);
@@ -336,10 +338,14 @@ async fn handle_websocket(ws: WebSocket, state: Arc<DashboardState>) {
     let initial_topology = state.topology();
     let initial_nodes = state.all_nodes();
 
-    if let Ok(msg) = serde_json::to_string(&WsUpdate::NetworkSummary { summary: initial_summary }) {
+    if let Ok(msg) = serde_json::to_string(&WsUpdate::NetworkSummary {
+        summary: initial_summary,
+    }) {
         let _ = tx.send(Message::text(msg)).await;
     }
-    if let Ok(msg) = serde_json::to_string(&WsUpdate::Topology { topology: initial_topology }) {
+    if let Ok(msg) = serde_json::to_string(&WsUpdate::Topology {
+        topology: initial_topology,
+    }) {
         let _ = tx.send(Message::text(msg)).await;
     }
     for node in initial_nodes {
@@ -401,18 +407,18 @@ async fn main() -> anyhow::Result<()> {
         .map(move || warp::reply::json(&state_nodes.all_nodes()));
 
     let state_node = state.clone();
-    let node_route = warp::path!("api" / "nodes" / String)
-        .and(warp::get())
-        .map(move |id: String| match state_node.get_node(&id) {
-            Some(node) => warp::reply::with_status(
-                warp::reply::json(&node),
-                warp::http::StatusCode::OK,
-            ),
-            None => warp::reply::with_status(
-                warp::reply::json(&serde_json::json!({"error": "Node not found"})),
-                warp::http::StatusCode::NOT_FOUND,
-            ),
-        });
+    let node_route =
+        warp::path!("api" / "nodes" / String)
+            .and(warp::get())
+            .map(move |id: String| match state_node.get_node(&id) {
+                Some(node) => {
+                    warp::reply::with_status(warp::reply::json(&node), warp::http::StatusCode::OK)
+                }
+                None => warp::reply::with_status(
+                    warp::reply::json(&serde_json::json!({"error": "Node not found"})),
+                    warp::http::StatusCode::NOT_FOUND,
+                ),
+            });
 
     let state_summary = state.clone();
     let summary_route = warp::path!("api" / "network" / "summary")
@@ -436,9 +442,7 @@ async fn main() -> anyhow::Result<()> {
     let static_route = warp::path("static").and(warp::fs::dir("static"));
 
     // Dashboard HTML
-    let index_route = warp::path::end().map(|| {
-        warp::reply::html(DASHBOARD_HTML)
-    });
+    let index_route = warp::path::end().map(|| warp::reply::html(DASHBOARD_HTML));
 
     let routes = metrics_route
         .or(nodes_route)

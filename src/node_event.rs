@@ -371,8 +371,14 @@ mod tests {
 
     #[test]
     fn test_disconnect_reason_display() {
-        assert_eq!(format!("{}", DisconnectReason::Graceful), "graceful shutdown");
-        assert_eq!(format!("{}", DisconnectReason::Timeout), "connection timeout");
+        assert_eq!(
+            format!("{}", DisconnectReason::Graceful),
+            "graceful shutdown"
+        );
+        assert_eq!(
+            format!("{}", DisconnectReason::Timeout),
+            "connection timeout"
+        );
         assert_eq!(
             format!("{}", DisconnectReason::TransportError("test".to_string())),
             "transport error: test"
@@ -384,7 +390,10 @@ mod tests {
         assert_eq!(format!("{}", TraversalMethod::Direct), "direct");
         assert_eq!(format!("{}", TraversalMethod::HolePunch), "hole punch");
         assert_eq!(format!("{}", TraversalMethod::Relay), "relay");
-        assert_eq!(format!("{}", TraversalMethod::PortPrediction), "port prediction");
+        assert_eq!(
+            format!("{}", TraversalMethod::PortPrediction),
+            "port prediction"
+        );
     }
 
     #[test]

@@ -208,9 +208,7 @@ mod tests {
             "127.0.0.1:9001".parse().unwrap(),
         ];
 
-        let config = NodeConfig::builder()
-            .known_peers(peers.clone())
-            .build();
+        let config = NodeConfig::builder().known_peers(peers.clone()).build();
 
         assert_eq!(config.known_peers, peers);
     }

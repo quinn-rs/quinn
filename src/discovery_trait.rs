@@ -130,10 +130,7 @@ impl ConcurrentDiscovery {
     }
 
     /// Discover addresses from all sources concurrently
-    pub fn discover(
-        &self,
-        peer_id: &PeerId,
-    ) -> ConcurrentDiscoveryStream {
+    pub fn discover(&self, peer_id: &PeerId) -> ConcurrentDiscoveryStream {
         let mut streams = Vec::new();
 
         for source in &self.sources {
@@ -251,7 +248,10 @@ impl ChannelDiscovery {
     }
 
     /// Push a discovered address
-    pub async fn push(&self, addr: DiscoveredAddress) -> Result<(), mpsc::error::SendError<DiscoveredAddress>> {
+    pub async fn push(
+        &self,
+        addr: DiscoveredAddress,
+    ) -> Result<(), mpsc::error::SendError<DiscoveredAddress>> {
         self.sender.send(addr).await
     }
 }
@@ -263,10 +263,13 @@ impl Discovery for ChannelDiscovery {
     ) -> Pin<Box<dyn Stream<Item = DiscoveryResult> + Send + 'static>> {
         let receiver = self.receiver.clone();
 
-        Box::pin(futures_util::stream::unfold(receiver, |receiver| async move {
-            let mut guard = receiver.lock().await;
-            guard.recv().await.map(|addr| (Ok(addr), receiver.clone()))
-        }))
+        Box::pin(futures_util::stream::unfold(
+            receiver,
+            |receiver| async move {
+                let mut guard = receiver.lock().await;
+                guard.recv().await.map(|addr| (Ok(addr), receiver.clone()))
+            },
+        ))
     }
 
     fn name(&self) -> &'static str {
@@ -329,8 +332,14 @@ mod tests {
 
     #[test]
     fn test_discovery_source_priority() {
-        assert!(DiscoverySource::Observed.base_priority() > DiscoverySource::LocalInterface.base_priority());
-        assert!(DiscoverySource::LocalInterface.base_priority() > DiscoverySource::PeerExchange.base_priority());
+        assert!(
+            DiscoverySource::Observed.base_priority()
+                > DiscoverySource::LocalInterface.base_priority()
+        );
+        assert!(
+            DiscoverySource::LocalInterface.base_priority()
+                > DiscoverySource::PeerExchange.base_priority()
+        );
         assert!(DiscoverySource::Config.base_priority() > DiscoverySource::Manual.base_priority());
     }
 
@@ -380,21 +389,21 @@ mod tests {
 
         // Send addresses in background
         tokio::spawn(async move {
-            sender.send(DiscoveredAddress {
-                addr: test_addr(7000),
-                source: DiscoverySource::Observed,
-                priority: 100,
-                ttl: None,
-            }).await.unwrap();
+            sender
+                .send(DiscoveredAddress {
+                    addr: test_addr(7000),
+                    source: DiscoverySource::Observed,
+                    priority: 100,
+                    ttl: None,
+                })
+                .await
+                .unwrap();
         });
 
         let mut stream = discovery.discover(&test_peer_id());
 
         // Wait for address
-        let result = tokio::time::timeout(
-            Duration::from_millis(100),
-            stream.next()
-        ).await;
+        let result = tokio::time::timeout(Duration::from_millis(100), stream.next()).await;
 
         assert!(result.is_ok());
         let addr = result.unwrap().unwrap().unwrap();

@@ -51,8 +51,7 @@ mod zero_config_tests {
 
     #[tokio::test]
     async fn test_node_bind_specific_addr() {
-        let bind_addr: SocketAddr =
-            SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0); // Random port on localhost
+        let bind_addr: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0); // Random port on localhost
 
         let node = Node::bind(bind_addr)
             .await
@@ -352,7 +351,10 @@ mod connection_tests {
         let result = timeout(Duration::from_millis(50), node.accept()).await;
 
         // Timeout expected - no one is connecting
-        assert!(result.is_err(), "Should timeout with no incoming connections");
+        assert!(
+            result.is_err(),
+            "Should timeout with no incoming connections"
+        );
         println!("Accept correctly timed out with no connections");
 
         node.shutdown().await;
@@ -545,7 +547,10 @@ mod nat_type_tests {
     fn test_nat_type_display() {
         assert_eq!(format!("{}", NatType::None), "None (Public IP)");
         assert_eq!(format!("{}", NatType::FullCone), "Full Cone");
-        assert_eq!(format!("{}", NatType::AddressRestricted), "Address Restricted");
+        assert_eq!(
+            format!("{}", NatType::AddressRestricted),
+            "Address Restricted"
+        );
         assert_eq!(format!("{}", NatType::PortRestricted), "Port Restricted");
         assert_eq!(format!("{}", NatType::Symmetric), "Symmetric");
         assert_eq!(format!("{}", NatType::Unknown), "Unknown");

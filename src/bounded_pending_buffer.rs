@@ -130,10 +130,7 @@ impl BoundedPendingBuffer {
 
     /// Get message count for a peer
     pub fn message_count(&self, peer_id: &PeerId) -> usize {
-        self.data
-            .get(peer_id)
-            .map(|d| d.entries.len())
-            .unwrap_or(0)
+        self.data.get(peer_id).map(|d| d.entries.len()).unwrap_or(0)
     }
 
     /// Get total bytes for a peer
@@ -162,8 +159,7 @@ impl BoundedPendingBuffer {
             peer_data.entries.retain(|entry| {
                 let is_valid = now.duration_since(entry.created_at) < ttl;
                 if !is_valid {
-                    peer_data.total_bytes =
-                        peer_data.total_bytes.saturating_sub(entry.data.len());
+                    peer_data.total_bytes = peer_data.total_bytes.saturating_sub(entry.data.len());
                 }
                 is_valid
             });
@@ -218,7 +214,11 @@ impl std::fmt::Display for PendingBufferError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::MessageTooLarge { size, max } => {
-                write!(f, "Message too large: {} bytes exceeds max {} bytes", size, max)
+                write!(
+                    f,
+                    "Message too large: {} bytes exceeds max {} bytes",
+                    size, max
+                )
             }
         }
     }
@@ -287,7 +287,9 @@ mod tests {
         }
 
         // 11th message should drop oldest
-        buffer.push(&peer_id, vec![10u8]).expect("push should succeed");
+        buffer
+            .push(&peer_id, vec![10u8])
+            .expect("push should succeed");
         assert_eq!(buffer.message_count(&peer_id), 10);
 
         // First message should be gone (was [0])
@@ -304,7 +306,9 @@ mod tests {
         );
 
         let peer_id = random_peer_id();
-        buffer.push(&peer_id, vec![1, 2, 3]).expect("push should succeed");
+        buffer
+            .push(&peer_id, vec![1, 2, 3])
+            .expect("push should succeed");
 
         // Should exist immediately
         assert_eq!(buffer.message_count(&peer_id), 1);
@@ -345,8 +349,12 @@ mod tests {
         );
 
         let peer_id = random_peer_id();
-        buffer.push(&peer_id, vec![1, 2, 3]).expect("push should succeed");
-        buffer.push(&peer_id, vec![4, 5, 6]).expect("push should succeed");
+        buffer
+            .push(&peer_id, vec![1, 2, 3])
+            .expect("push should succeed");
+        buffer
+            .push(&peer_id, vec![4, 5, 6])
+            .expect("push should succeed");
 
         buffer.clear_peer(&peer_id);
         assert_eq!(buffer.message_count(&peer_id), 0);
@@ -364,8 +372,12 @@ mod tests {
         let peer1 = PeerId([1u8; 32]);
         let peer2 = PeerId([2u8; 32]);
 
-        buffer.push(&peer1, vec![1, 2, 3]).expect("push should succeed");
-        buffer.push(&peer2, vec![4, 5]).expect("push should succeed");
+        buffer
+            .push(&peer1, vec![1, 2, 3])
+            .expect("push should succeed");
+        buffer
+            .push(&peer2, vec![4, 5])
+            .expect("push should succeed");
 
         let stats = buffer.stats();
         assert_eq!(stats.total_peers, 2);
@@ -382,7 +394,9 @@ mod tests {
         );
 
         let peer1 = PeerId([1u8; 32]);
-        buffer.push(&peer1, vec![1, 2, 3]).expect("push should succeed");
+        buffer
+            .push(&peer1, vec![1, 2, 3])
+            .expect("push should succeed");
 
         let result = buffer.pop_any();
         assert!(result.is_some());
@@ -407,7 +421,10 @@ mod tests {
 
         // Try to push a message larger than max
         let result = buffer.push(&peer_id, vec![0u8; 2000]);
-        assert!(matches!(result, Err(PendingBufferError::MessageTooLarge { .. })));
+        assert!(matches!(
+            result,
+            Err(PendingBufferError::MessageTooLarge { .. })
+        ));
     }
 
     #[test]
