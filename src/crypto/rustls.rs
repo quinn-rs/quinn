@@ -301,7 +301,7 @@ pub struct HandshakeData {
 /// 256 server names.
 ///
 /// [root_certs]: crate::config::ClientConfig::with_root_certificates()
-/// [platform]: crate::config::ClientConfig::with_platform_verifier()
+/// [platform]: crate::config::ClientConfig::try_with_platform_verifier()
 pub struct QuicClientConfig {
     pub(crate) inner: Arc<rustls::ClientConfig>,
     initial: Suite,
