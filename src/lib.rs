@@ -247,6 +247,9 @@ pub mod metrics;
 /// TURN-style relay protocol for NAT traversal fallback
 pub mod relay;
 
+/// MASQUE CONNECT-UDP Bind protocol for fully connectable P2P nodes
+pub mod masque;
+
 /// Transport trust module (TOFU, rotations, channel binding surfaces)
 pub mod trust;
 
