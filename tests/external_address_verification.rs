@@ -1,7 +1,7 @@
 // Copyright 2024 Saorsa Labs Ltd.
 // Licensed under GPL v3. See LICENSE-GPL.
 
-use ant_quic::auth::AuthConfig;
+// v0.2: AuthConfig removed - TLS handles peer authentication via ML-DSA-65
 use ant_quic::{P2pConfig, P2pEndpoint, P2pEvent};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::time::Duration;
@@ -22,10 +22,7 @@ async fn test_external_address_discovery() -> anyhow::Result<()> {
             enable_relay_fallback: false,
             ..Default::default()
         })
-        .auth(AuthConfig {
-            require_authentication: false,
-            ..Default::default()
-        })
+        // v0.2: Authentication handled by TLS via ML-DSA-65 - no separate config needed
         // v0.13.0+: PQC is always on
         .pqc(ant_quic::PqcConfig::default())
         .build()?;
@@ -50,10 +47,7 @@ async fn test_external_address_discovery() -> anyhow::Result<()> {
     let client_config = P2pConfig::builder()
         .bind_addr(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0))
         .known_peers(vec![observer_addr])
-        .auth(AuthConfig {
-            require_authentication: false,
-            ..Default::default()
-        })
+        // v0.2: Authentication handled by TLS via ML-DSA-65 - no separate config needed
         // v0.13.0+: PQC is always on
         .pqc(ant_quic::PqcConfig::default())
         .build()?;

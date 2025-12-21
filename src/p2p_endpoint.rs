@@ -14,7 +14,7 @@
 //!
 //! - Configuration via [`P2pConfig`](crate::unified_config::P2pConfig)
 //! - Event subscription via broadcast channels
-//! - Built-in authentication support
+//! - TLS-based peer authentication via ML-DSA-65 (v0.2+)
 //! - NAT traversal with automatic fallback
 //! - Connection metrics and statistics
 //!
@@ -58,10 +58,10 @@ use std::time::{Duration, Instant};
 use tokio::sync::{RwLock, broadcast};
 use tracing::{debug, error, info, warn};
 
-use crate::auth::{AuthManager, AuthMessage, AuthProtocol};
+// v0.2: auth module removed - TLS handles peer authentication via ML-DSA-65
 use crate::bounded_pending_buffer::BoundedPendingBuffer;
 use crate::crypto::raw_public_keys::key_utils::{
-    derive_peer_id_from_public_key, generate_ed25519_keypair,
+    derive_peer_id_from_public_key, generate_ml_dsa_keypair, MlDsaPublicKey, MlDsaSecretKey,
 };
 use crate::nat_traversal_api::{
     NatTraversalEndpoint, NatTraversalError, NatTraversalEvent, NatTraversalStatistics, PeerId,
@@ -82,8 +82,7 @@ pub struct P2pEndpoint {
     /// Internal NAT traversal endpoint
     inner: Arc<NatTraversalEndpoint>,
 
-    /// Authentication manager
-    auth_manager: Arc<AuthManager>,
+    // v0.2: auth_manager removed - TLS handles peer authentication via ML-DSA-65
 
     /// Connected peers with their addresses
     connected_peers: Arc<RwLock<HashMap<PeerId, PeerConnection>>>,
@@ -100,12 +99,13 @@ pub struct P2pEndpoint {
     /// Our peer ID
     peer_id: PeerId,
 
+    /// Our ML-DSA-65 public key bytes (for identity sharing) - 1952 bytes
+    public_key: Vec<u8>,
+
     /// Shutdown flag
     shutdown: Arc<AtomicBool>,
 
-    /// Bounded pending data buffer for data received during authentication
-    /// This prevents data loss when authenticate_peer receives data from other peers
-    /// and enforces memory limits with automatic expiration
+    /// Bounded pending data buffer for message ordering
     pending_data: Arc<RwLock<BoundedPendingBuffer>>,
 }
 
@@ -325,20 +325,20 @@ pub enum EndpointError {
 impl P2pEndpoint {
     /// Create a new P2P endpoint with the given configuration
     pub async fn new(config: P2pConfig) -> Result<Self, EndpointError> {
-        // Use provided keypair or generate a new one
-        let (secret_key, public_key) = if let Some(ref keypair) = config.keypair {
-            // Clone the provided keypair
-            (keypair.clone(), keypair.verifying_key())
-        } else {
-            // Generate a fresh keypair
-            generate_ed25519_keypair()
+        // Use provided keypair or generate a new one (ML-DSA-65)
+        let (public_key, secret_key) = match config.keypair.clone() {
+            Some(keypair) => keypair,
+            None => generate_ml_dsa_keypair().map_err(|e| {
+                EndpointError::Config(format!("Failed to generate ML-DSA-65 keypair: {e:?}"))
+            })?,
         };
         let peer_id = derive_peer_id_from_public_key(&public_key);
 
         info!("Creating P2P endpoint with peer ID: {:?}", peer_id);
 
-        // Create authentication manager (clone secret_key since we need it for NAT config too)
-        let auth_manager = Arc::new(AuthManager::new(secret_key.clone(), config.auth.clone()));
+        // v0.2: auth_manager removed - TLS handles peer authentication via ML-DSA-65
+        // Store public key bytes directly for identity sharing
+        let public_key_bytes: Vec<u8> = public_key.as_bytes().to_vec();
 
         // Create event channel
         let (event_tx, _) = broadcast::channel(EVENT_CHANNEL_CAPACITY);
@@ -406,19 +406,20 @@ impl P2pEndpoint {
 
         // Create NAT traversal endpoint with the same identity key used for auth
         // This ensures P2pEndpoint and NatTraversalEndpoint use the same keypair
-        let nat_config = config.to_nat_config_with_key(secret_key);
+        let nat_config = config.to_nat_config_with_key(public_key.clone(), secret_key);
         let inner = NatTraversalEndpoint::new(nat_config, Some(event_callback))
             .await
             .map_err(|e| EndpointError::Config(e.to_string()))?;
 
         Ok(Self {
             inner: Arc::new(inner),
-            auth_manager,
+            // v0.2: auth_manager removed
             connected_peers: Arc::new(RwLock::new(HashMap::new())),
             stats,
             config,
             event_tx,
             peer_id,
+            public_key: public_key_bytes,
             shutdown: Arc::new(AtomicBool::new(false)),
             pending_data: Arc::new(RwLock::new(BoundedPendingBuffer::default())),
         })
@@ -441,9 +442,9 @@ impl P2pEndpoint {
         self.inner.get_observed_external_address().ok().flatten()
     }
 
-    /// Get the public key bytes
-    pub fn public_key_bytes(&self) -> [u8; 32] {
-        self.auth_manager.public_key_bytes()
+    /// Get the ML-DSA-65 public key bytes (1952 bytes)
+    pub fn public_key_bytes(&self) -> &[u8] {
+        &self.public_key
     }
 
     // === Connection Management ===
@@ -487,10 +488,11 @@ impl P2pEndpoint {
             .map_err(EndpointError::NatTraversal)?;
 
         // Create peer connection record
+        // v0.2: Peer is authenticated via TLS (ML-DSA-65) during handshake
         let peer_conn = PeerConnection {
             peer_id,
             remote_addr: addr,
-            authenticated: false,
+            authenticated: true, // TLS handles authentication
             connected_at: Instant::now(),
             last_activity: Instant::now(),
         };
@@ -500,15 +502,6 @@ impl P2pEndpoint {
             .write()
             .await
             .insert(peer_id, peer_conn.clone());
-
-        // Handle authentication if required
-        if self.config.auth.require_authentication {
-            if let Err(err) = self.authenticate_peer(&peer_id).await {
-                let _ = self.inner.remove_connection(&peer_id);
-                let _ = self.connected_peers.write().await.remove(&peer_id);
-                return Err(err);
-            }
-        }
 
         // Update stats
         {
@@ -580,10 +573,11 @@ impl P2pEndpoint {
                         peer_id: evt_peer,
                         remote_address,
                     } if evt_peer == peer_id => {
+                        // v0.2: Peer is authenticated via TLS (ML-DSA-65) during handshake
                         let peer_conn = PeerConnection {
                             peer_id,
                             remote_addr: remote_address,
-                            authenticated: false,
+                            authenticated: true, // TLS handles authentication
                             connected_at: Instant::now(),
                             last_activity: Instant::now(),
                         };
@@ -592,11 +586,6 @@ impl P2pEndpoint {
                             .write()
                             .await
                             .insert(peer_id, peer_conn.clone());
-
-                        // Handle authentication if required
-                        if self.config.auth.require_authentication {
-                            self.authenticate_peer(&peer_id).await?;
-                        }
 
                         return Ok(peer_conn);
                     }
@@ -650,10 +639,11 @@ impl P2pEndpoint {
                     return None;
                 }
 
+                // v0.2: Peer is authenticated via TLS (ML-DSA-65) during handshake
                 let peer_conn = PeerConnection {
                     peer_id: resolved_peer_id,
                     remote_addr,
-                    authenticated: false,
+                    authenticated: true, // TLS handles authentication
                     connected_at: Instant::now(),
                     last_activity: Instant::now(),
                 };
@@ -662,18 +652,6 @@ impl P2pEndpoint {
                     .write()
                     .await
                     .insert(resolved_peer_id, peer_conn.clone());
-
-                if self.config.auth.require_authentication {
-                    if let Err(err) = self.authenticate_peer(&resolved_peer_id).await {
-                        let _ = self.inner.remove_connection(&resolved_peer_id);
-                        let _ = self.connected_peers.write().await.remove(&resolved_peer_id);
-                        warn!(
-                            "Authentication failed for peer {:?}: {}",
-                            resolved_peer_id, err
-                        );
-                        return None;
-                    }
-                }
 
                 {
                     let mut stats = self.stats.write().await;
@@ -992,104 +970,20 @@ impl P2pEndpoint {
         PeerId(peer_id_bytes)
     }
 
-    async fn authenticate_peer(&self, peer_id: &PeerId) -> Result<(), EndpointError> {
-        info!("Authenticating peer {:?}", peer_id);
-
-        let auth_protocol = AuthProtocol::new(Arc::clone(&self.auth_manager));
-        let auth_request = auth_protocol.initiate_auth().await;
-        let data = AuthManager::serialize_message(&auth_request)
-            .map_err(|e| EndpointError::Authentication(e.to_string()))?;
-
-        self.send(peer_id, &data).await?;
-
-        let timeout = self.config.auth.auth_timeout;
-        let start = Instant::now();
-
-        while start.elapsed() < timeout {
-            let remaining = timeout.saturating_sub(start.elapsed());
-
-            match self.recv(remaining).await {
-                Ok((recv_peer_id, data)) if recv_peer_id == *peer_id => {
-                    let message = AuthManager::deserialize_message(&data)
-                        .map_err(|e| EndpointError::Authentication(e.to_string()))?;
-
-                    if let AuthMessage::AuthFailure { reason } = &message {
-                        return Err(EndpointError::Authentication(reason.clone()));
-                    }
-
-                    let response = auth_protocol
-                        .handle_message(*peer_id, message.clone())
-                        .await
-                        .map_err(|e| EndpointError::Authentication(e.to_string()))?;
-
-                    if let Some(response) = response {
-                        let response_data = AuthManager::serialize_message(&response)
-                            .map_err(|e| EndpointError::Authentication(e.to_string()))?;
-                        self.send(peer_id, &response_data).await?;
-
-                        if matches!(response, AuthMessage::AuthSuccess { .. }) {
-                            if let Some(peer_conn) =
-                                self.connected_peers.write().await.get_mut(peer_id)
-                            {
-                                peer_conn.authenticated = true;
-                            }
-                            let _ = self
-                                .event_tx
-                                .send(P2pEvent::PeerAuthenticated { peer_id: *peer_id });
-                            return Ok(());
-                        }
-                    }
-
-                    if matches!(message, AuthMessage::AuthSuccess { .. }) {
-                        if let Some(peer_conn) = self.connected_peers.write().await.get_mut(peer_id)
-                        {
-                            peer_conn.authenticated = true;
-                        }
-                        let _ = self
-                            .event_tx
-                            .send(P2pEvent::PeerAuthenticated { peer_id: *peer_id });
-                        return Ok(());
-                    }
-                }
-                Ok((other_peer_id, data)) => {
-                    // Buffer data from non-target peers to prevent data loss
-                    // This data will be retrieved on the next recv() call
-                    debug!(
-                        "Buffering {} bytes from peer {:?} during authentication",
-                        data.len(),
-                        other_peer_id
-                    );
-                    let mut pending = self.pending_data.write().await;
-                    if let Err(e) = pending.push(&other_peer_id, data) {
-                        warn!("Failed to buffer pending data: {}", e);
-                    }
-                    continue;
-                }
-                Err(EndpointError::Timeout) => break,
-                Err(e) => {
-                    return Err(EndpointError::Authentication(format!(
-                        "Authentication failed: {e}"
-                    )));
-                }
-            }
-        }
-
-        Err(EndpointError::Authentication(
-            "Authentication timeout".to_string(),
-        ))
-    }
+    // v0.2: authenticate_peer removed - TLS handles peer authentication via ML-DSA-65
 }
 
 impl Clone for P2pEndpoint {
     fn clone(&self) -> Self {
         Self {
             inner: Arc::clone(&self.inner),
-            auth_manager: Arc::clone(&self.auth_manager),
+            // v0.2: auth_manager removed - TLS handles peer authentication
             connected_peers: Arc::clone(&self.connected_peers),
             stats: Arc::clone(&self.stats),
             config: self.config.clone(),
             event_tx: self.event_tx.clone(),
             peer_id: self.peer_id,
+            public_key: self.public_key.clone(),
             shutdown: Arc::clone(&self.shutdown),
             pending_data: Arc::clone(&self.pending_data),
         }

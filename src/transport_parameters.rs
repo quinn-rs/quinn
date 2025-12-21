@@ -371,10 +371,7 @@ pub struct PqcAlgorithms {
     pub ml_kem_768: bool,
     /// ML-DSA-65 (NIST FIPS 204) support for digital signatures
     pub ml_dsa_65: bool,
-    /// Hybrid X25519+ML-KEM-768 key exchange
-    pub hybrid_x25519_ml_kem: bool,
-    /// Hybrid Ed25519+ML-DSA-65 signatures
-    pub hybrid_ed25519_ml_dsa: bool,
+    // v0.2: Hybrid fields removed - pure PQC only
 }
 
 impl AddressDiscoveryConfig {
@@ -617,7 +614,7 @@ impl TransportParameters {
                 TransportParameterId::PqcAlgorithms => {
                     if let Some(ref algorithms) = self.pqc_algorithms {
                         w.write_var(id as u64);
-                        // Encode as bit field: 4 bits for 4 algorithms
+                        // Encode as bit field: 2 bits for pure PQC algorithms (v0.2)
                         let mut value = 0u8;
                         if algorithms.ml_kem_768 {
                             value |= 1 << 0;
@@ -625,12 +622,7 @@ impl TransportParameters {
                         if algorithms.ml_dsa_65 {
                             value |= 1 << 1;
                         }
-                        if algorithms.hybrid_x25519_ml_kem {
-                            value |= 1 << 2;
-                        }
-                        if algorithms.hybrid_ed25519_ml_dsa {
-                            value |= 1 << 3;
-                        }
+                        // v0.2: Bits 2-3 reserved (hybrid removed)
                         w.write_var(1u64); // Length is always 1 byte
                         w.write(value);
                     }
@@ -795,11 +787,10 @@ impl TransportParameters {
                         return Err(Error::Malformed);
                     }
                     let value = r.get::<u8>()?;
+                    // v0.2: Only decode pure PQC algorithms (bits 2-3 reserved)
                     params.pqc_algorithms = Some(PqcAlgorithms {
                         ml_kem_768: (value & (1 << 0)) != 0,
                         ml_dsa_65: (value & (1 << 1)) != 0,
-                        hybrid_x25519_ml_kem: (value & (1 << 2)) != 0,
-                        hybrid_ed25519_ml_dsa: (value & (1 << 3)) != 0,
                     });
                 }
                 _ => {
@@ -2214,13 +2205,11 @@ mod test {
 
     #[test]
     fn test_pqc_algorithms_transport_parameter() {
-        // Test that PQC algorithms can be encoded and decoded correctly
+        // v0.2: Test pure PQC algorithms encoding/decoding
         let mut params = TransportParameters::default();
         params.pqc_algorithms = Some(PqcAlgorithms {
             ml_kem_768: true,
-            ml_dsa_65: false,
-            hybrid_x25519_ml_kem: true,
-            hybrid_ed25519_ml_dsa: true,
+            ml_dsa_65: true,
         });
 
         // Encode
@@ -2235,41 +2224,30 @@ mod test {
         assert!(decoded.pqc_algorithms.is_some());
         let pqc = decoded.pqc_algorithms.unwrap();
         assert!(pqc.ml_kem_768);
-        assert!(!pqc.ml_dsa_65);
-        assert!(pqc.hybrid_x25519_ml_kem);
-        assert!(pqc.hybrid_ed25519_ml_dsa);
+        assert!(pqc.ml_dsa_65);
     }
 
     #[test]
     fn test_pqc_algorithms_all_combinations() {
-        // Test all possible combinations of PQC algorithm flags
+        // v0.2: Test all combinations of pure PQC algorithm flags
         for ml_kem in [false, true] {
             for ml_dsa in [false, true] {
-                for hybrid_kex in [false, true] {
-                    for hybrid_sig in [false, true] {
-                        let mut params = TransportParameters::default();
-                        params.pqc_algorithms = Some(PqcAlgorithms {
-                            ml_kem_768: ml_kem,
-                            ml_dsa_65: ml_dsa,
-                            hybrid_x25519_ml_kem: hybrid_kex,
-                            hybrid_ed25519_ml_dsa: hybrid_sig,
-                        });
+                let mut params = TransportParameters::default();
+                params.pqc_algorithms = Some(PqcAlgorithms {
+                    ml_kem_768: ml_kem,
+                    ml_dsa_65: ml_dsa,
+                });
 
-                        // Encode and decode
-                        let mut encoded = Vec::new();
-                        params.write(&mut encoded);
-                        let decoded =
-                            TransportParameters::read(Side::Client, &mut encoded.as_slice())
-                                .expect("Failed to decode");
+                // Encode and decode
+                let mut encoded = Vec::new();
+                params.write(&mut encoded);
+                let decoded = TransportParameters::read(Side::Client, &mut encoded.as_slice())
+                    .expect("Failed to decode");
 
-                        // Verify
-                        let pqc = decoded.pqc_algorithms.unwrap();
-                        assert_eq!(pqc.ml_kem_768, ml_kem);
-                        assert_eq!(pqc.ml_dsa_65, ml_dsa);
-                        assert_eq!(pqc.hybrid_x25519_ml_kem, hybrid_kex);
-                        assert_eq!(pqc.hybrid_ed25519_ml_dsa, hybrid_sig);
-                    }
-                }
+                // Verify
+                let pqc = decoded.pqc_algorithms.unwrap();
+                assert_eq!(pqc.ml_kem_768, ml_kem);
+                assert_eq!(pqc.ml_dsa_65, ml_dsa);
             }
         }
     }

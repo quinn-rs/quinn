@@ -1,5 +1,7 @@
 //! Simple Node API Integration Tests
 //!
+//! v0.2.0+: Updated for Pure PQC - uses ML-DSA-65 only, no Ed25519.
+//!
 //! Tests for the zero-config `Node` API introduced in v0.14.0.
 //!
 //! This test suite validates:
@@ -11,6 +13,7 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
+use ant_quic::crypto::raw_public_keys::pqc::generate_ml_dsa_keypair;
 use ant_quic::{NatType, Node, NodeConfig, NodeStatus};
 use std::collections::HashSet;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
@@ -38,12 +41,12 @@ mod zero_config_tests {
         let peer_id = node.peer_id();
         println!("Zero-config node peer ID: {:?}", peer_id);
 
-        // Verify it has a public key
+        // Verify it has a public key (PeerId is 32-byte SHA256 hash of ML-DSA-65 public key)
         let public_key = node.public_key_bytes();
         assert_eq!(
             public_key.len(),
             32,
-            "Ed25519 public key should be 32 bytes"
+            "PeerId should be 32 bytes"
         );
 
         node.shutdown().await;
@@ -99,27 +102,23 @@ mod zero_config_tests {
 
     #[tokio::test]
     async fn test_node_with_keypair_api() {
-        // Test that the with_keypair API works (even though keypair isn't used yet)
-        use ed25519_dalek::SigningKey;
-        use rand::rngs::OsRng;
+        // Test that the with_keypair API works with ML-DSA-65 keys
+        let (public_key, secret_key) = generate_ml_dsa_keypair().expect("keygen");
 
-        let keypair = SigningKey::generate(&mut OsRng);
-
-        // Create node with the keypair - this should succeed
-        let node = Node::with_keypair(keypair)
+        // Create node with the ML-DSA-65 keypair
+        let node = Node::with_keypair(public_key, secret_key)
             .await
             .expect("Node::with_keypair() should succeed");
 
         // Node should have a valid address and key
         let local_addr = node.local_addr().expect("Should have address");
-        let public_key = node.public_key_bytes();
+        let public_key_bytes = node.public_key_bytes();
 
         println!("Node with keypair at: {}", local_addr);
-        println!("Public key: {}", hex::encode(public_key));
+        println!("Public key (peer ID): {}", hex::encode(public_key_bytes));
 
-        // Note: The provided keypair may not be used yet (P2pConfig doesn't support it)
-        // This test verifies the API works, not that the keypair is used
-        assert_eq!(public_key.len(), 32);
+        // PeerId is 32-byte SHA256 hash of ML-DSA-65 public key
+        assert_eq!(public_key_bytes.len(), 32);
 
         node.shutdown().await;
     }
@@ -503,17 +502,14 @@ mod config_tests {
 
     #[test]
     fn test_config_builder_full() {
-        use ed25519_dalek::SigningKey;
-        use rand::rngs::OsRng;
-
         let addr: SocketAddr = "127.0.0.1:9000".parse().unwrap();
         let peer: SocketAddr = "1.2.3.4:9000".parse().unwrap();
-        let keypair = SigningKey::generate(&mut OsRng);
+        let (public_key, secret_key) = generate_ml_dsa_keypair().expect("keygen");
 
         let config = NodeConfig::builder()
             .bind_addr(addr)
             .known_peer(peer)
-            .keypair(keypair)
+            .keypair(public_key, secret_key)
             .build();
 
         assert_eq!(config.bind_addr, Some(addr));

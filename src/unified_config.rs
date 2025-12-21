@@ -26,10 +26,10 @@
 use std::net::SocketAddr;
 use std::time::Duration;
 
-use crate::auth::AuthConfig;
+// v0.2: AuthConfig removed - TLS handles peer authentication via ML-DSA-65
 use crate::config::nat_timeouts::TimeoutConfig;
 use crate::crypto::pqc::PqcConfig;
-use ed25519_dalek::SigningKey;
+use crate::crypto::pqc::types::{MlDsaPublicKey, MlDsaSecretKey};
 
 /// Configuration for ant-quic P2P endpoints
 ///
@@ -55,8 +55,7 @@ pub struct P2pConfig {
     /// Maximum number of concurrent connections
     pub max_connections: usize,
 
-    /// Authentication configuration
-    pub auth: AuthConfig,
+    // v0.2: auth field removed - TLS handles peer authentication via ML-DSA-65
 
     /// NAT traversal configuration
     pub nat: NatConfig,
@@ -73,10 +72,10 @@ pub struct P2pConfig {
     /// Interval for collecting and reporting statistics
     pub stats_interval: Duration,
 
-    /// Identity keypair for persistent peer identity.
+    /// Identity keypair for persistent peer identity (ML-DSA-65).
     /// If `None`, a fresh keypair is generated on startup.
     /// Provide this for persistent identity across restarts.
-    pub keypair: Option<SigningKey>,
+    pub keypair: Option<(MlDsaPublicKey, MlDsaSecretKey)>,
 }
 // v0.13.0: enable_coordinator removed - all nodes are coordinators
 
@@ -209,7 +208,7 @@ impl Default for P2pConfig {
             bind_addr: None,
             known_peers: Vec::new(),
             max_connections: 256,
-            auth: AuthConfig::default(),
+            // v0.2: auth removed
             nat: NatConfig::default(),
             timeouts: TimeoutConfig::default(),
             pqc: PqcConfig::default(),
@@ -245,14 +244,15 @@ impl P2pConfig {
 
     /// Convert to `NatTraversalConfig` with a specific identity key
     ///
-    /// This ensures the same Ed25519 keypair is used for both P2pEndpoint
+    /// This ensures the same ML-DSA-65 keypair is used for both P2pEndpoint
     /// authentication and TLS/RPK identity in NatTraversalEndpoint.
     pub fn to_nat_config_with_key(
         &self,
-        identity_key: ed25519_dalek::SigningKey,
+        public_key: MlDsaPublicKey,
+        secret_key: MlDsaSecretKey,
     ) -> crate::nat_traversal_api::NatTraversalConfig {
         let mut config = self.to_nat_config();
-        config.identity_key = Some(identity_key);
+        config.identity_key = Some((public_key, secret_key));
         config
     }
 }
@@ -263,13 +263,13 @@ pub struct P2pConfigBuilder {
     bind_addr: Option<SocketAddr>,
     known_peers: Vec<SocketAddr>,
     max_connections: Option<usize>,
-    auth: Option<AuthConfig>,
+    // v0.2: auth removed
     nat: Option<NatConfig>,
     timeouts: Option<TimeoutConfig>,
     pqc: Option<PqcConfig>,
     mtu: Option<MtuConfig>,
     stats_interval: Option<Duration>,
-    keypair: Option<SigningKey>,
+    keypair: Option<(MlDsaPublicKey, MlDsaSecretKey)>,
 }
 
 /// Error type for configuration validation
@@ -325,11 +325,7 @@ impl P2pConfigBuilder {
         self
     }
 
-    /// Set authentication configuration
-    pub fn auth(mut self, auth: AuthConfig) -> Self {
-        self.auth = Some(auth);
-        self
-    }
+    // v0.2: auth() method removed - TLS handles peer authentication via ML-DSA-65
 
     /// Set NAT traversal configuration
     pub fn nat(mut self, nat: NatConfig) -> Self {
@@ -397,12 +393,12 @@ impl P2pConfigBuilder {
         self
     }
 
-    /// Set identity keypair for persistent peer ID
+    /// Set identity keypair for persistent peer ID (ML-DSA-65)
     ///
     /// If not set, a fresh keypair is generated on startup.
     /// Provide this for stable identity across restarts.
-    pub fn keypair(mut self, keypair: SigningKey) -> Self {
-        self.keypair = Some(keypair);
+    pub fn keypair(mut self, public_key: MlDsaPublicKey, secret_key: MlDsaSecretKey) -> Self {
+        self.keypair = Some((public_key, secret_key));
         self
     }
 
@@ -421,7 +417,7 @@ impl P2pConfigBuilder {
             bind_addr: self.bind_addr,
             known_peers: self.known_peers,
             max_connections,
-            auth: self.auth.unwrap_or_default(),
+            // v0.2: auth removed
             nat: self.nat.unwrap_or_default(),
             timeouts: self.timeouts.unwrap_or_default(),
             pqc: self.pqc.unwrap_or_default(),

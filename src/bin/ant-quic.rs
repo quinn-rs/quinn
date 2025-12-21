@@ -180,7 +180,7 @@ async fn main() -> anyhow::Result<()> {
     } else {
         info!("Peer ID: {}", format_peer_id(&peer_id));
     }
-    info!("Public Key (Ed25519): {}", hex::encode(public_key));
+    info!("Public Key (ML-DSA-65): {}", hex::encode(public_key));
 
     if let Some(addr) = endpoint.local_addr() {
         info!("Local Address: {}", addr);

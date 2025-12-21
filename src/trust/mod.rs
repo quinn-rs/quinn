@@ -12,8 +12,10 @@ use std::{
 /// Global trust runtime storage that allows resetting for tests
 static GLOBAL_TRUST: Mutex<Option<Arc<GlobalTrustRuntime>>> = Mutex::new(None);
 
-use ed25519_dalek::Signer;
-use ed25519_dalek::{Signature, SigningKey as Ed25519SecretKey, VerifyingKey as Ed25519PublicKey};
+use crate::crypto::pqc::types::{MlDsaPublicKey, MlDsaSecretKey, MlDsaSignature};
+use crate::crypto::raw_public_keys::pqc::{
+    extract_public_key_from_spki, sign_with_ml_dsa, verify_with_ml_dsa, ML_DSA_65_SIGNATURE_SIZE,
+};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tokio::io::AsyncWriteExt as _;
@@ -267,8 +269,10 @@ pub struct GlobalTrustRuntime {
     pub store: Arc<dyn PinStore>,
     /// The trust policy configuration for TOFU, continuity, and channel binding
     pub policy: TransportPolicy,
-    /// The local Ed25519 signing key for trust operations
-    pub local_signing_key: Arc<Ed25519SecretKey>,
+    /// The local ML-DSA-65 public key for trust operations
+    pub local_public_key: Arc<MlDsaPublicKey>,
+    /// The local ML-DSA-65 secret key for trust operations
+    pub local_secret_key: Arc<MlDsaSecretKey>,
     /// The local Subject Public Key Info (SPKI) for trust operations
     pub local_spki: Arc<Vec<u8>>,
 }
@@ -338,10 +342,12 @@ pub fn register_first_seen(
 }
 
 /// Sign a new fingerprint with the old private key to prove continuity during key rotation.
-/// Returns the Ed25519 signature as bytes, which can be verified with the old public key.
-pub fn sign_continuity(old_sk: &Ed25519SecretKey, new_fpr: &[u8; 32]) -> Vec<u8> {
-    let sig: Signature = old_sk.sign(new_fpr);
-    sig.to_bytes().to_vec()
+/// Returns the ML-DSA-65 signature as bytes, which can be verified with the old public key.
+pub fn sign_continuity(old_sk: &MlDsaSecretKey, new_fpr: &[u8; 32]) -> Vec<u8> {
+    match sign_with_ml_dsa(old_sk, new_fpr) {
+        Ok(sig) => sig.as_bytes().to_vec(),
+        Err(_) => Vec::new(),
+    }
 }
 
 /// Register a key rotation for a peer, validating continuity if required by policy.
@@ -359,8 +365,8 @@ pub fn register_rotation(
     if policy.require_continuity {
         // Continuity: signature of new_fpr by old key. We cannot recover the old key here; this
         // is validated at a higher layer with the old SPKI. For now, enforce signature presence
-        // and length (ed25519) as a minimal check.
-        if continuity_sig.len() != 64 {
+        // and length (ML-DSA-65) as a minimal check.
+        if continuity_sig.len() != ML_DSA_65_SIGNATURE_SIZE {
             return Err(TrustError::ContinuityRequired);
         }
     }
@@ -386,28 +392,23 @@ pub fn derive_exporter(conn: &Connection) -> Result<[u8; 32], TrustError> {
     Ok(out)
 }
 
-/// Sign the exporter with an Ed25519 private key.
-///
-/// This helper is primarily for tests; production binding should prefer
-/// ML‑DSA when available.
-pub fn sign_exporter_ed25519(sk: &Ed25519SecretKey, exporter: &[u8; 32]) -> [u8; 64] {
-    let sig: Signature = sk.sign(exporter);
-    sig.to_bytes()
+/// Sign the exporter with an ML-DSA-65 private key.
+pub fn sign_exporter(sk: &MlDsaSecretKey, exporter: &[u8; 32]) -> Result<MlDsaSignature, TrustError> {
+    sign_with_ml_dsa(sk, exporter).map_err(|_| TrustError::ChannelBinding("ML-DSA sign failed"))
 }
 
 /// Verify a binding signature against a pinned SubjectPublicKeyInfo (SPKI).
 ///
 /// - Validates the SPKI matches the current pin for the derived peer ID.
-/// - Verifies the Ed25519 signature over the exporter using the SPKI's key.
+/// - Verifies the ML-DSA-65 signature over the exporter using the SPKI's key.
 /// - Emits `OnBindingVerified` on success and returns the `PeerId`.
-pub fn verify_binding_ed25519(
+pub fn verify_binding(
     store: &dyn PinStore,
     policy: &TransportPolicy,
     spki: &[u8],
     exporter: &[u8; 32],
-    signature: &[u8; 64],
+    signature: &[u8],
 ) -> Result<PeerId, TrustError> {
-    use crate::crypto::raw_keys::{RawKeyError, verifying_key_from_spki};
     // Compute IDs/fingerprints
     let peer = peer_id_from_spki(spki);
     let fpr = fingerprint_spki(spki);
@@ -420,11 +421,12 @@ pub fn verify_binding_ed25519(
         return Err(TrustError::ChannelBinding("fingerprint mismatch"));
     }
 
-    // Verify signature
-    let vk = verifying_key_from_spki(spki)
-        .map_err(|_e: RawKeyError| TrustError::ChannelBinding("spki invalid"))?;
-    let sig = ed25519_dalek::Signature::from_bytes(signature);
-    vk.verify_strict(exporter, &sig)
+    // Extract public key from SPKI and verify signature
+    let pk = extract_public_key_from_spki(spki)
+        .map_err(|_| TrustError::ChannelBinding("spki invalid"))?;
+    let sig = MlDsaSignature::from_bytes(signature)
+        .map_err(|_| TrustError::ChannelBinding("invalid signature format"))?;
+    verify_with_ml_dsa(&pk, exporter, &sig)
         .map_err(|_| TrustError::ChannelBinding("sig verify"))?;
 
     if let Some(sink) = &policy.sink {
@@ -477,32 +479,43 @@ pub fn perform_channel_binding_from_exporter(
     Ok(())
 }
 
-/// Send a binding message over a unidirectional stream using Ed25519.
+/// Send a binding message over a unidirectional stream using ML-DSA-65.
 ///
-/// Format: `u16 spki_len | exporter[32] | sig[64] | spki bytes`.
-pub async fn send_binding_ed25519(
+/// Format: `u16 spki_len | u16 sig_len | exporter[32] | sig bytes | spki bytes`.
+pub async fn send_binding(
     conn: &Connection,
     exporter: &[u8; 32],
-    signer: &Ed25519SecretKey,
+    signer: &MlDsaSecretKey,
     spki: &[u8],
 ) -> Result<(), TrustError> {
     let mut stream = conn
         .open_uni()
         .await
         .map_err(|_| TrustError::ChannelBinding("open_uni"))?;
-    let sig = sign_exporter_ed25519(signer, exporter);
+    let sig = sign_exporter(signer, exporter)?;
+    let sig_bytes = sig.as_bytes();
     let spki_len: u16 = spki
         .len()
         .try_into()
         .map_err(|_| TrustError::ChannelBinding("spki too large"))?;
-    let mut header = [0u8; 2 + 32 + 64];
+    let sig_len: u16 = sig_bytes
+        .len()
+        .try_into()
+        .map_err(|_| TrustError::ChannelBinding("sig too large"))?;
+
+    // Header: spki_len (2) + sig_len (2) + exporter (32)
+    let mut header = [0u8; 2 + 2 + 32];
     header[0..2].copy_from_slice(&spki_len.to_be_bytes());
-    header[2..34].copy_from_slice(exporter);
-    header[34..98].copy_from_slice(&sig);
+    header[2..4].copy_from_slice(&sig_len.to_be_bytes());
+    header[4..36].copy_from_slice(exporter);
     stream
         .write_all(&header)
         .await
         .map_err(|_| TrustError::ChannelBinding("write header"))?;
+    stream
+        .write_all(sig_bytes)
+        .await
+        .map_err(|_| TrustError::ChannelBinding("write sig"))?;
     stream
         .write_all(spki)
         .await
@@ -514,30 +527,42 @@ pub async fn send_binding_ed25519(
     Ok(())
 }
 
-/// Receive and verify a binding message over a unidirectional stream using Ed25519.
-pub async fn recv_verify_binding_ed25519(
+/// Receive and verify a binding message over a unidirectional stream using ML-DSA-65.
+pub async fn recv_verify_binding(
     conn: &Connection,
     store: &dyn PinStore,
     policy: &TransportPolicy,
 ) -> Result<PeerId, TrustError> {
+    use tokio::io::AsyncReadExt;
     let mut stream = conn
         .accept_uni()
         .await
         .map_err(|_| TrustError::ChannelBinding("accept_uni"))?;
-    let mut header = [0u8; 2 + 32 + 64];
+
+    // Read header: spki_len (2) + sig_len (2) + exporter (32)
+    let mut header = [0u8; 2 + 2 + 32];
     stream
         .read_exact(&mut header)
         .await
         .map_err(|_| TrustError::ChannelBinding("read header"))?;
     let spki_len = u16::from_be_bytes([header[0], header[1]]) as usize;
+    let sig_len = u16::from_be_bytes([header[2], header[3]]) as usize;
     let mut exporter = [0u8; 32];
-    exporter.copy_from_slice(&header[2..34]);
-    let mut sig = [0u8; 64];
-    sig.copy_from_slice(&header[34..98]);
+    exporter.copy_from_slice(&header[4..36]);
+
+    // Read signature
+    let mut sig = vec![0u8; sig_len];
+    stream
+        .read_exact(&mut sig)
+        .await
+        .map_err(|_| TrustError::ChannelBinding("read sig"))?;
+
+    // Read SPKI
     let mut spki = vec![0u8; spki_len];
     stream
         .read_exact(&mut spki)
         .await
         .map_err(|_| TrustError::ChannelBinding("read spki"))?;
-    verify_binding_ed25519(store, policy, &spki, &exporter, &sig)
+
+    verify_binding(store, policy, &spki, &exporter, &sig)
 }

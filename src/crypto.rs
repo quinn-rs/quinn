@@ -36,12 +36,9 @@ pub mod rustls;
 #[cfg(feature = "rustls-aws-lc-rs")]
 pub mod certificate_manager;
 
-/// RFC 7250 Raw Public Keys support
+/// RFC 7250 Raw Public Keys support (Pure PQC with ML-DSA-65)
 #[cfg(feature = "rustls-aws-lc-rs")]
 pub mod raw_public_keys;
-
-/// Ed25519 key pair implementation
-pub mod raw_keys;
 
 /// Post-Quantum Cryptography support - always available
 pub mod pqc;

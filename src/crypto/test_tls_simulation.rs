@@ -8,12 +8,13 @@
 //! Test module for TLS extension simulation integration
 //!
 //! This module tests the integration of RFC 7250 certificate type negotiation
-//! simulation with Raw Public Keys support.
+//! simulation with Raw Public Keys support using ML-DSA-65 (Pure PQC).
 
 #[cfg(test)]
 mod tests {
     use super::super::{
-        raw_public_keys::{RawPublicKeyConfigBuilder, key_utils::*},
+        raw_public_keys::RawPublicKeyConfigBuilder,
+        raw_public_keys::pqc::generate_ml_dsa_keypair,
         tls_extension_simulation::create_connection_id,
         tls_extensions::{CertificateType, CertificateTypePreferences},
     };
@@ -32,11 +33,10 @@ mod tests {
     #[test]
     fn test_rfc7250_client_config_creation() {
         ensure_crypto_provider();
-        let (_, public_key) = generate_ed25519_keypair();
-        let key_bytes = public_key_to_bytes(&public_key);
+        let (public_key, _secret_key) = generate_ml_dsa_keypair().unwrap();
 
         let config_builder = RawPublicKeyConfigBuilder::new()
-            .add_trusted_key(key_bytes)
+            .add_trusted_key(public_key)
             .enable_certificate_type_extensions();
 
         let rfc7250_client = config_builder.build_rfc7250_client_config().unwrap();
@@ -48,10 +48,10 @@ mod tests {
     #[test]
     fn test_rfc7250_server_config_creation() {
         ensure_crypto_provider();
-        let (private_key, _) = generate_ed25519_keypair();
+        let (public_key, secret_key) = generate_ml_dsa_keypair().unwrap();
 
         let config_builder = RawPublicKeyConfigBuilder::new()
-            .with_server_key(private_key)
+            .with_server_key(public_key, secret_key)
             .enable_certificate_type_extensions();
 
         let rfc7250_server = config_builder.build_rfc7250_server_config().unwrap();
@@ -63,19 +63,18 @@ mod tests {
     #[test]
     fn test_simulated_negotiation_flow() {
         ensure_crypto_provider();
-        let (server_private_key, server_public_key) = generate_ed25519_keypair();
-        let server_key_bytes = public_key_to_bytes(&server_public_key);
+        let (server_public_key, server_secret_key) = generate_ml_dsa_keypair().unwrap();
 
-        // Client configuration
+        // Client configuration - trusts the server's public key
         let client_config = RawPublicKeyConfigBuilder::new()
-            .add_trusted_key(server_key_bytes)
+            .add_trusted_key(server_public_key.clone())
             .enable_certificate_type_extensions()
             .build_rfc7250_client_config()
             .unwrap();
 
         // Server configuration
         let server_config = RawPublicKeyConfigBuilder::new()
-            .with_server_key(server_private_key)
+            .with_server_key(server_public_key, server_secret_key)
             .enable_certificate_type_extensions()
             .build_rfc7250_server_config()
             .unwrap();
@@ -109,13 +108,12 @@ mod tests {
     #[test]
     fn test_mixed_preferences_negotiation() {
         ensure_crypto_provider();
-        let (server_private_key, server_public_key) = generate_ed25519_keypair();
-        let server_key_bytes = public_key_to_bytes(&server_public_key);
+        let (server_public_key, server_secret_key) = generate_ml_dsa_keypair().unwrap();
 
         // Client prefers RPK but supports X.509
         let client_prefs = CertificateTypePreferences::prefer_raw_public_key();
         let client_config = RawPublicKeyConfigBuilder::new()
-            .add_trusted_key(server_key_bytes)
+            .add_trusted_key(server_public_key.clone())
             .with_certificate_type_extensions(client_prefs)
             .build_rfc7250_client_config()
             .unwrap();
@@ -123,7 +121,7 @@ mod tests {
         // Server only supports RPK
         let server_prefs = CertificateTypePreferences::raw_public_key_only();
         let server_config = RawPublicKeyConfigBuilder::new()
-            .with_server_key(server_private_key)
+            .with_server_key(server_public_key, server_secret_key)
             .with_certificate_type_extensions(server_prefs)
             .build_rfc7250_server_config()
             .unwrap();
@@ -150,11 +148,10 @@ mod tests {
     #[test]
     fn test_extension_context_cleanup() {
         ensure_crypto_provider();
-        let (_, public_key) = generate_ed25519_keypair();
-        let key_bytes = public_key_to_bytes(&public_key);
+        let (public_key, _secret_key) = generate_ml_dsa_keypair().unwrap();
 
         let client_config = RawPublicKeyConfigBuilder::new()
-            .add_trusted_key(key_bytes)
+            .add_trusted_key(public_key)
             .enable_certificate_type_extensions()
             .build_rfc7250_client_config()
             .unwrap();

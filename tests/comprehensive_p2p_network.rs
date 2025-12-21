@@ -13,7 +13,8 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use ant_quic::{NatConfig, P2pConfig, P2pEndpoint, P2pEvent, PqcConfig, auth::AuthConfig};
+use ant_quic::{NatConfig, P2pConfig, P2pEndpoint, P2pEvent, PqcConfig};
+// v0.2: AuthConfig removed - TLS handles peer authentication via ML-DSA-65
 use proptest::prelude::*;
 use std::collections::HashSet;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
@@ -33,10 +34,7 @@ fn test_node_config(known_peers: Vec<SocketAddr>) -> P2pConfig {
     P2pConfig::builder()
         .bind_addr(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0))
         .known_peers(known_peers)
-        .auth(AuthConfig {
-            require_authentication: false,
-            ..Default::default()
-        })
+        // v0.2: Authentication handled by TLS via ML-DSA-65 - no separate config needed
         .nat(NatConfig {
             enable_relay_fallback: false,
             ..Default::default()
@@ -96,14 +94,14 @@ mod first_node_tests {
         let peer_id = node.peer_id();
         println!("First node peer ID: {:?}", peer_id);
 
-        // First node should have a public key
+        // First node should have a public key (ML-DSA-65 in Pure PQC v0.2.0+)
         let public_key = node.public_key_bytes();
         assert_eq!(
             public_key.len(),
-            32,
-            "Ed25519 public key should be 32 bytes"
+            1952,
+            "ML-DSA-65 public key should be 1952 bytes"
         );
-        println!("First node public key: {}", hex::encode(public_key));
+        println!("First node public key (first 32 bytes): {}", hex::encode(&public_key[..32]));
 
         node.shutdown().await;
     }
@@ -441,20 +439,25 @@ mod raw_public_key_tests {
     use super::*;
     use ant_quic::crypto::raw_public_keys::key_utils;
 
+    /// v0.2.0+: Pure PQC - ML-DSA-65 key sizes
+    const ML_DSA_65_PUBLIC_KEY_SIZE: usize = 1952;
+    const ML_DSA_65_SECRET_KEY_SIZE: usize = 4032;
+
     #[test]
     fn test_keypair_generation() {
-        let (secret_key, public_key) = key_utils::generate_ed25519_keypair();
+        // v0.2.0+: ML-DSA-65 keypair - returns (public_key, secret_key)
+        let (public_key, secret_key) = key_utils::generate_keypair().expect("keygen");
 
-        // Verify key sizes
+        // Verify ML-DSA-65 key sizes
         assert_eq!(
             secret_key.as_bytes().len(),
-            32,
-            "Secret key should be 32 bytes"
+            ML_DSA_65_SECRET_KEY_SIZE,
+            "Secret key should be 4032 bytes"
         );
         assert_eq!(
             public_key.as_bytes().len(),
-            32,
-            "Public key should be 32 bytes"
+            ML_DSA_65_PUBLIC_KEY_SIZE,
+            "Public key should be 1952 bytes"
         );
 
         // Keys should be different
@@ -464,21 +467,23 @@ mod raw_public_key_tests {
             "Secret and public keys should differ"
         );
 
-        println!("Generated keypair:");
-        println!("  Secret key (hex): {}", hex::encode(secret_key.as_bytes()));
-        println!("  Public key (hex): {}", hex::encode(public_key.as_bytes()));
+        println!("Generated ML-DSA-65 keypair:");
+        println!(
+            "  Public key (first 32 bytes hex): {}",
+            hex::encode(&public_key.as_bytes()[..32])
+        );
     }
 
     #[test]
     fn test_peer_id_derivation() {
-        let (_secret_key, public_key) = key_utils::generate_ed25519_keypair();
-        let peer_id = key_utils::derive_peer_id_from_public_key(&public_key);
+        let (public_key, _secret_key) = key_utils::generate_keypair().expect("keygen");
+        let peer_id = key_utils::peer_id_from_public_key(&public_key);
 
-        println!("Peer ID from public key: {:?}", peer_id);
+        println!("Peer ID from ML-DSA-65 public key: {:?}", peer_id);
 
         // Generate another keypair and verify different peer ID
-        let (_secret_key2, public_key2) = key_utils::generate_ed25519_keypair();
-        let peer_id2 = key_utils::derive_peer_id_from_public_key(&public_key2);
+        let (public_key2, _secret_key2) = key_utils::generate_keypair().expect("keygen2");
+        let peer_id2 = key_utils::peer_id_from_public_key(&public_key2);
 
         assert_ne!(
             peer_id, peer_id2,
@@ -488,34 +493,40 @@ mod raw_public_key_tests {
 
     #[test]
     fn test_public_key_encoding() {
-        let (_secret_key, public_key) = key_utils::generate_ed25519_keypair();
+        let (public_key, _secret_key) = key_utils::generate_keypair().expect("keygen");
 
-        // Test byte encoding
-        let key_bytes = key_utils::public_key_to_bytes(&public_key);
-        assert_eq!(key_bytes.len(), 32);
+        // Test byte encoding - ML-DSA-65 is 1952 bytes
+        let key_bytes = public_key.as_bytes();
+        assert_eq!(key_bytes.len(), ML_DSA_65_PUBLIC_KEY_SIZE);
 
         // Test hex encoding (common display format)
         let hex_encoded = hex::encode(key_bytes);
-        assert_eq!(hex_encoded.len(), 64, "Hex encoding should be 64 chars");
+        assert_eq!(
+            hex_encoded.len(),
+            ML_DSA_65_PUBLIC_KEY_SIZE * 2,
+            "Hex encoding should be 3904 chars"
+        );
 
         // Display public key in various formats
-        println!("Public key formats:");
-        println!("  Hex: {}", hex_encoded);
+        println!("ML-DSA-65 public key formats:");
+        println!("  Hex (first 64 chars): {}...", &hex_encoded[..64]);
         println!("  Bytes (first 8): {:?}", &key_bytes[..8]);
-        println!("  Bytes (full): {:?}", key_bytes);
     }
 
     #[tokio::test]
     async fn test_node_public_key_access() {
         let node = create_test_node(vec![]).await;
 
-        // Get public key from node
+        // Get public key from node - v0.2.0+: ML-DSA-65 is 1952 bytes
         let public_key_bytes = node.public_key_bytes();
-        assert_eq!(public_key_bytes.len(), 32);
+        assert_eq!(public_key_bytes.len(), ML_DSA_65_PUBLIC_KEY_SIZE);
 
         // Verify it matches peer ID derivation
         let peer_id = node.peer_id();
-        println!("Node public key: {}", hex::encode(public_key_bytes));
+        println!(
+            "Node public key (first 32 bytes): {}",
+            hex::encode(&public_key_bytes[..32])
+        );
         println!("Node peer ID: {:?}", peer_id);
 
         node.shutdown().await;
@@ -527,7 +538,7 @@ mod raw_public_key_tests {
 
         // Generate 10 keypairs and verify all are unique
         for i in 0..10 {
-            let (_sk, pk) = key_utils::generate_ed25519_keypair();
+            let (pk, _sk) = key_utils::generate_keypair().expect("keygen");
             let pk_hex = hex::encode(pk.as_bytes());
 
             assert!(
@@ -842,28 +853,28 @@ mod proptest_tests {
             prop_assert_eq!(hex_encoded.len(), data.len() * 2);
         }
 
-        /// Test that keypairs are always unique
+        /// Test that keypairs are always unique (ML-DSA-65)
         #[test]
         fn test_keypair_uniqueness(_seed in 0u64..1000u64) {
             use ant_quic::crypto::raw_public_keys::key_utils;
 
-            let (_, pk1) = key_utils::generate_ed25519_keypair();
-            let (_, pk2) = key_utils::generate_ed25519_keypair();
+            let (pk1, _) = key_utils::generate_keypair().expect("keygen1");
+            let (pk2, _) = key_utils::generate_keypair().expect("keygen2");
 
             // Each keypair should be unique (extremely high probability)
             prop_assert_ne!(pk1.as_bytes(), pk2.as_bytes());
         }
 
-        /// Test peer ID derivation is deterministic
+        /// Test peer ID derivation is deterministic (ML-DSA-65)
         #[test]
         fn test_peer_id_deterministic(_seed in 0u64..100u64) {
             use ant_quic::crypto::raw_public_keys::key_utils;
 
-            let (_, public_key) = key_utils::generate_ed25519_keypair();
+            let (public_key, _) = key_utils::generate_keypair().expect("keygen");
 
             // Same public key should always yield same peer ID
-            let peer_id1 = key_utils::derive_peer_id_from_public_key(&public_key);
-            let peer_id2 = key_utils::derive_peer_id_from_public_key(&public_key);
+            let peer_id1 = key_utils::peer_id_from_public_key(&public_key);
+            let peer_id2 = key_utils::peer_id_from_public_key(&public_key);
 
             prop_assert_eq!(peer_id1, peer_id2);
         }

@@ -1,200 +1,203 @@
-//! Integration tests for PQC raw public key support
+//! Integration tests for Pure PQC raw public key support
+//!
+//! v0.2.0+: Updated for Pure PQC - uses ML-DSA-65 only, no Ed25519.
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 mod pqc_raw_public_key_tests {
-    use ant_quic::crypto::pqc::{
-        MlDsaOperations,
-        ml_dsa::MlDsa65,
-        types::{MlDsaPublicKey, PqcError},
+    use ant_quic::crypto::pqc::{MlDsaOperations, ml_dsa::MlDsa65};
+    use ant_quic::crypto::raw_public_keys::pqc::{
+        create_subject_public_key_info, derive_peer_id_from_public_key, extract_public_key_from_spki,
+        generate_ml_dsa_keypair, sign_with_ml_dsa, supported_signature_schemes, verify_signature,
+        verify_with_ml_dsa, PqcRawPublicKeyVerifier,
     };
-    use ant_quic::crypto::raw_public_keys::pqc::{ExtendedRawPublicKey, PqcRawPublicKeyVerifier};
-    use ed25519_dalek::{SigningKey as Ed25519SecretKey, VerifyingKey as Ed25519PublicKey};
     use rustls::SignatureScheme;
 
     #[test]
     fn test_ml_dsa_raw_public_key_lifecycle() {
-        // Create ML-DSA key pair
-        let ml_dsa = MlDsa65::new();
-        match ml_dsa.generate_keypair() {
-            Ok((public_key, _secret_key)) => {
-                // Create extended raw public key
-                let raw_key = ExtendedRawPublicKey::MlDsa65(public_key.clone());
+        // Create ML-DSA-65 key pair
+        let (public_key, _secret_key) = generate_ml_dsa_keypair().expect("keygen");
 
-                // Test properties
-                assert_eq!(raw_key.size(), public_key.as_bytes().len());
-                // v2.0: Pure PQC with correct IANA code point for ML-DSA-65
-                assert_eq!(
-                    raw_key.supported_signature_schemes(),
-                    vec![SignatureScheme::Unknown(0x0901)]
-                );
+        // Test key properties
+        assert_eq!(public_key.as_bytes().len(), 1952);
 
-                // Test SPKI encoding
-                match raw_key.to_subject_public_key_info() {
-                    Ok(spki) => {
-                        assert!(spki.len() > raw_key.size());
+        // Test SPKI encoding
+        let spki = create_subject_public_key_info(&public_key).expect("spki creation");
+        assert!(spki.len() > public_key.as_bytes().len());
 
-                        // Test round-trip (when implemented)
-                        match ExtendedRawPublicKey::from_subject_public_key_info(&spki) {
-                            Ok(_) => {
-                                // Success when ML-DSA parsing is implemented
-                            }
-                            Err(PqcError::OperationNotSupported) => {
-                                // Expected for now
-                            }
-                            Err(e) => {
-                                println!("ML-DSA not yet available: {e:?}");
-                                // This is expected until aws-lc-rs supports ML-DSA
-                            }
-                        }
-                    }
-                    Err(PqcError::OperationNotSupported) => {
-                        // Expected until implementation is complete
-                    }
-                    Err(e) => {
-                        println!("ML-DSA not yet available: {e:?}");
-                        // This is expected until aws-lc-rs supports ML-DSA
-                    }
-                }
-            }
-            Err(PqcError::OperationNotSupported) => {
-                // Expected until aws-lc-rs support
-            }
-            Err(e) => {
-                println!("ML-DSA not yet available: {e:?}");
-                // This is expected until aws-lc-rs supports ML-DSA
-            }
-        }
-    }
-
-    // v2.0: Hybrid keys removed - using pure PQC only (ML-DSA-65)
-
-    #[test]
-    fn test_pqc_verifier_with_mixed_keys() {
-        // Create different key types
-        let ed25519_key =
-            ExtendedRawPublicKey::Ed25519(Ed25519PublicKey::from_bytes(&[1u8; 32]).unwrap());
-
-        let ml_dsa_key =
-            ExtendedRawPublicKey::MlDsa65(MlDsaPublicKey::from_bytes(&vec![0u8; 1952]).unwrap());
-
-        // Create verifier with both key types
-        let mut verifier = PqcRawPublicKeyVerifier::new(vec![ed25519_key.clone()]);
-        verifier.add_trusted_key(ml_dsa_key.clone());
-
-        // Test Ed25519 verification
-        let ed25519_spki = ed25519_key.to_subject_public_key_info().unwrap();
-        assert!(verifier.verify_cert(&ed25519_spki).is_ok());
-
-        // Test ML-DSA verification (when implemented)
-        match ml_dsa_key.to_subject_public_key_info() {
-            Ok(ml_dsa_spki) => {
-                match verifier.verify_cert(&ml_dsa_spki) {
-                    Ok(_) => {
-                        // Success when parsing is implemented
-                    }
-                    Err(_) => {
-                        // Expected for now
-                    }
-                }
-            }
-            Err(PqcError::OperationNotSupported) => {
-                // Expected for now
-            }
-            Err(e) => {
-                println!("ML-DSA not yet available: {e:?}");
-                // This is expected until aws-lc-rs supports ML-DSA
-            }
-        }
+        // Test round-trip: SPKI -> public key
+        let recovered_key = extract_public_key_from_spki(&spki).expect("spki extraction");
+        assert_eq!(public_key.as_bytes(), recovered_key.as_bytes());
     }
 
     #[test]
-    fn test_signature_verification_ed25519() {
-        use ed25519_dalek::Signer;
-        use rand::rngs::OsRng;
+    fn test_ml_dsa_keypair_generation() {
+        // Generate multiple keypairs and verify they're different
+        let (pk1, sk1) = generate_ml_dsa_keypair().expect("keygen1");
+        let (pk2, sk2) = generate_ml_dsa_keypair().expect("keygen2");
 
-        // Generate key pair
-        let secret = Ed25519SecretKey::generate(&mut OsRng);
-        let public = secret.verifying_key();
+        // Different public keys
+        assert_ne!(pk1.as_bytes(), pk2.as_bytes());
 
-        // Create raw public key
-        let raw_key = ExtendedRawPublicKey::Ed25519(public);
+        // Different secret keys
+        assert_ne!(sk1.as_bytes(), sk2.as_bytes());
+    }
 
-        // Sign a message
-        let message = b"Test message for signature";
-        let signature = secret.sign(message);
+    #[test]
+    fn test_ml_dsa_signature_verification() {
+        let (public_key, secret_key) = generate_ml_dsa_keypair().expect("keygen");
+        let message = b"Test message for ML-DSA-65 signature";
+
+        // Sign the message
+        let signature = sign_with_ml_dsa(&secret_key, message).expect("signing");
 
         // Verify signature
-        let result = raw_key.verify(
-            message,
-            signature.to_bytes().as_ref(),
-            SignatureScheme::ED25519,
-        );
-        assert!(result.is_ok());
+        verify_with_ml_dsa(&public_key, message, &signature).expect("verification");
 
-        // Test with wrong message
+        // Verify with wrong message should fail
         let wrong_message = b"Wrong message";
-        let result = raw_key.verify(
-            wrong_message,
-            signature.to_bytes().as_ref(),
-            SignatureScheme::ED25519,
-        );
-        assert!(result.is_err());
+        assert!(verify_with_ml_dsa(&public_key, wrong_message, &signature).is_err());
+    }
 
-        // Test with wrong scheme
-        let result = raw_key.verify(
-            message,
-            signature.to_bytes().as_ref(),
-            SignatureScheme::Unknown(0x1234),
-        );
-        assert!(result.is_err());
+    #[test]
+    fn test_pqc_verifier_with_ml_dsa_keys() {
+        // Generate two key pairs
+        let (pk1, _sk1) = generate_ml_dsa_keypair().expect("keygen1");
+        let (pk2, _sk2) = generate_ml_dsa_keypair().expect("keygen2");
+        let (pk_untrusted, _sk_untrusted) = generate_ml_dsa_keypair().expect("keygen_untrusted");
+
+        // Create verifier with pk1 as trusted
+        let mut verifier = PqcRawPublicKeyVerifier::new(vec![pk1.clone()]);
+        verifier.add_trusted_key(pk2.clone());
+
+        // Trusted keys should verify
+        let spki1 = create_subject_public_key_info(&pk1).expect("spki1");
+        assert!(verifier.verify_cert(&spki1).is_ok());
+
+        let spki2 = create_subject_public_key_info(&pk2).expect("spki2");
+        assert!(verifier.verify_cert(&spki2).is_ok());
+
+        // Untrusted key should fail
+        let spki_untrusted = create_subject_public_key_info(&pk_untrusted).expect("spki_untrusted");
+        assert!(verifier.verify_cert(&spki_untrusted).is_err());
+    }
+
+    #[test]
+    fn test_verifier_allow_any() {
+        // Create "allow any" verifier (development mode)
+        let verifier = PqcRawPublicKeyVerifier::allow_any();
+
+        // Any valid key should be accepted
+        let (pk, _sk) = generate_ml_dsa_keypair().expect("keygen");
+        let spki = create_subject_public_key_info(&pk).expect("spki");
+        assert!(verifier.verify_cert(&spki).is_ok());
+    }
+
+    #[test]
+    fn test_supported_signature_schemes() {
+        let schemes = supported_signature_schemes();
+
+        // Should only contain ML-DSA-65 scheme (0x0901 per IANA)
+        assert_eq!(schemes.len(), 1);
+        assert_eq!(schemes[0], SignatureScheme::Unknown(0x0901));
+    }
+
+    #[test]
+    fn test_peer_id_derivation() {
+        let (public_key, _secret_key) = generate_ml_dsa_keypair().expect("keygen");
+
+        // Derive peer ID
+        let peer_id = derive_peer_id_from_public_key(&public_key);
+
+        // Peer ID should be 32 bytes (PeerId is tuple struct with pub [u8; 32])
+        assert_eq!(peer_id.0.len(), 32);
+
+        // Same key should produce same peer ID
+        let peer_id2 = derive_peer_id_from_public_key(&public_key);
+        assert_eq!(peer_id.0, peer_id2.0);
+
+        // Different key should produce different peer ID
+        let (pk2, _sk2) = generate_ml_dsa_keypair().expect("keygen2");
+        let peer_id3 = derive_peer_id_from_public_key(&pk2);
+        assert_ne!(peer_id.0, peer_id3.0);
     }
 
     #[test]
     fn test_large_key_serialization() {
-        // Test with ML-DSA key (1952 bytes)
-        let large_key = MlDsaPublicKey::from_bytes(&vec![0xAB; 1952]).unwrap();
-        let raw_key = ExtendedRawPublicKey::MlDsa65(large_key);
+        // ML-DSA-65 keys are 1952 bytes
+        let (public_key, _secret_key) = generate_ml_dsa_keypair().expect("keygen");
+        assert_eq!(public_key.as_bytes().len(), 1952);
 
         // Test SPKI encoding handles large keys
-        match raw_key.to_subject_public_key_info() {
-            Ok(spki) => {
-                // Should use long-form length encoding
-                assert!(spki.len() > 1952);
+        let spki = create_subject_public_key_info(&public_key).expect("spki");
 
-                // Check ASN.1 structure
-                assert_eq!(spki[0], 0x30); // SEQUENCE tag
+        // Should use long-form length encoding for large sizes
+        assert!(spki.len() > 1952);
+        assert_eq!(spki[0], 0x30); // SEQUENCE tag
 
-                // For large sizes, length should be in long form
-                if spki.len() > 255 {
-                    assert_eq!(spki[1], 0x82); // 2-byte length
-                }
-            }
-            Err(PqcError::OperationNotSupported) => {
-                // Expected for now
-            }
-            Err(e) => {
-                println!("ML-DSA not yet available: {e:?}");
-                // This is expected until aws-lc-rs supports ML-DSA
-            }
-        }
+        // For sizes > 255, length should be in long form (0x82 = 2-byte length)
+        assert_eq!(spki[1], 0x82);
     }
 
     #[test]
-    fn test_backward_compatibility() {
-        // Ensure Ed25519 keys work exactly as before
-        use ant_quic::crypto::raw_public_keys::create_ed25519_subject_public_key_info;
+    fn test_spki_round_trip() {
+        let (public_key, _secret_key) = generate_ml_dsa_keypair().expect("keygen");
 
-        let key = Ed25519PublicKey::from_bytes(&[42u8; 32]).unwrap();
+        // Encode to SPKI
+        let spki = create_subject_public_key_info(&public_key).expect("spki encode");
 
-        // Original SPKI encoding
-        let original_spki = create_ed25519_subject_public_key_info(&key);
+        // Decode from SPKI
+        let recovered = extract_public_key_from_spki(&spki).expect("spki decode");
 
-        // Extended SPKI encoding
-        let extended_key = ExtendedRawPublicKey::Ed25519(key);
-        let extended_spki = extended_key.to_subject_public_key_info().unwrap();
+        // Keys should match
+        assert_eq!(public_key.as_bytes(), recovered.as_bytes());
+    }
 
-        // Should be identical
-        assert_eq!(original_spki, extended_spki);
+    #[test]
+    fn test_verify_signature_function() {
+        let (public_key, secret_key) = generate_ml_dsa_keypair().expect("keygen");
+        let message = b"Test data for verify_signature function";
+
+        // Sign
+        let signature = sign_with_ml_dsa(&secret_key, message).expect("signing");
+
+        // Use the verify_signature function with correct scheme
+        assert!(verify_signature(&public_key, message, signature.as_bytes(), SignatureScheme::Unknown(0x0901)).is_ok());
+
+        // Wrong scheme should fail
+        assert!(verify_signature(&public_key, message, signature.as_bytes(), SignatureScheme::ED25519).is_err());
+    }
+
+    #[test]
+    fn test_invalid_spki_handling() {
+        // Empty SPKI
+        assert!(extract_public_key_from_spki(&[]).is_err());
+
+        // Too short SPKI
+        assert!(extract_public_key_from_spki(&[0x30, 0x00]).is_err());
+
+        // Invalid ASN.1 structure
+        assert!(extract_public_key_from_spki(&[0xFF; 100]).is_err());
+    }
+
+    #[test]
+    fn test_ml_dsa_operations_direct() {
+        let ml_dsa = MlDsa65::new();
+
+        // Generate keypair via MlDsaOperations trait
+        let (pk, sk) = ml_dsa.generate_keypair().expect("keygen");
+
+        // Sign message
+        let message = b"Direct ML-DSA operations test";
+        let signature = ml_dsa.sign(&sk, message).expect("sign");
+
+        // Verify signature
+        let valid = ml_dsa.verify(&pk, message, &signature).expect("verify");
+        assert!(valid);
+
+        // Wrong message should fail verification
+        let wrong_message = b"Wrong message for verification";
+        let valid = ml_dsa.verify(&pk, wrong_message, &signature).expect("verify wrong");
+        assert!(!valid);
     }
 }

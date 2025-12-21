@@ -34,7 +34,7 @@
 
 use std::net::SocketAddr;
 
-use ed25519_dalek::SigningKey;
+use crate::crypto::pqc::types::{MlDsaPublicKey, MlDsaSecretKey};
 
 /// Minimal configuration for P2P nodes
 ///
@@ -63,9 +63,9 @@ pub struct NodeConfig {
     /// When empty, node can still accept incoming connections.
     pub known_peers: Vec<SocketAddr>,
 
-    /// Identity keypair. Default: fresh generated
+    /// Identity keypair (ML-DSA-65). Default: fresh generated
     /// Provide for persistent identity across restarts.
-    pub keypair: Option<SigningKey>,
+    pub keypair: Option<(MlDsaPublicKey, MlDsaSecretKey)>,
 }
 
 impl std::fmt::Debug for NodeConfig {
@@ -105,10 +105,10 @@ impl NodeConfig {
         }
     }
 
-    /// Create config with a specific keypair
-    pub fn with_keypair(keypair: SigningKey) -> Self {
+    /// Create config with a specific ML-DSA-65 keypair
+    pub fn with_keypair(public_key: MlDsaPublicKey, secret_key: MlDsaSecretKey) -> Self {
         Self {
-            keypair: Some(keypair),
+            keypair: Some((public_key, secret_key)),
             ..Default::default()
         }
     }
@@ -119,7 +119,7 @@ impl NodeConfig {
 pub struct NodeConfigBuilder {
     bind_addr: Option<SocketAddr>,
     known_peers: Vec<SocketAddr>,
-    keypair: Option<SigningKey>,
+    keypair: Option<(MlDsaPublicKey, MlDsaSecretKey)>,
 }
 
 impl NodeConfigBuilder {
@@ -141,9 +141,9 @@ impl NodeConfigBuilder {
         self
     }
 
-    /// Set the identity keypair
-    pub fn keypair(mut self, keypair: SigningKey) -> Self {
-        self.keypair = Some(keypair);
+    /// Set the identity keypair (ML-DSA-65)
+    pub fn keypair(mut self, public_key: MlDsaPublicKey, secret_key: MlDsaSecretKey) -> Self {
+        self.keypair = Some((public_key, secret_key));
         self
     }
 
@@ -227,9 +227,9 @@ mod tests {
 
     #[test]
     fn test_debug_redacts_keypair() {
-        use rand::rngs::OsRng;
-        let keypair = SigningKey::generate(&mut OsRng);
-        let config = NodeConfig::with_keypair(keypair);
+        use crate::crypto::raw_public_keys::key_utils::generate_ml_dsa_keypair;
+        let (public_key, secret_key) = generate_ml_dsa_keypair().unwrap();
+        let config = NodeConfig::with_keypair(public_key, secret_key);
         let debug_str = format!("{:?}", config);
         assert!(debug_str.contains("[REDACTED]"));
         assert!(!debug_str.contains(&format!("{:?}", config.keypair)));

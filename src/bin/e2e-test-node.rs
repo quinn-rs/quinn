@@ -29,7 +29,8 @@
 #![allow(clippy::expect_used)] // Test binary - panics are acceptable
 
 use ant_quic::{
-    MtuConfig, P2pConfig, P2pEndpoint, P2pEvent, PeerId, TraversalPhase, auth::AuthConfig,
+    MtuConfig, P2pConfig, P2pEndpoint, P2pEvent, PeerId, TraversalPhase,
+    // v0.2: AuthConfig removed - TLS handles peer authentication via ML-DSA-65
 };
 use clap::Parser;
 use serde::{Deserialize, Serialize};
@@ -110,10 +111,7 @@ struct Args {
     /// Show progress updates during data transfer
     #[arg(long)]
     show_progress: bool,
-
-    /// Disable peer authentication (for local testing)
-    #[arg(long)]
-    no_auth: bool,
+    // v0.2: no_auth flag removed - TLS handles peer authentication via ML-DSA-65
 }
 
 /// Peer connection information for metrics
@@ -282,14 +280,7 @@ async fn main() -> anyhow::Result<()> {
         info!("Using PQC-optimized MTU settings");
     }
 
-    // Disable authentication if requested (for local testing)
-    if args.no_auth {
-        builder = builder.auth(AuthConfig {
-            require_authentication: false,
-            ..Default::default()
-        });
-        info!("Authentication DISABLED - for local testing only");
-    }
+    // v0.2: Authentication now handled by TLS via ML-DSA-65 - no separate config needed
 
     let config = builder.build()?;
 

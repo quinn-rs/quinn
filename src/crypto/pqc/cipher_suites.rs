@@ -12,7 +12,7 @@
 //!
 //! This module defines cipher suites with pure PQC key exchange:
 //! - Key Exchange: ML-KEM-768 (0x0201) ONLY
-//! - Signatures: ML-DSA-65 (0x0901) ONLY
+//! - Signatures: ML-DSA-65 (IANA 0x0905) ONLY
 //!
 //! This is a greenfield network with no legacy compatibility requirements.
 
@@ -40,18 +40,19 @@ pub mod named_groups {
 
 /// Pure PQC signature schemes
 ///
-/// v0.2: ONLY pure ML-DSA schemes with correct IANA code points.
+/// v0.2: ONLY pure ML-DSA schemes - uses rustls native enums.
+/// IANA code points: ML_DSA_44=0x0904, ML_DSA_65=0x0905, ML_DSA_87=0x0906
 pub mod signature_schemes {
     use rustls::SignatureScheme;
 
     /// ML-DSA-44 (NIST Level 2)
-    pub const MLDSA44: SignatureScheme = SignatureScheme::Unknown(0x0900);
+    pub const MLDSA44: SignatureScheme = SignatureScheme::ML_DSA_44;
 
     /// ML-DSA-65 (NIST Level 3) - PRIMARY
-    pub const MLDSA65: SignatureScheme = SignatureScheme::Unknown(0x0901);
+    pub const MLDSA65: SignatureScheme = SignatureScheme::ML_DSA_65;
 
     /// ML-DSA-87 (NIST Level 5)
-    pub const MLDSA87: SignatureScheme = SignatureScheme::Unknown(0x0902);
+    pub const MLDSA87: SignatureScheme = SignatureScheme::ML_DSA_87;
 }
 
 /// Placeholder cipher suite structures
@@ -177,9 +178,9 @@ mod tests {
 
     #[test]
     fn test_signature_scheme_codes() {
-        // v0.2: Verify correct IANA code points
-        assert_eq!(u16::from(signature_schemes::MLDSA44), 0x0900);
-        assert_eq!(u16::from(signature_schemes::MLDSA65), 0x0901);
-        assert_eq!(u16::from(signature_schemes::MLDSA87), 0x0902);
+        // v0.2: Verify correct IANA code points per draft-tls-westerbaan-mldsa
+        assert_eq!(u16::from(signature_schemes::MLDSA44), 0x0904);
+        assert_eq!(u16::from(signature_schemes::MLDSA65), 0x0905);
+        assert_eq!(u16::from(signature_schemes::MLDSA87), 0x0906);
     }
 }

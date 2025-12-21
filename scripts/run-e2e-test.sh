@@ -232,7 +232,6 @@ start_local_nodes() {
         --node-location "local" \
         --metrics-server "$DASHBOARD_URL" \
         --echo \
-        --no-auth \
         --duration "$DURATION" \
         $VERBOSE_FLAG \
         > "$LOG_DIR/node-seed.log" 2>&1 &
@@ -259,7 +258,6 @@ start_local_nodes() {
                 --node-location "local" \
                 --metrics-server "$DASHBOARD_URL" \
                 --echo \
-                --no-auth \
                 --duration "$DURATION" \
                 $VERBOSE_FLAG \
                 > "$LOG_DIR/node-$i.log" 2>&1 &
@@ -293,7 +291,6 @@ start_local_nodes() {
                 --generate-data "$DATA_SIZE" \
                 --verify-data \
                 --show-progress \
-                --no-auth \
                 --duration "$DURATION" \
                 $VERBOSE_FLAG \
                 > "$LOG_DIR/node-$i.log" 2>&1 &
@@ -467,29 +464,13 @@ main() {
     monitor_progress
     echo ""
 
-    # Wait for graceful shutdown
-    log_info "Waiting for nodes to complete..."
-    sleep 3
-
-    # Send interrupt
-    for pid in "${NODE_PIDS[@]}"; do
-        if kill -0 "$pid" 2>/dev/null; then
-            kill -INT "$pid" 2>/dev/null || true
-        fi
-    done
-
-    # Wait
-    for pid in "${NODE_PIDS[@]}"; do
-        wait "$pid" 2>/dev/null || true
-    done
-
-    # Results
+    # Collect results (nodes continue running until Ctrl+C)
     collect_results
     generate_report
 
-    # Keep dashboard running for inspection
-    log_info "Dashboard still running at http://localhost:$DASHBOARD_PORT"
-    log_info "Press Ctrl+C to stop dashboard and exit"
+    # Keep running for inspection
+    log_info "Dashboard and nodes running at http://localhost:$DASHBOARD_PORT"
+    log_info "Press Ctrl+C to stop all processes and exit"
 
     print_summary
 

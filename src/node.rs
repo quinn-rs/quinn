@@ -48,7 +48,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use ed25519_dalek::SigningKey;
+use crate::crypto::pqc::types::{MlDsaPublicKey, MlDsaSecretKey};
 use tokio::sync::broadcast;
 use tracing::info;
 
@@ -199,11 +199,14 @@ impl Node {
     /// # Example
     ///
     /// ```rust,ignore
-    /// let keypair = load_keypair_from_file("~/.ant-quic/identity.key")?;
-    /// let node = Node::with_keypair(keypair).await?;
+    /// let (public_key, secret_key) = load_keypair_from_file("~/.ant-quic/identity.key")?;
+    /// let node = Node::with_keypair(public_key, secret_key).await?;
     /// ```
-    pub async fn with_keypair(keypair: SigningKey) -> Result<Self, NodeError> {
-        Self::with_config(NodeConfig::with_keypair(keypair)).await
+    pub async fn with_keypair(
+        public_key: MlDsaPublicKey,
+        secret_key: MlDsaSecretKey,
+    ) -> Result<Self, NodeError> {
+        Self::with_config(NodeConfig::with_keypair(public_key, secret_key)).await
     }
 
     /// Create a node with full configuration
@@ -351,10 +354,8 @@ impl Node {
         self.inner.external_addr()
     }
 
-    /// Get the public key bytes
-    ///
-    /// Returns the 32-byte Ed25519 public key.
-    pub fn public_key_bytes(&self) -> [u8; 32] {
+    /// Get the ML-DSA-65 public key bytes (1952 bytes)
+    pub fn public_key_bytes(&self) -> &[u8] {
         self.inner.public_key_bytes()
     }
 
@@ -772,16 +773,16 @@ mod tests {
 
     #[tokio::test]
     async fn test_node_identity() {
+        use crate::crypto::raw_public_keys::key_utils::derive_peer_id_from_key_bytes;
+
         let node = Node::new().await.unwrap();
 
         // Verify identity methods
         let peer_id = node.peer_id();
         let public_key = node.public_key_bytes();
 
-        // Peer ID should be derived from public key
-        let derived = derive_peer_id_from_public_key(
-            &ed25519_dalek::VerifyingKey::from_bytes(&public_key).unwrap(),
-        );
+        // Peer ID should be derived from public key (ML-DSA-65)
+        let derived = derive_peer_id_from_key_bytes(public_key).unwrap();
         assert_eq!(peer_id, derived);
 
         node.shutdown().await;
@@ -811,35 +812,39 @@ mod tests {
 
     #[tokio::test]
     async fn test_node_with_keypair_persistence() {
-        // Generate a keypair
-        let keypair = SigningKey::generate(&mut rand::rngs::OsRng);
-        let expected_public_key = keypair.verifying_key();
-        let expected_peer_id = derive_peer_id_from_public_key(&expected_public_key);
+        use crate::crypto::raw_public_keys::key_utils::generate_ml_dsa_keypair;
+
+        // Generate an ML-DSA-65 keypair
+        let (public_key, secret_key) = generate_ml_dsa_keypair().unwrap();
+        let expected_peer_id = derive_peer_id_from_public_key(&public_key);
+        let expected_public_key_bytes = public_key.as_bytes().to_vec();
 
         // Create node with the keypair
-        let node = Node::with_keypair(keypair).await.unwrap();
+        let node = Node::with_keypair(public_key, secret_key).await.unwrap();
 
         // Verify the node uses the same identity
         assert_eq!(node.peer_id(), expected_peer_id);
-        assert_eq!(node.public_key_bytes(), expected_public_key.to_bytes());
+        assert_eq!(node.public_key_bytes(), expected_public_key_bytes);
 
         node.shutdown().await;
     }
 
     #[tokio::test]
     async fn test_node_keypair_via_config() {
-        // Generate a keypair
-        let keypair = SigningKey::generate(&mut rand::rngs::OsRng);
-        let expected_public_key = keypair.verifying_key();
-        let expected_peer_id = derive_peer_id_from_public_key(&expected_public_key);
+        use crate::crypto::raw_public_keys::key_utils::generate_ml_dsa_keypair;
+
+        // Generate an ML-DSA-65 keypair
+        let (public_key, secret_key) = generate_ml_dsa_keypair().unwrap();
+        let expected_peer_id = derive_peer_id_from_public_key(&public_key);
+        let expected_public_key_bytes = public_key.as_bytes().to_vec();
 
         // Create node via config with keypair
-        let config = NodeConfig::with_keypair(keypair);
+        let config = NodeConfig::with_keypair(public_key, secret_key);
         let node = Node::with_config(config).await.unwrap();
 
         // Verify the node uses the same identity
         assert_eq!(node.peer_id(), expected_peer_id);
-        assert_eq!(node.public_key_bytes(), expected_public_key.to_bytes());
+        assert_eq!(node.public_key_bytes(), expected_public_key_bytes);
 
         node.shutdown().await;
     }

@@ -12,7 +12,7 @@
 //! This module bridges the pure PQC negotiation logic with rustls's TLS 1.3
 //! handshake process:
 //! - Key Exchange: ML-KEM-768 (0x0201) ONLY
-//! - Signatures: ML-DSA-65 (0x0901) ONLY
+//! - Signatures: ML-DSA-65 (IANA 0x0905) ONLY
 
 use crate::crypto::pqc::{
     config::PqcConfig,
@@ -295,7 +295,7 @@ mod tests {
 
         // v0.2: Should have ML-KEM-768 as first (PRIMARY)
         assert_eq!(groups[0], 0x0201); // ML-KEM-768
-        assert_eq!(signatures[0], 0x0901); // ML-DSA-65
+        assert_eq!(signatures[0], 0x0905); // ML-DSA-65 (IANA code)
     }
 
     #[test]

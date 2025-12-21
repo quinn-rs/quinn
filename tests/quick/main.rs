@@ -6,7 +6,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 // Re-export test modules
-mod auth_tests;
+// v0.2: auth_tests removed - TLS handles peer authentication via ML-DSA-65
 mod auto_binding_integration;
 mod binding_stream_tests;
 mod connect_topologies;

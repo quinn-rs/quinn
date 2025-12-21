@@ -295,13 +295,13 @@ impl Future for ConnectionDriver {
                 let hl_conn_client = hl_conn_server.clone();
                 let store = rt.store.clone();
                 let policy = rt.policy.clone();
-                let signer = rt.local_signing_key.clone();
+                let signer = rt.local_secret_key.clone();
                 let spki = rt.local_spki.clone();
                 let runtime = conn.runtime.clone();
 
                 if conn.inner.side().is_server() {
                     runtime.spawn(Box::pin(async move {
-                        match crate::trust::recv_verify_binding_ed25519(
+                        match crate::trust::recv_verify_binding(
                             &hl_conn_server,
                             &*store,
                             &policy,
@@ -332,7 +332,7 @@ impl Future for ConnectionDriver {
                 if conn.inner.side().is_client() {
                     runtime.spawn(Box::pin(async move {
                         if let Ok(exp) = crate::trust::derive_exporter(&hl_conn_client) {
-                            let _ = crate::trust::send_binding_ed25519(
+                            let _ = crate::trust::send_binding(
                                 &hl_conn_client,
                                 &exp,
                                 &signer,

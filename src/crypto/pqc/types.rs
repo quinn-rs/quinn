@@ -300,6 +300,23 @@ impl Zeroize for MlDsaSecretKey {
     }
 }
 
+impl Clone for MlDsaSecretKey {
+    fn clone(&self) -> Self {
+        let mut key = Box::new([0u8; ML_DSA_65_SECRET_KEY_SIZE]);
+        key.copy_from_slice(&self.0[..]);
+        Self(key)
+    }
+}
+
+impl std::fmt::Debug for MlDsaSecretKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Redact secret key content for security
+        f.debug_struct("MlDsaSecretKey")
+            .field("len", &ML_DSA_65_SECRET_KEY_SIZE)
+            .finish_non_exhaustive()
+    }
+}
+
 impl MlDsaSecretKey {
     /// Get the secret key as bytes
     pub fn as_bytes(&self) -> &[u8] {

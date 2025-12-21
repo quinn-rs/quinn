@@ -690,30 +690,32 @@ pub(crate) fn configured_provider() -> Arc<rustls::crypto::CryptoProvider> {
 
 /// Create a CryptoProvider with PQC support
 ///
-/// v0.13.0+: PQC is always enabled. When a `PqcConfig` is provided, this function
-/// creates a provider that uses only PQC key exchange groups (ML-KEM-768 or hybrid
-/// groups containing ML-KEM). Classical algorithms like X25519 are excluded.
+/// v0.13.0+: PQC is always enabled. This function creates a provider that uses
+/// PQC key exchange groups (ML-KEM-768 or hybrid groups containing ML-KEM).
+/// Classical algorithms like X25519 are excluded.
+///
+/// If no `PqcConfig` is provided, a default configuration with both ML-KEM and
+/// ML-DSA enabled is used.
 pub fn configured_provider_with_pqc(
     config: Option<&PqcConfig>,
 ) -> Arc<rustls::crypto::CryptoProvider> {
     // v0.13.0+: Always use PQC
     DEBUG_KEM_ONLY.store(true, Ordering::Relaxed);
 
-    match config {
-        Some(pqc_config) => {
-            // Use the PQC crypto provider factory
-            match crate::crypto::pqc::create_crypto_provider(pqc_config) {
-                Ok(provider) => provider,
-                Err(e) => {
-                    tracing::warn!(
-                        "Failed to create PQC provider: {:?}, falling back to default",
-                        e
-                    );
-                    configured_provider()
-                }
-            }
+    // Use provided config or create default PQC config
+    let default_config = PqcConfig::default();
+    let pqc_config = config.unwrap_or(&default_config);
+
+    // Use the PQC crypto provider factory
+    match crate::crypto::pqc::create_crypto_provider(pqc_config) {
+        Ok(provider) => provider,
+        Err(e) => {
+            tracing::warn!(
+                "Failed to create PQC provider: {:?}, falling back to default",
+                e
+            );
+            configured_provider()
         }
-        None => configured_provider(),
     }
 }
 

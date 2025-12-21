@@ -7,14 +7,13 @@ mod pqc_packet_tests {
     // Removed unused imports - they will be added back when functionality is implemented
 
     /// Test PQC detection from transport parameters
+    /// v0.2: Pure PQC only - no hybrid algorithms
     #[test]
     fn test_pqc_detection_from_transport_parameters() {
-        // For now, test that PQC algorithms can be represented
+        // Test pure PQC algorithms representation
         let pqc_algorithms = PqcAlgorithms {
             ml_kem_768: true,
             ml_dsa_65: true,
-            hybrid_x25519_ml_kem: true,
-            hybrid_ed25519_ml_dsa: false,
         };
 
         // Test encoding to bytes
@@ -26,14 +25,6 @@ mod pqc_packet_tests {
 
         assert_eq!(decoded.ml_kem_768, pqc_algorithms.ml_kem_768);
         assert_eq!(decoded.ml_dsa_65, pqc_algorithms.ml_dsa_65);
-        assert_eq!(
-            decoded.hybrid_x25519_ml_kem,
-            pqc_algorithms.hybrid_x25519_ml_kem
-        );
-        assert_eq!(
-            decoded.hybrid_ed25519_ml_dsa,
-            pqc_algorithms.hybrid_ed25519_ml_dsa
-        );
     }
 
     /// Test increased packet size limits for PQC handshakes
@@ -414,13 +405,12 @@ mod pqc_packet_tests {
     }
 
     // Helper structures (these would be implemented in the actual code)
+    // v0.2: Pure PQC only - hybrid fields removed
 
     #[derive(Clone, Debug, PartialEq)]
     struct PqcAlgorithms {
         ml_kem_768: bool,
         ml_dsa_65: bool,
-        hybrid_x25519_ml_kem: bool,
-        hybrid_ed25519_ml_dsa: bool,
     }
 
     impl PqcAlgorithms {
@@ -428,20 +418,16 @@ mod pqc_packet_tests {
             let mut buf = Vec::new();
             buf.push(if self.ml_kem_768 { 1 } else { 0 });
             buf.push(if self.ml_dsa_65 { 1 } else { 0 });
-            buf.push(if self.hybrid_x25519_ml_kem { 1 } else { 0 });
-            buf.push(if self.hybrid_ed25519_ml_dsa { 1 } else { 0 });
             buf
         }
 
         fn decode(data: &[u8]) -> Result<Self, &'static str> {
-            if data.len() < 4 {
+            if data.len() < 2 {
                 return Err("Invalid PQC algorithms data");
             }
             Ok(Self {
                 ml_kem_768: data[0] != 0,
                 ml_dsa_65: data[1] != 0,
-                hybrid_x25519_ml_kem: data[2] != 0,
-                hybrid_ed25519_ml_dsa: data[3] != 0,
             })
         }
     }

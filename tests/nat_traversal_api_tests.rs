@@ -6,8 +6,8 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use ant_quic::{
-    crypto::raw_public_keys::key_utils::{
-        derive_peer_id_from_public_key, generate_ed25519_keypair,
+    crypto::raw_public_keys::pqc::{
+        derive_peer_id_from_public_key, generate_ml_dsa_keypair,
     },
     nat_traversal_api::{
         NatTraversalConfig, NatTraversalEndpoint, NatTraversalError, NatTraversalEvent,
@@ -143,8 +143,8 @@ async fn test_connection_to_nonexistent_peer() {
         .await
         .expect("Failed to create endpoint");
 
-    // Generate a random peer ID
-    let (_private_key, public_key) = generate_ed25519_keypair();
+    // Generate a random peer ID (ML-DSA-65)
+    let (public_key, _secret_key) = generate_ml_dsa_keypair().unwrap();
     let peer_id = derive_peer_id_from_public_key(&public_key);
     let remote_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 0, 2, 1)), 9999);
 

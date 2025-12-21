@@ -11,7 +11,7 @@
 //!
 //! This module provides TLS extensions for pure PQC key exchange and signatures:
 //! - Key Exchange: ML-KEM-768 (0x0201) ONLY
-//! - Signatures: ML-DSA-65 (0x0901) ONLY
+//! - Signatures: ML-DSA-65 (IANA 0x0905) ONLY
 //!
 //! This is a greenfield network with no legacy compatibility requirements.
 

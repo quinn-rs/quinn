@@ -147,7 +147,6 @@ dependencies = [
  "core-foundation 0.9.4",
  "criterion",
  "dashmap",
- "ed25519-dalek",
  "futures-util",
  "hex",
  "hex-literal",

@@ -1,13 +1,14 @@
-//! Integration test: NAT traversal RFC frame config + RFC 7250 raw public keys with PQC/hybrid
+//! Integration test: NAT traversal RFC frame config + Pure PQC raw public keys
+//!
+//! v0.2.0+: Updated for Pure PQC - uses ML-DSA-65 only, no Ed25519.
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 mod pqc_integration {
     use ant_quic::VarInt;
-    use ant_quic::crypto::pqc::types::MlDsaPublicKey;
-    use ant_quic::crypto::pqc::types::PqcError;
-    use ant_quic::crypto::raw_public_keys::create_ed25519_subject_public_key_info;
-    use ant_quic::crypto::raw_public_keys::pqc::{ExtendedRawPublicKey, PqcRawPublicKeyVerifier};
+    use ant_quic::crypto::raw_public_keys::pqc::{
+        create_subject_public_key_info, generate_ml_dsa_keypair, PqcRawPublicKeyVerifier,
+    };
     use ant_quic::frame::nat_traversal_unified::{
         NatTraversalFrameConfig, TRANSPORT_PARAM_RFC_NAT_TRAVERSAL, peer_supports_rfc_nat,
     };
@@ -37,42 +38,16 @@ mod pqc_integration {
         assert!(cfg.use_rfc_format);
         assert!(!cfg.accept_legacy);
 
-        // 2) RFC 7250 Raw Public Keys with PQC/hybrid
-        // 2a) Ed25519 raw public key SPKI flow
-        let (_ed25519_signing, ed25519_verify) =
-            ant_quic::crypto::raw_public_keys::key_utils::generate_ed25519_keypair();
-        let ed25519_spki = create_ed25519_subject_public_key_info(&ed25519_verify);
+        // 2) Pure PQC Raw Public Keys with ML-DSA-65
+        let (public_key, _secret_key) = generate_ml_dsa_keypair().expect("keygen");
+
+        // Create SPKI from ML-DSA-65 public key
+        let spki = create_subject_public_key_info(&public_key).expect("spki");
+
+        // Verify with allow-any verifier
         let verifier = PqcRawPublicKeyVerifier::allow_any();
-        // Allow-any verifier should accept any SPKI form and return the parsed ExtendedRawPublicKey
-        let recovered = verifier
-            .verify_cert(&ed25519_spki)
-            .expect("ed25519 SPKI verification failed");
-        match recovered {
-            ExtendedRawPublicKey::Ed25519(_) => {}
-            other => panic!("unexpected key variant for ed25519: {:?}", other),
-        }
-
-        // 2b) ML-DSA-65 (PQC) raw public key SPKI flow (where supported by our helpers)
-        // Construct a dummy ML-DSA public key of the exact size; actual bytes are not semantically checked here
-        let ml_dsa_key = MlDsaPublicKey::from_bytes(
-            &vec![0u8; ant_quic::crypto::pqc::types::ML_DSA_65_PUBLIC_KEY_SIZE],
-        )
-        .expect("Failed to create ML-DSA public key");
-        let pqc_key = ExtendedRawPublicKey::MlDsa65(ml_dsa_key);
-        // Export SPKI for ML-DSA; may be partially implemented depending on feature set
-        let ml_dsa_spki_result = pqc_key.to_subject_public_key_info();
-        match ml_dsa_spki_result {
-            Ok(spki) => {
-                // The verifier should either accept or (if parser path is not yet fully implemented) report a controlled error
-                let _ = verifier.verify_cert(&spki);
-            }
-            Err(PqcError::OperationNotSupported) => {
-                // Accept current placeholder behavior; implementation can be completed later
-            }
-            Err(e) => panic!("Unexpected ML-DSA SPKI error: {e:?}"),
-        }
-
-        // v2.0: Hybrid keys removed - using pure PQC only
+        let result = verifier.verify_cert(&spki);
+        assert!(result.is_ok(), "ML-DSA-65 SPKI verification should succeed");
 
         // 3) Sanity: RFC NAT traversal frame types are available and VarInt encodes as expected
         let v = VarInt::from_u32(123);

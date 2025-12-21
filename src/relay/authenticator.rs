@@ -5,11 +5,14 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
-//! Ed25519-based authentication for relay operations with anti-replay protection.
+//! ML-DSA-65 based authentication for relay operations with anti-replay protection.
 
+use crate::crypto::pqc::types::{MlDsaPublicKey, MlDsaSecretKey, MlDsaSignature};
+use crate::crypto::raw_public_keys::key_utils::generate_ml_dsa_keypair;
+use crate::crypto::raw_public_keys::pqc::{
+    sign_with_ml_dsa, verify_with_ml_dsa, ML_DSA_65_SIGNATURE_SIZE,
+};
 use crate::relay::{RelayError, RelayResult};
-use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
-use rand::rngs::OsRng;
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -25,17 +28,17 @@ pub struct AuthToken {
     pub bandwidth_limit: u32,
     /// Session timeout in seconds
     pub timeout_seconds: u32,
-    /// Ed25519 signature over the token data
-    pub signature: [u8; 64],
+    /// ML-DSA-65 signature over the token data (3309 bytes)
+    pub signature: Vec<u8>,
 }
 
-/// Ed25519 authenticator with anti-replay protection
+/// ML-DSA-65 authenticator with anti-replay protection
 #[derive(Debug)]
 pub struct RelayAuthenticator {
-    /// Private signing key for this node
-    signing_key: SigningKey,
-    /// Public verification key for this node
-    verifying_key: VerifyingKey,
+    /// ML-DSA-65 public key for this node
+    public_key: MlDsaPublicKey,
+    /// ML-DSA-65 secret key for this node
+    secret_key: MlDsaSecretKey,
     /// Set of used nonces for anti-replay protection
     used_nonces: Arc<Mutex<HashSet<u64>>>,
     /// Maximum age of tokens in seconds (default: 5 minutes)
@@ -49,7 +52,7 @@ impl AuthToken {
     pub fn new(
         bandwidth_limit: u32,
         timeout_seconds: u32,
-        signing_key: &SigningKey,
+        secret_key: &MlDsaSecretKey,
     ) -> RelayResult<Self> {
         let nonce = Self::generate_nonce();
         let timestamp = Self::current_timestamp()?;
@@ -59,18 +62,23 @@ impl AuthToken {
             timestamp,
             bandwidth_limit,
             timeout_seconds,
-            signature: [0; 64],
+            signature: vec![0; ML_DSA_65_SIGNATURE_SIZE],
         };
 
         // Sign the token
-        let signature_bytes = signing_key.sign(&token.signable_data()).to_bytes();
-        token.signature = signature_bytes;
+        let sig = sign_with_ml_dsa(secret_key, &token.signable_data()).map_err(|_| {
+            RelayError::AuthenticationFailed {
+                reason: "ML-DSA-65 signing failed".to_string(),
+            }
+        })?;
+        token.signature = sig.as_bytes().to_vec();
 
         Ok(token)
     }
 
     /// Generate a cryptographically secure nonce
     fn generate_nonce() -> u64 {
+        use rand::rngs::OsRng;
         use rand::Rng;
         OsRng.r#gen()
     }
@@ -96,14 +104,17 @@ impl AuthToken {
     }
 
     /// Verify the token signature
-    pub fn verify(&self, verifying_key: &VerifyingKey) -> RelayResult<()> {
-        let signature = Signature::from_bytes(&self.signature);
+    pub fn verify(&self, public_key: &MlDsaPublicKey) -> RelayResult<()> {
+        let signature =
+            MlDsaSignature::from_bytes(&self.signature).map_err(|_| RelayError::AuthenticationFailed {
+                reason: "Invalid signature format".to_string(),
+            })?;
 
-        verifying_key
-            .verify(&self.signable_data(), &signature)
-            .map_err(|_| RelayError::AuthenticationFailed {
+        verify_with_ml_dsa(public_key, &self.signable_data(), &signature).map_err(|_| {
+            RelayError::AuthenticationFailed {
                 reason: "Signature verification failed".to_string(),
-            })
+            }
+        })
     }
 
     /// Check if the token has expired
@@ -115,35 +126,39 @@ impl AuthToken {
 
 impl RelayAuthenticator {
     /// Create a new authenticator with a random key pair
-    pub fn new() -> Self {
-        let signing_key = SigningKey::generate(&mut OsRng);
-        let verifying_key = signing_key.verifying_key();
+    ///
+    /// # Errors
+    /// Returns an error if ML-DSA-65 key generation fails.
+    pub fn new() -> RelayResult<Self> {
+        let (public_key, secret_key) = generate_ml_dsa_keypair().map_err(|e| {
+            RelayError::AuthenticationFailed {
+                reason: format!("ML-DSA-65 keypair generation failed: {}", e),
+            }
+        })?;
 
-        Self {
-            signing_key,
-            verifying_key,
+        Ok(Self {
+            public_key,
+            secret_key,
             used_nonces: Arc::new(Mutex::new(HashSet::new())),
             max_token_age: 300, // 5 minutes
             replay_window_size: 1000,
-        }
+        })
     }
 
-    /// Create an authenticator with a specific signing key
-    pub fn with_key(signing_key: SigningKey) -> Self {
-        let verifying_key = signing_key.verifying_key();
-
+    /// Create an authenticator with a specific keypair
+    pub fn with_keypair(public_key: MlDsaPublicKey, secret_key: MlDsaSecretKey) -> Self {
         Self {
-            signing_key,
-            verifying_key,
+            public_key,
+            secret_key,
             used_nonces: Arc::new(Mutex::new(HashSet::new())),
             max_token_age: 300,
             replay_window_size: 1000,
         }
     }
 
-    /// Get the public verifying key
-    pub fn verifying_key(&self) -> &VerifyingKey {
-        &self.verifying_key
+    /// Get the public key
+    pub fn public_key(&self) -> &MlDsaPublicKey {
+        &self.public_key
     }
 
     /// Create a new authentication token
@@ -152,7 +167,7 @@ impl RelayAuthenticator {
         bandwidth_limit: u32,
         timeout_seconds: u32,
     ) -> RelayResult<AuthToken> {
-        AuthToken::new(bandwidth_limit, timeout_seconds, &self.signing_key)
+        AuthToken::new(bandwidth_limit, timeout_seconds, &self.secret_key)
     }
 
     /// Verify an authentication token with anti-replay protection
@@ -160,10 +175,10 @@ impl RelayAuthenticator {
     pub fn verify_token(
         &self,
         token: &AuthToken,
-        peer_verifying_key: &VerifyingKey,
+        peer_public_key: &MlDsaPublicKey,
     ) -> RelayResult<()> {
         // Check signature
-        token.verify(peer_verifying_key)?;
+        token.verify(peer_public_key)?;
 
         // Check if token has expired
         if token.is_expired(self.max_token_age)? {
@@ -229,11 +244,7 @@ impl RelayAuthenticator {
     }
 }
 
-impl Default for RelayAuthenticator {
-    fn default() -> Self {
-        Self::new()
-    }
-}
+// Note: No Default impl - use new() which returns Result for proper error handling
 
 #[cfg(test)]
 mod tests {
@@ -243,7 +254,7 @@ mod tests {
 
     #[test]
     fn test_auth_token_creation_and_verification() {
-        let authenticator = RelayAuthenticator::new();
+        let authenticator = RelayAuthenticator::new().unwrap();
         let token = authenticator.create_token(1024, 300).unwrap();
 
         assert!(token.bandwidth_limit == 1024);
@@ -252,23 +263,23 @@ mod tests {
         assert!(token.timestamp > 0);
 
         // Verify token
-        assert!(token.verify(authenticator.verifying_key()).is_ok());
+        assert!(token.verify(authenticator.public_key()).is_ok());
     }
 
     #[test]
     fn test_token_verification_with_wrong_key() {
-        let authenticator1 = RelayAuthenticator::new();
-        let authenticator2 = RelayAuthenticator::new();
+        let authenticator1 = RelayAuthenticator::new().unwrap();
+        let authenticator2 = RelayAuthenticator::new().unwrap();
 
         let token = authenticator1.create_token(1024, 300).unwrap();
 
         // Should fail with wrong key
-        assert!(token.verify(authenticator2.verifying_key()).is_err());
+        assert!(token.verify(authenticator2.public_key()).is_err());
     }
 
     #[test]
     fn test_token_expiration() {
-        let mut authenticator = RelayAuthenticator::new();
+        let mut authenticator = RelayAuthenticator::new().unwrap();
         authenticator.set_max_token_age(1); // 1 second
 
         let token = authenticator.create_token(1024, 300).unwrap();
@@ -286,27 +297,23 @@ mod tests {
 
     #[test]
     fn test_anti_replay_protection() {
-        let authenticator = RelayAuthenticator::new();
+        let authenticator = RelayAuthenticator::new().unwrap();
         let token = authenticator.create_token(1024, 300).unwrap();
 
         // First verification should succeed
-        assert!(
-            authenticator
-                .verify_token(&token, authenticator.verifying_key())
-                .is_ok()
-        );
+        assert!(authenticator
+            .verify_token(&token, authenticator.public_key())
+            .is_ok());
 
         // Second verification should fail (replay)
-        assert!(
-            authenticator
-                .verify_token(&token, authenticator.verifying_key())
-                .is_err()
-        );
+        assert!(authenticator
+            .verify_token(&token, authenticator.public_key())
+            .is_err());
     }
 
     #[test]
     fn test_nonce_uniqueness() {
-        let authenticator = RelayAuthenticator::new();
+        let authenticator = RelayAuthenticator::new().unwrap();
         let mut nonces = HashSet::new();
 
         // Generate many tokens and check nonce uniqueness
@@ -319,7 +326,7 @@ mod tests {
 
     #[test]
     fn test_token_signable_data() {
-        let authenticator = RelayAuthenticator::new();
+        let authenticator = RelayAuthenticator::new().unwrap();
         let token1 = authenticator.create_token(1024, 300).unwrap();
         let token2 = authenticator.create_token(1024, 300).unwrap();
 
@@ -329,19 +336,19 @@ mod tests {
 
     #[test]
     fn test_nonce_window_management() {
-        let authenticator = RelayAuthenticator::new();
+        let authenticator = RelayAuthenticator::new().unwrap();
 
         // Fill up the nonce window
         for _ in 0..1000 {
             let token = authenticator.create_token(1024, 300).unwrap();
-            let _ = authenticator.verify_token(&token, authenticator.verifying_key());
+            let _ = authenticator.verify_token(&token, authenticator.public_key());
         }
 
         assert_eq!(authenticator.nonce_count(), 1000);
 
         // Add one more token (should trigger cleanup)
         let token = authenticator.create_token(1024, 300).unwrap();
-        let _ = authenticator.verify_token(&token, authenticator.verifying_key());
+        let _ = authenticator.verify_token(&token, authenticator.public_key());
 
         // Window should be maintained at reasonable size
         assert!(authenticator.nonce_count() <= 1000);
@@ -349,11 +356,11 @@ mod tests {
 
     #[test]
     fn test_clear_nonces() {
-        let authenticator = RelayAuthenticator::new();
+        let authenticator = RelayAuthenticator::new().unwrap();
         let token = authenticator.create_token(1024, 300).unwrap();
 
         // Use token
-        let _ = authenticator.verify_token(&token, authenticator.verifying_key());
+        let _ = authenticator.verify_token(&token, authenticator.public_key());
         assert!(authenticator.nonce_count() > 0);
 
         // Clear nonces
@@ -361,19 +368,17 @@ mod tests {
         assert_eq!(authenticator.nonce_count(), 0);
 
         // Should be able to use the same token again
-        assert!(
-            authenticator
-                .verify_token(&token, authenticator.verifying_key())
-                .is_ok()
-        );
+        assert!(authenticator
+            .verify_token(&token, authenticator.public_key())
+            .is_ok());
     }
 
     #[test]
-    fn test_with_specific_key() {
-        let signing_key = SigningKey::generate(&mut OsRng);
-        let authenticator = RelayAuthenticator::with_key(signing_key);
+    fn test_with_specific_keypair() {
+        let (public_key, secret_key) = generate_ml_dsa_keypair().unwrap();
+        let authenticator = RelayAuthenticator::with_keypair(public_key, secret_key);
 
         let token = authenticator.create_token(1024, 300).unwrap();
-        assert!(token.verify(authenticator.verifying_key()).is_ok());
+        assert!(token.verify(authenticator.public_key()).is_ok());
     }
 }

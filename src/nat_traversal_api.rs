@@ -39,39 +39,16 @@ fn create_random_port_bind_addr() -> SocketAddr {
         .unwrap_or_else(|_| panic!("Random port bind address format is always valid"))
 }
 
-/// Extract Ed25519 public key (32 bytes) from SubjectPublicKeyInfo DER structure.
+/// Extract ML-DSA-65 public key from SubjectPublicKeyInfo DER structure.
 ///
-/// RFC 7250 Raw Public Keys use SubjectPublicKeyInfo format. For Ed25519, this is:
-/// - SEQUENCE (0x30, 0x2a = 42 bytes total)
-///   - Algorithm identifier SEQUENCE (0x30, 0x05)
-///     - Ed25519 OID: 1.3.101.112 (0x06, 0x03, 0x2b, 0x65, 0x70)
-///   - BIT STRING (0x03, 0x21, 0x00) containing 32-byte public key
+/// v0.2: Pure PQC - Uses ML-DSA-65 for all authentication.
+/// RFC 7250 Raw Public Keys use SubjectPublicKeyInfo format.
 ///
-/// Returns Some([u8; 32]) if valid Ed25519 SPKI, None otherwise.
-fn extract_ed25519_from_spki(spki: &[u8]) -> Option<[u8; 32]> {
-    // Ed25519 SPKI is exactly 44 bytes
-    if spki.len() != 44 {
-        return None;
-    }
-
-    // Check for Ed25519 SPKI structure
-    // SEQUENCE tag (0x30), length 42 (0x2a)
-    // Algorithm SEQUENCE (0x30, 0x05)
-    // Ed25519 OID (0x06, 0x03, 0x2b, 0x65, 0x70)
-    let ed25519_header = [0x30, 0x2a, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70];
-    if !spki.starts_with(&ed25519_header) {
-        return None;
-    }
-
-    // BIT STRING header should be at offset 9: 0x03 0x21 0x00
-    if spki[9..12] != [0x03, 0x21, 0x00] {
-        return None;
-    }
-
-    // Public key is at offset 12, exactly 32 bytes
-    let mut public_key = [0u8; 32];
-    public_key.copy_from_slice(&spki[12..44]);
-    Some(public_key)
+/// Returns the extracted ML-DSA-65 public key if valid SPKI, None otherwise.
+fn extract_ml_dsa_from_spki(
+    spki: &[u8],
+) -> Option<crate::crypto::pqc::types::MlDsaPublicKey> {
+    crate::crypto::raw_public_keys::pqc::extract_public_key_from_spki(spki).ok()
 }
 
 use tracing::{debug, error, info, warn};
@@ -218,14 +195,15 @@ pub struct NatTraversalConfig {
     pub pqc: Option<PqcConfig>,
     /// Timeout configuration for NAT traversal operations
     pub timeouts: crate::config::nat_timeouts::TimeoutConfig,
-    /// Identity keypair for TLS authentication (Ed25519)
+    /// Identity keypair for TLS authentication (ML-DSA-65)
     ///
+    /// v0.2: Pure PQC - Uses ML-DSA-65 for all authentication.
     /// v0.13.0+: This keypair is used for RFC 7250 Raw Public Key TLS authentication.
     /// If provided, peers will derive the same PeerId from this key via TLS handshake.
     /// If None, a random keypair is generated (not recommended for production as it
     /// won't match the application-layer PeerId).
     #[serde(skip)]
-    pub identity_key: Option<ed25519_dalek::SigningKey>,
+    pub identity_key: Option<(crate::crypto::pqc::types::MlDsaPublicKey, crate::crypto::pqc::types::MlDsaSecretKey)>,
 }
 
 // v0.13.0: EndpointRole enum has been removed.
@@ -1429,22 +1407,24 @@ impl NatTraversalEndpoint {
             // Use provided identity key or generate a new one
             // v0.13.0+: For consistent identity between TLS and application layers,
             // P2pEndpoint should pass its auth keypair here via config.identity_key
-            let server_key = if let Some(ref key) = config.identity_key {
-                debug!("Using provided identity key for TLS authentication");
-                key.clone()
-            } else {
-                debug!(
-                    "No identity key provided - generating new keypair (identity mismatch warning)"
-                );
-                let (key, _public_key) =
-                    crate::crypto::raw_public_keys::key_utils::generate_ed25519_keypair();
-                key
+            let (server_pub_key, server_sec_key) = match config.identity_key.clone() {
+                Some(key) => {
+                    debug!("Using provided identity key for TLS authentication");
+                    key
+                }
+                None => {
+                    debug!(
+                        "No identity key provided - generating new keypair (identity mismatch warning)"
+                    );
+                    crate::crypto::raw_public_keys::key_utils::generate_ml_dsa_keypair()
+                        .map_err(|e| NatTraversalError::ConfigError(format!("ML-DSA-65 keygen failed: {e:?}")))?
+                }
             };
 
-            // Build RFC 7250 server config with Raw Public Keys
+            // Build RFC 7250 server config with Raw Public Keys (ML-DSA-65)
             let mut rpk_builder = RawPublicKeyConfigBuilder::new()
-                .with_server_key(server_key)
-                .allow_any_key(); // P2P network - accept any valid Ed25519 key
+                .with_server_key(server_pub_key, server_sec_key)
+                .allow_any_key(); // P2P network - accept any valid ML-DSA-65 key
 
             if let Some(ref pqc) = config.pqc {
                 rpk_builder = rpk_builder.with_pqc(pqc.clone());
@@ -1484,21 +1464,23 @@ impl NatTraversalEndpoint {
 
             // v0.13.0+: For symmetric P2P identity, client MUST also present its key
             // This allows servers to derive our peer ID from TLS, not from address
-            let client_key = if let Some(ref key) = config.identity_key {
-                debug!("Using provided identity key for client TLS authentication");
-                key.clone()
-            } else {
-                debug!("No identity key provided for client - generating new keypair");
-                let (key, _public_key) =
-                    crate::crypto::raw_public_keys::key_utils::generate_ed25519_keypair();
-                key
+            let (client_pub_key, client_sec_key) = match config.identity_key.clone() {
+                Some(key) => {
+                    debug!("Using provided identity key for client TLS authentication");
+                    key
+                }
+                None => {
+                    debug!("No identity key provided for client - generating new keypair");
+                    crate::crypto::raw_public_keys::key_utils::generate_ml_dsa_keypair()
+                        .map_err(|e| NatTraversalError::ConfigError(format!("ML-DSA-65 keygen failed: {e:?}")))?
+                }
             };
 
-            // Build RFC 7250 client config with Raw Public Keys
+            // Build RFC 7250 client config with Raw Public Keys (ML-DSA-65)
             // v0.13.0+: Client presents its own key for mutual authentication
             let mut rpk_builder = RawPublicKeyConfigBuilder::new()
-                .with_client_key(client_key) // Present our identity to servers
-                .allow_any_key(); // P2P network - accept any valid Ed25519 key
+                .with_client_key(client_pub_key, client_sec_key) // Present our identity to servers
+                .allow_any_key(); // P2P network - accept any valid ML-DSA-65 key
 
             if let Some(ref pqc) = config.pqc {
                 rpk_builder = rpk_builder.with_pqc(pqc.clone());
@@ -2336,8 +2318,8 @@ impl NatTraversalEndpoint {
     /// Derive a peer ID from the authenticated raw public key if available.
     ///
     /// For rustls, `peer_identity()` returns `Vec<CertificateDer>`. For RFC 7250 Raw Public Keys,
-    /// this contains SubjectPublicKeyInfo (44 bytes for Ed25519). We extract the 32-byte
-    /// Ed25519 public key from bytes 12-44 of the SPKI structure.
+    /// this contains SubjectPublicKeyInfo for ML-DSA-65. We extract the
+    /// ML-DSA-65 public key from the SPKI structure and derive the PeerId.
     fn derive_peer_id_from_connection(connection: &InnerConnection) -> Option<PeerId> {
         if let Some(identity) = connection.peer_identity() {
             // rustls returns Vec<CertificateDer> - downcast to that type
@@ -2345,36 +2327,20 @@ impl NatTraversalEndpoint {
                 identity.downcast_ref::<Vec<rustls::pki_types::CertificateDer<'static>>>()
             {
                 if let Some(cert) = certs.first() {
-                    // For RFC 7250 Raw Public Keys, cert is SubjectPublicKeyInfo (44 bytes for Ed25519)
+                    // v0.2: For RFC 7250 Raw Public Keys with ML-DSA-65
                     let spki = cert.as_ref();
-                    if let Some(public_key) = extract_ed25519_from_spki(spki) {
-                        match crate::derive_peer_id_from_key_bytes(&public_key) {
-                            Ok(peer_id) => {
-                                debug!("Derived peer ID from Ed25519 public key in SPKI");
-                                return Some(peer_id);
-                            }
-                            Err(e) => {
-                                warn!("Failed to derive peer ID from public key: {}", e);
-                            }
-                        }
+                    if let Some(public_key) = extract_ml_dsa_from_spki(spki) {
+                        let peer_id =
+                            crate::crypto::raw_public_keys::pqc::derive_peer_id_from_public_key(
+                                &public_key,
+                            );
+                        debug!("Derived peer ID from ML-DSA-65 public key in SPKI");
+                        return Some(peer_id);
                     } else {
                         debug!(
-                            "Certificate is not Ed25519 SPKI format (len={})",
+                            "Certificate is not ML-DSA-65 SPKI format (len={})",
                             spki.len()
                         );
-                    }
-                }
-            } else {
-                // Fallback: try direct [u8; 32] (for custom crypto implementations)
-                if let Some(public_key_bytes) = identity.downcast_ref::<[u8; 32]>() {
-                    match crate::derive_peer_id_from_key_bytes(public_key_bytes) {
-                        Ok(peer_id) => {
-                            debug!("Derived peer ID from raw Ed25519 public key");
-                            return Some(peer_id);
-                        }
-                        Err(e) => {
-                            warn!("Failed to derive peer ID from public key: {}", e);
-                        }
                     }
                 }
             }
@@ -2385,9 +2351,10 @@ impl NatTraversalEndpoint {
 
     /// Extract peer ID from connection by deriving it from the peer's public key
     ///
+    /// v0.2: Pure PQC - Uses ML-DSA-65 for all authentication.
     /// For rustls, `peer_identity()` returns `Vec<CertificateDer>`. For RFC 7250 Raw Public Keys,
-    /// this contains SubjectPublicKeyInfo (44 bytes for Ed25519). We extract the 32-byte
-    /// Ed25519 public key from bytes 12-44 of the SPKI structure.
+    /// this contains SubjectPublicKeyInfo for ML-DSA-65. We extract the
+    /// ML-DSA-65 public key from the SPKI structure and derive the PeerId.
     pub async fn extract_peer_id_from_connection(
         &self,
         connection: &InnerConnection,
@@ -4135,11 +4102,8 @@ impl rustls::client::danger::ServerCertVerifier for SkipServerVerification {
     }
 
     fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
-        vec![
-            rustls::SignatureScheme::RSA_PKCS1_SHA256,
-            rustls::SignatureScheme::ECDSA_NISTP256_SHA256,
-            rustls::SignatureScheme::ED25519,
-        ]
+        // v0.2: Pure PQC - only ML-DSA-65 (IANA 0x0905)
+        vec![rustls::SignatureScheme::ML_DSA_65]
     }
 }
 

@@ -1,4 +1,6 @@
 //! Integration tests for automatic channel binding on connect and NEW_TOKEN v2 issuance.
+//!
+//! v0.2.0+: Updated for Pure PQC - uses ML-DSA-65 keypairs, no Ed25519.
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
@@ -6,6 +8,9 @@ use std::sync::{Arc, Mutex};
 use tokio::time::{Duration, timeout};
 
 use ant_quic as quic;
+use ant_quic::crypto::raw_public_keys::pqc::{
+    create_subject_public_key_info, generate_ml_dsa_keypair,
+};
 use ant_quic::nat_traversal_api::PeerId;
 use ant_quic::{
     TokenStore,
@@ -58,12 +63,9 @@ impl TokenStore for CollectingTokenStore {
 async fn auto_binding_emits_new_token_v2() {
     let (server, server_addr, chain) = mk_server().await;
 
-    // Prepare client identity (Ed25519) and trust runtime
-    let signer = ed25519_dalek::SigningKey::generate(&mut rand::rngs::OsRng);
-    let spki = {
-        let vk = ed25519_dalek::VerifyingKey::from(&signer);
-        quic::crypto::raw_keys::create_ed25519_subject_public_key_info(&vk)
-    };
+    // Prepare client identity (ML-DSA-65) and trust runtime
+    let (public_key, secret_key) = generate_ml_dsa_keypair().expect("keygen");
+    let spki = create_subject_public_key_info(&public_key).expect("spki");
 
     let tmp = tempfile::tempdir().expect("tempdir");
     let store = quic::trust::FsPinStore::new(tmp.path());
@@ -77,7 +79,8 @@ async fn auto_binding_emits_new_token_v2() {
     quic::trust::set_global_runtime(Arc::new(quic::trust::GlobalTrustRuntime {
         store: Arc::new(store.clone()),
         policy: policy.clone(),
-        local_signing_key: Arc::new(signer.clone()),
+        local_public_key: Arc::new(public_key),
+        local_secret_key: Arc::new(secret_key),
         local_spki: Arc::new(spki.clone()),
     }));
 
@@ -142,16 +145,13 @@ async fn auto_binding_emits_new_token_v2() {
 async fn auto_binding_rejects_on_mismatch() {
     let (server, server_addr, chain) = mk_server().await;
 
-    // Prepare client identity
-    let signer = ed25519_dalek::SigningKey::generate(&mut rand::rngs::OsRng);
-    let spki = {
-        let vk = ed25519_dalek::VerifyingKey::from(&signer);
-        quic::crypto::raw_keys::create_ed25519_subject_public_key_info(&vk)
-    };
+    // Prepare client identity (ML-DSA-65)
+    let (public_key, secret_key) = generate_ml_dsa_keypair().expect("keygen");
+    let spki = create_subject_public_key_info(&public_key).expect("spki");
 
     // Pin a wrong key so verification fails
-    let wrong_kp = quic::crypto::raw_keys::generate_ed25519_keypair();
-    let wrong_spki = wrong_kp.public_key_spki();
+    let (wrong_pk, _wrong_sk) = generate_ml_dsa_keypair().expect("wrong keygen");
+    let wrong_spki = create_subject_public_key_info(&wrong_pk).expect("wrong spki");
 
     let tmp = tempfile::tempdir().expect("tempdir");
     let store = quic::trust::FsPinStore::new(tmp.path());
@@ -162,7 +162,8 @@ async fn auto_binding_rejects_on_mismatch() {
     quic::trust::set_global_runtime(Arc::new(quic::trust::GlobalTrustRuntime {
         store: Arc::new(store.clone()),
         policy: policy.clone(),
-        local_signing_key: Arc::new(signer.clone()),
+        local_public_key: Arc::new(public_key),
+        local_secret_key: Arc::new(secret_key),
         local_spki: Arc::new(spki.clone()),
     }));
 

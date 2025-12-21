@@ -12,7 +12,7 @@
 //!
 //! This module provides TLS named groups and signature schemes for pure PQC:
 //! - Key exchange: ML-KEM-768 (0x0201) ONLY
-//! - Signatures: ML-DSA-65 (0x0901) ONLY
+//! - Signatures: ML-DSA-65 (IANA 0x0905) ONLY
 //!
 //! NO classical fallback. NO hybrid algorithms. This is a greenfield network.
 
@@ -108,13 +108,15 @@ impl fmt::Display for NamedGroup {
 ///
 /// Based on:
 /// - FIPS 204 (ML-DSA)
+/// - IANA TLS SignatureScheme registry (draft-tls-westerbaan-mldsa)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(u16)]
 pub enum SignatureScheme {
     // Pure PQC schemes - ONLY THESE ARE ACCEPTED
-    MlDsa44 = 0x0900, // ML-DSA-44 (NIST Level 2)
-    MlDsa65 = 0x0901, // ML-DSA-65 (NIST Level 3) - PRIMARY
-    MlDsa87 = 0x0902, // ML-DSA-87 (NIST Level 5)
+    // IANA code points from draft-tls-westerbaan-mldsa
+    MlDsa44 = 0x0904, // ML-DSA-44 (NIST Level 2)
+    MlDsa65 = 0x0905, // ML-DSA-65 (NIST Level 3) - PRIMARY
+    MlDsa87 = 0x0906, // ML-DSA-87 (NIST Level 5)
 }
 
 impl SignatureScheme {
@@ -135,9 +137,9 @@ impl SignatureScheme {
     /// Returns None for unsupported schemes (classical, hybrid)
     pub fn from_u16(value: u16) -> Option<Self> {
         match value {
-            0x0900 => Some(Self::MlDsa44),
-            0x0901 => Some(Self::MlDsa65),
-            0x0902 => Some(Self::MlDsa87),
+            0x0904 => Some(Self::MlDsa44),
+            0x0905 => Some(Self::MlDsa65),
+            0x0906 => Some(Self::MlDsa87),
             _ => None, // Classical and hybrid schemes rejected
         }
     }
@@ -171,7 +173,7 @@ impl SignatureScheme {
         let value = u16::from_be_bytes([bytes[0], bytes[1]]);
         Self::from_u16(value).ok_or_else(|| {
             PqcError::NegotiationFailed(format!(
-                "Signature scheme 0x{:04X} not supported - use ML-DSA-65 (0x0901)",
+                "Signature scheme 0x{:04X} not supported - use ML-DSA-65 (0x0905)",
                 value
             ))
         })
@@ -214,23 +216,23 @@ mod tests {
     #[test]
     fn test_signature_scheme_primary() {
         assert_eq!(SignatureScheme::PRIMARY, SignatureScheme::MlDsa65);
-        assert_eq!(SignatureScheme::PRIMARY.to_u16(), 0x0901);
+        assert_eq!(SignatureScheme::PRIMARY.to_u16(), 0x0905);
     }
 
     #[test]
     fn test_signature_scheme_conversions() {
-        // ML-DSA schemes should work
-        assert_eq!(SignatureScheme::MlDsa65.to_u16(), 0x0901);
+        // ML-DSA schemes should work (IANA codes per draft-tls-westerbaan-mldsa)
+        assert_eq!(SignatureScheme::MlDsa65.to_u16(), 0x0905);
         assert_eq!(
-            SignatureScheme::from_u16(0x0901),
+            SignatureScheme::from_u16(0x0905),
             Some(SignatureScheme::MlDsa65)
         );
         assert_eq!(
-            SignatureScheme::from_u16(0x0900),
+            SignatureScheme::from_u16(0x0904),
             Some(SignatureScheme::MlDsa44)
         );
         assert_eq!(
-            SignatureScheme::from_u16(0x0902),
+            SignatureScheme::from_u16(0x0906),
             Some(SignatureScheme::MlDsa87)
         );
 
@@ -251,10 +253,10 @@ mod tests {
         assert_eq!(bytes, [0x02, 0x01]);
         assert_eq!(NamedGroup::from_bytes(&bytes).unwrap(), group);
 
-        // Test ML-DSA-65
+        // Test ML-DSA-65 (IANA 0x0905)
         let scheme = SignatureScheme::MlDsa65;
         let bytes = scheme.to_bytes();
-        assert_eq!(bytes, [0x09, 0x01]);
+        assert_eq!(bytes, [0x09, 0x05]);
         assert_eq!(SignatureScheme::from_bytes(&bytes).unwrap(), scheme);
     }
 

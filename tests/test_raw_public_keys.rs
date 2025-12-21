@@ -1,31 +1,31 @@
 //! Focused tests for Raw Public Key implementation
 //!
-//! This test file validates the Phase 1-3 Raw Public Key functionality
-//! without depending on the full codebase compilation.
+//! v0.2.0+: Updated for Pure PQC - uses ML-DSA-65 only, no Ed25519.
+//! This test file validates the Pure PQC Raw Public Key functionality.
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 #![cfg(feature = "rustls-aws-lc-rs")]
 
 use ant_quic::crypto::{
     certificate_negotiation::{CertificateNegotiationManager, NegotiationConfig},
-    raw_public_keys::{RawPublicKeyConfigBuilder, key_utils},
+    raw_public_keys::{RawPublicKeyConfigBuilder, pqc::generate_ml_dsa_keypair},
     tls_extensions::{CertificateType, CertificateTypeList, CertificateTypePreferences},
 };
 
 use std::time::Duration;
 
+// ML-DSA-65 key sizes (FIPS 204)
+const ML_DSA_65_PUBLIC_KEY_SIZE: usize = 1952;
+const ML_DSA_65_SECRET_KEY_SIZE: usize = 4032;
+
 #[test]
 fn test_raw_public_key_generation() {
-    // Test Ed25519 key pair generation
-    let (private_key, public_key) = key_utils::generate_ed25519_keypair();
+    // Test ML-DSA-65 key pair generation
+    let (public_key, secret_key) = generate_ml_dsa_keypair().expect("keygen");
 
-    // Verify key sizes
-    assert_eq!(private_key.as_bytes().len(), 32);
-    assert_eq!(public_key.as_bytes().len(), 32);
-
-    // Test public key extraction
-    let key_bytes = key_utils::public_key_to_bytes(&public_key);
-    assert_eq!(key_bytes.len(), 32);
+    // Verify key sizes match ML-DSA-65 specification
+    assert_eq!(public_key.as_bytes().len(), ML_DSA_65_PUBLIC_KEY_SIZE);
+    assert_eq!(secret_key.as_bytes().len(), ML_DSA_65_SECRET_KEY_SIZE);
 }
 
 #[test]
@@ -116,7 +116,7 @@ fn test_negotiation_caching() {
 
 #[test]
 fn test_raw_public_key_config_builder() {
-    let (private_key, _public_key) = key_utils::generate_ed25519_keypair();
+    let (public_key, secret_key) = generate_ml_dsa_keypair().expect("keygen");
 
     // Build client config
     let client_builder = RawPublicKeyConfigBuilder::new()
@@ -126,9 +126,9 @@ fn test_raw_public_key_config_builder() {
     let client_result = client_builder.build_client_config();
     assert!(client_result.is_ok());
 
-    // Build server config with separate builder
+    // Build server config with separate builder - use with_client_key for ML-DSA
     let server_builder = RawPublicKeyConfigBuilder::new()
-        .with_server_key(private_key)
+        .with_client_key(public_key, secret_key)
         .enable_certificate_type_extensions();
 
     let server_result = server_builder.build_server_config();

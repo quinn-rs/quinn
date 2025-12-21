@@ -170,14 +170,18 @@ async fn test_ml_dsa_operations() {
     println!("  Signing: {sign_time:?}");
     println!("  Verification: {verify_time:?}");
 
-    // Verify performance is reasonable
+    // Verify performance is reasonable (higher thresholds for debug builds)
+    let keygen_limit = if cfg!(debug_assertions) { 200 } else { 100 };
+    let sign_limit = if cfg!(debug_assertions) { 150 } else { 50 };
+    let verify_limit = if cfg!(debug_assertions) { 100 } else { 50 };
+
     assert!(
-        keygen_time < Duration::from_millis(100),
+        keygen_time < Duration::from_millis(keygen_limit),
         "Key generation too slow"
     );
-    assert!(sign_time < Duration::from_millis(50), "Signing too slow");
+    assert!(sign_time < Duration::from_millis(sign_limit), "Signing too slow");
     assert!(
-        verify_time < Duration::from_millis(50),
+        verify_time < Duration::from_millis(verify_limit),
         "Verification too slow"
     );
 }

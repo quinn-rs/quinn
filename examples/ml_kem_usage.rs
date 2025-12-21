@@ -1,9 +1,8 @@
-//! Example demonstrating ML-KEM-768 usage with aws-lc-rs
+//! Example demonstrating ML-KEM-768 usage with saorsa-pqc
 //!
-//! This example shows how the ML-KEM implementation works around the lack of
-//! direct private key serialization in aws-lc-rs by using an in-memory cache.
+//! v0.2: Updated to use the simplified MlKem768 implementation backed by saorsa-pqc.
 
-use ant_quic::crypto::pqc::{MlKemOperations, ml_kem_impl::MlKem768Impl};
+use ant_quic::crypto::pqc::{MlKemOperations, MlKem768};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== ML-KEM-768 Usage Example ===\n");
@@ -15,8 +14,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 fn run_ml_kem_demo() -> Result<(), Box<dyn std::error::Error>> {
     println!("ML-KEM-768 Example\n");
 
-    // Create ML-KEM instance
-    let ml_kem = MlKem768Impl::new();
+    // Create ML-KEM instance (v0.2: uses saorsa-pqc backend)
+    let ml_kem = MlKem768::new();
 
     // Generate a keypair
     println!("1. Generating ML-KEM-768 keypair...");
@@ -61,11 +60,9 @@ fn run_ml_kem_demo() -> Result<(), Box<dyn std::error::Error>> {
 
     // Note about the implementation
     println!("\n📝 Implementation Note:");
-    println!("   aws-lc-rs doesn't expose raw private key serialization for ML-KEM.");
-    println!("   This implementation uses an in-memory cache to store DecapsulationKey");
-    println!("   objects, indexed by the public key bytes.");
-    println!("   For production use, consider implementing proper key storage using");
-    println!("   PKCS#8 encoding or a secure key management system.");
+    println!("   v0.2: ML-KEM-768 is now backed by saorsa-pqc which provides");
+    println!("   a clean FIPS 203 implementation with proper key serialization.");
+    println!("   This is used in TLS 1.3 key exchange for post-quantum security.");
 
     Ok(())
 }

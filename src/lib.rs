@@ -206,8 +206,7 @@ pub mod nat_traversal;
 pub mod transport;
 
 // Additional modules
-/// Peer authentication system
-pub mod auth;
+// v0.2: auth module removed - TLS handles peer authentication via ML-DSA-65
 /// Secure chat protocol implementation
 pub mod chat;
 // Performance optimization utilities are deprecated; remove module to eliminate dead code
@@ -264,10 +263,11 @@ pub use high_level::{
     RecvStream as HighLevelRecvStream, SendStream as HighLevelSendStream,
 };
 
-// Re-export crypto utilities for peer ID management
+// Re-export crypto utilities for peer ID management (v0.2: Pure PQC with ML-DSA-65)
 pub use crypto::raw_public_keys::key_utils::{
-    derive_peer_id_from_key_bytes, derive_peer_id_from_public_key, generate_ed25519_keypair,
-    public_key_from_bytes, public_key_to_bytes, verify_peer_id,
+    MlDsaPublicKey, MlDsaSecretKey, ML_DSA_65_PUBLIC_KEY_SIZE, ML_DSA_65_SECRET_KEY_SIZE,
+    derive_peer_id_from_key_bytes, derive_peer_id_from_public_key, generate_ml_dsa_keypair,
+    verify_peer_id,
 };
 
 // Re-export key types for backward compatibility

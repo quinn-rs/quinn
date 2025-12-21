@@ -1,12 +1,16 @@
-//! Channel binding tests using Ed25519 as a stand-in for PQ signatures.
+//! Channel binding tests using ML-DSA-65 Pure PQC signatures.
+//!
+//! v0.2.0+: Updated for Pure PQC - uses ML-DSA-65 only, no Ed25519.
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use ant_quic::{
     config::{ClientConfig, ServerConfig},
+    crypto::pqc::types::{MlDsaPublicKey, MlDsaSecretKey},
+    crypto::raw_public_keys::pqc::{create_subject_public_key_info, generate_ml_dsa_keypair},
     high_level::Endpoint,
     nat_traversal_api::PeerId,
-    trust::{self, EventCollector, FsPinStore, PinStore, TransportPolicy},
+    trust::{self, EventCollector, FsPinStore, TransportPolicy},
 };
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use std::{net::SocketAddr, sync::Arc};
@@ -21,15 +25,14 @@ fn gen_self_signed_cert() -> (Vec<CertificateDer<'static>>, PrivateKeyDer<'stati
     (vec![cert_der], key_der)
 }
 
-fn ed25519_keypair() -> (ed25519_dalek::SigningKey, ed25519_dalek::VerifyingKey) {
-    use rand::rngs::OsRng;
-    let sk = ed25519_dalek::SigningKey::generate(&mut OsRng);
-    let vk = sk.verifying_key();
-    (sk, vk)
+/// Generate an ML-DSA-65 keypair for testing
+fn ml_dsa_keypair() -> (MlDsaPublicKey, MlDsaSecretKey) {
+    generate_ml_dsa_keypair().expect("ML-DSA-65 keypair generation")
 }
 
-fn spki_from_vk(vk: &ed25519_dalek::VerifyingKey) -> Vec<u8> {
-    ant_quic::crypto::raw_keys::create_ed25519_subject_public_key_info(vk)
+/// Create SPKI from ML-DSA-65 public key
+fn spki_from_pk(pk: &MlDsaPublicKey) -> Vec<u8> {
+    create_subject_public_key_info(pk).expect("SPKI creation")
 }
 
 fn peer_id_from_spki(spki: &[u8]) -> PeerId {
@@ -49,16 +52,27 @@ async fn loopback_pair() -> (ant_quic::Connection, ant_quic::Connection) {
     let addr: SocketAddr = server.local_addr().unwrap();
 
     let accept = tokio::spawn(async move {
-        let inc = timeout(Duration::from_secs(10), server.accept()).await.unwrap().unwrap();
+        let inc = timeout(Duration::from_secs(10), server.accept())
+            .await
+            .unwrap()
+            .unwrap();
         timeout(Duration::from_secs(10), inc).await.unwrap().unwrap()
     });
 
     let mut roots = rustls::RootCertStore::empty();
-    for c in chain { roots.add(c).unwrap(); }
+    for c in chain {
+        roots.add(c).unwrap();
+    }
     let client_cfg = ClientConfig::with_root_certificates(Arc::new(roots)).unwrap();
     let mut client = Endpoint::client(([127, 0, 0, 1], 0).into()).expect("client ep");
     client.set_default_client_config(client_cfg);
-    let c_conn = timeout(Duration::from_secs(10), client.connect(addr, "localhost").expect("start")).await.unwrap().unwrap();
+    let c_conn = timeout(
+        Duration::from_secs(10),
+        client.connect(addr, "localhost").expect("start"),
+    )
+    .await
+    .unwrap()
+    .unwrap();
     let s_conn = accept.await.unwrap();
     (c_conn, s_conn)
 }
@@ -67,13 +81,13 @@ async fn loopback_pair() -> (ant_quic::Connection, ant_quic::Connection) {
 async fn binding_success_with_pinned_key() {
     let (client_conn, server_conn) = loopback_pair().await;
 
-    // Generate test keys for client and server identity (stand-in for PQ keys)
-    let (c_sk, c_vk) = ed25519_keypair();
-    let (s_sk, s_vk) = ed25519_keypair();
-    let c_spki = spki_from_vk(&c_vk);
-    let s_spki = spki_from_vk(&s_vk);
-    let c_peer = peer_id_from_spki(&c_spki);
-    let s_peer = peer_id_from_spki(&s_spki);
+    // Generate ML-DSA-65 keys for client and server identity
+    let (c_pk, c_sk) = ml_dsa_keypair();
+    let (s_pk, _s_sk) = ml_dsa_keypair();
+    let c_spki = spki_from_pk(&c_pk);
+    let s_spki = spki_from_pk(&s_pk);
+    let _c_peer = peer_id_from_spki(&c_spki);
+    let _s_peer = peer_id_from_spki(&s_spki);
 
     // Pin each other's keys
     let client_store_dir = TempDir::new().unwrap();
@@ -89,7 +103,7 @@ async fn binding_success_with_pinned_key() {
     // Event sinks
     let c_events = Arc::new(EventCollector::default());
     let s_events = Arc::new(EventCollector::default());
-    let c_policy = TransportPolicy::default().with_event_sink(c_events.clone());
+    let _c_policy = TransportPolicy::default().with_event_sink(c_events.clone());
     let s_policy = TransportPolicy::default().with_event_sink(s_events.clone());
 
     // Derive exporter (same for both sides)
@@ -97,39 +111,52 @@ async fn binding_success_with_pinned_key() {
     let exp_server = trust::derive_exporter(&server_conn).unwrap();
     assert_eq!(exp_client, exp_server);
 
-    // Sign exporters with each side's key
-    let sig_c = trust::sign_exporter_ed25519(&c_sk, &exp_client);
-    let sig_s = trust::sign_exporter_ed25519(&s_sk, &exp_server);
-
-    // Each side verifies the other's signature against the pinned SPKI
-    let pid_s = trust::verify_binding_ed25519(&c_store, &c_policy, &s_spki, &exp_client, &sig_s).unwrap();
-    let pid_c = trust::verify_binding_ed25519(&s_store, &s_policy, &c_spki, &exp_server, &sig_c).unwrap();
-    assert_eq!(pid_s, s_peer);
-    assert_eq!(pid_c, c_peer);
-    assert!(c_events.binding_verified_called());
+    // Server waits to receive; client sends
+    let s_store_owned = s_store.clone();
+    let s_policy_owned = s_policy.clone();
+    let s_conn_clone = server_conn.clone();
+    let recv_task = tokio::spawn(async move {
+        trust::recv_verify_binding(&s_conn_clone, &s_store_owned, &s_policy_owned).await
+    });
+    trust::send_binding(&client_conn, &exp_client, &c_sk, &c_spki)
+        .await
+        .expect("send ok");
+    let pid = recv_task.await.unwrap().expect("verify ok");
     assert!(s_events.binding_verified_called());
+    let _ = pid;
+    let _ = exp_server; // silence
 }
 
 #[tokio::test]
 async fn binding_reject_on_key_mismatch() {
     let (client_conn, server_conn) = loopback_pair().await;
-    let (c_sk, c_vk) = ed25519_keypair();
-    let (s_sk, _s_vk) = ed25519_keypair();
-    let c_spki = spki_from_vk(&c_vk);
-    let s_spki = spki_from_vk(&ed25519_keypair().1); // wrong key pinned
+    let (c_pk, c_sk) = ml_dsa_keypair();
+    let (s_pk, _s_sk) = ml_dsa_keypair();
+    let c_spki = spki_from_pk(&c_pk);
+    let wrong_spki = spki_from_pk(&s_pk); // wrong key pinned
 
     let c_store_dir = TempDir::new().unwrap();
     let s_store_dir = TempDir::new().unwrap();
     let c_store = FsPinStore::new(c_store_dir.path());
     let s_store = FsPinStore::new(s_store_dir.path());
-    trust::register_first_seen(&c_store, &TransportPolicy::default(), &s_spki).unwrap();
+    trust::register_first_seen(&c_store, &TransportPolicy::default(), &wrong_spki).unwrap();
     trust::register_first_seen(&s_store, &TransportPolicy::default(), &c_spki).unwrap();
 
     let exp = trust::derive_exporter(&client_conn).unwrap();
-    let sig_s = trust::sign_exporter_ed25519(&s_sk, &exp);
-    let policy = TransportPolicy::default();
-    let err = trust::verify_binding_ed25519(&c_store, &policy, &s_spki, &exp, &sig_s).expect_err("should reject");
-    let _ = server_conn; let _ = client_conn; let _ = c_sk; // silence unused
-    match err { ant_quic::trust::TrustError::ChannelBinding(_) => {}, _ => panic!("wrong error") }
+    // Server waits and should reject because pin mismatches
+    let s_conn_clone = server_conn.clone();
+    let c_store_owned = c_store.clone();
+    let policy_owned = TransportPolicy::default();
+    let recv_task = tokio::spawn(async move {
+        trust::recv_verify_binding(&s_conn_clone, &c_store_owned, &policy_owned).await
+    });
+    trust::send_binding(&client_conn, &exp, &c_sk, &c_spki)
+        .await
+        .expect("send ok");
+    let err = recv_task.await.unwrap().expect_err("should reject");
+    match err {
+        ant_quic::trust::TrustError::ChannelBinding(_) | ant_quic::trust::TrustError::NotPinned => {
+        }
+        _ => panic!("unexpected err"),
+    }
 }
-

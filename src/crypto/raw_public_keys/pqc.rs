@@ -4,222 +4,271 @@
 // Please see the file LICENSE-GPL, or visit <http://www.gnu.org/licenses/> for the full text.
 //
 // Full details available at https://saorsalabs.com/licenses
-#![allow(missing_docs)]
 
-//! Pure Post-Quantum Cryptography extensions for Raw Public Keys
+//! Pure Post-Quantum Cryptography for Raw Public Keys
 //!
-//! v0.2: Pure PQC - NO hybrid or classical algorithms.
+//! v0.2: Pure PQC - NO classical algorithms.
 //!
-//! This module extends the raw public key infrastructure to support
-//! pure ML-DSA-65 (0x0901) keys for post-quantum authentication.
-//! Ed25519 is retained ONLY for 32-byte PeerId compact identifier.
+//! This module provides:
+//! - ML-DSA-65 key generation for Pure PQC identity
+//! - PeerId derivation from ML-DSA-65 public keys
+//! - SPKI (SubjectPublicKeyInfo) ASN.1 encoding/decoding for ML-DSA-65
+//! - Signature verification for TLS 1.3 authentication
 //!
-//! This is a greenfield network with no legacy compatibility requirements.
-
-use std::fmt::{self, Debug};
+//! This is a greenfield network - Pure PQC from day one.
 
 use rustls::{CertificateError, DigitallySignedStruct, Error as TlsError, SignatureScheme};
 
 use crate::crypto::pqc::{
     MlDsaOperations,
     ml_dsa::MlDsa65,
-    types::{MlDsaPublicKey as MlDsa65PublicKey, MlDsaSignature as MlDsa65Signature, PqcError},
+    types::{
+        MlDsaPublicKey as MlDsa65PublicKey, MlDsaSecretKey as MlDsa65SecretKey,
+        MlDsaSignature as MlDsa65Signature, PqcError,
+    },
 };
 
-use ed25519_dalek::{Signature as Ed25519Signature, VerifyingKey as Ed25519PublicKey};
+// Re-export types for external use
+pub use crate::crypto::pqc::types::{
+    MlDsaPublicKey, MlDsaSecretKey, MlDsaSignature,
+};
 
-/// Extended Raw Public Key types (v0.2: Pure PQC)
+// =============================================================================
+// Constants
+// =============================================================================
+
+/// ML-DSA-65 OID: 2.16.840.1.101.3.4.3.18 (NIST CSOR)
+/// Per draft-ietf-lamps-dilithium-certificates
+const ML_DSA_65_OID: [u8; 9] = [0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x03, 0x12];
+
+/// ML-DSA-65 public key size in bytes (per FIPS 204)
+pub const ML_DSA_65_PUBLIC_KEY_SIZE: usize = 1952;
+
+/// ML-DSA-65 secret key size in bytes (per FIPS 204)
+pub const ML_DSA_65_SECRET_KEY_SIZE: usize = 4032;
+
+/// ML-DSA-65 signature size in bytes (per FIPS 204)
+pub const ML_DSA_65_SIGNATURE_SIZE: usize = 3309;
+
+// =============================================================================
+// Pure PQC Identity Functions
+// =============================================================================
+
+/// Generate a new ML-DSA-65 keypair for Pure PQC identity
 ///
-/// v0.2: ONLY pure ML-DSA-65 for authentication.
-/// Ed25519 is retained ONLY for 32-byte PeerId compact identifier.
-#[derive(Clone, Debug)]
-pub enum ExtendedRawPublicKey {
-    /// Ed25519 key for PeerId identification ONLY (not for TLS authentication)
-    Ed25519(Ed25519PublicKey),
-
-    /// Pure ML-DSA-65 key for TLS authentication (PRIMARY)
-    MlDsa65(MlDsa65PublicKey),
+/// This is the PRIMARY and ONLY identity generation function.
+/// Returns (public_key, secret_key) for use in TLS authentication and PeerId derivation.
+pub fn generate_ml_dsa_keypair() -> Result<(MlDsa65PublicKey, MlDsa65SecretKey), PqcError> {
+    let ml_dsa = MlDsa65::new();
+    ml_dsa.generate_keypair()
 }
 
-impl ExtendedRawPublicKey {
-    /// Create SubjectPublicKeyInfo DER encoding for the key
-    pub fn to_subject_public_key_info(&self) -> Result<Vec<u8>, PqcError> {
-        match self {
-            Self::Ed25519(key) => {
-                // Use existing Ed25519 SPKI encoding (for PeerId only)
-                Ok(super::create_ed25519_subject_public_key_info(key))
-            }
-            Self::MlDsa65(key) => {
-                // v0.2: Create pure ML-DSA SPKI encoding
-                create_ml_dsa_subject_public_key_info(key)
-            }
-        }
-    }
-
-    /// Extract public key from SubjectPublicKeyInfo
-    ///
-    /// v0.2: Only Ed25519 (for PeerId) and pure ML-DSA-65 (for auth) are supported.
-    pub fn from_subject_public_key_info(spki: &[u8]) -> Result<Self, PqcError> {
-        // Try Ed25519 first (for PeerId identification)
-        if let Ok(key) = extract_ed25519_from_spki(spki) {
-            return Ok(Self::Ed25519(key));
-        }
-
-        // Try ML-DSA (v0.2: PRIMARY for authentication)
-        if let Ok(key) = extract_ml_dsa_from_spki(spki) {
-            return Ok(Self::MlDsa65(key));
-        }
-
-        Err(PqcError::InvalidPublicKey)
-    }
-
-    /// Verify a signature using this public key
-    ///
-    /// v0.2: Only pure ML-DSA-65 for TLS authentication.
-    /// Ed25519 is only for PeerId verification, not TLS.
-    pub fn verify(
-        &self,
-        message: &[u8],
-        signature: &[u8],
-        scheme: SignatureScheme,
-    ) -> Result<(), PqcError> {
-        match self {
-            Self::Ed25519(key) => verify_ed25519_signature(key, message, signature, scheme),
-            Self::MlDsa65(key) => verify_ml_dsa_signature(key, message, signature, scheme),
-        }
-    }
-
-    /// Get the signature schemes supported by this key type
-    ///
-    /// v0.2: ML-DSA-65 (0x0901) is the PRIMARY authentication scheme.
-    pub fn supported_signature_schemes(&self) -> Vec<SignatureScheme> {
-        match self {
-            Self::Ed25519(_) => vec![SignatureScheme::ED25519],
-            Self::MlDsa65(_) => vec![
-                // v0.2: ML-DSA-65 with correct IANA code point
-                SignatureScheme::Unknown(0x0901),
-            ],
-        }
-    }
-
-    /// Get the size of this public key in bytes
-    pub fn size(&self) -> usize {
-        match self {
-            Self::Ed25519(_) => 32,
-            Self::MlDsa65(key) => key.as_bytes().len(),
-        }
-    }
-}
-
-/// Create SubjectPublicKeyInfo for ML-DSA public key
-fn create_ml_dsa_subject_public_key_info(
+/// Derive a PeerId from an ML-DSA-65 public key using SHA-256 hash
+///
+/// Pure PQC peer identification using ML-DSA-65 public keys.
+///
+/// The SHA-256 hash ensures:
+/// - Uniform 32-byte distribution
+/// - Collision resistance
+/// - No direct key exposure in the peer ID
+pub fn derive_peer_id_from_public_key(
     public_key: &MlDsa65PublicKey,
-) -> Result<Vec<u8>, PqcError> {
-    // ML-DSA OID: 1.3.6.1.4.1.2.267.12.4.4 (draft-ietf-lamps-dilithium-certificates)
-    // This is the OID for ML-DSA-65
-    let ml_dsa_oid = vec![
-        0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01, 0x0B, 0x30, 0x00,
-    ];
+) -> crate::nat_traversal_api::PeerId {
+    use aws_lc_rs::digest;
 
+    let key_bytes = public_key.as_bytes();
+
+    // Create the input data with domain separator
+    let mut input = Vec::with_capacity(20 + key_bytes.len());
+    input.extend_from_slice(b"AUTONOMI_PEER_ID_V2:");
+    input.extend_from_slice(key_bytes);
+
+    // Hash the input using SHA-256
+    let hash = digest::digest(&digest::SHA256, &input);
+    let hash_bytes = hash.as_ref();
+
+    let mut peer_id_bytes = [0u8; 32];
+    peer_id_bytes.copy_from_slice(hash_bytes);
+
+    crate::nat_traversal_api::PeerId(peer_id_bytes)
+}
+
+/// Derive a PeerId from raw ML-DSA-65 public key bytes (1952 bytes)
+pub fn derive_peer_id_from_key_bytes(
+    key_bytes: &[u8],
+) -> Result<crate::nat_traversal_api::PeerId, PqcError> {
+    let public_key = MlDsa65PublicKey::from_bytes(key_bytes)?;
+    Ok(derive_peer_id_from_public_key(&public_key))
+}
+
+/// Verify that a peer ID was correctly derived from an ML-DSA-65 public key
+pub fn verify_peer_id(
+    peer_id: &crate::nat_traversal_api::PeerId,
+    public_key: &MlDsa65PublicKey,
+) -> bool {
+    let derived_id = derive_peer_id_from_public_key(public_key);
+    *peer_id == derived_id
+}
+
+// =============================================================================
+// SPKI (SubjectPublicKeyInfo) Encoding/Decoding
+// =============================================================================
+
+/// Create SubjectPublicKeyInfo for ML-DSA-65 public key
+///
+/// Encodes per draft-ietf-lamps-dilithium-certificates:
+/// ```asn1
+/// SubjectPublicKeyInfo ::= SEQUENCE {
+///     algorithm AlgorithmIdentifier,
+///     subjectPublicKey BIT STRING
+/// }
+/// AlgorithmIdentifier ::= SEQUENCE {
+///     algorithm OBJECT IDENTIFIER,
+///     -- parameters MUST be absent for ML-DSA
+/// }
+/// ```
+pub fn create_subject_public_key_info(public_key: &MlDsa65PublicKey) -> Result<Vec<u8>, PqcError> {
     let key_bytes = public_key.as_bytes();
     let key_len = key_bytes.len();
 
-    // Calculate total length
-    let oid_sequence_len = 2 + ml_dsa_oid.len();
-    let bit_string_len = 1 + key_len; // 1 byte for unused bits
-    let total_len = 2 + oid_sequence_len + 2 + bit_string_len;
+    // Validate key size
+    if key_len != ML_DSA_65_PUBLIC_KEY_SIZE {
+        return Err(PqcError::InvalidPublicKey);
+    }
 
-    let mut spki = Vec::with_capacity(total_len + 2);
+    // Algorithm identifier: SEQUENCE { OID }
+    let oid_with_tag_len = 2 + ML_DSA_65_OID.len(); // 11 bytes
+    let algorithm_seq_content_len = oid_with_tag_len;
 
-    // SEQUENCE tag and length
+    // BIT STRING: tag (0x03) + length + 0x00 (unused bits) + key
+    let bit_string_content_len = 1 + key_len; // 1953 bytes
+    let bit_string_len_encoding = length_encoding_size(bit_string_content_len);
+    let bit_string_total = 1 + bit_string_len_encoding + bit_string_content_len;
+
+    // Algorithm SEQUENCE
+    let algo_seq_len_encoding = length_encoding_size(algorithm_seq_content_len);
+    let algo_seq_total = 1 + algo_seq_len_encoding + algorithm_seq_content_len;
+
+    // Outer SEQUENCE content
+    let outer_content_len = algo_seq_total + bit_string_total;
+
+    let mut spki = Vec::with_capacity(4 + outer_content_len);
+
+    // Outer SEQUENCE
     spki.push(0x30);
-    encode_length(&mut spki, total_len);
+    encode_length(&mut spki, outer_content_len);
 
     // Algorithm identifier SEQUENCE
     spki.push(0x30);
-    encode_length(&mut spki, ml_dsa_oid.len());
-    spki.extend_from_slice(&ml_dsa_oid);
+    encode_length(&mut spki, algorithm_seq_content_len);
+
+    // OID
+    spki.push(0x06);
+    spki.push(ML_DSA_65_OID.len() as u8);
+    spki.extend_from_slice(&ML_DSA_65_OID);
 
     // Subject public key BIT STRING
     spki.push(0x03);
-    encode_length(&mut spki, bit_string_len);
+    encode_length(&mut spki, bit_string_content_len);
     spki.push(0x00); // No unused bits
     spki.extend_from_slice(key_bytes);
 
     Ok(spki)
 }
 
-// v0.2: Removed create_hybrid_subject_public_key_info - NO hybrid keys
+/// Extract ML-DSA-65 key from SubjectPublicKeyInfo
+pub fn extract_public_key_from_spki(spki: &[u8]) -> Result<MlDsa65PublicKey, PqcError> {
+    let mut pos = 0;
 
-/// Extract Ed25519 key from SPKI
-fn extract_ed25519_from_spki(spki: &[u8]) -> Result<Ed25519PublicKey, PqcError> {
-    // Ed25519 OID pattern
-    let ed25519_oid = [0x30, 0x2a, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70];
+    // Parse outer SEQUENCE
+    if spki.get(pos) != Some(&0x30) {
+        return Err(PqcError::InvalidPublicKey);
+    }
+    pos += 1;
 
-    if spki.len() != 44 || !spki.starts_with(&ed25519_oid) {
+    let (outer_len, len_bytes) = parse_length(&spki[pos..])?;
+    pos += len_bytes;
+
+    // Verify we have enough data
+    if spki.len() < pos + outer_len {
         return Err(PqcError::InvalidPublicKey);
     }
 
-    let key_bytes = &spki[12..44];
-    Ed25519PublicKey::from_bytes(
-        key_bytes
-            .try_into()
-            .map_err(|_| PqcError::InvalidPublicKey)?,
-    )
-    .map_err(|_| PqcError::InvalidPublicKey)
-}
+    // Parse algorithm identifier SEQUENCE
+    if spki.get(pos) != Some(&0x30) {
+        return Err(PqcError::InvalidPublicKey);
+    }
+    pos += 1;
 
-/// Extract ML-DSA key from SPKI (placeholder)
-fn extract_ml_dsa_from_spki(_spki: &[u8]) -> Result<MlDsa65PublicKey, PqcError> {
-    // This is a placeholder - actual implementation would parse the ASN.1 structure
-    // For now, return error as ML-DSA is not yet implemented
-    Err(PqcError::OperationNotSupported)
-}
+    let (algo_len, len_bytes) = parse_length(&spki[pos..])?;
+    pos += len_bytes;
+    let algo_end = pos + algo_len;
 
-// v0.2: Removed extract_hybrid_from_spki - NO hybrid keys
+    // Parse OID
+    if spki.get(pos) != Some(&0x06) {
+        return Err(PqcError::InvalidPublicKey);
+    }
+    pos += 1;
 
-/// Verify Ed25519 signature
-fn verify_ed25519_signature(
-    key: &Ed25519PublicKey,
-    message: &[u8],
-    signature: &[u8],
-    scheme: SignatureScheme,
-) -> Result<(), PqcError> {
-    if scheme != SignatureScheme::ED25519 {
-        return Err(PqcError::InvalidSignature);
+    let (oid_len, len_bytes) = parse_length(&spki[pos..])?;
+    pos += len_bytes;
+
+    if oid_len != ML_DSA_65_OID.len() {
+        return Err(PqcError::InvalidPublicKey);
     }
 
-    if signature.len() != 64 {
-        return Err(PqcError::InvalidSignature);
+    // Verify ML-DSA-65 OID
+    if spki.get(pos..pos + oid_len) != Some(&ML_DSA_65_OID[..]) {
+        return Err(PqcError::InvalidPublicKey);
+    }
+    pos = algo_end;
+
+    // Parse BIT STRING
+    if spki.get(pos) != Some(&0x03) {
+        return Err(PqcError::InvalidPublicKey);
+    }
+    pos += 1;
+
+    let (bit_string_len, len_bytes) = parse_length(&spki[pos..])?;
+    pos += len_bytes;
+
+    // First byte of BIT STRING is unused bits count (must be 0)
+    if spki.get(pos) != Some(&0x00) {
+        return Err(PqcError::InvalidPublicKey);
+    }
+    pos += 1;
+
+    // Extract public key bytes
+    let key_len = bit_string_len - 1;
+    if key_len != ML_DSA_65_PUBLIC_KEY_SIZE {
+        return Err(PqcError::InvalidPublicKey);
     }
 
-    let sig = Ed25519Signature::from_bytes(
-        signature
-            .try_into()
-            .map_err(|_| PqcError::InvalidSignature)?,
-    );
+    let key_bytes = spki
+        .get(pos..pos + key_len)
+        .ok_or(PqcError::InvalidPublicKey)?;
 
-    use ed25519_dalek::Verifier;
-    key.verify(message, &sig)
-        .map_err(|_| PqcError::InvalidSignature)
+    MlDsa65PublicKey::from_bytes(key_bytes)
 }
 
-/// Verify ML-DSA-65 signature (v0.2: Pure PQC)
-fn verify_ml_dsa_signature(
+// =============================================================================
+// Signature Verification
+// =============================================================================
+
+/// Verify ML-DSA-65 signature
+pub fn verify_signature(
     key: &MlDsa65PublicKey,
     message: &[u8],
     signature: &[u8],
     scheme: SignatureScheme,
 ) -> Result<(), PqcError> {
-    // v0.2: Check for ML-DSA-65 scheme with correct IANA code point
-    if scheme != SignatureScheme::Unknown(0x0901) {
+    // Check for ML-DSA-65 scheme - uses rustls native enum (IANA 0x0905)
+    if scheme != SignatureScheme::ML_DSA_65 {
         return Err(PqcError::InvalidSignature);
     }
 
-    // Parse signature bytes into ML-DSA signature
     let sig = MlDsa65Signature::from_bytes(signature)?;
 
-    // Use the ML-DSA verifier
     let verifier = MlDsa65::new();
     match verifier.verify(key, message, &sig) {
         Ok(true) => Ok(()),
@@ -228,34 +277,53 @@ fn verify_ml_dsa_signature(
     }
 }
 
-// v0.2: Removed verify_hybrid_signature - NO hybrid signatures
+/// Get the supported signature schemes for ML-DSA-65
+/// Uses rustls native enum (IANA 0x0905)
+pub fn supported_signature_schemes() -> Vec<SignatureScheme> {
+    vec![SignatureScheme::ML_DSA_65]
+}
 
-/// Encode ASN.1 length
-fn encode_length(output: &mut Vec<u8>, len: usize) {
-    if len < 128 {
-        output.push(len as u8);
-    } else if len < 256 {
-        output.push(0x81);
-        output.push(len as u8);
-    } else {
-        output.push(0x82);
-        output.push((len >> 8) as u8);
-        output.push((len & 0xFF) as u8);
+/// Sign data with an ML-DSA-65 secret key
+///
+/// Returns the signature as an MlDsaSignature on success.
+pub fn sign_with_ml_dsa(
+    secret_key: &MlDsa65SecretKey,
+    data: &[u8],
+) -> Result<MlDsa65Signature, PqcError> {
+    let signer = MlDsa65::new();
+    signer.sign(secret_key, data)
+}
+
+/// Verify a signature with an ML-DSA-65 public key
+///
+/// Returns Ok(()) if the signature is valid, Err otherwise.
+pub fn verify_with_ml_dsa(
+    public_key: &MlDsa65PublicKey,
+    data: &[u8],
+    signature: &MlDsa65Signature,
+) -> Result<(), PqcError> {
+    let verifier = MlDsa65::new();
+    match verifier.verify(public_key, data, signature) {
+        Ok(true) => Ok(()),
+        Ok(false) => Err(PqcError::InvalidSignature),
+        Err(e) => Err(e),
     }
 }
 
-/// PQC-aware Raw Public Key Verifier
+// =============================================================================
+// PQC Raw Public Key Verifier
+// =============================================================================
+
+/// Pure PQC Raw Public Key Verifier for TLS
 #[derive(Debug)]
 pub struct PqcRawPublicKeyVerifier {
-    /// Set of trusted public keys
-    trusted_keys: Vec<ExtendedRawPublicKey>,
-    /// Whether to allow any valid key
+    trusted_keys: Vec<MlDsa65PublicKey>,
     allow_any_key: bool,
 }
 
 impl PqcRawPublicKeyVerifier {
     /// Create a new verifier with trusted keys
-    pub fn new(trusted_keys: Vec<ExtendedRawPublicKey>) -> Self {
+    pub fn new(trusted_keys: Vec<MlDsa65PublicKey>) -> Self {
         Self {
             trusted_keys,
             allow_any_key: false,
@@ -271,24 +339,21 @@ impl PqcRawPublicKeyVerifier {
     }
 
     /// Add a trusted key
-    pub fn add_trusted_key(&mut self, key: ExtendedRawPublicKey) {
+    pub fn add_trusted_key(&mut self, key: MlDsa65PublicKey) {
         self.trusted_keys.push(key);
     }
 
     /// Verify a certificate (SPKI) against trusted keys
-    pub fn verify_cert(&self, cert: &[u8]) -> Result<ExtendedRawPublicKey, TlsError> {
-        // Extract key from SPKI
-        let key = ExtendedRawPublicKey::from_subject_public_key_info(cert)
+    pub fn verify_cert(&self, cert: &[u8]) -> Result<MlDsa65PublicKey, TlsError> {
+        let key = extract_public_key_from_spki(cert)
             .map_err(|_| TlsError::InvalidCertificate(CertificateError::BadEncoding))?;
 
-        // Check if trusted
         if self.allow_any_key {
             return Ok(key);
         }
 
-        // Check against trusted keys
         for trusted in &self.trusted_keys {
-            if self.keys_match(&key, trusted) {
+            if key.as_bytes() == trusted.as_bytes() {
                 return Ok(key);
             }
         }
@@ -297,138 +362,197 @@ impl PqcRawPublicKeyVerifier {
             CertificateError::UnknownIssuer,
         ))
     }
+}
 
-    /// Check if two keys match (v0.2: No hybrid keys)
-    fn keys_match(&self, a: &ExtendedRawPublicKey, b: &ExtendedRawPublicKey) -> bool {
-        match (a, b) {
-            (ExtendedRawPublicKey::Ed25519(a), ExtendedRawPublicKey::Ed25519(b)) => {
-                a.as_bytes() == b.as_bytes()
-            }
-            (ExtendedRawPublicKey::MlDsa65(a), ExtendedRawPublicKey::MlDsa65(b)) => {
-                a.as_bytes() == b.as_bytes()
-            }
-            _ => false,
-        }
+// =============================================================================
+// ASN.1 Helpers
+// =============================================================================
+
+fn length_encoding_size(len: usize) -> usize {
+    if len < 128 {
+        1
+    } else if len < 256 {
+        2
+    } else {
+        3
     }
 }
+
+fn encode_length(output: &mut Vec<u8>, len: usize) {
+    if len < 128 {
+        output.push(len as u8);
+    } else if len < 256 {
+        output.push(0x81);
+        output.push(len as u8);
+    } else {
+        output.push(0x82);
+        output.push((len >> 8) as u8);
+        output.push((len & 0xFF) as u8);
+    }
+}
+
+fn parse_length(data: &[u8]) -> Result<(usize, usize), PqcError> {
+    if data.is_empty() {
+        return Err(PqcError::InvalidPublicKey);
+    }
+
+    let first = data[0];
+    if first < 128 {
+        Ok((first as usize, 1))
+    } else if first == 0x81 {
+        if data.len() < 2 {
+            return Err(PqcError::InvalidPublicKey);
+        }
+        Ok((data[1] as usize, 2))
+    } else if first == 0x82 {
+        if data.len() < 3 {
+            return Err(PqcError::InvalidPublicKey);
+        }
+        let len = ((data[1] as usize) << 8) | (data[2] as usize);
+        Ok((len, 3))
+    } else {
+        Err(PqcError::InvalidPublicKey)
+    }
+}
+
+// =============================================================================
+// Tests
+// =============================================================================
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn test_extended_raw_public_key_ed25519() {
-        use crate::crypto::raw_public_keys::key_utils::generate_ed25519_keypair;
+    fn test_generate_ml_dsa_keypair() {
+        let result = generate_ml_dsa_keypair();
+        assert!(result.is_ok());
 
-        // Generate valid test key
-        let (_, ed25519_key) = generate_ed25519_keypair();
-        let key_bytes = *ed25519_key.as_bytes();
+        let (public_key, secret_key) = result.unwrap();
 
-        let extended_key = ExtendedRawPublicKey::Ed25519(ed25519_key);
+        assert_eq!(public_key.as_bytes().len(), ML_DSA_65_PUBLIC_KEY_SIZE);
+        assert_eq!(secret_key.as_bytes().len(), ML_DSA_65_SECRET_KEY_SIZE);
 
-        // Test SPKI encoding
-        let spki = extended_key.to_subject_public_key_info().unwrap();
-        assert_eq!(spki.len(), 44);
-
-        // Test round-trip
-        let recovered = ExtendedRawPublicKey::from_subject_public_key_info(&spki).unwrap();
-        match recovered {
-            ExtendedRawPublicKey::Ed25519(key) => {
-                assert_eq!(key.as_bytes(), &key_bytes);
-            }
-            _ => panic!("Wrong key type"),
-        }
-
-        // Test size
-        assert_eq!(extended_key.size(), 32);
-
-        // Test supported schemes (Ed25519 for PeerId only)
-        assert_eq!(
-            extended_key.supported_signature_schemes(),
-            vec![SignatureScheme::ED25519]
-        );
+        // Different keypairs should be different
+        let (public_key2, _) = generate_ml_dsa_keypair().unwrap();
+        assert_ne!(public_key.as_bytes(), public_key2.as_bytes());
     }
 
     #[test]
-    fn test_ml_dsa_spki_encoding_pure_pqc() {
-        // Create a dummy ML-DSA public key
-        let ml_dsa_key = MlDsa65PublicKey::from_bytes(&vec![0u8; 1952]).unwrap();
-        let extended_key = ExtendedRawPublicKey::MlDsa65(ml_dsa_key);
+    fn test_derive_peer_id() {
+        let (public_key, _) = generate_ml_dsa_keypair().unwrap();
 
-        // Test SPKI encoding
-        match extended_key.to_subject_public_key_info() {
-            Ok(spki) => {
-                // Should have proper ASN.1 structure
-                assert!(spki.starts_with(&[0x30])); // SEQUENCE tag
-                assert!(spki.len() > 1952); // Larger than key due to ASN.1
-            }
-            Err(PqcError::OperationNotSupported) => {
-                // Expected until ML-DSA is implemented
-            }
-            Err(e) => panic!("Unexpected error: {:?}", e),
-        }
+        // Deterministic
+        let peer_id1 = derive_peer_id_from_public_key(&public_key);
+        let peer_id2 = derive_peer_id_from_public_key(&public_key);
+        assert_eq!(peer_id1, peer_id2);
 
-        // Test size
-        assert_eq!(extended_key.size(), 1952);
+        // Different keys produce different peer IDs
+        let (public_key2, _) = generate_ml_dsa_keypair().unwrap();
+        let peer_id3 = derive_peer_id_from_public_key(&public_key2);
+        assert_ne!(peer_id1, peer_id3);
+    }
 
-        // v0.2: Test supported schemes with correct IANA code point
-        assert_eq!(
-            extended_key.supported_signature_schemes(),
-            vec![SignatureScheme::Unknown(0x0901)]
-        );
+    #[test]
+    fn test_derive_peer_id_from_key_bytes() {
+        let (public_key, _) = generate_ml_dsa_keypair().unwrap();
+        let key_bytes = public_key.as_bytes();
+
+        let peer_id1 = derive_peer_id_from_public_key(&public_key);
+        let peer_id2 = derive_peer_id_from_key_bytes(key_bytes).unwrap();
+        assert_eq!(peer_id1, peer_id2);
+
+        // Invalid key bytes should fail
+        assert!(derive_peer_id_from_key_bytes(&[0u8; 100]).is_err());
+    }
+
+    #[test]
+    fn test_verify_peer_id() {
+        let (public_key, _) = generate_ml_dsa_keypair().unwrap();
+        let peer_id = derive_peer_id_from_public_key(&public_key);
+
+        assert!(verify_peer_id(&peer_id, &public_key));
+
+        let (other_key, _) = generate_ml_dsa_keypair().unwrap();
+        assert!(!verify_peer_id(&peer_id, &other_key));
+    }
+
+    #[test]
+    fn test_spki_round_trip() {
+        let (public_key, _) = generate_ml_dsa_keypair().unwrap();
+
+        let spki = create_subject_public_key_info(&public_key).unwrap();
+        assert!(spki.starts_with(&[0x30]));
+        assert!(spki.len() > ML_DSA_65_PUBLIC_KEY_SIZE);
+
+        let recovered = extract_public_key_from_spki(&spki).unwrap();
+        assert_eq!(recovered.as_bytes(), public_key.as_bytes());
+    }
+
+    #[test]
+    fn test_spki_with_synthetic_key() {
+        let key_bytes: Vec<u8> = (0..1952).map(|i| (i % 256) as u8).collect();
+        let public_key = MlDsa65PublicKey::from_bytes(&key_bytes).unwrap();
+
+        let spki = create_subject_public_key_info(&public_key).unwrap();
+        let recovered = extract_public_key_from_spki(&spki).unwrap();
+        assert_eq!(recovered.as_bytes(), &key_bytes[..]);
     }
 
     #[test]
     fn test_pqc_verifier() {
-        use crate::crypto::raw_public_keys::key_utils::generate_ed25519_keypair;
+        let (pub1, _) = generate_ml_dsa_keypair().unwrap();
+        let (pub2, _) = generate_ml_dsa_keypair().unwrap();
 
-        // Create test keys with valid Ed25519 keys
-        let (_, pub1) = generate_ed25519_keypair();
-        let (_, pub2) = generate_ed25519_keypair();
+        let verifier = PqcRawPublicKeyVerifier::new(vec![pub1.clone()]);
 
-        let key1 = ExtendedRawPublicKey::Ed25519(pub1);
-        let key2 = ExtendedRawPublicKey::Ed25519(pub2);
-
-        // Create verifier with trusted key
-        let verifier = PqcRawPublicKeyVerifier::new(vec![key1.clone()]);
-
-        // Test verification with trusted key
-        let spki1 = key1.to_subject_public_key_info().unwrap();
+        let spki1 = create_subject_public_key_info(&pub1).unwrap();
         assert!(verifier.verify_cert(&spki1).is_ok());
 
-        // Test verification with untrusted key
-        let spki2 = key2.to_subject_public_key_info().unwrap();
+        let spki2 = create_subject_public_key_info(&pub2).unwrap();
         assert!(verifier.verify_cert(&spki2).is_err());
 
-        // Test allow_any mode
         let any_verifier = PqcRawPublicKeyVerifier::allow_any();
         assert!(any_verifier.verify_cert(&spki2).is_ok());
+    }
+
+    #[test]
+    fn test_supported_signature_schemes() {
+        let schemes = supported_signature_schemes();
+        // ML-DSA-65 IANA code is 0x0905 per draft-tls-westerbaan-mldsa
+        assert_eq!(schemes, vec![SignatureScheme::ML_DSA_65]);
+    }
+
+    #[test]
+    fn test_parse_length() {
+        let (len, consumed) = parse_length(&[50]).unwrap();
+        assert_eq!(len, 50);
+        assert_eq!(consumed, 1);
+
+        let (len, consumed) = parse_length(&[0x81, 200]).unwrap();
+        assert_eq!(len, 200);
+        assert_eq!(consumed, 2);
+
+        let (len, consumed) = parse_length(&[0x82, 0x07, 0xA1]).unwrap();
+        assert_eq!(len, 1953);
+        assert_eq!(consumed, 3);
+
+        assert!(parse_length(&[]).is_err());
     }
 
     #[test]
     fn test_asn1_length_encoding() {
         let mut buf = Vec::new();
 
-        // Short form (< 128)
         encode_length(&mut buf, 50);
         assert_eq!(buf, vec![50]);
 
-        // Long form (128-255)
         buf.clear();
         encode_length(&mut buf, 200);
         assert_eq!(buf, vec![0x81, 200]);
 
-        // Long form (256+)
         buf.clear();
         encode_length(&mut buf, 1000);
         assert_eq!(buf, vec![0x82, 0x03, 0xE8]);
-    }
-
-    #[test]
-    fn test_ml_dsa_key_size() {
-        // v0.2: ML-DSA-65 public key should be 1952 bytes
-        let ml_dsa_key = MlDsa65PublicKey::from_bytes(&vec![0u8; 1952]).unwrap();
-        let extended_key = ExtendedRawPublicKey::MlDsa65(ml_dsa_key);
-        assert_eq!(extended_key.size(), 1952);
     }
 }

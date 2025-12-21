@@ -524,19 +524,26 @@ mod tests {
             crypto::{rustls::QuicServerConfig, rustls::QuicClientConfig},
             shared::ConnectionId,
         };
+        use rustls::pki_types::{CertificateDer, PrivateKeyDer};
         use std::sync::Arc;
-        
+
         // Create a minimal connection for testing
         // Note: This is a simplified mock - in real tests you'd use the proper connection setup
         let endpoint_config = EndpointConfig::default();
         let mut config = TransportConfig::default();
         config.max_concurrent_uni_streams(100u32.into());
-        
+
+        // Generate self-signed certificate for testing
+        let cert = rcgen::generate_simple_self_signed(vec!["localhost".to_string()])
+            .expect("generate self-signed cert");
+        let cert_der = CertificateDer::from(cert.cert);
+        let key_der = PrivateKeyDer::Pkcs8(cert.signing_key.serialize_der().into());
+
         let server_config = ServerConfig {
             transport: Arc::new(config),
             crypto: Arc::new(QuicServerConfig::with_single_cert(
-                vec![], // Empty cert chain for testing
-                Arc::new(ed25519_dalek::SigningKey::from_bytes(&[42; 32])),
+                vec![cert_der],
+                key_der,
             ).unwrap()),
         };
         

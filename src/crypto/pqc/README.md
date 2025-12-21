@@ -73,7 +73,7 @@ The PQC module is ready with placeholder implementations:
 - ✅ PQC transport parameter (ID: 0x50C0) for algorithm negotiation
 - ✅ PqcAlgorithms struct with pure PQC algorithm flags:
   - ml_kem_768: ML-KEM-768 key encapsulation (IANA 0x0201)
-  - ml_dsa_65: ML-DSA-65 digital signatures (IANA 0x0901)
+  - ml_dsa_65: ML-DSA-65 digital signatures (IANA 0x0905)
 - ✅ Bit field encoding (1 byte) for efficient transmission
 - ✅ Comprehensive tests for encoding/decoding
 - ✅ Connection state integration with PqcState struct

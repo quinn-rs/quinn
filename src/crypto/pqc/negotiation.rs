@@ -11,7 +11,7 @@
 //!
 //! This module implements the negotiation logic for pure PQC in TLS 1.3 handshakes:
 //! - Key Exchange: ML-KEM-768 (0x0201) ONLY
-//! - Signatures: ML-DSA-65 (0x0901) ONLY
+//! - Signatures: ML-DSA-65 (IANA 0x0905) ONLY
 //! - NO classical fallback, NO hybrid algorithms
 //!
 //! This is a greenfield network with no legacy compatibility requirements.
@@ -282,9 +282,9 @@ pub fn order_by_preference(groups: &mut Vec<NamedGroup>, signatures: &mut Vec<Si
     signatures.sort_by_key(|s| {
         if s.is_pqc() {
             match s.to_u16() {
-                0x0901 => 0, // ML-DSA-65 (PRIMARY)
-                0x0902 => 1, // ML-DSA-87
-                0x0900 => 2, // ML-DSA-44
+                0x0905 => 0, // ML-DSA-65 (PRIMARY) - IANA code
+                0x0906 => 1, // ML-DSA-87 - IANA code
+                0x0904 => 2, // ML-DSA-44 - IANA code
                 _ => 3,
             }
         } else {

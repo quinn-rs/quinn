@@ -1,9 +1,13 @@
 //! On-wire binding exchange tests using a unidirectional stream.
+//!
+//! v0.2.0+: Updated for Pure PQC - uses ML-DSA-65 keypairs, no Ed25519.
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use ant_quic::{
     config::{ClientConfig, ServerConfig},
+    crypto::pqc::types::{MlDsaPublicKey, MlDsaSecretKey},
+    crypto::raw_public_keys::pqc::{create_subject_public_key_info, generate_ml_dsa_keypair},
     high_level::Endpoint,
     trust::{self, EventCollector, FsPinStore, TransportPolicy},
 };
@@ -20,15 +24,14 @@ fn gen_self_signed_cert() -> (Vec<CertificateDer<'static>>, PrivateKeyDer<'stati
     (vec![cert_der], key_der)
 }
 
-fn ed25519_keypair() -> (ed25519_dalek::SigningKey, ed25519_dalek::VerifyingKey) {
-    use rand::rngs::OsRng;
-    let sk = ed25519_dalek::SigningKey::generate(&mut OsRng);
-    let vk = sk.verifying_key();
-    (sk, vk)
+/// Generate an ML-DSA-65 keypair for testing
+fn ml_dsa_keypair() -> (MlDsaPublicKey, MlDsaSecretKey) {
+    generate_ml_dsa_keypair().expect("ML-DSA-65 keypair generation")
 }
 
-fn spki_from_vk(vk: &ed25519_dalek::VerifyingKey) -> Vec<u8> {
-    ant_quic::crypto::raw_keys::create_ed25519_subject_public_key_info(vk)
+/// Create SPKI from ML-DSA-65 public key
+fn spki_from_pk(pk: &MlDsaPublicKey) -> Vec<u8> {
+    create_subject_public_key_info(pk).expect("SPKI creation")
 }
 
 async fn loopback_pair() -> (
@@ -72,10 +75,10 @@ async fn loopback_pair() -> (
 #[tokio::test]
 async fn binding_over_stream_success() {
     let (client_conn, server_conn) = loopback_pair().await;
-    let (c_sk, c_vk) = ed25519_keypair();
-    let (_s_sk, s_vk) = ed25519_keypair();
-    let c_spki = spki_from_vk(&c_vk);
-    let s_spki = spki_from_vk(&s_vk);
+    let (c_pk, c_sk) = ml_dsa_keypair();
+    let (s_pk, _s_sk) = ml_dsa_keypair();
+    let c_spki = spki_from_pk(&c_pk);
+    let s_spki = spki_from_pk(&s_pk);
 
     let c_tmp = TempDir::new().unwrap();
     let s_tmp = TempDir::new().unwrap();
@@ -100,9 +103,9 @@ async fn binding_over_stream_success() {
     let s_policy_owned = s_policy.clone();
     let s_conn_clone = server_conn.clone();
     let recv_task = tokio::spawn(async move {
-        trust::recv_verify_binding_ed25519(&s_conn_clone, &s_store_owned, &s_policy_owned).await
+        trust::recv_verify_binding(&s_conn_clone, &s_store_owned, &s_policy_owned).await
     });
-    trust::send_binding_ed25519(&client_conn, &exp_client, &c_sk, &c_spki)
+    trust::send_binding(&client_conn, &exp_client, &c_sk, &c_spki)
         .await
         .expect("send ok");
     let pid = recv_task.await.unwrap().expect("verify ok");
@@ -114,10 +117,10 @@ async fn binding_over_stream_success() {
 #[tokio::test]
 async fn binding_over_stream_reject_on_mismatch() {
     let (client_conn, server_conn) = loopback_pair().await;
-    let (c_sk, _c_vk) = ed25519_keypair();
-    let (_, s_vk) = ed25519_keypair();
-    let c_spki = spki_from_vk(&_c_vk);
-    let wrong_spki = spki_from_vk(&s_vk); // wrong pin
+    let (c_pk, c_sk) = ml_dsa_keypair();
+    let (s_pk, _s_sk) = ml_dsa_keypair();
+    let c_spki = spki_from_pk(&c_pk);
+    let wrong_spki = spki_from_pk(&s_pk); // wrong pin
 
     let c_tmp = TempDir::new().unwrap();
     let s_tmp = TempDir::new().unwrap();
@@ -132,9 +135,9 @@ async fn binding_over_stream_reject_on_mismatch() {
     let c_store_owned = c_store.clone();
     let policy_owned = TransportPolicy::default();
     let recv_task = tokio::spawn(async move {
-        trust::recv_verify_binding_ed25519(&s_conn_clone, &c_store_owned, &policy_owned).await
+        trust::recv_verify_binding(&s_conn_clone, &c_store_owned, &policy_owned).await
     });
-    trust::send_binding_ed25519(&client_conn, &exp, &c_sk, &c_spki)
+    trust::send_binding(&client_conn, &exp, &c_sk, &c_spki)
         .await
         .expect("send ok");
     let err = recv_task.await.unwrap().expect_err("should reject");

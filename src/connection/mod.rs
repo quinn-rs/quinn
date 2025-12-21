@@ -6079,12 +6079,8 @@ impl PqcState {
         if let Some(ref algorithms) = params.pqc_algorithms {
             self.enabled = true;
             self.algorithms = Some(algorithms.clone());
-            // If any PQC algorithm is supported, prepare for larger packets
-            if algorithms.ml_kem_768
-                || algorithms.ml_dsa_65
-                || algorithms.hybrid_x25519_ml_kem
-                || algorithms.hybrid_ed25519_ml_dsa
-            {
+            // v0.2: Pure PQC - if any algorithm is supported, prepare for larger packets
+            if algorithms.ml_kem_768 || algorithms.ml_dsa_65 {
                 self.using_pqc = true;
                 self.handshake_mtu = 4096; // Default PQC handshake MTU
             }

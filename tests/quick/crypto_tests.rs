@@ -1,4 +1,6 @@
 //! Quick cryptography tests
+//!
+//! v0.2.0+: Updated for Pure PQC - uses ML-DSA-65 only, no Ed25519.
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
@@ -15,10 +17,11 @@ fn test_basic_crypto_operations() {
 
 #[test]
 fn test_key_generation_speed() {
-    super::utils::assert_duration(Duration::from_millis(200), || {
-        // Test that key generation is reasonably fast
-        use ed25519_dalek::SigningKey;
-        let _signing_key = SigningKey::generate(&mut rand::thread_rng());
-        // Test completed - key generated successfully
+    // ML-DSA-65 key generation is slower than Ed25519 - allow more time
+    super::utils::assert_duration(Duration::from_millis(500), || {
+        // Test that ML-DSA-65 key generation completes in reasonable time
+        use ant_quic::crypto::raw_public_keys::pqc::generate_ml_dsa_keypair;
+        let (_public_key, _secret_key) = generate_ml_dsa_keypair().expect("keygen");
+        // Test completed - ML-DSA-65 keypair generated successfully
     });
 }
