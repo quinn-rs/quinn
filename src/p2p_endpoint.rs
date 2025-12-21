@@ -1047,6 +1047,7 @@ mod tests {
         assert!(err.to_string().contains("not found"));
     }
 
+    #[cfg(feature = "runtime-tokio")]
     #[tokio::test]
     async fn test_endpoint_creation() {
         // v0.13.0+: No role - all nodes are symmetric P2P nodes

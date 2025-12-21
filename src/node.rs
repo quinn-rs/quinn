@@ -676,14 +676,14 @@ impl Clone for Node {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "runtime-tokio"))]
 mod tests {
     use super::*;
 
     #[tokio::test]
     async fn test_node_new_default() {
         let node = Node::new().await;
-        assert!(node.is_ok(), "Node::new() should succeed");
+        assert!(node.is_ok(), "Node::new() should succeed: {:?}", node.err());
 
         let node = node.unwrap();
         assert!(node.is_running());
