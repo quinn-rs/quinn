@@ -71,8 +71,10 @@ Implement **native QUIC NAT traversal** using QUIC extension frames, eliminating
 | Layer | Method | Success Rate | Used When |
 |-------|--------|--------------|-----------|
 | 1 | Direct QUIC | ~20% | No NAT, public IPs |
-| 2 | Native NAT traversal | ~80% | Most NAT types |
+| 2 | Native NAT traversal | High* | Most NAT types |
 | 3 | MASQUE relay (ADR-006) | ~100% | Symmetric NAT, CGNAT |
+
+*Testing including CGNAT environments has shown excellent results. Specific success rates await broader deployment validation.
 
 This layered approach ensures near-100% connectivity while minimizing relay usage.
 
@@ -95,7 +97,7 @@ For symmetric NATs that use different ports per destination:
 ### Trade-offs
 - **Non-standard**: Custom extension frames (based on IETF drafts)
 - **Requires seed peer**: Must connect to at least one peer first
-- **Symmetric NAT limits**: ~80% success vs ~95% with TURN relay
+- **Symmetric NAT limits**: Some challenging NAT configurations may require relay fallback
 
 ### Standards Basis
 

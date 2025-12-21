@@ -8,12 +8,12 @@ Accepted (2025-12-21)
 
 ### The Problem
 
-Native QUIC NAT traversal (ADR-005) achieves ~80-95% success rate depending on NAT types. However, some scenarios cannot be resolved through hole punching:
+Native QUIC NAT traversal (ADR-005) has shown excellent results in testing, including successful traversal of CGNAT environments. However, without widespread deployment data, we cannot yet quantify exact success rates. Some scenarios may still require relay fallback:
 
-- **Double symmetric NAT**: Both peers behind symmetric NATs
-- **Carrier-grade NAT (CGNAT)**: Multiple NAT layers with limited port mappings
+- **Double symmetric NAT**: Both peers behind symmetric NATs with unpredictable port allocation
 - **Firewall restrictions**: UDP blocked or severely rate-limited
 - **Hostile network environments**: Corporate proxies, captive portals
+- **Extremely restrictive CGNAT**: Some carriers may have unusually aggressive policies
 
 For ant-quic to deliver reliable P2P connectivity without central infrastructure, we need a **guaranteed fallback** that works in 100% of cases while still operating within our symmetric peer model.
 
@@ -86,8 +86,10 @@ Compressed (known targets):
 | Layer | Method | Success Rate | Latency |
 |-------|--------|--------------|---------|
 | 1 | Direct QUIC (no NAT) | ~20% | Lowest |
-| 2 | Native NAT traversal | ~80% | Low |
+| 2 | Native NAT traversal | High* | Low |
 | 3 | MASQUE relay | ~100% | Higher |
+
+*Testing including CGNAT environments has shown excellent results (100% in controlled tests). However, without widespread deployment data across diverse network configurations, we state "High" rather than a specific percentage. Actual success rates may vary based on NAT implementation specifics.
 
 ### Relay-to-Direct Migration
 
