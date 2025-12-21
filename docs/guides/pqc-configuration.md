@@ -1,11 +1,11 @@
-# Post-Quantum Cryptography Configuration Guide
+# Pure Post-Quantum Cryptography Configuration Guide
 
-This guide covers everything you need to know about Post-Quantum Cryptography (PQC) in ant-quic v0.13.0+.
+This guide covers everything you need to know about Pure Post-Quantum Cryptography (PQC) in ant-quic v0.2+.
 
 ## Table of Contents
 
 1. [Overview](#overview)
-2. [Always-On PQC](#always-on-pqc)
+2. [Pure PQC (v0.2)](#pure-pqc-v02)
 3. [Configuration Options](#configuration-options)
 4. [Performance Tuning](#performance-tuning)
 5. [Troubleshooting](#troubleshooting)
@@ -13,46 +13,58 @@ This guide covers everything you need to know about Post-Quantum Cryptography (P
 
 ## Overview
 
-**In ant-quic v0.13.0+, Post-Quantum Cryptography is always enabled.** Every connection uses PQC algorithms - there is no classical-only mode and no way to disable PQC.
+**In ant-quic v0.2+, Pure Post-Quantum Cryptography is always enabled.** Every connection uses ONLY PQC algorithms - there are no classical algorithms, no hybrid modes, and no fallback.
 
-This provides maximum security against both current classical attacks and future quantum computer threats.
+This is a greenfield network with no legacy compatibility requirements.
 
 ### Algorithms Used
 
-| Algorithm | Standard | Security Level | Purpose |
-|-----------|----------|---------------|---------|
-| ML-KEM-768 | FIPS 203 | NIST Level 3 (192-bit) | Key Encapsulation |
-| ML-DSA-65 | FIPS 204 | NIST Level 3 (192-bit) | Digital Signatures |
+| Algorithm | Standard | Security Level | Purpose | IANA Code |
+|-----------|----------|---------------|---------|-----------|
+| ML-KEM-768 | FIPS 203 | NIST Level 3 (192-bit) | Key Exchange | 0x0201 |
+| ML-DSA-65 | FIPS 204 | NIST Level 3 (192-bit) | Digital Signatures | 0x0905 |
 
-The hybrid approach combines:
-- **Key Exchange**: X25519 + ML-KEM-768
-- **Signatures**: Ed25519 + ML-DSA-65
+### Powered by saorsa-pqc
 
-**Security Property**: An attacker must break BOTH classical and post-quantum algorithms to compromise security.
+All PQC operations are implemented by [saorsa-pqc](https://crates.io/crates/saorsa-pqc):
+- **NIST FIPS 203/204 compliant** implementations
+- **AVX2/AVX-512/NEON** hardware acceleration
+- **Constant-time operations** for side-channel resistance
+- **Validated against NIST KATs** (Known Answer Tests)
 
-## Always-On PQC
+**v0.2 Change**: Pure PQC only - no hybrid classical+PQC combinations.
 
-### Why Always-On?
+## Pure PQC (v0.2)
 
-In v0.13.0, we removed the ability to disable PQC because:
+### Why Pure PQC (No Hybrid)?
 
-1. **"Harvest Now, Decrypt Later"**: Adversaries can record encrypted traffic today and decrypt it when quantum computers become available
-2. **No Performance Excuse**: Modern implementations have minimal overhead (~8%)
-3. **Simplicity**: No mode selection means fewer configuration errors
-4. **Future-Proof**: All ant-quic networks are quantum-resistant by default
+In v0.2, we removed all hybrid and classical algorithms:
+
+1. **Greenfield Network**: No legacy systems require compatibility
+2. **Maximum Security**: No weak classical algorithms in the chain
+3. **Simpler Implementation**: One cryptographic path, fewer edge cases
+4. **Future-Proof**: All connections quantum-resistant from day one
+5. **NIST Standardized**: ML-KEM and ML-DSA are FIPS 203/204 standards
 
 ### What Changed from Earlier Versions
 
-If you're upgrading from ant-quic < v0.13.0:
+If you're upgrading from ant-quic < v0.2:
 
 | Removed | Reason |
 |---------|--------|
-| `PqcMode::Disabled` | PQC cannot be disabled |
-| `PqcMode::Hybrid` | Hybrid is now always used |
-| `PqcMode::Pure` | Pure PQC mode removed |
-| `HybridPreference` | No preference selection |
-| `fallback_enabled` | No fallback to classical-only |
-| `migration_period_days` | No migration period needed |
+| `PqcMode::Hybrid` | Hybrid mode removed - pure PQC only |
+| `PqcMode::Classical` | Classical mode removed |
+| X25519 key exchange | Replaced by ML-KEM-768 |
+| Ed25519 TLS auth | Replaced by ML-DSA-65 (Ed25519 retained for PeerId only) |
+| Hybrid transport params | Simplified to pure PQC |
+| `fallback_enabled` | No fallback - pure PQC mandatory |
+
+### Ed25519 Role in v0.2
+
+Ed25519 is still used, but ONLY for the 32-byte PeerId compact identifier:
+- **PeerId = Ed25519 public key** (32 bytes)
+- **NOT used for TLS authentication** - ML-DSA-65 handles all signatures
+- Provides a compact, human-readable node identifier
 
 ## Configuration Options
 

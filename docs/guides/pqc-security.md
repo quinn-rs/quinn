@@ -1,63 +1,78 @@
-# Post-Quantum Cryptography Security Considerations
+# Pure Post-Quantum Cryptography Security Analysis
 
-This document outlines security considerations for ant-quic's Post-Quantum Cryptography implementation.
+This document outlines security considerations for ant-quic's Pure Post-Quantum Cryptography implementation.
 
 ## Executive Summary
 
-In ant-quic v0.13.0+, **Post-Quantum Cryptography is always enabled**. Every connection uses NIST-standardized algorithms (ML-KEM-768 and ML-DSA-65) in hybrid mode with classical algorithms. This provides defense-in-depth against both current classical attacks and future quantum threats.
+**In ant-quic v0.2+, connections use ONLY post-quantum cryptography.** Every connection uses NIST-standardized algorithms (ML-KEM-768 and ML-DSA-65) exclusively - no classical algorithms, no hybrid modes, no fallback.
+
+This is a greenfield network with no legacy compatibility requirements. All cryptographic operations are provided by [saorsa-pqc](https://crates.io/crates/saorsa-pqc), a NIST FIPS 203/204 compliant implementation.
 
 ## Threat Model
 
-### Current Threats
-1. **Classical Attacks**: Protected by proven algorithms (X25519, Ed25519)
-2. **Side-Channel Attacks**: Mitigated through constant-time implementations
-3. **Protocol Attacks**: QUIC's security properties maintained
-
-### Future Quantum Threats
-1. **Shor's Algorithm**: Breaks RSA/ECDSA - mitigated by ML-KEM/ML-DSA
+### Quantum Threats
+1. **Shor's Algorithm**: Would break RSA/ECDH - ant-quic is immune (no classical crypto)
 2. **Grover's Algorithm**: Weakens symmetric crypto - mitigated by appropriate key sizes
-3. **Harvest Now, Decrypt Later**: Addressed by always-on PQC deployment
+3. **Harvest Now, Decrypt Later**: Addressed by pure PQC deployment from day one
 
-### Why Always-On PQC?
+### Classical Threats
+1. **Side-Channel Attacks**: Mitigated through constant-time implementations in saorsa-pqc
+2. **Protocol Attacks**: QUIC's security properties maintained
+3. **Lattice Reduction**: ML-KEM/ML-DSA parameters chosen for NIST Level 3 security
 
-In v0.13.0, we removed the ability to disable PQC because:
+### Why Pure PQC (No Hybrid)?
 
-1. **No Performance Excuse**: Modern implementations have ~8% overhead
-2. **Consistent Security**: Every connection has the same protection
-3. **No Configuration Errors**: Users cannot accidentally disable PQC
-4. **Future-Proof**: All ant-quic networks are quantum-resistant
+In v0.2, we chose pure PQC without hybrid classical algorithms because:
+
+1. **Greenfield Network**: No legacy systems require backward compatibility
+2. **Maximum Security**: No weak classical algorithms in the cryptographic chain
+3. **Simpler Implementation**: One cryptographic path, fewer edge cases
+4. **Future-Proof**: All ant-quic connections are quantum-resistant from day one
+5. **NIST Standardized**: ML-KEM and ML-DSA are FIPS 203/204 final standards
 
 ## Security Architecture
 
-### Hybrid Cryptography Design
+### Pure Post-Quantum Design
 
 ```
-┌─────────────────┐     ┌─────────────────┐
-│   Classical     │     │  Post-Quantum   │
-│   Algorithms    │     │   Algorithms    │
-├─────────────────┤     ├─────────────────┤
-│    X25519       │  +  │   ML-KEM-768    │ = Hybrid Key Exchange
-│    Ed25519      │  +  │   ML-DSA-65     │ = Hybrid Signatures
-└─────────────────┘     └─────────────────┘
+┌─────────────────────────────────────────────────────┐
+│           Pure Post-Quantum Cryptography            │
+├─────────────────────────────────────────────────────┤
+│   ML-KEM-768 (FIPS 203)  │  Key Encapsulation       │
+│   ML-DSA-65  (FIPS 204)  │  Digital Signatures      │
+│   Ed25519                │  PeerId ONLY (32 bytes)  │
+└─────────────────────────────────────────────────────┘
 ```
 
-**Security Property**: An attacker must break BOTH algorithm families to compromise security. This provides:
-- Protection if classical algorithms are broken (quantum computers)
-- Protection if PQC algorithms have undiscovered weaknesses
-- Best of both worlds security guarantee
+**v0.2 Identity Model**:
+- **Ed25519**: Used ONLY for compact 32-byte PeerId addressing identifier
+- **ML-DSA-65**: Used for ALL TLS handshake signatures
+- **ML-KEM-768**: Used for ALL key exchange operations
+
+**Security Property**: All cryptographic authentication and key exchange uses NIST-standardized post-quantum algorithms. Ed25519 is retained only as a compact addressing scheme.
 
 ### Key Derivation
 
 Keys are derived using NIST SP 800-56C Rev. 2 compliant methods:
 
 ```rust
-// Simplified representation
-hybrid_secret = KDF(
-    classical_secret || pqc_secret,
+// Simplified representation - pure PQC
+shared_secret = KDF(
+    ml_kem_shared_secret,
     context_info,
     output_length
 )
 ```
+
+### Powered by saorsa-pqc
+
+All PQC operations are implemented by [saorsa-pqc](https://crates.io/crates/saorsa-pqc):
+
+- **NIST FIPS 203/204 compliant** implementations
+- **AVX2/AVX-512/NEON** hardware acceleration where available
+- **Constant-time operations** for side-channel resistance
+- **Validated against NIST KATs** (Known Answer Tests)
+- **Production-ready** with comprehensive test coverage
 
 ## Implementation Security
 
@@ -82,17 +97,17 @@ All cryptographic operations are implemented to run in constant time:
 
 ## Algorithm Security Levels
 
-| Algorithm | Classical Security | Quantum Security | Status |
-|-----------|-------------------|------------------|---------|
-| ML-KEM-768 | 192 bits | 175 bits | NIST FIPS 203 |
-| ML-DSA-65 | 192 bits | 175 bits | NIST FIPS 204 |
-| X25519 | 128 bits | 64 bits | Current standard |
-| Ed25519 | 128 bits | 64 bits | Current standard |
+| Algorithm | Classical Security | Quantum Security | Status | IANA Code |
+|-----------|-------------------|------------------|---------|-----------|
+| ML-KEM-768 | 192 bits | 175 bits | NIST FIPS 203 | 0x0201 |
+| ML-DSA-65 | 192 bits | 175 bits | NIST FIPS 204 | 0x0905 |
 
-**Hybrid Combined Security**:
-- Classical: 192 bits (limited by weakest component)
-- Quantum: 175 bits (ML-KEM/ML-DSA provide this)
-- Requires breaking BOTH to compromise
+**Pure PQC Security**:
+- Classical security: 192 bits (NIST Level 3)
+- Quantum security: ~175 bits (NIST Level 3)
+- All cryptographic operations use post-quantum algorithms
+
+**Note**: Ed25519 is used ONLY for the compact 32-byte PeerId identifier, not for any cryptographic authentication or key exchange.
 
 ## Known Limitations
 
@@ -101,33 +116,33 @@ All cryptographic operations are implemented to run in constant time:
 - Less cryptanalysis time compared to RSA/ECDH
 - Implementations may have undiscovered vulnerabilities
 
-**Mitigation**: Hybrid mode ensures classical algorithm protection remains
+**Mitigation**: Use of well-tested saorsa-pqc library with NIST KAT validation
 
 ### 2. Side-Channel Resistance
 - PQC algorithms have larger attack surface
 - More complex operations increase side-channel risk
 - Hardware countermeasures not universally available
 
-**Mitigation**: Software countermeasures implemented, hardware acceleration when available
+**Mitigation**: saorsa-pqc implements constant-time operations; hardware acceleration via AVX2/AVX-512/NEON where available
 
 ### 3. Performance Impact
 - Larger key sizes increase bandwidth usage
 - More complex operations increase CPU usage
-- Memory requirements higher than classical only
+- Memory requirements higher than classical
 
-**Mitigation**: Connection pooling, caching, and optimization techniques. Always-on design means these optimizations are well-tested.
+**Mitigation**: Connection pooling, caching, and hardware acceleration. ~8.7% overhead is acceptable for quantum security.
 
 ### 4. Key/Ciphertext Sizes
 
-| Component | ML-KEM-768 | X25519 |
-|-----------|------------|--------|
-| Public Key | 1,184 bytes | 32 bytes |
-| Ciphertext | 1,088 bytes | 32 bytes |
+| Component | ML-KEM-768 |
+|-----------|------------|
+| Public Key | 1,184 bytes |
+| Ciphertext | 1,088 bytes |
 
-| Component | ML-DSA-65 | Ed25519 |
-|-----------|-----------|---------|
-| Public Key | 1,952 bytes | 32 bytes |
-| Signature | 3,293 bytes | 64 bytes |
+| Component | ML-DSA-65 |
+|-----------|-----------|
+| Public Key | 1,952 bytes |
+| Signature | 3,293 bytes |
 
 **Impact**: Increased handshake packet sizes. See [PQC Configuration Guide](./pqc-configuration.md) for MTU tuning.
 
@@ -197,10 +212,11 @@ Current estimates for cryptographically relevant quantum computers (CRQC):
 
 ## Security Audit Checklist
 
-For deployments using ant-quic v0.13.0+:
+For deployments using ant-quic v0.2+:
 
-- [x] PQC enabled (automatic - cannot be disabled)
-- [x] Hybrid mode active (automatic)
+- [x] Pure PQC enabled (automatic - no classical crypto)
+- [x] ML-KEM-768 for key exchange (automatic)
+- [x] ML-DSA-65 for signatures (automatic)
 - [ ] Version is latest stable release
 - [ ] Monitoring for security advisories configured
 - [ ] Side-channel countermeasures verified for deployment environment
@@ -210,30 +226,24 @@ For deployments using ant-quic v0.13.0+:
 
 ## Incident Response
 
-### If Classical Algorithm Compromised
-1. Continue operating (hybrid mode protects via PQC)
-2. Monitor for ant-quic updates
-3. Plan migration to updated classical algorithm
-4. No immediate action required due to hybrid protection
+### If ML-KEM Weakness Discovered
+1. Assess severity based on NIST/community guidance
+2. Update to patched saorsa-pqc version immediately
+3. Rotate long-term identity keys if key derivation affected
+4. Consider temporary network isolation if critical
 
-### If PQC Algorithm Compromised
-1. Continue operating (hybrid mode protects via classical)
-2. Update to patched version immediately
-3. Await NIST guidance on replacement algorithm
-4. No immediate action required due to hybrid protection
-
-### If Both Algorithm Families Compromised (Unlikely)
-1. Immediate security incident declaration
-2. Isolate affected systems
-3. Implement emergency key rotation
-4. Await vendor patches
-5. This scenario is extremely unlikely - would require breaking both RSA/ECDH AND lattice-based crypto
+### If ML-DSA Weakness Discovered
+1. Assess severity based on NIST/community guidance
+2. Update to patched saorsa-pqc version immediately
+3. Review authentication logs for anomalies
+4. Rotate ML-DSA keypairs if signature forgery possible
 
 ### If Implementation Bug Found
-1. Check ant-quic security advisories
-2. Update to patched version
+1. Check ant-quic and saorsa-pqc security advisories
+2. Update to patched version immediately
 3. Rotate long-term identity keys if recommended
 4. Review affected connections in logs
+5. Report findings to security@autonomi.com
 
 ## Future Considerations
 
@@ -277,4 +287,4 @@ For security issues, report via:
 
 ## Conclusion
 
-ant-quic v0.13.0+ provides robust, always-on protection against both current and future quantum threats. The hybrid approach ensures security even if one algorithm family is compromised, while the always-on design eliminates configuration errors and ensures consistent protection across all deployments.
+ant-quic v0.2+ provides robust, pure post-quantum protection against current and future quantum threats. The pure PQC approach using NIST-standardized ML-KEM-768 and ML-DSA-65, implemented by the well-tested saorsa-pqc library, ensures maximum quantum resistance for all connections. As a greenfield network, ant-quic benefits from deploying quantum-safe cryptography from day one without legacy compatibility concerns.

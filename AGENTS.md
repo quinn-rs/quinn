@@ -28,7 +28,7 @@ ant-quic is a QUIC transport protocol implementation with advanced NAT traversal
 ### Authentication: Pure PQC with Raw Public Keys (v0.2)
 
 We use **Pure Post-Quantum Cryptography** with raw public keys (inspired by RFC 7250):
-- Reference: `rfcs/ant-quic-hybrid-pqc-authentication.md` (our specification)
+- Reference: `rfcs/ant-quic-pqc-authentication.md` (our specification)
 - Identity: Ed25519 key pairs (32-byte PeerId compact identifier ONLY)
 - Key Exchange: ML-KEM-768 (IANA 0x0201) - FIPS 203
 - Signatures: ML-DSA-65 (IANA 0x0901) - FIPS 204
@@ -181,7 +181,7 @@ Conventional Commits required (see `cliff.toml`):
 
 ### Core Protocol
 - `rfc9000.txt` - QUIC base protocol
-- `ant-quic-hybrid-pqc-authentication.md` - Pure PQC Raw Public Keys (v0.2 - our specification)
+- `ant-quic-pqc-authentication.md` - Pure PQC Raw Public Keys (v0.2 - our specification)
 
 ### NAT Traversal (Native QUIC)
 - `draft-seemann-quic-nat-traversal-02.txt` - Primary NAT traversal spec
@@ -218,5 +218,5 @@ Conventional Commits required (see `cliff.toml`):
 - v0.2 Pure PQC: ML-KEM-768 (0x0201) + ML-DSA-65 (0x0901)
 - Native QUIC NAT traversal (NO STUN/ICE/TURN)
 - Correct frame IDs (0x3d7e90+, 0x9f81a6+)
-- Pure PQC Raw Public Keys (v0.2 - see `rfcs/ant-quic-hybrid-pqc-authentication.md`)
+- Pure PQC Raw Public Keys (v0.2 - see `rfcs/ant-quic-pqc-authentication.md`)
 - IPv4 and IPv6 dual-stack support

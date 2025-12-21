@@ -1,6 +1,6 @@
 # ant-quic
 
-QUIC transport with NAT traversal for P2P networks. Every node is symmetric - can connect AND accept connections.
+**Pure Post-Quantum QUIC** transport with NAT traversal for P2P networks. Every node is symmetric - can connect AND accept connections.
 
 [![Documentation](https://docs.rs/ant-quic/badge.svg)](https://docs.rs/ant-quic/)
 [![Crates.io](https://img.shields.io/crates/v/ant-quic.svg)](https://crates.io/crates/ant-quic)
@@ -13,12 +13,13 @@ QUIC transport with NAT traversal for P2P networks. Every node is symmetric - ca
 
 ## Key Features
 
-- **100% Post-Quantum Cryptography** - ML-KEM-768 + ML-DSA-65 on every connection
+- **🔐 Pure Post-Quantum Cryptography (v0.2)** - ML-KEM-768 + ML-DSA-65 ONLY - no classical fallback
 - **Symmetric P2P Nodes** - Every node is identical: connect, accept, coordinate
 - **Automatic NAT Traversal** - Per [draft-seemann-quic-nat-traversal-02](rfcs/draft-seemann-quic-nat-traversal-02.txt)
 - **External Address Discovery** - Per [draft-ietf-quic-address-discovery-00](rfcs/draft-ietf-quic-address-discovery-00.txt)
-- **Hybrid PQC Raw Public Keys** - Ed25519 identity + ML-DSA-65 per [our specification](rfcs/ant-quic-hybrid-pqc-authentication.md)
+- **Pure PQC Raw Public Keys** - ML-DSA-65 authentication per [our specification](rfcs/ant-quic-pqc-authentication.md)
 - **Zero Configuration Required** - Sensible defaults, just create and connect
+- **Powered by [saorsa-pqc](https://crates.io/crates/saorsa-pqc)** - NIST FIPS 203/204 compliant implementations
 
 ## Quick Start
 
@@ -82,38 +83,52 @@ The term "known_peers" replaces "bootstrap_nodes" - they're just addresses to co
 2. **Integration APIs**: `P2pEndpoint`, `P2pConfig`
 3. **Applications**: Binary, examples
 
-## Post-Quantum Cryptography (Always On)
+## Pure Post-Quantum Cryptography (v0.2)
 
-Every connection uses post-quantum cryptography - there is no classical-only mode.
+**ant-quic v0.2 uses PURE post-quantum cryptography** - no classical algorithms, no hybrid modes, no fallback.
+
+This is a greenfield network with no legacy compatibility requirements.
 
 ### Algorithms
 
-| Algorithm | Standard | Purpose | Security Level |
-|-----------|----------|---------|----------------|
-| **ML-KEM-768** | FIPS 203 | Key Exchange | NIST Level 3 (192-bit) |
-| **ML-DSA-65** | FIPS 204 | Digital Signatures | NIST Level 3 (192-bit) |
+| Algorithm | Standard | Purpose | Security Level | IANA Code |
+|-----------|----------|---------|----------------|-----------|
+| **ML-KEM-768** | FIPS 203 | Key Exchange | NIST Level 3 (192-bit) | 0x0201 |
+| **ML-DSA-65** | FIPS 204 | Digital Signatures | NIST Level 3 (192-bit) | 0x0905 |
 
-### Configuration
+### Powered by saorsa-pqc
 
-PQC is always enabled. The `PqcConfig` only tunes performance parameters:
+ant-quic uses [saorsa-pqc](https://crates.io/crates/saorsa-pqc) for all PQC operations:
+
+- **NIST FIPS 203/204 compliant** implementations
+- **AVX2/AVX-512/NEON** hardware acceleration
+- **Constant-time operations** for side-channel resistance
+- **Extensively tested** against NIST Known Answer Tests (KATs)
 
 ```rust
 use ant_quic::crypto::pqc::PqcConfig;
 
 let pqc = PqcConfig::builder()
-    .ml_kem(true)               // Key exchange (required)
-    .ml_dsa(true)               // Signatures (optional, default: true)
+    .ml_kem(true)               // ML-KEM-768 key exchange
+    .ml_dsa(true)               // ML-DSA-65 signatures
     .memory_pool_size(10)       // Memory pool for crypto ops
     .handshake_timeout_multiplier(2.0)  // PQC handshakes are larger
     .build()?;
 ```
 
-### Why 100% PQC?
+### Why Pure PQC (No Hybrid)?
 
-- **Harvest Now, Decrypt Later** - Protect against future quantum computers
+- **Greenfield Network** - No legacy systems to maintain compatibility with
+- **Maximum Security** - No weak classical algorithms in the chain
+- **Simpler Implementation** - One cryptographic path, fewer edge cases
+- **Future-Proof** - All connections quantum-resistant from day one
 - **NIST Standardized** - ML-KEM and ML-DSA are FIPS 203/204 standards
-- **No Configuration Errors** - Can't accidentally use weak crypto
-- **Future-Proof** - All historical connections are quantum-resistant
+
+### Identity Model
+
+- **Ed25519 PeerId** - 32-byte identifier for addressing (NOT for TLS authentication)
+- **ML-DSA-65 Authentication** - All TLS handshake signatures use pure PQC
+- **ML-KEM-768 Key Exchange** - All key agreement uses pure PQC
 
 See [docs/guides/pqc-security.md](docs/guides/pqc-security.md) for security analysis.
 
@@ -158,23 +173,32 @@ NAT traversal is built into the QUIC protocol via extension frames, not STUN/TUR
 
 See [docs/NAT_TRAVERSAL_GUIDE.md](docs/NAT_TRAVERSAL_GUIDE.md) for detailed information.
 
-## Raw Public Key Identity
+## Raw Public Key Identity (v0.2)
 
-Each node has an Ed25519 identity key. The PeerId is derived from the public key:
+Each node has an Ed25519 key pair for addressing, with ML-DSA-65 for authentication:
 
 ```rust
-// PeerId = SHA-256(SubjectPublicKeyInfo)
+// PeerId = Ed25519 public key (32 bytes) - used for addressing ONLY
 let (public_key, secret_key) = generate_ed25519_keypair();
 let peer_id = derive_peer_id_from_public_key(&public_key);
+
+// ML-DSA-65 keypair - used for TLS authentication
+let (ml_dsa_pub, ml_dsa_sec) = generate_ml_dsa_65_keypair();
 ```
 
-This follows our [Hybrid PQC Authentication specification](rfcs/ant-quic-hybrid-pqc-authentication.md), inspired by RFC 7250.
+This follows our [Pure PQC Authentication specification](rfcs/ant-quic-pqc-authentication.md).
+
+### v0.2 Changes
+
+- **Ed25519**: Used ONLY for compact 32-byte PeerId addressing
+- **ML-DSA-65**: Used for ALL TLS handshake signatures (pure PQC)
+- **No Hybrid**: Previous hybrid Ed25519+ML-DSA scheme removed
 
 ### Trust Model
 
-- **TOFU (Trust On First Use)**: First contact stores SPKI fingerprint
+- **TOFU (Trust On First Use)**: First contact stores ML-DSA-65 public key fingerprint
 - **Rotation**: New keys must be signed by old key (continuity)
-- **Channel Binding**: TLS exporter signed with ML-DSA/Ed25519
+- **Channel Binding**: TLS exporter signed with ML-DSA-65 (pure PQC)
 - **NAT/Path Changes**: Token binding uses (PeerId || CID || nonce)
 
 ## Installation
@@ -285,11 +309,11 @@ ant-quic implements these specifications:
 |---------------|--------|-------|
 | [RFC 9000](rfcs/rfc9000.txt) | Full | QUIC Transport Protocol |
 | [RFC 9001](rfcs/rfc9001.txt) | Full | QUIC TLS |
-| [Hybrid PQC Auth](rfcs/ant-quic-hybrid-pqc-authentication.md) | Full | Raw Public Keys + PQC |
+| [Pure PQC Auth](rfcs/ant-quic-pqc-authentication.md) | Full | Raw Public Keys + Pure PQC (v0.2) |
 | [draft-seemann-quic-nat-traversal-02](rfcs/draft-seemann-quic-nat-traversal-02.txt) | Full | NAT Traversal |
 | [draft-ietf-quic-address-discovery-00](rfcs/draft-ietf-quic-address-discovery-00.txt) | Full | Address Discovery |
-| [FIPS 203](rfcs/fips-203-ml-kem.pdf) | Full | ML-KEM |
-| [FIPS 204](rfcs/fips-204-ml-dsa.pdf) | Full | ML-DSA |
+| [FIPS 203](rfcs/fips-203-ml-kem.pdf) | Full | ML-KEM (via saorsa-pqc) |
+| [FIPS 204](rfcs/fips-204-ml-dsa.pdf) | Full | ML-DSA (via saorsa-pqc) |
 
 See [docs/review.md](docs/review.md) for detailed RFC compliance analysis.
 
@@ -391,6 +415,7 @@ at your option.
 ## Acknowledgments
 
 - Built on [Quinn](https://github.com/quinn-rs/quinn) QUIC implementation
+- **Pure PQC powered by [saorsa-pqc](https://crates.io/crates/saorsa-pqc)** - NIST FIPS 203/204 compliant ML-KEM and ML-DSA
 - NAT traversal per [draft-seemann-quic-nat-traversal-02](https://datatracker.ietf.org/doc/draft-seemann-quic-nat-traversal/)
 - Developed for the [Autonomi](https://autonomi.com) decentralized network
 
