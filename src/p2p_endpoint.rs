@@ -429,6 +429,18 @@ impl P2pEndpoint {
         self.peer_id
     }
 
+    /// Get the underlying QUIC connection for a peer.
+    ///
+    /// This is used by the LinkTransport abstraction layer to wrap connections.
+    pub fn get_quic_connection(
+        &self,
+        peer_id: &PeerId,
+    ) -> Result<Option<crate::high_level::Connection>, EndpointError> {
+        self.inner
+            .get_connection(peer_id)
+            .map_err(EndpointError::NatTraversal)
+    }
+
     /// Get the local bind address
     pub fn local_addr(&self) -> Option<SocketAddr> {
         self.inner

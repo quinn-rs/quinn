@@ -266,6 +266,18 @@ pub use high_level::{
     RecvStream as HighLevelRecvStream, SendStream as HighLevelSendStream,
 };
 
+// Link transport abstraction layer for overlay networks
+pub mod link_transport;
+mod link_transport_impl;
+
+// Re-export link transport types
+pub use link_transport::{
+    BoxFuture, BoxStream, Capabilities, ConnectionStats as LinkConnectionStats,
+    DisconnectReason as LinkDisconnectReason, Incoming as LinkIncoming, LinkConn, LinkError,
+    LinkEvent, LinkRecvStream, LinkResult, LinkSendStream, LinkTransport, NatHint, ProtocolId,
+};
+pub use link_transport_impl::{P2pLinkConn, P2pLinkTransport, P2pRecvStream, P2pSendStream};
+
 // Re-export crypto utilities for peer ID management (v0.2: Pure PQC with ML-DSA-65)
 pub use crypto::raw_public_keys::key_utils::{
     ML_DSA_65_PUBLIC_KEY_SIZE, ML_DSA_65_SECRET_KEY_SIZE, MlDsaPublicKey, MlDsaSecretKey,
