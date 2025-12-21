@@ -643,14 +643,14 @@ async fn handle_event_with_state(
         P2pEvent::PeerConnected { peer_id, addr } => {
             // Track peer state
             let state = PeerState {
-                peer_id: peer_id.clone(),
+                peer_id: *peer_id,
                 remote_addr: *addr,
                 connected_at: Instant::now(),
                 bytes_sent: 0,
                 bytes_received: 0,
                 connection_type: "direct".to_string(),
             };
-            peer_states.write().await.insert(peer_id.clone(), state);
+            peer_states.write().await.insert(*peer_id, state);
             stats.direct_connections.fetch_add(1, Ordering::SeqCst);
 
             if json {
