@@ -672,6 +672,34 @@ impl Endpoint {
                 // with other components or logging/metrics collection
                 debug!("NAT candidate {} validated successfully", address);
             }
+            TryConnectTo {
+                request_id,
+                target_address,
+                timeout_ms,
+                requester_connection,
+                requested_at: _,
+            } => {
+                // Handle TryConnectTo request from a peer
+                // This is used for NAT callback testing - a peer asks us to try connecting
+                // to a target to verify connectivity
+                trace!(
+                    "TryConnectTo request received: request_id={}, target={}, timeout={}ms, from={}",
+                    request_id, target_address, timeout_ms, requester_connection
+                );
+
+                // Since the endpoint is synchronous and we can't spawn async tasks here,
+                // we'll queue a response. The actual connection attempt would need to be
+                // handled by the higher-level async runtime.
+                // For now, we queue a "not implemented" response to acknowledge the request.
+                debug!(
+                    "TryConnectTo: endpoint received callback request for {}",
+                    target_address
+                );
+
+                // TODO: In the async wrapper (high_level/mod.rs), implement the actual
+                // connection attempt and send back the TryConnectToResponse.
+                // For now, this event is acknowledged but not acted upon at the endpoint level.
+            }
             Drained => {
                 if let Some(conn) = self.connections.try_remove(ch.0) {
                     self.index.remove(&conn);

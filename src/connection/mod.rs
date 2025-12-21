@@ -3552,6 +3552,12 @@ impl Connection {
                 Frame::ObservedAddress(observed_address) => {
                     self.handle_observed_address_frame(&observed_address, now)?;
                 }
+                Frame::TryConnectTo(try_connect_to) => {
+                    self.handle_try_connect_to(&try_connect_to, now)?;
+                }
+                Frame::TryConnectToResponse(response) => {
+                    self.handle_try_connect_to_response(&response)?;
+                }
             }
         }
 
@@ -4918,6 +4924,116 @@ impl Connection {
             "Received ObservedAddress frame: address={} for path={}",
             observed_address.address, path_id
         );
+
+        Ok(())
+    }
+
+    /// Handle TryConnectTo frame - request from peer to attempt connection to a target
+    ///
+    /// This is part of the NAT traversal callback mechanism where a peer can request
+    /// this node to attempt a connection to verify connectivity.
+    fn handle_try_connect_to(
+        &mut self,
+        try_connect_to: &crate::frame::TryConnectTo,
+        now: Instant,
+    ) -> Result<(), TransportError> {
+        trace!(
+            "Received TryConnectTo: request_id={}, target={}, timeout_ms={}",
+            try_connect_to.request_id, try_connect_to.target_address, try_connect_to.timeout_ms
+        );
+
+        // Validate the target address (basic security checks)
+        let target = try_connect_to.target_address;
+
+        // Don't allow requests to loopback addresses from remote peers
+        if target.ip().is_loopback() {
+            warn!(
+                "Rejecting TryConnectTo request to loopback address: {}",
+                target
+            );
+            // Queue error response
+            let response = crate::frame::TryConnectToResponse {
+                request_id: try_connect_to.request_id,
+                success: false,
+                error_code: Some(crate::frame::TryConnectError::InvalidAddress),
+                source_address: self.path.remote,
+            };
+            self.spaces[SpaceId::Data]
+                .pending
+                .try_connect_to_responses
+                .push(response);
+            return Ok(());
+        }
+
+        // Don't allow requests to unspecified addresses
+        if target.ip().is_unspecified() {
+            warn!(
+                "Rejecting TryConnectTo request to unspecified address: {}",
+                target
+            );
+            let response = crate::frame::TryConnectToResponse {
+                request_id: try_connect_to.request_id,
+                success: false,
+                error_code: Some(crate::frame::TryConnectError::InvalidAddress),
+                source_address: self.path.remote,
+            };
+            self.spaces[SpaceId::Data]
+                .pending
+                .try_connect_to_responses
+                .push(response);
+            return Ok(());
+        }
+
+        // Queue an endpoint event to perform the connection attempt asynchronously
+        // The endpoint will handle the actual connection and send back a response
+        self.endpoint_events
+            .push_back(EndpointEventInner::TryConnectTo {
+                request_id: try_connect_to.request_id,
+                target_address: try_connect_to.target_address,
+                timeout_ms: try_connect_to.timeout_ms,
+                requester_connection: self.path.remote,
+                requested_at: now,
+            });
+
+        trace!(
+            "Queued TryConnectTo attempt for request_id={}",
+            try_connect_to.request_id
+        );
+
+        Ok(())
+    }
+
+    /// Handle TryConnectToResponse frame - result of a connection attempt we requested
+    fn handle_try_connect_to_response(
+        &mut self,
+        response: &crate::frame::TryConnectToResponse,
+    ) -> Result<(), TransportError> {
+        trace!(
+            "Received TryConnectToResponse: request_id={}, success={}, error={:?}, source={}",
+            response.request_id, response.success, response.error_code, response.source_address
+        );
+
+        // If the connection was successful, we've confirmed that the target address
+        // can receive connections from the peer that attempted the connection
+        if response.success {
+            debug!(
+                "TryConnectTo succeeded: target can receive connections from {}",
+                response.source_address
+            );
+
+            // Update NAT traversal state with the successful probe result
+            if let Some(nat_state) = &mut self.nat_traversal {
+                nat_state
+                    .record_successful_callback_probe(response.request_id, response.source_address);
+            }
+        } else {
+            debug!("TryConnectTo failed with error: {:?}", response.error_code);
+
+            // Update NAT traversal state with the failed probe result
+            if let Some(nat_state) = &mut self.nat_traversal {
+                nat_state.record_failed_callback_probe(response.request_id, response.error_code);
+            }
+        }
 
         Ok(())
     }

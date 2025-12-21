@@ -78,6 +78,14 @@ pub(crate) enum EndpointEventInner {
     /// NAT traversal candidate validation succeeded
     #[allow(dead_code)]
     NatCandidateValidated { address: SocketAddr, challenge: u64 },
+    /// Request to attempt connection to a target address (NAT callback mechanism)
+    TryConnectTo {
+        request_id: crate::VarInt,
+        target_address: SocketAddr,
+        timeout_ms: u16,
+        requester_connection: SocketAddr,
+        requested_at: crate::Instant,
+    },
 }
 
 /// Protocol-level identifier for a connection.

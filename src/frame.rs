@@ -157,6 +157,11 @@ frame_types! {
     // Address Discovery Extension - draft-ietf-quic-address-discovery-00
     OBSERVED_ADDRESS_IPV4 = 0x9f81a6,
     OBSERVED_ADDRESS_IPV6 = 0x9f81a7,
+    // NAT Traversal Callback - try_connect_to request/response
+    TRY_CONNECT_TO_IPV4 = 0x3d7e95,
+    TRY_CONNECT_TO_IPV6 = 0x3d7e96,
+    TRY_CONNECT_TO_RESPONSE_IPV4 = 0x3d7e97,
+    TRY_CONNECT_TO_RESPONSE_IPV6 = 0x3d7e98,
     // DATAGRAM
 }
 
@@ -193,6 +198,8 @@ pub(crate) enum Frame {
     PunchMeNow(PunchMeNow),
     RemoveAddress(RemoveAddress),
     ObservedAddress(ObservedAddress),
+    TryConnectTo(TryConnectTo),
+    TryConnectToResponse(TryConnectToResponse),
 }
 
 impl Frame {
@@ -246,6 +253,14 @@ impl Frame {
             ObservedAddress(o) => match o.address {
                 SocketAddr::V4(_) => FrameType::OBSERVED_ADDRESS_IPV4,
                 SocketAddr::V6(_) => FrameType::OBSERVED_ADDRESS_IPV6,
+            },
+            TryConnectTo(t) => match t.target_address {
+                SocketAddr::V4(_) => FrameType::TRY_CONNECT_TO_IPV4,
+                SocketAddr::V6(_) => FrameType::TRY_CONNECT_TO_IPV6,
+            },
+            TryConnectToResponse(r) => match r.source_address {
+                SocketAddr::V4(_) => FrameType::TRY_CONNECT_TO_RESPONSE_IPV4,
+                SocketAddr::V6(_) => FrameType::TRY_CONNECT_TO_RESPONSE_IPV6,
             },
         }
     }
@@ -778,6 +793,18 @@ impl Iter {
             FrameType::OBSERVED_ADDRESS_IPV6 => {
                 Frame::ObservedAddress(ObservedAddress::decode(&mut self.bytes, true)?)
             }
+            FrameType::TRY_CONNECT_TO_IPV4 => {
+                Frame::TryConnectTo(TryConnectTo::decode(&mut self.bytes, false)?)
+            }
+            FrameType::TRY_CONNECT_TO_IPV6 => {
+                Frame::TryConnectTo(TryConnectTo::decode(&mut self.bytes, true)?)
+            }
+            FrameType::TRY_CONNECT_TO_RESPONSE_IPV4 => {
+                Frame::TryConnectToResponse(TryConnectToResponse::decode(&mut self.bytes, false)?)
+            }
+            FrameType::TRY_CONNECT_TO_RESPONSE_IPV6 => {
+                Frame::TryConnectToResponse(TryConnectToResponse::decode(&mut self.bytes, true)?)
+            }
             _ => {
                 if let Some(s) = ty.stream() {
                     Frame::Stream(Stream {
@@ -1021,7 +1048,9 @@ impl AckFrequency {
 }
 
 // Re-export unified NAT traversal frames
-pub(crate) use nat_traversal_unified::{AddAddress, PunchMeNow, RemoveAddress};
+pub(crate) use nat_traversal_unified::{
+    AddAddress, PunchMeNow, RemoveAddress, TryConnectError, TryConnectTo, TryConnectToResponse,
+};
 
 /// Address Discovery frame for informing peers of their observed address
 /// draft-ietf-quic-address-discovery-00

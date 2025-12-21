@@ -350,6 +350,12 @@ pub(crate) struct NatTraversalStats {
     pub(super) invalid_address_rejections: u32,
     /// Suspicious coordination attempts
     pub(super) suspicious_coordination_attempts: u32,
+    /// Callback probes received (TryConnectToResponse)
+    pub(super) callback_probes_received: u32,
+    /// Callback probes that succeeded
+    pub(super) callback_probes_successful: u32,
+    /// Callback probes that failed
+    pub(super) callback_probes_failed: u32,
 }
 /// Security validation state for rate limiting and attack detection
 #[derive(Debug)]
@@ -3099,6 +3105,44 @@ impl NatTraversalState {
         self.bootstrap_coordinator
             .as_ref()
             .and_then(|coord| coord.peer_index.get(&peer_id).map(|p| p.observed_addr))
+    }
+
+    /// Record a successful TryConnectTo callback probe
+    ///
+    /// Called when we receive a TryConnectToResponse indicating success.
+    /// This confirms that the source address can reach us.
+    pub(super) fn record_successful_callback_probe(
+        &mut self,
+        request_id: VarInt,
+        source_address: SocketAddr,
+    ) {
+        debug!(
+            "Recording successful callback probe: request_id={}, source={}",
+            request_id, source_address
+        );
+        // Update statistics
+        self.stats.callback_probes_received += 1;
+        self.stats.callback_probes_successful += 1;
+
+        // The successful probe confirms that 'source_address' can connect to us
+        // This is useful for understanding NAT traversal capabilities
+    }
+
+    /// Record a failed TryConnectTo callback probe
+    ///
+    /// Called when we receive a TryConnectToResponse indicating failure.
+    pub(super) fn record_failed_callback_probe(
+        &mut self,
+        request_id: VarInt,
+        error_code: Option<crate::frame::TryConnectError>,
+    ) {
+        debug!(
+            "Recording failed callback probe: request_id={}, error={:?}",
+            request_id, error_code
+        );
+        // Update statistics
+        self.stats.callback_probes_received += 1;
+        self.stats.callback_probes_failed += 1;
     }
 
     /// Start candidate discovery process

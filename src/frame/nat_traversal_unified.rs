@@ -455,6 +455,258 @@ impl RemoveAddress {
     }
 }
 
+/// Error codes for TryConnectToResponse
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum TryConnectError {
+    /// Connection timed out
+    Timeout = 0,
+    /// Connection refused by remote
+    ConnectionRefused = 1,
+    /// Network unreachable
+    NetworkUnreachable = 2,
+    /// Host unreachable
+    HostUnreachable = 3,
+    /// Rate limited - too many requests
+    RateLimited = 4,
+    /// Address validation failed
+    InvalidAddress = 5,
+    /// Internal error
+    InternalError = 255,
+}
+
+impl TryConnectError {
+    /// Convert from u8
+    pub fn from_u8(value: u8) -> Self {
+        match value {
+            0 => Self::Timeout,
+            1 => Self::ConnectionRefused,
+            2 => Self::NetworkUnreachable,
+            3 => Self::HostUnreachable,
+            4 => Self::RateLimited,
+            5 => Self::InvalidAddress,
+            _ => Self::InternalError,
+        }
+    }
+}
+
+/// TRY_CONNECT_TO frame - Request a peer to attempt connecting to a target
+///
+/// This frame enables NAT traversal testing by asking a connected peer
+/// to attempt a connection to a specified address. The peer will report
+/// success or failure via TryConnectToResponse.
+///
+/// Wire format:
+/// ```text
+/// +------------+-----------------+-----------+
+/// | Request ID | Target Address  | Timeout   |
+/// | (VarInt)   | (IP + Port)     | (u16 ms)  |
+/// +------------+-----------------+-----------+
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TryConnectTo {
+    /// Unique request identifier for correlation
+    pub request_id: VarInt,
+    /// Target address to attempt connection to
+    pub target_address: SocketAddr,
+    /// Timeout in milliseconds for the attempt
+    pub timeout_ms: u16,
+}
+
+impl TryConnectTo {
+    /// Create a new TryConnectTo frame
+    pub fn new(request_id: VarInt, target_address: SocketAddr, timeout_ms: u16) -> Self {
+        Self {
+            request_id,
+            target_address,
+            timeout_ms,
+        }
+    }
+
+    /// Encode to buffer
+    pub fn encode<W: BufMut>(&self, buf: &mut W) {
+        match self.target_address {
+            SocketAddr::V4(_) => buf.write_var(FrameType::TRY_CONNECT_TO_IPV4.0),
+            SocketAddr::V6(_) => buf.write_var(FrameType::TRY_CONNECT_TO_IPV6.0),
+        }
+
+        buf.write(self.request_id);
+
+        match self.target_address {
+            SocketAddr::V4(addr) => {
+                buf.put_slice(&addr.ip().octets());
+                buf.put_u16(addr.port());
+            }
+            SocketAddr::V6(addr) => {
+                buf.put_slice(&addr.ip().octets());
+                buf.put_u16(addr.port());
+            }
+        }
+
+        buf.put_u16(self.timeout_ms);
+    }
+
+    /// Decode from buffer
+    pub fn decode<R: Buf>(r: &mut R, is_ipv6: bool) -> Result<Self, UnexpectedEnd> {
+        let request_id = r.get()?;
+
+        let target_address = if is_ipv6 {
+            if r.remaining() < 16 + 2 {
+                return Err(UnexpectedEnd);
+            }
+            let mut octets = [0u8; 16];
+            r.copy_to_slice(&mut octets);
+            let port = r.get_u16();
+            SocketAddr::V6(SocketAddrV6::new(Ipv6Addr::from(octets), port, 0, 0))
+        } else {
+            if r.remaining() < 4 + 2 {
+                return Err(UnexpectedEnd);
+            }
+            let mut octets = [0u8; 4];
+            r.copy_to_slice(&mut octets);
+            let port = r.get_u16();
+            SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::from(octets), port))
+        };
+
+        if r.remaining() < 2 {
+            return Err(UnexpectedEnd);
+        }
+        let timeout_ms = r.get_u16();
+
+        Ok(Self {
+            request_id,
+            target_address,
+            timeout_ms,
+        })
+    }
+}
+
+impl FrameStruct for TryConnectTo {
+    const SIZE_BOUND: usize = 4 + 9 + 16 + 2 + 2; // frame type + request_id + IPv6 + port + timeout
+}
+
+/// TRY_CONNECT_TO_RESPONSE frame - Response to a TryConnectTo request
+///
+/// Reports the result of a connection attempt initiated by TryConnectTo.
+///
+/// Wire format:
+/// ```text
+/// +------------+---------+----------------+--------------+
+/// | Request ID | Success | Error Code     | Source Addr  |
+/// | (VarInt)   | (u8)    | (u8, optional) | (IP + Port)  |
+/// +------------+---------+----------------+--------------+
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TryConnectToResponse {
+    /// Request ID from the original TryConnectTo
+    pub request_id: VarInt,
+    /// Whether the connection attempt succeeded
+    pub success: bool,
+    /// Error code if failed (None if success)
+    pub error_code: Option<TryConnectError>,
+    /// Source address used for the attempt (for NAT detection)
+    pub source_address: SocketAddr,
+}
+
+impl TryConnectToResponse {
+    /// Create a successful response
+    pub fn success(request_id: VarInt, source_address: SocketAddr) -> Self {
+        Self {
+            request_id,
+            success: true,
+            error_code: None,
+            source_address,
+        }
+    }
+
+    /// Create a failed response
+    pub fn failure(
+        request_id: VarInt,
+        error_code: TryConnectError,
+        source_address: SocketAddr,
+    ) -> Self {
+        Self {
+            request_id,
+            success: false,
+            error_code: Some(error_code),
+            source_address,
+        }
+    }
+
+    /// Encode to buffer
+    pub fn encode<W: BufMut>(&self, buf: &mut W) {
+        match self.source_address {
+            SocketAddr::V4(_) => buf.write_var(FrameType::TRY_CONNECT_TO_RESPONSE_IPV4.0),
+            SocketAddr::V6(_) => buf.write_var(FrameType::TRY_CONNECT_TO_RESPONSE_IPV6.0),
+        }
+
+        buf.write(self.request_id);
+        buf.put_u8(if self.success { 1 } else { 0 });
+
+        if let Some(error) = self.error_code {
+            buf.put_u8(error as u8);
+        } else {
+            buf.put_u8(0);
+        }
+
+        match self.source_address {
+            SocketAddr::V4(addr) => {
+                buf.put_slice(&addr.ip().octets());
+                buf.put_u16(addr.port());
+            }
+            SocketAddr::V6(addr) => {
+                buf.put_slice(&addr.ip().octets());
+                buf.put_u16(addr.port());
+            }
+        }
+    }
+
+    /// Decode from buffer
+    pub fn decode<R: Buf>(r: &mut R, is_ipv6: bool) -> Result<Self, UnexpectedEnd> {
+        let request_id = r.get()?;
+
+        if r.remaining() < 2 {
+            return Err(UnexpectedEnd);
+        }
+        let success = r.get_u8() != 0;
+        let error_byte = r.get_u8();
+        let error_code = if success {
+            None
+        } else {
+            Some(TryConnectError::from_u8(error_byte))
+        };
+
+        let source_address = if is_ipv6 {
+            if r.remaining() < 16 + 2 {
+                return Err(UnexpectedEnd);
+            }
+            let mut octets = [0u8; 16];
+            r.copy_to_slice(&mut octets);
+            let port = r.get_u16();
+            SocketAddr::V6(SocketAddrV6::new(Ipv6Addr::from(octets), port, 0, 0))
+        } else {
+            if r.remaining() < 4 + 2 {
+                return Err(UnexpectedEnd);
+            }
+            let mut octets = [0u8; 4];
+            r.copy_to_slice(&mut octets);
+            let port = r.get_u16();
+            SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::from(octets), port))
+        };
+
+        Ok(Self {
+            request_id,
+            success,
+            error_code,
+            source_address,
+        })
+    }
+}
+
+impl FrameStruct for TryConnectToResponse {
+    const SIZE_BOUND: usize = 4 + 9 + 1 + 1 + 16 + 2; // frame type + request_id + success + error + IPv6 + port
+}
+
 /// Configuration for NAT traversal frame handling
 #[derive(Debug, Clone)]
 pub struct NatTraversalFrameConfig {

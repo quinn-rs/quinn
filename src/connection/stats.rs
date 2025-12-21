@@ -64,6 +64,8 @@ pub struct FrameStats {
     pub punch_me_now: u64,
     pub remove_address: u64,
     pub observed_address: u64,
+    pub try_connect_to: u64,
+    pub try_connect_to_response: u64,
 }
 
 impl FrameStats {
@@ -108,6 +110,8 @@ impl FrameStats {
             Frame::PunchMeNow(_) => self.punch_me_now += 1,
             Frame::RemoveAddress(_) => self.remove_address += 1,
             Frame::ObservedAddress(_) => self.observed_address += 1,
+            Frame::TryConnectTo(_) => self.try_connect_to += 1,
+            Frame::TryConnectToResponse(_) => self.try_connect_to_response += 1,
         }
     }
 }
