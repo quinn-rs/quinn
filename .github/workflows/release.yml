@@ -101,7 +101,7 @@ jobs:
         with:
           tool: cross
 
-      - name: Build
+      - name: Build ant-quic
         run: |
           if [ "${{ matrix.use-cross }}" = "true" ]; then
             cross build --release --target ${{ matrix.target }} --bin ant-quic
@@ -110,12 +110,49 @@ jobs:
           fi
         shell: bash
 
-      - name: Package (Unix)
+      - name: Build e2e-dashboard
+        run: |
+          if [ "${{ matrix.use-cross }}" = "true" ]; then
+            cross build --release --target ${{ matrix.target }} --manifest-path e2e-dashboard/Cargo.toml
+          else
+            cargo build --release --target ${{ matrix.target }} --manifest-path e2e-dashboard/Cargo.toml
+          fi
+        shell: bash
+
+      - name: Package ant-quic (Unix)
         if: matrix.os != 'windows-latest'
         run: |
           cd target/${{ matrix.target }}/release
           tar czf ../../../${{ matrix.archive }} ${{ matrix.binary }}
           cd -
+
+      - name: Package e2e-dashboard (Unix)
+        if: matrix.os != 'windows-latest'
+        run: |
+          # Determine archive name based on target (matching ant-quic naming pattern)
+          case "${{ matrix.target }}" in
+            x86_64-unknown-linux-gnu) ARCH="x86_64-linux" ;;
+            aarch64-unknown-linux-gnu) ARCH="aarch64-linux" ;;
+            x86_64-apple-darwin) ARCH="x86_64-macos" ;;
+            aarch64-apple-darwin) ARCH="aarch64-macos" ;;
+            *) ARCH="${{ matrix.target }}" ;;
+          esac
+
+          DASHBOARD_BIN="e2e-dashboard"
+          ARCHIVE="e2e-dashboard-${ARCH}.tar.gz"
+
+          # Dashboard binary might be in e2e-dashboard/target or root target depending on workspace setup
+          if [ -f "e2e-dashboard/target/${{ matrix.target }}/release/${DASHBOARD_BIN}" ]; then
+            cd e2e-dashboard/target/${{ matrix.target }}/release
+            tar czf ../../../../${ARCHIVE} ${DASHBOARD_BIN}
+            cd -
+          elif [ -f "target/${{ matrix.target }}/release/${DASHBOARD_BIN}" ]; then
+            cd target/${{ matrix.target }}/release
+            tar czf ../../../${ARCHIVE} ${DASHBOARD_BIN}
+            cd -
+          fi
+
+          echo "DASHBOARD_ARCHIVE=${ARCHIVE}" >> $GITHUB_ENV
 
       - name: Package (Windows)
         if: matrix.os == 'windows-latest'
@@ -124,12 +161,21 @@ jobs:
           7z a ../../../${{ matrix.archive }} ${{ matrix.binary }}
           cd -
 
-      - name: Upload Artifact
+      - name: Upload ant-quic Artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.archive }}
           path: ${{ matrix.archive }}
           retention-days: 1
+
+      - name: Upload e2e-dashboard Artifact
+        if: matrix.os != 'windows-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.DASHBOARD_ARCHIVE }}
+          path: ${{ env.DASHBOARD_ARCHIVE }}
+          retention-days: 1
+          if-no-files-found: ignore
 
   release:
     name: Create Release

@@ -30,11 +30,14 @@
 
 use ant_quic::{MtuConfig, P2pConfig, P2pEndpoint, P2pEvent, PeerId, TraversalPhase};
 use clap::Parser;
+use sha2::{Digest, Sha256};
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::time::{Duration, Instant};
-use tracing::{debug, error, info};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use tokio::sync::RwLock;
+use tracing::{debug, error, info, warn};
 
 /// ant-quic P2P node
 ///
@@ -108,6 +111,36 @@ struct Args {
     /// Show full public key (not just first 8 bytes)
     #[arg(long)]
     full_key: bool,
+
+    // === Metrics Reporting ===
+    /// Dashboard server URL for metrics reporting (e.g., http://saorsa-1.saorsalabs.com:8080)
+    #[arg(long)]
+    metrics_server: Option<String>,
+
+    /// Metrics reporting interval in seconds
+    #[arg(long, default_value = "5")]
+    metrics_interval: u64,
+
+    /// Node location identifier (e.g., "hetzner-eu", "do-nyc")
+    #[arg(long, default_value = "unknown")]
+    node_location: String,
+
+    /// Node identifier (defaults to first 8 bytes of peer ID)
+    #[arg(long)]
+    node_id: Option<String>,
+
+    // === Data Testing ===
+    /// Generate test data with SHA-256 checksums (size in bytes)
+    #[arg(long)]
+    generate_data: Option<u64>,
+
+    /// Verify received data integrity
+    #[arg(long)]
+    verify_data: bool,
+
+    /// Chunk size for data generation/verification (bytes)
+    #[arg(long, default_value = "65536")]
+    chunk_size: usize,
 }
 
 // v0.13.0: Mode enum removed - all nodes are symmetric P2P nodes
@@ -120,10 +153,63 @@ struct RuntimeStats {
     connections_accepted: AtomicU64,
     connections_initiated: AtomicU64,
     nat_traversals_completed: AtomicU64,
+    nat_traversals_failed: AtomicU64,
     external_addresses_discovered: AtomicU64,
     counters_sent: AtomicU64,
     counters_received: AtomicU64,
     echoes_sent: AtomicU64,
+    // Data verification stats
+    data_chunks_sent: AtomicU64,
+    data_chunks_verified: AtomicU64,
+    data_verification_failures: AtomicU64,
+    direct_connections: AtomicU64,
+    relayed_connections: AtomicU64,
+}
+
+/// Information about a connected peer for metrics reporting
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct PeerInfo {
+    pub peer_id: String,
+    pub remote_addr: String,
+    pub connected_at: u64,
+    pub bytes_sent: u64,
+    pub bytes_received: u64,
+    pub connection_type: String, // "direct", "nat_traversed", "relayed"
+}
+
+/// Metrics report sent to dashboard
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct NodeMetricsReport {
+    pub node_id: String,
+    pub location: String,
+    pub timestamp: u64,
+    pub uptime_secs: u64,
+    pub active_connections: usize,
+    pub bytes_sent_total: u64,
+    pub bytes_received_total: u64,
+    pub current_throughput_mbps: f64,
+    pub nat_traversal_successes: u64,
+    pub nat_traversal_failures: u64,
+    pub direct_connections: u64,
+    pub relayed_connections: u64,
+    pub data_chunks_sent: u64,
+    pub data_chunks_verified: u64,
+    pub data_verification_failures: u64,
+    pub external_addresses: Vec<String>,
+    pub connected_peers: Vec<PeerInfo>,
+    pub local_addr: String,
+}
+
+/// Track per-peer state for metrics
+#[derive(Debug, Clone)]
+#[allow(dead_code)] // Fields tracked for future use in detailed metrics
+struct PeerState {
+    peer_id: PeerId,
+    remote_addr: SocketAddr,
+    connected_at: Instant,
+    bytes_sent: u64,
+    bytes_received: u64,
+    connection_type: String,
 }
 
 #[tokio::main]
@@ -203,17 +289,33 @@ async fn main() -> anyhow::Result<()> {
     let stats = Arc::new(RuntimeStats::default());
     let stats_clone = stats.clone();
 
+    // Track peer state for metrics
+    let peer_states: Arc<RwLock<HashMap<PeerId, PeerState>>> =
+        Arc::new(RwLock::new(HashMap::new()));
+
+    // Track discovered external addresses
+    let external_addrs: Arc<RwLock<Vec<SocketAddr>>> = Arc::new(RwLock::new(Vec::new()));
+
     // Event handler
     let endpoint_clone = endpoint.clone();
     let shutdown_events = shutdown.clone();
     let json_output = args.json;
+    let peer_states_events = peer_states.clone();
+    let external_addrs_events = external_addrs.clone();
 
     let event_handle = tokio::spawn(async move {
         let mut events = endpoint_clone.subscribe();
         while !shutdown_events.load(Ordering::SeqCst) {
             match tokio::time::timeout(Duration::from_millis(100), events.recv()).await {
                 Ok(Ok(event)) => {
-                    handle_event(&event, &stats_clone, json_output);
+                    handle_event_with_state(
+                        &event,
+                        &stats_clone,
+                        &peer_states_events,
+                        &external_addrs_events,
+                        json_output,
+                    )
+                    .await;
                 }
                 Ok(Err(_)) => break, // Channel closed
                 Err(_) => continue,  // Timeout, check shutdown
@@ -234,6 +336,76 @@ async fn main() -> anyhow::Result<()> {
             while !shutdown_stats.load(Ordering::SeqCst) {
                 interval_timer.tick().await;
                 print_stats(&endpoint_stats, &stats_clone2, json).await;
+            }
+        }))
+    } else {
+        None
+    };
+
+    // Metrics push task
+    let metrics_handle = if let Some(ref server) = args.metrics_server {
+        let endpoint_metrics = endpoint.clone();
+        let shutdown_metrics = shutdown.clone();
+        let stats_metrics = stats.clone();
+        let peer_states_metrics = peer_states.clone();
+        let external_addrs_metrics = external_addrs.clone();
+        let interval_secs = args.metrics_interval;
+        let server_url = server.clone();
+        let node_id = args
+            .node_id
+            .clone()
+            .unwrap_or_else(|| format_peer_id(&peer_id));
+        let location = args.node_location.clone();
+        let start_time = Instant::now();
+
+        info!(
+            "Metrics reporting enabled: {} every {}s",
+            server_url, interval_secs
+        );
+
+        Some(tokio::spawn(async move {
+            let client = reqwest::Client::builder()
+                .timeout(Duration::from_secs(10))
+                .build()
+                .unwrap_or_else(|_| reqwest::Client::new());
+
+            let mut interval = tokio::time::interval(Duration::from_secs(interval_secs));
+            let mut prev_bytes: u64 = 0;
+            let mut prev_time = Instant::now();
+
+            while !shutdown_metrics.load(Ordering::SeqCst) {
+                interval.tick().await;
+
+                let report = build_metrics_report(
+                    &node_id,
+                    &location,
+                    start_time,
+                    &endpoint_metrics,
+                    &stats_metrics,
+                    &peer_states_metrics,
+                    &external_addrs_metrics,
+                    &mut prev_bytes,
+                    &mut prev_time,
+                )
+                .await;
+
+                let url = format!("{}/api/metrics", server_url);
+                match client.post(&url).json(&report).send().await {
+                    Ok(response) => {
+                        if response.status().is_success() {
+                            debug!("Metrics sent successfully to {}", url);
+                        } else {
+                            warn!(
+                                "Metrics server returned status {}: {}",
+                                response.status(),
+                                url
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        warn!("Failed to send metrics to {}: {}", url, e);
+                    }
+                }
             }
         }))
     } else {
@@ -449,6 +621,9 @@ async fn main() -> anyhow::Result<()> {
     if let Some(h) = counter_handle {
         h.abort();
     }
+    if let Some(h) = metrics_handle {
+        h.abort();
+    }
 
     // Final stats
     print_final_stats(&stats, start_time.elapsed(), args.json);
@@ -457,9 +632,27 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn handle_event(event: &P2pEvent, stats: &RuntimeStats, json: bool) {
+async fn handle_event_with_state(
+    event: &P2pEvent,
+    stats: &RuntimeStats,
+    peer_states: &RwLock<HashMap<PeerId, PeerState>>,
+    external_addrs: &RwLock<Vec<SocketAddr>>,
+    json: bool,
+) {
     match event {
         P2pEvent::PeerConnected { peer_id, addr } => {
+            // Track peer state
+            let state = PeerState {
+                peer_id: peer_id.clone(),
+                remote_addr: *addr,
+                connected_at: Instant::now(),
+                bytes_sent: 0,
+                bytes_received: 0,
+                connection_type: "direct".to_string(),
+            };
+            peer_states.write().await.insert(peer_id.clone(), state);
+            stats.direct_connections.fetch_add(1, Ordering::SeqCst);
+
             if json {
                 println!(
                     r#"{{"event":"peer_connected","peer_id":"{}","addr":"{}"}}"#,
@@ -471,6 +664,9 @@ fn handle_event(event: &P2pEvent, stats: &RuntimeStats, json: bool) {
             }
         }
         P2pEvent::PeerDisconnected { peer_id, reason } => {
+            // Remove peer state
+            peer_states.write().await.remove(peer_id);
+
             if json {
                 println!(
                     r#"{{"event":"peer_disconnected","peer_id":"{}","reason":"{:?}"}}"#,
@@ -489,6 +685,13 @@ fn handle_event(event: &P2pEvent, stats: &RuntimeStats, json: bool) {
             stats
                 .external_addresses_discovered
                 .fetch_add(1, Ordering::SeqCst);
+
+            // Track the discovered address
+            let mut addrs = external_addrs.write().await;
+            if !addrs.contains(addr) {
+                addrs.push(*addr);
+            }
+
             if json {
                 println!(
                     r#"{{"event":"external_address_discovered","addr":"{}"}}"#,
@@ -503,6 +706,11 @@ fn handle_event(event: &P2pEvent, stats: &RuntimeStats, json: bool) {
                 stats
                     .nat_traversals_completed
                     .fetch_add(1, Ordering::SeqCst);
+
+                // Update connection type to nat_traversed
+                if let Some(state) = peer_states.write().await.get_mut(peer_id) {
+                    state.connection_type = "nat_traversed".to_string();
+                }
             }
             if json {
                 println!(
@@ -522,6 +730,12 @@ fn handle_event(event: &P2pEvent, stats: &RuntimeStats, json: bool) {
             stats
                 .bytes_received
                 .fetch_add(*bytes as u64, Ordering::SeqCst);
+
+            // Update peer bytes received
+            if let Some(state) = peer_states.write().await.get_mut(peer_id) {
+                state.bytes_received += *bytes as u64;
+            }
+
             debug!("Received {} bytes from {}", bytes, format_peer_id(peer_id));
         }
         _ => {
@@ -685,5 +899,169 @@ fn format_bytes(bytes: u64) -> String {
         format!("{:.2} KB", bytes as f64 / KB as f64)
     } else {
         format!("{} B", bytes)
+    }
+}
+
+// === Data Verification Functions ===
+
+/// Compute SHA-256 hash of data
+#[allow(dead_code)] // Will be used when data generation features are wired up
+fn compute_sha256(data: &[u8]) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    hasher.update(data);
+    let result = hasher.finalize();
+    let mut hash = [0u8; 32];
+    hash.copy_from_slice(&result);
+    hash
+}
+
+/// Verified data chunk with embedded checksum
+#[derive(Debug, Clone)]
+#[allow(dead_code)] // Will be used when data generation features are wired up
+pub struct VerifiedDataChunk {
+    /// Sequence number
+    pub sequence: u64,
+    /// The actual data
+    pub data: Vec<u8>,
+    /// SHA-256 hash of the data
+    pub checksum: [u8; 32],
+}
+
+#[allow(dead_code)] // Will be used when data generation features are wired up
+impl VerifiedDataChunk {
+    /// Create a new verified chunk with random data
+    fn generate(sequence: u64, size: usize) -> Self {
+        let data: Vec<u8> = (0..size).map(|i| ((sequence + i as u64) % 256) as u8).collect();
+        let checksum = compute_sha256(&data);
+        Self {
+            sequence,
+            data,
+            checksum,
+        }
+    }
+
+    /// Serialize chunk to bytes: [sequence(8)] [checksum(32)] [data]
+    fn to_bytes(&self) -> Vec<u8> {
+        let mut bytes = Vec::with_capacity(8 + 32 + self.data.len());
+        bytes.extend_from_slice(&self.sequence.to_be_bytes());
+        bytes.extend_from_slice(&self.checksum);
+        bytes.extend_from_slice(&self.data);
+        bytes
+    }
+
+    /// Deserialize chunk from bytes
+    fn from_bytes(bytes: &[u8]) -> Option<Self> {
+        if bytes.len() < 40 {
+            return None;
+        }
+        let sequence = u64::from_be_bytes(bytes[0..8].try_into().ok()?);
+        let mut checksum = [0u8; 32];
+        checksum.copy_from_slice(&bytes[8..40]);
+        let data = bytes[40..].to_vec();
+        Some(Self {
+            sequence,
+            data,
+            checksum,
+        })
+    }
+
+    /// Verify the checksum matches the data
+    fn verify(&self) -> bool {
+        let computed = compute_sha256(&self.data);
+        computed == self.checksum
+    }
+}
+
+// === Metrics Functions ===
+
+/// Build a metrics report from current state
+async fn build_metrics_report(
+    node_id: &str,
+    location: &str,
+    start_time: Instant,
+    endpoint: &P2pEndpoint,
+    stats: &RuntimeStats,
+    peer_states: &RwLock<HashMap<PeerId, PeerState>>,
+    external_addrs: &RwLock<Vec<SocketAddr>>,
+    prev_bytes: &mut u64,
+    prev_time: &mut Instant,
+) -> NodeMetricsReport {
+    let now_secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+
+    let bytes_sent = stats.bytes_sent.load(Ordering::SeqCst);
+    let bytes_received = stats.bytes_received.load(Ordering::SeqCst);
+    let total_bytes = bytes_sent + bytes_received;
+
+    // Calculate throughput
+    let elapsed = prev_time.elapsed().as_secs_f64();
+    let throughput_mbps = if elapsed > 0.0 {
+        let bytes_diff = total_bytes.saturating_sub(*prev_bytes);
+        (bytes_diff as f64 * 8.0) / (elapsed * 1_000_000.0) // bits per second / 1M
+    } else {
+        0.0
+    };
+    *prev_bytes = total_bytes;
+    *prev_time = Instant::now();
+
+    // Get connected peers
+    let endpoint_stats = endpoint.stats().await;
+    let peers = endpoint.connected_peers().await;
+
+    // Build peer info from tracked state
+    let peer_states_read = peer_states.read().await;
+    let connected_peers: Vec<PeerInfo> = peers
+        .iter()
+        .map(|p| {
+            let state = peer_states_read.get(&p.peer_id);
+            PeerInfo {
+                peer_id: hex::encode(&p.peer_id.0[..8]),
+                remote_addr: p.remote_addr.to_string(),
+                connected_at: state
+                    .map(|s| s.connected_at.elapsed().as_secs())
+                    .unwrap_or(0),
+                bytes_sent: state.map(|s| s.bytes_sent).unwrap_or(0),
+                bytes_received: state.map(|s| s.bytes_received).unwrap_or(0),
+                connection_type: state
+                    .map(|s| s.connection_type.clone())
+                    .unwrap_or_else(|| "direct".to_string()),
+            }
+        })
+        .collect();
+
+    // Get external addresses from tracked state
+    let external_addresses: Vec<String> = external_addrs
+        .read()
+        .await
+        .iter()
+        .map(|a| a.to_string())
+        .collect();
+
+    let local_addr = endpoint
+        .local_addr()
+        .map(|a| a.to_string())
+        .unwrap_or_else(|| "unknown".to_string());
+
+    NodeMetricsReport {
+        node_id: node_id.to_string(),
+        location: location.to_string(),
+        timestamp: now_secs,
+        uptime_secs: start_time.elapsed().as_secs(),
+        active_connections: endpoint_stats.active_connections,
+        bytes_sent_total: bytes_sent,
+        bytes_received_total: bytes_received,
+        current_throughput_mbps: throughput_mbps,
+        nat_traversal_successes: stats.nat_traversals_completed.load(Ordering::SeqCst),
+        nat_traversal_failures: stats.nat_traversals_failed.load(Ordering::SeqCst),
+        direct_connections: stats.direct_connections.load(Ordering::SeqCst),
+        relayed_connections: stats.relayed_connections.load(Ordering::SeqCst),
+        data_chunks_sent: stats.data_chunks_sent.load(Ordering::SeqCst),
+        data_chunks_verified: stats.data_chunks_verified.load(Ordering::SeqCst),
+        data_verification_failures: stats.data_verification_failures.load(Ordering::SeqCst),
+        external_addresses,
+        connected_peers,
+        local_addr,
     }
 }
