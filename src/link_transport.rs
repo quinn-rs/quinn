@@ -36,26 +36,116 @@
 //! └─────────────────────────────────────────────────────────────────┘
 //! ```
 //!
-//! ## Example
+//! ## Example: Implementing an Overlay
 //!
 //! ```rust,ignore
-//! use ant_quic::link_transport::{LinkTransport, LinkConn, ProtocolId};
+//! use ant_quic::link_transport::{LinkTransport, LinkConn, LinkEvent, ProtocolId, LinkError};
+//! use std::sync::Arc;
+//! use futures_util::StreamExt;
 //!
-//! // Define your overlay's protocol
+//! // Define your overlay's protocol identifier
 //! const DHT_PROTOCOL: ProtocolId = ProtocolId::from_static(b"saorsa-dht/1.0.0");
 //!
-//! async fn run_overlay<T: LinkTransport>(transport: T) -> anyhow::Result<()> {
-//!     // Accept incoming connections for our protocol
-//!     let mut incoming = transport.accept(DHT_PROTOCOL);
-//!     
-//!     // Dial a peer
-//!     let peer_id = /* ... */;
-//!     let conn = transport.dial(peer_id, DHT_PROTOCOL).await?;
-//!     
-//!     // Open a bidirectional stream
-//!     let (send, recv) = conn.open_bi().await?;
-//!     
+//! async fn run_overlay<T: LinkTransport>(transport: Arc<T>) -> anyhow::Result<()> {
+//!     // Register our protocol so peers know we support it
+//!     transport.register_protocol(DHT_PROTOCOL);
+//!
+//!     // Subscribe to transport events for connection lifecycle
+//!     let mut events = transport.subscribe();
+//!     tokio::spawn(async move {
+//!         while let Ok(event) = events.recv().await {
+//!             match event {
+//!                 LinkEvent::PeerConnected { peer, caps } => {
+//!                     println!("New peer: {:?}, relay: {}", peer, caps.supports_relay);
+//!                 }
+//!                 LinkEvent::PeerDisconnected { peer, reason } => {
+//!                     println!("Lost peer: {:?}, reason: {:?}", peer, reason);
+//!                 }
+//!                 _ => {}
+//!             }
+//!         }
+//!     });
+//!
+//!     // Accept incoming connections in a background task
+//!     let transport_clone = transport.clone();
+//!     tokio::spawn(async move {
+//!         let mut incoming = transport_clone.accept(DHT_PROTOCOL);
+//!         while let Some(result) = incoming.next().await {
+//!             match result {
+//!                 Ok(conn) => {
+//!                     println!("Accepted connection from {:?}", conn.peer());
+//!                     // Handle connection...
+//!                 }
+//!                 Err(e) => eprintln!("Accept error: {}", e),
+//!             }
+//!         }
+//!     });
+//!
+//!     // Dial a peer using their PeerId (NAT traversal handled automatically)
+//!     let peers = transport.peer_table();
+//!     if let Some((peer_id, caps)) = peers.first() {
+//!         match transport.dial(*peer_id, DHT_PROTOCOL).await {
+//!             Ok(conn) => {
+//!                 // Open a bidirectional stream for request/response
+//!                 let (mut send, mut recv) = conn.open_bi().await?;
+//!                 send.write_all(b"PING").await?;
+//!                 send.finish()?;
+//!
+//!                 let response = recv.read_to_end(1024).await?;
+//!                 println!("Response: {:?}", response);
+//!             }
+//!             Err(LinkError::PeerNotFound(_)) => {
+//!                 println!("Peer not in table - need to bootstrap");
+//!             }
+//!             Err(e) => eprintln!("Dial failed: {}", e),
+//!         }
+//!     }
+//!
 //!     Ok(())
+//! }
+//! ```
+//!
+//! ## Choosing Stream Types
+//!
+//! - **Bidirectional (`open_bi`)**: Use for request/response patterns where both
+//!   sides send and receive. Example: RPC calls, file transfers with acknowledgment.
+//!
+//! - **Unidirectional (`open_uni`)**: Use for one-way messages where no response
+//!   is needed. Example: event notifications, log streaming, pub/sub.
+//!
+//! - **Datagrams (`send_datagram`)**: Use for small, unreliable messages where
+//!   latency matters more than reliability. Example: heartbeats, real-time metrics.
+//!
+//! ## Error Handling Patterns
+//!
+//! ```rust,ignore
+//! use ant_quic::link_transport::{LinkError, LinkResult};
+//!
+//! async fn connect_with_retry<T: LinkTransport>(
+//!     transport: &T,
+//!     peer: PeerId,
+//!     proto: ProtocolId,
+//! ) -> LinkResult<T::Conn> {
+//!     for attempt in 1..=3 {
+//!         match transport.dial(peer, proto).await {
+//!             Ok(conn) => return Ok(conn),
+//!             Err(LinkError::PeerNotFound(_)) => {
+//!                 // Peer not in table - can't retry, need bootstrap
+//!                 return Err(LinkError::PeerNotFound(format!("{:?}", peer)));
+//!             }
+//!             Err(LinkError::ConnectionFailed(msg)) if attempt < 3 => {
+//!                 // Transient failure - retry after delay
+//!                 tokio::time::sleep(Duration::from_millis(100 * attempt as u64)).await;
+//!                 continue;
+//!             }
+//!             Err(LinkError::Timeout) if attempt < 3 => {
+//!                 // NAT traversal may need multiple attempts
+//!                 continue;
+//!             }
+//!             Err(e) => return Err(e),
+//!         }
+//!     }
+//!     Err(LinkError::ConnectionFailed("max retries exceeded".into()))
 //! }
 //! ```
 
@@ -487,50 +577,137 @@ pub type BoxStream<'a, T> = Pin<Box<dyn futures_util::Stream<Item = T> + Send + 
 /// A connection to a remote peer.
 ///
 /// This trait abstracts a single QUIC connection, providing methods to
-/// open streams and send/receive datagrams.
+/// open streams and send/receive datagrams. Connections are obtained via
+/// [`LinkTransport::dial`] or [`LinkTransport::accept`].
+///
+/// # Stream Types
+///
+/// - **Bidirectional streams** (`open_bi`): Both endpoints can send and receive.
+///   Use for request/response patterns.
+/// - **Unidirectional streams** (`open_uni`): Only the opener can send.
+///   Use for notifications or one-way data transfer.
+/// - **Datagrams** (`send_datagram`): Unreliable, unordered messages.
+///   Use for real-time data where latency > reliability.
+///
+/// # Connection Lifecycle
+///
+/// 1. Connection established (via dial or accept)
+/// 2. Open streams as needed
+/// 3. Close gracefully with `close()` or let it drop
 pub trait LinkConn: Send + Sync {
-    /// Get the remote peer's ID.
+    /// Get the remote peer's cryptographic identity.
+    ///
+    /// This is stable across reconnections and network changes.
     fn peer(&self) -> PeerId;
 
-    /// Get the remote peer's address.
+    /// Get the remote peer's current network address.
+    ///
+    /// Note: This may change during the connection lifetime due to
+    /// NAT rebinding or connection migration.
     fn remote_addr(&self) -> SocketAddr;
 
     /// Open a unidirectional stream (send only).
+    ///
+    /// The remote peer will receive this stream via their `accept_uni()`.
+    /// Use for one-way messages like notifications or log streams.
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// let mut stream = conn.open_uni().await?;
+    /// stream.write_all(b"notification").await?;
+    /// stream.finish()?; // Signal end of stream
+    /// ```
     fn open_uni(&self) -> BoxFuture<'_, LinkResult<Box<dyn LinkSendStream>>>;
 
-    /// Open a bidirectional stream.
+    /// Open a bidirectional stream for request/response communication.
+    ///
+    /// Returns a (send, recv) pair. Both sides can write and read.
+    /// Use for RPC, file transfers, or any interactive protocol.
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// let (mut send, mut recv) = conn.open_bi().await?;
+    /// send.write_all(b"request").await?;
+    /// send.finish()?;
+    /// let response = recv.read_to_end(4096).await?;
+    /// ```
     fn open_bi(&self) -> BoxFuture<'_, LinkResult<(Box<dyn LinkSendStream>, Box<dyn LinkRecvStream>)>>;
 
     /// Send an unreliable datagram to the peer.
+    ///
+    /// Datagrams are:
+    /// - **Unreliable**: May be dropped without notification
+    /// - **Unordered**: May arrive out of order
+    /// - **Size-limited**: Must fit in a single QUIC packet (~1200 bytes)
+    ///
+    /// Use for heartbeats, metrics, or real-time data where occasional
+    /// loss is acceptable.
     fn send_datagram(&self, data: Bytes) -> LinkResult<()>;
 
     /// Receive datagrams from the peer.
+    ///
+    /// Returns a stream of datagrams. Each datagram is delivered as-is
+    /// (no framing). The stream ends when the connection closes.
     fn recv_datagrams(&self) -> BoxStream<'_, Bytes>;
 
-    /// Close the connection with an error code.
+    /// Close the connection gracefully.
+    ///
+    /// # Parameters
+    /// - `error_code`: Application-defined error code (0 = normal close)
+    /// - `reason`: Human-readable reason for debugging
     fn close(&self, error_code: u64, reason: &str);
 
     /// Check if the connection is still open.
+    ///
+    /// Returns false after the connection has been closed (locally or remotely)
+    /// or if a fatal error occurred.
     fn is_open(&self) -> bool;
 
-    /// Get connection statistics.
+    /// Get current connection statistics.
+    ///
+    /// Useful for monitoring connection health and debugging performance.
     fn stats(&self) -> ConnectionStats;
 }
 
 /// Statistics for a connection.
+///
+/// Updated in real-time as the connection handles data. Use for:
+/// - Monitoring connection health
+/// - Detecting congestion (high RTT, packet loss)
+/// - Debugging performance issues
+///
+/// # Typical Values
+///
+/// | Metric | Good | Concerning | Critical |
+/// |--------|------|------------|----------|
+/// | RTT | <50ms | 50-200ms | >500ms |
+/// | Packet loss | <0.1% | 0.1-1% | >5% |
+///
+/// # Example
+/// ```rust,ignore
+/// let stats = conn.stats();
+/// if stats.rtt > Duration::from_millis(200) {
+///     log::warn!("High latency: {:?}", stats.rtt);
+/// }
+/// if stats.packets_lost > stats.bytes_sent / 100 {
+///     log::warn!("Significant packet loss detected");
+/// }
+/// ```
 #[derive(Debug, Clone, Default)]
 pub struct ConnectionStats {
-    /// Bytes sent on this connection.
+    /// Total bytes sent on this connection (including retransmits).
     pub bytes_sent: u64,
-    /// Bytes received on this connection.
+    /// Total bytes received on this connection.
     pub bytes_received: u64,
-    /// Current round-trip time estimate.
+    /// Current smoothed round-trip time estimate.
+    /// Calculated using QUIC's RTT estimation algorithm.
     pub rtt: Duration,
-    /// Connection uptime.
+    /// How long this connection has been established.
     pub connected_duration: Duration,
-    /// Number of streams opened.
+    /// Total number of streams opened (bidirectional + unidirectional).
     pub streams_opened: u64,
-    /// Packets lost (estimated).
+    /// Estimated packets lost during transmission.
+    /// High values indicate congestion or poor network conditions.
     pub packets_lost: u64,
 }
 
@@ -589,7 +766,7 @@ pub type Incoming<C> = BoxStream<'static, LinkResult<C>>;
 ///
 /// # Example Implementation
 ///
-/// The default implementation wraps [`P2pEndpoint`]:
+/// The default implementation wraps `P2pEndpoint`:
 ///
 /// ```rust,ignore
 /// let config = P2pConfig::builder()
@@ -602,51 +779,112 @@ pub trait LinkTransport: Send + Sync + 'static {
     /// The connection type returned by this transport.
     type Conn: LinkConn + 'static;
 
-    /// Get our local peer ID.
+    /// Get our local peer identity.
+    ///
+    /// This is our stable cryptographic identity, derived from our key pair.
+    /// It remains constant across restarts and network changes.
     fn local_peer(&self) -> PeerId;
 
-    /// Get our observed external address (if known).
+    /// Get our externally observed address, if known.
+    ///
+    /// Returns the address other peers see when we connect to them.
+    /// This is discovered via:
+    /// - OBSERVED_ADDRESS frames from connected peers
+    /// - NAT traversal address discovery
+    ///
+    /// Returns `None` if we haven't connected to any peers yet or
+    /// if we're behind a symmetric NAT that changes our external port.
     fn external_address(&self) -> Option<SocketAddr>;
 
-    /// Get the current peer table with capabilities.
+    /// Get all known peers with their capabilities.
     ///
-    /// This returns all known peers, including disconnected ones
-    /// that are still in the bootstrap cache.
+    /// Includes:
+    /// - Currently connected peers (`caps.is_connected = true`)
+    /// - Previously connected peers still in bootstrap cache
+    /// - Peers learned from relay/coordination traffic
+    ///
+    /// Use `Capabilities::quality_score()` to rank peers for selection.
     fn peer_table(&self) -> Vec<(PeerId, Capabilities)>;
 
     /// Get capabilities for a specific peer.
+    ///
+    /// Returns `None` if the peer is not known.
     fn peer_capabilities(&self, peer: &PeerId) -> Option<Capabilities>;
 
-    /// Subscribe to transport events.
+    /// Subscribe to transport-level events.
+    ///
+    /// Events include peer connections/disconnections, address changes,
+    /// and capability updates. Use for maintaining overlay state.
+    ///
+    /// Multiple subscribers are supported via broadcast channel.
     fn subscribe(&self) -> broadcast::Receiver<LinkEvent>;
 
     /// Accept incoming connections for a specific protocol.
+    ///
+    /// Returns a stream of connections from peers that want to speak
+    /// the specified protocol. Register your protocol first with
+    /// `register_protocol()`.
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// let mut incoming = transport.accept(MY_PROTOCOL);
+    /// while let Some(result) = incoming.next().await {
+    ///     if let Ok(conn) = result {
+    ///         tokio::spawn(handle_connection(conn));
+    ///     }
+    /// }
+    /// ```
     fn accept(&self, proto: ProtocolId) -> Incoming<Self::Conn>;
 
-    /// Dial a peer to establish a connection.
+    /// Dial a peer by their PeerId (preferred method).
     ///
-    /// This may involve NAT traversal, which is handled transparently.
+    /// Uses the peer table to find known addresses for this peer.
+    /// NAT traversal is handled automatically - if direct connection
+    /// fails, coordination and hole-punching are attempted.
+    ///
+    /// # Errors
+    /// - `PeerNotFound`: Peer not in table (need to bootstrap)
+    /// - `ConnectionFailed`: Network error (may be transient)
+    /// - `Timeout`: NAT traversal timed out (retry may succeed)
     fn dial(&self, peer: PeerId, proto: ProtocolId) -> BoxFuture<'_, LinkResult<Self::Conn>>;
 
-    /// Dial a peer by address (for bootstrap).
+    /// Dial a peer by direct address (for bootstrapping).
+    ///
+    /// Use when you don't know the peer's ID yet, such as when
+    /// connecting to a known seed address to join the network.
+    ///
+    /// After connection, the peer's ID will be available via
+    /// `conn.peer()`.
     fn dial_addr(&self, addr: SocketAddr, proto: ProtocolId) -> BoxFuture<'_, LinkResult<Self::Conn>>;
 
-    /// Get the list of protocols we support.
+    /// Get protocols we advertise as supported.
     fn supported_protocols(&self) -> Vec<ProtocolId>;
 
     /// Register a protocol as supported.
+    ///
+    /// Call this before `accept()` to receive connections for the protocol.
+    /// Registered protocols are advertised to connected peers.
     fn register_protocol(&self, proto: ProtocolId);
 
     /// Unregister a protocol.
+    ///
+    /// Stops accepting new connections for this protocol. Existing
+    /// connections are not affected.
     fn unregister_protocol(&self, proto: ProtocolId);
 
-    /// Check if we're connected to a peer.
+    /// Check if we have an active connection to a peer.
     fn is_connected(&self, peer: &PeerId) -> bool;
 
-    /// Get the number of active connections.
+    /// Get the count of active connections.
     fn active_connections(&self) -> usize;
 
     /// Gracefully shutdown the transport.
+    ///
+    /// Closes all connections, stops accepting new ones, and flushes
+    /// the bootstrap cache to disk. Pending operations will complete
+    /// or error.
+    ///
+    /// Call this before exiting to ensure clean shutdown.
     fn shutdown(&self) -> BoxFuture<'_, ()>;
 }
 
