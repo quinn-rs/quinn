@@ -301,12 +301,8 @@ impl Future for ConnectionDriver {
 
                 if conn.inner.side().is_server() {
                     runtime.spawn(Box::pin(async move {
-                        match crate::trust::recv_verify_binding(
-                            &hl_conn_server,
-                            &*store,
-                            &policy,
-                        )
-                        .await
+                        match crate::trust::recv_verify_binding(&hl_conn_server, &*store, &policy)
+                            .await
                         {
                             Ok(peer) => {
                                 hl_conn_server
@@ -332,13 +328,9 @@ impl Future for ConnectionDriver {
                 if conn.inner.side().is_client() {
                     runtime.spawn(Box::pin(async move {
                         if let Ok(exp) = crate::trust::derive_exporter(&hl_conn_client) {
-                            let _ = crate::trust::send_binding(
-                                &hl_conn_client,
-                                &exp,
-                                &signer,
-                                &spki,
-                            )
-                            .await;
+                            let _ =
+                                crate::trust::send_binding(&hl_conn_client, &exp, &signer, &spki)
+                                    .await;
                         }
                     }));
                 }

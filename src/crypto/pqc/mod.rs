@@ -165,11 +165,16 @@ mod performance_tests {
 
         // Check if we meet the target (relaxed for debug builds due to unoptimized crypto)
         // Debug builds are ~10x slower due to unoptimized PQC crypto operations
-        let max_overhead = if cfg!(debug_assertions) { 1000.0 } else { 150.0 };
+        let max_overhead = if cfg!(debug_assertions) {
+            1000.0
+        } else {
+            150.0
+        };
         assert!(
             overhead < max_overhead,
             "PQC overhead {:.1}% exceeds {}% target",
-            overhead, max_overhead
+            overhead,
+            max_overhead
         );
     }
 }

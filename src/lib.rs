@@ -265,7 +265,7 @@ pub use high_level::{
 
 // Re-export crypto utilities for peer ID management (v0.2: Pure PQC with ML-DSA-65)
 pub use crypto::raw_public_keys::key_utils::{
-    MlDsaPublicKey, MlDsaSecretKey, ML_DSA_65_PUBLIC_KEY_SIZE, ML_DSA_65_SECRET_KEY_SIZE,
+    ML_DSA_65_PUBLIC_KEY_SIZE, ML_DSA_65_SECRET_KEY_SIZE, MlDsaPublicKey, MlDsaSecretKey,
     derive_peer_id_from_key_bytes, derive_peer_id_from_public_key, generate_ml_dsa_keypair,
     verify_peer_id,
 };

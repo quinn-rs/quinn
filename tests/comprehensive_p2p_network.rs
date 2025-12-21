@@ -101,7 +101,10 @@ mod first_node_tests {
             1952,
             "ML-DSA-65 public key should be 1952 bytes"
         );
-        println!("First node public key (first 32 bytes): {}", hex::encode(&public_key[..32]));
+        println!(
+            "First node public key (first 32 bytes): {}",
+            hex::encode(&public_key[..32])
+        );
 
         node.shutdown().await;
     }

@@ -2,7 +2,7 @@
 //!
 //! v0.2: Updated to use the simplified MlKem768 implementation backed by saorsa-pqc.
 
-use ant_quic::crypto::pqc::{MlKemOperations, MlKem768};
+use ant_quic::crypto::pqc::{MlKem768, MlKemOperations};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== ML-KEM-768 Usage Example ===\n");

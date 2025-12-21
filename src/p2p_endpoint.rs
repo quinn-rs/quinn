@@ -61,7 +61,7 @@ use tracing::{debug, error, info, warn};
 // v0.2: auth module removed - TLS handles peer authentication via ML-DSA-65
 use crate::bounded_pending_buffer::BoundedPendingBuffer;
 use crate::crypto::raw_public_keys::key_utils::{
-    derive_peer_id_from_public_key, generate_ml_dsa_keypair, MlDsaPublicKey, MlDsaSecretKey,
+    MlDsaPublicKey, MlDsaSecretKey, derive_peer_id_from_public_key, generate_ml_dsa_keypair,
 };
 use crate::nat_traversal_api::{
     NatTraversalEndpoint, NatTraversalError, NatTraversalEvent, NatTraversalStatistics, PeerId,
@@ -83,7 +83,6 @@ pub struct P2pEndpoint {
     inner: Arc<NatTraversalEndpoint>,
 
     // v0.2: auth_manager removed - TLS handles peer authentication via ML-DSA-65
-
     /// Connected peers with their addresses
     connected_peers: Arc<RwLock<HashMap<PeerId, PeerConnection>>>,
 

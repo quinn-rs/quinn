@@ -21,10 +21,10 @@ use std::sync::Arc;
 use rustls::crypto::CryptoProvider;
 use rustls::pki_types::{AlgorithmIdentifier, InvalidSignature, SignatureVerificationAlgorithm};
 
+use super::MlDsaOperations;
 use super::config::PqcConfig;
 use super::ml_dsa::MlDsa65;
 use super::types::PqcError;
-use super::MlDsaOperations;
 
 /// ML-DSA-65 OID: 2.16.840.1.101.3.4.3.17
 const ML_DSA_65_OID: &[u8] = &[
@@ -83,7 +83,8 @@ const ML_DSA_65_SCHEME: rustls::SignatureScheme = rustls::SignatureScheme::ML_DS
 
 /// Static algorithm list with ML-DSA-65 only
 /// Note: We only need ML-DSA-65 for our Raw Public Key authentication
-static ML_DSA_65_ALGORITHMS: &[&'static dyn SignatureVerificationAlgorithm] = &[&ML_DSA_65_VERIFIER];
+static ML_DSA_65_ALGORITHMS: &[&'static dyn SignatureVerificationAlgorithm] =
+    &[&ML_DSA_65_VERIFIER];
 
 /// Mapping from TLS SignatureScheme to ML-DSA-65 verifier
 static ML_DSA_65_MAPPINGS: &[(
@@ -287,10 +288,16 @@ mod tests {
 
         // v0.2: Hybrid ML-KEM groups are accepted (still provide PQC protection)
         let result = validate_negotiated_group(rustls::NamedGroup::Unknown(0x11EC));
-        assert!(result.is_ok(), "X25519MLKEM768 should be accepted (contains ML-KEM)");
+        assert!(
+            result.is_ok(),
+            "X25519MLKEM768 should be accepted (contains ML-KEM)"
+        );
 
         let result = validate_negotiated_group(rustls::NamedGroup::Unknown(0x11EB));
-        assert!(result.is_ok(), "SecP256r1MLKEM768 should be accepted (contains ML-KEM)");
+        assert!(
+            result.is_ok(),
+            "SecP256r1MLKEM768 should be accepted (contains ML-KEM)"
+        );
     }
 
     #[test]

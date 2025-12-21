@@ -146,10 +146,8 @@ impl ServerCertVerifier for RawPublicKeyVerifier {
         let public_key = self.extract_ml_dsa_key(cert.as_ref())?;
 
         // Verify ML-DSA-65 signature
-        let sig =
-            MlDsa65Signature::from_bytes(dss.signature()).map_err(|_| {
-                TlsError::General("Invalid ML-DSA-65 signature format".to_string())
-            })?;
+        let sig = MlDsa65Signature::from_bytes(dss.signature())
+            .map_err(|_| TlsError::General("Invalid ML-DSA-65 signature format".to_string()))?;
 
         let verifier = MlDsa65::new();
         match verifier.verify(&public_key, message, &sig) {
@@ -157,7 +155,9 @@ impl ServerCertVerifier for RawPublicKeyVerifier {
                 debug!("TLS 1.3 ML-DSA-65 signature verification successful");
                 Ok(HandshakeSignatureValid::assertion())
             }
-            Ok(false) => Err(TlsError::General("Signature verification failed".to_string())),
+            Ok(false) => Err(TlsError::General(
+                "Signature verification failed".to_string(),
+            )),
             Err(_) => Err(TlsError::General(
                 "Signature verification error".to_string(),
             )),
@@ -420,8 +420,8 @@ impl RawPublicKeyConfigBuilder {
 /// Utility functions for key generation and conversion
 pub mod key_utils {
     pub use super::pqc::{
-        MlDsaPublicKey, MlDsaSecretKey, MlDsaSignature, ML_DSA_65_PUBLIC_KEY_SIZE,
-        ML_DSA_65_SECRET_KEY_SIZE, ML_DSA_65_SIGNATURE_SIZE, derive_peer_id_from_key_bytes,
+        ML_DSA_65_PUBLIC_KEY_SIZE, ML_DSA_65_SECRET_KEY_SIZE, ML_DSA_65_SIGNATURE_SIZE,
+        MlDsaPublicKey, MlDsaSecretKey, MlDsaSignature, derive_peer_id_from_key_bytes,
         derive_peer_id_from_public_key, generate_ml_dsa_keypair, verify_peer_id,
     };
 

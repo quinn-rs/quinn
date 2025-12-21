@@ -7,9 +7,9 @@
 mod pqc_raw_public_key_tests {
     use ant_quic::crypto::pqc::{MlDsaOperations, ml_dsa::MlDsa65};
     use ant_quic::crypto::raw_public_keys::pqc::{
-        create_subject_public_key_info, derive_peer_id_from_public_key, extract_public_key_from_spki,
-        generate_ml_dsa_keypair, sign_with_ml_dsa, supported_signature_schemes, verify_signature,
-        verify_with_ml_dsa, PqcRawPublicKeyVerifier,
+        PqcRawPublicKeyVerifier, create_subject_public_key_info, derive_peer_id_from_public_key,
+        extract_public_key_from_spki, generate_ml_dsa_keypair, sign_with_ml_dsa,
+        supported_signature_schemes, verify_signature, verify_with_ml_dsa,
     };
     use rustls::SignatureScheme;
 
@@ -162,10 +162,26 @@ mod pqc_raw_public_key_tests {
         let signature = sign_with_ml_dsa(&secret_key, message).expect("signing");
 
         // Use the verify_signature function with correct scheme
-        assert!(verify_signature(&public_key, message, signature.as_bytes(), SignatureScheme::Unknown(0x0901)).is_ok());
+        assert!(
+            verify_signature(
+                &public_key,
+                message,
+                signature.as_bytes(),
+                SignatureScheme::Unknown(0x0901)
+            )
+            .is_ok()
+        );
 
         // Wrong scheme should fail
-        assert!(verify_signature(&public_key, message, signature.as_bytes(), SignatureScheme::ED25519).is_err());
+        assert!(
+            verify_signature(
+                &public_key,
+                message,
+                signature.as_bytes(),
+                SignatureScheme::ED25519
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -197,7 +213,9 @@ mod pqc_raw_public_key_tests {
 
         // Wrong message should fail verification
         let wrong_message = b"Wrong message for verification";
-        let valid = ml_dsa.verify(&pk, wrong_message, &signature).expect("verify wrong");
+        let valid = ml_dsa
+            .verify(&pk, wrong_message, &signature)
+            .expect("verify wrong");
         assert!(!valid);
     }
 }

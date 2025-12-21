@@ -29,7 +29,12 @@
 #![allow(clippy::expect_used)] // Test binary - panics are acceptable
 
 use ant_quic::{
-    MtuConfig, P2pConfig, P2pEndpoint, P2pEvent, PeerId, TraversalPhase,
+    MtuConfig,
+    P2pConfig,
+    P2pEndpoint,
+    P2pEvent,
+    PeerId,
+    TraversalPhase,
     // v0.2: AuthConfig removed - TLS handles peer authentication via ML-DSA-65
 };
 use clap::Parser;

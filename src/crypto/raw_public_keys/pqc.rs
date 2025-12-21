@@ -29,9 +29,7 @@ use crate::crypto::pqc::{
 };
 
 // Re-export types for external use
-pub use crate::crypto::pqc::types::{
-    MlDsaPublicKey, MlDsaSecretKey, MlDsaSignature,
-};
+pub use crate::crypto::pqc::types::{MlDsaPublicKey, MlDsaSecretKey, MlDsaSignature};
 
 // =============================================================================
 // Constants

@@ -344,15 +344,11 @@ mod tests {
         let mut negotiator = PqcNegotiator::new(config);
 
         // v0.2: Both sides offer PRIMARY algorithms
-        negotiator.set_client_algorithms(
-            vec![NamedGroup::MlKem768],
-            vec![SignatureScheme::MlDsa65],
-        );
+        negotiator
+            .set_client_algorithms(vec![NamedGroup::MlKem768], vec![SignatureScheme::MlDsa65]);
 
-        negotiator.set_server_algorithms(
-            vec![NamedGroup::MlKem768],
-            vec![SignatureScheme::MlDsa65],
-        );
+        negotiator
+            .set_server_algorithms(vec![NamedGroup::MlKem768], vec![SignatureScheme::MlDsa65]);
 
         let result = negotiator.negotiate();
 
@@ -369,15 +365,11 @@ mod tests {
         let mut negotiator = PqcNegotiator::new(config);
 
         // Disjoint sets of pure PQC algorithms
-        negotiator.set_client_algorithms(
-            vec![NamedGroup::MlKem512],
-            vec![SignatureScheme::MlDsa44],
-        );
+        negotiator
+            .set_client_algorithms(vec![NamedGroup::MlKem512], vec![SignatureScheme::MlDsa44]);
 
-        negotiator.set_server_algorithms(
-            vec![NamedGroup::MlKem1024],
-            vec![SignatureScheme::MlDsa87],
-        );
+        negotiator
+            .set_server_algorithms(vec![NamedGroup::MlKem1024], vec![SignatureScheme::MlDsa87]);
 
         let result = negotiator.negotiate();
 
@@ -453,14 +445,10 @@ mod tests {
         let config = PqcConfig::default();
         let mut negotiator = PqcNegotiator::new(config);
 
-        negotiator.set_client_algorithms(
-            vec![NamedGroup::MlKem768],
-            vec![SignatureScheme::MlDsa65],
-        );
-        negotiator.set_server_algorithms(
-            vec![NamedGroup::MlKem768],
-            vec![SignatureScheme::MlDsa65],
-        );
+        negotiator
+            .set_client_algorithms(vec![NamedGroup::MlKem768], vec![SignatureScheme::MlDsa65]);
+        negotiator
+            .set_server_algorithms(vec![NamedGroup::MlKem768], vec![SignatureScheme::MlDsa65]);
 
         let debug_info = negotiator.debug_info();
         assert!(debug_info.contains("Client Groups"));

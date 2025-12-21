@@ -102,11 +102,8 @@ impl PqcTlsExtension {
     /// Classical and hybrid groups are NOT accepted.
     pub fn negotiate_group(&self, peer_groups: &[NamedGroup]) -> NegotiationResult<NamedGroup> {
         // v0.2: ONLY accept pure PQC groups
-        let pqc_groups: Vec<NamedGroup> = peer_groups
-            .iter()
-            .filter(|g| g.is_pqc())
-            .copied()
-            .collect();
+        let pqc_groups: Vec<NamedGroup> =
+            peer_groups.iter().filter(|g| g.is_pqc()).copied().collect();
 
         if let Some(group) = self.select_group(&pqc_groups) {
             return NegotiationResult::Selected(group);

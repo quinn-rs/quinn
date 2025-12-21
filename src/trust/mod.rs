@@ -14,7 +14,7 @@ static GLOBAL_TRUST: Mutex<Option<Arc<GlobalTrustRuntime>>> = Mutex::new(None);
 
 use crate::crypto::pqc::types::{MlDsaPublicKey, MlDsaSecretKey, MlDsaSignature};
 use crate::crypto::raw_public_keys::pqc::{
-    extract_public_key_from_spki, sign_with_ml_dsa, verify_with_ml_dsa, ML_DSA_65_SIGNATURE_SIZE,
+    ML_DSA_65_SIGNATURE_SIZE, extract_public_key_from_spki, sign_with_ml_dsa, verify_with_ml_dsa,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -393,7 +393,10 @@ pub fn derive_exporter(conn: &Connection) -> Result<[u8; 32], TrustError> {
 }
 
 /// Sign the exporter with an ML-DSA-65 private key.
-pub fn sign_exporter(sk: &MlDsaSecretKey, exporter: &[u8; 32]) -> Result<MlDsaSignature, TrustError> {
+pub fn sign_exporter(
+    sk: &MlDsaSecretKey,
+    exporter: &[u8; 32],
+) -> Result<MlDsaSignature, TrustError> {
     sign_with_ml_dsa(sk, exporter).map_err(|_| TrustError::ChannelBinding("ML-DSA sign failed"))
 }
 

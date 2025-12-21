@@ -43,11 +43,7 @@ mod zero_config_tests {
 
         // Verify it has a public key (PeerId is 32-byte SHA256 hash of ML-DSA-65 public key)
         let public_key = node.public_key_bytes();
-        assert_eq!(
-            public_key.len(),
-            32,
-            "PeerId should be 32 bytes"
-        );
+        assert_eq!(public_key.len(), 32, "PeerId should be 32 bytes");
 
         node.shutdown().await;
     }

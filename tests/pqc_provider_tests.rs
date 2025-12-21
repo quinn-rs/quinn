@@ -83,7 +83,10 @@ fn test_validate_negotiated_group_ml_kem() {
 
     // v0.2: Hybrid ML-KEM groups are accepted (still provide PQC protection)
     let result = validate_negotiated_group(rustls::NamedGroup::Unknown(0x11EC));
-    assert!(result.is_ok(), "X25519MLKEM768 should be accepted (contains ML-KEM)");
+    assert!(
+        result.is_ok(),
+        "X25519MLKEM768 should be accepted (contains ML-KEM)"
+    );
 }
 
 /// Test PQC group detection (v2.0: ONLY pure ML-KEM)
@@ -171,5 +174,8 @@ fn test_validate_pqc_connection() {
 
     // v0.2: Hybrid ML-KEM groups are accepted (provide PQC protection)
     let result = validate_pqc_connection(rustls::NamedGroup::Unknown(0x11EC));
-    assert!(result.is_ok(), "X25519MLKEM768 should be accepted (contains ML-KEM)");
+    assert!(
+        result.is_ok(),
+        "X25519MLKEM768 should be accepted (contains ML-KEM)"
+    );
 }

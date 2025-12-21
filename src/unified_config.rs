@@ -56,7 +56,6 @@ pub struct P2pConfig {
     pub max_connections: usize,
 
     // v0.2: auth field removed - TLS handles peer authentication via ML-DSA-65
-
     /// NAT traversal configuration
     pub nat: NatConfig,
 

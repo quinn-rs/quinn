@@ -279,11 +279,7 @@ mod tests {
         // v0.2: Should only contain pure PQC algorithms (NO hybrids)
         for &group_code in &groups {
             if let Some(group) = NamedGroup::from_u16(group_code) {
-                assert!(
-                    group.is_pqc(),
-                    "Expected pure PQC group, got {:?}",
-                    group
-                );
+                assert!(group.is_pqc(), "Expected pure PQC group, got {:?}", group);
             }
         }
 

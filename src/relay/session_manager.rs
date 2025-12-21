@@ -168,7 +168,9 @@ impl SessionManager {
     ///
     /// # Errors
     /// Returns an error if the internal authenticator fails to initialize.
-    pub fn new(config: SessionConfig) -> RelayResult<(Self, mpsc::UnboundedReceiver<SessionEvent>)> {
+    pub fn new(
+        config: SessionConfig,
+    ) -> RelayResult<(Self, mpsc::UnboundedReceiver<SessionEvent>)> {
         let (event_sender, event_receiver) = mpsc::unbounded_channel();
 
         let manager = Self {
@@ -671,12 +673,16 @@ mod tests {
 
         // Forward data
         let data = vec![1, 2, 3, 4, 5];
-        assert!(manager
-            .forward_data(session_id, data.clone(), ForwardDirection::ClientToPeer)
-            .is_ok());
-        assert!(manager
-            .forward_data(session_id, data, ForwardDirection::PeerToClient)
-            .is_ok());
+        assert!(
+            manager
+                .forward_data(session_id, data.clone(), ForwardDirection::ClientToPeer)
+                .is_ok()
+        );
+        assert!(
+            manager
+                .forward_data(session_id, data, ForwardDirection::PeerToClient)
+                .is_ok()
+        );
 
         // Check statistics updated
         let session = manager.get_session(session_id).unwrap();

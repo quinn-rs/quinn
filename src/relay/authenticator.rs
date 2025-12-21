@@ -10,7 +10,7 @@
 use crate::crypto::pqc::types::{MlDsaPublicKey, MlDsaSecretKey, MlDsaSignature};
 use crate::crypto::raw_public_keys::key_utils::generate_ml_dsa_keypair;
 use crate::crypto::raw_public_keys::pqc::{
-    sign_with_ml_dsa, verify_with_ml_dsa, ML_DSA_65_SIGNATURE_SIZE,
+    ML_DSA_65_SIGNATURE_SIZE, sign_with_ml_dsa, verify_with_ml_dsa,
 };
 use crate::relay::{RelayError, RelayResult};
 use std::collections::HashSet;
@@ -78,8 +78,8 @@ impl AuthToken {
 
     /// Generate a cryptographically secure nonce
     fn generate_nonce() -> u64 {
-        use rand::rngs::OsRng;
         use rand::Rng;
+        use rand::rngs::OsRng;
         OsRng.r#gen()
     }
 
@@ -105,10 +105,11 @@ impl AuthToken {
 
     /// Verify the token signature
     pub fn verify(&self, public_key: &MlDsaPublicKey) -> RelayResult<()> {
-        let signature =
-            MlDsaSignature::from_bytes(&self.signature).map_err(|_| RelayError::AuthenticationFailed {
+        let signature = MlDsaSignature::from_bytes(&self.signature).map_err(|_| {
+            RelayError::AuthenticationFailed {
                 reason: "Invalid signature format".to_string(),
-            })?;
+            }
+        })?;
 
         verify_with_ml_dsa(public_key, &self.signable_data(), &signature).map_err(|_| {
             RelayError::AuthenticationFailed {
@@ -130,11 +131,10 @@ impl RelayAuthenticator {
     /// # Errors
     /// Returns an error if ML-DSA-65 key generation fails.
     pub fn new() -> RelayResult<Self> {
-        let (public_key, secret_key) = generate_ml_dsa_keypair().map_err(|e| {
-            RelayError::AuthenticationFailed {
+        let (public_key, secret_key) =
+            generate_ml_dsa_keypair().map_err(|e| RelayError::AuthenticationFailed {
                 reason: format!("ML-DSA-65 keypair generation failed: {}", e),
-            }
-        })?;
+            })?;
 
         Ok(Self {
             public_key,
@@ -301,14 +301,18 @@ mod tests {
         let token = authenticator.create_token(1024, 300).unwrap();
 
         // First verification should succeed
-        assert!(authenticator
-            .verify_token(&token, authenticator.public_key())
-            .is_ok());
+        assert!(
+            authenticator
+                .verify_token(&token, authenticator.public_key())
+                .is_ok()
+        );
 
         // Second verification should fail (replay)
-        assert!(authenticator
-            .verify_token(&token, authenticator.public_key())
-            .is_err());
+        assert!(
+            authenticator
+                .verify_token(&token, authenticator.public_key())
+                .is_err()
+        );
     }
 
     #[test]
@@ -368,9 +372,11 @@ mod tests {
         assert_eq!(authenticator.nonce_count(), 0);
 
         // Should be able to use the same token again
-        assert!(authenticator
-            .verify_token(&token, authenticator.public_key())
-            .is_ok());
+        assert!(
+            authenticator
+                .verify_token(&token, authenticator.public_key())
+                .is_ok()
+        );
     }
 
     #[test]

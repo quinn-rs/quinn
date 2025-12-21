@@ -179,7 +179,10 @@ async fn test_ml_dsa_operations() {
         keygen_time < Duration::from_millis(keygen_limit),
         "Key generation too slow"
     );
-    assert!(sign_time < Duration::from_millis(sign_limit), "Signing too slow");
+    assert!(
+        sign_time < Duration::from_millis(sign_limit),
+        "Signing too slow"
+    );
     assert!(
         verify_time < Duration::from_millis(verify_limit),
         "Verification too slow"

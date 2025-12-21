@@ -45,9 +45,7 @@ fn create_random_port_bind_addr() -> SocketAddr {
 /// RFC 7250 Raw Public Keys use SubjectPublicKeyInfo format.
 ///
 /// Returns the extracted ML-DSA-65 public key if valid SPKI, None otherwise.
-fn extract_ml_dsa_from_spki(
-    spki: &[u8],
-) -> Option<crate::crypto::pqc::types::MlDsaPublicKey> {
+fn extract_ml_dsa_from_spki(spki: &[u8]) -> Option<crate::crypto::pqc::types::MlDsaPublicKey> {
     crate::crypto::raw_public_keys::pqc::extract_public_key_from_spki(spki).ok()
 }
 
@@ -203,7 +201,10 @@ pub struct NatTraversalConfig {
     /// If None, a random keypair is generated (not recommended for production as it
     /// won't match the application-layer PeerId).
     #[serde(skip)]
-    pub identity_key: Option<(crate::crypto::pqc::types::MlDsaPublicKey, crate::crypto::pqc::types::MlDsaSecretKey)>,
+    pub identity_key: Option<(
+        crate::crypto::pqc::types::MlDsaPublicKey,
+        crate::crypto::pqc::types::MlDsaSecretKey,
+    )>,
 }
 
 // v0.13.0: EndpointRole enum has been removed.
@@ -1416,8 +1417,13 @@ impl NatTraversalEndpoint {
                     debug!(
                         "No identity key provided - generating new keypair (identity mismatch warning)"
                     );
-                    crate::crypto::raw_public_keys::key_utils::generate_ml_dsa_keypair()
-                        .map_err(|e| NatTraversalError::ConfigError(format!("ML-DSA-65 keygen failed: {e:?}")))?
+                    crate::crypto::raw_public_keys::key_utils::generate_ml_dsa_keypair().map_err(
+                        |e| {
+                            NatTraversalError::ConfigError(format!(
+                                "ML-DSA-65 keygen failed: {e:?}"
+                            ))
+                        },
+                    )?
                 }
             };
 
@@ -1471,8 +1477,13 @@ impl NatTraversalEndpoint {
                 }
                 None => {
                     debug!("No identity key provided for client - generating new keypair");
-                    crate::crypto::raw_public_keys::key_utils::generate_ml_dsa_keypair()
-                        .map_err(|e| NatTraversalError::ConfigError(format!("ML-DSA-65 keygen failed: {e:?}")))?
+                    crate::crypto::raw_public_keys::key_utils::generate_ml_dsa_keypair().map_err(
+                        |e| {
+                            NatTraversalError::ConfigError(format!(
+                                "ML-DSA-65 keygen failed: {e:?}"
+                            ))
+                        },
+                    )?
                 }
             };
 

@@ -6,9 +6,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use ant_quic::{
-    crypto::raw_public_keys::pqc::{
-        derive_peer_id_from_public_key, generate_ml_dsa_keypair,
-    },
+    crypto::raw_public_keys::pqc::{derive_peer_id_from_public_key, generate_ml_dsa_keypair},
     nat_traversal_api::{
         NatTraversalConfig, NatTraversalEndpoint, NatTraversalError, NatTraversalEvent,
     },
