@@ -278,6 +278,14 @@ pub use link_transport::{
 };
 pub use link_transport_impl::{P2pLinkConn, P2pLinkTransport, P2pRecvStream, P2pSendStream};
 
+// Bootstrap cache for peer persistence and quality-based selection
+pub mod bootstrap_cache;
+pub use bootstrap_cache::{
+    BootstrapCache, BootstrapCacheConfig, BootstrapCacheConfigBuilder, CacheEvent, CacheStats,
+    CachedPeer, ConnectionOutcome, ConnectionStats as CacheConnectionStats, NatType as CacheNatType,
+    PeerCapabilities, PeerSource, QualityWeights, SelectionStrategy,
+};
+
 // Re-export crypto utilities for peer ID management (v0.2: Pure PQC with ML-DSA-65)
 pub use crypto::raw_public_keys::key_utils::{
     ML_DSA_65_PUBLIC_KEY_SIZE, ML_DSA_65_SECRET_KEY_SIZE, MlDsaPublicKey, MlDsaSecretKey,
