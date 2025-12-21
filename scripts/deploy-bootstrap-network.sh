@@ -31,28 +31,37 @@ SERVICE_NAME="ant-quic"
 DASHBOARD_PORT="8080"
 QUIC_PORT="9000"
 
-# Node definitions
-declare -A NODES=(
-    ["saorsa-1"]="saorsa-1.saorsalabs.com"
-    ["saorsa-2"]="saorsa-2.saorsalabs.com"
-    ["saorsa-3"]="saorsa-3.saorsalabs.com"
-)
+# Node definitions (bash 3.x compatible)
+NODE_NAMES="saorsa-1 saorsa-2 saorsa-3"
 
-declare -A NODE_IPS=(
-    ["saorsa-1"]="77.42.75.115"
-    ["saorsa-2"]="162.243.167.201"
-    ["saorsa-3"]="159.65.221.230"
-)
+get_node_hostname() {
+    case "$1" in
+        saorsa-1) echo "saorsa-1.saorsalabs.com" ;;
+        saorsa-2) echo "saorsa-2.saorsalabs.com" ;;
+        saorsa-3) echo "saorsa-3.saorsalabs.com" ;;
+    esac
+}
 
-declare -A NODE_LOCATIONS=(
-    ["saorsa-1"]="hetzner-eu"
-    ["saorsa-2"]="do-nyc"
-    ["saorsa-3"]="do-nyc"
-)
+get_node_ip() {
+    case "$1" in
+        saorsa-1) echo "77.42.75.115" ;;
+        saorsa-2) echo "162.243.167.201" ;;
+        saorsa-3) echo "159.65.221.230" ;;
+    esac
+}
+
+get_node_location() {
+    case "$1" in
+        saorsa-1) echo "hetzner-eu" ;;
+        saorsa-2) echo "do-nyc" ;;
+        saorsa-3) echo "do-nyc" ;;
+    esac
+}
 
 # Dashboard node
 DASHBOARD_NODE="saorsa-1"
-DASHBOARD_URL="http://${NODES[$DASHBOARD_NODE]}:${DASHBOARD_PORT}"
+DASHBOARD_HOSTNAME=$(get_node_hostname "$DASHBOARD_NODE")
+DASHBOARD_URL="http://${DASHBOARD_HOSTNAME}:${DASHBOARD_PORT}"
 
 # Parse arguments
 VERSION=""
@@ -101,7 +110,8 @@ log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 remote_exec() {
     local node=$1
     local cmd=$2
-    local hostname=${NODES[$node]}
+    local hostname
+    hostname=$(get_node_hostname "$node")
 
     if $DRY_RUN; then
         echo -e "${YELLOW}[DRY-RUN]${NC} ssh root@${hostname} '$cmd'"
@@ -115,7 +125,8 @@ remote_copy() {
     local src=$1
     local node=$2
     local dest=$3
-    local hostname=${NODES[$node]}
+    local hostname
+    hostname=$(get_node_hostname "$node")
 
     if $DRY_RUN; then
         echo -e "${YELLOW}[DRY-RUN]${NC} scp $src root@${hostname}:$dest"
@@ -124,16 +135,16 @@ remote_copy() {
     fi
 }
 
-# Get all bootstrap peers except the current node
+# Get all bootstrap peers except the current node (uses IPs for SocketAddr compatibility)
 get_peers_for_node() {
     local current_node=$1
     local peers=""
-    for node in "${!NODES[@]}"; do
+    for node in $NODE_NAMES; do
         if [[ "$node" != "$current_node" ]]; then
             if [[ -n "$peers" ]]; then
                 peers="${peers},"
             fi
-            peers="${peers}${NODES[$node]}:${QUIC_PORT}"
+            peers="${peers}$(get_node_ip "$node"):${QUIC_PORT}"
         fi
     done
     echo "$peers"
@@ -142,15 +153,24 @@ get_peers_for_node() {
 # Generate systemd service file
 generate_service_file() {
     local node=$1
-    local peers=$(get_peers_for_node "$node")
-    local location=${NODE_LOCATIONS[$node]}
-    local metrics_args=""
+    local peers
+    local location
+    peers=$(get_peers_for_node "$node")
+    location=$(get_node_location "$node")
 
-    # Only saorsa-1 doesn't send metrics (it runs the dashboard)
-    # Other nodes send metrics to saorsa-1
+    # Build the ExecStart command
+    local exec_cmd="${INSTALL_DIR}/ant-quic"
+    exec_cmd="${exec_cmd} --listen 0.0.0.0:${QUIC_PORT}"
+    exec_cmd="${exec_cmd} --known-peers ${peers}"
+    exec_cmd="${exec_cmd} --node-id ${node}"
+    exec_cmd="${exec_cmd} --node-location ${location}"
+
+    # Only non-dashboard nodes send metrics to the dashboard
     if [[ "$node" != "$DASHBOARD_NODE" ]]; then
-        metrics_args="--metrics-server ${DASHBOARD_URL}"
+        exec_cmd="${exec_cmd} --metrics-server ${DASHBOARD_URL}"
     fi
+
+    exec_cmd="${exec_cmd} --stats --stats-interval 30"
 
     cat << EOF
 [Unit]
@@ -161,13 +181,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 User=root
-ExecStart=${INSTALL_DIR}/ant-quic \\
-    --listen 0.0.0.0:${QUIC_PORT} \\
-    --known-peers ${peers} \\
-    --node-id ${node} \\
-    --node-location ${location} \\
-    ${metrics_args} \\
-    --stats --stats-interval 30
+ExecStart=${exec_cmd}
 Restart=always
 RestartSec=5
 StandardOutput=append:/var/log/ant-quic.log
@@ -204,7 +218,8 @@ EOF
 deploy_node() {
     local node=$1
     local version=$2
-    local hostname=${NODES[$node]}
+    local hostname
+    hostname=$(get_node_hostname "$node")
 
     log_info "Deploying to ${node} (${hostname})..."
 
@@ -263,14 +278,14 @@ cmd_deploy() {
         log_info "Using latest version: v${VERSION}"
     fi
 
-    local nodes_to_deploy=()
+    local nodes_to_deploy
     if [[ -n "$TARGET_NODE" ]]; then
-        nodes_to_deploy=("$TARGET_NODE")
+        nodes_to_deploy="$TARGET_NODE"
     else
-        nodes_to_deploy=("${!NODES[@]}")
+        nodes_to_deploy="$NODE_NAMES"
     fi
 
-    for node in "${nodes_to_deploy[@]}"; do
+    for node in $nodes_to_deploy; do
         deploy_node "$node" "$VERSION"
     done
 
@@ -280,11 +295,11 @@ cmd_deploy() {
 
 # Command: start
 cmd_start() {
-    local nodes_to_start=()
+    local nodes_to_start
     if [[ -n "$TARGET_NODE" ]]; then
-        nodes_to_start=("$TARGET_NODE")
+        nodes_to_start="$TARGET_NODE"
     else
-        nodes_to_start=("${!NODES[@]}")
+        nodes_to_start="$NODE_NAMES"
     fi
 
     # Start dashboard first
@@ -294,7 +309,7 @@ cmd_start() {
         sleep 2
     fi
 
-    for node in "${nodes_to_start[@]}"; do
+    for node in $nodes_to_start; do
         log_info "Starting ${SERVICE_NAME} on ${node}..."
         remote_exec "$node" "systemctl start ${SERVICE_NAME}"
     done
@@ -304,14 +319,14 @@ cmd_start() {
 
 # Command: stop
 cmd_stop() {
-    local nodes_to_stop=()
+    local nodes_to_stop
     if [[ -n "$TARGET_NODE" ]]; then
-        nodes_to_stop=("$TARGET_NODE")
+        nodes_to_stop="$TARGET_NODE"
     else
-        nodes_to_stop=("${!NODES[@]}")
+        nodes_to_stop="$NODE_NAMES"
     fi
 
-    for node in "${nodes_to_stop[@]}"; do
+    for node in $nodes_to_stop; do
         log_info "Stopping ${SERVICE_NAME} on ${node}..."
         remote_exec "$node" "systemctl stop ${SERVICE_NAME} 2>/dev/null || true"
         if [[ "$node" == "$DASHBOARD_NODE" ]]; then
@@ -337,13 +352,16 @@ cmd_status() {
     echo "==========================================="
     echo ""
 
-    for node in "${!NODES[@]}"; do
-        local hostname=${NODES[$node]}
-        local ip=${NODE_IPS[$node]}
+    for node in $NODE_NAMES; do
+        local hostname
+        local ip
+        hostname=$(get_node_hostname "$node")
+        ip=$(get_node_ip "$node")
         echo -e "${BLUE}${node}${NC} (${hostname} / ${ip})"
 
         # Check service status
-        local status=$(remote_exec "$node" "systemctl is-active ${SERVICE_NAME} 2>/dev/null || echo 'inactive'")
+        local status
+        status=$(remote_exec "$node" "systemctl is-active ${SERVICE_NAME} 2>/dev/null || echo 'inactive'")
         if [[ "$status" == "active" ]]; then
             echo -e "  ant-quic: ${GREEN}running${NC}"
         else
@@ -352,7 +370,8 @@ cmd_status() {
 
         # Check dashboard on dashboard node
         if [[ "$node" == "$DASHBOARD_NODE" ]]; then
-            local dashboard_status=$(remote_exec "$node" "systemctl is-active e2e-dashboard 2>/dev/null || echo 'inactive'")
+            local dashboard_status
+            dashboard_status=$(remote_exec "$node" "systemctl is-active e2e-dashboard 2>/dev/null || echo 'inactive'")
             if [[ "$dashboard_status" == "active" ]]; then
                 echo -e "  dashboard: ${GREEN}running${NC} (${DASHBOARD_URL})"
             else
@@ -375,14 +394,14 @@ cmd_status() {
 
 # Command: logs
 cmd_logs() {
-    local nodes_to_log=()
+    local nodes_to_log
     if [[ -n "$TARGET_NODE" ]]; then
-        nodes_to_log=("$TARGET_NODE")
+        nodes_to_log="$TARGET_NODE"
     else
-        nodes_to_log=("${!NODES[@]}")
+        nodes_to_log="$NODE_NAMES"
     fi
 
-    for node in "${nodes_to_log[@]}"; do
+    for node in $nodes_to_log; do
         echo -e "\n${BLUE}=== Logs from ${node} ===${NC}\n"
         remote_exec "$node" "tail -50 /var/log/ant-quic.log 2>/dev/null || journalctl -u ${SERVICE_NAME} -n 50 --no-pager"
     done
@@ -406,8 +425,9 @@ cmd_health() {
     echo "Checking node connectivity..."
     echo ""
 
-    for node in "${!NODES[@]}"; do
-        local hostname=${NODES[$node]}
+    for node in $NODE_NAMES; do
+        local hostname
+        hostname=$(get_node_hostname "$node")
         echo -n "${node}: "
         if ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 "root@${hostname}" "echo ok" 2>/dev/null; then
             echo -e "${GREEN}SSH OK${NC}"
@@ -447,9 +467,9 @@ Examples:
   $0 logs --node saorsa-2            # View logs from specific node
 
 Nodes:
-  saorsa-1  ${NODES[saorsa-1]} (Dashboard + Primary bootstrap)
-  saorsa-2  ${NODES[saorsa-2]} (Bootstrap peer)
-  saorsa-3  ${NODES[saorsa-3]} (NAT test node)
+  saorsa-1  saorsa-1.saorsalabs.com (Dashboard + Primary bootstrap)
+  saorsa-2  saorsa-2.saorsalabs.com (Bootstrap peer)
+  saorsa-3  saorsa-3.saorsalabs.com (NAT test node)
 
 Dashboard: ${DASHBOARD_URL}
 EOF
