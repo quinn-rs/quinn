@@ -931,7 +931,9 @@ pub struct VerifiedDataChunk {
 impl VerifiedDataChunk {
     /// Create a new verified chunk with random data
     fn generate(sequence: u64, size: usize) -> Self {
-        let data: Vec<u8> = (0..size).map(|i| ((sequence + i as u64) % 256) as u8).collect();
+        let data: Vec<u8> = (0..size)
+            .map(|i| ((sequence + i as u64) % 256) as u8)
+            .collect();
         let checksum = compute_sha256(&data);
         Self {
             sequence,
