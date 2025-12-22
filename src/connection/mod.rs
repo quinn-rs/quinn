@@ -4320,57 +4320,6 @@ impl Connection {
         }
     }
 
-    /* FIXME: This function needs to be rewritten for the new enum-based NatTraversalConfig
-    /// Validate that NAT traversal roles are compatible
-    fn validate_nat_traversal_roles(
-        &self,
-        local_config: &crate::transport_parameters::NatTraversalConfig,
-        peer_config: &crate::transport_parameters::NatTraversalConfig,
-    ) -> Result<(), String> {
-        // Check for invalid role combinations
-        match (&local_config.role, &peer_config.role) {
-            // Both bootstrap nodes - this is unusual but allowed
-            (
-                crate::transport_parameters::NatTraversalRole::Bootstrap,
-                crate::transport_parameters::NatTraversalRole::Bootstrap,
-            ) => {
-                debug!("Both endpoints are bootstrap nodes - unusual but allowed");
-            }
-            // Client-Server combinations are ideal
-            (
-                crate::transport_parameters::NatTraversalRole::Client,
-                crate::transport_parameters::NatTraversalRole::Server { .. },
-            )
-            | (
-                crate::transport_parameters::NatTraversalRole::Server { .. },
-                crate::transport_parameters::NatTraversalRole::Client,
-            ) => {
-                debug!("Client-Server NAT traversal role combination");
-            }
-            // Bootstrap can coordinate with anyone
-            (crate::transport_parameters::NatTraversalRole::Bootstrap, _)
-            | (_, crate::transport_parameters::NatTraversalRole::Bootstrap) => {
-                debug!("Bootstrap node coordination");
-            }
-            // Client-Client requires bootstrap coordination
-            (
-                crate::transport_parameters::NatTraversalRole::Client,
-                crate::transport_parameters::NatTraversalRole::Client,
-            ) => {
-                debug!("Client-Client connection requires bootstrap coordination");
-            }
-            // Server-Server is allowed but may need coordination
-            (
-                crate::transport_parameters::NatTraversalRole::Server { .. },
-                crate::transport_parameters::NatTraversalRole::Server { .. },
-            ) => {
-                debug!("Server-Server connection");
-            }
-        }
-
-        Ok(())
-    }
-    */
 
     /// Emit NAT traversal capability negotiation event
     fn emit_nat_traversal_capability_event(&mut self, negotiated: bool) {

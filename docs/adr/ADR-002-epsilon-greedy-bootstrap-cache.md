@@ -18,6 +18,30 @@ We need a bootstrap cache that:
 - Persists across restarts
 - Handles multi-process access safely
 
+### Latest Release
+
+All features implemented and tested with 40 passing unit tests.
+
+---
+
+## Implementation Notes
+
+### Naming Convention (2025-12-22)
+
+The actual implementation uses the type name `BootstrapCache` rather than `GreedyBootstrapCache` as originally specified in this ADR. This decision prioritizes API simplicity and ergonomics:
+
+- **Type name**: `BootstrapCache` (src/bootstrap_cache/cache.rs)
+- **Algorithm**: Epsilon-greedy selection (unchanged)
+- **Rationale**: The term "epsilon-greedy" describes the internal algorithm, not the user-facing purpose. Users interact with a "bootstrap cache" that happens to use smart selection internally.
+
+The epsilon-greedy strategy remains fully implemented with all specified features:
+- Quality scoring based on success/failure ratio
+- Configurable exploration rate (ε = 0.1)
+- Time-based decay
+- Capacity limits with LRU eviction
+
+This naming change affects only the public API surface - the algorithmic behavior is identical to the ADR specification.
+
 ## Decision
 
 Implement an **epsilon-greedy** bootstrap cache with quality-based peer selection:

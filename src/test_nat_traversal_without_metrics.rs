@@ -12,7 +12,8 @@
 #[cfg(test)]
 mod nat_traversal_functional_tests {
     use crate::{
-        nat_traversal_api::{NatTraversalEndpoint, NatTraversalRole},
+        // v0.13.0: NatTraversalRole removed - all nodes are symmetric P2P
+        nat_traversal_api::NatTraversalEndpoint,
         candidate_discovery::CandidateAddress,
         transport_parameters::PreferredAddress,
     };
@@ -21,10 +22,9 @@ mod nat_traversal_functional_tests {
 
     #[tokio::test]
     async fn test_nat_traversal_discovers_candidates_without_metrics() {
-        // Create NAT traversal endpoint
+        // Create NAT traversal endpoint (v0.13.0: no role parameter)
         let endpoint = NatTraversalEndpoint::new(
-            NatTraversalRole::Client,
-            vec![],
+            vec![], // bootstrap peers
         ).await.expect("Failed to create endpoint");
 
         // Add some test candidates
@@ -56,13 +56,11 @@ mod nat_traversal_functional_tests {
     async fn test_connection_establishment_without_metrics() {
         // Test that connections can be established without relying on success counters
         let client_endpoint = NatTraversalEndpoint::new(
-            NatTraversalRole::Client,
-            vec![],
+            vec![], // bootstrap peers
         ).await.expect("Failed to create client endpoint");
 
         let server_endpoint = NatTraversalEndpoint::new(
-            NatTraversalRole::Server,
-            vec![],
+            vec![], // bootstrap peers
         ).await.expect("Failed to create server endpoint");
 
         // In a real test, we would:

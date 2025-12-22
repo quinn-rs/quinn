@@ -395,19 +395,6 @@ impl AddressDiscoveryConfig {
     }
 }
 
-/// Role of an endpoint in NAT traversal coordination
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
-pub enum NatTraversalRole {
-    /// Client endpoint (initiates connections, on-demand)
-    Client,
-    /// Server endpoint (accepts connections, always reachable)
-    Server {
-        /// Whether this server can act as a relay for other connections
-        can_relay: bool,
-    },
-    /// Bootstrap/relay endpoint (publicly reachable, coordinates traversal)
-    Bootstrap,
-}
 
 /// A server's preferred address
 ///

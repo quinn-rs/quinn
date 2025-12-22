@@ -29,9 +29,8 @@ mod tests {
     use std::sync::Arc;
 
     /// Create a test NAT traversal state
-    fn create_test_state(role: NatTraversalRole) -> NatTraversalState {
+    fn create_test_state() -> NatTraversalState {
         NatTraversalState {
-            role,
             local_candidates: HashMap::new(),
             remote_candidates: HashMap::new(),
             candidate_pairs: Vec::new(),
@@ -79,13 +78,7 @@ mod tests {
         format!("{:x}", hasher.finish())
     }
 
-    #[test]
-    fn test_nat_traversal_role_serialization() {
-        // Test role encoding/decoding
-        assert_eq!(NatTraversalRole::Client as u8, 0);
-        assert_eq!(NatTraversalRole::Server { can_relay: false } as u8, 1);
-        assert_eq!(NatTraversalRole::Bootstrap as u8, 2);
-    }
+    // v0.13.0: Removed test_nat_traversal_role_serialization - roles deprecated in symmetric P2P
 
     #[test]
     fn test_candidate_priority_calculation() {
@@ -105,7 +98,7 @@ mod tests {
 
     #[test]
     fn test_add_local_candidate() {
-        let mut state = create_test_state(NatTraversalRole::Client);
+        let mut state = create_test_state();
         let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100)), 5000);
         
         // Add candidate
@@ -125,7 +118,7 @@ mod tests {
 
     #[test]
     fn test_add_remote_candidate() {
-        let mut state = create_test_state(NatTraversalRole::Server { can_relay: false });
+        let mut state = create_test_state();
         let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(203, 0, 113, 1)), 6000);
         
         // Add remote candidate
@@ -139,7 +132,7 @@ mod tests {
 
     #[test]
     fn test_candidate_pair_generation() {
-        let mut state = create_test_state(NatTraversalRole::Client);
+        let mut state = create_test_state();
         
         // Add local candidates
         let local1 = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100)), 5000);
@@ -184,7 +177,7 @@ mod tests {
 
     #[test]
     fn test_max_candidates_limit() {
-        let mut state = create_test_state(NatTraversalRole::Client);
+        let mut state = create_test_state();
         state.max_candidates = 5;
         
         // Try to add more than max candidates
@@ -205,7 +198,7 @@ mod tests {
 
     #[test]
     fn test_candidate_validation() {
-        let mut state = create_test_state(NatTraversalRole::Client);
+        let mut state = create_test_state();
         let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100)), 5000);
         
         // Add unvalidated candidate
@@ -224,7 +217,7 @@ mod tests {
 
     #[test]
     fn test_coordination_state_transitions() {
-        let mut state = create_test_state(NatTraversalRole::Client);
+        let mut state = create_test_state();
         
         // Start coordination
         let coordination = CoordinationState {
@@ -258,7 +251,7 @@ mod tests {
 
     #[test]
     fn test_path_validation_state() {
-        let mut state = create_test_state(NatTraversalRole::Client);
+        let mut state = create_test_state();
         let remote_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(203, 0, 113, 1)), 6000);
         
         // Add path validation
@@ -284,7 +277,7 @@ mod tests {
 
     #[test]
     fn test_stats_tracking() {
-        let mut state = create_test_state(NatTraversalRole::Client);
+        let mut state = create_test_state();
         
         // Update stats
         state.stats.candidates_discovered += 5;
@@ -307,7 +300,7 @@ mod tests {
 
     #[test]
     fn test_ipv6_candidate_handling() {
-        let mut state = create_test_state(NatTraversalRole::Client);
+        let mut state = create_test_state();
         
         // Add IPv6 candidates
         let ipv6_addr = SocketAddr::new(
@@ -366,7 +359,7 @@ mod tests {
 
     #[test]
     fn test_coordination_timeout() {
-        let mut state = create_test_state(NatTraversalRole::Client);
+        let mut state = create_test_state();
         state.coordination_timeout = Duration::from_millis(100);
         
         // Start coordination
@@ -389,27 +382,11 @@ mod tests {
         assert!(timed_out, "Coordination should have timed out");
     }
 
-    #[test]
-    fn test_role_capabilities() {
-        // Client cannot relay
-        let client = NatTraversalRole::Client;
-        assert!(!matches!(client, NatTraversalRole::Server { can_relay: true }));
-        
-        // Server can optionally relay
-        let server_no_relay = NatTraversalRole::Server { can_relay: false };
-        let server_relay = NatTraversalRole::Server { can_relay: true };
-        
-        assert!(matches!(server_no_relay, NatTraversalRole::Server { .. }));
-        assert!(matches!(server_relay, NatTraversalRole::Server { can_relay: true }));
-        
-        // Bootstrap always relays
-        let bootstrap = NatTraversalRole::Bootstrap;
-        assert!(matches!(bootstrap, NatTraversalRole::Bootstrap));
-    }
+    // v0.13.0: Removed test_role_capabilities - all nodes are symmetric peers in v0.13.0+
 
     #[test]
     fn test_candidate_filtering() {
-        let mut state = create_test_state(NatTraversalRole::Client);
+        let mut state = create_test_state();
         
         // Add various candidates
         let candidates = vec![
@@ -439,7 +416,7 @@ mod tests {
 
     #[test]
     fn test_concurrent_coordination_rounds() {
-        let mut state = create_test_state(NatTraversalRole::Client);
+        let mut state = create_test_state();
         
         // Complete first round
         state.stats.coordination_rounds = 1;
@@ -494,7 +471,7 @@ mod tests {
 
     #[test]
     fn test_sequence_number_overflow() {
-        let mut state = create_test_state(NatTraversalRole::Client);
+        let mut state = create_test_state();
         
         // Set sequence near max
         state.next_sequence = VarInt::from_u32(u32::MAX - 1);
@@ -555,7 +532,7 @@ mod tests {
             SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 4433),
             SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 4434),
             Side::Server,
-            Some(NatTraversalRole::Server { can_relay: false }),
+            None, // v0.13.0: Role parameter deprecated in symmetric P2P
         )
     }
 
@@ -752,7 +729,7 @@ mod edge_case_tests {
 
     #[test]
     fn test_empty_candidate_lists() {
-        let mut state = create_test_state(NatTraversalRole::Client);
+        let mut state = create_test_state();
         
         // Generate pairs with empty lists
         state.generate_candidate_pairs();
@@ -771,7 +748,7 @@ mod edge_case_tests {
 
     #[test]
     fn test_duplicate_candidates() {
-        let mut state = create_test_state(NatTraversalRole::Client);
+        let mut state = create_test_state();
         let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100)), 5000);
         
         // Add same address with different sequences
@@ -791,7 +768,7 @@ mod edge_case_tests {
 
     #[test] 
     fn test_malformed_address_handling() {
-        let mut state = create_test_state(NatTraversalRole::Client);
+        let mut state = create_test_state();
         
         // Test with port 0
         let addr_port_zero = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100)), 0);
@@ -804,7 +781,7 @@ mod edge_case_tests {
 
     #[test]
     fn test_rapid_state_changes() {
-        let mut state = create_test_state(NatTraversalRole::Client);
+        let mut state = create_test_state();
         
         // Rapidly change coordination state
         for round in 1..=10 {
@@ -830,7 +807,7 @@ mod edge_case_tests {
 
     #[test]
     fn test_memory_pressure_scenarios() {
-        let mut state = create_test_state(NatTraversalRole::Client);
+        let mut state = create_test_state();
         state.max_candidates = 1000; // High limit
         
         // Add many candidates
@@ -852,7 +829,7 @@ mod edge_case_tests {
 
     #[test]
     fn test_time_based_candidate_expiry() {
-        let mut state = create_test_state(NatTraversalRole::Client);
+        let mut state = create_test_state();
         let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100)), 5000);
         
         // Add candidate with old timestamp
@@ -883,7 +860,7 @@ mod performance_tests {
     #[test]
     #[ignore = "performance test"]
     fn bench_candidate_pair_generation() {
-        let mut state = create_test_state(NatTraversalRole::Client);
+        let mut state = create_test_state();
         
         // Add many candidates
         for i in 0..50 {
