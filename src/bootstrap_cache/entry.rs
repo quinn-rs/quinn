@@ -37,6 +37,10 @@ pub struct CachedPeer {
 
     /// Source that added this peer
     pub source: PeerSource,
+
+    /// Known relay paths for reaching this peer when direct connection fails
+    #[serde(default)]
+    pub relay_paths: Vec<RelayPathHint>,
 }
 
 fn default_quality_score() -> f64 {
@@ -135,6 +139,26 @@ pub struct ConnectionOutcome {
     pub capabilities_discovered: Option<PeerCapabilities>,
 }
 
+/// A relay path hint for reaching a peer through an intermediary
+///
+/// When direct connections fail, relay paths provide alternative routes.
+/// This tracks known relays that can reach a given peer.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RelayPathHint {
+    /// EndpointId of the relay peer
+    #[serde(with = "peer_id_serde")]
+    pub relay_endpoint_id: PeerId,
+
+    /// Known socket addresses for the relay
+    pub relay_locators: Vec<SocketAddr>,
+
+    /// Observed round-trip latency through this relay in milliseconds
+    pub observed_latency_ms: Option<u32>,
+
+    /// When this relay path was last successfully used
+    pub last_used: SystemTime,
+}
+
 impl CachedPeer {
     /// Create a new peer entry
     pub fn new(peer_id: PeerId, addresses: Vec<SocketAddr>, source: PeerSource) -> Self {
@@ -149,6 +173,7 @@ impl CachedPeer {
             stats: ConnectionStats::default(),
             quality_score: 0.5, // Neutral starting score
             source,
+            relay_paths: Vec::new(),
         }
     }
 

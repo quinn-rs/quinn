@@ -55,5 +55,7 @@ pub use cache::{BootstrapCache, CacheEvent, CacheStats};
 pub use config::{BootstrapCacheConfig, BootstrapCacheConfigBuilder, QualityWeights};
 pub use entry::{
     CachedPeer, ConnectionOutcome, ConnectionStats, NatType, PeerCapabilities, PeerSource,
+    RelayPathHint,
 };
+pub use persistence::EncryptedCachePersistence;
 pub use selection::SelectionStrategy;

@@ -16,6 +16,7 @@ ADRs document significant architectural decisions made in the project. Each reco
 | [ADR-004](ADR-004-symmetric-p2p-architecture.md) | Symmetric P2P Architecture | Accepted | 2025-12-21 |
 | [ADR-005](ADR-005-native-quic-nat-traversal.md) | Native QUIC NAT Traversal | Accepted | 2025-12-21 |
 | [ADR-006](ADR-006-masque-relay-fallback.md) | MASQUE CONNECT-UDP Bind Relay | Accepted | 2025-12-21 |
+| [ADR-007](ADR-007-local-only-hostkey.md) | Local-only HostKey | Accepted | 2025-12-22 |
 
 ## ADR Template
 

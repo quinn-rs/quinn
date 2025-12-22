@@ -28,11 +28,13 @@
 //! ant-quic --known-peers 1.2.3.4:9000 --connect 5.6.7.8:9001 --throughput-test
 //! ```
 
+use ant_quic::host_identity::{auto_storage, HostIdentity};
 use ant_quic::{MtuConfig, P2pConfig, P2pEndpoint, P2pEvent, PeerId, TraversalPhase};
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -60,6 +62,10 @@ const DEFAULT_BOOTSTRAP_NODES: &[&str] = &[
 #[command(name = "ant-quic")]
 #[command(author, version, about, long_about = None)]
 struct Args {
+    /// Subcommand to run
+    #[command(subcommand)]
+    command: Option<Command>,
+
     /// Address to listen on (dual-stack: binds IPv6 and IPv4)
     #[arg(short, long, default_value = "[::]:0")]
     listen: SocketAddr,
@@ -155,6 +161,76 @@ struct Args {
     chunk_size: usize,
 }
 
+/// CLI subcommands
+#[derive(Subcommand, Debug)]
+enum Command {
+    /// Identity management commands
+    Identity {
+        #[command(subcommand)]
+        action: IdentityAction,
+    },
+
+    /// Bootstrap cache management commands
+    Cache {
+        #[command(subcommand)]
+        action: CacheAction,
+    },
+
+    /// Run diagnostic checks
+    Doctor,
+}
+
+/// Identity management actions
+#[derive(Subcommand, Debug)]
+enum IdentityAction {
+    /// Show the current host identity fingerprint and endpoint IDs
+    Show {
+        /// Show all network endpoint IDs
+        #[arg(long)]
+        all_networks: bool,
+
+        /// Data directory for stored identities
+        #[arg(long, default_value = "~/.ant-quic")]
+        data_dir: PathBuf,
+    },
+
+    /// Wipe the host identity and all derived data (DANGEROUS)
+    Wipe {
+        /// Skip confirmation prompt
+        #[arg(long)]
+        force: bool,
+
+        /// Data directory for stored identities
+        #[arg(long, default_value = "~/.ant-quic")]
+        data_dir: PathBuf,
+    },
+
+    /// Export identity fingerprint for sharing
+    Fingerprint,
+}
+
+/// Cache management actions
+#[derive(Subcommand, Debug)]
+enum CacheAction {
+    /// Show bootstrap cache statistics
+    Stats {
+        /// Data directory containing the cache
+        #[arg(long, default_value = "~/.ant-quic")]
+        data_dir: PathBuf,
+    },
+
+    /// Clear the bootstrap cache
+    Clear {
+        /// Skip confirmation prompt
+        #[arg(long)]
+        force: bool,
+
+        /// Data directory containing the cache
+        #[arg(long, default_value = "~/.ant-quic")]
+        data_dir: PathBuf,
+    },
+}
+
 // v0.13.0: Mode enum removed - all nodes are symmetric P2P nodes
 
 /// Runtime statistics
@@ -233,6 +309,11 @@ async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(format!("ant_quic={log_level},ant_quic={log_level}"))
         .init();
+
+    // Handle subcommands first
+    if let Some(command) = args.command {
+        return handle_command(command).await;
+    }
 
     info!("ant-quic v{}", env!("CARGO_PKG_VERSION"));
     info!("Symmetric P2P node starting...");
@@ -1096,4 +1177,343 @@ async fn build_metrics_report(
         connected_peers,
         local_addr,
     }
+}
+
+// =============================================================================
+// CLI Subcommand Handlers
+// =============================================================================
+
+/// Handle CLI subcommands
+async fn handle_command(command: Command) -> anyhow::Result<()> {
+    match command {
+        Command::Identity { action } => handle_identity_command(action).await,
+        Command::Cache { action } => handle_cache_command(action).await,
+        Command::Doctor => handle_doctor_command().await,
+    }
+}
+
+/// Expand tilde to home directory
+fn expand_tilde(path: &PathBuf) -> PathBuf {
+    let path_str = path.to_string_lossy();
+    if path_str.starts_with("~/") {
+        if let Some(home) = dirs::home_dir() {
+            return home.join(&path_str[2..]);
+        }
+    }
+    path.clone()
+}
+
+/// Handle identity subcommands
+async fn handle_identity_command(action: IdentityAction) -> anyhow::Result<()> {
+    match action {
+        IdentityAction::Show { all_networks, data_dir } => {
+            let data_dir = expand_tilde(&data_dir);
+
+            println!("═══════════════════════════════════════════════════════════════");
+            println!("                    HOST IDENTITY");
+            println!("═══════════════════════════════════════════════════════════════");
+
+            // Try to load existing host identity
+            let storage = auto_storage()?;
+            match storage.load() {
+                Ok(secret) => {
+                    let host = HostIdentity::from_secret(secret);
+                    println!("Fingerprint: {}", host.fingerprint());
+                    println!("Policy: {:?}", host.policy());
+                    println!("Storage: {}", storage.backend_name());
+                    println!("Data Directory: {}", data_dir.display());
+
+                    if all_networks {
+                        // List all network keypair files in data directory
+                        println!();
+                        println!("Stored Endpoint Keypairs:");
+                        if data_dir.exists() {
+                            let mut found = false;
+                            if let Ok(entries) = std::fs::read_dir(&data_dir) {
+                                for entry in entries.flatten() {
+                                    let name = entry.file_name();
+                                    let name_str = name.to_string_lossy();
+                                    if name_str.ends_with("_keypair.enc") {
+                                        let network_id_hex = name_str.trim_end_matches("_keypair.enc");
+                                        println!("  - Network: {}", network_id_hex);
+                                        found = true;
+                                    }
+                                }
+                            }
+                            if !found {
+                                println!("  (none)");
+                            }
+                        } else {
+                            println!("  (data directory not found)");
+                        }
+                    }
+                }
+                Err(e) => {
+                    println!("No host identity found.");
+                    println!("Error: {}", e);
+                    println!();
+                    println!("A new identity will be created when you first run the node.");
+                }
+            }
+            println!("═══════════════════════════════════════════════════════════════");
+        }
+
+        IdentityAction::Wipe { force, data_dir } => {
+            let data_dir = expand_tilde(&data_dir);
+
+            if !force {
+                println!("WARNING: This will permanently delete your host identity and all derived keys!");
+                println!("All stored endpoint keypairs will be lost.");
+                println!();
+                print!("Type 'DELETE' to confirm: ");
+                use std::io::Write;
+                std::io::stdout().flush()?;
+
+                let mut input = String::new();
+                std::io::stdin().read_line(&mut input)?;
+                if input.trim() != "DELETE" {
+                    println!("Aborted.");
+                    return Ok(());
+                }
+            }
+
+            // Delete host key from storage
+            let storage = auto_storage()?;
+            if storage.exists() {
+                storage.delete()?;
+                println!("Host identity deleted from secure storage.");
+            } else {
+                println!("No host identity found in secure storage.");
+            }
+
+            // Delete keypair files
+            if data_dir.exists() {
+                let mut deleted = 0;
+                if let Ok(entries) = std::fs::read_dir(&data_dir) {
+                    for entry in entries.flatten() {
+                        let name = entry.file_name();
+                        let name_str = name.to_string_lossy();
+                        if name_str.ends_with("_keypair.enc") {
+                            if std::fs::remove_file(entry.path()).is_ok() {
+                                deleted += 1;
+                            }
+                        }
+                    }
+                }
+                println!("Deleted {} encrypted keypair file(s).", deleted);
+            }
+
+            println!("Identity wiped. A new identity will be created on next run.");
+        }
+
+        IdentityAction::Fingerprint => {
+            let storage = auto_storage()?;
+            match storage.load() {
+                Ok(secret) => {
+                    let host = HostIdentity::from_secret(secret);
+                    println!("{}", host.fingerprint());
+                }
+                Err(_) => {
+                    eprintln!("No host identity found.");
+                    std::process::exit(1);
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Handle cache subcommands
+async fn handle_cache_command(action: CacheAction) -> anyhow::Result<()> {
+    match action {
+        CacheAction::Stats { data_dir } => {
+            let data_dir = expand_tilde(&data_dir);
+            let cache_file = data_dir.join("bootstrap_cache.enc");
+
+            println!("═══════════════════════════════════════════════════════════════");
+            println!("                    BOOTSTRAP CACHE STATS");
+            println!("═══════════════════════════════════════════════════════════════");
+            println!("Cache file: {}", cache_file.display());
+
+            if cache_file.exists() {
+                let metadata = std::fs::metadata(&cache_file)?;
+                println!("File size: {} bytes", metadata.len());
+
+                if let Ok(modified) = metadata.modified() {
+                    if let Ok(elapsed) = modified.elapsed() {
+                        let secs = elapsed.as_secs();
+                        if secs < 60 {
+                            println!("Last modified: {}s ago", secs);
+                        } else if secs < 3600 {
+                            println!("Last modified: {}m ago", secs / 60);
+                        } else if secs < 86400 {
+                            println!("Last modified: {}h ago", secs / 3600);
+                        } else {
+                            println!("Last modified: {}d ago", secs / 86400);
+                        }
+                    }
+                }
+
+                println!();
+                println!("Note: Cache is encrypted. Detailed stats require decryption");
+                println!("which needs a running node with host identity.");
+            } else {
+                println!("Cache file not found.");
+                println!();
+                println!("A new cache will be created when you run the node.");
+            }
+            println!("═══════════════════════════════════════════════════════════════");
+        }
+
+        CacheAction::Clear { force, data_dir } => {
+            let data_dir = expand_tilde(&data_dir);
+            let cache_file = data_dir.join("bootstrap_cache.enc");
+
+            if !cache_file.exists() {
+                println!("No cache file found at {}", cache_file.display());
+                return Ok(());
+            }
+
+            if !force {
+                println!("WARNING: This will delete your bootstrap cache.");
+                println!("You will need to rediscover peers on next run.");
+                println!();
+                print!("Type 'CLEAR' to confirm: ");
+                use std::io::Write;
+                std::io::stdout().flush()?;
+
+                let mut input = String::new();
+                std::io::stdin().read_line(&mut input)?;
+                if input.trim() != "CLEAR" {
+                    println!("Aborted.");
+                    return Ok(());
+                }
+            }
+
+            std::fs::remove_file(&cache_file)?;
+            println!("Bootstrap cache cleared.");
+        }
+    }
+    Ok(())
+}
+
+/// Handle doctor diagnostic command
+async fn handle_doctor_command() -> anyhow::Result<()> {
+    println!("═══════════════════════════════════════════════════════════════");
+    println!("                    ANT-QUIC DOCTOR");
+    println!("═══════════════════════════════════════════════════════════════");
+    println!();
+
+    let mut issues: Vec<String> = Vec::new();
+    let mut passed = 0;
+
+    // Check 1: Host identity storage
+    print!("Checking host identity storage... ");
+    let storage = match auto_storage() {
+        Ok(s) => {
+            println!("{}", s.backend_name());
+            passed += 1;
+            s
+        }
+        Err(e) => {
+            println!("FAILED: {}", e);
+            issues.push("Cannot access host identity storage.".to_string());
+            // Create a fallback for the remaining checks
+            return Ok(());
+        }
+    };
+
+    // Check 2: Host identity exists
+    print!("Checking host identity... ");
+    match storage.load() {
+        Ok(secret) => {
+            let host = HostIdentity::from_secret(secret);
+            println!("OK (fingerprint: {})", host.fingerprint());
+            passed += 1;
+        }
+        Err(_) => {
+            println!("NOT FOUND");
+            issues.push("No host identity found. One will be created on first run.".to_string());
+        }
+    }
+
+    // Check 3: Data directory
+    print!("Checking data directory... ");
+    let data_dir = dirs::home_dir()
+        .map(|h| h.join(".ant-quic"))
+        .unwrap_or_else(|| PathBuf::from(".ant-quic"));
+    if data_dir.exists() {
+        println!("OK ({})", data_dir.display());
+        passed += 1;
+    } else {
+        println!("NOT FOUND");
+        issues.push("Data directory not found. It will be created on first run.".to_string());
+    }
+
+    // Check 4: Bootstrap cache
+    print!("Checking bootstrap cache... ");
+    let cache_file = data_dir.join("bootstrap_cache.enc");
+    if cache_file.exists() {
+        let size = std::fs::metadata(&cache_file)
+            .map(|m| m.len())
+            .unwrap_or(0);
+        println!("OK ({} bytes)", size);
+        passed += 1;
+    } else {
+        println!("NOT FOUND");
+        issues.push("No bootstrap cache. Peers will be discovered on first run.".to_string());
+    }
+
+    // Check 5: Network connectivity (basic check)
+    print!("Checking network... ");
+    match tokio::net::UdpSocket::bind("[::]:0").await {
+        Ok(socket) => {
+            let addr = socket.local_addr().unwrap_or_else(|_| "[::]:0".parse().unwrap());
+            println!("OK (can bind UDP on {})", addr);
+            passed += 1;
+        }
+        Err(e) => {
+            println!("FAILED");
+            issues.push(format!("Cannot bind UDP socket: {}", e));
+        }
+    }
+
+    // Check 6: DNS resolution for bootstrap nodes
+    print!("Checking DNS resolution... ");
+    let mut dns_ok = 0;
+    for node in DEFAULT_BOOTSTRAP_NODES {
+        if tokio::net::lookup_host(node).await.is_ok() {
+            dns_ok += 1;
+        }
+    }
+    if dns_ok == DEFAULT_BOOTSTRAP_NODES.len() {
+        println!("OK ({} nodes resolved)", dns_ok);
+        passed += 1;
+    } else if dns_ok > 0 {
+        println!("PARTIAL ({}/{} nodes resolved)", dns_ok, DEFAULT_BOOTSTRAP_NODES.len());
+        passed += 1;
+    } else {
+        println!("FAILED");
+        issues.push("Cannot resolve any bootstrap nodes. Check your DNS settings.".to_string());
+    }
+
+    println!();
+    println!("═══════════════════════════════════════════════════════════════");
+    println!("                         SUMMARY");
+    println!("═══════════════════════════════════════════════════════════════");
+    println!("Checks passed: {}/6", passed);
+
+    if issues.is_empty() {
+        println!();
+        println!("All checks passed! Your system is ready to run ant-quic.");
+    } else {
+        println!();
+        println!("Issues found:");
+        for issue in &issues {
+            println!("  ! {}", issue);
+        }
+    }
+    println!("═══════════════════════════════════════════════════════════════");
+
+    Ok(())
 }

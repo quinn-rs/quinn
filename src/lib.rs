@@ -286,6 +286,10 @@ pub use bootstrap_cache::{
     NatType as CacheNatType, PeerCapabilities, PeerSource, QualityWeights, SelectionStrategy,
 };
 
+// Host identity for local-only HostKey management (ADR-007)
+pub mod host_identity;
+pub use host_identity::{EndpointKeyPolicy, HostIdentity, HostKeyStorage, StorageError};
+
 // Re-export crypto utilities for peer ID management (v0.2: Pure PQC with ML-DSA-65)
 pub use crypto::raw_public_keys::key_utils::{
     ML_DSA_65_PUBLIC_KEY_SIZE, ML_DSA_65_SECRET_KEY_SIZE, MlDsaPublicKey, MlDsaSecretKey,

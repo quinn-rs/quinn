@@ -33,8 +33,11 @@
 //! ```
 
 use std::net::SocketAddr;
+use std::path::Path;
 
 use crate::crypto::pqc::types::{MlDsaPublicKey, MlDsaSecretKey};
+use crate::host_identity::HostIdentity;
+use crate::unified_config::load_or_generate_endpoint_keypair;
 
 /// Minimal configuration for P2P nodes
 ///
@@ -145,6 +148,32 @@ impl NodeConfigBuilder {
     pub fn keypair(mut self, public_key: MlDsaPublicKey, secret_key: MlDsaSecretKey) -> Self {
         self.keypair = Some((public_key, secret_key));
         self
+    }
+
+    /// Set the identity from a HostIdentity with encrypted storage
+    ///
+    /// This loads or generates a keypair using the HostIdentity for encryption.
+    /// The keypair is stored encrypted at rest in the specified directory.
+    ///
+    /// # Arguments
+    ///
+    /// * `host` - The HostIdentity for key derivation
+    /// * `network_id` - Network identifier for per-network keypair isolation
+    /// * `storage_dir` - Directory to store the encrypted keypair
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the keypair cannot be loaded or generated.
+    pub fn with_host_identity(
+        mut self,
+        host: &HostIdentity,
+        network_id: &[u8],
+        storage_dir: &Path,
+    ) -> Result<Self, String> {
+        let (public_key, secret_key) = load_or_generate_endpoint_keypair(host, network_id, storage_dir)
+            .map_err(|e| format!("Failed to load/generate keypair: {e}"))?;
+        self.keypair = Some((public_key, secret_key));
+        Ok(self)
     }
 
     /// Build the configuration

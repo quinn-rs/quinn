@@ -30,6 +30,7 @@ use std::time::Duration;
 use crate::config::nat_timeouts::TimeoutConfig;
 use crate::crypto::pqc::PqcConfig;
 use crate::crypto::pqc::types::{MlDsaPublicKey, MlDsaSecretKey};
+use crate::host_identity::HostIdentity;
 
 /// Configuration for ant-quic P2P endpoints
 ///
@@ -406,6 +407,44 @@ impl P2pConfigBuilder {
         self
     }
 
+    /// Configure with a HostIdentity for persistent, encrypted endpoint keypair storage
+    ///
+    /// This method:
+    /// 1. Derives an endpoint encryption key from the HostIdentity for this network
+    /// 2. Loads the existing keypair from encrypted storage if available
+    /// 3. Generates and stores a new keypair if none exists
+    ///
+    /// The keypair is stored encrypted on disk, ensuring persistent identity across
+    /// restarts while protecting the secret key at rest.
+    ///
+    /// # Arguments
+    /// * `host` - The HostIdentity for deriving encryption keys
+    /// * `network_id` - Network identifier for per-network key isolation
+    /// * `storage_dir` - Directory for encrypted keypair storage
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// use ant_quic::{P2pConfig, HostIdentity};
+    ///
+    /// let host = HostIdentity::generate();
+    /// let config = P2pConfig::builder()
+    ///     .bind_addr("0.0.0.0:9000".parse()?)
+    ///     .with_host_identity(&host, b"my-network", "/var/lib/ant-quic")?
+    ///     .build()?;
+    /// ```
+    pub fn with_host_identity(
+        mut self,
+        host: &HostIdentity,
+        network_id: &[u8],
+        storage_dir: impl AsRef<std::path::Path>,
+    ) -> Result<Self, ConfigError> {
+        let keypair =
+            load_or_generate_endpoint_keypair(host, network_id, storage_dir.as_ref())
+                .map_err(|e| ConfigError::PqcError(format!("Failed to load/generate keypair: {e}")))?;
+        self.keypair = Some(keypair);
+        Ok(self)
+    }
+
     /// Build the configuration with validation
     pub fn build(self) -> Result<P2pConfig, ConfigError> {
         // Validate max_connections
@@ -430,6 +469,160 @@ impl P2pConfigBuilder {
             keypair: self.keypair,
         })
     }
+}
+
+// =============================================================================
+// Endpoint Keypair Storage (ADR-007)
+// =============================================================================
+
+/// Load or generate an endpoint keypair with encrypted storage
+///
+/// This function:
+/// 1. Derives an encryption key from the HostIdentity for the given network
+/// 2. Attempts to load an existing keypair from encrypted storage
+/// 3. If not found, generates a new ML-DSA-65 keypair and stores it encrypted
+///
+/// The keypair file is stored as `{network_id_hex}_keypair.enc` in the storage directory.
+pub fn load_or_generate_endpoint_keypair(
+    host: &HostIdentity,
+    network_id: &[u8],
+    storage_dir: &std::path::Path,
+) -> Result<(MlDsaPublicKey, MlDsaSecretKey), std::io::Error> {
+    // Derive encryption key for this network's keypair
+    let encryption_key = host.derive_endpoint_encryption_key(network_id);
+
+    // Compute filename based on network_id
+    let network_id_hex = hex::encode(network_id);
+    let keypair_file = storage_dir.join(format!("{network_id_hex}_keypair.enc"));
+
+    // Ensure storage directory exists
+    std::fs::create_dir_all(storage_dir)?;
+
+    // Try to load existing keypair
+    if keypair_file.exists() {
+        let ciphertext = std::fs::read(&keypair_file)?;
+        let plaintext = decrypt_keypair_data(&ciphertext, &encryption_key)?;
+        return deserialize_keypair(&plaintext);
+    }
+
+    // Generate new keypair
+    let (public_key, secret_key) =
+        crate::crypto::raw_public_keys::key_utils::generate_ml_dsa_keypair()
+            .map_err(|e| std::io::Error::other(e.to_string()))?;
+
+    // Serialize and encrypt
+    let plaintext = serialize_keypair(&public_key, &secret_key)?;
+    let ciphertext = encrypt_keypair_data(&plaintext, &encryption_key)?;
+
+    // Write to file atomically
+    let temp_file = keypair_file.with_extension("tmp");
+    std::fs::write(&temp_file, &ciphertext)?;
+    std::fs::rename(&temp_file, &keypair_file)?;
+
+    Ok((public_key, secret_key))
+}
+
+/// Encrypt keypair data using ChaCha20-Poly1305
+fn encrypt_keypair_data(plaintext: &[u8], key: &[u8; 32]) -> Result<Vec<u8>, std::io::Error> {
+    use aws_lc_rs::aead::{Aad, LessSafeKey, Nonce, UnboundKey, CHACHA20_POLY1305};
+
+    // Generate random nonce
+    let mut nonce_bytes = [0u8; 12];
+    aws_lc_rs::rand::fill(&mut nonce_bytes)
+        .map_err(|e| std::io::Error::other(e.to_string()))?;
+
+    // Create cipher
+    let unbound_key = UnboundKey::new(&CHACHA20_POLY1305, key)
+        .map_err(|e| std::io::Error::other(e.to_string()))?;
+    let key = LessSafeKey::new(unbound_key);
+
+    // Encrypt
+    let nonce = Nonce::assume_unique_for_key(nonce_bytes);
+    let mut in_out = plaintext.to_vec();
+    key.seal_in_place_append_tag(nonce, Aad::empty(), &mut in_out)
+        .map_err(|e| std::io::Error::other(e.to_string()))?;
+
+    // Prepend nonce to ciphertext
+    let mut result = nonce_bytes.to_vec();
+    result.extend(in_out);
+    Ok(result)
+}
+
+/// Decrypt keypair data using ChaCha20-Poly1305
+fn decrypt_keypair_data(ciphertext: &[u8], key: &[u8; 32]) -> Result<Vec<u8>, std::io::Error> {
+    use aws_lc_rs::aead::{Aad, LessSafeKey, Nonce, UnboundKey, CHACHA20_POLY1305};
+
+    if ciphertext.len() < 12 {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "Ciphertext too short",
+        ));
+    }
+
+    // Extract nonce and ciphertext
+    let (nonce_bytes, encrypted) = ciphertext.split_at(12);
+    let mut nonce_arr = [0u8; 12];
+    nonce_arr.copy_from_slice(nonce_bytes);
+
+    // Create cipher
+    let unbound_key = UnboundKey::new(&CHACHA20_POLY1305, key)
+        .map_err(|e| std::io::Error::other(e.to_string()))?;
+    let key = LessSafeKey::new(unbound_key);
+
+    // Decrypt
+    let nonce = Nonce::assume_unique_for_key(nonce_arr);
+    let mut in_out = encrypted.to_vec();
+    let plaintext = key
+        .open_in_place(nonce, Aad::empty(), &mut in_out)
+        .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidData, "Decryption failed"))?;
+
+    Ok(plaintext.to_vec())
+}
+
+/// Serialize keypair to bytes (public key || secret key)
+fn serialize_keypair(
+    public_key: &MlDsaPublicKey,
+    secret_key: &MlDsaSecretKey,
+) -> Result<Vec<u8>, std::io::Error> {
+    let pub_bytes = public_key.as_bytes();
+    let sec_bytes = secret_key.as_bytes();
+
+    // Format: [4-byte public key length][public key bytes][secret key bytes]
+    let pub_len = pub_bytes.len() as u32;
+    let mut result = Vec::with_capacity(4 + pub_bytes.len() + sec_bytes.len());
+    result.extend_from_slice(&pub_len.to_le_bytes());
+    result.extend_from_slice(pub_bytes);
+    result.extend_from_slice(sec_bytes);
+    Ok(result)
+}
+
+/// Deserialize keypair from bytes
+fn deserialize_keypair(data: &[u8]) -> Result<(MlDsaPublicKey, MlDsaSecretKey), std::io::Error> {
+    if data.len() < 4 {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "Keypair data too short",
+        ));
+    }
+
+    let pub_len = u32::from_le_bytes([data[0], data[1], data[2], data[3]]) as usize;
+
+    if data.len() < 4 + pub_len {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "Keypair data truncated",
+        ));
+    }
+
+    let pub_bytes = &data[4..4 + pub_len];
+    let sec_bytes = &data[4 + pub_len..];
+
+    let public_key = MlDsaPublicKey::from_bytes(pub_bytes)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))?;
+    let secret_key = MlDsaSecretKey::from_bytes(sec_bytes)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))?;
+
+    Ok((public_key, secret_key))
 }
 
 #[cfg(test)]

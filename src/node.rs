@@ -53,6 +53,8 @@ use tokio::sync::broadcast;
 use tracing::info;
 
 use crate::crypto::raw_public_keys::key_utils::derive_peer_id_from_public_key;
+use crate::host_identity::HostIdentity;
+use crate::unified_config::load_or_generate_endpoint_keypair;
 use crate::nat_traversal_api::PeerId;
 use crate::node_config::NodeConfig;
 use crate::node_event::{DisconnectReason as NodeDisconnectReason, NodeEvent};
@@ -207,6 +209,42 @@ impl Node {
         secret_key: MlDsaSecretKey,
     ) -> Result<Self, NodeError> {
         Self::with_config(NodeConfig::with_keypair(public_key, secret_key)).await
+    }
+
+    /// Create a node with a HostIdentity for persistent encrypted identity
+    ///
+    /// This is the recommended way to create a node with persistent identity.
+    /// The keypair is encrypted at rest using a key derived from the HostIdentity.
+    ///
+    /// # Arguments
+    ///
+    /// * `host` - The HostIdentity for key derivation
+    /// * `network_id` - Network identifier for per-network keypair isolation
+    /// * `storage_dir` - Directory to store the encrypted keypair
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// use ant_quic::{Node, HostIdentity};
+    ///
+    /// let host = HostIdentity::generate();
+    /// let node = Node::with_host_identity(
+    ///     &host,
+    ///     b"my-network",
+    ///     "/var/lib/ant-quic",
+    /// ).await?;
+    /// ```
+    pub async fn with_host_identity(
+        host: &HostIdentity,
+        network_id: &[u8],
+        storage_dir: impl AsRef<std::path::Path>,
+    ) -> Result<Self, NodeError> {
+        let (public_key, secret_key) =
+            load_or_generate_endpoint_keypair(host, network_id, storage_dir.as_ref()).map_err(
+                |e| NodeError::Creation(format!("Failed to load/generate keypair: {e}")),
+            )?;
+
+        Self::with_keypair(public_key, secret_key).await
     }
 
     /// Create a node with full configuration
@@ -863,5 +901,85 @@ mod tests {
         assert!(events.try_recv().is_err()); // No events yet
 
         node.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn test_node_with_host_identity() {
+        use crate::host_identity::HostIdentity;
+
+        // Create a temporary directory for storage
+        let temp_dir = std::env::temp_dir().join(format!(
+            "ant-quic-test-node-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::create_dir_all(&temp_dir);
+
+        // Generate a HostIdentity
+        let host = HostIdentity::generate();
+        let network_id = b"test-network";
+
+        // Create first node with host identity
+        let node1 = Node::with_host_identity(&host, network_id, &temp_dir)
+            .await
+            .unwrap();
+        let peer_id_1 = node1.peer_id();
+        let public_key_1 = node1.public_key_bytes().to_vec();
+
+        // Verify the node is running
+        assert!(node1.is_running());
+
+        // Shutdown and cleanup
+        node1.shutdown().await;
+
+        // Create second node with same host identity - should have same identity
+        let node2 = Node::with_host_identity(&host, network_id, &temp_dir)
+            .await
+            .unwrap();
+        let peer_id_2 = node2.peer_id();
+        let public_key_2 = node2.public_key_bytes().to_vec();
+
+        // Verify both nodes have the same identity
+        assert_eq!(peer_id_1, peer_id_2);
+        assert_eq!(public_key_1, public_key_2);
+
+        node2.shutdown().await;
+
+        // Cleanup temp directory
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[tokio::test]
+    async fn test_node_host_identity_per_network_isolation() {
+        use crate::host_identity::HostIdentity;
+
+        // Create a temporary directory for storage
+        let temp_dir = std::env::temp_dir().join(format!(
+            "ant-quic-test-isolation-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::create_dir_all(&temp_dir);
+
+        // Generate a HostIdentity
+        let host = HostIdentity::generate();
+
+        // Create nodes with different network IDs
+        let node1 = Node::with_host_identity(&host, b"network-1", &temp_dir)
+            .await
+            .unwrap();
+        let peer_id_1 = node1.peer_id();
+
+        let node2 = Node::with_host_identity(&host, b"network-2", &temp_dir)
+            .await
+            .unwrap();
+        let peer_id_2 = node2.peer_id();
+
+        // Different networks should have different identities (privacy)
+        assert_ne!(peer_id_1, peer_id_2);
+
+        node1.shutdown().await;
+        node2.shutdown().await;
+
+        // Cleanup temp directory
+        let _ = std::fs::remove_dir_all(&temp_dir);
     }
 }

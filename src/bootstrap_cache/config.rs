@@ -9,7 +9,7 @@ pub struct BootstrapCacheConfig {
     /// Directory for cache files
     pub cache_dir: PathBuf,
 
-    /// Maximum number of peers to cache (default: 20,000)
+    /// Maximum number of peers to cache (default: 30,000 per ADR-007)
     pub max_peers: usize,
 
     /// Epsilon for exploration rate (default: 0.1 = 10%)
@@ -55,7 +55,7 @@ impl Default for BootstrapCacheConfig {
     fn default() -> Self {
         Self {
             cache_dir: default_cache_dir(),
-            max_peers: 20_000,
+            max_peers: 30_000,
             epsilon: 0.1,
             stale_threshold: Duration::from_secs(7 * 24 * 3600), // 7 days
             save_interval: Duration::from_secs(5 * 60),          // 5 minutes
@@ -177,7 +177,7 @@ mod tests {
     #[test]
     fn test_default_config() {
         let config = BootstrapCacheConfig::default();
-        assert_eq!(config.max_peers, 20_000);
+        assert_eq!(config.max_peers, 30_000);
         assert!((config.epsilon - 0.1).abs() < f64::EPSILON);
         assert_eq!(config.stale_threshold, Duration::from_secs(7 * 24 * 3600));
     }

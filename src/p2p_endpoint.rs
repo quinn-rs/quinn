@@ -557,8 +557,8 @@ impl P2pEndpoint {
         addresses: &[SocketAddr],
     ) -> Result<PeerConnection, EndpointError> {
         use std::net::IpAddr;
-       use tokio::time::{timeout, Duration};
-        
+        use tokio::time::{Duration, timeout};
+
         if self.shutdown.load(Ordering::SeqCst) {
             return Err(EndpointError::ShuttingDown);
         }
@@ -582,7 +582,7 @@ impl P2pEndpoint {
             ipv6_addrs.len()
         );
 
-        // Try both families in PARALLEL  
+        // Try both families in PARALLEL
         let (ipv4_result, ipv6_result) = tokio::join!(
             self.try_connect_family(&ipv4_addrs, "IPv4"),
             self.try_connect_family(&ipv6_addrs, "IPv6"),
@@ -596,7 +596,7 @@ impl P2pEndpoint {
                     "✓✓ Dual-stack success! IPv4: {}, IPv6: {} (maintaining both connections)",
                     v4_conn.remote_addr, v6_conn.remote_addr
                 );
-                
+
                 // Both connections already stored by try_connect_family
                 // Return IPv6 as primary (modern internet best practice)
                 Ok(v6_conn)
@@ -604,13 +604,19 @@ impl P2pEndpoint {
 
             (Some(v4_conn), None) => {
                 // IPv4-only network (v6 unavailable or failed)
-                info!("IPv4-only connection established to {}", v4_conn.remote_addr);
+                info!(
+                    "IPv4-only connection established to {}",
+                    v4_conn.remote_addr
+                );
                 Ok(v4_conn)
             }
 
             (None, Some(v6_conn)) => {
                 // IPv6-only network (v4 unavailable or failed)
-                info!("IPv6-only connection established to {}", v6_conn.remote_addr);
+                info!(
+                    "IPv6-only connection established to {}",
+                    v6_conn.remote_addr
+                );
                 Ok(v6_conn)
             }
 
@@ -636,8 +642,8 @@ impl P2pEndpoint {
         addresses: &[SocketAddr],
         family_name: &str,
     ) -> Option<PeerConnection> {
-        use tokio::time::{timeout, Duration};
-        
+        use tokio::time::{Duration, timeout};
+
         if addresses.is_empty() {
             debug!("{}: No addresses to try", family_name);
             return None;
