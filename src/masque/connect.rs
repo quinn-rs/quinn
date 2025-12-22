@@ -189,7 +189,7 @@ impl ConnectUdpRequest {
 
     /// Encode the request as a wire format message
     ///
-    /// Format: [flags (1)] [host_len (varint)] [host] [port (2)]
+    /// Format: `[flags (1)] [host_len (varint)] [host] [port (2)]`
     pub fn encode(&self) -> Bytes {
         let mut buf = BytesMut::new();
 

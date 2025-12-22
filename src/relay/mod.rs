@@ -18,10 +18,10 @@
 //!
 //! # Components
 //!
-//! - [`authenticator`] - ML-DSA-65 post-quantum authentication
-//! - [`error`] - Relay error types
-//! - [`rate_limiter`] - Token bucket rate limiting
-//! - [`statistics`] - Relay statistics collection
+//! - `authenticator` - ML-DSA-65 post-quantum authentication
+//! - `error` - Relay error types
+//! - `rate_limiter` - Token bucket rate limiting
+//! - `statistics` - Relay statistics collection
 //!
 //! # Usage
 //!
