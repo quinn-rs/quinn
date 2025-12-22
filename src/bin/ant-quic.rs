@@ -39,6 +39,18 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
 
+/// Default bootstrap nodes operated by Saorsa Labs
+///
+/// These nodes are available for initial network discovery. They run the same
+/// ant-quic software as any other node and provide:
+/// - Initial peer discovery
+/// - NAT traversal coordination
+/// - External address observation (OBSERVED_ADDRESS frames)
+const DEFAULT_BOOTSTRAP_NODES: &[&str] = &[
+    "saorsa-1.saorsalabs.com:9000",
+    "saorsa-2.saorsalabs.com:9000",
+];
+
 /// ant-quic P2P node
 ///
 /// A symmetric P2P node that can both connect to and accept connections from
@@ -226,12 +238,30 @@ async fn main() -> anyhow::Result<()> {
     info!("Symmetric P2P node starting...");
 
     // Combine known_peers and bootstrap (bootstrap is an alias for backwards compat)
-    let all_peers: Vec<SocketAddr> = args
+    let mut all_peers: Vec<SocketAddr> = args
         .known_peers
         .iter()
         .chain(args.bootstrap.iter())
         .copied()
         .collect();
+
+    // Use default bootstrap nodes if no peers were specified
+    if all_peers.is_empty() {
+        info!("No peers specified, using default Saorsa Labs bootstrap nodes");
+        for addr_str in DEFAULT_BOOTSTRAP_NODES {
+            match tokio::net::lookup_host(addr_str).await {
+                Ok(mut addrs) => {
+                    if let Some(addr) = addrs.next() {
+                        all_peers.push(addr);
+                        info!("  - {} -> {}", addr_str, addr);
+                    }
+                }
+                Err(e) => {
+                    warn!("Failed to resolve {}: {}", addr_str, e);
+                }
+            }
+        }
+    }
 
     // Build configuration
     let mut builder = P2pConfig::builder().bind_addr(args.listen);

@@ -227,14 +227,14 @@ cargo build --release
 ## Binary Usage
 
 ```bash
-# Run as P2P node (connects and accepts)
+# Run as P2P node (auto-connects to default bootstrap nodes)
 ant-quic --listen 0.0.0.0:9000
 
-# Connect to known peers for discovery
-ant-quic --listen 0.0.0.0:9000 --known-peers peer1.example.com:9000,peer2.example.com:9000
+# Connect to specific known peers
+ant-quic --listen 0.0.0.0:9000 --known-peers 1.2.3.4:9000 --known-peers 5.6.7.8:9000
 
 # Show your external address (discovered via peers)
-ant-quic --listen 0.0.0.0:9000 --known-peers 159.89.81.21:9000
+ant-quic --listen 0.0.0.0:9000
 # Output: External address: YOUR.PUBLIC.IP:PORT
 
 # Run with monitoring dashboard
@@ -245,6 +245,32 @@ ant-quic --dashboard --listen 0.0.0.0:9000
 # /peers  - List connected peers
 # /help   - Show all commands
 ```
+
+### Default Bootstrap Nodes
+
+If no `--known-peers` are specified, ant-quic automatically connects to the Saorsa Labs bootstrap nodes:
+- `saorsa-1.saorsalabs.com:9000`
+- `saorsa-2.saorsalabs.com:9000`
+
+These nodes run the same ant-quic software as any peer - they help with initial peer discovery and external address observation.
+
+### Bootstrap Cache
+
+ant-quic maintains a local cache of discovered peers to improve startup time and resilience. The cache is stored as a JSON file:
+
+| Platform | Cache Location |
+|----------|----------------|
+| **macOS** | `~/Library/Caches/ant-quic/bootstrap_cache.json` |
+| **Linux** | `~/.cache/ant-quic/bootstrap_cache.json` |
+| **Windows** | `%LOCALAPPDATA%\ant-quic\bootstrap_cache.json` |
+
+The cache includes:
+- Peer IDs and socket addresses
+- Connection quality scores (RTT, success rate)
+- NAT type hints for traversal optimization
+- Last-seen timestamps for freshness
+
+The cache is automatically managed - stale entries are pruned and high-quality peers are prioritized for reconnection.
 
 ## API Reference
 
