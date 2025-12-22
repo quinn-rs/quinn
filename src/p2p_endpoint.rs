@@ -530,6 +530,151 @@ impl P2pEndpoint {
         Ok(peer_conn)
     }
 
+    /// Connect to a peer using dual-stack strategy (tries both IPv4 and IPv6 in parallel)
+    ///
+    /// This method implements the user requirement: **"connect on ip4 and 6 we do both"**
+    ///
+    /// **Strategy**:
+    /// 1. Separates addresses by family (IPv4 vs IPv6)
+    /// 2. Tries both families in parallel using `tokio::join!`
+    /// 3. Handles all scenarios:
+    ///    - **Both work**: Keeps dual connections for redundancy (BEST CASE)
+    ///    - **IPv4-only**: Uses IPv4 connection, graceful degradation
+    ///    - **IPv6-only**: Uses IPv6 connection, graceful degradation  
+    ///    - **Neither**: Returns error (try NAT traversal next)
+    ///
+    /// # Arguments
+    /// * `addresses` - List of candidate addresses (mix of IPv4 and IPv6)
+    ///
+    /// # Returns
+    /// Primary connection (IPv6 preferred if both succeed)
+    ///
+    /// # Dual-Connection Behavior
+    /// When both IPv4 AND IPv6 succeed, BOTH connections are stored in `connected_peers`.
+    /// The system maintains redundant connections for maximum reliability.
+    pub async fn connect_dual_stack(
+        &self,
+        addresses: &[SocketAddr],
+    ) -> Result<PeerConnection, EndpointError> {
+        use std::net::IpAddr;
+       use tokio::time::{timeout, Duration};
+        
+        if self.shutdown.load(Ordering::SeqCst) {
+            return Err(EndpointError::ShuttingDown);
+        }
+
+        // Separate addresses by family
+        let ipv4_addrs: Vec<SocketAddr> = addresses
+            .iter()
+            .filter(|addr| matches!(addr.ip(), IpAddr::V4(_)))
+            .copied()
+            .collect();
+
+        let ipv6_addrs: Vec<SocketAddr> = addresses
+            .iter()
+            .filter(|addr| matches!(addr.ip(), IpAddr::V6(_)))
+            .copied()
+            .collect();
+
+        info!(
+            "Dual-stack connect: {} IPv4, {} IPv6 addresses",
+            ipv4_addrs.len(),
+            ipv6_addrs.len()
+        );
+
+        // Try both families in PARALLEL  
+        let (ipv4_result, ipv6_result) = tokio::join!(
+            self.try_connect_family(&ipv4_addrs, "IPv4"),
+            self.try_connect_family(&ipv6_addrs, "IPv6"),
+        );
+
+        // Handle all possible outcomes
+        match (ipv4_result, ipv6_result) {
+            (Some(v4_conn), Some(v6_conn)) => {
+                // 🎉 BEST CASE: Both IPv4 AND IPv6 work - keep both!
+                info!(
+                    "✓✓ Dual-stack success! IPv4: {}, IPv6: {} (maintaining both connections)",
+                    v4_conn.remote_addr, v6_conn.remote_addr
+                );
+                
+                // Both connections already stored by try_connect_family
+                // Return IPv6 as primary (modern internet best practice)
+                Ok(v6_conn)
+            }
+
+            (Some(v4_conn), None) => {
+                // IPv4-only network (v6 unavailable or failed)
+                info!("IPv4-only connection established to {}", v4_conn.remote_addr);
+                Ok(v4_conn)
+            }
+
+            (None, Some(v6_conn)) => {
+                // IPv6-only network (v4 unavailable or failed)
+                info!("IPv6-only connection established to {}", v6_conn.remote_addr);
+                Ok(v6_conn)
+            }
+
+            (None, None) => {
+                // Neither direct connection works - try NAT traversal next
+                warn!("Both IPv4 and IPv6 direct connections failed");
+                Err(EndpointError::Connection(
+                    "Dual-stack connection failed for both address families".to_string(),
+                ))
+            }
+        }
+    }
+
+    /// Try to connect using addresses from one family (IPv4 or IPv6)
+    ///
+    /// Attempts each address in the list until one succeeds or all fail.
+    /// Uses a 5-second timeout per attempt.
+    ///
+    /// # Returns
+    /// `Some(PeerConnection)` if any address succeeds, `None` if all fail or no addresses
+    async fn try_connect_family(
+        &self,
+        addresses: &[SocketAddr],
+        family_name: &str,
+    ) -> Option<PeerConnection> {
+        use tokio::time::{timeout, Duration};
+        
+        if addresses.is_empty() {
+            debug!("{}: No addresses to try", family_name);
+            return None;
+        }
+
+        debug!("Trying {} {} addresses", addresses.len(), family_name);
+
+        for (idx, addr) in addresses.iter().enumerate() {
+            debug!(
+                "  {} attempt {}/{}: {}",
+                family_name,
+                idx + 1,
+                addresses.len(),
+                addr
+            );
+
+            // Try connection with 5s timeout
+            match timeout(Duration::from_secs(5), self.connect(*addr)).await {
+                Ok(Ok(peer_conn)) => {
+                    info!("✓ {} connection successful to {}", family_name, addr);
+                    return Some(peer_conn);
+                }
+                Ok(Err(e)) => {
+                    debug!("  {} to {} failed: {}", family_name, addr, e);
+                    // Try next address
+                }
+                Err(_) => {
+                    debug!("  {} to {} timed out (5s)", family_name, addr);
+                    // Try next address
+                }
+            }
+        }
+
+        debug!("{}: All {} addresses failed", family_name, addresses.len());
+        None
+    }
+
     /// Connect to a peer by ID using NAT traversal
     pub async fn connect_to_peer(
         &self,
