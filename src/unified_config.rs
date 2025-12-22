@@ -93,6 +93,9 @@ pub struct NatConfig {
     /// Enable automatic relay fallback when direct connection fails
     pub enable_relay_fallback: bool,
 
+    /// Known relay nodes for MASQUE CONNECT-UDP Bind fallback
+    pub relay_nodes: Vec<std::net::SocketAddr>,
+
     /// Maximum concurrent NAT traversal attempts
     pub max_concurrent_attempts: usize,
 
@@ -106,6 +109,7 @@ impl Default for NatConfig {
             max_candidates: 10,
             enable_symmetric_nat: true,
             enable_relay_fallback: true,
+            relay_nodes: Vec::new(),
             max_concurrent_attempts: 3,
             prefer_rfc_nat_traversal: true,
         }
@@ -232,6 +236,7 @@ impl P2pConfig {
             coordination_timeout: self.timeouts.nat_traversal.coordination_timeout,
             enable_symmetric_nat: self.nat.enable_symmetric_nat,
             enable_relay_fallback: self.nat.enable_relay_fallback,
+            relay_nodes: self.nat.relay_nodes.clone(),
             max_concurrent_attempts: self.nat.max_concurrent_attempts,
             bind_addr: self.bind_addr,
             prefer_rfc_nat_traversal: self.nat.prefer_rfc_nat_traversal,

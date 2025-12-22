@@ -6,27 +6,25 @@
 // Full details available at https://saorsalabs.com/licenses
 
 //! Comprehensive relay statistics collection and aggregation.
+//!
+//! This module provides statistics collection for the MASQUE relay infrastructure.
+//! It tracks authentication, rate limiting, errors, and relay queue statistics.
 
 use super::{
     AuthenticationStatistics, ConnectionStatistics, ErrorStatistics, RateLimitingStatistics,
-    RelayConnection, RelayStatistics, SessionManager, SessionStatistics,
+    RelayStatistics, SessionStatistics,
 };
 use crate::endpoint::RelayStats;
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 /// Comprehensive relay statistics collector that aggregates stats from all relay components
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct RelayStatisticsCollector {
     /// Basic relay queue statistics
     queue_stats: Arc<Mutex<RelayStats>>,
-
-    /// Session managers being tracked
-    session_managers: Arc<Mutex<Vec<Arc<SessionManager>>>>,
-
-    /// Connection tracking
-    connections: Arc<Mutex<HashMap<u32, Arc<RelayConnection>>>>,
 
     /// Error tracking
     error_counts: Arc<Mutex<HashMap<String, u64>>>,
@@ -42,6 +40,39 @@ pub struct RelayStatisticsCollector {
 
     /// Last statistics snapshot
     last_snapshot: Arc<Mutex<RelayStatistics>>,
+
+    /// Active sessions count (updated externally)
+    active_sessions: AtomicU32,
+
+    /// Total sessions created (updated externally)
+    total_sessions: AtomicU64,
+
+    /// Active connections count (updated externally)
+    active_connections: AtomicU32,
+
+    /// Total bytes sent (updated externally)
+    total_bytes_sent: AtomicU64,
+
+    /// Total bytes received (updated externally)
+    total_bytes_received: AtomicU64,
+}
+
+impl Clone for RelayStatisticsCollector {
+    fn clone(&self) -> Self {
+        Self {
+            queue_stats: Arc::clone(&self.queue_stats),
+            error_counts: Arc::clone(&self.error_counts),
+            auth_stats: Arc::clone(&self.auth_stats),
+            rate_limit_stats: Arc::clone(&self.rate_limit_stats),
+            start_time: self.start_time,
+            last_snapshot: Arc::clone(&self.last_snapshot),
+            active_sessions: AtomicU32::new(self.active_sessions.load(Ordering::Relaxed)),
+            total_sessions: AtomicU64::new(self.total_sessions.load(Ordering::Relaxed)),
+            active_connections: AtomicU32::new(self.active_connections.load(Ordering::Relaxed)),
+            total_bytes_sent: AtomicU64::new(self.total_bytes_sent.load(Ordering::Relaxed)),
+            total_bytes_received: AtomicU64::new(self.total_bytes_received.load(Ordering::Relaxed)),
+        }
+    }
 }
 
 impl RelayStatisticsCollector {
@@ -49,35 +80,35 @@ impl RelayStatisticsCollector {
     pub fn new() -> Self {
         Self {
             queue_stats: Arc::new(Mutex::new(RelayStats::default())),
-            session_managers: Arc::new(Mutex::new(Vec::new())),
-            connections: Arc::new(Mutex::new(HashMap::new())),
             error_counts: Arc::new(Mutex::new(HashMap::new())),
             auth_stats: Arc::new(Mutex::new(AuthenticationStatistics::default())),
             rate_limit_stats: Arc::new(Mutex::new(RateLimitingStatistics::default())),
             start_time: Instant::now(),
             last_snapshot: Arc::new(Mutex::new(RelayStatistics::default())),
+            active_sessions: AtomicU32::new(0),
+            total_sessions: AtomicU64::new(0),
+            active_connections: AtomicU32::new(0),
+            total_bytes_sent: AtomicU64::new(0),
+            total_bytes_received: AtomicU64::new(0),
         }
     }
 
-    /// Register a session manager for statistics collection
-    #[allow(clippy::unwrap_used)]
-    pub fn register_session_manager(&self, session_manager: Arc<SessionManager>) {
-        let mut managers = self.session_managers.lock().unwrap();
-        managers.push(session_manager);
+    /// Update session count (called by MASQUE relay server)
+    pub fn update_session_count(&self, active: u32, total: u64) {
+        self.active_sessions.store(active, Ordering::Relaxed);
+        self.total_sessions.store(total, Ordering::Relaxed);
     }
 
-    /// Register a relay connection for statistics collection
-    #[allow(clippy::unwrap_used)]
-    pub fn register_connection(&self, session_id: u32, connection: Arc<RelayConnection>) {
-        let mut connections = self.connections.lock().unwrap();
-        connections.insert(session_id, connection);
+    /// Update connection count (called by MASQUE relay components)
+    pub fn update_connection_count(&self, active: u32) {
+        self.active_connections.store(active, Ordering::Relaxed);
     }
 
-    /// Unregister a relay connection
-    #[allow(clippy::unwrap_used)]
-    pub fn unregister_connection(&self, session_id: u32) {
-        let mut connections = self.connections.lock().unwrap();
-        connections.remove(&session_id);
+    /// Update bytes transferred (called by MASQUE relay components)
+    pub fn add_bytes_transferred(&self, sent: u64, received: u64) {
+        self.total_bytes_sent.fetch_add(sent, Ordering::Relaxed);
+        self.total_bytes_received
+            .fetch_add(received, Ordering::Relaxed);
     }
 
     /// Update queue statistics (called from endpoint)
@@ -174,67 +205,49 @@ impl RelayStatisticsCollector {
         self.last_snapshot.lock().unwrap().clone()
     }
 
-    /// Collect session statistics from all registered session managers
-    #[allow(clippy::unwrap_used)]
+    /// Collect session statistics from atomic counters
     fn collect_session_statistics(&self) -> SessionStatistics {
-        let managers = self.session_managers.lock().unwrap();
-        let mut total_stats = SessionStatistics::default();
+        let active_sessions = self.active_sessions.load(Ordering::Relaxed);
+        let total_sessions = self.total_sessions.load(Ordering::Relaxed);
+        let total_bytes_sent = self.total_bytes_sent.load(Ordering::Relaxed);
+        let total_bytes_received = self.total_bytes_received.load(Ordering::Relaxed);
 
-        for manager in managers.iter() {
-            let mgr_stats = manager.get_statistics();
-
-            // Aggregate session counts
-            total_stats.active_sessions += mgr_stats.active_sessions as u32;
-            total_stats.pending_sessions += mgr_stats.pending_sessions as u32;
-            total_stats.total_bytes_forwarded +=
-                mgr_stats.total_bytes_sent + mgr_stats.total_bytes_received;
-
-            // For derived stats, we take the maximum or average as appropriate
-            if mgr_stats.total_sessions > 0 {
-                total_stats.total_sessions_created += mgr_stats.total_sessions as u64;
-            }
-        }
+        let mut stats = SessionStatistics::default();
+        stats.active_sessions = active_sessions;
+        stats.total_sessions_created = total_sessions;
+        stats.total_bytes_forwarded = total_bytes_sent + total_bytes_received;
 
         // Calculate average session duration if we have historical data
-        // This would need to be tracked over time in a real implementation
         let elapsed = self.start_time.elapsed().as_secs_f64();
-        if total_stats.total_sessions_created > 0 && elapsed > 0.0 {
-            total_stats.avg_session_duration = elapsed / total_stats.total_sessions_created as f64;
+        if total_sessions > 0 && elapsed > 0.0 {
+            stats.avg_session_duration = elapsed / total_sessions as f64;
         }
 
-        total_stats
+        stats
     }
 
-    /// Collect connection statistics from all registered connections
-    #[allow(clippy::unwrap_used)]
+    /// Collect connection statistics from atomic counters
     fn collect_connection_statistics(&self) -> ConnectionStatistics {
-        let connections = self.connections.lock().unwrap();
-        let mut total_stats = ConnectionStatistics::default();
+        let active_connections = self.active_connections.load(Ordering::Relaxed);
+        let total_bytes_sent = self.total_bytes_sent.load(Ordering::Relaxed);
+        let total_bytes_received = self.total_bytes_received.load(Ordering::Relaxed);
 
-        total_stats.total_connections = connections.len() as u64;
-
-        for connection in connections.values() {
-            let conn_stats = connection.get_stats();
-
-            if conn_stats.is_active {
-                total_stats.active_connections += 1;
-            }
-
-            total_stats.total_bytes_sent += conn_stats.bytes_sent;
-            total_stats.total_bytes_received += conn_stats.bytes_received;
-        }
+        let mut stats = ConnectionStatistics::default();
+        stats.active_connections = active_connections;
+        stats.total_bytes_sent = total_bytes_sent;
+        stats.total_bytes_received = total_bytes_received;
 
         // Calculate average bandwidth usage
         let elapsed = self.start_time.elapsed().as_secs_f64();
         if elapsed > 0.0 {
-            let total_bytes = total_stats.total_bytes_sent + total_stats.total_bytes_received;
-            total_stats.avg_bandwidth_usage = total_bytes as f64 / elapsed;
+            let total_bytes = total_bytes_sent + total_bytes_received;
+            stats.avg_bandwidth_usage = total_bytes as f64 / elapsed;
         }
 
         // Peak concurrent connections would need to be tracked over time
-        total_stats.peak_concurrent_connections = total_stats.active_connections;
+        stats.peak_concurrent_connections = active_connections;
 
-        total_stats
+        stats
     }
 
     /// Collect error statistics
@@ -302,6 +315,12 @@ impl RelayStatisticsCollector {
             let mut rate_limit_stats = self.rate_limit_stats.lock().unwrap();
             *rate_limit_stats = RateLimitingStatistics::default();
         }
+
+        self.active_sessions.store(0, Ordering::Relaxed);
+        self.total_sessions.store(0, Ordering::Relaxed);
+        self.active_connections.store(0, Ordering::Relaxed);
+        self.total_bytes_sent.store(0, Ordering::Relaxed);
+        self.total_bytes_received.store(0, Ordering::Relaxed);
     }
 }
 
@@ -380,6 +399,32 @@ mod tests {
     }
 
     #[test]
+    fn test_session_count_updates() {
+        let collector = RelayStatisticsCollector::new();
+
+        // Update session counts
+        collector.update_session_count(5, 100);
+
+        let stats = collector.collect_statistics();
+        assert_eq!(stats.session_stats.active_sessions, 5);
+        assert_eq!(stats.session_stats.total_sessions_created, 100);
+    }
+
+    #[test]
+    fn test_bytes_transferred() {
+        let collector = RelayStatisticsCollector::new();
+
+        // Add some bytes transferred
+        collector.add_bytes_transferred(1000, 2000);
+        collector.add_bytes_transferred(500, 500);
+
+        let stats = collector.collect_statistics();
+        assert_eq!(stats.connection_stats.total_bytes_sent, 1500);
+        assert_eq!(stats.connection_stats.total_bytes_received, 2500);
+        assert_eq!(stats.session_stats.total_bytes_forwarded, 4000);
+    }
+
+    #[test]
     fn test_success_rate_calculation() {
         let collector = RelayStatisticsCollector::new();
 
@@ -414,15 +459,20 @@ mod tests {
         collector.record_auth_attempt(true, None);
         collector.record_error("test_error");
         collector.record_rate_limit(false);
+        collector.update_session_count(10, 50);
+        collector.add_bytes_transferred(1000, 2000);
 
         // Verify data exists
         let stats_before = collector.collect_statistics();
         assert!(stats_before.auth_stats.total_auth_attempts > 0);
+        assert_eq!(stats_before.session_stats.active_sessions, 10);
 
         // Reset and verify clean state
         collector.reset();
         let stats_after = collector.collect_statistics();
         assert_eq!(stats_after.auth_stats.total_auth_attempts, 0);
         assert_eq!(stats_after.rate_limit_stats.total_requests, 0);
+        assert_eq!(stats_after.session_stats.active_sessions, 0);
+        assert_eq!(stats_after.connection_stats.total_bytes_sent, 0);
     }
 }

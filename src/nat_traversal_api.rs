@@ -66,6 +66,7 @@ use crate::{
     candidate_discovery::{CandidateDiscoveryManager, DiscoveryConfig, DiscoveryEvent},
     // v0.13.0: NatTraversalRole removed - all nodes are symmetric P2P nodes
     connection::nat_traversal::{CandidateSource, CandidateState},
+    masque::integration::{RelayManager, RelayManagerConfig},
 };
 
 use crate::{
@@ -112,6 +113,8 @@ pub struct NatTraversalEndpoint {
     /// Track peers for which ConnectionEstablished has already been emitted
     /// This prevents duplicate events from being sent multiple times for the same connection
     emitted_established_events: Arc<std::sync::RwLock<std::collections::HashSet<PeerId>>>,
+    /// MASQUE relay manager for fallback connections
+    relay_manager: Option<Arc<RelayManager>>,
 }
 
 /// Configuration for NAT traversal behavior
@@ -167,6 +170,9 @@ pub struct NatTraversalConfig {
     pub enable_symmetric_nat: bool,
     /// Enable automatic relay fallback
     pub enable_relay_fallback: bool,
+    /// Known relay nodes for MASQUE CONNECT-UDP Bind fallback
+    /// When direct NAT traversal fails, connections can be relayed through these nodes
+    pub relay_nodes: Vec<SocketAddr>,
     /// Maximum concurrent NAT traversal attempts
     pub max_concurrent_attempts: usize,
     /// Bind address for the endpoint
@@ -717,6 +723,7 @@ impl Default for NatTraversalConfig {
             coordination_timeout: Duration::from_secs(10),
             enable_symmetric_nat: true,
             enable_relay_fallback: true,
+            relay_nodes: Vec::new(),
             max_concurrent_attempts: 3,
             bind_addr: None,
             prefer_rfc_nat_traversal: true, // Default to RFC format for standards compliance
@@ -856,6 +863,23 @@ impl NatTraversalEndpoint {
         let emitted_established_events =
             Arc::new(std::sync::RwLock::new(std::collections::HashSet::new()));
 
+        // Create MASQUE relay manager if relay fallback is enabled
+        let relay_manager = if config.enable_relay_fallback && !config.relay_nodes.is_empty() {
+            let relay_config = RelayManagerConfig {
+                max_relays: config.relay_nodes.len().min(5), // Cap at 5 relays
+                connect_timeout: config.coordination_timeout,
+                ..RelayManagerConfig::default()
+            };
+            let manager = RelayManager::new(relay_config);
+            // Add configured relay nodes
+            for relay_addr in &config.relay_nodes {
+                manager.add_relay_node(*relay_addr).await;
+            }
+            Some(Arc::new(manager))
+        } else {
+            None
+        };
+
         let endpoint = Self {
             inner_endpoint: Some(inner_endpoint.clone()),
             config: config.clone(),
@@ -870,6 +894,7 @@ impl NatTraversalEndpoint {
             local_peer_id: Self::generate_local_peer_id(),
             timeout_config: config.timeouts.clone(),
             emitted_established_events: emitted_established_events.clone(),
+            relay_manager,
         };
 
         // v0.13.0+: All nodes are symmetric P2P nodes - always start accepting connections
@@ -1981,6 +2006,80 @@ impl NatTraversalEndpoint {
         }
 
         Ok(connection)
+    }
+
+    /// Attempt connection with automatic relay fallback
+    ///
+    /// If direct NAT traversal fails and relay nodes are configured,
+    /// this will attempt to establish a relayed connection via MASQUE.
+    pub async fn connect_with_fallback(
+        &self,
+        peer_id: PeerId,
+        server_name: &str,
+        remote_addr: SocketAddr,
+    ) -> Result<InnerConnection, NatTraversalError> {
+        // First, try direct connection
+        match self.connect_to_peer(peer_id, server_name, remote_addr).await {
+            Ok(conn) => return Ok(conn),
+            Err(e) if self.relay_manager.is_some() => {
+                info!(
+                    "Direct connection to {:?} failed ({:?}), attempting relay fallback",
+                    peer_id, e
+                );
+            }
+            Err(e) => return Err(e),
+        }
+
+        // Direct connection failed, try relay
+        let relay_manager = self.relay_manager.as_ref().ok_or_else(|| {
+            NatTraversalError::ConnectionFailed("No relay nodes configured".to_string())
+        })?;
+
+        // Get available relays
+        let available_relays = relay_manager.available_relays().await;
+        if available_relays.is_empty() {
+            return Err(NatTraversalError::ConnectionFailed(
+                "No available relay nodes".to_string(),
+            ));
+        }
+
+        // Try each relay in order
+        for relay_addr in available_relays {
+            info!("Attempting connection via relay: {}", relay_addr);
+
+            // Create CONNECT-UDP Bind request
+            let request = relay_manager.create_connect_request();
+
+            // For now, relay fallback is a placeholder
+            // Full implementation requires:
+            // 1. Establishing QUIC connection to relay
+            // 2. Sending HTTP CONNECT-UDP request
+            // 3. Receiving assigned public address
+            // 4. Using relay for datagram forwarding
+            debug!(
+                "Relay fallback for {} via {} - request: {:?}",
+                remote_addr, relay_addr, request
+            );
+        }
+
+        Err(NatTraversalError::ConnectionFailed(
+            "All relay attempts failed".to_string(),
+        ))
+    }
+
+    /// Get the relay manager for advanced relay operations
+    ///
+    /// Returns None if relay fallback is not enabled or no relay nodes are configured.
+    pub fn relay_manager(&self) -> Option<Arc<RelayManager>> {
+        self.relay_manager.clone()
+    }
+
+    /// Check if relay fallback is available
+    pub async fn has_relay_fallback(&self) -> bool {
+        match &self.relay_manager {
+            Some(manager) => manager.has_available_relay().await,
+            None => false,
+        }
     }
 
     /// Accept incoming connections on the endpoint

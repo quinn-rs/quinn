@@ -344,8 +344,11 @@ pub use p2p_endpoint::{
 pub use unified_config::{ConfigError, MtuConfig, NatConfig, P2pConfig, P2pConfigBuilder};
 
 pub use relay::{
-    AuthToken, RelayAction, RelayAuthenticator, RelayConnection, RelayConnectionConfig, RelayError,
-    RelayEvent, RelayResult, SessionId, SessionManager, SessionState,
+    AuthToken, RelayAuthenticator, RelayError, RelayResult, RelayStatisticsCollector,
+    // MASQUE types re-exported from relay module
+    MasqueRelayClient, MasqueRelayConfig, MasqueRelayServer, MasqueRelayStats, MigrationConfig,
+    MigrationCoordinator, MigrationState, RelayManager, RelayManagerConfig, RelaySession,
+    RelaySessionConfig, RelaySessionState,
 };
 pub use shared::{ConnectionId, EcnCodepoint, EndpointEvent};
 pub use transport_error::{Code as TransportErrorCode, Error as TransportError};

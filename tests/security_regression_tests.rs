@@ -24,6 +24,7 @@ fn test_peer_config() -> NatTraversalConfig {
         pqc: None,
         timeouts: Default::default(),
         identity_key: None,
+        relay_nodes: vec![],
     }
 }
 
@@ -42,6 +43,7 @@ fn test_server_config() -> NatTraversalConfig {
         pqc: None,
         timeouts: Default::default(),
         identity_key: None,
+        relay_nodes: vec![],
     }
 }
 
@@ -83,6 +85,7 @@ async fn test_error_handling_no_panic() {
         pqc: None,
         timeouts: Default::default(),
         identity_key: None,
+        relay_nodes: vec![],
     };
 
     let result1 = NatTraversalEndpoint::new(config1, None).await;
@@ -105,6 +108,7 @@ async fn test_error_handling_no_panic() {
         pqc: None,
         timeouts: Default::default(),
         identity_key: None,
+        relay_nodes: vec![],
     };
 
     let result2 = NatTraversalEndpoint::new(config2, None).await;
@@ -190,6 +194,7 @@ async fn test_malformed_config_handling() {
         pqc: None,
         timeouts: Default::default(),
         identity_key: None,
+        relay_nodes: vec![],
     };
 
     let result = NatTraversalEndpoint::new(no_peers_config, None).await;
@@ -213,6 +218,7 @@ async fn test_malformed_config_handling() {
         pqc: None,
         timeouts: Default::default(),
         identity_key: None,
+        relay_nodes: vec![],
     };
 
     let result2 = NatTraversalEndpoint::new(extreme_config, None).await;
@@ -243,6 +249,7 @@ async fn test_input_sanitization() {
         pqc: None,
         timeouts: Default::default(),
         identity_key: None,
+        relay_nodes: vec![],
     };
 
     // This should either work or fail gracefully, not exhaust memory or panic
@@ -308,6 +315,7 @@ mod specific_regression_tests {
             pqc: None,
             timeouts: Default::default(),
             identity_key: None,
+            relay_nodes: vec![],
         };
 
         // Should not panic and should handle random port selection
@@ -353,6 +361,7 @@ mod specific_regression_tests {
             pqc: None,
             timeouts: Default::default(),
             identity_key: None,
+            relay_nodes: vec![],
         };
 
         // Should not panic, even if configuration is inconsistent

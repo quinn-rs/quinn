@@ -91,13 +91,33 @@
 //! - [RFC 9297 - HTTP Datagrams](https://datatracker.ietf.org/doc/rfc9297/)
 
 pub mod capsule;
+pub mod connect;
 pub mod context;
 pub mod datagram;
+pub mod integration;
+pub mod migration;
+pub mod relay_client;
+pub mod relay_server;
+pub mod relay_session;
 
 // Re-export primary types for convenience
 pub use capsule::{
     CAPSULE_COMPRESSION_ACK, CAPSULE_COMPRESSION_ASSIGN, CAPSULE_COMPRESSION_CLOSE, Capsule,
     CompressionAck, CompressionAssign, CompressionClose,
 };
+pub use connect::{
+    ConnectError, ConnectUdpRequest, ConnectUdpResponse, BIND_ANY_HOST, BIND_ANY_PORT,
+    CONNECT_UDP_BIND_PROTOCOL, CONNECT_UDP_PROTOCOL,
+};
 pub use context::{ContextError, ContextInfo, ContextManager, ContextState};
 pub use datagram::{CompressedDatagram, Datagram, UncompressedDatagram};
+pub use relay_client::{
+    MasqueRelayClient, RelayClientConfig, RelayClientStats, RelayConnectionState,
+};
+pub use relay_server::{
+    DatagramResult, MasqueRelayConfig, MasqueRelayServer, MasqueRelayStats, OutboundDatagram,
+    SessionInfo,
+};
+pub use relay_session::{RelaySession, RelaySessionConfig, RelaySessionState, RelaySessionStats};
+pub use integration::{RelayManager, RelayManagerConfig, RelayManagerStats, RelayOperationResult};
+pub use migration::{MigrationConfig, MigrationCoordinator, MigrationState, MigrationStats};

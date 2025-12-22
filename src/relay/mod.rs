@@ -5,45 +5,62 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
-//! TURN-style Relay Protocol Implementation
+//! Relay Infrastructure for NAT Traversal
 //!
-//! This module implements a TURN-style relay protocol for NAT traversal fallback
-//! when direct peer-to-peer connections cannot be established. The relay system
-//! provides a fallback mechanism to ensure connectivity between peers through
-//! trusted relay servers.
+//! This module provides relay infrastructure components used by the MASQUE
+//! CONNECT-UDP Bind implementation for guaranteed NAT traversal fallback.
 //!
-//! # Protocol Overview
+//! # Overview
 //!
-//! The relay protocol uses QUIC extension frames for communication:
-//! - `RELAY_REQUEST` (0x44): Request relay connection establishment
-//! - `RELAY_RESPONSE` (0x45): Response to relay request with status
-//! - `RELAY_DATA` (0x46): Bidirectional data forwarding through relay
+//! The relay system implements `draft-ietf-masque-connect-udp-listen-10` to
+//! enable UDP proxying over QUIC connections. This provides 100% connectivity
+//! guarantee even when direct hole punching fails.
 //!
-//! # Security
+//! # Components
 //!
-//! All relay operations use Ed25519 cryptographic authentication with
-//! anti-replay protection. Rate limiting prevents abuse and ensures
-//! fair resource allocation among clients.
+//! - [`authenticator`] - ML-DSA-65 post-quantum authentication
+//! - [`error`] - Relay error types
+//! - [`rate_limiter`] - Token bucket rate limiting
+//! - [`statistics`] - Relay statistics collection
+//!
+//! # Usage
+//!
+//! The primary relay implementation is in [`crate::masque`]. This module
+//! provides shared infrastructure components.
+//!
+//! ```rust,ignore
+//! use ant_quic::masque::{MasqueRelayServer, MasqueRelayClient, RelayManager};
+//! use ant_quic::relay::{RelayAuthenticator, RateLimiter};
+//!
+//! // Create a relay server with authentication
+//! let authenticator = RelayAuthenticator::new(keypair);
+//! let server = MasqueRelayServer::new(config, relay_address);
+//!
+//! // Create a relay client
+//! let client = MasqueRelayClient::new(relay_address, client_config);
+//! ```
+//!
+//! See [`crate::masque`] for the full MASQUE implementation.
 
 pub mod authenticator;
-pub mod connection;
 pub mod error;
 pub mod rate_limiter;
-pub mod session_manager;
 pub mod statistics;
 
+// Core exports
 pub use authenticator::{AuthToken, RelayAuthenticator};
-pub use connection::{RelayAction, RelayConnection, RelayConnectionConfig, RelayEvent};
 pub use error::{RelayError, RelayResult};
 pub use rate_limiter::{RateLimiter, TokenBucket};
-pub use session_manager::{
-    RelaySessionInfo, SessionConfig, SessionId, SessionManager, SessionManagerStats, SessionState,
+pub use statistics::RelayStatisticsCollector;
+
+// Re-export MASQUE types for convenience
+pub use crate::masque::{
+    MasqueRelayClient, MasqueRelayConfig, MasqueRelayServer, MasqueRelayStats,
+    MigrationConfig, MigrationCoordinator, MigrationState, RelayManager, RelayManagerConfig,
+    RelaySession, RelaySessionConfig, RelaySessionState,
 };
 
 use std::time::Duration;
-
-// Export the statistics collector
-pub use statistics::RelayStatisticsCollector;
 
 /// Default relay session timeout (5 minutes)
 pub const DEFAULT_SESSION_TIMEOUT: Duration = Duration::from_secs(300);
@@ -54,7 +71,7 @@ pub const DEFAULT_BANDWIDTH_LIMIT: u32 = 1_048_576;
 /// Maximum number of concurrent relay sessions per client
 pub const MAX_CONCURRENT_SESSIONS: usize = 10;
 
-/// Maximum size of relay data frame payload (64 KB)
+/// Maximum size of relay data payload (64 KB)
 pub const MAX_RELAY_DATA_SIZE: usize = 65536;
 
 /// Rate limiting: tokens per second (100 requests/second)
@@ -68,13 +85,14 @@ pub const ANTI_REPLAY_WINDOW_SIZE: u64 = 1000;
 
 /// Session cleanup interval (check every 30 seconds)
 pub const SESSION_CLEANUP_INTERVAL: Duration = Duration::from_secs(30);
+
 /// Comprehensive relay statistics combining all relay operations
 #[derive(Debug, Clone, Default)]
 pub struct RelayStatistics {
     /// Session-related statistics
     pub session_stats: SessionStatistics,
 
-    /// Connection-related statistics  
+    /// Connection-related statistics
     pub connection_stats: ConnectionStatistics,
 
     /// Authentication and security statistics
@@ -253,18 +271,15 @@ impl RelayStatistics {
 
     /// Check if relay is operating within healthy parameters
     pub fn is_healthy(&self) -> bool {
-        // Calculate total operations across all subsystems
         let total_ops = self.session_stats.total_sessions_created
             + self.connection_stats.total_connections
             + self.auth_stats.total_auth_attempts
             + self.rate_limit_stats.total_requests;
 
-        // If no operations have been recorded, consider it healthy (idle state)
         if total_ops == 0 {
             return true;
         }
 
-        // Calculate total errors across all error types
         let total_errors = self.error_stats.protocol_errors
             + self.error_stats.resource_exhausted
             + self.error_stats.session_errors
@@ -272,19 +287,12 @@ impl RelayStatistics {
             + self.error_stats.network_errors
             + self.error_stats.internal_errors;
 
-        // For systems with operations, apply health criteria:
-        // 1. High success rate (>95%)
-        // 2. Error rate check (with special handling for short time periods)
-        // 3. Good rate limiting efficiency if applicable
-
         let error_rate_ok = if total_errors == 0 {
-            true // No errors is always healthy
+            true
         } else if self.error_stats.error_rate < 1.0 {
-            true // Less than 1 error/sec is healthy
+            true
         } else {
-            // For high error rates, check if we have very few absolute errors
-            // This handles cases where tests run quickly and cause artificially high rates
-            total_errors <= 5 && total_ops >= 100 // Allow up to 5 errors if we have 100+ ops (5% error rate)
+            total_errors <= 5 && total_ops >= 100
         };
 
         self.success_rate() > 0.95

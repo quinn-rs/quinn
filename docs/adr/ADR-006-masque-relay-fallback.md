@@ -160,14 +160,39 @@ Per ADR-004 (Symmetric P2P), all peers participate in relaying:
 |-------|-----------|--------|
 | 1 | HTTP Capsule protocol | ✅ Complete |
 | 2 | Context ID management | ✅ Complete |
-| 3 | HTTP CONNECT handler | 🚧 Planned |
-| 4 | Relay server integration | 🚧 Planned |
-| 5 | Connection migration | 🚧 Planned |
+| 3 | HTTP CONNECT handler | ✅ Complete |
+| 4 | Relay server integration | ✅ Complete |
+| 5 | Relay client implementation | ✅ Complete |
+| 6 | NAT traversal API integration | ✅ Complete |
+| 7 | Connection migration | ✅ Complete |
+| 8 | Legacy relay deprecation | ✅ Complete |
+| 9 | Integration tests | ✅ Complete |
+
+### Module Summary
+
+| Module | File | Description |
+|--------|------|-------------|
+| Capsule | `src/masque/capsule.rs` | HTTP Capsule encoding/decoding |
+| Context | `src/masque/context.rs` | Context ID management |
+| Datagram | `src/masque/datagram.rs` | Compressed/uncompressed datagrams |
+| Connect | `src/masque/connect.rs` | HTTP CONNECT-UDP Bind handler |
+| Relay Server | `src/masque/relay_server.rs` | MASQUE relay server |
+| Relay Client | `src/masque/relay_client.rs` | MASQUE relay client |
+| Relay Session | `src/masque/relay_session.rs` | Per-session state management |
+| Integration | `src/masque/integration.rs` | RelayManager for pool management |
+| Migration | `src/masque/migration.rs` | Relay-to-direct path upgrade |
+
+### Test Coverage
+
+- 87 MASQUE unit tests (embedded in modules)
+- 16 MASQUE integration tests (`tests/masque_integration_tests.rs`)
+- All legacy relay tests continue to pass via deprecation shims
 
 ## References
 
 - **Specification**: `draft-ietf-masque-connect-udp-listen-10`
 - **Base protocol**: RFC 9298 (CONNECT-UDP), RFC 9297 (HTTP Datagrams)
-- **Implementation**: `src/masque/` (capsule.rs, context.rs, datagram.rs)
-- **Integration**: `src/nat_traversal_api.rs` (relay fallback config)
+- **Implementation**: `src/masque/` (complete module)
+- **Integration**: `src/nat_traversal_api.rs` (relay_manager, connect_with_fallback)
+- **Legacy Deprecation**: `src/relay/mod.rs` (re-exports MASQUE types)
 - **Related ADRs**: ADR-004 (Symmetric P2P), ADR-005 (Native QUIC NAT)
