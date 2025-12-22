@@ -213,7 +213,11 @@ impl CachedPeer {
                 SystemTime::now()
                     .duration_since(SystemTime::UNIX_EPOCH)
                     .ok()
-                    .map(|now_epoch| now_epoch.as_secs().saturating_sub(last_seen_epoch.as_secs()))
+                    .map(|now_epoch| {
+                        now_epoch
+                            .as_secs()
+                            .saturating_sub(last_seen_epoch.as_secs())
+                    })
             })
             .unwrap_or(0) as f64;
 

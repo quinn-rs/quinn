@@ -2019,7 +2019,10 @@ impl NatTraversalEndpoint {
         remote_addr: SocketAddr,
     ) -> Result<InnerConnection, NatTraversalError> {
         // First, try direct connection
-        match self.connect_to_peer(peer_id, server_name, remote_addr).await {
+        match self
+            .connect_to_peer(peer_id, server_name, remote_addr)
+            .await
+        {
             Ok(conn) => return Ok(conn),
             Err(e) if self.relay_manager.is_some() => {
                 info!(

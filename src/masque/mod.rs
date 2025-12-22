@@ -106,11 +106,13 @@ pub use capsule::{
     CompressionAck, CompressionAssign, CompressionClose,
 };
 pub use connect::{
-    ConnectError, ConnectUdpRequest, ConnectUdpResponse, BIND_ANY_HOST, BIND_ANY_PORT,
-    CONNECT_UDP_BIND_PROTOCOL, CONNECT_UDP_PROTOCOL,
+    BIND_ANY_HOST, BIND_ANY_PORT, CONNECT_UDP_BIND_PROTOCOL, CONNECT_UDP_PROTOCOL, ConnectError,
+    ConnectUdpRequest, ConnectUdpResponse,
 };
 pub use context::{ContextError, ContextInfo, ContextManager, ContextState};
 pub use datagram::{CompressedDatagram, Datagram, UncompressedDatagram};
+pub use integration::{RelayManager, RelayManagerConfig, RelayManagerStats, RelayOperationResult};
+pub use migration::{MigrationConfig, MigrationCoordinator, MigrationState, MigrationStats};
 pub use relay_client::{
     MasqueRelayClient, RelayClientConfig, RelayClientStats, RelayConnectionState,
 };
@@ -119,5 +121,3 @@ pub use relay_server::{
     SessionInfo,
 };
 pub use relay_session::{RelaySession, RelaySessionConfig, RelaySessionState, RelaySessionStats};
-pub use integration::{RelayManager, RelayManagerConfig, RelayManagerStats, RelayOperationResult};
-pub use migration::{MigrationConfig, MigrationCoordinator, MigrationState, MigrationStats};

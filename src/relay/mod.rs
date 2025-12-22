@@ -55,9 +55,9 @@ pub use statistics::RelayStatisticsCollector;
 
 // Re-export MASQUE types for convenience
 pub use crate::masque::{
-    MasqueRelayClient, MasqueRelayConfig, MasqueRelayServer, MasqueRelayStats,
-    MigrationConfig, MigrationCoordinator, MigrationState, RelayManager, RelayManagerConfig,
-    RelaySession, RelaySessionConfig, RelaySessionState,
+    MasqueRelayClient, MasqueRelayConfig, MasqueRelayServer, MasqueRelayStats, MigrationConfig,
+    MigrationCoordinator, MigrationState, RelayManager, RelayManagerConfig, RelaySession,
+    RelaySessionConfig, RelaySessionState,
 };
 
 use std::time::Duration;

@@ -20,38 +20,38 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
+use ant_quic::VarInt;
 use ant_quic::masque::{
+    Capsule,
+    // Datagram types
+    CompressedDatagram,
     // Capsule types
     CompressionAck,
     CompressionAssign,
-    Capsule,
     // Connect types
     ConnectUdpRequest,
     ConnectUdpResponse,
     // Context types
     ContextManager,
-    // Datagram types
-    CompressedDatagram,
-    // Integration types
-    RelayManager,
-    RelayManagerConfig,
+    // Client types
+    MasqueRelayClient,
+    // Server types
+    MasqueRelayConfig,
+    MasqueRelayServer,
     // Migration types
     MigrationConfig,
     MigrationCoordinator,
     MigrationState,
-    // Server types
-    MasqueRelayConfig,
-    MasqueRelayServer,
+    RelayClientConfig,
+    RelayConnectionState,
+    // Integration types
+    RelayManager,
+    RelayManagerConfig,
     // Session types
     RelaySession,
     RelaySessionConfig,
     RelaySessionState,
-    // Client types
-    MasqueRelayClient,
-    RelayClientConfig,
-    RelayConnectionState,
 };
-use ant_quic::VarInt;
 use bytes::Bytes;
 
 /// Test address helper
@@ -76,7 +76,10 @@ async fn test_relay_server_handles_connect_request() {
     let client_addr = test_addr(12345);
     let request = ConnectUdpRequest::bind_any();
 
-    let response = server.handle_connect_request(&request, client_addr).await.unwrap();
+    let response = server
+        .handle_connect_request(&request, client_addr)
+        .await
+        .unwrap();
 
     assert!(response.is_success());
     assert_eq!(server.stats().active_sessions.load(Ordering::Relaxed), 1);
@@ -94,14 +97,20 @@ async fn test_relay_server_session_limit() {
     for i in 0..2u16 {
         let client = test_addr(12345 + i);
         let request = ConnectUdpRequest::bind_any();
-        let response = server.handle_connect_request(&request, client).await.unwrap();
+        let response = server
+            .handle_connect_request(&request, client)
+            .await
+            .unwrap();
         assert!(response.is_success());
     }
 
     // Third should get error response (not Err)
     let extra_client = test_addr(12347);
     let request = ConnectUdpRequest::bind_any();
-    let response = server.handle_connect_request(&request, extra_client).await.unwrap();
+    let response = server
+        .handle_connect_request(&request, extra_client)
+        .await
+        .unwrap();
     assert!(!response.is_success());
 }
 
@@ -115,14 +124,20 @@ async fn test_relay_client_lifecycle() {
     let client = MasqueRelayClient::new(relay_addr(1), config);
 
     // Initial state
-    assert!(matches!(client.state().await, RelayConnectionState::Disconnected));
+    assert!(matches!(
+        client.state().await,
+        RelayConnectionState::Disconnected
+    ));
 
     // Handle success response
     let response = ConnectUdpResponse::success(Some(test_addr(50000)));
     client.handle_connect_response(response).await.unwrap();
 
     // Should be connected with public address
-    assert!(matches!(client.state().await, RelayConnectionState::Connected));
+    assert!(matches!(
+        client.state().await,
+        RelayConnectionState::Connected
+    ));
     assert!(client.public_address().await.is_some());
 }
 
@@ -199,7 +214,9 @@ async fn test_context_manager_bidirectional() {
     client_mgr.register_compressed(client_ctx, target).unwrap();
 
     // Server registers remote context
-    server_mgr.register_remote(client_ctx, Some(target)).unwrap();
+    server_mgr
+        .register_remote(client_ctx, Some(target))
+        .unwrap();
 
     // Verify both can look up target
     let client_target = client_mgr.get_target(client_ctx);
@@ -228,7 +245,9 @@ async fn test_migration_full_flow() {
     let candidate2 = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2)), 9002);
 
     // Add candidates
-    coordinator.add_candidates(peer, vec![candidate1, candidate2]).await;
+    coordinator
+        .add_candidates(peer, vec![candidate1, candidate2])
+        .await;
 
     // Start migration
     coordinator.start_migration(peer).await;
@@ -248,7 +267,9 @@ async fn test_migration_full_flow() {
     ));
 
     // Report validated path
-    coordinator.report_validated_path(peer, candidate1, Duration::from_millis(50)).await;
+    coordinator
+        .report_validated_path(peer, candidate1, Duration::from_millis(50))
+        .await;
     assert!(matches!(
         coordinator.state(peer).await,
         MigrationState::MigrationPending { .. }
@@ -316,7 +337,10 @@ async fn test_relay_manager_multi_relay() {
 
     // Handle success for first relay
     let response = ConnectUdpResponse::success(Some(test_addr(50000)));
-    manager.handle_connect_response(relay_addr(1), response).await.unwrap();
+    manager
+        .handle_connect_response(relay_addr(1), response)
+        .await
+        .unwrap();
 
     // Stats should reflect connection
     let stats = manager.stats();
@@ -333,7 +357,9 @@ async fn test_relay_manager_error_tracking() {
 
     // Handle error response
     let response = ConnectUdpResponse::error(503, "Server busy");
-    let result = manager.handle_connect_response(relay_addr(1), response).await;
+    let result = manager
+        .handle_connect_response(relay_addr(1), response)
+        .await;
     assert!(result.is_err());
 
     // Stats should reflect failure
@@ -363,7 +389,9 @@ async fn test_relay_session_compression_flow() {
         8080,
     );
 
-    let response = session.handle_capsule(Capsule::CompressionAssign(assign)).unwrap();
+    let response = session
+        .handle_capsule(Capsule::CompressionAssign(assign))
+        .unwrap();
 
     // Should get ACK back
     assert!(matches!(response, Some(Capsule::CompressionAck(_))));
@@ -406,11 +434,17 @@ async fn test_e2e_relay_scenario() {
 
     // Client connects to relay
     let request = ConnectUdpRequest::bind_any();
-    let response = server.handle_connect_request(&request, test_addr(12345)).await.unwrap();
+    let response = server
+        .handle_connect_request(&request, test_addr(12345))
+        .await
+        .unwrap();
 
     // Client receives response
     client.handle_connect_response(response).await.unwrap();
-    assert!(matches!(client.state().await, RelayConnectionState::Connected));
+    assert!(matches!(
+        client.state().await,
+        RelayConnectionState::Connected
+    ));
 
     // Client wants to reach a target
     let target = test_addr(8080);
@@ -451,10 +485,15 @@ async fn test_e2e_migration_scenario() {
 
     // Simulate: connection established through relay
     let response = ConnectUdpResponse::success(Some(test_addr(50000)));
-    relay_manager.handle_connect_response(relay_addr(1), response).await.unwrap();
+    relay_manager
+        .handle_connect_response(relay_addr(1), response)
+        .await
+        .unwrap();
 
     // Receive peer's direct address candidates
-    coordinator.add_candidates(peer, vec![direct_candidate]).await;
+    coordinator
+        .add_candidates(peer, vec![direct_candidate])
+        .await;
 
     // Start migration attempt
     coordinator.start_migration(peer).await;
@@ -462,7 +501,9 @@ async fn test_e2e_migration_scenario() {
     coordinator.poll(peer).await;
 
     // Simulate: direct path validated
-    coordinator.report_validated_path(peer, direct_candidate, Duration::from_millis(30)).await;
+    coordinator
+        .report_validated_path(peer, direct_candidate, Duration::from_millis(30))
+        .await;
     coordinator.complete_migration(peer).await;
 
     // Verify we're on direct path
@@ -491,7 +532,10 @@ async fn test_high_session_count() {
     for i in 0..50u16 {
         let client = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, i as u8)), 12345 + i);
         let request = ConnectUdpRequest::bind_any();
-        let response = server.handle_connect_request(&request, client).await.unwrap();
+        let response = server
+            .handle_connect_request(&request, client)
+            .await
+            .unwrap();
         assert!(response.is_success());
     }
 
@@ -506,7 +550,10 @@ async fn test_context_allocation_stress() {
     for i in 0..100u16 {
         let ctx = manager.allocate_local().unwrap();
         // Each context needs a unique target address
-        let target = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, (i / 250) as u8 + 1)), 8000 + i);
+        let target = SocketAddr::new(
+            IpAddr::V4(Ipv4Addr::new(192, 168, 1, (i / 250) as u8 + 1)),
+            8000 + i,
+        );
         manager.register_compressed(ctx, target).unwrap();
         manager.handle_ack(ctx).unwrap();
     }

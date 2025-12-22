@@ -33,8 +33,8 @@
 use bytes::Bytes;
 use std::collections::HashMap;
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use crate::VarInt;
@@ -60,7 +60,7 @@ pub struct RelaySessionConfig {
 impl Default for RelaySessionConfig {
     fn default() -> Self {
         Self {
-            bandwidth_limit: 1_048_576, // 1 MB/s
+            bandwidth_limit: 1_048_576,                // 1 MB/s
             session_timeout: Duration::from_secs(300), // 5 minutes
             max_contexts: 100,
             datagram_buffer_size: 65536,
@@ -262,15 +262,9 @@ impl RelaySession {
         self.stats.record_capsule();
 
         match capsule {
-            Capsule::CompressionAssign(assign) => {
-                self.handle_compression_assign(assign)
-            }
-            Capsule::CompressionAck(ack) => {
-                self.handle_compression_ack(ack)
-            }
-            Capsule::CompressionClose(close) => {
-                self.handle_compression_close(close)
-            }
+            Capsule::CompressionAssign(assign) => self.handle_compression_assign(assign),
+            Capsule::CompressionAck(ack) => self.handle_compression_ack(ack),
+            Capsule::CompressionClose(close) => self.handle_compression_close(close),
             Capsule::Unknown { capsule_type, .. } => {
                 // Unknown capsules should be ignored per spec
                 tracing::debug!(
@@ -307,7 +301,8 @@ impl RelaySession {
             }
         }
 
-        let result = self.context_manager
+        let result = self
+            .context_manager
             .register_remote(assign.context_id, target)
             .map(|_| {
                 if let Some(t) = target {
@@ -317,7 +312,9 @@ impl RelaySession {
 
         match result {
             Ok(_) => {
-                self.stats.contexts_registered.fetch_add(1, Ordering::Relaxed);
+                self.stats
+                    .contexts_registered
+                    .fetch_add(1, Ordering::Relaxed);
                 // Send ACK
                 Ok(Some(Capsule::CompressionAck(CompressionAck::new(
                     assign.context_id,
@@ -385,9 +382,7 @@ impl RelaySession {
     /// For uncompressed contexts, the target is in the datagram itself.
     pub fn resolve_target(&self, datagram: &Datagram) -> Option<SocketAddr> {
         match datagram {
-            Datagram::Compressed(d) => {
-                self.context_manager.get_target(d.context_id)
-            }
+            Datagram::Compressed(d) => self.context_manager.get_target(d.context_id),
             Datagram::Uncompressed(d) => Some(d.target),
         }
     }
@@ -403,13 +398,14 @@ impl RelaySession {
         }
 
         // Allocate a new context (server allocates odd IDs)
-        let ctx_id = self.context_manager.allocate_local().map_err(|_| {
-            RelayError::ResourceExhausted {
-                resource_type: "contexts".into(),
-                current_usage: self.context_manager.active_count() as u64,
-                limit: self.config.max_contexts as u64,
-            }
-        })?;
+        let ctx_id =
+            self.context_manager
+                .allocate_local()
+                .map_err(|_| RelayError::ResourceExhausted {
+                    resource_type: "contexts".into(),
+                    current_usage: self.context_manager.active_count() as u64,
+                    limit: self.config.max_contexts as u64,
+                })?;
 
         // Register the compressed context
         self.context_manager
@@ -611,12 +607,16 @@ mod tests {
 
         // First registration should succeed
         let assign1 = CompressionAssign::compressed_v4(VarInt::from_u32(2), target, port);
-        let response1 = session.handle_capsule(Capsule::CompressionAssign(assign1)).unwrap();
+        let response1 = session
+            .handle_capsule(Capsule::CompressionAssign(assign1))
+            .unwrap();
         assert!(matches!(response1, Some(Capsule::CompressionAck(_))));
 
         // Second registration for same target should be rejected
         let assign2 = CompressionAssign::compressed_v4(VarInt::from_u32(4), target, port);
-        let response2 = session.handle_capsule(Capsule::CompressionAssign(assign2)).unwrap();
+        let response2 = session
+            .handle_capsule(Capsule::CompressionAssign(assign2))
+            .unwrap();
         assert!(matches!(response2, Some(Capsule::CompressionClose(_))));
     }
 }

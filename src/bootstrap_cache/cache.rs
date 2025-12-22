@@ -8,7 +8,7 @@ use crate::nat_traversal_api::PeerId;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Instant;
-use tokio::sync::{broadcast, RwLock};
+use tokio::sync::{RwLock, broadcast};
 use tracing::{debug, info, warn};
 
 /// Bootstrap cache event for notifications
@@ -67,16 +67,12 @@ impl BootstrapCache {
     ///
     /// Loads existing cache data from disk if available, otherwise starts fresh.
     pub async fn open(config: BootstrapCacheConfig) -> std::io::Result<Self> {
-        let persistence =
-            CachePersistence::new(&config.cache_dir, config.enable_file_locking)?;
+        let persistence = CachePersistence::new(&config.cache_dir, config.enable_file_locking)?;
         let data = persistence.load()?;
         let (event_tx, _) = broadcast::channel(256);
         let now = Instant::now();
 
-        info!(
-            "Opened bootstrap cache with {} peers",
-            data.peers.len()
-        );
+        info!("Opened bootstrap cache with {} peers", data.peers.len());
 
         Ok(Self {
             config,
@@ -161,9 +157,7 @@ impl BootstrapCache {
         let mut data = self.data.write().await;
 
         // Evict lowest quality if at capacity
-        if data.peers.len() >= self.config.max_peers
-            && !data.peers.contains_key(&peer.peer_id.0)
-        {
+        if data.peers.len() >= self.config.max_peers && !data.peers.contains_key(&peer.peer_id.0) {
             self.evict_lowest_quality(&mut data);
         }
 
@@ -172,7 +166,9 @@ impl BootstrapCache {
         let count = data.peers.len();
         drop(data);
 
-        let _ = self.event_tx.send(CacheEvent::Updated { peer_count: count });
+        let _ = self
+            .event_tx
+            .send(CacheEvent::Updated { peer_count: count });
     }
 
     /// Add a seed peer (user-provided bootstrap node).
@@ -320,7 +316,9 @@ impl BootstrapCache {
         }
 
         let count = data.peers.len();
-        let _ = self.event_tx.send(CacheEvent::Updated { peer_count: count });
+        let _ = self
+            .event_tx
+            .send(CacheEvent::Updated { peer_count: count });
     }
 
     /// Get cache statistics.
@@ -371,8 +369,7 @@ impl BootstrapCache {
         tokio::spawn(async move {
             let mut save_interval = tokio::time::interval(cache.config.save_interval);
             let mut cleanup_interval = tokio::time::interval(cache.config.cleanup_interval);
-            let mut quality_interval =
-                tokio::time::interval(cache.config.quality_update_interval);
+            let mut quality_interval = tokio::time::interval(cache.config.quality_update_interval);
 
             loop {
                 tokio::select! {
@@ -549,9 +546,7 @@ mod tests {
             let peer_id = PeerId([i; 32]);
             let mut peer = CachedPeer::new(
                 peer_id,
-                vec![format!("127.0.0.1:{}", 9000 + i as u16)
-                    .parse()
-                    .unwrap()],
+                vec![format!("127.0.0.1:{}", 9000 + i as u16).parse().unwrap()],
                 PeerSource::Seed,
             );
             peer.quality_score = i as f64 / 15.0;
@@ -604,9 +599,7 @@ mod tests {
         for i in 0..10u8 {
             let mut peer = CachedPeer::new(
                 PeerId([i; 32]),
-                vec![format!("127.0.0.1:{}", 9000 + i as u16)
-                    .parse()
-                    .unwrap()],
+                vec![format!("127.0.0.1:{}", 9000 + i as u16).parse().unwrap()],
                 PeerSource::Seed,
             );
             peer.capabilities.supports_relay = i % 2 == 0;

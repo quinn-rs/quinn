@@ -41,8 +41,8 @@
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 
@@ -386,13 +386,12 @@ impl MigrationCoordinator {
     async fn handle_probe_timeout(&self, peer: SocketAddr) {
         let mut states = self.states.write().await;
 
-        let attempts = if let Some(MigrationState::FallbackToRelay { attempts, .. }) =
-            states.get(&peer)
-        {
-            *attempts + 1
-        } else {
-            1
-        };
+        let attempts =
+            if let Some(MigrationState::FallbackToRelay { attempts, .. }) = states.get(&peer) {
+                *attempts + 1
+            } else {
+                1
+            };
 
         if attempts >= self.config.max_attempts {
             states.insert(
@@ -477,13 +476,12 @@ impl MigrationCoordinator {
     pub async fn fallback_to_relay(&self, peer: SocketAddr, reason: &str) {
         let mut states = self.states.write().await;
 
-        let attempts = if let Some(MigrationState::FallbackToRelay { attempts, .. }) =
-            states.get(&peer)
-        {
-            *attempts
-        } else {
-            0
-        };
+        let attempts =
+            if let Some(MigrationState::FallbackToRelay { attempts, .. }) = states.get(&peer) {
+                *attempts
+            } else {
+                0
+            };
 
         states.insert(
             peer,
@@ -679,9 +677,7 @@ mod tests {
         let coordinator = MigrationCoordinator::new(config);
 
         let peer = peer_addr(1);
-        coordinator
-            .fallback_to_relay(peer, "Test fallback")
-            .await;
+        coordinator.fallback_to_relay(peer, "Test fallback").await;
 
         let state = coordinator.state(peer).await;
         assert!(matches!(state, MigrationState::FallbackToRelay { .. }));
@@ -693,7 +689,9 @@ mod tests {
         let coordinator = MigrationCoordinator::new(config);
 
         let peer = peer_addr(1);
-        coordinator.add_candidates(peer, vec![candidate_addr(1)]).await;
+        coordinator
+            .add_candidates(peer, vec![candidate_addr(1)])
+            .await;
         coordinator.start_migration(peer).await;
         coordinator.reset(peer).await;
 

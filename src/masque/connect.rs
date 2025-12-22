@@ -219,13 +219,14 @@ impl ConnectUdpRequest {
         let flags = buf.get_u8();
         let connect_udp_bind = (flags & 0x01) != 0;
 
-        let host_len = VarInt::decode(buf).map_err(|_| {
-            ConnectError::InvalidRequest("invalid host length".into())
-        })?;
+        let host_len = VarInt::decode(buf)
+            .map_err(|_| ConnectError::InvalidRequest("invalid host length".into()))?;
         let host_len = host_len.into_inner() as usize;
 
         if buf.remaining() < host_len + 2 {
-            return Err(ConnectError::InvalidRequest("buffer too short for host".into()));
+            return Err(ConnectError::InvalidRequest(
+                "buffer too short for host".into(),
+            ));
         }
 
         let mut host_bytes = vec![0u8; host_len];
@@ -246,7 +247,11 @@ impl ConnectUdpRequest {
 impl fmt::Display for ConnectUdpRequest {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if self.is_bind_request() {
-            write!(f, "CONNECT-UDP-BIND {}:{}", self.target_host, self.target_port)
+            write!(
+                f,
+                "CONNECT-UDP-BIND {}:{}",
+                self.target_host, self.target_port
+            )
         } else {
             write!(f, "CONNECT-UDP {}:{}", self.target_host, self.target_port)
         }
@@ -422,9 +427,8 @@ impl ConnectUdpResponse {
         };
 
         let reason = if has_reason {
-            let reason_len = VarInt::decode(buf).map_err(|_| {
-                ConnectError::InvalidResponse("invalid reason length".into())
-            })?;
+            let reason_len = VarInt::decode(buf)
+                .map_err(|_| ConnectError::InvalidResponse("invalid reason length".into()))?;
             let reason_len = reason_len.into_inner() as usize;
 
             if buf.remaining() < reason_len {
@@ -433,9 +437,10 @@ impl ConnectUdpResponse {
 
             let mut reason_bytes = vec![0u8; reason_len];
             buf.copy_to_slice(&mut reason_bytes);
-            Some(String::from_utf8(reason_bytes).map_err(|_| {
-                ConnectError::InvalidResponse("invalid UTF-8 in reason".into())
-            })?)
+            Some(
+                String::from_utf8(reason_bytes)
+                    .map_err(|_| ConnectError::InvalidResponse("invalid UTF-8 in reason".into()))?,
+            )
         } else {
             None
         };
@@ -501,9 +506,8 @@ mod tests {
         let decoded = ConnectUdpRequest::decode(&mut encoded.clone()).unwrap();
         assert_eq!(original, decoded);
 
-        let original = ConnectUdpRequest::target(
-            SocketAddr::new(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)), 443),
-        );
+        let original =
+            ConnectUdpRequest::target(SocketAddr::new(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)), 443));
         let encoded = original.encode();
         let decoded = ConnectUdpRequest::decode(&mut encoded.clone()).unwrap();
         assert_eq!(original, decoded);
@@ -514,9 +518,10 @@ mod tests {
         let bind = ConnectUdpRequest::bind_any();
         assert!(bind.to_string().contains("CONNECT-UDP-BIND"));
 
-        let target = ConnectUdpRequest::target(
-            SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)), 80),
-        );
+        let target = ConnectUdpRequest::target(SocketAddr::new(
+            IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)),
+            80,
+        ));
         assert!(target.to_string().contains("CONNECT-UDP"));
         assert!(target.to_string().contains("192.168.1.1:80"));
     }
@@ -602,9 +607,10 @@ mod tests {
 
     #[test]
     fn test_response_display() {
-        let success = ConnectUdpResponse::success(Some(
-            SocketAddr::new(IpAddr::V4(Ipv4Addr::new(1, 2, 3, 4)), 5678),
-        ));
+        let success = ConnectUdpResponse::success(Some(SocketAddr::new(
+            IpAddr::V4(Ipv4Addr::new(1, 2, 3, 4)),
+            5678,
+        )));
         let display = success.to_string();
         assert!(display.contains("200"));
         assert!(display.contains("1.2.3.4:5678"));

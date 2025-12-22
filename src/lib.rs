@@ -282,8 +282,8 @@ pub use link_transport_impl::{P2pLinkConn, P2pLinkTransport, P2pRecvStream, P2pS
 pub mod bootstrap_cache;
 pub use bootstrap_cache::{
     BootstrapCache, BootstrapCacheConfig, BootstrapCacheConfigBuilder, CacheEvent, CacheStats,
-    CachedPeer, ConnectionOutcome, ConnectionStats as CacheConnectionStats, NatType as CacheNatType,
-    PeerCapabilities, PeerSource, QualityWeights, SelectionStrategy,
+    CachedPeer, ConnectionOutcome, ConnectionStats as CacheConnectionStats,
+    NatType as CacheNatType, PeerCapabilities, PeerSource, QualityWeights, SelectionStrategy,
 };
 
 // Re-export crypto utilities for peer ID management (v0.2: Pure PQC with ML-DSA-65)
@@ -344,11 +344,24 @@ pub use p2p_endpoint::{
 pub use unified_config::{ConfigError, MtuConfig, NatConfig, P2pConfig, P2pConfigBuilder};
 
 pub use relay::{
-    AuthToken, RelayAuthenticator, RelayError, RelayResult, RelayStatisticsCollector,
+    AuthToken,
     // MASQUE types re-exported from relay module
-    MasqueRelayClient, MasqueRelayConfig, MasqueRelayServer, MasqueRelayStats, MigrationConfig,
-    MigrationCoordinator, MigrationState, RelayManager, RelayManagerConfig, RelaySession,
-    RelaySessionConfig, RelaySessionState,
+    MasqueRelayClient,
+    MasqueRelayConfig,
+    MasqueRelayServer,
+    MasqueRelayStats,
+    MigrationConfig,
+    MigrationCoordinator,
+    MigrationState,
+    RelayAuthenticator,
+    RelayError,
+    RelayManager,
+    RelayManagerConfig,
+    RelayResult,
+    RelaySession,
+    RelaySessionConfig,
+    RelaySessionState,
+    RelayStatisticsCollector,
 };
 pub use shared::{ConnectionId, EcnCodepoint, EndpointEvent};
 pub use transport_error::{Code as TransportErrorCode, Error as TransportError};

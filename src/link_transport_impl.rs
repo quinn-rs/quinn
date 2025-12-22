@@ -205,9 +205,7 @@ impl LinkSendStream for P2pSendStream {
     }
 
     fn finish(&mut self) -> LinkResult<()> {
-        self.inner
-            .finish()
-            .map_err(|_| LinkError::ConnectionClosed)
+        self.inner.finish().map_err(|_| LinkError::ConnectionClosed)
     }
 
     fn reset(&mut self, error_code: u64) -> LinkResult<()> {
@@ -336,10 +334,7 @@ impl P2pLinkTransport {
     }
 
     /// Forward P2pEvents to LinkEvents.
-    async fn event_forwarder(
-        endpoint: Arc<P2pEndpoint>,
-        state: Arc<RwLock<LinkTransportState>>,
-    ) {
+    async fn event_forwarder(endpoint: Arc<P2pEndpoint>, state: Arc<RwLock<LinkTransportState>>) {
         let mut rx = endpoint.subscribe();
         loop {
             match rx.recv().await {
@@ -351,7 +346,10 @@ impl P2pLinkTransport {
                             if let Ok(mut state) = state.write() {
                                 state.capabilities.insert(peer_id, caps.clone());
                             }
-                            Some(LinkEvent::PeerConnected { peer: peer_id, caps })
+                            Some(LinkEvent::PeerConnected {
+                                peer: peer_id,
+                                caps,
+                            })
                         }
                         P2pEvent::PeerDisconnected { peer_id, reason } => {
                             let disconnect_reason = match reason {
@@ -463,47 +461,46 @@ impl LinkTransport for P2pLinkTransport {
         // For now, accept all incoming connections
         let endpoint = self.endpoint.clone();
 
-        Box::pin(futures_util::stream::unfold(endpoint, |endpoint| async move {
-            // Wait for an incoming connection
-            if let Some(peer_conn) = endpoint.accept().await {
-                // Get the underlying QUIC connection
-                if let Some(conn) = endpoint
-                    .get_quic_connection(&peer_conn.peer_id)
-                    .ok()
-                    .flatten()
-                {
-                    let link_conn =
-                        P2pLinkConn::new(conn, peer_conn.peer_id, peer_conn.remote_addr);
-                    Some((Ok(link_conn), endpoint))
+        Box::pin(futures_util::stream::unfold(
+            endpoint,
+            |endpoint| async move {
+                // Wait for an incoming connection
+                if let Some(peer_conn) = endpoint.accept().await {
+                    // Get the underlying QUIC connection
+                    if let Some(conn) = endpoint
+                        .get_quic_connection(&peer_conn.peer_id)
+                        .ok()
+                        .flatten()
+                    {
+                        let link_conn =
+                            P2pLinkConn::new(conn, peer_conn.peer_id, peer_conn.remote_addr);
+                        Some((Ok(link_conn), endpoint))
+                    } else {
+                        // Connection not found, try again
+                        Some((
+                            Err(LinkError::ConnectionFailed(
+                                "Connection not found".to_string(),
+                            )),
+                            endpoint,
+                        ))
+                    }
                 } else {
-                    // Connection not found, try again
-                    Some((
-                        Err(LinkError::ConnectionFailed(
-                            "Connection not found".to_string(),
-                        )),
-                        endpoint,
-                    ))
+                    // Endpoint is shutting down
+                    None
                 }
-            } else {
-                // Endpoint is shutting down
-                None
-            }
-        }))
+            },
+        ))
     }
 
     fn dial(&self, peer: PeerId, _proto: ProtocolId) -> BoxFuture<'_, LinkResult<Self::Conn>> {
         Box::pin(async move {
             // Look up peer address from capabilities
-            let addr = self
-                .state
-                .read()
-                .ok()
-                .and_then(|state| {
-                    state
-                        .capabilities
-                        .get(&peer)
-                        .and_then(|caps| caps.observed_addrs.first().copied())
-                });
+            let addr = self.state.read().ok().and_then(|state| {
+                state
+                    .capabilities
+                    .get(&peer)
+                    .and_then(|caps| caps.observed_addrs.first().copied())
+            });
 
             match addr {
                 Some(addr) => {

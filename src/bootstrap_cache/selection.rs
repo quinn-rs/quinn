@@ -36,11 +36,7 @@ impl Default for SelectionStrategy {
 ///
 /// # Returns
 /// References to selected peers, up to `count` items
-pub fn select_epsilon_greedy(
-    peers: &[CachedPeer],
-    count: usize,
-    epsilon: f64,
-) -> Vec<&CachedPeer> {
+pub fn select_epsilon_greedy(peers: &[CachedPeer], count: usize, epsilon: f64) -> Vec<&CachedPeer> {
     if peers.is_empty() || count == 0 {
         return Vec::new();
     }
@@ -180,11 +176,7 @@ pub fn select_by_strategy(
                 let j = rng.gen_range(0..=i);
                 indices.swap(i, j);
             }
-            indices
-                .into_iter()
-                .take(count)
-                .map(|i| &peers[i])
-                .collect()
+            indices.into_iter().take(count).map(|i| &peers[i]).collect()
         }
     }
 }
@@ -242,10 +234,7 @@ mod tests {
 
         for _ in 0..10 {
             let selection = select_epsilon_greedy(&peers, 10, 0.5);
-            if selection
-                .iter()
-                .map(|p| p.peer_id)
-                .collect::<Vec<_>>()
+            if selection.iter().map(|p| p.peer_id).collect::<Vec<_>>()
                 != first_selection
                     .iter()
                     .map(|p| p.peer_id)
@@ -305,10 +294,7 @@ mod tests {
 
         for _ in 0..10 {
             let selection = select_by_strategy(&peers, 10, SelectionStrategy::Random);
-            if selection
-                .iter()
-                .map(|p| p.peer_id)
-                .collect::<Vec<_>>()
+            if selection.iter().map(|p| p.peer_id).collect::<Vec<_>>()
                 != first_selection
                     .iter()
                     .map(|p| p.peer_id)

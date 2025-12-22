@@ -631,7 +631,9 @@ pub trait LinkConn: Send + Sync {
     /// send.finish()?;
     /// let response = recv.read_to_end(4096).await?;
     /// ```
-    fn open_bi(&self) -> BoxFuture<'_, LinkResult<(Box<dyn LinkSendStream>, Box<dyn LinkRecvStream>)>>;
+    fn open_bi(
+        &self,
+    ) -> BoxFuture<'_, LinkResult<(Box<dyn LinkSendStream>, Box<dyn LinkRecvStream>)>>;
 
     /// Send an unreliable datagram to the peer.
     ///
@@ -855,7 +857,11 @@ pub trait LinkTransport: Send + Sync + 'static {
     ///
     /// After connection, the peer's ID will be available via
     /// `conn.peer()`.
-    fn dial_addr(&self, addr: SocketAddr, proto: ProtocolId) -> BoxFuture<'_, LinkResult<Self::Conn>>;
+    fn dial_addr(
+        &self,
+        addr: SocketAddr,
+        proto: ProtocolId,
+    ) -> BoxFuture<'_, LinkResult<Self::Conn>>;
 
     /// Get protocols we advertise as supported.
     fn supported_protocols(&self) -> Vec<ProtocolId>;
@@ -926,17 +932,27 @@ mod tests {
         // Default has perfect RTT (0ms) and no packet loss, so score should be high
         // Score = 0.5 (base) + 0.3 (RTT: 1.0*0.3) + 0.2 (loss: 1.0*0.2) = 1.0
         let base_score = caps.quality_score();
-        assert!((0.9..=1.0).contains(&base_score), "base_score = {}", base_score);
+        assert!(
+            (0.9..=1.0).contains(&base_score),
+            "base_score = {}",
+            base_score
+        );
 
         // Worse RTT should reduce score
         caps.rtt_ms_p50 = 150; // 50% of max
         let worse_rtt_score = caps.quality_score();
-        assert!(worse_rtt_score < base_score, "worse RTT should reduce score");
+        assert!(
+            worse_rtt_score < base_score,
+            "worse RTT should reduce score"
+        );
 
         // Very bad RTT should reduce score more
         caps.rtt_ms_p50 = 500;
         let bad_rtt_score = caps.quality_score();
-        assert!(bad_rtt_score < worse_rtt_score, "bad RTT should reduce score more");
+        assert!(
+            bad_rtt_score < worse_rtt_score,
+            "bad RTT should reduce score more"
+        );
 
         // Symmetric NAT should reduce score
         caps.rtt_ms_p50 = 50;
@@ -946,7 +962,10 @@ mod tests {
         caps.nat_type_hint = None;
         caps.rtt_ms_p50 = 50;
         let no_nat_score = caps.quality_score();
-        assert!(nat_score < no_nat_score, "symmetric NAT should reduce score");
+        assert!(
+            nat_score < no_nat_score,
+            "symmetric NAT should reduce score"
+        );
     }
 
     #[test]
@@ -954,9 +973,9 @@ mod tests {
         let mut caps = Capabilities::default();
         let dht = ProtocolId::from("dht/1.0");
         let gossip = ProtocolId::from("gossip/1.0");
-        
+
         caps.protocols.push(dht);
-        
+
         assert!(caps.supports_protocol(&dht));
         assert!(!caps.supports_protocol(&gossip));
     }

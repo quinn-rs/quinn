@@ -34,8 +34,8 @@
 use bytes::Bytes;
 use std::collections::HashMap;
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 
@@ -344,7 +344,7 @@ impl MasqueRelayServer {
                     return DatagramResult::Error(RelayError::ProtocolError {
                         frame_type: 0x00,
                         reason: "Unknown context ID".into(),
-                    })
+                    });
                 }
             }
         };

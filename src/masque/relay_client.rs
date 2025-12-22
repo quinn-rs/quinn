@@ -39,16 +39,15 @@
 use bytes::Bytes;
 use std::collections::HashMap;
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 
 use crate::VarInt;
 use crate::masque::{
-    Capsule, CompressedDatagram, CompressionAck, CompressionAssign, CompressionClose,
-    ConnectError, ConnectUdpRequest, ConnectUdpResponse, ContextManager, Datagram,
-    UncompressedDatagram,
+    Capsule, CompressedDatagram, CompressionAck, CompressionAssign, CompressionClose, ConnectError,
+    ConnectUdpRequest, ConnectUdpResponse, ContextManager, Datagram, UncompressedDatagram,
 };
 use crate::relay::error::{RelayError, RelayResult, SessionErrorKind};
 
@@ -233,10 +232,7 @@ impl MasqueRelayClient {
     }
 
     /// Handle the CONNECT-UDP response from the relay
-    pub async fn handle_connect_response(
-        &self,
-        response: ConnectUdpResponse,
-    ) -> RelayResult<()> {
+    pub async fn handle_connect_response(&self, response: ConnectUdpResponse) -> RelayResult<()> {
         if !response.is_success() {
             *self.state.write().await = RelayConnectionState::Failed;
             return Err(RelayError::SessionError {
@@ -356,7 +352,10 @@ impl MasqueRelayClient {
 
         // Update target mapping
         if let Some(t) = target {
-            self.target_to_context.write().await.insert(t, assign.context_id);
+            self.target_to_context
+                .write()
+                .await
+                .insert(t, assign.context_id);
         }
 
         // Send ACK
@@ -388,22 +387,23 @@ impl MasqueRelayClient {
         // Allocate new context
         let ctx_id = {
             let mut mgr = self.context_manager.write().await;
-            let id = mgr.allocate_local().map_err(|_| RelayError::ResourceExhausted {
-                resource_type: "contexts".into(),
-                current_usage: mgr.active_count() as u64,
-                limit: self.config.max_pending_contexts as u64,
-            })?;
+            let id = mgr
+                .allocate_local()
+                .map_err(|_| RelayError::ResourceExhausted {
+                    resource_type: "contexts".into(),
+                    current_usage: mgr.active_count() as u64,
+                    limit: self.config.max_pending_contexts as u64,
+                })?;
 
             // Register as compressed context
-            mgr.register_compressed(id, target).map_err(|_| {
-                RelayError::SessionError {
+            mgr.register_compressed(id, target)
+                .map_err(|_| RelayError::SessionError {
                     session_id: None,
                     kind: SessionErrorKind::InvalidState {
                         current_state: "duplicate target".into(),
                         expected_state: "unique target".into(),
                     },
-                }
-            })?;
+                })?;
 
             id
         };
@@ -413,12 +413,8 @@ impl MasqueRelayClient {
 
         // Create COMPRESSION_ASSIGN capsule
         let assign = match target {
-            SocketAddr::V4(v4) => {
-                CompressionAssign::compressed_v4(ctx_id, *v4.ip(), v4.port())
-            }
-            SocketAddr::V6(v6) => {
-                CompressionAssign::compressed_v6(ctx_id, *v6.ip(), v6.port())
-            }
+            SocketAddr::V4(v4) => CompressionAssign::compressed_v4(ctx_id, *v4.ip(), v4.port()),
+            SocketAddr::V6(v6) => CompressionAssign::compressed_v6(ctx_id, *v6.ip(), v6.port()),
         };
 
         Ok((ctx_id, Some(Capsule::CompressionAssign(assign))))
@@ -642,11 +638,16 @@ mod tests {
 
         // Simulate ACK
         let ack = CompressionAck::new(ctx_id);
-        client.handle_capsule(Capsule::CompressionAck(ack)).await.unwrap();
+        client
+            .handle_capsule(Capsule::CompressionAck(ack))
+            .await
+            .unwrap();
 
         // Handle CLOSE
         let close = CompressionClose::new(ctx_id);
-        let result = client.handle_capsule(Capsule::CompressionClose(close)).await;
+        let result = client
+            .handle_capsule(Capsule::CompressionClose(close))
+            .await;
         assert!(result.is_ok());
 
         // Context should be removed

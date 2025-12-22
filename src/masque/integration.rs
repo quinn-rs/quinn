@@ -37,8 +37,8 @@
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 
@@ -260,8 +260,7 @@ impl RelayManager {
         relays
             .iter()
             .filter(|(_, info)| {
-                info.available
-                    && info.can_retry(self.config.retry_delay, self.config.max_retries)
+                info.available && info.can_retry(self.config.retry_delay, self.config.max_retries)
             })
             .map(|(addr, _)| *addr)
             .collect()
@@ -353,12 +352,10 @@ impl RelayManager {
         payload: Bytes,
     ) -> RelayResult<()> {
         let relays = self.relays.read().await;
-        let info = relays
-            .get(&relay)
-            .ok_or(RelayError::SessionError {
-                session_id: None,
-                kind: SessionErrorKind::NotFound,
-            })?;
+        let info = relays.get(&relay).ok_or(RelayError::SessionError {
+            session_id: None,
+            kind: SessionErrorKind::NotFound,
+        })?;
 
         let _client = info.client.as_ref().ok_or(RelayError::SessionError {
             session_id: None,
@@ -404,10 +401,7 @@ impl RelayManager {
     /// Get number of active relay connections
     pub async fn active_relay_count(&self) -> usize {
         let relays = self.relays.read().await;
-        relays
-            .values()
-            .filter(|info| info.client.is_some())
-            .count()
+        relays.values().filter(|info| info.client.is_some()).count()
     }
 
     /// Check if relay fallback is available
@@ -483,9 +477,10 @@ mod tests {
         let relay = relay_addr(1);
         manager.add_relay_node(relay).await;
 
-        let response = ConnectUdpResponse::success(Some(
-            SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)), 12345)
-        ));
+        let response = ConnectUdpResponse::success(Some(SocketAddr::new(
+            IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)),
+            12345,
+        )));
 
         let result = manager.handle_connect_response(relay, response).await;
         assert!(result.is_ok());
