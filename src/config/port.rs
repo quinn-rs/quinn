@@ -56,20 +56,20 @@ pub enum PortBinding {
 pub enum IpMode {
     /// IPv4 only (bind to 0.0.0.0:port)
     ///
-    /// This is the safest default as it:
-    /// - Works on all platforms
-    /// - Avoids dual-stack conflicts
-    /// - Simplifies configuration
-    #[default]
+    /// Useful for systems where IPv6 is unavailable or disabled.
     IPv4Only,
 
     /// IPv6 only (bind to `[::]`:port)
     IPv6Only,
 
-    /// Both IPv4 and IPv6 on same port
+    /// Both IPv4 and IPv6 on same port (RECOMMENDED DEFAULT)
+    ///
+    /// Provides maximum connectivity by supporting both address families.
+    /// Gracefully falls back to IPv4-only if IPv6 is unavailable.
     ///
     /// Note: May fail on some platforms due to dual-stack binding conflicts.
     /// Use `DualStackSeparate` if this fails.
+    #[default]
     DualStack,
 
     /// IPv4 and IPv6 on different ports
@@ -203,8 +203,9 @@ impl Default for EndpointPortConfig {
         Self {
             // Use OS-assigned port to avoid conflicts
             port: PortBinding::OsAssigned,
-            // Use IPv4-only to avoid dual-stack conflicts
-            ip_mode: IpMode::IPv4Only,
+            // Use dual-stack for maximum connectivity (greenfield default)
+            // Gracefully falls back to IPv4-only if IPv6 unavailable
+            ip_mode: IpMode::DualStack,
             socket_options: SocketOptions::default(),
             retry_behavior: PortRetryBehavior::FailFast,
         }
@@ -370,7 +371,7 @@ mod tests {
     #[test]
     fn test_ip_mode_default() {
         let mode = IpMode::default();
-        assert_eq!(mode, IpMode::IPv4Only);
+        assert_eq!(mode, IpMode::DualStack); // Changed to DualStack as new default
     }
 
     #[test]
@@ -419,7 +420,7 @@ mod tests {
     fn test_endpoint_port_config_default() {
         let config = EndpointPortConfig::default();
         assert_eq!(config.port, PortBinding::OsAssigned);
-        assert_eq!(config.ip_mode, IpMode::IPv4Only);
+        assert_eq!(config.ip_mode, IpMode::DualStack); // Changed to DualStack
         assert_eq!(config.retry_behavior, PortRetryBehavior::FailFast);
     }
 
