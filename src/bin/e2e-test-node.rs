@@ -57,8 +57,8 @@ use tracing::{debug, error, info, warn};
     about = "E2E test node with metrics push and data verification"
 )]
 struct Args {
-    /// Address to listen on
-    #[arg(short, long, default_value = "0.0.0.0:0")]
+    /// Address to listen on (dual-stack: binds IPv6 and IPv4)
+    #[arg(short, long, default_value = "[::]:0")]
     listen: SocketAddr,
 
     /// Known peer addresses to connect to (comma-separated)

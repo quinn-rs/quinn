@@ -60,8 +60,8 @@ const DEFAULT_BOOTSTRAP_NODES: &[&str] = &[
 #[command(name = "ant-quic")]
 #[command(author, version, about, long_about = None)]
 struct Args {
-    /// Address to listen on
-    #[arg(short, long, default_value = "0.0.0.0:0")]
+    /// Address to listen on (dual-stack: binds IPv6 and IPv4)
+    #[arg(short, long, default_value = "[::]:0")]
     listen: SocketAddr,
 
     /// Known peer addresses to connect to (comma-separated)
