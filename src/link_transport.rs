@@ -271,7 +271,7 @@ impl From<[u8; 16]> for ProtocolId {
 // ============================================================================
 
 /// NAT type classification hint for connection strategy selection.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum NatHint {
     /// No NAT detected (public IP, direct connectivity)
     None,
@@ -284,13 +284,8 @@ pub enum NatHint {
     /// Symmetric NAT (hardest to traverse, may require relay)
     Symmetric,
     /// Unknown NAT type
+    #[default]
     Unknown,
-}
-
-impl Default for NatHint {
-    fn default() -> Self {
-        Self::Unknown
-    }
 }
 
 /// Capabilities and quality metrics for a connected peer.

@@ -107,7 +107,7 @@ pub struct ConnectionStats {
 }
 
 /// How we discovered this peer
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum PeerSource {
     /// User-provided bootstrap seed
     Seed,
@@ -120,13 +120,8 @@ pub enum PeerSource {
     /// Merged from another cache instance
     Merge,
     /// Unknown source (legacy entries)
+    #[default]
     Unknown,
-}
-
-impl Default for PeerSource {
-    fn default() -> Self {
-        Self::Unknown
-    }
 }
 
 /// Result of a connection attempt
