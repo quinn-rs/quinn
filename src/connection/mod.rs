@@ -4320,7 +4320,6 @@ impl Connection {
         }
     }
 
-
     /// Emit NAT traversal capability negotiation event
     fn emit_nat_traversal_capability_event(&mut self, negotiated: bool) {
         // For now, we'll just log the event

@@ -395,7 +395,6 @@ impl AddressDiscoveryConfig {
     }
 }
 
-
 /// A server's preferred address
 ///
 /// This is communicated as a transport parameter during TLS session establishment.
