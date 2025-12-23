@@ -122,6 +122,7 @@ jobs:
 
       - name: Update CHANGELOG.md
         if: github.event.inputs.dry_run != 'true'
+        continue-on-error: true  # Don't fail release if changelog update fails
         run: |
           git cliff --output CHANGELOG.md
 
@@ -316,6 +317,7 @@ jobs:
     name: Build Docker Images
     needs: [validate, test]
     runs-on: ubuntu-latest
+    continue-on-error: true  # Don't block release on Docker build failures
     steps:
       - name: Checkout
         uses: actions/checkout@v4

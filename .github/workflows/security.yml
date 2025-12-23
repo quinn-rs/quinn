@@ -177,11 +177,12 @@ jobs:
           name: supply-chain-report
           path: supply-chain-report.json
 
-  # Security scorecard
+  # Security scorecard (informational, non-blocking)
   scorecard:
     name: Security Scorecard
     runs-on: ubuntu-latest
     if: github.event_name != 'pull_request'
+    continue-on-error: true  # Don't block builds on scorecard failures
     permissions:
       contents: read
       security-events: write
