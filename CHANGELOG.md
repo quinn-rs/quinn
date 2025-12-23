@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.8] - 2025-12-23
+
+### Bug Fixes
+
+- Fix security workflow output to not block builds on non-PR events
+
 ## [0.14.7] - 2025-12-23
 
 ### Maintenance
