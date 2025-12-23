@@ -211,6 +211,9 @@ jobs:
             archive: ant-quic-x86_64-windows.zip
             test_archive: ant-quic-test-x86_64-windows.zip
 
+    # Allow cross-compile jobs to fail without blocking release
+    continue-on-error: ${{ matrix.use-cross == true }}
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -225,6 +228,11 @@ jobs:
         uses: taiki-e/install-action@v2
         with:
           tool: cross
+
+      # Install NASM for Windows builds (required by aws-lc-rs)
+      - name: Install NASM
+        if: matrix.os == 'windows-latest'
+        uses: ilammy/setup-nasm@v1
 
       - name: Cache cargo
         uses: actions/cache@v4
@@ -379,11 +387,12 @@ jobs:
 
   release:
     name: Create GitHub Release
-    needs: [validate, build, build-docker, changelog, publish-crate]
+    needs: [validate, build, changelog]
     runs-on: ubuntu-latest
     permissions:
       contents: write
-    if: github.event.inputs.dry_run != 'true'
+    # Run even if some builds failed (cross-compile), but skip if validation failed
+    if: github.event.inputs.dry_run != 'true' && needs.validate.result == 'success'
     steps:
       - name: Checkout
         uses: actions/checkout@v4

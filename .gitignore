@@ -30,3 +30,4 @@ scripts/*.pid
 scripts/*.log.bak
 scripts/workflow_monitor.log
 docs/book/book/
+release-artifacts/
