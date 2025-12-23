@@ -5,6 +5,11 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
+// Allow unused_assignments: ZeroizeOnDrop derive macro generates code that triggers
+// false positive warnings for struct fields marked with #[zeroize(skip)].
+// The prk and policy fields ARE used throughout the HostIdentity implementation.
+#![allow(unused_assignments)]
+
 //! HostKey derivation for deterministic key generation
 //!
 //! This module provides HKDF-based key derivation from a local-only HostKey.
@@ -81,14 +86,10 @@ pub enum EndpointKeyPolicy {
 #[derive(ZeroizeOnDrop)]
 pub struct HostIdentity {
     /// The root secret (32 bytes, never exposed)
-    // Allow: ZeroizeOnDrop macro generates false positive unused_assignments warning
-    #[allow(unused_assignments)]
     #[zeroize(skip)]
     prk: hkdf::Prk,
 
     /// The endpoint key policy
-    // Allow: ZeroizeOnDrop macro generates false positive unused_assignments warning
-    #[allow(unused_assignments)]
     #[zeroize(skip)]
     policy: EndpointKeyPolicy,
 }
