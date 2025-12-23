@@ -34,7 +34,7 @@ impl Default for Args {
         Self {
             registry: false,
             port: 8080,
-            registry_url: "https://quic.saorsalabs.com".to_string(),
+            registry_url: "https://saorsa-1.saorsalabs.com".to_string(),
             max_peers: 10,
             quiet: false,
         }
@@ -96,7 +96,7 @@ USAGE:
 OPTIONS:
     --registry              Run as central registry server
     --port <PORT>           HTTP server port (registry mode) [default: 8080]
-    --registry-url <URL>    Registry URL to connect to [default: https://quic.saorsalabs.com]
+    --registry-url <URL>    Registry URL to connect to [default: https://saorsa-1.saorsalabs.com]
     --max-peers <N>         Maximum peer connections [default: 10]
     -q, --quiet             Disable TUI, log mode only
     -h, --help              Print this help message

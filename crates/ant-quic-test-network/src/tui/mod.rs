@@ -21,7 +21,7 @@
 //! ╠══════════════════════════════════════════════════════════════════════════════╣
 //! ║  NETWORK STATS                                                               ║
 //! ╠══════════════════════════════════════════════════════════════════════════════╣
-//! ║  [Q] Quit    Dashboard: https://quic.saorsalabs.com    ML-KEM-768 | ML-DSA-65║
+//! ║  [Q] Quit    Dashboard: https://saorsa-1.saorsalabs.com  ML-KEM-768 | ML-DSA-65║
 //! ╚══════════════════════════════════════════════════════════════════════════════╝
 //! ```
 //!
@@ -114,8 +114,8 @@ impl Default for TuiConfig {
     fn default() -> Self {
         Self {
             tick_rate: Duration::from_millis(250),
-            registry_url: "https://quic.saorsalabs.com".to_string(),
-            dashboard_url: "https://quic.saorsalabs.com".to_string(),
+            registry_url: "https://saorsa-1.saorsalabs.com".to_string(),
+            dashboard_url: "https://saorsa-1.saorsalabs.com".to_string(),
         }
     }
 }

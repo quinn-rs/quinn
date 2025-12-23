@@ -38,7 +38,7 @@ pub struct TestNodeConfig {
 impl Default for TestNodeConfig {
     fn default() -> Self {
         Self {
-            registry_url: "https://quic.saorsalabs.com".to_string(),
+            registry_url: "https://saorsa-1.saorsalabs.com".to_string(),
             max_peers: 10,
             bind_addr: "0.0.0.0:9000".parse().expect("valid default address"),
             connect_interval: Duration::from_secs(10),

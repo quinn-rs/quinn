@@ -718,6 +718,89 @@
         .address-type.ipv4 { background: rgba(0, 217, 255, 0.2); color: var(--accent-cyan); }
         .address-type.ipv6 { background: rgba(168, 85, 247, 0.2); color: var(--accent-purple); }
 
+        /* Architecture Section */
+        .architecture-section {
+            padding: 4rem 2rem;
+            background: linear-gradient(180deg, transparent 0%, rgba(0, 217, 255, 0.05) 100%);
+            border-top: 1px solid var(--border-color);
+        }
+
+        .architecture-section h2 {
+            text-align: center;
+            font-size: 2rem;
+            margin-bottom: 0.5rem;
+            color: var(--accent-gold);
+        }
+
+        .arch-intro {
+            text-align: center;
+            color: var(--text-secondary);
+            max-width: 600px;
+            margin: 0 auto 3rem;
+        }
+
+        .adr-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 1.5rem;
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        .adr-card {
+            background: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 1.5rem;
+            text-decoration: none;
+            transition: transform 0.2s, border-color 0.2s, box-shadow 0.2s;
+            display: block;
+        }
+
+        .adr-card:hover {
+            transform: translateY(-3px);
+            border-color: var(--accent-cyan);
+            box-shadow: 0 4px 20px rgba(0, 217, 255, 0.15);
+        }
+
+        .adr-number {
+            display: inline-block;
+            padding: 0.25rem 0.5rem;
+            background: rgba(0, 217, 255, 0.15);
+            color: var(--accent-cyan);
+            border-radius: 6px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            margin-bottom: 0.75rem;
+        }
+
+        .adr-card h3 {
+            color: var(--text-primary);
+            font-size: 1rem;
+            margin-bottom: 0.5rem;
+        }
+
+        .adr-card p {
+            color: var(--text-secondary);
+            font-size: 0.85rem;
+            line-height: 1.4;
+        }
+
+        .adr-card.all-adrs {
+            background: linear-gradient(135deg, rgba(255, 215, 0, 0.1) 0%, rgba(255, 215, 0, 0.05) 100%);
+            border-color: rgba(255, 215, 0, 0.3);
+        }
+
+        .adr-card.all-adrs .adr-number {
+            background: rgba(255, 215, 0, 0.15);
+            color: var(--accent-gold);
+        }
+
+        .adr-card.all-adrs:hover {
+            border-color: var(--accent-gold);
+            box-shadow: 0 4px 20px rgba(255, 215, 0, 0.15);
+        }
+
         /* Footer */
         .footer {
             padding: 3rem 2rem;
@@ -804,7 +887,7 @@
             </div>
             <h1>The Future of <span>Secure Networking</span></h1>
             <p class="hero-tagline">
-                Join our global test network and help build the next generation of quantum-resistant peer-to-peer communication.
+                Help us with this critical first test of the foundation of a global network layer. Your participation validates the quantum-resistant P2P infrastructure that will power many new secure, private networks.
             </p>
         </div>
     </section>
@@ -984,8 +1067,8 @@
 
     <!-- Download Section -->
     <section class="download-section" id="download">
-        <h2>Join the Test Network</h2>
-        <p>Download the test client for your platform. Just run it - that's all you need to do! Your node will automatically connect to the network.</p>
+        <h2>Help Test the Network Layer</h2>
+        <p>Download the test client for your platform. Just run it - that's all you need to do! Your node will automatically connect and help validate this critical network infrastructure.</p>
 
         <div class="download-grid">
             <!-- Windows -->
@@ -1045,6 +1128,62 @@
                     <p>That's it! Your node will automatically connect to the network and start testing connections with other nodes worldwide.</p>
                 </div>
             </div>
+        </div>
+    </section>
+
+    <!-- Architecture Section -->
+    <section class="architecture-section" id="architecture">
+        <h2>Architecture & Design</h2>
+        <p class="arch-intro">ant-quic is built on transparent, well-documented architectural decisions. Explore our design rationale:</p>
+
+        <div class="adr-grid">
+            <a href="https://github.com/dirvine/ant-quic/blob/master/docs/adr/ADR-001-link-transport-abstraction.md" class="adr-card">
+                <span class="adr-number">ADR-001</span>
+                <h3>Link Transport Abstraction</h3>
+                <p>Flexible transport layer supporting QUIC, WebRTC, and future transports</p>
+            </a>
+
+            <a href="https://github.com/dirvine/ant-quic/blob/master/docs/adr/ADR-002-epsilon-greedy-bootstrap-cache.md" class="adr-card">
+                <span class="adr-number">ADR-002</span>
+                <h3>Epsilon-Greedy Bootstrap</h3>
+                <p>Smart peer selection balancing exploitation and exploration</p>
+            </a>
+
+            <a href="https://github.com/dirvine/ant-quic/blob/master/docs/adr/ADR-003-pure-post-quantum-cryptography.md" class="adr-card">
+                <span class="adr-number">ADR-003</span>
+                <h3>Pure Post-Quantum Crypto</h3>
+                <p>ML-KEM-768 and ML-DSA-65 for quantum-safe security</p>
+            </a>
+
+            <a href="https://github.com/dirvine/ant-quic/blob/master/docs/adr/ADR-004-symmetric-p2p-architecture.md" class="adr-card">
+                <span class="adr-number">ADR-004</span>
+                <h3>Symmetric P2P Architecture</h3>
+                <p>All nodes are equal - no special roles or bootstrap nodes</p>
+            </a>
+
+            <a href="https://github.com/dirvine/ant-quic/blob/master/docs/adr/ADR-005-native-quic-nat-traversal.md" class="adr-card">
+                <span class="adr-number">ADR-005</span>
+                <h3>Native QUIC NAT Traversal</h3>
+                <p>Built-in hole punching without STUN/TURN dependencies</p>
+            </a>
+
+            <a href="https://github.com/dirvine/ant-quic/blob/master/docs/adr/ADR-006-masque-relay-fallback.md" class="adr-card">
+                <span class="adr-number">ADR-006</span>
+                <h3>MASQUE Relay Fallback</h3>
+                <p>HTTP/3 relays for symmetric NAT scenarios</p>
+            </a>
+
+            <a href="https://github.com/dirvine/ant-quic/blob/master/docs/adr/ADR-007-local-only-hostkey.md" class="adr-card">
+                <span class="adr-number">ADR-007</span>
+                <h3>Local-Only Host Keys</h3>
+                <p>Secure key storage that never leaves your device</p>
+            </a>
+
+            <a href="https://github.com/dirvine/ant-quic/tree/master/docs/adr" class="adr-card all-adrs">
+                <span class="adr-number">All ADRs</span>
+                <h3>View All Decisions</h3>
+                <p>Browse the complete architecture decision records</p>
+            </a>
         </div>
     </section>
 
