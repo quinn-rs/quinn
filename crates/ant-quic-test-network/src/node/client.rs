@@ -7,7 +7,7 @@ use crate::registry::{
     ConnectionMethod, ConnectionReport, NatStats, NatType, NodeCapabilities, NodeHeartbeat,
     NodeRegistration, PeerInfo, RegistryClient,
 };
-use crate::tui::{ConnectedPeer, TuiEvent, country_flag};
+use crate::tui::{ConnectedPeer, LocalNodeInfo, TuiEvent, country_flag};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -82,6 +82,156 @@ fn has_global_ipv6() -> bool {
     }
 
     false
+}
+
+/// Detect local IPv4 and IPv6 addresses.
+fn detect_local_addresses(bind_port: u16) -> (Option<SocketAddr>, Option<SocketAddr>) {
+    let mut local_ipv4: Option<SocketAddr> = None;
+    let mut local_ipv6: Option<SocketAddr> = None;
+
+    #[cfg(target_os = "macos")]
+    {
+        use std::process::Command;
+
+        // macOS doesn't have the 'ip' command, use ifconfig instead
+        if let Ok(output) = Command::new("ifconfig").output() {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            for line in stdout.lines() {
+                let line = line.trim();
+
+                // Look for IPv4: "inet 192.168.1.100 netmask ..."
+                if line.starts_with("inet ")
+                    && !line.contains("127.0.0.1")
+                    && local_ipv4.is_none()
+                {
+                    if let Some(ip_str) = line.split_whitespace().nth(1) {
+                        if let Ok(ip) = ip_str.parse::<std::net::Ipv4Addr>() {
+                            if !ip.is_loopback() && !ip.is_link_local() {
+                                local_ipv4 = Some(SocketAddr::new(ip.into(), bind_port));
+                            }
+                        }
+                    }
+                }
+
+                // Look for IPv6: "inet6 2001:db8::1 prefixlen ..."
+                if line.starts_with("inet6 ")
+                    && !line.contains("::1")
+                    && !line.contains("fe80::")
+                    && local_ipv6.is_none()
+                {
+                    if let Some(ip_str) = line.split_whitespace().nth(1) {
+                        // Remove scope ID if present (e.g., "fe80::1%en0" -> "fe80::1")
+                        let ip_str = ip_str.split('%').next().unwrap_or(ip_str);
+                        if let Ok(ip) = ip_str.parse::<std::net::Ipv6Addr>() {
+                            if !ip.is_loopback()
+                                && !ip.is_unspecified()
+                                && ((ip.segments()[0] & 0xfe00) != 0xfe80)
+                            {
+                                local_ipv6 = Some(SocketAddr::new(ip.into(), bind_port));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        use std::process::Command;
+
+        // Try to get IPv4 address
+        if let Ok(output) = Command::new("ip")
+            .args(["-4", "addr", "show", "scope", "global"])
+            .output()
+        {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            for line in stdout.lines() {
+                if let Some(addr_str) = line.trim().strip_prefix("inet ") {
+                    // Extract IP from "inet 192.168.1.100/24 brd ..." format
+                    if let Some(ip_str) = addr_str.split('/').next() {
+                        if let Ok(ip) = ip_str.parse::<std::net::Ipv4Addr>() {
+                            if !ip.is_loopback() && !ip.is_link_local() {
+                                local_ipv4 = Some(SocketAddr::new(ip.into(), bind_port));
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Try to get IPv6 address
+        if let Ok(output) = Command::new("ip")
+            .args(["-6", "addr", "show", "scope", "global"])
+            .output()
+        {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            for line in stdout.lines() {
+                if let Some(addr_str) = line.trim().strip_prefix("inet6 ") {
+                    // Extract IP from "inet6 2001:db8::1/64 scope global" format
+                    if let Some(ip_str) = addr_str.split('/').next() {
+                        if let Ok(ip) = ip_str.parse::<std::net::Ipv6Addr>() {
+                            if !ip.is_loopback()
+                                && !ip.is_unspecified()
+                                && ((ip.segments()[0] & 0xfe00) != 0xfe80)
+                            {
+                                // Not link-local
+                                local_ipv6 = Some(SocketAddr::new(ip.into(), bind_port));
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[cfg(windows)]
+    {
+        use std::process::Command;
+
+        if let Ok(output) = Command::new("ipconfig").output() {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            for line in stdout.lines() {
+                let line = line.trim();
+
+                // Look for "IPv4 Address. . . . . . . . . . . : 192.168.1.100"
+                if line.contains("IPv4") && line.contains(":") && local_ipv4.is_none() {
+                    if let Some(ip_str) = line.split(':').last() {
+                        let ip_str = ip_str.trim();
+                        if let Ok(ip) = ip_str.parse::<std::net::Ipv4Addr>() {
+                            if !ip.is_loopback() && !ip.is_link_local() {
+                                local_ipv4 = Some(SocketAddr::new(ip.into(), bind_port));
+                            }
+                        }
+                    }
+                }
+
+                // Look for "IPv6 Address. . . . . . . . . . . : 2001:db8::1"
+                if line.contains("IPv6")
+                    && line.contains(":")
+                    && !line.contains("fe80")
+                    && local_ipv6.is_none()
+                {
+                    // IPv6 addresses contain multiple colons, so we need to find the label-value separator
+                    if let Some(pos) = line.rfind(": ") {
+                        let ip_str = &line[pos + 2..];
+                        if let Ok(ip) = ip_str.parse::<std::net::Ipv6Addr>() {
+                            if !ip.is_loopback()
+                                && !ip.is_unspecified()
+                                && ((ip.segments()[0] & 0xfe00) != 0xfe80)
+                            {
+                                local_ipv6 = Some(SocketAddr::new(ip.into(), bind_port));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    (local_ipv4, local_ipv6)
 }
 
 /// Maximum time without activity before considering a peer stale (seconds).
@@ -193,6 +343,27 @@ impl TestNode {
         let peer_id = generate_temporary_peer_id();
         let public_key = "placeholder_public_key".to_string();
 
+        // Detect local addresses
+        let bind_port = config.bind_addr.port();
+        let (local_ipv4, local_ipv6) = detect_local_addresses(bind_port);
+
+        // Create initial local node info and send it to TUI
+        let mut local_node = LocalNodeInfo::default();
+        local_node.set_peer_id(&peer_id);
+        local_node.local_ipv4 = local_ipv4;
+        local_node.local_ipv6 = local_ipv6;
+        local_node.nat_type = NatType::Unknown;
+        local_node.registered = false;
+
+        // Send initial node info to TUI (non-blocking)
+        let event_tx_clone = event_tx.clone();
+        let local_node_clone = local_node.clone();
+        tokio::spawn(async move {
+            let _ = event_tx_clone
+                .send(TuiEvent::UpdateLocalNode(local_node_clone))
+                .await;
+        });
+
         Self {
             listen_addresses: vec![config.bind_addr],
             config,
@@ -289,7 +460,7 @@ impl TestNode {
             peer_id: self.peer_id.clone(),
             public_key: self.public_key.clone(),
             listen_addresses: self.listen_addresses.clone(),
-            external_addresses: external_addrs,
+            external_addresses: external_addrs.clone(),
             nat_type: NatType::Unknown, // Will be determined after connections
             version: env!("CARGO_PKG_VERSION").to_string(),
             capabilities,
@@ -303,8 +474,42 @@ impl TestNode {
                         "Registered with registry, got {} peers",
                         response.peers.len()
                     );
-                    // Send registration success to TUI
+
+                    // Update local node info with registration status
+                    let bind_port = self.config.bind_addr.port();
+                    let (local_ipv4, local_ipv6) = detect_local_addresses(bind_port);
+
+                    let mut local_node = LocalNodeInfo::default();
+                    local_node.set_peer_id(&self.peer_id);
+                    local_node.local_ipv4 = local_ipv4;
+                    local_node.local_ipv6 = local_ipv6;
+                    local_node.nat_type = NatType::Unknown;
+                    local_node.registered = true;
+                    local_node.last_heartbeat = Some(std::time::Instant::now());
+
+                    // Set external addresses if we have any
+                    if !external_addrs.is_empty() {
+                        for addr in &external_addrs {
+                            if addr.is_ipv4() && local_node.external_ipv4.is_none() {
+                                local_node.external_ipv4 = Some(*addr);
+                            } else if addr.is_ipv6() && local_node.external_ipv6.is_none() {
+                                local_node.external_ipv6 = Some(*addr);
+                            }
+                        }
+                    }
+
+                    // Send updated node info to TUI
+                    let _ = self
+                        .event_tx
+                        .send(TuiEvent::UpdateLocalNode(local_node))
+                        .await;
                     let _ = self.event_tx.send(TuiEvent::RegistrationComplete).await;
+
+                    // Also send the registered count
+                    let _ = self
+                        .event_tx
+                        .send(TuiEvent::UpdateRegisteredCount(response.peers.len() + 1))
+                        .await;
                 } else {
                     let err = response
                         .error
@@ -520,6 +725,9 @@ impl TestNode {
                             &candidate.peer_id[..8.min(candidate.peer_id.len())],
                             e
                         );
+
+                        // Notify TUI of connection failure
+                        let _ = event_tx.send(TuiEvent::ConnectionFailed).await;
                     }
                 }
             }

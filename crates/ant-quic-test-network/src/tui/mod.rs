@@ -97,6 +97,10 @@ pub enum TuiEvent {
         /// Round-trip time if successful
         rtt: Option<std::time::Duration>,
     },
+    /// Connection attempt failed
+    ConnectionFailed,
+    /// Connection attempt started
+    ConnectionAttempted,
 }
 
 /// Configuration for the TUI.
@@ -243,8 +247,28 @@ fn handle_tui_event(app: &mut App, event: TuiEvent) {
             app.set_info("Registered with network registry");
         }
         TuiEvent::PeerConnected(peer) => {
+            // Track the connection method breakdown
+            match peer.method {
+                crate::registry::ConnectionMethod::Direct => {
+                    app.stats.direct_connections += 1;
+                }
+                crate::registry::ConnectionMethod::HolePunched => {
+                    app.stats.hole_punched_connections += 1;
+                }
+                crate::registry::ConnectionMethod::Relayed => {
+                    app.stats.relayed_connections += 1;
+                }
+            }
             app.update_peer(peer);
             app.stats.connection_successes += 1;
+            app.stats.connection_attempts += 1;
+        }
+        TuiEvent::ConnectionFailed => {
+            app.stats.connection_failures += 1;
+            app.stats.connection_attempts += 1;
+        }
+        TuiEvent::ConnectionAttempted => {
+            app.stats.connection_attempts += 1;
         }
         TuiEvent::TestPacketResult {
             peer_id,
