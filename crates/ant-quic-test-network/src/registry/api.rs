@@ -255,15 +255,13 @@ async fn handle_get_node_detail(
             let conn_stats = store.get_node_connection_stats(&peer.peer_id);
 
             let total_attempts = nat_stats.attempts.max(1);
-            let total_success = nat_stats.direct_success + nat_stats.hole_punch_success + nat_stats.relay_success;
+            let total_success =
+                nat_stats.direct_success + nat_stats.hole_punch_success + nat_stats.relay_success;
             let success_rate = (total_success as f64 / total_attempts as f64) * 100.0;
 
             // Calculate connectivity score
-            let (score, rating, message, full_connectivity) = assess_connectivity(
-                &peer.capabilities,
-                peer.nat_type,
-                success_rate,
-            );
+            let (score, rating, message, full_connectivity) =
+                assess_connectivity(&peer.capabilities, peer.nat_type, success_rate);
 
             let response = NodeDetailResponse {
                 peer: peer.clone(),
@@ -368,9 +366,15 @@ fn assess_connectivity(
     ) && capabilities.nat_traversal;
 
     let message = if full_connectivity {
-        format!("{}. This node can achieve 100% peer-to-peer connectivity!", nat_msg)
+        format!(
+            "{}. This node can achieve 100% peer-to-peer connectivity!",
+            nat_msg
+        )
     } else {
-        format!("{}. Some connections may require relay assistance.", nat_msg)
+        format!(
+            "{}. Some connections may require relay assistance.",
+            nat_msg
+        )
     };
 
     (score, rating, message, full_connectivity)
