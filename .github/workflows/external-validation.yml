@@ -135,7 +135,8 @@ jobs:
           retention-days: 30
 
       - name: Create issue if threshold not met
-        if: steps.analyze.outputs.threshold_met == 'false' && github.event_name == 'schedule'
+        # Only create issue if threshold not met AND we actually tested some endpoints
+        if: steps.analyze.outputs.threshold_met == 'false' && steps.analyze.outputs.total_endpoints != '0' && github.event_name == 'schedule'
         uses: actions/github-script@v7
         with:
           script: |

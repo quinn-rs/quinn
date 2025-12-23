@@ -561,7 +561,7 @@ jobs:
 
             **Run as test node (connect to network):**
             ```bash
-            ant-quic-test --registry-url https://quic.saorsalabs.com
+            ant-quic-test --registry-url https://saorsa-1.saorsalabs.com
             ```
 
             ### What's Changed

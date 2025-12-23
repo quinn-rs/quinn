@@ -513,11 +513,11 @@ mod tests {
 
     #[test]
     fn test_registry_client_creation() {
-        let client = RegistryClient::new("https://quic.saorsalabs.com");
-        assert_eq!(client.base_url, "https://quic.saorsalabs.com");
+        let client = RegistryClient::new("https://saorsa-1.saorsalabs.com");
+        assert_eq!(client.base_url, "https://saorsa-1.saorsalabs.com");
 
         // Test trailing slash handling
-        let client2 = RegistryClient::new("https://quic.saorsalabs.com/");
-        assert_eq!(client2.base_url, "https://quic.saorsalabs.com");
+        let client2 = RegistryClient::new("https://saorsa-1.saorsalabs.com/");
+        assert_eq!(client2.base_url, "https://saorsa-1.saorsalabs.com");
     }
 }

@@ -39,7 +39,7 @@
 //! ```rust,ignore
 //! use ant_quic::registry::{RegistryClient, NodeRegistration};
 //!
-//! let client = RegistryClient::new("https://quic.saorsalabs.com");
+//! let client = RegistryClient::new("https://saorsa-1.saorsalabs.com");
 //!
 //! // Register with the network
 //! let registration = NodeRegistration { /* ... */ };

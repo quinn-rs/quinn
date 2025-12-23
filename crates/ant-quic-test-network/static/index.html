@@ -801,6 +801,233 @@
             box-shadow: 0 4px 20px rgba(255, 215, 0, 0.15);
         }
 
+        /* ADR Modal */
+        .adr-modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.8);
+            backdrop-filter: blur(8px);
+            z-index: 300;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            padding: 2rem;
+        }
+
+        .adr-modal-overlay.active {
+            display: flex;
+        }
+
+        .adr-modal {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 20px;
+            max-width: 800px;
+            width: 100%;
+            max-height: 90vh;
+            overflow-y: auto;
+            padding: 2.5rem;
+            position: relative;
+            animation: modalSlideIn 0.3s ease-out;
+        }
+
+        @keyframes modalSlideIn {
+            from {
+                opacity: 0;
+                transform: translateY(-20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .adr-modal-close {
+            position: absolute;
+            top: 1rem;
+            right: 1rem;
+            background: rgba(255, 255, 255, 0.1);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            color: var(--text-secondary);
+            font-size: 1.5rem;
+            cursor: pointer;
+            padding: 0.5rem 0.75rem;
+            line-height: 1;
+            transition: all 0.2s;
+        }
+
+        .adr-modal-close:hover {
+            background: rgba(255, 255, 255, 0.15);
+            color: var(--text-primary);
+        }
+
+        .adr-modal-header {
+            margin-bottom: 1.5rem;
+            padding-bottom: 1rem;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .adr-modal-number {
+            display: inline-block;
+            padding: 0.4rem 0.75rem;
+            background: rgba(0, 217, 255, 0.15);
+            color: var(--accent-cyan);
+            border-radius: 8px;
+            font-size: 0.85rem;
+            font-weight: 600;
+            margin-bottom: 0.75rem;
+        }
+
+        .adr-modal-header h2 {
+            font-size: 1.75rem;
+            margin-bottom: 0.5rem;
+            color: var(--text-primary);
+        }
+
+        .adr-modal-meta {
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+        }
+
+        .adr-modal-content {
+            line-height: 1.8;
+            color: var(--text-secondary);
+        }
+
+        .adr-modal-content h3 {
+            color: var(--accent-cyan);
+            font-size: 1.1rem;
+            margin: 1.5rem 0 0.75rem;
+        }
+
+        .adr-modal-content p {
+            margin-bottom: 1rem;
+        }
+
+        .adr-modal-content ul {
+            margin: 0 0 1rem 1.5rem;
+        }
+
+        .adr-modal-content li {
+            margin-bottom: 0.5rem;
+        }
+
+        .adr-modal-content code {
+            background: rgba(0, 217, 255, 0.1);
+            color: var(--accent-cyan);
+            padding: 0.2rem 0.5rem;
+            border-radius: 4px;
+            font-family: 'SF Mono', Monaco, monospace;
+            font-size: 0.9rem;
+        }
+
+        .adr-modal-link {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            margin-top: 1.5rem;
+            padding: 0.75rem 1.5rem;
+            background: linear-gradient(135deg, var(--accent-cyan), var(--accent-green));
+            color: var(--bg-dark);
+            text-decoration: none;
+            border-radius: 10px;
+            font-weight: 600;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+
+        .adr-modal-link:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 20px rgba(0, 217, 255, 0.3);
+        }
+
+        /* ADR Card hover effect */
+        .adr-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 1.5rem;
+            text-decoration: none;
+            transition: transform 0.2s, border-color 0.2s, box-shadow 0.2s;
+            display: block;
+            cursor: pointer;
+        }
+
+        .adr-card:hover {
+            transform: translateY(-3px);
+            border-color: var(--accent-cyan);
+            box-shadow: 0 4px 20px rgba(0, 217, 255, 0.2);
+        }
+
+        .adr-card:focus {
+            outline: none;
+            border-color: var(--accent-cyan);
+            box-shadow: 0 0 0 3px rgba(0, 217, 255, 0.3);
+        }
+
+        /* Sticky stats panel with minimize on scroll */
+        .stats-overlay {
+            position: fixed;
+            bottom: 2rem;
+            right: 2rem;
+            z-index: 50;
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+            max-width: 320px;
+            transition: all 0.3s ease;
+        }
+
+        .stats-overlay.minimized {
+            max-width: 200px;
+            bottom: 1rem;
+            right: 1rem;
+        }
+
+        .stats-overlay.minimized .stat-card {
+            padding: 0.75rem;
+        }
+
+        .stats-overlay.minimized .stat-value {
+            font-size: 1.25rem;
+        }
+
+        .stats-overlay.minimized .stat-card h3 {
+            font-size: 0.65rem;
+        }
+
+        .stats-overlay.minimized .stat-row {
+            display: none;
+        }
+
+        .stats-overlay.minimized .activity-card {
+            display: none;
+        }
+
+        .stats-toggle {
+            position: absolute;
+            top: -12px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 20px;
+            padding: 0.25rem 0.75rem;
+            font-size: 0.7rem;
+            color: var(--text-secondary);
+            cursor: pointer;
+            transition: all 0.2s;
+            z-index: 51;
+        }
+
+        .stats-toggle:hover {
+            background: rgba(0, 217, 255, 0.1);
+            color: var(--accent-cyan);
+        }
+
         /* Footer */
         .footer {
             padding: 3rem 2rem;
@@ -869,6 +1096,7 @@
         <div class="nav-links">
             <a href="#network">Network</a>
             <a href="#download">Download</a>
+            <a href="#architecture">Architecture</a>
             <a href="https://github.com/dirvine/ant-quic" target="_blank">GitHub</a>
         </div>
         <a href="#download" class="nav-cta">Join the Network</a>
@@ -893,7 +1121,8 @@
     </section>
 
     <!-- Stats Overlay -->
-    <div class="stats-overlay">
+    <div class="stats-overlay" id="stats-overlay">
+        <button class="stats-toggle" id="stats-toggle" onclick="toggleStats()">▼ Expand</button>
         <div class="stat-card">
             <h3>Network Nodes</h3>
             <div class="stat-value" id="total-nodes">0</div>
@@ -1181,55 +1410,77 @@
         <p class="arch-intro">ant-quic is built on transparent, well-documented architectural decisions. Explore our design rationale:</p>
 
         <div class="adr-grid">
-            <a href="https://github.com/dirvine/ant-quic/blob/master/docs/adr/ADR-001-link-transport-abstraction.md" class="adr-card">
+            <div class="adr-card" tabindex="0" onclick="showAdrModal('001')" onkeypress="if(event.key==='Enter')showAdrModal('001')">
                 <span class="adr-number">ADR-001</span>
                 <h3>Link Transport Abstraction</h3>
                 <p>Flexible transport layer supporting QUIC, WebRTC, and future transports</p>
-            </a>
+            </div>
 
-            <a href="https://github.com/dirvine/ant-quic/blob/master/docs/adr/ADR-002-epsilon-greedy-bootstrap-cache.md" class="adr-card">
+            <div class="adr-card" tabindex="0" onclick="showAdrModal('002')" onkeypress="if(event.key==='Enter')showAdrModal('002')">
                 <span class="adr-number">ADR-002</span>
                 <h3>Epsilon-Greedy Bootstrap</h3>
                 <p>Smart peer selection balancing exploitation and exploration</p>
-            </a>
+            </div>
 
-            <a href="https://github.com/dirvine/ant-quic/blob/master/docs/adr/ADR-003-pure-post-quantum-cryptography.md" class="adr-card">
+            <div class="adr-card" tabindex="0" onclick="showAdrModal('003')" onkeypress="if(event.key==='Enter')showAdrModal('003')">
                 <span class="adr-number">ADR-003</span>
                 <h3>Pure Post-Quantum Crypto</h3>
                 <p>ML-KEM-768 and ML-DSA-65 for quantum-safe security</p>
-            </a>
+            </div>
 
-            <a href="https://github.com/dirvine/ant-quic/blob/master/docs/adr/ADR-004-symmetric-p2p-architecture.md" class="adr-card">
+            <div class="adr-card" tabindex="0" onclick="showAdrModal('004')" onkeypress="if(event.key==='Enter')showAdrModal('004')">
                 <span class="adr-number">ADR-004</span>
                 <h3>Symmetric P2P Architecture</h3>
                 <p>All nodes are equal - no special roles or bootstrap nodes</p>
-            </a>
+            </div>
 
-            <a href="https://github.com/dirvine/ant-quic/blob/master/docs/adr/ADR-005-native-quic-nat-traversal.md" class="adr-card">
+            <div class="adr-card" tabindex="0" onclick="showAdrModal('005')" onkeypress="if(event.key==='Enter')showAdrModal('005')">
                 <span class="adr-number">ADR-005</span>
                 <h3>Native QUIC NAT Traversal</h3>
                 <p>Built-in hole punching without STUN/TURN dependencies</p>
-            </a>
+            </div>
 
-            <a href="https://github.com/dirvine/ant-quic/blob/master/docs/adr/ADR-006-masque-relay-fallback.md" class="adr-card">
+            <div class="adr-card" tabindex="0" onclick="showAdrModal('006')" onkeypress="if(event.key==='Enter')showAdrModal('006')">
                 <span class="adr-number">ADR-006</span>
                 <h3>MASQUE Relay Fallback</h3>
                 <p>HTTP/3 relays for symmetric NAT scenarios</p>
-            </a>
+            </div>
 
-            <a href="https://github.com/dirvine/ant-quic/blob/master/docs/adr/ADR-007-local-only-hostkey.md" class="adr-card">
+            <div class="adr-card" tabindex="0" onclick="showAdrModal('007')" onkeypress="if(event.key==='Enter')showAdrModal('007')">
                 <span class="adr-number">ADR-007</span>
                 <h3>Local-Only Host Keys</h3>
                 <p>Secure key storage that never leaves your device</p>
-            </a>
+            </div>
 
-            <a href="https://github.com/dirvine/ant-quic/tree/master/docs/adr" class="adr-card all-adrs">
+            <a href="https://github.com/dirvine/ant-quic/tree/master/docs/adr" class="adr-card all-adrs" target="_blank">
                 <span class="adr-number">All ADRs</span>
                 <h3>View All Decisions</h3>
                 <p>Browse the complete architecture decision records</p>
             </a>
         </div>
     </section>
+
+    <!-- ADR Modal Overlay -->
+    <div class="adr-modal-overlay" id="adr-modal-overlay">
+        <div class="adr-modal">
+            <button class="adr-modal-close" onclick="closeAdrModal()">&times;</button>
+            <div class="adr-modal-header">
+                <span class="adr-modal-number" id="adr-modal-number">ADR-001</span>
+                <h2 id="adr-modal-title">Loading...</h2>
+                <div class="adr-modal-meta" id="adr-modal-meta">Status: Accepted</div>
+            </div>
+            <div class="adr-modal-content" id="adr-modal-content">
+                <!-- Content populated by JavaScript -->
+            </div>
+            <a href="#" class="adr-modal-link" id="adr-modal-link" target="_blank">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z"/>
+                    <path d="M19 19H5V5h7V3H5a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7h-2v7z"/>
+                </svg>
+                View Full Document on GitHub
+            </a>
+        </div>
+    </div>
 
     <!-- Footer -->
     <footer class="footer">
@@ -1518,6 +1769,245 @@
         fetchData();
         setInterval(fetchData, 15000);
         connectWS();
+
+        // ============================================
+        // ADR Modal System
+        // ============================================
+        const adrData = {
+            '001': {
+                title: 'Link Transport Abstraction',
+                url: 'https://github.com/dirvine/ant-quic/blob/master/docs/adr/ADR-001-link-transport-abstraction.md',
+                status: 'Accepted',
+                date: 'December 2024',
+                content: `
+                    <h3>Context</h3>
+                    <p>ant-quic needs a flexible transport layer that can adapt to various network conditions and future protocol evolution. Supporting multiple transports allows the network to function in diverse environments.</p>
+
+                    <h3>Decision</h3>
+                    <p>We implement a <code>Link</code> trait abstraction that decouples the P2P logic from the underlying transport mechanism. This allows:</p>
+                    <ul>
+                        <li>QUIC as the primary transport with full NAT traversal support</li>
+                        <li>WebRTC for browser-based nodes</li>
+                        <li>Future transports without changing application code</li>
+                    </ul>
+
+                    <h3>Consequences</h3>
+                    <p>This design enables transport-agnostic peer connections while maintaining quantum-safe security across all transports. The abstraction adds minimal overhead while providing maximum flexibility.</p>
+                `
+            },
+            '002': {
+                title: 'Epsilon-Greedy Bootstrap Cache',
+                url: 'https://github.com/dirvine/ant-quic/blob/master/docs/adr/ADR-002-epsilon-greedy-bootstrap-cache.md',
+                status: 'Accepted',
+                date: 'December 2024',
+                content: `
+                    <h3>Context</h3>
+                    <p>Peer discovery and connection management require balancing known-good peers with discovery of new peers. A pure exploitation strategy leads to network fragmentation, while pure exploration wastes resources.</p>
+
+                    <h3>Decision</h3>
+                    <p>We use an epsilon-greedy algorithm for peer selection:</p>
+                    <ul>
+                        <li><strong>90% exploitation:</strong> Connect to known high-quality peers</li>
+                        <li><strong>10% exploration:</strong> Try new or unknown peers</li>
+                        <li>Dynamic adjustment based on network health</li>
+                    </ul>
+
+                    <h3>Consequences</h3>
+                    <p>This approach maintains network resilience while efficiently utilizing bandwidth. The cache persists across sessions, providing fast bootstrap times while continuously improving peer quality metrics.</p>
+                `
+            },
+            '003': {
+                title: 'Pure Post-Quantum Cryptography',
+                url: 'https://github.com/dirvine/ant-quic/blob/master/docs/adr/ADR-003-pure-post-quantum-cryptography.md',
+                status: 'Accepted',
+                date: 'December 2024',
+                content: `
+                    <h3>Context</h3>
+                    <p>Quantum computers threaten classical cryptographic algorithms. A "harvest now, decrypt later" attack means data encrypted today could be compromised in the future. We need quantum-resistant security from day one.</p>
+
+                    <h3>Decision</h3>
+                    <p>ant-quic uses pure post-quantum cryptography with no classical fallback:</p>
+                    <ul>
+                        <li><strong>ML-KEM-768:</strong> Key encapsulation for secure key exchange (FIPS 203)</li>
+                        <li><strong>ML-DSA-65:</strong> Digital signatures for authentication (FIPS 204)</li>
+                        <li>No hybrid schemes - 100% quantum-safe</li>
+                    </ul>
+
+                    <h3>Consequences</h3>
+                    <p>All network traffic is protected against both current and future quantum threats. This is a greenfield design choice that ensures long-term security without the complexity of hybrid cryptography.</p>
+                `
+            },
+            '004': {
+                title: 'Symmetric P2P Architecture',
+                url: 'https://github.com/dirvine/ant-quic/blob/master/docs/adr/ADR-004-symmetric-p2p-architecture.md',
+                status: 'Accepted',
+                date: 'December 2024',
+                content: `
+                    <h3>Context</h3>
+                    <p>Traditional P2P networks often have special node types (bootstrap nodes, super peers, relays). This creates single points of failure and requires infrastructure maintenance.</p>
+
+                    <h3>Decision</h3>
+                    <p>All ant-quic nodes are identical in capability:</p>
+                    <ul>
+                        <li>Every node can initiate and accept connections</li>
+                        <li>No "bootstrap" or "super peer" distinction</li>
+                        <li>"Known peers" are simply initial connection hints</li>
+                        <li>Any peer can help with NAT traversal coordination</li>
+                    </ul>
+
+                    <h3>Consequences</h3>
+                    <p>The network is maximally decentralized with no privileged nodes. This improves resilience, simplifies deployment, and ensures no single point of control or failure exists.</p>
+                `
+            },
+            '005': {
+                title: 'Native QUIC NAT Traversal',
+                url: 'https://github.com/dirvine/ant-quic/blob/master/docs/adr/ADR-005-native-quic-nat-traversal.md',
+                status: 'Accepted',
+                date: 'December 2024',
+                content: `
+                    <h3>Context</h3>
+                    <p>NAT traversal traditionally requires external protocols (STUN, ICE, TURN). These add complexity, external dependencies, and potential privacy concerns.</p>
+
+                    <h3>Decision</h3>
+                    <p>NAT traversal is implemented natively within QUIC using extension frames:</p>
+                    <ul>
+                        <li><code>ADD_ADDRESS</code> - Advertise candidate addresses</li>
+                        <li><code>PUNCH_ME_NOW</code> - Coordinate simultaneous hole punching</li>
+                        <li><code>OBSERVED_ADDRESS</code> - Report external address observations</li>
+                        <li>Based on draft-seemann-quic-nat-traversal specification</li>
+                    </ul>
+
+                    <h3>Consequences</h3>
+                    <p>No external STUN/TURN infrastructure required. All NAT traversal happens over encrypted QUIC connections, preserving privacy and reducing attack surface. ~95% connectivity achievable through direct connections or hole punching.</p>
+                `
+            },
+            '006': {
+                title: 'MASQUE Relay Fallback',
+                url: 'https://github.com/dirvine/ant-quic/blob/master/docs/adr/ADR-006-masque-relay-fallback.md',
+                status: 'Accepted',
+                date: 'December 2024',
+                content: `
+                    <h3>Context</h3>
+                    <p>Some NAT configurations (particularly symmetric NATs) cannot be traversed through hole punching alone. A relay mechanism is needed for the remaining ~5% of connections.</p>
+
+                    <h3>Decision</h3>
+                    <p>Use MASQUE (HTTP/3-based relay) for fallback connectivity:</p>
+                    <ul>
+                        <li>Standard HTTP/3 CONNECT method for proxying</li>
+                        <li>Any node can volunteer as a relay</li>
+                        <li>Encrypted end-to-end - relay sees only encrypted QUIC packets</li>
+                        <li>Automatic fallback when direct connection fails</li>
+                    </ul>
+
+                    <h3>Consequences</h3>
+                    <p>100% connectivity is achievable. The relay mechanism uses standardized protocols, allowing any HTTP/3 proxy infrastructure to participate. Relaying is optional and privacy-preserving.</p>
+                `
+            },
+            '007': {
+                title: 'Local-Only Host Keys',
+                url: 'https://github.com/dirvine/ant-quic/blob/master/docs/adr/ADR-007-local-only-hostkey.md',
+                status: 'Accepted',
+                date: 'December 2024',
+                content: `
+                    <h3>Context</h3>
+                    <p>Node identity keys are extremely sensitive - they represent the node's identity on the network. Compromise of these keys allows impersonation.</p>
+
+                    <h3>Decision</h3>
+                    <p>Host keys are stored locally and never leave the device:</p>
+                    <ul>
+                        <li>Keys stored in platform-secure storage (Keychain, Credential Manager)</li>
+                        <li>No key backup or sync features by design</li>
+                        <li>Keys generated on first run with secure randomness</li>
+                        <li>PeerId = SHA-256(public_key) for compact identification</li>
+                    </ul>
+
+                    <h3>Consequences</h3>
+                    <p>Node identity is bound to the physical device. While this means losing a device loses the identity, it also means keys cannot be stolen remotely. This aligns with the principle of minimal trust.</p>
+                `
+            }
+        };
+
+        function showAdrModal(adrId) {
+            const adr = adrData[adrId];
+            if (!adr) return;
+
+            document.getElementById('adr-modal-number').textContent = `ADR-${adrId}`;
+            document.getElementById('adr-modal-title').textContent = adr.title;
+            document.getElementById('adr-modal-meta').textContent = `Status: ${adr.status} | ${adr.date}`;
+            document.getElementById('adr-modal-content').innerHTML = adr.content;
+            document.getElementById('adr-modal-link').href = adr.url;
+            document.getElementById('adr-modal-overlay').classList.add('active');
+            document.body.style.overflow = 'hidden';
+        }
+
+        function closeAdrModal() {
+            document.getElementById('adr-modal-overlay').classList.remove('active');
+            document.body.style.overflow = '';
+        }
+
+        // Close ADR modal on escape key or overlay click
+        document.getElementById('adr-modal-overlay').addEventListener('click', (e) => {
+            if (e.target.id === 'adr-modal-overlay') closeAdrModal();
+        });
+
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') {
+                closeAdrModal();
+                closeNodeDetail();
+            }
+        });
+
+        // ============================================
+        // Stats Panel Scroll Behavior
+        // ============================================
+        let statsMinimized = false;
+        const heroSection = document.getElementById('network');
+
+        function toggleStats() {
+            const statsOverlay = document.getElementById('stats-overlay');
+            const toggleBtn = document.getElementById('stats-toggle');
+            statsMinimized = !statsMinimized;
+
+            if (statsMinimized) {
+                statsOverlay.classList.add('minimized');
+                toggleBtn.textContent = '▲ Expand';
+            } else {
+                statsOverlay.classList.remove('minimized');
+                toggleBtn.textContent = '▼ Minimize';
+            }
+        }
+
+        // Auto-minimize stats when scrolling past hero section
+        let lastScrollY = 0;
+        let userManualToggle = false;
+
+        window.addEventListener('scroll', () => {
+            if (userManualToggle) return; // Don't auto-change if user manually toggled
+
+            const scrollY = window.scrollY;
+            const heroBottom = heroSection ? heroSection.offsetHeight : window.innerHeight;
+            const statsOverlay = document.getElementById('stats-overlay');
+            const toggleBtn = document.getElementById('stats-toggle');
+
+            if (scrollY > heroBottom * 0.7 && !statsMinimized) {
+                statsOverlay.classList.add('minimized');
+                toggleBtn.textContent = '▲ Expand';
+                statsMinimized = true;
+            } else if (scrollY < heroBottom * 0.3 && statsMinimized) {
+                statsOverlay.classList.remove('minimized');
+                toggleBtn.textContent = '▼ Minimize';
+                statsMinimized = false;
+            }
+
+            lastScrollY = scrollY;
+        });
+
+        // Track manual toggle
+        document.getElementById('stats-toggle').addEventListener('click', () => {
+            userManualToggle = true;
+            // Reset after 10 seconds to allow auto behavior again
+            setTimeout(() => { userManualToggle = false; }, 10000);
+        });
     </script>
 </body>
 </html>
