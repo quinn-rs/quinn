@@ -1078,7 +1078,9 @@
                 </svg>
                 <h3>Windows</h3>
                 <p>Windows 10 or later (64-bit)</p>
-                <span class="download-btn coming-soon">Coming Soon</span>
+                <a href="https://github.com/dirvine/ant-quic/releases/latest/download/ant-quic-test-x86_64-windows.zip" class="download-btn">
+                    Download for Windows
+                </a>
             </div>
 
             <!-- macOS -->
@@ -1106,28 +1108,70 @@
             </div>
         </div>
 
-        <!-- Simple Instructions -->
+        <!-- Platform-specific Instructions -->
         <div class="instructions">
-            <h3>How to Run</h3>
-            <div class="step">
-                <span class="step-number">1</span>
-                <div class="step-content">
-                    <p>Download and extract the file for your system</p>
+            <h3>📖 How to Run (This is a TUI app - requires Terminal)</h3>
+
+            <div style="margin-bottom: 1.5rem;">
+                <h4 style="color: var(--accent-cyan); margin-bottom: 0.75rem;">🍎 macOS</h4>
+                <div class="step">
+                    <span class="step-number">1</span>
+                    <div class="step-content">
+                        <p>Double-click the downloaded .tar.gz file to extract it</p>
+                    </div>
+                </div>
+                <div class="step">
+                    <span class="step-number">2</span>
+                    <div class="step-content">
+                        <p>Open Terminal (Applications → Utilities → Terminal)</p>
+                    </div>
+                </div>
+                <div class="step">
+                    <span class="step-number">3</span>
+                    <div class="step-content">
+                        <p>Navigate to your Downloads folder and run:</p>
+                        <code>cd ~/Downloads && ./ant-quic-test</code>
+                    </div>
                 </div>
             </div>
-            <div class="step">
-                <span class="step-number">2</span>
-                <div class="step-content">
-                    <p>Open a terminal (Command Prompt on Windows) and run:</p>
-                    <code>./ant-quic-test</code>
+
+            <div style="margin-bottom: 1.5rem;">
+                <h4 style="color: var(--accent-cyan); margin-bottom: 0.75rem;">🪟 Windows</h4>
+                <div class="step">
+                    <span class="step-number">1</span>
+                    <div class="step-content">
+                        <p>Right-click the downloaded .zip file and select "Extract All"</p>
+                    </div>
+                </div>
+                <div class="step">
+                    <span class="step-number">2</span>
+                    <div class="step-content">
+                        <p>Open PowerShell or Command Prompt (Win+R, type "cmd", press Enter)</p>
+                    </div>
+                </div>
+                <div class="step">
+                    <span class="step-number">3</span>
+                    <div class="step-content">
+                        <p>Navigate to the extracted folder and run:</p>
+                        <code>cd Downloads\ant-quic-test-x86_64-windows && .\ant-quic-test.exe</code>
+                    </div>
                 </div>
             </div>
-            <div class="step">
-                <span class="step-number">3</span>
-                <div class="step-content">
-                    <p>That's it! Your node will automatically connect to the network and start testing connections with other nodes worldwide.</p>
+
+            <div>
+                <h4 style="color: var(--accent-cyan); margin-bottom: 0.75rem;">🐧 Linux</h4>
+                <div class="step">
+                    <span class="step-number">1</span>
+                    <div class="step-content">
+                        <p>Open a terminal and run:</p>
+                        <code>cd ~/Downloads && tar -xzf ant-quic-test-*.tar.gz && chmod +x ant-quic-test && ./ant-quic-test</code>
+                    </div>
                 </div>
             </div>
+
+            <p style="margin-top: 1.5rem; color: var(--text-secondary); font-size: 0.85rem;">
+                ✨ The TUI (Terminal User Interface) will show your node connecting to peers worldwide in real-time!
+            </p>
         </div>
     </section>
 
