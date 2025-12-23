@@ -1,0 +1,58 @@
+[package]
+name = "ant-quic-test-network"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85.0"
+license = "MIT OR Apache-2.0"
+description = "Large-scale network testing infrastructure for ant-quic"
+keywords = ["quic", "nat-traversal", "p2p", "testing", "tui"]
+categories = ["network-programming", "command-line-utilities"]
+
+[dependencies]
+# Core ant-quic library
+ant-quic = { path = "../.." }
+
+# Web server for registry API
+warp = "0.3"
+futures-util = "0.3"
+
+# TUI framework
+ratatui = "0.29"
+crossterm = { version = "0.28", features = ["event-stream"] }
+
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# HTTP client for registry communication
+reqwest = { version = "0.12", features = ["json"] }
+
+# Error handling
+anyhow = "1"
+
+# Concurrent data structures
+dashmap = "6"
+
+# Random number generation
+rand = "0.8"
+
+# Cryptographic hashing for test packets
+sha2 = "0.10"
+
+# Hex encoding for peer IDs
+hex = "0.4"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = "0.3"
+
+# Embedded static files for web dashboard
+rust-embed = "8"
+mime_guess = "2"
+
+[[bin]]
+name = "ant-quic-test"
+path = "src/main.rs"

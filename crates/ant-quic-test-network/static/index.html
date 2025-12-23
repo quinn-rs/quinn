@@ -1,0 +1,813 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ant-quic Network Dashboard</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+            color: #e0e0e0;
+            min-height: 100vh;
+            overflow-x: hidden;
+        }
+
+        .header {
+            text-align: center;
+            padding: 20px;
+            background: rgba(0, 0, 0, 0.3);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .header h1 {
+            font-size: 2.5em;
+            background: linear-gradient(90deg, #00d9ff, #00ff88);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .header .tagline {
+            font-size: 1.2em;
+            color: #888;
+            margin-top: 5px;
+        }
+
+        .header .crypto-badges {
+            margin-top: 10px;
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 5px 12px;
+            margin: 0 5px;
+            background: rgba(0, 217, 255, 0.2);
+            border: 1px solid rgba(0, 217, 255, 0.5);
+            border-radius: 15px;
+            font-size: 0.85em;
+        }
+
+        .main-content {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 20px;
+            padding: 20px;
+            max-width: 1800px;
+            margin: 0 auto;
+        }
+
+        .globe-container {
+            flex: 2;
+            min-width: 600px;
+            min-height: 600px;
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 15px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            position: relative;
+            overflow: hidden;
+        }
+
+        #globe {
+            width: 100%;
+            height: 600px;
+        }
+
+        .stats-panel {
+            flex: 1;
+            min-width: 300px;
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+
+        .stat-card {
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 15px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            padding: 20px;
+        }
+
+        .stat-card h3 {
+            font-size: 0.9em;
+            color: #888;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 10px;
+        }
+
+        .stat-value {
+            font-size: 2.5em;
+            font-weight: bold;
+            color: #00d9ff;
+        }
+
+        .stat-value.success {
+            color: #00ff88;
+        }
+
+        .stat-sub {
+            font-size: 0.9em;
+            color: #666;
+            margin-top: 5px;
+        }
+
+        .connection-types {
+            display: flex;
+            gap: 10px;
+            margin-top: 10px;
+        }
+
+        .conn-type {
+            flex: 1;
+            text-align: center;
+            padding: 10px;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 8px;
+        }
+
+        .conn-type .value {
+            font-size: 1.5em;
+            font-weight: bold;
+        }
+
+        .conn-type .label {
+            font-size: 0.8em;
+            color: #666;
+        }
+
+        .conn-type.direct .value { color: #00ff88; }
+        .conn-type.punched .value { color: #ffdd00; }
+        .conn-type.relayed .value { color: #ff6b6b; }
+
+        .activity-feed {
+            max-height: 250px;
+            overflow-y: auto;
+        }
+
+        .activity-item {
+            padding: 8px 0;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+            font-size: 0.85em;
+        }
+
+        .activity-item:last-child {
+            border-bottom: none;
+        }
+
+        .activity-item .time {
+            color: #666;
+            font-size: 0.85em;
+        }
+
+        .activity-item .peer {
+            color: #00d9ff;
+            font-family: monospace;
+        }
+
+        .activity-item .country {
+            margin-left: 5px;
+        }
+
+        .footer {
+            text-align: center;
+            padding: 30px;
+            color: #666;
+            font-size: 0.9em;
+        }
+
+        .footer a {
+            color: #00d9ff;
+            text-decoration: none;
+        }
+
+        .footer a:hover {
+            text-decoration: underline;
+        }
+
+        .thank-you {
+            background: rgba(128, 0, 255, 0.1);
+            border: 1px solid rgba(128, 0, 255, 0.3);
+            border-radius: 10px;
+            padding: 15px;
+            margin-top: 15px;
+            text-align: center;
+        }
+
+        .legend {
+            position: absolute;
+            bottom: 15px;
+            left: 15px;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 10px 15px;
+            border-radius: 8px;
+            font-size: 0.8em;
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin: 5px 0;
+        }
+
+        .legend-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+        }
+
+        .legend-dot.active { background: #00ff88; box-shadow: 0 0 10px #00ff88; }
+        .legend-dot.idle { background: #00d9ff; }
+        .legend-dot.stale { background: #666; }
+        .legend-dot.registry { background: #ffd700; }
+
+        @media (max-width: 1000px) {
+            .main-content {
+                flex-direction: column;
+            }
+            .globe-container {
+                min-width: 100%;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>ant-quic Network</h1>
+        <div class="tagline">"We will be legion!!"</div>
+        <div class="crypto-badges">
+            <span class="badge">ML-KEM-768</span>
+            <span class="badge">ML-DSA-65</span>
+            <span class="badge">Quantum-Safe</span>
+        </div>
+    </div>
+
+    <div class="main-content">
+        <div class="globe-container">
+            <div id="globe"></div>
+            <div class="legend">
+                <div class="legend-item">
+                    <span class="legend-dot registry"></span>
+                    <span>Registry Server</span>
+                </div>
+                <div class="legend-item">
+                    <span class="legend-dot active"></span>
+                    <span>Active Node (&lt;60s)</span>
+                </div>
+                <div class="legend-item">
+                    <span class="legend-dot idle"></span>
+                    <span>Idle Node</span>
+                </div>
+                <div class="legend-item">
+                    <span class="legend-dot stale"></span>
+                    <span>Stale (&gt;5min)</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="stats-panel">
+            <div class="stat-card">
+                <h3>Registered Nodes</h3>
+                <div class="stat-value" id="total-nodes">0</div>
+                <div class="stat-sub"><span id="active-nodes">0</span> currently active</div>
+            </div>
+
+            <div class="stat-card">
+                <h3>Total Connections</h3>
+                <div class="stat-value" id="total-connections">0</div>
+                <div class="connection-types">
+                    <div class="conn-type direct">
+                        <div class="value" id="direct-count">0</div>
+                        <div class="label">Direct</div>
+                    </div>
+                    <div class="conn-type punched">
+                        <div class="value" id="punched-count">0</div>
+                        <div class="label">Hole-Punched</div>
+                    </div>
+                    <div class="conn-type relayed">
+                        <div class="value" id="relayed-count">0</div>
+                        <div class="label">Relayed</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="stat-card">
+                <h3>Success Rate</h3>
+                <div class="stat-value success" id="success-rate">100%</div>
+                <div class="stat-sub"><span id="total-attempts">0</span> connection attempts</div>
+            </div>
+
+            <div class="stat-card">
+                <h3>Data Transferred</h3>
+                <div class="stat-value" id="data-transferred">0 B</div>
+                <div class="stat-sub">5KB test packets</div>
+            </div>
+
+            <div class="stat-card">
+                <h3>Recent Activity</h3>
+                <div class="activity-feed" id="activity-feed">
+                    <div class="activity-item">
+                        <span class="time">Waiting for connections...</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="thank-you">
+                Thank you to all our amazing testers for helping build a safer, more secure, and privacy-respecting internet for humanity!
+            </div>
+        </div>
+    </div>
+
+    <div class="footer">
+        <p>Join the test: Download <a href="https://github.com/dirvine/ant-quic/releases">ant-quic-test</a> and run it - that's all you need to do!</p>
+        <p style="margin-top: 10px;">Powered by <a href="https://github.com/dirvine/ant-quic">ant-quic</a> - Quantum-Safe P2P Networking</p>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <script>
+        // Globe visualization
+        class NetworkGlobe {
+            constructor(containerId) {
+                this.container = document.getElementById(containerId);
+                this.nodes = new Map();
+                this.connections = [];
+                this.init();
+            }
+
+            init() {
+                // Scene setup
+                this.scene = new THREE.Scene();
+                this.camera = new THREE.PerspectiveCamera(
+                    45,
+                    this.container.clientWidth / this.container.clientHeight,
+                    0.1,
+                    1000
+                );
+                this.camera.position.z = 3;
+
+                this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+                this.renderer.setSize(this.container.clientWidth, this.container.clientHeight);
+                this.renderer.setPixelRatio(window.devicePixelRatio);
+                this.container.appendChild(this.renderer.domElement);
+
+                // Controls
+                this.controls = new THREE.OrbitControls(this.camera, this.renderer.domElement);
+                this.controls.enableDamping = true;
+                this.controls.dampingFactor = 0.05;
+                this.controls.rotateSpeed = 0.5;
+                this.controls.enableZoom = true;
+                this.controls.minDistance = 1.5;
+                this.controls.maxDistance = 5;
+                this.controls.autoRotate = true;
+                this.controls.autoRotateSpeed = 0.5;
+
+                // Create Earth
+                this.createEarth();
+
+                // Ambient light
+                const ambientLight = new THREE.AmbientLight(0x404040, 0.5);
+                this.scene.add(ambientLight);
+
+                // Directional light
+                const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+                directionalLight.position.set(5, 3, 5);
+                this.scene.add(directionalLight);
+
+                // Node group
+                this.nodeGroup = new THREE.Group();
+                this.scene.add(this.nodeGroup);
+
+                // Connection group
+                this.connectionGroup = new THREE.Group();
+                this.scene.add(this.connectionGroup);
+
+                // Handle resize
+                window.addEventListener('resize', () => this.onResize());
+
+                // Start animation
+                this.animate();
+            }
+
+            createEarth() {
+                // Earth sphere with wireframe
+                const geometry = new THREE.SphereGeometry(1, 64, 64);
+
+                // Main earth (dark blue)
+                const earthMaterial = new THREE.MeshPhongMaterial({
+                    color: 0x1a1a2e,
+                    transparent: true,
+                    opacity: 0.9,
+                });
+                this.earth = new THREE.Mesh(geometry, earthMaterial);
+                this.scene.add(this.earth);
+
+                // Wireframe overlay
+                const wireframeMaterial = new THREE.MeshBasicMaterial({
+                    color: 0x00d9ff,
+                    wireframe: true,
+                    transparent: true,
+                    opacity: 0.15,
+                });
+                const wireframe = new THREE.Mesh(geometry, wireframeMaterial);
+                wireframe.scale.set(1.001, 1.001, 1.001);
+                this.scene.add(wireframe);
+
+                // Atmosphere glow
+                const atmosphereGeometry = new THREE.SphereGeometry(1.02, 64, 64);
+                const atmosphereMaterial = new THREE.ShaderMaterial({
+                    vertexShader: `
+                        varying vec3 vNormal;
+                        void main() {
+                            vNormal = normalize(normalMatrix * normal);
+                            gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+                        }
+                    `,
+                    fragmentShader: `
+                        varying vec3 vNormal;
+                        void main() {
+                            float intensity = pow(0.6 - dot(vNormal, vec3(0.0, 0.0, 1.0)), 2.0);
+                            gl_FragColor = vec4(0.0, 0.85, 1.0, 1.0) * intensity;
+                        }
+                    `,
+                    blending: THREE.AdditiveBlending,
+                    side: THREE.BackSide,
+                    transparent: true,
+                });
+                const atmosphere = new THREE.Mesh(atmosphereGeometry, atmosphereMaterial);
+                atmosphere.scale.set(1.1, 1.1, 1.1);
+                this.scene.add(atmosphere);
+            }
+
+            latLngToVector3(lat, lng, radius = 1.02) {
+                const phi = (90 - lat) * (Math.PI / 180);
+                const theta = (lng + 180) * (Math.PI / 180);
+                const x = -radius * Math.sin(phi) * Math.cos(theta);
+                const y = radius * Math.cos(phi);
+                const z = radius * Math.sin(phi) * Math.sin(theta);
+                return new THREE.Vector3(x, y, z);
+            }
+
+            addNode(nodeId, lat, lng, isActive, isRegistry = false) {
+                const position = this.latLngToVector3(lat, lng);
+
+                // Node marker
+                const geometry = new THREE.SphereGeometry(0.02, 16, 16);
+                let color;
+                if (isRegistry) {
+                    color = 0xffd700; // Gold for registry
+                } else if (isActive) {
+                    color = 0x00ff88; // Green for active
+                } else {
+                    color = 0x00d9ff; // Cyan for idle
+                }
+
+                const material = new THREE.MeshBasicMaterial({ color });
+                const node = new THREE.Mesh(geometry, material);
+                node.position.copy(position);
+
+                // Glow effect for active nodes
+                if (isActive || isRegistry) {
+                    const glowGeometry = new THREE.SphereGeometry(0.04, 16, 16);
+                    const glowMaterial = new THREE.MeshBasicMaterial({
+                        color,
+                        transparent: true,
+                        opacity: 0.3,
+                    });
+                    const glow = new THREE.Mesh(glowGeometry, glowMaterial);
+                    node.add(glow);
+                }
+
+                this.nodeGroup.add(node);
+                this.nodes.set(nodeId, { mesh: node, lat, lng, isActive });
+            }
+
+            updateNode(nodeId, isActive) {
+                const node = this.nodes.get(nodeId);
+                if (node) {
+                    node.isActive = isActive;
+                    const color = isActive ? 0x00ff88 : 0x00d9ff;
+                    node.mesh.material.color.setHex(color);
+                }
+            }
+
+            removeNode(nodeId) {
+                const node = this.nodes.get(nodeId);
+                if (node) {
+                    this.nodeGroup.remove(node.mesh);
+                    this.nodes.delete(nodeId);
+                }
+            }
+
+            addConnection(fromId, toId, type = 'direct') {
+                const fromNode = this.nodes.get(fromId);
+                const toNode = this.nodes.get(toId);
+                if (!fromNode || !toNode) return;
+
+                const from = this.latLngToVector3(fromNode.lat, fromNode.lng);
+                const to = this.latLngToVector3(toNode.lat, toNode.lng);
+
+                // Create curved arc
+                const mid = from.clone().add(to).multiplyScalar(0.5);
+                mid.normalize().multiplyScalar(1.3); // Arc height
+
+                const curve = new THREE.QuadraticBezierCurve3(from, mid, to);
+                const points = curve.getPoints(50);
+                const geometry = new THREE.BufferGeometry().setFromPoints(points);
+
+                let color;
+                switch (type) {
+                    case 'direct': color = 0x00ff88; break;
+                    case 'punched': color = 0xffdd00; break;
+                    case 'relayed': color = 0xff6b6b; break;
+                    default: color = 0x00d9ff;
+                }
+
+                const material = new THREE.LineBasicMaterial({
+                    color,
+                    transparent: true,
+                    opacity: 0.6,
+                });
+
+                const arc = new THREE.Line(geometry, material);
+                this.connectionGroup.add(arc);
+
+                // Auto-remove after 3 seconds
+                setTimeout(() => {
+                    this.connectionGroup.remove(arc);
+                }, 3000);
+            }
+
+            clearNodes() {
+                while (this.nodeGroup.children.length > 0) {
+                    this.nodeGroup.remove(this.nodeGroup.children[0]);
+                }
+                this.nodes.clear();
+            }
+
+            onResize() {
+                this.camera.aspect = this.container.clientWidth / this.container.clientHeight;
+                this.camera.updateProjectionMatrix();
+                this.renderer.setSize(this.container.clientWidth, this.container.clientHeight);
+            }
+
+            animate() {
+                requestAnimationFrame(() => this.animate());
+                this.controls.update();
+                this.renderer.render(this.scene, this.camera);
+            }
+        }
+
+        // Country centroid coordinates for GeoIP
+        const countryCentroids = {
+            'US': { lat: 37.09, lng: -95.71, name: 'United States' },
+            'GB': { lat: 55.38, lng: -3.44, name: 'United Kingdom' },
+            'DE': { lat: 51.17, lng: 10.45, name: 'Germany' },
+            'FR': { lat: 46.23, lng: 2.21, name: 'France' },
+            'JP': { lat: 36.20, lng: 138.25, name: 'Japan' },
+            'CN': { lat: 35.86, lng: 104.20, name: 'China' },
+            'AU': { lat: -25.27, lng: 133.78, name: 'Australia' },
+            'CA': { lat: 56.13, lng: -106.35, name: 'Canada' },
+            'BR': { lat: -14.24, lng: -51.93, name: 'Brazil' },
+            'IN': { lat: 20.59, lng: 78.96, name: 'India' },
+            'RU': { lat: 61.52, lng: 105.32, name: 'Russia' },
+            'KR': { lat: 35.91, lng: 127.77, name: 'South Korea' },
+            'MX': { lat: 23.63, lng: -102.55, name: 'Mexico' },
+            'ES': { lat: 40.46, lng: -3.75, name: 'Spain' },
+            'IT': { lat: 41.87, lng: 12.57, name: 'Italy' },
+            'NL': { lat: 52.13, lng: 5.29, name: 'Netherlands' },
+            'SE': { lat: 60.13, lng: 18.64, name: 'Sweden' },
+            'NO': { lat: 60.47, lng: 8.47, name: 'Norway' },
+            'FI': { lat: 61.92, lng: 25.75, name: 'Finland' },
+            'DK': { lat: 56.26, lng: 9.50, name: 'Denmark' },
+            'PL': { lat: 51.92, lng: 19.15, name: 'Poland' },
+            'CH': { lat: 46.82, lng: 8.23, name: 'Switzerland' },
+            'AT': { lat: 47.52, lng: 14.55, name: 'Austria' },
+            'BE': { lat: 50.50, lng: 4.47, name: 'Belgium' },
+            'IE': { lat: 53.14, lng: -7.69, name: 'Ireland' },
+            'SG': { lat: 1.35, lng: 103.82, name: 'Singapore' },
+            'NZ': { lat: -40.90, lng: 174.89, name: 'New Zealand' },
+            'ZA': { lat: -30.56, lng: 22.94, name: 'South Africa' },
+            'AR': { lat: -38.42, lng: -63.62, name: 'Argentina' },
+            'CL': { lat: -35.68, lng: -71.54, name: 'Chile' },
+            'PT': { lat: 39.40, lng: -8.22, name: 'Portugal' },
+            'CZ': { lat: 49.82, lng: 15.47, name: 'Czech Republic' },
+            'RO': { lat: 45.94, lng: 24.97, name: 'Romania' },
+            'HU': { lat: 47.16, lng: 19.50, name: 'Hungary' },
+            'GR': { lat: 39.07, lng: 21.82, name: 'Greece' },
+            'IL': { lat: 31.05, lng: 34.85, name: 'Israel' },
+            'AE': { lat: 23.42, lng: 53.85, name: 'UAE' },
+            'TH': { lat: 15.87, lng: 100.99, name: 'Thailand' },
+            'VN': { lat: 14.06, lng: 108.28, name: 'Vietnam' },
+            'MY': { lat: 4.21, lng: 101.98, name: 'Malaysia' },
+            'ID': { lat: -0.79, lng: 113.92, name: 'Indonesia' },
+            'PH': { lat: 12.88, lng: 121.77, name: 'Philippines' },
+            'TW': { lat: 23.70, lng: 120.96, name: 'Taiwan' },
+            'HK': { lat: 22.40, lng: 114.11, name: 'Hong Kong' },
+            'UA': { lat: 48.38, lng: 31.17, name: 'Ukraine' },
+            'TR': { lat: 38.96, lng: 35.24, name: 'Turkey' },
+            'EG': { lat: 26.82, lng: 30.80, name: 'Egypt' },
+            'SA': { lat: 23.89, lng: 45.08, name: 'Saudi Arabia' },
+            'PK': { lat: 30.38, lng: 69.35, name: 'Pakistan' },
+            'BD': { lat: 23.68, lng: 90.36, name: 'Bangladesh' },
+            'NG': { lat: 9.08, lng: 8.68, name: 'Nigeria' },
+            'CO': { lat: 4.57, lng: -74.30, name: 'Colombia' },
+            'PE': { lat: -9.19, lng: -75.02, name: 'Peru' },
+            'VE': { lat: 6.42, lng: -66.59, name: 'Venezuela' },
+        };
+
+        // Dashboard state
+        let globe;
+        let ws;
+        let stats = {
+            totalNodes: 0,
+            activeNodes: 0,
+            connections: 0,
+            directCount: 0,
+            punchedCount: 0,
+            relayedCount: 0,
+            successRate: 100,
+            attempts: 0,
+            bytesTransferred: 0
+        };
+
+        // Format bytes
+        function formatBytes(bytes) {
+            if (bytes === 0) return '0 B';
+            const k = 1024;
+            const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+        }
+
+        // Update stats display
+        function updateStats() {
+            document.getElementById('total-nodes').textContent = stats.totalNodes;
+            document.getElementById('active-nodes').textContent = stats.activeNodes;
+            document.getElementById('total-connections').textContent = stats.connections;
+            document.getElementById('direct-count').textContent = stats.directCount;
+            document.getElementById('punched-count').textContent = stats.punchedCount;
+            document.getElementById('relayed-count').textContent = stats.relayedCount;
+            document.getElementById('success-rate').textContent = stats.successRate.toFixed(1) + '%';
+            document.getElementById('total-attempts').textContent = stats.attempts;
+            document.getElementById('data-transferred').textContent = formatBytes(stats.bytesTransferred);
+        }
+
+        // Add activity
+        function addActivity(message) {
+            const feed = document.getElementById('activity-feed');
+            const time = new Date().toLocaleTimeString();
+            const item = document.createElement('div');
+            item.className = 'activity-item';
+            item.innerHTML = `<span class="time">${time}</span> ${message}`;
+            feed.insertBefore(item, feed.firstChild);
+
+            // Keep only last 20 items
+            while (feed.children.length > 20) {
+                feed.removeChild(feed.lastChild);
+            }
+        }
+
+        // Connect to WebSocket
+        function connectWebSocket() {
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = `${protocol}//${window.location.host}/ws/live`;
+
+            ws = new WebSocket(wsUrl);
+
+            ws.onopen = () => {
+                console.log('WebSocket connected');
+                addActivity('Connected to registry server');
+            };
+
+            ws.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+                handleEvent(data);
+            };
+
+            ws.onclose = () => {
+                console.log('WebSocket disconnected, reconnecting...');
+                setTimeout(connectWebSocket, 3000);
+            };
+
+            ws.onerror = (error) => {
+                console.error('WebSocket error:', error);
+            };
+        }
+
+        // Handle WebSocket events
+        function handleEvent(event) {
+            switch (event.type) {
+                case 'node_registered':
+                    const coords = countryCentroids[event.country_code] || { lat: 0, lng: 0 };
+                    globe.addNode(event.peer_id, coords.lat, coords.lng, true);
+                    stats.totalNodes++;
+                    stats.activeNodes++;
+                    addActivity(`Node <span class="peer">${event.peer_id.substring(0, 8)}</span> registered <span class="country">${event.country_code || ''}</span>`);
+                    break;
+
+                case 'node_offline':
+                    globe.removeNode(event.peer_id);
+                    stats.totalNodes--;
+                    addActivity(`Node <span class="peer">${event.peer_id.substring(0, 8)}</span> went offline`);
+                    break;
+
+                case 'connection_established':
+                    const type = event.method || 'direct';
+                    globe.addConnection(event.from_peer, event.to_peer, type);
+                    stats.connections++;
+                    if (type === 'direct') stats.directCount++;
+                    else if (type === 'punched') stats.punchedCount++;
+                    else if (type === 'relayed') stats.relayedCount++;
+                    addActivity(`<span class="peer">${event.from_peer.substring(0, 8)}</span> connected to <span class="peer">${event.to_peer.substring(0, 8)}</span> via ${type}`);
+                    break;
+
+                case 'stats_update':
+                    stats = { ...stats, ...event.stats };
+                    break;
+
+                case 'full_state':
+                    // Clear and rebuild
+                    globe.clearNodes();
+                    stats = event.stats || stats;
+                    for (const node of event.nodes || []) {
+                        const coords = countryCentroids[node.country_code] || { lat: 0, lng: 0 };
+                        globe.addNode(node.peer_id, coords.lat, coords.lng, node.is_active);
+                    }
+                    // Add registry server
+                    globe.addNode('registry', 53.35, -6.26, true, true); // Dublin, Ireland
+                    break;
+            }
+            updateStats();
+        }
+
+        // Fetch initial stats
+        async function fetchStats() {
+            try {
+                const response = await fetch('/api/stats');
+                const data = await response.json();
+                stats.totalNodes = data.total_registered || 0;
+                stats.activeNodes = data.active_count || 0;
+                stats.connections = data.total_connections || 0;
+                stats.directCount = data.direct_connections || 0;
+                stats.punchedCount = data.hole_punched_connections || 0;
+                stats.relayedCount = data.relayed_connections || 0;
+                stats.bytesTransferred = data.bytes_transferred || 0;
+                stats.attempts = data.connection_attempts || 0;
+                if (stats.attempts > 0) {
+                    stats.successRate = (stats.connections / stats.attempts) * 100;
+                }
+                updateStats();
+            } catch (e) {
+                console.error('Failed to fetch stats:', e);
+            }
+        }
+
+        // Fetch peers
+        async function fetchPeers() {
+            try {
+                const response = await fetch('/api/peers');
+                const peers = await response.json();
+                globe.clearNodes();
+                // Add registry server
+                globe.addNode('registry', 53.35, -6.26, true, true);
+                for (const peer of peers) {
+                    const coords = countryCentroids[peer.country_code] || { lat: 0, lng: 0 };
+                    globe.addNode(peer.peer_id, coords.lat, coords.lng, peer.is_active);
+                }
+                stats.totalNodes = peers.length;
+                stats.activeNodes = peers.filter(p => p.is_active).length;
+                updateStats();
+            } catch (e) {
+                console.error('Failed to fetch peers:', e);
+            }
+        }
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', () => {
+            globe = new NetworkGlobe('globe');
+
+            // Add registry server
+            globe.addNode('registry', 53.35, -6.26, true, true);
+
+            // Fetch initial data
+            fetchStats();
+            fetchPeers();
+
+            // Connect WebSocket for real-time updates
+            connectWebSocket();
+
+            // Refresh stats periodically
+            setInterval(fetchStats, 10000);
+            setInterval(fetchPeers, 30000);
+        });
+    </script>
+</body>
+</html>
