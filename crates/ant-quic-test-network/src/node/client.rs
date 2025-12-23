@@ -589,9 +589,8 @@ impl TestNode {
                         let mut rng = rand::thread_rng();
                         if rng.gen_ratio(1, PEER_ROTATION_CHANCE) {
                             // Find the oldest connected peer to rotate out
-                            if let Some((oldest_id, _)) = peers
-                                .iter()
-                                .min_by_key(|(_, p)| p.connected_at)
+                            if let Some((oldest_id, _)) =
+                                peers.iter().min_by_key(|(_, p)| p.connected_at)
                             {
                                 info!(
                                     "Rotating out peer {} for network freshness",
