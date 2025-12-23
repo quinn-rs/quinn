@@ -78,6 +78,9 @@ pub enum EndpointKeyPolicy {
 /// # Security
 ///
 /// The inner secret is zeroed on drop to prevent memory leaks.
+// Allow unused_assignments: ZeroizeOnDrop macro generates code that triggers false positives
+// for fields marked with #[zeroize(skip)] - these fields ARE used throughout the impl.
+#[allow(unused_assignments)]
 #[derive(ZeroizeOnDrop)]
 pub struct HostIdentity {
     /// The root secret (32 bytes, never exposed)
