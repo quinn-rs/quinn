@@ -3,7 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ant-quic Network Dashboard</title>
+    <title>ant-quic - Quantum-Safe P2P Network</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <style>
         * {
             margin: 0;
@@ -11,210 +12,418 @@
             box-sizing: border-box;
         }
 
+        :root {
+            --bg-dark: #0a0a0f;
+            --bg-card: rgba(20, 20, 30, 0.8);
+            --border-color: rgba(255, 255, 255, 0.08);
+            --text-primary: #ffffff;
+            --text-secondary: #8b8b9a;
+            --accent-cyan: #00d9ff;
+            --accent-green: #00ff88;
+            --accent-gold: #ffd700;
+            --accent-purple: #a855f7;
+        }
+
         body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
-            color: #e0e0e0;
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: var(--bg-dark);
+            color: var(--text-primary);
             min-height: 100vh;
             overflow-x: hidden;
         }
 
-        .header {
-            text-align: center;
-            padding: 20px;
-            background: rgba(0, 0, 0, 0.3);
-            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        /* Navigation */
+        .nav {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            z-index: 100;
+            padding: 1rem 2rem;
+            background: rgba(10, 10, 15, 0.9);
+            backdrop-filter: blur(20px);
+            border-bottom: 1px solid var(--border-color);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
         }
 
-        .header h1 {
-            font-size: 2.5em;
-            background: linear-gradient(90deg, #00d9ff, #00ff88);
+        .nav-brand {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
+        .nav-brand svg {
+            width: 32px;
+            height: 32px;
+        }
+
+        .nav-brand span {
+            font-size: 1.25rem;
+            font-weight: 600;
+            background: linear-gradient(135deg, var(--accent-cyan), var(--accent-green));
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
-            background-clip: text;
         }
 
-        .header .tagline {
-            font-size: 1.2em;
-            color: #888;
-            margin-top: 5px;
-        }
-
-        .header .crypto-badges {
-            margin-top: 10px;
-        }
-
-        .badge {
-            display: inline-block;
-            padding: 5px 12px;
-            margin: 0 5px;
-            background: rgba(0, 217, 255, 0.2);
-            border: 1px solid rgba(0, 217, 255, 0.5);
-            border-radius: 15px;
-            font-size: 0.85em;
-        }
-
-        .main-content {
+        .nav-links {
             display: flex;
-            flex-wrap: wrap;
-            gap: 20px;
-            padding: 20px;
-            max-width: 1800px;
-            margin: 0 auto;
+            gap: 2rem;
         }
 
-        .globe-container {
-            flex: 2;
-            min-width: 600px;
-            min-height: 600px;
-            background: rgba(0, 0, 0, 0.3);
-            border-radius: 15px;
-            border: 1px solid rgba(255, 255, 255, 0.1);
+        .nav-links a {
+            color: var(--text-secondary);
+            text-decoration: none;
+            font-size: 0.9rem;
+            font-weight: 500;
+            transition: color 0.2s;
+        }
+
+        .nav-links a:hover {
+            color: var(--text-primary);
+        }
+
+        .nav-cta {
+            padding: 0.6rem 1.25rem;
+            background: linear-gradient(135deg, var(--accent-cyan), var(--accent-green));
+            color: var(--bg-dark);
+            border: none;
+            border-radius: 8px;
+            font-weight: 600;
+            font-size: 0.9rem;
+            cursor: pointer;
+            text-decoration: none;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+
+        .nav-cta:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 20px rgba(0, 217, 255, 0.3);
+        }
+
+        /* Hero Section with Globe */
+        .hero {
+            min-height: 100vh;
+            display: flex;
             position: relative;
             overflow: hidden;
         }
 
-        #globe {
+        .globe-wrapper {
+            position: absolute;
+            top: 0;
+            left: 0;
             width: 100%;
-            height: 600px;
+            height: 100%;
+            z-index: 1;
         }
 
-        .stats-panel {
-            flex: 1;
-            min-width: 300px;
+        #globe {
+            width: 100%;
+            height: 100%;
+        }
+
+        .hero-content {
+            position: relative;
+            z-index: 10;
+            padding: 8rem 4rem 4rem;
+            max-width: 600px;
             display: flex;
             flex-direction: column;
-            gap: 15px;
+            justify-content: center;
+        }
+
+        .hero-badges {
+            display: flex;
+            gap: 0.5rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .badge {
+            padding: 0.4rem 0.8rem;
+            background: rgba(0, 217, 255, 0.1);
+            border: 1px solid rgba(0, 217, 255, 0.3);
+            border-radius: 20px;
+            font-size: 0.75rem;
+            font-weight: 500;
+            color: var(--accent-cyan);
+        }
+
+        .hero h1 {
+            font-size: 3.5rem;
+            font-weight: 700;
+            line-height: 1.1;
+            margin-bottom: 1rem;
+        }
+
+        .hero h1 span {
+            background: linear-gradient(135deg, var(--accent-cyan), var(--accent-green));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .hero-tagline {
+            font-size: 1.25rem;
+            color: var(--text-secondary);
+            margin-bottom: 2rem;
+            line-height: 1.6;
+        }
+
+        /* Stats Panel */
+        .stats-overlay {
+            position: fixed;
+            bottom: 2rem;
+            right: 2rem;
+            z-index: 50;
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+            max-width: 320px;
         }
 
         .stat-card {
-            background: rgba(0, 0, 0, 0.3);
-            border-radius: 15px;
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            padding: 20px;
+            background: var(--bg-card);
+            backdrop-filter: blur(20px);
+            border: 1px solid var(--border-color);
+            border-radius: 16px;
+            padding: 1.25rem;
         }
 
         .stat-card h3 {
-            font-size: 0.9em;
-            color: #888;
+            font-size: 0.75rem;
+            font-weight: 500;
+            color: var(--text-secondary);
             text-transform: uppercase;
-            letter-spacing: 1px;
-            margin-bottom: 10px;
+            letter-spacing: 0.5px;
+            margin-bottom: 0.5rem;
         }
 
         .stat-value {
-            font-size: 2.5em;
-            font-weight: bold;
-            color: #00d9ff;
+            font-size: 2rem;
+            font-weight: 700;
+            color: var(--accent-cyan);
         }
 
-        .stat-value.success {
-            color: #00ff88;
-        }
+        .stat-value.success { color: var(--accent-green); }
 
-        .stat-sub {
-            font-size: 0.9em;
-            color: #666;
-            margin-top: 5px;
-        }
-
-        .connection-types {
+        .stat-row {
             display: flex;
-            gap: 10px;
-            margin-top: 10px;
+            gap: 1rem;
+            margin-top: 0.75rem;
         }
 
-        .conn-type {
+        .stat-item {
             flex: 1;
             text-align: center;
-            padding: 10px;
-            background: rgba(255, 255, 255, 0.05);
+            padding: 0.75rem;
+            background: rgba(255, 255, 255, 0.03);
             border-radius: 8px;
         }
 
-        .conn-type .value {
-            font-size: 1.5em;
-            font-weight: bold;
+        .stat-item .value {
+            font-size: 1.25rem;
+            font-weight: 600;
         }
 
-        .conn-type .label {
-            font-size: 0.8em;
-            color: #666;
+        .stat-item .label {
+            font-size: 0.7rem;
+            color: var(--text-secondary);
+            margin-top: 0.25rem;
         }
 
-        .conn-type.direct .value { color: #00ff88; }
-        .conn-type.punched .value { color: #ffdd00; }
-        .conn-type.relayed .value { color: #ff6b6b; }
+        .stat-item.direct .value { color: var(--accent-green); }
+        .stat-item.punched .value { color: var(--accent-gold); }
+        .stat-item.relayed .value { color: #ff6b6b; }
 
-        .activity-feed {
-            max-height: 250px;
+        /* Download Section */
+        .download-section {
+            padding: 6rem 2rem;
+            background: linear-gradient(180deg, var(--bg-dark) 0%, rgba(20, 20, 30, 1) 100%);
+            text-align: center;
+        }
+
+        .download-section h2 {
+            font-size: 2.5rem;
+            font-weight: 700;
+            margin-bottom: 1rem;
+        }
+
+        .download-section p {
+            color: var(--text-secondary);
+            font-size: 1.1rem;
+            max-width: 600px;
+            margin: 0 auto 3rem;
+            line-height: 1.6;
+        }
+
+        .download-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 1.5rem;
+            max-width: 1000px;
+            margin: 0 auto;
+        }
+
+        .download-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 20px;
+            padding: 2rem;
+            text-align: center;
+            transition: transform 0.2s, border-color 0.2s;
+        }
+
+        .download-card:hover {
+            transform: translateY(-4px);
+            border-color: var(--accent-cyan);
+        }
+
+        .download-card svg {
+            width: 48px;
+            height: 48px;
+            margin-bottom: 1rem;
+            fill: var(--accent-cyan);
+        }
+
+        .download-card h3 {
+            font-size: 1.25rem;
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+        }
+
+        .download-card p {
+            font-size: 0.9rem;
+            color: var(--text-secondary);
+            margin-bottom: 1.5rem;
+        }
+
+        .download-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.75rem 1.5rem;
+            background: linear-gradient(135deg, var(--accent-cyan), var(--accent-green));
+            color: var(--bg-dark);
+            border: none;
+            border-radius: 10px;
+            font-weight: 600;
+            font-size: 0.95rem;
+            text-decoration: none;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+
+        .download-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 20px rgba(0, 217, 255, 0.4);
+        }
+
+        /* Instructions */
+        .instructions {
+            max-width: 700px;
+            margin: 4rem auto 0;
+            text-align: left;
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 16px;
+            padding: 2rem;
+        }
+
+        .instructions h3 {
+            font-size: 1.1rem;
+            margin-bottom: 1.5rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .step {
+            display: flex;
+            gap: 1rem;
+            margin-bottom: 1.25rem;
+        }
+
+        .step-number {
+            width: 28px;
+            height: 28px;
+            background: linear-gradient(135deg, var(--accent-cyan), var(--accent-green));
+            color: var(--bg-dark);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 600;
+            font-size: 0.85rem;
+            flex-shrink: 0;
+        }
+
+        .step-content {
+            flex: 1;
+        }
+
+        .step-content p {
+            color: var(--text-secondary);
+            font-size: 0.95rem;
+            margin: 0;
+        }
+
+        .step-content code {
+            display: block;
+            background: rgba(0, 0, 0, 0.4);
+            padding: 0.75rem 1rem;
+            border-radius: 8px;
+            font-family: 'SF Mono', Monaco, monospace;
+            font-size: 0.85rem;
+            margin-top: 0.5rem;
+            color: var(--accent-green);
+        }
+
+        /* Activity Feed */
+        .activity-card {
+            max-height: 200px;
             overflow-y: auto;
         }
 
         .activity-item {
-            padding: 8px 0;
-            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
-            font-size: 0.85em;
+            padding: 0.6rem 0;
+            border-bottom: 1px solid var(--border-color);
+            font-size: 0.8rem;
         }
 
         .activity-item:last-child {
             border-bottom: none;
         }
 
-        .activity-item .time {
-            color: #666;
-            font-size: 0.85em;
+        .activity-time {
+            color: var(--text-secondary);
+            font-size: 0.75rem;
         }
 
-        .activity-item .peer {
-            color: #00d9ff;
-            font-family: monospace;
+        .activity-peer {
+            color: var(--accent-cyan);
+            font-family: 'SF Mono', Monaco, monospace;
         }
 
-        .activity-item .country {
-            margin-left: 5px;
-        }
-
-        .footer {
-            text-align: center;
-            padding: 30px;
-            color: #666;
-            font-size: 0.9em;
-        }
-
-        .footer a {
-            color: #00d9ff;
-            text-decoration: none;
-        }
-
-        .footer a:hover {
-            text-decoration: underline;
-        }
-
-        .thank-you {
-            background: rgba(128, 0, 255, 0.1);
-            border: 1px solid rgba(128, 0, 255, 0.3);
-            border-radius: 10px;
-            padding: 15px;
-            margin-top: 15px;
-            text-align: center;
-        }
-
+        /* Legend */
         .legend {
-            position: absolute;
-            bottom: 15px;
-            left: 15px;
-            background: rgba(0, 0, 0, 0.7);
-            padding: 10px 15px;
-            border-radius: 8px;
-            font-size: 0.8em;
+            position: fixed;
+            bottom: 2rem;
+            left: 2rem;
+            z-index: 50;
+            background: var(--bg-card);
+            backdrop-filter: blur(20px);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 1rem;
+            font-size: 0.75rem;
         }
 
         .legend-item {
             display: flex;
             align-items: center;
-            gap: 8px;
-            margin: 5px 0;
+            gap: 0.5rem;
+            margin: 0.4rem 0;
         }
 
         .legend-dot {
@@ -223,441 +432,323 @@
             border-radius: 50%;
         }
 
-        .legend-dot.active { background: #00ff88; box-shadow: 0 0 10px #00ff88; }
-        .legend-dot.idle { background: #00d9ff; }
-        .legend-dot.stale { background: #666; }
-        .legend-dot.registry { background: #ffd700; }
+        .legend-dot.active { background: var(--accent-green); box-shadow: 0 0 10px var(--accent-green); }
+        .legend-dot.idle { background: var(--accent-cyan); }
+        .legend-dot.registry { background: var(--accent-gold); box-shadow: 0 0 10px var(--accent-gold); }
 
-        @media (max-width: 1000px) {
-            .main-content {
-                flex-direction: column;
+        /* Footer */
+        .footer {
+            padding: 3rem 2rem;
+            text-align: center;
+            border-top: 1px solid var(--border-color);
+        }
+
+        .footer p {
+            color: var(--text-secondary);
+            font-size: 0.9rem;
+        }
+
+        .footer a {
+            color: var(--accent-cyan);
+            text-decoration: none;
+        }
+
+        .footer a:hover {
+            text-decoration: underline;
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .hero-content {
+                padding: 6rem 1.5rem 2rem;
             }
-            .globe-container {
-                min-width: 100%;
+            .hero h1 {
+                font-size: 2.5rem;
+            }
+            .stats-overlay {
+                position: relative;
+                bottom: auto;
+                right: auto;
+                max-width: 100%;
+                padding: 1rem;
+            }
+            .legend {
+                position: relative;
+                bottom: auto;
+                left: auto;
+                margin: 1rem;
+            }
+            .nav-links {
+                display: none;
             }
         }
     </style>
 </head>
 <body>
-    <div class="header">
-        <h1>ant-quic Network</h1>
-        <div class="tagline">"We will be legion!!"</div>
-        <div class="crypto-badges">
-            <span class="badge">ML-KEM-768</span>
-            <span class="badge">ML-DSA-65</span>
-            <span class="badge">Quantum-Safe</span>
+    <!-- Navigation -->
+    <nav class="nav">
+        <div class="nav-brand">
+            <svg viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <circle cx="20" cy="20" r="18" stroke="url(#grad)" stroke-width="2" fill="none"/>
+                <circle cx="20" cy="20" r="8" fill="url(#grad)"/>
+                <path d="M20 2 L20 38 M2 20 L38 20" stroke="url(#grad)" stroke-width="1.5" opacity="0.5"/>
+                <defs>
+                    <linearGradient id="grad" x1="0%" y1="0%" x2="100%" y2="100%">
+                        <stop offset="0%" style="stop-color:#00d9ff"/>
+                        <stop offset="100%" style="stop-color:#00ff88"/>
+                    </linearGradient>
+                </defs>
+            </svg>
+            <span>ant-quic</span>
         </div>
-    </div>
+        <div class="nav-links">
+            <a href="#network">Network</a>
+            <a href="#download">Download</a>
+            <a href="https://github.com/dirvine/ant-quic" target="_blank">GitHub</a>
+        </div>
+        <a href="#download" class="nav-cta">Join the Network</a>
+    </nav>
 
-    <div class="main-content">
-        <div class="globe-container">
+    <!-- Hero with Globe -->
+    <section class="hero" id="network">
+        <div class="globe-wrapper">
             <div id="globe"></div>
-            <div class="legend">
-                <div class="legend-item">
-                    <span class="legend-dot registry"></span>
-                    <span>Registry Server</span>
+        </div>
+        <div class="hero-content">
+            <div class="hero-badges">
+                <span class="badge">ML-KEM-768</span>
+                <span class="badge">ML-DSA-65</span>
+                <span class="badge">Quantum-Safe</span>
+            </div>
+            <h1>The Future of <span>Secure Networking</span></h1>
+            <p class="hero-tagline">
+                Join our global test network and help build the next generation of quantum-resistant peer-to-peer communication.
+            </p>
+        </div>
+    </section>
+
+    <!-- Stats Overlay -->
+    <div class="stats-overlay">
+        <div class="stat-card">
+            <h3>Network Nodes</h3>
+            <div class="stat-value" id="total-nodes">0</div>
+            <div style="color: var(--text-secondary); font-size: 0.85rem;">
+                <span id="active-nodes">0</span> currently active
+            </div>
+        </div>
+        <div class="stat-card">
+            <h3>Connections</h3>
+            <div class="stat-value success" id="total-connections">0</div>
+            <div class="stat-row">
+                <div class="stat-item direct">
+                    <div class="value" id="direct-count">0</div>
+                    <div class="label">Direct</div>
                 </div>
-                <div class="legend-item">
-                    <span class="legend-dot active"></span>
-                    <span>Active Node (&lt;60s)</span>
+                <div class="stat-item punched">
+                    <div class="value" id="punched-count">0</div>
+                    <div class="label">NAT Punched</div>
                 </div>
-                <div class="legend-item">
-                    <span class="legend-dot idle"></span>
-                    <span>Idle Node</span>
-                </div>
-                <div class="legend-item">
-                    <span class="legend-dot stale"></span>
-                    <span>Stale (&gt;5min)</span>
+                <div class="stat-item relayed">
+                    <div class="value" id="relayed-count">0</div>
+                    <div class="label">Relayed</div>
                 </div>
             </div>
         </div>
-
-        <div class="stats-panel">
-            <div class="stat-card">
-                <h3>Registered Nodes</h3>
-                <div class="stat-value" id="total-nodes">0</div>
-                <div class="stat-sub"><span id="active-nodes">0</span> currently active</div>
-            </div>
-
-            <div class="stat-card">
-                <h3>Total Connections</h3>
-                <div class="stat-value" id="total-connections">0</div>
-                <div class="connection-types">
-                    <div class="conn-type direct">
-                        <div class="value" id="direct-count">0</div>
-                        <div class="label">Direct</div>
-                    </div>
-                    <div class="conn-type punched">
-                        <div class="value" id="punched-count">0</div>
-                        <div class="label">Hole-Punched</div>
-                    </div>
-                    <div class="conn-type relayed">
-                        <div class="value" id="relayed-count">0</div>
-                        <div class="label">Relayed</div>
-                    </div>
+        <div class="stat-card">
+            <h3>Data Transferred</h3>
+            <div class="stat-value" id="data-transferred">0 B</div>
+        </div>
+        <div class="stat-card activity-card">
+            <h3>Live Activity</h3>
+            <div id="activity-feed">
+                <div class="activity-item">
+                    <span class="activity-time">Waiting for connections...</span>
                 </div>
-            </div>
-
-            <div class="stat-card">
-                <h3>Success Rate</h3>
-                <div class="stat-value success" id="success-rate">100%</div>
-                <div class="stat-sub"><span id="total-attempts">0</span> connection attempts</div>
-            </div>
-
-            <div class="stat-card">
-                <h3>Data Transferred</h3>
-                <div class="stat-value" id="data-transferred">0 B</div>
-                <div class="stat-sub">5KB test packets</div>
-            </div>
-
-            <div class="stat-card">
-                <h3>Recent Activity</h3>
-                <div class="activity-feed" id="activity-feed">
-                    <div class="activity-item">
-                        <span class="time">Waiting for connections...</span>
-                    </div>
-                </div>
-            </div>
-
-            <div class="thank-you">
-                Thank you to all our amazing testers for helping build a safer, more secure, and privacy-respecting internet for humanity!
             </div>
         </div>
     </div>
 
-    <div class="footer">
-        <p>Join the test: Download <a href="https://github.com/dirvine/ant-quic/releases">ant-quic-test</a> and run it - that's all you need to do!</p>
-        <p style="margin-top: 10px;">Powered by <a href="https://github.com/dirvine/ant-quic">ant-quic</a> - Quantum-Safe P2P Networking</p>
+    <!-- Legend -->
+    <div class="legend">
+        <div class="legend-item">
+            <span class="legend-dot registry"></span>
+            <span>Registry Server</span>
+        </div>
+        <div class="legend-item">
+            <span class="legend-dot active"></span>
+            <span>Active Node</span>
+        </div>
+        <div class="legend-item">
+            <span class="legend-dot idle"></span>
+            <span>Idle Node</span>
+        </div>
     </div>
 
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <!-- Download Section -->
+    <section class="download-section" id="download">
+        <h2>Join the Test Network</h2>
+        <p>Download the test client for your platform. Just run it - that's all you need to do! Your node will automatically connect to the network.</p>
+
+        <div class="download-grid">
+            <!-- Windows -->
+            <div class="download-card">
+                <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M0 3.449L9.75 2.1v9.451H0m10.949-9.602L24 0v11.4H10.949M0 12.6h9.75v9.451L0 20.699M10.949 12.6H24V24l-12.9-1.801"/>
+                </svg>
+                <h3>Windows</h3>
+                <p>Windows 10 or later (64-bit)</p>
+                <a href="https://github.com/dirvine/ant-quic/releases/latest/download/ant-quic-test-x86_64-windows.zip" class="download-btn">
+                    Download for Windows
+                </a>
+            </div>
+
+            <!-- macOS -->
+            <div class="download-card">
+                <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.81-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/>
+                </svg>
+                <h3>macOS</h3>
+                <p>macOS 11 or later (Intel & Apple Silicon)</p>
+                <a href="https://github.com/dirvine/ant-quic/releases/latest/download/ant-quic-test-aarch64-macos.tar.gz" class="download-btn">
+                    Download for Mac
+                </a>
+            </div>
+
+            <!-- Linux -->
+            <div class="download-card">
+                <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M12.504 0c-.155 0-.315.008-.48.021-4.226.333-3.105 4.807-3.17 6.298-.076 1.092-.3 1.953-1.05 3.02-.885 1.051-2.127 2.75-2.716 4.521-.278.832-.41 1.684-.287 2.489a.424.424 0 00-.11.135c-.26.268-.45.6-.663.839-.199.199-.485.267-.797.4-.313.136-.658.269-.864.68-.09.189-.136.394-.132.602 0 .199.027.4.055.536.058.399.116.728.04.97-.249.68-.28 1.145-.106 1.484.174.334.535.47.94.601.81.2 1.91.135 2.774.6.926.466 1.866.67 2.616.47.526-.116.97-.464 1.208-.946.587-.003 1.23-.269 2.26-.334.699-.058 1.574.267 2.577.2.025.134.063.198.114.333l.003.003c.391.778 1.113 1.132 1.884 1.071.771-.06 1.592-.536 2.257-1.306.631-.765 1.683-1.084 2.378-1.503.348-.199.629-.469.649-.853.023-.4-.2-.811-.714-1.376v-.097l-.003-.003c-.17-.2-.25-.535-.338-.926-.085-.401-.182-.786-.492-1.046h-.003c-.059-.054-.123-.067-.188-.135a.357.357 0 00-.19-.064c.431-1.278.264-2.55-.173-3.694-.533-1.41-1.465-2.638-2.175-3.483-.796-1.005-1.576-1.957-1.56-3.368.026-2.152.236-6.133-3.544-6.139zm.529 3.405h.013c.213 0 .396.062.584.198.19.135.33.332.438.533.105.259.158.459.166.724 0-.02.006-.04.006-.06v.105a.086.086 0 01-.004-.021l-.004-.024a1.807 1.807 0 01-.15.706.953.953 0 01-.213.335.71.71 0 00-.088-.042c-.104-.045-.198-.064-.284-.133a1.312 1.312 0 00-.22-.066c.05-.06.146-.133.183-.198.053-.128.082-.264.088-.402v-.02a1.21 1.21 0 00-.061-.4c-.045-.134-.101-.2-.183-.333-.084-.066-.167-.132-.267-.132h-.016c-.093 0-.176.03-.262.132a.8.8 0 00-.205.334 1.18 1.18 0 00-.09.468v.018c.008.135.034.267.09.399.052.066.113.135.17.198-.08.018-.16.036-.237.066a.66.66 0 00-.12.045.943.943 0 01-.166-.334 1.767 1.767 0 01-.09-.468v-.024a1.63 1.63 0 01.09-.732c.09-.2.21-.4.39-.533.18-.135.39-.198.6-.198zm-2.646.482a1.28 1.28 0 01.19.016c.154.019.295.052.44.133.15.082.27.2.365.367.095.167.158.335.184.576l.003.018v.024c.005.133-.015.265-.058.4a.958.958 0 01-.202.334.636.636 0 00-.106-.05.82.82 0 00-.209-.066c.048-.066.097-.133.134-.198a.732.732 0 00.072-.399v-.024a.97.97 0 00-.072-.332.601.601 0 00-.153-.2c-.066-.066-.15-.133-.236-.133h-.015c-.09 0-.17.067-.24.133-.066.066-.12.134-.16.2a.97.97 0 00-.072.332v.024c0 .133.028.265.084.4a.86.86 0 00.095.135 1.13 1.13 0 00-.209.066.552.552 0 00-.106.05.912.912 0 01-.153-.335c-.04-.135-.055-.267-.05-.4l.003-.027a1.578 1.578 0 01.166-.577c.09-.167.2-.3.348-.383.15-.082.312-.133.47-.133zm4.746 4.098c.11 0 .218.015.325.044.112.03.211.075.298.134.086.06.159.14.22.233.065.096.118.197.158.302l.016.038c.086.21.126.463.126.76v.02a2.23 2.23 0 01-.08.575c-.05.178-.126.34-.227.48a1.088 1.088 0 01-.365.333c-.142.086-.313.133-.508.14h-.02c-.192 0-.366-.055-.517-.165a1.108 1.108 0 01-.342-.45 1.89 1.89 0 01-.142-.657v-.02c.005-.235.045-.44.118-.614.074-.175.17-.32.29-.434.12-.115.253-.2.402-.256a1.27 1.27 0 01.434-.066zm-3.88.066c.11 0 .216.022.318.066.103.044.196.106.28.187.086.082.156.18.21.297.058.116.1.244.127.385l.003.018c.02.122.03.249.03.38v.02c-.006.198-.04.375-.1.53a1.104 1.104 0 01-.26.39 1.138 1.138 0 01-.38.247c-.144.058-.302.086-.475.086h-.02c-.17 0-.328-.028-.474-.086a1.092 1.092 0 01-.375-.247 1.138 1.138 0 01-.262-.392c-.06-.157-.093-.337-.098-.538v-.02c0-.13.01-.254.032-.375l.003-.018c.027-.14.07-.268.127-.382a.89.89 0 01.212-.295.973.973 0 01.28-.187 1.005 1.005 0 01.321-.066z"/>
+                </svg>
+                <h3>Linux</h3>
+                <p>Ubuntu 20.04+, Debian 11+, Fedora 35+</p>
+                <a href="https://github.com/dirvine/ant-quic/releases/latest/download/ant-quic-test-x86_64-linux.tar.gz" class="download-btn">
+                    Download for Linux
+                </a>
+            </div>
+        </div>
+
+        <!-- Simple Instructions -->
+        <div class="instructions">
+            <h3>How to Run</h3>
+            <div class="step">
+                <span class="step-number">1</span>
+                <div class="step-content">
+                    <p>Download and extract the file for your system</p>
+                </div>
+            </div>
+            <div class="step">
+                <span class="step-number">2</span>
+                <div class="step-content">
+                    <p>Open a terminal (Command Prompt on Windows) and run:</p>
+                    <code>./ant-quic-test</code>
+                </div>
+            </div>
+            <div class="step">
+                <span class="step-number">3</span>
+                <div class="step-content">
+                    <p>That's it! Your node will automatically connect to the network and start testing connections with other nodes worldwide.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer class="footer">
+        <p>
+            Thank you for helping build a safer, more secure internet for humanity!
+        </p>
+        <p style="margin-top: 1rem;">
+            <a href="https://github.com/dirvine/ant-quic">GitHub</a> &bull;
+            <a href="https://github.com/dirvine/ant-quic/releases">All Releases</a> &bull;
+            <a href="https://github.com/dirvine/ant-quic/issues">Report Issues</a>
+        </p>
+    </footer>
+
+    <!-- Globe.gl for realistic globe -->
+    <script src="https://unpkg.com/globe.gl@2.27.2/dist/globe.gl.min.js"></script>
     <script>
-        // Globe visualization
-        class NetworkGlobe {
-            constructor(containerId) {
-                this.container = document.getElementById(containerId);
-                this.nodes = new Map();
-                this.connections = [];
-                this.init();
-            }
-
-            init() {
-                // Scene setup
-                this.scene = new THREE.Scene();
-                this.camera = new THREE.PerspectiveCamera(
-                    45,
-                    this.container.clientWidth / this.container.clientHeight,
-                    0.1,
-                    1000
-                );
-                this.camera.position.z = 3;
-
-                this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-                this.renderer.setSize(this.container.clientWidth, this.container.clientHeight);
-                this.renderer.setPixelRatio(window.devicePixelRatio);
-                this.container.appendChild(this.renderer.domElement);
-
-                // Controls
-                this.controls = new THREE.OrbitControls(this.camera, this.renderer.domElement);
-                this.controls.enableDamping = true;
-                this.controls.dampingFactor = 0.05;
-                this.controls.rotateSpeed = 0.5;
-                this.controls.enableZoom = true;
-                this.controls.minDistance = 1.5;
-                this.controls.maxDistance = 5;
-                this.controls.autoRotate = true;
-                this.controls.autoRotateSpeed = 0.5;
-
-                // Create Earth
-                this.createEarth();
-
-                // Ambient light
-                const ambientLight = new THREE.AmbientLight(0x404040, 0.5);
-                this.scene.add(ambientLight);
-
-                // Directional light
-                const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
-                directionalLight.position.set(5, 3, 5);
-                this.scene.add(directionalLight);
-
-                // Node group
-                this.nodeGroup = new THREE.Group();
-                this.scene.add(this.nodeGroup);
-
-                // Connection group
-                this.connectionGroup = new THREE.Group();
-                this.scene.add(this.connectionGroup);
-
-                // Handle resize
-                window.addEventListener('resize', () => this.onResize());
-
-                // Start animation
-                this.animate();
-            }
-
-            createEarth() {
-                // Earth sphere with wireframe
-                const geometry = new THREE.SphereGeometry(1, 64, 64);
-
-                // Main earth (dark blue)
-                const earthMaterial = new THREE.MeshPhongMaterial({
-                    color: 0x1a1a2e,
-                    transparent: true,
-                    opacity: 0.9,
-                });
-                this.earth = new THREE.Mesh(geometry, earthMaterial);
-                this.scene.add(this.earth);
-
-                // Wireframe overlay
-                const wireframeMaterial = new THREE.MeshBasicMaterial({
-                    color: 0x00d9ff,
-                    wireframe: true,
-                    transparent: true,
-                    opacity: 0.15,
-                });
-                const wireframe = new THREE.Mesh(geometry, wireframeMaterial);
-                wireframe.scale.set(1.001, 1.001, 1.001);
-                this.scene.add(wireframe);
-
-                // Atmosphere glow
-                const atmosphereGeometry = new THREE.SphereGeometry(1.02, 64, 64);
-                const atmosphereMaterial = new THREE.ShaderMaterial({
-                    vertexShader: `
-                        varying vec3 vNormal;
-                        void main() {
-                            vNormal = normalize(normalMatrix * normal);
-                            gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-                        }
-                    `,
-                    fragmentShader: `
-                        varying vec3 vNormal;
-                        void main() {
-                            float intensity = pow(0.6 - dot(vNormal, vec3(0.0, 0.0, 1.0)), 2.0);
-                            gl_FragColor = vec4(0.0, 0.85, 1.0, 1.0) * intensity;
-                        }
-                    `,
-                    blending: THREE.AdditiveBlending,
-                    side: THREE.BackSide,
-                    transparent: true,
-                });
-                const atmosphere = new THREE.Mesh(atmosphereGeometry, atmosphereMaterial);
-                atmosphere.scale.set(1.1, 1.1, 1.1);
-                this.scene.add(atmosphere);
-            }
-
-            latLngToVector3(lat, lng, radius = 1.02) {
-                const phi = (90 - lat) * (Math.PI / 180);
-                const theta = (lng + 180) * (Math.PI / 180);
-                const x = -radius * Math.sin(phi) * Math.cos(theta);
-                const y = radius * Math.cos(phi);
-                const z = radius * Math.sin(phi) * Math.sin(theta);
-                return new THREE.Vector3(x, y, z);
-            }
-
-            addNode(nodeId, lat, lng, isActive, isRegistry = false) {
-                const position = this.latLngToVector3(lat, lng);
-
-                // Node marker
-                const geometry = new THREE.SphereGeometry(0.02, 16, 16);
-                let color;
-                if (isRegistry) {
-                    color = 0xffd700; // Gold for registry
-                } else if (isActive) {
-                    color = 0x00ff88; // Green for active
-                } else {
-                    color = 0x00d9ff; // Cyan for idle
-                }
-
-                const material = new THREE.MeshBasicMaterial({ color });
-                const node = new THREE.Mesh(geometry, material);
-                node.position.copy(position);
-
-                // Glow effect for active nodes
-                if (isActive || isRegistry) {
-                    const glowGeometry = new THREE.SphereGeometry(0.04, 16, 16);
-                    const glowMaterial = new THREE.MeshBasicMaterial({
-                        color,
-                        transparent: true,
-                        opacity: 0.3,
-                    });
-                    const glow = new THREE.Mesh(glowGeometry, glowMaterial);
-                    node.add(glow);
-                }
-
-                this.nodeGroup.add(node);
-                this.nodes.set(nodeId, { mesh: node, lat, lng, isActive });
-            }
-
-            updateNode(nodeId, isActive) {
-                const node = this.nodes.get(nodeId);
-                if (node) {
-                    node.isActive = isActive;
-                    const color = isActive ? 0x00ff88 : 0x00d9ff;
-                    node.mesh.material.color.setHex(color);
-                }
-            }
-
-            removeNode(nodeId) {
-                const node = this.nodes.get(nodeId);
-                if (node) {
-                    this.nodeGroup.remove(node.mesh);
-                    this.nodes.delete(nodeId);
-                }
-            }
-
-            addConnection(fromId, toId, type = 'direct') {
-                const fromNode = this.nodes.get(fromId);
-                const toNode = this.nodes.get(toId);
-                if (!fromNode || !toNode) return;
-
-                const from = this.latLngToVector3(fromNode.lat, fromNode.lng);
-                const to = this.latLngToVector3(toNode.lat, toNode.lng);
-
-                // Create curved arc
-                const mid = from.clone().add(to).multiplyScalar(0.5);
-                mid.normalize().multiplyScalar(1.3); // Arc height
-
-                const curve = new THREE.QuadraticBezierCurve3(from, mid, to);
-                const points = curve.getPoints(50);
-                const geometry = new THREE.BufferGeometry().setFromPoints(points);
-
-                let color;
-                switch (type) {
-                    case 'direct': color = 0x00ff88; break;
-                    case 'punched': color = 0xffdd00; break;
-                    case 'relayed': color = 0xff6b6b; break;
-                    default: color = 0x00d9ff;
-                }
-
-                const material = new THREE.LineBasicMaterial({
-                    color,
-                    transparent: true,
-                    opacity: 0.6,
-                });
-
-                const arc = new THREE.Line(geometry, material);
-                this.connectionGroup.add(arc);
-
-                // Auto-remove after 3 seconds
-                setTimeout(() => {
-                    this.connectionGroup.remove(arc);
-                }, 3000);
-            }
-
-            clearNodes() {
-                while (this.nodeGroup.children.length > 0) {
-                    this.nodeGroup.remove(this.nodeGroup.children[0]);
-                }
-                this.nodes.clear();
-            }
-
-            onResize() {
-                this.camera.aspect = this.container.clientWidth / this.container.clientHeight;
-                this.camera.updateProjectionMatrix();
-                this.renderer.setSize(this.container.clientWidth, this.container.clientHeight);
-            }
-
-            animate() {
-                requestAnimationFrame(() => this.animate());
-                this.controls.update();
-                this.renderer.render(this.scene, this.camera);
-            }
-        }
-
-        // Country centroid coordinates for GeoIP
+        // Country centroids
         const countryCentroids = {
-            'US': { lat: 37.09, lng: -95.71, name: 'United States' },
-            'GB': { lat: 55.38, lng: -3.44, name: 'United Kingdom' },
-            'DE': { lat: 51.17, lng: 10.45, name: 'Germany' },
-            'FR': { lat: 46.23, lng: 2.21, name: 'France' },
-            'JP': { lat: 36.20, lng: 138.25, name: 'Japan' },
-            'CN': { lat: 35.86, lng: 104.20, name: 'China' },
-            'AU': { lat: -25.27, lng: 133.78, name: 'Australia' },
-            'CA': { lat: 56.13, lng: -106.35, name: 'Canada' },
-            'BR': { lat: -14.24, lng: -51.93, name: 'Brazil' },
-            'IN': { lat: 20.59, lng: 78.96, name: 'India' },
-            'RU': { lat: 61.52, lng: 105.32, name: 'Russia' },
-            'KR': { lat: 35.91, lng: 127.77, name: 'South Korea' },
-            'MX': { lat: 23.63, lng: -102.55, name: 'Mexico' },
-            'ES': { lat: 40.46, lng: -3.75, name: 'Spain' },
-            'IT': { lat: 41.87, lng: 12.57, name: 'Italy' },
-            'NL': { lat: 52.13, lng: 5.29, name: 'Netherlands' },
-            'SE': { lat: 60.13, lng: 18.64, name: 'Sweden' },
-            'NO': { lat: 60.47, lng: 8.47, name: 'Norway' },
-            'FI': { lat: 61.92, lng: 25.75, name: 'Finland' },
-            'DK': { lat: 56.26, lng: 9.50, name: 'Denmark' },
-            'PL': { lat: 51.92, lng: 19.15, name: 'Poland' },
-            'CH': { lat: 46.82, lng: 8.23, name: 'Switzerland' },
-            'AT': { lat: 47.52, lng: 14.55, name: 'Austria' },
-            'BE': { lat: 50.50, lng: 4.47, name: 'Belgium' },
-            'IE': { lat: 53.14, lng: -7.69, name: 'Ireland' },
-            'SG': { lat: 1.35, lng: 103.82, name: 'Singapore' },
-            'NZ': { lat: -40.90, lng: 174.89, name: 'New Zealand' },
-            'ZA': { lat: -30.56, lng: 22.94, name: 'South Africa' },
-            'AR': { lat: -38.42, lng: -63.62, name: 'Argentina' },
-            'CL': { lat: -35.68, lng: -71.54, name: 'Chile' },
-            'PT': { lat: 39.40, lng: -8.22, name: 'Portugal' },
-            'CZ': { lat: 49.82, lng: 15.47, name: 'Czech Republic' },
-            'RO': { lat: 45.94, lng: 24.97, name: 'Romania' },
-            'HU': { lat: 47.16, lng: 19.50, name: 'Hungary' },
-            'GR': { lat: 39.07, lng: 21.82, name: 'Greece' },
-            'IL': { lat: 31.05, lng: 34.85, name: 'Israel' },
-            'AE': { lat: 23.42, lng: 53.85, name: 'UAE' },
-            'TH': { lat: 15.87, lng: 100.99, name: 'Thailand' },
-            'VN': { lat: 14.06, lng: 108.28, name: 'Vietnam' },
-            'MY': { lat: 4.21, lng: 101.98, name: 'Malaysia' },
-            'ID': { lat: -0.79, lng: 113.92, name: 'Indonesia' },
-            'PH': { lat: 12.88, lng: 121.77, name: 'Philippines' },
-            'TW': { lat: 23.70, lng: 120.96, name: 'Taiwan' },
-            'HK': { lat: 22.40, lng: 114.11, name: 'Hong Kong' },
-            'UA': { lat: 48.38, lng: 31.17, name: 'Ukraine' },
-            'TR': { lat: 38.96, lng: 35.24, name: 'Turkey' },
-            'EG': { lat: 26.82, lng: 30.80, name: 'Egypt' },
-            'SA': { lat: 23.89, lng: 45.08, name: 'Saudi Arabia' },
-            'PK': { lat: 30.38, lng: 69.35, name: 'Pakistan' },
-            'BD': { lat: 23.68, lng: 90.36, name: 'Bangladesh' },
-            'NG': { lat: 9.08, lng: 8.68, name: 'Nigeria' },
-            'CO': { lat: 4.57, lng: -74.30, name: 'Colombia' },
-            'PE': { lat: -9.19, lng: -75.02, name: 'Peru' },
-            'VE': { lat: 6.42, lng: -66.59, name: 'Venezuela' },
+            'US': { lat: 37.09, lng: -95.71 },
+            'GB': { lat: 55.38, lng: -3.44 },
+            'DE': { lat: 51.17, lng: 10.45 },
+            'FR': { lat: 46.23, lng: 2.21 },
+            'JP': { lat: 36.20, lng: 138.25 },
+            'CN': { lat: 35.86, lng: 104.20 },
+            'AU': { lat: -25.27, lng: 133.78 },
+            'CA': { lat: 56.13, lng: -106.35 },
+            'BR': { lat: -14.24, lng: -51.93 },
+            'IN': { lat: 20.59, lng: 78.96 },
+            'RU': { lat: 61.52, lng: 105.32 },
+            'KR': { lat: 35.91, lng: 127.77 },
+            'NL': { lat: 52.13, lng: 5.29 },
+            'SE': { lat: 60.13, lng: 18.64 },
+            'IE': { lat: 53.35, lng: -6.26 },
+            'SG': { lat: 1.35, lng: 103.82 },
+            'NZ': { lat: -40.90, lng: 174.89 },
+            'ZA': { lat: -30.56, lng: 22.94 },
         };
 
         // Dashboard state
-        let globe;
-        let ws;
-        let stats = {
-            totalNodes: 0,
-            activeNodes: 0,
-            connections: 0,
-            directCount: 0,
-            punchedCount: 0,
-            relayedCount: 0,
-            successRate: 100,
-            attempts: 0,
-            bytesTransferred: 0
-        };
+        let nodes = [];
+        let arcs = [];
+
+        // Initialize Globe
+        const globe = Globe()
+            .globeImageUrl('https://unpkg.com/three-globe@2.27.2/example/img/earth-blue-marble.jpg')
+            .bumpImageUrl('https://unpkg.com/three-globe@2.27.2/example/img/earth-topology.png')
+            .backgroundImageUrl('https://unpkg.com/three-globe@2.27.2/example/img/night-sky.png')
+            .showAtmosphere(true)
+            .atmosphereColor('#00d9ff')
+            .atmosphereAltitude(0.15)
+            .pointsData(nodes)
+            .pointLat('lat')
+            .pointLng('lng')
+            .pointColor('color')
+            .pointAltitude(0.01)
+            .pointRadius('size')
+            .pointsMerge(true)
+            .arcsData(arcs)
+            .arcColor('color')
+            .arcAltitude(0.2)
+            .arcStroke(0.5)
+            .arcDashLength(0.4)
+            .arcDashGap(0.2)
+            .arcDashAnimateTime(1500)
+            (document.getElementById('globe'));
+
+        // Auto-rotate
+        globe.controls().autoRotate = true;
+        globe.controls().autoRotateSpeed = 0.3;
+
+        // Add registry server marker
+        nodes.push({
+            lat: 53.35,
+            lng: -6.26,
+            color: '#ffd700',
+            size: 0.5,
+            name: 'Registry Server (Dublin)'
+        });
+        globe.pointsData(nodes);
 
         // Format bytes
         function formatBytes(bytes) {
             if (bytes === 0) return '0 B';
             const k = 1024;
-            const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+            const sizes = ['B', 'KB', 'MB', 'GB'];
             const i = Math.floor(Math.log(bytes) / Math.log(k));
-            return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
         }
 
-        // Update stats display
-        function updateStats() {
-            document.getElementById('total-nodes').textContent = stats.totalNodes;
-            document.getElementById('active-nodes').textContent = stats.activeNodes;
-            document.getElementById('total-connections').textContent = stats.connections;
-            document.getElementById('direct-count').textContent = stats.directCount;
-            document.getElementById('punched-count').textContent = stats.punchedCount;
-            document.getElementById('relayed-count').textContent = stats.relayedCount;
-            document.getElementById('success-rate').textContent = stats.successRate.toFixed(1) + '%';
-            document.getElementById('total-attempts').textContent = stats.attempts;
-            document.getElementById('data-transferred').textContent = formatBytes(stats.bytesTransferred);
+        // Update stats
+        function updateStats(data) {
+            document.getElementById('total-nodes').textContent = data.total_nodes || 0;
+            document.getElementById('active-nodes').textContent = data.active_nodes || 0;
+            document.getElementById('total-connections').textContent = data.total_connections || 0;
+            document.getElementById('direct-count').textContent = data.connection_breakdown?.direct || 0;
+            document.getElementById('punched-count').textContent = data.connection_breakdown?.hole_punched || 0;
+            document.getElementById('relayed-count').textContent = data.connection_breakdown?.relayed || 0;
+            document.getElementById('data-transferred').textContent = formatBytes(data.total_bytes_transferred || 0);
         }
 
         // Add activity
@@ -666,148 +757,79 @@
             const time = new Date().toLocaleTimeString();
             const item = document.createElement('div');
             item.className = 'activity-item';
-            item.innerHTML = `<span class="time">${time}</span> ${message}`;
+            item.innerHTML = `<span class="activity-time">${time}</span> ${message}`;
             feed.insertBefore(item, feed.firstChild);
-
-            // Keep only last 20 items
-            while (feed.children.length > 20) {
+            while (feed.children.length > 10) {
                 feed.removeChild(feed.lastChild);
             }
         }
 
-        // Connect to WebSocket
-        function connectWebSocket() {
+        // Fetch and update
+        async function fetchData() {
+            try {
+                const [statsRes, peersRes] = await Promise.all([
+                    fetch('/api/stats'),
+                    fetch('/api/peers')
+                ]);
+                const stats = await statsRes.json();
+                const peers = await peersRes.json();
+
+                updateStats(stats);
+
+                // Update nodes on globe
+                nodes = [{
+                    lat: 53.35, lng: -6.26,
+                    color: '#ffd700', size: 0.5
+                }];
+
+                for (const peer of peers) {
+                    const coords = peer.latitude && peer.longitude
+                        ? { lat: peer.latitude, lng: peer.longitude }
+                        : countryCentroids[peer.country_code] || { lat: 0, lng: 0 };
+
+                    nodes.push({
+                        lat: coords.lat,
+                        lng: coords.lng,
+                        color: peer.is_active ? '#00ff88' : '#00d9ff',
+                        size: peer.is_active ? 0.3 : 0.2,
+                        peer_id: peer.peer_id
+                    });
+                }
+                globe.pointsData(nodes);
+            } catch (e) {
+                console.error('Fetch error:', e);
+            }
+        }
+
+        // WebSocket for real-time
+        function connectWS() {
             const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-            const wsUrl = `${protocol}//${window.location.host}/ws/live`;
-
-            ws = new WebSocket(wsUrl);
-
-            ws.onopen = () => {
-                console.log('WebSocket connected');
-                addActivity('Connected to registry server');
-            };
+            const ws = new WebSocket(`${protocol}//${window.location.host}/ws/live`);
 
             ws.onmessage = (event) => {
                 const data = JSON.parse(event.data);
-                handleEvent(data);
-            };
-
-            ws.onclose = () => {
-                console.log('WebSocket disconnected, reconnecting...');
-                setTimeout(connectWebSocket, 3000);
-            };
-
-            ws.onerror = (error) => {
-                console.error('WebSocket error:', error);
-            };
-        }
-
-        // Handle WebSocket events
-        function handleEvent(event) {
-            switch (event.type) {
-                case 'node_registered':
-                    const coords = countryCentroids[event.country_code] || { lat: 0, lng: 0 };
-                    globe.addNode(event.peer_id, coords.lat, coords.lng, true);
-                    stats.totalNodes++;
-                    stats.activeNodes++;
-                    addActivity(`Node <span class="peer">${event.peer_id.substring(0, 8)}</span> registered <span class="country">${event.country_code || ''}</span>`);
-                    break;
-
-                case 'node_offline':
-                    globe.removeNode(event.peer_id);
-                    stats.totalNodes--;
-                    addActivity(`Node <span class="peer">${event.peer_id.substring(0, 8)}</span> went offline`);
-                    break;
-
-                case 'connection_established':
-                    const type = event.method || 'direct';
-                    globe.addConnection(event.from_peer, event.to_peer, type);
-                    stats.connections++;
-                    if (type === 'direct') stats.directCount++;
-                    else if (type === 'punched') stats.punchedCount++;
-                    else if (type === 'relayed') stats.relayedCount++;
-                    addActivity(`<span class="peer">${event.from_peer.substring(0, 8)}</span> connected to <span class="peer">${event.to_peer.substring(0, 8)}</span> via ${type}`);
-                    break;
-
-                case 'stats_update':
-                    stats = { ...stats, ...event.stats };
-                    break;
-
-                case 'full_state':
-                    // Clear and rebuild
-                    globe.clearNodes();
-                    stats = event.stats || stats;
-                    for (const node of event.nodes || []) {
-                        const coords = countryCentroids[node.country_code] || { lat: 0, lng: 0 };
-                        globe.addNode(node.peer_id, coords.lat, coords.lng, node.is_active);
-                    }
-                    // Add registry server
-                    globe.addNode('registry', 53.35, -6.26, true, true); // Dublin, Ireland
-                    break;
-            }
-            updateStats();
-        }
-
-        // Fetch initial stats
-        async function fetchStats() {
-            try {
-                const response = await fetch('/api/stats');
-                const data = await response.json();
-                stats.totalNodes = data.total_registered || 0;
-                stats.activeNodes = data.active_count || 0;
-                stats.connections = data.total_connections || 0;
-                stats.directCount = data.direct_connections || 0;
-                stats.punchedCount = data.hole_punched_connections || 0;
-                stats.relayedCount = data.relayed_connections || 0;
-                stats.bytesTransferred = data.bytes_transferred || 0;
-                stats.attempts = data.connection_attempts || 0;
-                if (stats.attempts > 0) {
-                    stats.successRate = (stats.connections / stats.attempts) * 100;
+                if (data.type === 'node_registered') {
+                    const coords = countryCentroids[data.country_code] || { lat: data.latitude || 0, lng: data.longitude || 0 };
+                    nodes.push({
+                        lat: coords.lat, lng: coords.lng,
+                        color: '#00ff88', size: 0.3
+                    });
+                    globe.pointsData(nodes);
+                    addActivity(`<span class="activity-peer">${data.peer_id.substring(0,8)}</span> joined ${data.country_code || ''}`);
+                } else if (data.type === 'connection_established') {
+                    addActivity(`<span class="activity-peer">${data.from_peer.substring(0,8)}</span> connected via ${data.method || 'direct'}`);
+                } else if (data.type === 'stats_update') {
+                    updateStats(data.stats);
                 }
-                updateStats();
-            } catch (e) {
-                console.error('Failed to fetch stats:', e);
-            }
+            };
+
+            ws.onclose = () => setTimeout(connectWS, 3000);
         }
 
-        // Fetch peers
-        async function fetchPeers() {
-            try {
-                const response = await fetch('/api/peers');
-                const peers = await response.json();
-                globe.clearNodes();
-                // Add registry server
-                globe.addNode('registry', 53.35, -6.26, true, true);
-                for (const peer of peers) {
-                    const coords = countryCentroids[peer.country_code] || { lat: 0, lng: 0 };
-                    globe.addNode(peer.peer_id, coords.lat, coords.lng, peer.is_active);
-                }
-                stats.totalNodes = peers.length;
-                stats.activeNodes = peers.filter(p => p.is_active).length;
-                updateStats();
-            } catch (e) {
-                console.error('Failed to fetch peers:', e);
-            }
-        }
-
-        // Initialize
-        document.addEventListener('DOMContentLoaded', () => {
-            globe = new NetworkGlobe('globe');
-
-            // Add registry server
-            globe.addNode('registry', 53.35, -6.26, true, true);
-
-            // Fetch initial data
-            fetchStats();
-            fetchPeers();
-
-            // Connect WebSocket for real-time updates
-            connectWebSocket();
-
-            // Refresh stats periodically
-            setInterval(fetchStats, 10000);
-            setInterval(fetchPeers, 30000);
-        });
+        // Init
+        fetchData();
+        setInterval(fetchData, 15000);
+        connectWS();
     </script>
 </body>
 </html>
