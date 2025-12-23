@@ -155,7 +155,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 User=root
-ExecStart=${INSTALL_DIR}/ant-quic-test --registry-url ${REGISTRY_URL}
+ExecStart=${INSTALL_DIR}/ant-quic-test --registry-url ${REGISTRY_URL} --quiet
 Restart=always
 RestartSec=5
 StandardOutput=append:/var/log/ant-quic-test.log
