@@ -25,9 +25,19 @@ use tokio::time::timeout;
 /// Short timeout for quick operations
 const SHORT_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// Timeout for shutdown operations (prevents test hangs)
+const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(2);
+
 // ============================================================================
 // Test Utilities
 // ============================================================================
+
+/// Shutdown a node with timeout to prevent test hangs.
+/// The underlying shutdown can block on wait_idle() if connections don't close cleanly.
+async fn shutdown_with_timeout(node: P2pEndpoint) {
+    let _ = timeout(SHUTDOWN_TIMEOUT, node.shutdown()).await;
+    // Drop the node regardless - this ensures cleanup even if shutdown hangs
+}
 
 /// Create a test node configuration
 fn test_node_config(known_peers: Vec<SocketAddr>) -> P2pConfig {
@@ -106,7 +116,7 @@ mod first_node_tests {
             hex::encode(&public_key[..32])
         );
 
-        node.shutdown().await;
+        shutdown_with_timeout(node).await;
     }
 
     #[tokio::test]
@@ -150,8 +160,8 @@ mod first_node_tests {
 
         // Cleanup
         accept_handle.abort();
-        connector.shutdown().await;
-        listener.shutdown().await;
+        shutdown_with_timeout(connector).await;
+        shutdown_with_timeout(listener).await;
     }
 
     #[tokio::test]
@@ -176,9 +186,9 @@ mod first_node_tests {
         println!("Node 2: {}", addr2);
         println!("Node 3: {}", addr3);
 
-        node1.shutdown().await;
-        node2.shutdown().await;
-        node3.shutdown().await;
+        shutdown_with_timeout(node1).await;
+        shutdown_with_timeout(node2).await;
+        shutdown_with_timeout(node3).await;
     }
 }
 
@@ -223,8 +233,8 @@ mod bootstrap_tests {
         }
 
         accept_task.abort();
-        node1.shutdown().await;
-        node2.shutdown().await;
+        shutdown_with_timeout(node1).await;
+        shutdown_with_timeout(node2).await;
     }
 
     #[tokio::test]
@@ -255,9 +265,9 @@ mod bootstrap_tests {
         println!("Node 2 peer ID: {:?}", node2.peer_id());
         println!("Node 3 peer ID: {:?}", node3.peer_id());
 
-        seed.shutdown().await;
-        node2.shutdown().await;
-        node3.shutdown().await;
+        shutdown_with_timeout(seed).await;
+        shutdown_with_timeout(node2).await;
+        shutdown_with_timeout(node3).await;
     }
 }
 
@@ -283,7 +293,7 @@ mod address_discovery_tests {
         assert!(local.is_some(), "Local address should be available");
         println!("Local address: {:?}", local);
 
-        node.shutdown().await;
+        shutdown_with_timeout(node).await;
     }
 
     #[tokio::test]
@@ -330,8 +340,8 @@ mod address_discovery_tests {
         }
 
         connect_task.abort();
-        client.shutdown().await;
-        observer.shutdown().await;
+        shutdown_with_timeout(client).await;
+        shutdown_with_timeout(observer).await;
     }
 }
 
@@ -393,8 +403,8 @@ mod data_transfer_tests {
         }
 
         accept_task.abort();
-        client.shutdown().await;
-        server.shutdown().await;
+        shutdown_with_timeout(client).await;
+        shutdown_with_timeout(server).await;
     }
 
     #[tokio::test]
@@ -429,8 +439,8 @@ mod data_transfer_tests {
         }
 
         accept_task.abort();
-        node1.shutdown().await;
-        node2.shutdown().await;
+        shutdown_with_timeout(node1).await;
+        shutdown_with_timeout(node2).await;
     }
 }
 
@@ -532,7 +542,7 @@ mod raw_public_key_tests {
         );
         println!("Node peer ID: {:?}", peer_id);
 
-        node.shutdown().await;
+        shutdown_with_timeout(node).await;
     }
 
     #[test]
@@ -689,9 +699,9 @@ mod nat_traversal_tests {
         // In a real scenario, nodes would exchange external addresses
         // and perform hole punching
 
-        node1.shutdown().await;
-        node2.shutdown().await;
-        node3.shutdown().await;
+        shutdown_with_timeout(node1).await;
+        shutdown_with_timeout(node2).await;
+        shutdown_with_timeout(node3).await;
     }
 
     #[tokio::test]
@@ -729,8 +739,8 @@ mod nat_traversal_tests {
         }
 
         accept_task.abort();
-        client.shutdown().await;
-        coordinator.shutdown().await;
+        shutdown_with_timeout(client).await;
+        shutdown_with_timeout(coordinator).await;
     }
 }
 
@@ -771,9 +781,9 @@ mod three_node_network_tests {
         println!("Ring topology verified:");
         println!("  Node 1 -> Node 2 -> Node 3 -> Node 1");
 
-        node1.shutdown().await;
-        node2.shutdown().await;
-        node3.shutdown().await;
+        shutdown_with_timeout(node1).await;
+        shutdown_with_timeout(node2).await;
+        shutdown_with_timeout(node3).await;
     }
 
     #[tokio::test]
@@ -800,9 +810,9 @@ mod three_node_network_tests {
         println!("Star topology verified:");
         println!("  Spoke1 -> Hub <- Spoke2");
 
-        hub.shutdown().await;
-        spoke1.shutdown().await;
-        spoke2.shutdown().await;
+        shutdown_with_timeout(hub).await;
+        shutdown_with_timeout(spoke1).await;
+        shutdown_with_timeout(spoke2).await;
     }
 
     #[tokio::test]
@@ -830,9 +840,9 @@ mod three_node_network_tests {
         assert!(node2.local_addr().is_some());
         assert!(node3.local_addr().is_some());
 
-        node1.shutdown().await;
-        node2.shutdown().await;
-        node3.shutdown().await;
+        shutdown_with_timeout(node1).await;
+        shutdown_with_timeout(node2).await;
+        shutdown_with_timeout(node3).await;
     }
 }
 
@@ -958,9 +968,9 @@ async fn test_comprehensive_integration_summary() {
 
     // Cleanup
     println!("\n6. Shutting down nodes...");
-    first_node.shutdown().await;
-    second_node.shutdown().await;
-    third_node.shutdown().await;
+    shutdown_with_timeout(first_node).await;
+    shutdown_with_timeout(second_node).await;
+    shutdown_with_timeout(third_node).await;
 
     println!("\n=== All Integration Tests Passed ===\n");
 }
