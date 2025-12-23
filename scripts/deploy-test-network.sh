@@ -61,7 +61,7 @@ get_node_role() {
 # Registry node hosts the dashboard
 REGISTRY_NODE="saorsa-1"
 REGISTRY_HOSTNAME=$(get_node_hostname "$REGISTRY_NODE")
-REGISTRY_URL="http://saorsa-1.saorsalabs.com:${REGISTRY_PORT}"
+REGISTRY_URL="https://saorsa-1.saorsalabs.com"
 DASHBOARD_URL="${REGISTRY_URL}"
 
 # Parse arguments
