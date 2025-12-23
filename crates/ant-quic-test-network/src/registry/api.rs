@@ -6,7 +6,8 @@
 use crate::dashboard::dashboard_routes;
 use crate::registry::store::PeerStore;
 use crate::registry::types::{
-    NetworkEvent, NetworkStats, NodeHeartbeat, NodeRegistration, PeerInfo, RegistrationResponse,
+    ConnectionReport, NetworkEvent, NetworkStats, NodeHeartbeat, NodeRegistration, PeerInfo,
+    RegistrationResponse,
 };
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -87,6 +88,13 @@ pub async fn start_registry_server(config: RegistryConfig) -> anyhow::Result<()>
         .and(store_filter.clone())
         .and_then(handle_get_results);
 
+    // POST /api/connection - Report a connection
+    let connection = warp::path!("api" / "connection")
+        .and(warp::post())
+        .and(warp::body::json())
+        .and(store_filter.clone())
+        .and_then(handle_connection_report);
+
     // GET /ws/live - WebSocket for real-time updates
     let websocket = warp::path!("ws" / "live")
         .and(warp::ws())
@@ -109,6 +117,7 @@ pub async fn start_registry_server(config: RegistryConfig) -> anyhow::Result<()>
     let routes = dashboard
         .or(register)
         .or(heartbeat)
+        .or(connection)
         .or(all_peers)
         .or(peers)
         .or(stats)
@@ -206,6 +215,31 @@ async fn handle_get_all_peers(store: Arc<PeerStore>) -> Result<impl Reply, Rejec
 async fn handle_get_results(store: Arc<PeerStore>) -> Result<impl Reply, Rejection> {
     let results = store.get_experiment_results().await;
     Ok(warp::reply::json(&results))
+}
+
+/// Handle connection report from nodes.
+async fn handle_connection_report(
+    report: ConnectionReport,
+    store: Arc<PeerStore>,
+) -> Result<impl Reply, Rejection> {
+    tracing::debug!(
+        "Connection report: {} -> {} via {:?}",
+        &report.from_peer[..8.min(report.from_peer.len())],
+        &report.to_peer[..8.min(report.to_peer.len())],
+        report.method
+    );
+
+    store
+        .record_connection(
+            report.from_peer,
+            report.to_peer,
+            report.method,
+            report.is_ipv6,
+            report.rtt_ms,
+        )
+        .await;
+
+    Ok(warp::reply::json(&serde_json::json!({"success": true})))
 }
 
 /// Detailed node information for the dashboard.
@@ -519,6 +553,13 @@ impl RegistryClient {
         let url = format!("{}/api/stats", self.base_url);
         let stats = self.client.get(&url).send().await?.json().await?;
         Ok(stats)
+    }
+
+    /// Report a connection to the registry.
+    pub async fn report_connection(&self, report: &ConnectionReport) -> anyhow::Result<()> {
+        let url = format!("{}/api/connection", self.base_url);
+        self.client.post(&url).json(report).send().await?;
+        Ok(())
     }
 }
 

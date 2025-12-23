@@ -4,8 +4,8 @@
 //! automatic connections, and test traffic generation.
 
 use crate::registry::{
-    ConnectionMethod, NatStats, NatType, NodeCapabilities, NodeHeartbeat, NodeRegistration,
-    PeerInfo, RegistryClient,
+    ConnectionMethod, ConnectionReport, NatStats, NatType, NodeCapabilities, NodeHeartbeat,
+    NodeRegistration, PeerInfo, RegistryClient,
 };
 use crate::tui::{ConnectedPeer, TuiEvent, country_flag};
 use std::collections::HashMap;
@@ -492,6 +492,22 @@ impl TestNode {
 
                         // Notify TUI
                         let _ = event_tx.send(TuiEvent::PeerConnected(peer_for_tui)).await;
+
+                        // Report connection to registry
+                        let report = ConnectionReport {
+                            from_peer: our_peer_id.clone(),
+                            to_peer: candidate.peer_id.clone(),
+                            method,
+                            is_ipv6: candidate
+                                .addresses
+                                .first()
+                                .map(|a| a.is_ipv6())
+                                .unwrap_or(false),
+                            rtt_ms: None, // Will be updated later with test packets
+                        };
+                        if let Err(e) = registry.report_connection(&report).await {
+                            warn!("Failed to report connection: {}", e);
+                        }
                     }
                     Err(e) => {
                         failed.fetch_add(1, Ordering::Relaxed);

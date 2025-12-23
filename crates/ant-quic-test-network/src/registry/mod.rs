@@ -61,6 +61,7 @@ mod types;
 pub use api::{RegistryClient, RegistryConfig, start_registry_server};
 pub use store::PeerStore;
 pub use types::{
-    ConnectionBreakdown, ConnectionMethod, NatStats, NatType, NetworkEvent, NetworkStats,
-    NodeCapabilities, NodeHeartbeat, NodeRegistration, PeerInfo, RegistrationResponse,
+    ConnectionBreakdown, ConnectionMethod, ConnectionReport, NatStats, NatType, NetworkEvent,
+    NetworkStats, NodeCapabilities, NodeHeartbeat, NodeRegistration, PeerInfo,
+    RegistrationResponse,
 };

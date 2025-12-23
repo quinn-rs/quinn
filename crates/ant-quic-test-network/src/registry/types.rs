@@ -131,6 +131,21 @@ pub struct NodeHeartbeat {
     pub nat_stats: Option<NatStats>,
 }
 
+/// Connection report sent by nodes to record individual connections.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConnectionReport {
+    /// Source peer ID (the reporting node)
+    pub from_peer: String,
+    /// Destination peer ID
+    pub to_peer: String,
+    /// Connection method used
+    pub method: ConnectionMethod,
+    /// Whether connection used IPv6
+    pub is_ipv6: bool,
+    /// Round-trip time in milliseconds (optional)
+    pub rtt_ms: Option<u64>,
+}
+
 /// NAT traversal statistics included in heartbeats.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct NatStats {
