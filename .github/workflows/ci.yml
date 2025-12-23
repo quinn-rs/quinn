@@ -26,7 +26,26 @@ jobs:
   # Quick checks - lint, format, compile
   quick-checks:
     name: Quick Checks
-    uses: ./.github/workflows/quick-checks.yml
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Format check
+        run: cargo fmt --all -- --check
+
+      - name: Clippy
+        run: cargo clippy --all-features --lib --bins --examples -- -D warnings
+
+      - name: Build check
+        run: cargo check --lib --bins --examples
 
   # Main test suite
   test:
