@@ -1,11 +1,12 @@
-//! In-memory peer store with TTL-based expiration.
+//! In-memory peer store with TTL-based expiration and historical tracking.
 //!
 //! This module provides thread-safe storage for registered nodes
-//! with automatic expiration of stale entries.
+//! with automatic expiration of stale entries and persistent
+//! historical tracking for experiment results.
 
 use crate::registry::types::{
-    ConnectionBreakdown, NatStats, NetworkEvent, NetworkStats, NodeHeartbeat, NodeRegistration,
-    PeerInfo,
+    ConnectionBreakdown, ConnectionMethod, ConnectionRecord, ExperimentResults, NatStats,
+    NetworkEvent, NetworkStats, NodeHeartbeat, NodeRegistration, PeerInfo, PeerStatus,
 };
 use dashmap::DashMap;
 use std::collections::HashMap;
@@ -14,6 +15,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 use tokio::sync::broadcast;
+use tokio::sync::RwLock;
 
 /// Default time-to-live for registrations (2 minutes).
 const DEFAULT_TTL_SECS: u64 = 120;
@@ -25,12 +27,16 @@ const HEARTBEAT_INTERVAL_SECS: u64 = 30;
 /// Active threshold - nodes with heartbeat within this time are considered active.
 const ACTIVE_THRESHOLD_SECS: u64 = 60;
 
+/// Inactive threshold - nodes between active and historical (5 minutes).
+const INACTIVE_THRESHOLD_SECS: u64 = 300;
+
 /// Internal storage entry for a registered node.
 #[derive(Debug, Clone)]
 struct NodeEntry {
     /// Registration data
     registration: NodeRegistration,
-    /// When this entry was created
+    /// When this entry was created (kept for metadata, expiration uses last_heartbeat)
+    #[allow(dead_code)]
     registered_at: Instant,
     /// Last heartbeat received
     last_heartbeat: Instant,
@@ -49,23 +55,45 @@ struct NodeEntry {
     bytes_received: u64,
 }
 
-/// Thread-safe peer registry store.
-#[derive(Debug)]
+/// Thread-safe peer registry store with historical tracking.
 pub struct PeerStore {
-    /// Peer storage (peer_id -> NodeEntry)
+    /// Active peer storage (peer_id -> NodeEntry)
     peers: DashMap<String, NodeEntry>,
+    /// Historical nodes (offline but preserved for results)
+    historical_peers: DashMap<String, NodeEntry>,
+    /// Connection records for experiment results
+    connections: RwLock<Vec<ConnectionRecord>>,
     /// Event broadcaster for real-time updates
     event_tx: broadcast::Sender<NetworkEvent>,
     /// Store creation time (for uptime calculation)
     created_at: Instant,
-    /// Total connections established (aggregate from heartbeats)
-    /// Reserved for future use when tracking total connections over time.
-    #[allow(dead_code)]
+    /// Total connections established
     total_connections: AtomicU64,
     /// Total bytes transferred
     total_bytes: AtomicU64,
+    /// IPv4 connection count
+    ipv4_connections: AtomicU64,
+    /// IPv6 connection count
+    ipv6_connections: AtomicU64,
+    /// Peak concurrent nodes
+    peak_nodes: AtomicU64,
+    /// Total unique nodes ever seen
+    total_unique_nodes: AtomicU64,
     /// Configuration
     ttl_secs: u64,
+    /// Next connection ID
+    next_connection_id: AtomicU64,
+}
+
+impl std::fmt::Debug for PeerStore {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PeerStore")
+            .field("peers", &self.peers.len())
+            .field("historical_peers", &self.historical_peers.len())
+            .field("total_connections", &self.total_connections)
+            .field("ttl_secs", &self.ttl_secs)
+            .finish()
+    }
 }
 
 impl PeerStore {
@@ -79,11 +107,18 @@ impl PeerStore {
         let (event_tx, _) = broadcast::channel(1000);
         Arc::new(Self {
             peers: DashMap::new(),
+            historical_peers: DashMap::new(),
+            connections: RwLock::new(Vec::new()),
             event_tx,
             created_at: Instant::now(),
             total_connections: AtomicU64::new(0),
             total_bytes: AtomicU64::new(0),
+            ipv4_connections: AtomicU64::new(0),
+            ipv6_connections: AtomicU64::new(0),
+            peak_nodes: AtomicU64::new(0),
+            total_unique_nodes: AtomicU64::new(0),
             ttl_secs,
+            next_connection_id: AtomicU64::new(1),
         })
     }
 
@@ -96,6 +131,9 @@ impl PeerStore {
     pub fn register(&self, registration: NodeRegistration) -> Result<Vec<PeerInfo>, String> {
         let peer_id = registration.peer_id.clone();
         let now = Instant::now();
+
+        // Check if this node was previously historical (coming back online)
+        let was_historical = self.historical_peers.remove(&peer_id).is_some();
 
         // Resolve geographic coordinates from IP
         // For now, use (0, 0) - will be enhanced with GeoIP module
@@ -124,8 +162,28 @@ impl PeerStore {
         let is_new = !self.peers.contains_key(&peer_id);
         self.peers.insert(peer_id.clone(), entry);
 
+        // Track unique nodes and peak
+        if is_new && !was_historical {
+            self.total_unique_nodes.fetch_add(1, Ordering::Relaxed);
+        }
+
+        // Update peak nodes
+        let current_count = self.peers.len() as u64;
+        let mut peak = self.peak_nodes.load(Ordering::Relaxed);
+        while current_count > peak {
+            match self.peak_nodes.compare_exchange_weak(
+                peak,
+                current_count,
+                Ordering::SeqCst,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => break,
+                Err(p) => peak = p,
+            }
+        }
+
         // Broadcast registration event
-        if is_new {
+        if is_new || was_historical {
             let _ = self.event_tx.send(NetworkEvent::NodeRegistered {
                 peer_id: peer_id.clone(),
                 country_code,
@@ -185,8 +243,8 @@ impl PeerStore {
             .iter()
             .filter(|entry| entry.key() != exclude_peer_id)
             .filter(|entry| {
-                // Filter out expired entries
-                now.duration_since(entry.registered_at).as_secs() < self.ttl_secs
+                // Filter out expired entries (based on last heartbeat, not registration time)
+                now.duration_since(entry.last_heartbeat).as_secs() < self.ttl_secs
             })
             .map(|entry| self.entry_to_peer_info(&entry, now, active_threshold))
             .collect()
@@ -199,7 +257,17 @@ impl PeerStore {
         now: Instant,
         active_threshold: Duration,
     ) -> PeerInfo {
-        let is_active = now.duration_since(entry.last_heartbeat) < active_threshold;
+        let since_heartbeat = now.duration_since(entry.last_heartbeat).as_secs();
+        let is_active = since_heartbeat < active_threshold.as_secs();
+
+        // Determine peer status
+        let status = if since_heartbeat < ACTIVE_THRESHOLD_SECS {
+            PeerStatus::Active
+        } else if since_heartbeat < INACTIVE_THRESHOLD_SECS {
+            PeerStatus::Inactive
+        } else {
+            PeerStatus::Historical
+        };
 
         // Combine listen and external addresses
         let mut addresses = entry.registration.external_addresses.clone();
@@ -215,8 +283,7 @@ impl PeerStore {
         let success_rate = total_success as f64 / total_attempts as f64;
 
         // Get unix timestamp for last_seen
-        let last_seen_secs = now.duration_since(entry.last_heartbeat).as_secs();
-        let last_seen = crate::registry::types::unix_timestamp().saturating_sub(last_seen_secs);
+        let last_seen = crate::registry::types::unix_timestamp().saturating_sub(since_heartbeat);
 
         PeerInfo {
             peer_id: entry.registration.peer_id.clone(),
@@ -230,6 +297,10 @@ impl PeerStore {
             capabilities: entry.registration.capabilities.clone(),
             version: entry.registration.version.clone(),
             is_active,
+            status,
+            bytes_sent: entry.bytes_sent,
+            bytes_received: entry.bytes_received,
+            connected_peers: entry.connected_peers,
         }
     }
 
@@ -247,8 +318,8 @@ impl PeerStore {
         let mut total_success: u64 = 0;
 
         for entry in self.peers.iter() {
-            // Skip expired entries
-            if now.duration_since(entry.registered_at).as_secs() >= self.ttl_secs {
+            // Skip expired entries (based on last heartbeat, not registration time)
+            if now.duration_since(entry.last_heartbeat).as_secs() >= self.ttl_secs {
                 continue;
             }
 
@@ -285,35 +356,183 @@ impl PeerStore {
         NetworkStats {
             total_nodes,
             active_nodes,
+            historical_nodes: self.historical_peers.len(),
             total_connections,
             total_bytes_transferred: self.total_bytes.load(Ordering::Relaxed),
             connection_success_rate: success_rate,
             connection_breakdown: breakdown,
             geographic_distribution,
             uptime_secs: self.created_at.elapsed().as_secs(),
+            ipv4_connections: self.ipv4_connections.load(Ordering::Relaxed),
+            ipv6_connections: self.ipv6_connections.load(Ordering::Relaxed),
         }
     }
 
-    /// Remove expired entries (called periodically).
+    /// Move expired entries to historical (called periodically).
+    /// Returns the number of nodes moved to historical.
     pub fn cleanup_expired(&self) -> usize {
         let now = Instant::now();
-        let mut removed = Vec::new();
+        let mut moved_to_historical = Vec::new();
 
         for entry in self.peers.iter() {
-            if now.duration_since(entry.registered_at).as_secs() >= self.ttl_secs {
-                removed.push(entry.key().clone());
+            // Expire based on last heartbeat, not registration time
+            if now.duration_since(entry.last_heartbeat).as_secs() >= self.ttl_secs {
+                moved_to_historical.push((entry.key().clone(), entry.value().clone()));
             }
         }
 
-        let count = removed.len();
-        for peer_id in removed {
+        let count = moved_to_historical.len();
+        for (peer_id, entry) in moved_to_historical {
+            // Move to historical storage instead of deleting
             self.peers.remove(&peer_id);
+            self.historical_peers.insert(peer_id.clone(), entry);
+
             let _ = self.event_tx.send(NetworkEvent::NodeOffline {
                 peer_id: peer_id.clone(),
             });
         }
 
         count
+    }
+
+    /// Record a connection for experiment results.
+    pub async fn record_connection(
+        &self,
+        from_peer: String,
+        to_peer: String,
+        method: ConnectionMethod,
+        is_ipv6: bool,
+        rtt_ms: Option<u64>,
+    ) {
+        let id = self.next_connection_id.fetch_add(1, Ordering::Relaxed);
+
+        // Get country codes from peer entries
+        let from_country = self.peers.get(&from_peer).and_then(|e| e.country_code.clone());
+        let to_country = self.peers.get(&to_peer).and_then(|e| e.country_code.clone());
+
+        let record = ConnectionRecord {
+            id,
+            from_peer: from_peer.clone(),
+            to_peer: to_peer.clone(),
+            method,
+            is_ipv6,
+            rtt_ms,
+            timestamp: crate::registry::types::unix_timestamp(),
+            from_country,
+            to_country,
+            is_active: true,
+        };
+
+        // Update IP version counters
+        if is_ipv6 {
+            self.ipv6_connections.fetch_add(1, Ordering::Relaxed);
+        } else {
+            self.ipv4_connections.fetch_add(1, Ordering::Relaxed);
+        }
+
+        self.total_connections.fetch_add(1, Ordering::Relaxed);
+
+        let mut connections = self.connections.write().await;
+        connections.push(record);
+
+        // Also broadcast the connection event
+        let _ = self.event_tx.send(NetworkEvent::ConnectionEstablished {
+            from_peer,
+            to_peer,
+            method,
+            rtt_ms,
+        });
+    }
+
+    /// Get all registered peers including historical.
+    pub fn get_all_peers_with_historical(&self) -> Vec<PeerInfo> {
+        let now = Instant::now();
+        let active_threshold = Duration::from_secs(ACTIVE_THRESHOLD_SECS);
+
+        let mut peers: Vec<PeerInfo> = self
+            .peers
+            .iter()
+            .map(|entry| self.entry_to_peer_info(&entry, now, active_threshold))
+            .collect();
+
+        // Add historical peers with Historical status
+        for entry in self.historical_peers.iter() {
+            let mut info = self.entry_to_peer_info(&entry, now, active_threshold);
+            info.status = PeerStatus::Historical;
+            info.is_active = false;
+            peers.push(info);
+        }
+
+        peers
+    }
+
+    /// Get experiment results summary.
+    pub async fn get_experiment_results(&self) -> ExperimentResults {
+        let now = Instant::now();
+        let active_threshold = Duration::from_secs(ACTIVE_THRESHOLD_SECS);
+
+        let connections = self.connections.read().await;
+
+        // Aggregate NAT stats from all nodes
+        let mut nat_stats = NatStats::default();
+        let mut breakdown = ConnectionBreakdown::default();
+        let mut geographic_distribution: HashMap<String, usize> = HashMap::new();
+
+        // Active peers
+        for entry in self.peers.iter() {
+            nat_stats.attempts += entry.nat_stats.attempts;
+            nat_stats.direct_success += entry.nat_stats.direct_success;
+            nat_stats.hole_punch_success += entry.nat_stats.hole_punch_success;
+            nat_stats.relay_success += entry.nat_stats.relay_success;
+            nat_stats.failures += entry.nat_stats.failures;
+
+            if let Some(ref cc) = entry.country_code {
+                *geographic_distribution.entry(cc.clone()).or_insert(0) += 1;
+            }
+        }
+
+        // Historical peers (count them too)
+        for entry in self.historical_peers.iter() {
+            if let Some(ref cc) = entry.country_code {
+                *geographic_distribution.entry(cc.clone()).or_insert(0) += 1;
+            }
+        }
+
+        // Count connections by method
+        for conn in connections.iter() {
+            match conn.method {
+                ConnectionMethod::Direct => breakdown.direct += 1,
+                ConnectionMethod::HolePunched => breakdown.hole_punched += 1,
+                ConnectionMethod::Relayed => breakdown.relayed += 1,
+            }
+        }
+
+        // Historical nodes as PeerInfo
+        let historical_nodes: Vec<PeerInfo> = self
+            .historical_peers
+            .iter()
+            .map(|entry| {
+                let mut info = self.entry_to_peer_info(&entry, now, active_threshold);
+                info.status = PeerStatus::Historical;
+                info.is_active = false;
+                info
+            })
+            .collect();
+
+        ExperimentResults {
+            start_time: crate::registry::types::unix_timestamp()
+                .saturating_sub(self.created_at.elapsed().as_secs()),
+            duration_secs: self.created_at.elapsed().as_secs(),
+            total_nodes_seen: self.total_unique_nodes.load(Ordering::Relaxed) as usize,
+            peak_concurrent_nodes: self.peak_nodes.load(Ordering::Relaxed) as usize,
+            connections: connections.clone(),
+            nat_stats,
+            connection_breakdown: breakdown,
+            ipv4_connections: self.ipv4_connections.load(Ordering::Relaxed),
+            ipv6_connections: self.ipv6_connections.load(Ordering::Relaxed),
+            geographic_distribution,
+            historical_nodes,
+        }
     }
 
     /// Get the number of registered peers.
@@ -513,11 +732,18 @@ impl Default for PeerStore {
         let (event_tx, _) = broadcast::channel(1000);
         Self {
             peers: DashMap::new(),
+            historical_peers: DashMap::new(),
+            connections: RwLock::new(Vec::new()),
             event_tx,
             created_at: Instant::now(),
             total_connections: AtomicU64::new(0),
             total_bytes: AtomicU64::new(0),
+            ipv4_connections: AtomicU64::new(0),
+            ipv6_connections: AtomicU64::new(0),
+            peak_nodes: AtomicU64::new(0),
+            total_unique_nodes: AtomicU64::new(0),
             ttl_secs: DEFAULT_TTL_SECS,
+            next_connection_id: AtomicU64::new(1),
         }
     }
 }

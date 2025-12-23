@@ -171,6 +171,18 @@ pub struct PeerInfo {
     pub version: String,
     /// Whether this node is currently active (heartbeat within threshold)
     pub is_active: bool,
+    /// Peer status (active, inactive, or historical)
+    #[serde(default)]
+    pub status: PeerStatus,
+    /// Total bytes sent by this node
+    #[serde(default)]
+    pub bytes_sent: u64,
+    /// Total bytes received by this node
+    #[serde(default)]
+    pub bytes_received: u64,
+    /// Number of connected peers
+    #[serde(default)]
+    pub connected_peers: usize,
 }
 
 /// Network-wide statistics (returned by /api/stats).
@@ -180,6 +192,8 @@ pub struct NetworkStats {
     pub total_nodes: usize,
     /// Number of currently active nodes
     pub active_nodes: usize,
+    /// Number of historical (offline) nodes
+    pub historical_nodes: usize,
     /// Total connections established network-wide
     pub total_connections: u64,
     /// Total bytes transferred network-wide
@@ -192,6 +206,10 @@ pub struct NetworkStats {
     pub geographic_distribution: std::collections::HashMap<String, usize>,
     /// Registry uptime in seconds
     pub uptime_secs: u64,
+    /// IPv4 connections count
+    pub ipv4_connections: u64,
+    /// IPv6 connections count
+    pub ipv6_connections: u64,
 }
 
 /// Breakdown of connections by method.
@@ -252,6 +270,75 @@ pub struct RegistrationResponse {
     pub peers: Vec<PeerInfo>,
     /// Registration expiry time (heartbeat deadline)
     pub expires_in_secs: u64,
+}
+
+/// Individual connection record for experiment results.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConnectionRecord {
+    /// Unique connection ID
+    pub id: u64,
+    /// Source peer ID
+    pub from_peer: String,
+    /// Destination peer ID
+    pub to_peer: String,
+    /// Connection method used
+    pub method: ConnectionMethod,
+    /// Whether connection used IPv6
+    pub is_ipv6: bool,
+    /// Round-trip time in milliseconds
+    pub rtt_ms: Option<u64>,
+    /// Unix timestamp when connection was established
+    pub timestamp: u64,
+    /// Source country code
+    pub from_country: Option<String>,
+    /// Destination country code
+    pub to_country: Option<String>,
+    /// Whether connection is still active
+    pub is_active: bool,
+}
+
+/// Experiment results summary.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExperimentResults {
+    /// Experiment start time (unix timestamp)
+    pub start_time: u64,
+    /// Total duration in seconds
+    pub duration_secs: u64,
+    /// Total unique nodes seen
+    pub total_nodes_seen: usize,
+    /// Peak concurrent nodes
+    pub peak_concurrent_nodes: usize,
+    /// All connection records
+    pub connections: Vec<ConnectionRecord>,
+    /// NAT traversal statistics
+    pub nat_stats: NatStats,
+    /// Breakdown by connection method
+    pub connection_breakdown: ConnectionBreakdown,
+    /// IPv4 vs IPv6 statistics
+    pub ipv4_connections: u64,
+    pub ipv6_connections: u64,
+    /// Geographic distribution
+    pub geographic_distribution: std::collections::HashMap<String, usize>,
+    /// Historical nodes (nodes that have gone offline)
+    pub historical_nodes: Vec<PeerInfo>,
+}
+
+/// Status of a peer (active or historical).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PeerStatus {
+    /// Currently active (heartbeat within threshold)
+    Active,
+    /// Recently inactive (within 5 minutes)
+    Inactive,
+    /// Historical (offline for more than 5 minutes)
+    Historical,
+}
+
+impl Default for PeerStatus {
+    fn default() -> Self {
+        Self::Active
+    }
 }
 
 /// Helper function to get current unix timestamp.

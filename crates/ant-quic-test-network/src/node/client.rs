@@ -51,6 +51,39 @@ impl Default for TestNodeConfig {
 /// Maximum consecutive failures before disconnecting a peer.
 const MAX_CONSECUTIVE_FAILURES: u32 = 5;
 
+/// Detect if the system has global IPv6 connectivity.
+fn has_global_ipv6() -> bool {
+    // Try to get network interfaces and check for global IPv6 addresses
+    #[cfg(unix)]
+    {
+        use std::process::Command;
+        // Use ip command to check for global IPv6 addresses
+        if let Ok(output) = Command::new("ip")
+            .args(["-6", "addr", "show", "scope", "global"])
+            .output()
+        {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            return stdout.contains("inet6") && !stdout.trim().is_empty();
+        }
+    }
+
+    #[cfg(windows)]
+    {
+        use std::process::Command;
+        if let Ok(output) = Command::new("ipconfig").output() {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            // Look for IPv6 addresses that aren't link-local (fe80::)
+            for line in stdout.lines() {
+                if line.contains("IPv6") && !line.contains("fe80::") && !line.contains("::1") {
+                    return true;
+                }
+            }
+        }
+    }
+
+    false
+}
+
 /// Maximum time without activity before considering a peer stale (seconds).
 const STALE_PEER_TIMEOUT_SECS: u64 = 60;
 
@@ -238,6 +271,20 @@ impl TestNode {
     async fn register(&self) -> anyhow::Result<()> {
         let external_addrs = self.external_addresses.read().await.clone();
 
+        // Detect actual network capabilities
+        let ipv6_available = has_global_ipv6();
+        let capabilities = NodeCapabilities {
+            pqc: true,
+            ipv4: true,
+            ipv6: ipv6_available,
+            nat_traversal: true,
+            relay: false,
+        };
+
+        if ipv6_available {
+            info!("IPv6 connectivity detected");
+        }
+
         let registration = NodeRegistration {
             peer_id: self.peer_id.clone(),
             public_key: self.public_key.clone(),
@@ -245,7 +292,7 @@ impl TestNode {
             external_addresses: external_addrs,
             nat_type: NatType::Unknown, // Will be determined after connections
             version: env!("CARGO_PKG_VERSION").to_string(),
-            capabilities: NodeCapabilities::default(),
+            capabilities,
             location_label: None,
         };
 

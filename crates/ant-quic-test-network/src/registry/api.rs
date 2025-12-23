@@ -75,6 +75,18 @@ pub async fn start_registry_server(config: RegistryConfig) -> anyhow::Result<()>
         .and(store_filter.clone())
         .and_then(handle_get_node_detail);
 
+    // GET /api/peers/all - Get all peers including historical
+    let all_peers = warp::path!("api" / "peers" / "all")
+        .and(warp::get())
+        .and(store_filter.clone())
+        .and_then(handle_get_all_peers);
+
+    // GET /api/results - Get experiment results
+    let results = warp::path!("api" / "results")
+        .and(warp::get())
+        .and(store_filter.clone())
+        .and_then(handle_get_results);
+
     // GET /ws/live - WebSocket for real-time updates
     let websocket = warp::path!("ws" / "live")
         .and(warp::ws())
@@ -93,11 +105,14 @@ pub async fn start_registry_server(config: RegistryConfig) -> anyhow::Result<()>
 
     // Combine all routes
     // Note: Dashboard routes are first so "/" serves index.html
+    // all_peers must come before peers to match the more specific path first
     let routes = dashboard
         .or(register)
         .or(heartbeat)
+        .or(all_peers)
         .or(peers)
         .or(stats)
+        .or(results)
         .or(node_detail)
         .or(websocket)
         .or(health)
@@ -181,6 +196,18 @@ async fn handle_get_stats(store: Arc<PeerStore>) -> Result<impl Reply, Rejection
     Ok(warp::reply::json(&stats))
 }
 
+/// Handle get all peers including historical.
+async fn handle_get_all_peers(store: Arc<PeerStore>) -> Result<impl Reply, Rejection> {
+    let peers = store.get_all_peers_with_historical();
+    Ok(warp::reply::json(&peers))
+}
+
+/// Handle get experiment results.
+async fn handle_get_results(store: Arc<PeerStore>) -> Result<impl Reply, Rejection> {
+    let results = store.get_experiment_results().await;
+    Ok(warp::reply::json(&results))
+}
+
 /// Detailed node information for the dashboard.
 #[derive(Debug, Clone, serde::Serialize)]
 struct NodeDetailResponse {
@@ -245,7 +272,8 @@ async fn handle_get_node_detail(
     peer_id: String,
     store: Arc<PeerStore>,
 ) -> Result<impl Reply, Rejection> {
-    let peers = store.get_all_peers();
+    // Check both active and historical peers
+    let peers = store.get_all_peers_with_historical();
     let peer = peers.iter().find(|p| p.peer_id.starts_with(&peer_id));
 
     match peer {

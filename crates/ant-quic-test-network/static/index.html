@@ -52,6 +52,12 @@
             display: flex;
             align-items: center;
             gap: 0.75rem;
+            cursor: pointer;
+            transition: opacity 0.2s;
+        }
+
+        .nav-brand:hover {
+            opacity: 0.8;
         }
 
         .nav-brand svg {
@@ -445,6 +451,7 @@
 
         .legend-dot.active { background: var(--accent-green); box-shadow: 0 0 10px var(--accent-green); }
         .legend-dot.idle { background: var(--accent-cyan); }
+        .legend-dot.historical { background: #666; opacity: 0.6; }
         .legend-dot.registry { background: var(--accent-gold); box-shadow: 0 0 10px var(--accent-gold); }
 
         /* Node Detail Panel */
@@ -527,6 +534,11 @@
         .node-status-badge.idle {
             background: rgba(0, 217, 255, 0.2);
             color: var(--accent-cyan);
+        }
+
+        .node-status-badge.historical {
+            background: rgba(102, 102, 102, 0.3);
+            color: #999;
         }
 
         .node-detail-peer-id {
@@ -1028,6 +1040,217 @@
             color: var(--accent-cyan);
         }
 
+        /* Results Modal */
+        .results-modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.85);
+            backdrop-filter: blur(10px);
+            z-index: 300;
+            display: none;
+            align-items: flex-start;
+            justify-content: center;
+            padding: 2rem;
+            overflow-y: auto;
+        }
+
+        .results-modal-overlay.active {
+            display: flex;
+        }
+
+        .results-modal {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 20px;
+            max-width: 1000px;
+            width: 100%;
+            margin: 2rem 0;
+            padding: 2.5rem;
+            position: relative;
+            animation: modalSlideIn 0.3s ease-out;
+        }
+
+        .results-modal-close {
+            position: absolute;
+            top: 1rem;
+            right: 1rem;
+            background: rgba(255, 255, 255, 0.1);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            color: var(--text-secondary);
+            font-size: 1.5rem;
+            cursor: pointer;
+            padding: 0.5rem 0.75rem;
+            line-height: 1;
+            transition: all 0.2s;
+        }
+
+        .results-modal-close:hover {
+            background: rgba(255, 255, 255, 0.15);
+            color: var(--text-primary);
+        }
+
+        .results-header {
+            margin-bottom: 2rem;
+            padding-bottom: 1rem;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .results-header h2 {
+            font-size: 1.75rem;
+            margin-bottom: 0.5rem;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
+        .results-header p {
+            color: var(--text-secondary);
+            font-size: 0.9rem;
+        }
+
+        .results-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1rem;
+            margin-bottom: 2rem;
+        }
+
+        .results-stat-card {
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 1.25rem;
+            text-align: center;
+        }
+
+        .results-stat-card .label {
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 0.5rem;
+        }
+
+        .results-stat-card .value {
+            font-size: 1.5rem;
+            font-weight: 700;
+        }
+
+        .results-stat-card .value.cyan { color: var(--accent-cyan); }
+        .results-stat-card .value.green { color: var(--accent-green); }
+        .results-stat-card .value.gold { color: var(--accent-gold); }
+        .results-stat-card .value.purple { color: var(--accent-purple); }
+
+        .results-section {
+            margin-bottom: 2rem;
+        }
+
+        .results-section h3 {
+            font-size: 1rem;
+            font-weight: 600;
+            color: var(--accent-cyan);
+            margin-bottom: 1rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .connection-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.85rem;
+        }
+
+        .connection-table th {
+            text-align: left;
+            padding: 0.75rem;
+            background: rgba(255, 255, 255, 0.05);
+            color: var(--text-secondary);
+            font-weight: 500;
+            text-transform: uppercase;
+            font-size: 0.7rem;
+            letter-spacing: 0.5px;
+        }
+
+        .connection-table td {
+            padding: 0.75rem;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .connection-table tr:hover td {
+            background: rgba(0, 217, 255, 0.05);
+        }
+
+        .method-badge {
+            display: inline-block;
+            padding: 0.2rem 0.5rem;
+            border-radius: 6px;
+            font-size: 0.7rem;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        .method-badge.direct { background: rgba(0, 255, 136, 0.2); color: var(--accent-green); }
+        .method-badge.hole_punched { background: rgba(0, 217, 255, 0.2); color: var(--accent-cyan); }
+        .method-badge.relayed { background: rgba(255, 215, 0, 0.2); color: var(--accent-gold); }
+
+        .ip-badge {
+            display: inline-block;
+            padding: 0.15rem 0.4rem;
+            border-radius: 4px;
+            font-size: 0.65rem;
+            font-weight: 600;
+        }
+
+        .ip-badge.ipv4 { background: rgba(0, 217, 255, 0.2); color: var(--accent-cyan); }
+        .ip-badge.ipv6 { background: rgba(168, 85, 247, 0.2); color: var(--accent-purple); }
+
+        .geo-distribution {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+        }
+
+        .geo-item {
+            display: flex;
+            align-items: center;
+            gap: 0.4rem;
+            padding: 0.4rem 0.75rem;
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            font-size: 0.85rem;
+        }
+
+        .geo-item .count {
+            font-weight: 600;
+            color: var(--accent-cyan);
+        }
+
+        .download-results-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.75rem 1.5rem;
+            background: linear-gradient(135deg, var(--accent-cyan), var(--accent-green));
+            color: var(--bg-dark);
+            border: none;
+            border-radius: 10px;
+            font-weight: 600;
+            font-size: 0.9rem;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+
+        .download-results-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 20px rgba(0, 217, 255, 0.3);
+        }
+
         /* Footer */
         .footer {
             padding: 3rem 2rem;
@@ -1079,7 +1302,7 @@
 <body>
     <!-- Navigation -->
     <nav class="nav">
-        <div class="nav-brand">
+        <a href="#network" class="nav-brand" onclick="scrollToTop()" style="text-decoration: none;">
             <svg viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
                 <circle cx="20" cy="20" r="18" stroke="url(#grad)" stroke-width="2" fill="none"/>
                 <circle cx="20" cy="20" r="8" fill="url(#grad)"/>
@@ -1092,9 +1315,10 @@
                 </defs>
             </svg>
             <span>ant-quic</span>
-        </div>
+        </a>
         <div class="nav-links">
             <a href="#network">Network</a>
+            <a href="#results" onclick="showResultsModal(); return false;">Results</a>
             <a href="#download">Download</a>
             <a href="#architecture">Architecture</a>
             <a href="https://github.com/dirvine/ant-quic" target="_blank">GitHub</a>
@@ -1127,7 +1351,7 @@
             <h3>Network Nodes</h3>
             <div class="stat-value" id="total-nodes">0</div>
             <div style="color: var(--text-secondary); font-size: 0.85rem;">
-                <span id="active-nodes">0</span> currently active
+                <span id="active-nodes">0</span> active, <span id="historical-nodes">0</span> historical
             </div>
         </div>
         <div class="stat-card">
@@ -1291,6 +1515,10 @@
         <div class="legend-item">
             <span class="legend-dot idle"></span>
             <span>Idle Node</span>
+        </div>
+        <div class="legend-item">
+            <span class="legend-dot historical"></span>
+            <span>Historical (Offline)</span>
         </div>
     </div>
 
@@ -1485,6 +1713,112 @@
         </div>
     </div>
 
+    <!-- Results Modal Overlay -->
+    <div class="results-modal-overlay" id="results-modal-overlay">
+        <div class="results-modal">
+            <button class="results-modal-close" onclick="closeResultsModal()">&times;</button>
+
+            <div class="results-header">
+                <h2>Experiment Results</h2>
+                <p id="results-duration">Loading experiment data...</p>
+            </div>
+
+            <!-- Overview Stats -->
+            <div class="results-grid" id="results-overview">
+                <div class="results-stat-card">
+                    <div class="label">Total Nodes Seen</div>
+                    <div class="value cyan" id="results-total-nodes">0</div>
+                </div>
+                <div class="results-stat-card">
+                    <div class="label">Peak Concurrent</div>
+                    <div class="value green" id="results-peak-nodes">0</div>
+                </div>
+                <div class="results-stat-card">
+                    <div class="label">Total Connections</div>
+                    <div class="value gold" id="results-total-connections">0</div>
+                </div>
+                <div class="results-stat-card">
+                    <div class="label">Success Rate</div>
+                    <div class="value green" id="results-success-rate">0%</div>
+                </div>
+            </div>
+
+            <!-- Connection Breakdown -->
+            <div class="results-section">
+                <h3>Connection Methods</h3>
+                <div class="results-grid">
+                    <div class="results-stat-card">
+                        <div class="label">Direct</div>
+                        <div class="value green" id="results-direct">0</div>
+                    </div>
+                    <div class="results-stat-card">
+                        <div class="label">Hole Punched</div>
+                        <div class="value cyan" id="results-punched">0</div>
+                    </div>
+                    <div class="results-stat-card">
+                        <div class="label">Relayed</div>
+                        <div class="value gold" id="results-relayed">0</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- IP Version Stats -->
+            <div class="results-section">
+                <h3>IP Version Distribution</h3>
+                <div class="results-grid">
+                    <div class="results-stat-card">
+                        <div class="label">IPv4 Connections</div>
+                        <div class="value cyan" id="results-ipv4">0</div>
+                    </div>
+                    <div class="results-stat-card">
+                        <div class="label">IPv6 Connections</div>
+                        <div class="value purple" id="results-ipv6">0</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Geographic Distribution -->
+            <div class="results-section">
+                <h3>Geographic Distribution</h3>
+                <div class="geo-distribution" id="results-geo">
+                    <span style="color: var(--text-secondary);">Loading...</span>
+                </div>
+            </div>
+
+            <!-- Connection History -->
+            <div class="results-section">
+                <h3>Recent Connections (Last 50)</h3>
+                <div style="overflow-x: auto;">
+                    <table class="connection-table">
+                        <thead>
+                            <tr>
+                                <th>From</th>
+                                <th>To</th>
+                                <th>Method</th>
+                                <th>IP</th>
+                                <th>RTT</th>
+                                <th>Time</th>
+                            </tr>
+                        </thead>
+                        <tbody id="results-connections">
+                            <tr><td colspan="6" style="text-align: center; color: var(--text-secondary);">Loading...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Download Button -->
+            <div style="text-align: center; margin-top: 2rem;">
+                <button class="download-results-btn" onclick="downloadResults()">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/>
+                    </svg>
+                    Download Full Results (JSON)
+                </button>
+            </div>
+        </div>
+    </div>
+
     <!-- Footer -->
     <footer class="footer">
         <p>
@@ -1606,6 +1940,7 @@
         function updateStats(data) {
             document.getElementById('total-nodes').textContent = data.total_nodes || 0;
             document.getElementById('active-nodes').textContent = data.active_nodes || 0;
+            document.getElementById('historical-nodes').textContent = data.historical_nodes || 0;
             document.getElementById('total-connections').textContent = data.total_connections || 0;
             document.getElementById('direct-count').textContent = data.connection_breakdown?.direct || 0;
             document.getElementById('punched-count').textContent = data.connection_breakdown?.hole_punched || 0;
@@ -1631,7 +1966,7 @@
             try {
                 const [statsRes, peersRes] = await Promise.all([
                     fetch('/api/stats'),
-                    fetch('/api/peers')
+                    fetch('/api/peers/all')  // Use /all to include historical peers
                 ]);
                 const stats = await statsRes.json();
                 const peers = await peersRes.json();
@@ -1649,12 +1984,29 @@
                         ? { lat: peer.latitude, lng: peer.longitude }
                         : countryCentroids[peer.country_code] || { lat: 0, lng: 0 };
 
+                    // Determine color and size based on status
+                    let color, size;
+                    if (peer.status === 'historical') {
+                        color = '#666666';  // Gray for historical nodes
+                        size = 0.15;
+                    } else if (peer.status === 'inactive') {
+                        color = '#00d9ff';  // Cyan for inactive
+                        size = 0.2;
+                    } else if (peer.is_active) {
+                        color = '#00ff88';  // Green for active
+                        size = 0.3;
+                    } else {
+                        color = '#00d9ff';  // Cyan default
+                        size = 0.2;
+                    }
+
                     nodes.push({
                         lat: coords.lat,
                         lng: coords.lng,
-                        color: peer.is_active ? '#00ff88' : '#00d9ff',
-                        size: peer.is_active ? 0.3 : 0.2,
-                        peer_id: peer.peer_id
+                        color: color,
+                        size: size,
+                        peer_id: peer.peer_id,
+                        status: peer.status
                     });
                 }
                 globe.pointsData(nodes);
@@ -1709,8 +2061,19 @@
                 // Update peer ID and status
                 document.getElementById('node-peer-id').textContent = data.peer_id;
                 const statusBadge = document.getElementById('node-status-badge');
-                statusBadge.textContent = data.is_active ? 'Active' : 'Idle';
-                statusBadge.className = `node-status-badge ${data.is_active ? 'active' : 'idle'}`;
+                let statusText, statusClass;
+                if (data.status === 'historical') {
+                    statusText = 'Historical';
+                    statusClass = 'historical';
+                } else if (data.status === 'inactive' || !data.is_active) {
+                    statusText = 'Inactive';
+                    statusClass = 'idle';
+                } else {
+                    statusText = 'Active';
+                    statusClass = 'active';
+                }
+                statusBadge.textContent = statusText;
+                statusBadge.className = `node-status-badge ${statusClass}`;
 
                 // Connectivity score
                 document.getElementById('connectivity-score').textContent = data.connectivity?.score || 0;
@@ -1790,6 +2153,14 @@
         document.getElementById('node-detail-overlay').addEventListener('click', (e) => {
             if (e.target.id === 'node-detail-overlay') closeNodeDetail();
         });
+
+        // Scroll to top function
+        function scrollToTop() {
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+            closeResultsModal();
+            closeAdrModal();
+            closeNodeDetail();
+        }
 
         // Init
         fetchData();
@@ -2033,6 +2404,138 @@
             userManualToggle = true;
             // Reset after 10 seconds to allow auto behavior again
             setTimeout(() => { userManualToggle = false; }, 10000);
+        });
+
+        // ============================================
+        // Results Modal System
+        // ============================================
+        let cachedResults = null;
+
+        async function showResultsModal() {
+            const overlay = document.getElementById('results-modal-overlay');
+            overlay.classList.add('active');
+            document.body.style.overflow = 'hidden';
+
+            try {
+                const response = await fetch('/api/results');
+                const results = await response.json();
+                cachedResults = results;
+                updateResultsModal(results);
+            } catch (e) {
+                console.error('Error fetching results:', e);
+                document.getElementById('results-duration').textContent = 'Error loading experiment data';
+            }
+        }
+
+        function closeResultsModal() {
+            document.getElementById('results-modal-overlay').classList.remove('active');
+            document.body.style.overflow = '';
+        }
+
+        function formatDuration(secs) {
+            const hours = Math.floor(secs / 3600);
+            const mins = Math.floor((secs % 3600) / 60);
+            if (hours > 0) {
+                return `${hours}h ${mins}m`;
+            }
+            return `${mins}m`;
+        }
+
+        function updateResultsModal(results) {
+            // Duration
+            const startDate = new Date(results.start_time * 1000);
+            const duration = formatDuration(results.duration_secs);
+            document.getElementById('results-duration').textContent =
+                `Started ${startDate.toLocaleString()} | Duration: ${duration}`;
+
+            // Overview stats
+            document.getElementById('results-total-nodes').textContent = results.total_nodes_seen || 0;
+            document.getElementById('results-peak-nodes').textContent = results.peak_concurrent_nodes || 0;
+            document.getElementById('results-total-connections').textContent = results.connections?.length || 0;
+
+            // Success rate
+            const natStats = results.nat_stats || {};
+            const totalAttempts = natStats.attempts || 0;
+            const totalSuccess = (natStats.direct_success || 0) + (natStats.hole_punch_success || 0) + (natStats.relay_success || 0);
+            const successRate = totalAttempts > 0 ? ((totalSuccess / totalAttempts) * 100).toFixed(1) : 0;
+            document.getElementById('results-success-rate').textContent = `${successRate}%`;
+
+            // Connection breakdown
+            const breakdown = results.connection_breakdown || {};
+            document.getElementById('results-direct').textContent = breakdown.direct || 0;
+            document.getElementById('results-punched').textContent = breakdown.hole_punched || 0;
+            document.getElementById('results-relayed').textContent = breakdown.relayed || 0;
+
+            // IP version stats
+            document.getElementById('results-ipv4').textContent = results.ipv4_connections || 0;
+            document.getElementById('results-ipv6').textContent = results.ipv6_connections || 0;
+
+            // Geographic distribution
+            const geoContainer = document.getElementById('results-geo');
+            const geo = results.geographic_distribution || {};
+            const geoEntries = Object.entries(geo).sort((a, b) => b[1] - a[1]);
+
+            if (geoEntries.length > 0) {
+                geoContainer.innerHTML = geoEntries.map(([code, count]) =>
+                    `<div class="geo-item"><span>${code}</span><span class="count">${count}</span></div>`
+                ).join('');
+            } else {
+                geoContainer.innerHTML = '<span style="color: var(--text-secondary);">No geographic data available</span>';
+            }
+
+            // Connection history (last 50)
+            const tbody = document.getElementById('results-connections');
+            const connections = results.connections || [];
+            const recent = connections.slice(-50).reverse();
+
+            if (recent.length > 0) {
+                tbody.innerHTML = recent.map(conn => {
+                    const time = new Date(conn.timestamp * 1000).toLocaleTimeString();
+                    const methodClass = conn.method.toLowerCase();
+                    const ipType = conn.is_ipv6 ? 'ipv6' : 'ipv4';
+                    const rtt = conn.rtt_ms ? `${conn.rtt_ms}ms` : '-';
+                    return `<tr>
+                        <td><code>${conn.from_peer.substring(0, 8)}...</code></td>
+                        <td><code>${conn.to_peer.substring(0, 8)}...</code></td>
+                        <td><span class="method-badge ${methodClass}">${conn.method}</span></td>
+                        <td><span class="ip-badge ${ipType}">${ipType.toUpperCase()}</span></td>
+                        <td>${rtt}</td>
+                        <td>${time}</td>
+                    </tr>`;
+                }).join('');
+            } else {
+                tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; color: var(--text-secondary);">No connections recorded yet</td></tr>';
+            }
+        }
+
+        function downloadResults() {
+            if (!cachedResults) {
+                alert('No results data available');
+                return;
+            }
+
+            const blob = new Blob([JSON.stringify(cachedResults, null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `ant-quic-experiment-results-${new Date().toISOString().split('T')[0]}.json`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        }
+
+        // Close results modal on escape or overlay click
+        document.getElementById('results-modal-overlay').addEventListener('click', (e) => {
+            if (e.target.id === 'results-modal-overlay') closeResultsModal();
+        });
+
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') {
+                closeResultsModal();
+                closeAdrModal();
+                closeNodeDetail();
+            }
         });
     </script>
 </body>
