@@ -405,9 +405,15 @@ jobs:
       - name: Prepare release assets
         run: |
           mkdir -p release
-          find artifacts -name "*.tar.gz*" -o -name "*.zip*" | xargs -I {} mv {} release/
+          # Find only files (not directories) and move them to release/
+          find artifacts -type f \( -name "*.tar.gz" -o -name "*.tar.gz.sha256" -o -name "*.zip" -o -name "*.zip.sha256" \) -exec mv {} release/ \;
+          # List what we found
+          echo "Release assets:"
+          ls -la release/
+          # Generate checksums for binary files only
           cd release
-          sha256sum * | grep -v ".sha256" > checksums.txt
+          sha256sum *.tar.gz *.zip 2>/dev/null | sort > checksums.txt || true
+          cat checksums.txt
           cd ..
 
       - name: Create Release
