@@ -1,0 +1,267 @@
+# Exotic Platforms - BSD, Solaris, illumos, and Android testing
+# Weekly high-overhead tests for exotic platforms and configurations
+
+name: Exotic Platforms
+
+on:
+  workflow_dispatch:
+    inputs:
+      platforms:
+        description: 'Platform set to test'
+        required: false
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - bsd
+          - android
+  schedule:
+    # Run weekly on Fridays at 3:21 AM UTC
+    - cron: '21 3 * * 5'
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # FreeBSD testing via VM
+  freebsd:
+    name: FreeBSD
+    runs-on: ubuntu-latest
+    if: github.event.inputs.platforms == 'all' || github.event.inputs.platforms == 'bsd' || github.event_name == 'schedule'
+    continue-on-error: true  # Exotic platform - transient issues expected
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Test on FreeBSD
+        uses: vmactions/freebsd-vm@v1
+        with:
+          usesh: true
+          mem: 4096
+          copyback: false
+          prepare: |
+            pkg install -y curl cmake
+            curl https://sh.rustup.rs -sSf --output rustup.sh
+            sh rustup.sh -y --profile minimal --default-toolchain stable
+          run: |
+            export PATH="$HOME/.cargo/bin:$PATH"
+            echo "===== rustc --version ====="
+            rustc --version
+            echo "===== freebsd-version ====="
+            freebsd-version
+
+            cargo build --locked --lib --bins --examples
+            cargo test --locked --lib
+            cargo test --locked --lib -- --ignored stress
+
+  # NetBSD testing via VM
+  netbsd:
+    name: NetBSD
+    runs-on: ubuntu-latest
+    if: github.event.inputs.platforms == 'all' || github.event.inputs.platforms == 'bsd' || github.event_name == 'schedule'
+    continue-on-error: true
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Test on NetBSD
+        uses: vmactions/netbsd-vm@v1
+        with:
+          usesh: true
+          mem: 4096
+          copyback: false
+          prepare: |
+            export PATH="/usr/sbin:/sbin:$PATH"
+            pkg_add curl
+            curl https://sh.rustup.rs -sSf --output rustup.sh
+            sh rustup.sh -y --profile minimal --default-toolchain stable
+          run: |
+            export PATH="$HOME/.cargo/bin:$PATH"
+            echo "===== rustc --version ====="
+            rustc --version
+            echo "===== uname -a ====="
+            uname -a
+
+            cargo build --locked --lib --bins --examples
+            cargo test --locked --lib
+            cargo test --locked --lib -- --ignored stress
+
+  # Solaris testing via VM
+  solaris:
+    name: Solaris
+    runs-on: ubuntu-latest
+    if: github.event.inputs.platforms == 'all' || github.event.inputs.platforms == 'bsd' || github.event_name == 'schedule'
+    continue-on-error: true
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Test on Solaris
+        uses: vmactions/solaris-vm@v1
+        with:
+          release: "11.4-gcc"
+          usesh: true
+          mem: 4096
+          copyback: false
+          prepare: |
+            source <(curl -s https://raw.githubusercontent.com/psumbera/solaris-rust/refs/heads/main/sh.rust-web-install)
+            echo "===== rustc --version ====="
+            rustc --version
+            echo "===== Solaris version ====="
+            uname -a
+          run: |
+            export PATH=$HOME/.rust_solaris/bin:$PATH
+            # Workaround for https://github.com/quinn-rs/quinn/issues/2218
+            export CARGO_HTTP_MULTIPLEXING=false
+
+            cargo build --locked --lib --bins --examples
+            cargo test --locked --lib
+            # Skip stress tests on Solaris - they hang
+
+  # illumos (OmniOS) testing via VM
+  illumos:
+    name: illumos (OmniOS)
+    runs-on: ubuntu-latest
+    if: github.event.inputs.platforms == 'all' || github.event.inputs.platforms == 'bsd' || github.event_name == 'schedule'
+    continue-on-error: true
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Test on illumos
+        uses: vmactions/omnios-vm@v1
+        with:
+          usesh: true
+          mem: 4096
+          copyback: false
+          prepare: |
+            pkg install gcc14 curl pkg-config glib2
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+          run: |
+            . "$HOME/.cargo/env"
+
+            cargo build --locked --lib --bins --examples
+            cargo test --locked --lib
+            cargo test --locked --lib -- --ignored stress
+
+  # Android emulator testing
+  android:
+    name: Android (${{ matrix.target }})
+    runs-on: ubuntu-latest
+    if: github.event.inputs.platforms == 'all' || github.event.inputs.platforms == 'android' || github.event_name == 'schedule'
+    continue-on-error: true  # aws-lc-rs has bindgen issues on Android
+    timeout-minutes: 60
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-linux-android
+            emulator-arch: x86_64
+            api-level: 26
+          - target: i686-linux-android
+            emulator-arch: x86
+            api-level: 25
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '21'
+
+      - name: Install Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android NDK
+        run: sdkmanager --install "ndk;25.2.9519653"
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: android-${{ matrix.target }}
+
+      - name: Install cargo-ndk
+        run: cargo install cargo-ndk --locked
+
+      - name: Build unit tests for Android
+        run: cargo ndk -t ${{ matrix.target }} test --no-run
+
+      - name: Enable KVM group perms
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Run tests on Android Emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: ${{ matrix.api-level }}
+          arch: ${{ matrix.emulator-arch }}
+          script: .github/workflows/rust-android-run-tests-on-emulator.sh
+
+  # Feature powerset testing (exotic feature combinations)
+  feature-powerset:
+    name: Feature Powerset (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    if: github.event.inputs.platforms == 'all' || github.event_name == 'schedule'
+    continue-on-error: true  # Feature powerset is advisory
+    timeout-minutes: 60
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
+    env:
+      RUSTFLAGS: -Dwarnings
+      # Skip features with compatibility issues
+      SKIP_FEATURES: ${{ matrix.os != 'ubuntu-latest' && 'rustls-aws-lc-rs,rustls-aws-lc-rs-fips,aws-lc-rs,aws-lc-rs-fips,pqc,property_testing' || 'rustls-aws-lc-rs,aws-lc-rs,pqc,property_testing' }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: features-${{ matrix.os }}
+
+      - uses: taiki-e/install-action@cargo-hack
+
+      - name: Check feature powerset
+        run: cargo hack check --feature-powerset --depth 2 --no-dev-deps --ignore-private --skip "${{env.SKIP_FEATURES}}" --include-features rustls-aws-lc-rs
+
+  # Summary job
+  summary:
+    name: Summary
+    needs: [freebsd, netbsd, solaris, illumos, android, feature-powerset]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Generate summary
+        run: |
+          echo "# Exotic Platforms Test Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Platform | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| FreeBSD | ${{ needs.freebsd.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| NetBSD | ${{ needs.netbsd.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Solaris | ${{ needs.solaris.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| illumos | ${{ needs.illumos.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Android | ${{ needs.android.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Feature Powerset | ${{ needs.feature-powerset.result }} |" >> $GITHUB_STEP_SUMMARY

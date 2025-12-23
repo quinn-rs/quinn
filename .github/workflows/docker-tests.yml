@@ -1,10 +1,20 @@
-# Docker NAT Tests
-# Simplified version for act compatibility
+# Docker Tests - NAT simulation in containers
+# Tests NAT traversal using Docker-based network simulation
 
-name: Docker NAT Tests
+name: Docker Tests
 
 on:
   workflow_call:
+  workflow_dispatch:
+  schedule:
+    # Run weekly on Saturdays at 4 AM UTC
+    - cron: '0 4 * * 6'
+  push:
+    branches: [master, main]
+    paths:
+      - 'docker/**'
+      - 'src/**/nat*.rs'
+      - 'src/**/connection*.rs'
 
 env:
   DOCKER_BUILDKIT: 1

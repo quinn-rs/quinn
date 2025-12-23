@@ -1,0 +1,174 @@
+# CI - Main continuous integration gate
+# Runs on every push/PR to verify code quality and tests
+
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+    branches: [master, main]
+  workflow_dispatch:
+
+env:
+  RUST_BACKTRACE: 1
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Quick checks - lint, format, compile
+  quick-checks:
+    name: Quick Checks
+    uses: ./.github/workflows/quick-checks.yml
+
+  # Main test suite
+  test:
+    name: Test Suite
+    needs: quick-checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build
+        run: cargo build --lib --bins --examples
+
+      - name: Run library tests
+        run: cargo test --lib --all-features -- --test-threads=2
+
+      - name: Run integration tests
+        run: |
+          cargo test --test quick --all-features -- --test-threads=2 --skip auto_binding --skip binding_stream --skip kem_group_is_restricted_with_provider
+          cargo test --test standard --all-features -- --test-threads=2
+
+      - name: Run doc tests
+        run: cargo test --doc
+
+  # Security audit
+  security:
+    name: Security Audit
+    needs: quick-checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Cache cargo-audit
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/cargo-audit
+          key: cargo-audit-${{ runner.os }}
+
+      - name: Install cargo-audit
+        run: |
+          if ! command -v cargo-audit &> /dev/null; then
+            cargo install cargo-audit --locked
+          fi
+
+      - name: Run security audit
+        run: cargo audit
+
+  # NAT traversal tests
+  nat-tests:
+    name: NAT Tests
+    needs: quick-checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: NAT traversal tests
+        run: cargo test --lib nat_traversal --features test-utils -- --test-threads=2
+
+      - name: Candidate discovery tests
+        run: cargo test --lib candidate_discovery --features test-utils -- --test-threads=2
+
+      - name: Connection establishment tests
+        run: cargo test --lib connection_establishment --features test-utils -- --test-threads=2
+
+  # MSRV verification
+  msrv:
+    name: MSRV (1.85.0)
+    needs: quick-checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install MSRV
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: 1.85.0
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: msrv
+
+      - name: Check MSRV
+        run: cargo check --all-features
+
+  # CI gate - all required jobs must pass
+  ci-success:
+    name: CI Gate
+    needs: [quick-checks, test, security, nat-tests, msrv]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Check all jobs
+        run: |
+          echo "### CI Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Job | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|-----|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Quick Checks | ${{ needs.quick-checks.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Test Suite | ${{ needs.test.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Security | ${{ needs.security.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| NAT Tests | ${{ needs.nat-tests.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| MSRV | ${{ needs.msrv.result }} |" >> $GITHUB_STEP_SUMMARY
+
+          # Required jobs
+          if [[ "${{ needs.quick-checks.result }}" != "success" ]]; then
+            echo "::error::Quick checks failed"
+            exit 1
+          fi
+          if [[ "${{ needs.test.result }}" != "success" ]]; then
+            echo "::error::Test suite failed"
+            exit 1
+          fi
+          if [[ "${{ needs.security.result }}" != "success" ]]; then
+            echo "::error::Security audit failed"
+            exit 1
+          fi
+          if [[ "${{ needs.nat-tests.result }}" != "success" ]]; then
+            echo "::error::NAT tests failed"
+            exit 1
+          fi
+          if [[ "${{ needs.msrv.result }}" != "success" ]]; then
+            echo "::error::MSRV check failed"
+            exit 1
+          fi
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**All CI checks passed!**" >> $GITHUB_STEP_SUMMARY

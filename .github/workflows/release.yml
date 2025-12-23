@@ -1,3 +1,6 @@
+# Release - Build and publish releases
+# Builds multi-platform binaries, Docker images, and publishes to crates.io
+
 name: Release
 
 on:
@@ -9,6 +12,10 @@ on:
       version:
         description: 'Version to release (e.g., v0.1.0)'
         required: true
+      dry_run:
+        description: 'Dry run (no actual release)'
+        type: boolean
+        default: false
 
 env:
   CARGO_TERM_COLOR: always
@@ -20,9 +27,13 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
+      version_number: ${{ steps.version.outputs.version_number }}
+      is_prerelease: ${{ steps.version.outputs.is_prerelease }}
     steps:
       - uses: actions/checkout@v4
-      
+        with:
+          fetch-depth: 0  # Need full history for changelog
+
       - name: Extract version
         id: version
         run: |
@@ -32,14 +43,94 @@ jobs:
             VERSION="${GITHUB_REF#refs/tags/}"
           fi
           echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "Version: $VERSION"
-      
+
+          # Extract version number without 'v' prefix
+          VERSION_NUMBER="${VERSION#v}"
+          echo "version_number=$VERSION_NUMBER" >> $GITHUB_OUTPUT
+
+          # Check if pre-release
+          if [[ "$VERSION" =~ -(alpha|beta|rc) ]]; then
+            echo "is_prerelease=true" >> $GITHUB_OUTPUT
+          else
+            echo "is_prerelease=false" >> $GITHUB_OUTPUT
+          fi
+
+          echo "Version: $VERSION (number: $VERSION_NUMBER)"
+
       - name: Validate version format
         run: |
           VERSION="${{ steps.version.outputs.version }}"
-          if ! [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9]+)?$ ]]; then
+          VERSION_REGEX="^v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9]+(\.[0-9]+)?)?$"
+          if ! [[ "$VERSION" =~ $VERSION_REGEX ]]; then
             echo "::error::Invalid version format: $VERSION"
             exit 1
+          fi
+
+      - name: Check Cargo.toml version
+        run: |
+          CARGO_VERSION=$(grep "^version" Cargo.toml | head -1 | cut -d'"' -f2)
+          EXPECTED="${{ steps.version.outputs.version_number }}"
+          if [[ "$CARGO_VERSION" != "$EXPECTED" ]]; then
+            echo "::error::Cargo.toml version mismatch"
+            echo "::error::Expected $EXPECTED but found $CARGO_VERSION"
+            exit 1
+          fi
+
+  changelog:
+    name: Generate Changelog
+    needs: validate
+    runs-on: ubuntu-latest
+    outputs:
+      changelog: ${{ steps.changelog.outputs.changelog }}
+      breaking_changes: ${{ steps.breaking.outputs.has_breaking }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install git-cliff
+        run: cargo install git-cliff --locked
+
+      - name: Generate changelog
+        id: changelog
+        run: |
+          PREVIOUS_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+
+          if [ -z "$PREVIOUS_TAG" ]; then
+            echo "No previous tag found, generating full changelog"
+            git cliff --output CHANGELOG_RELEASE.md
+          else
+            echo "Generating changelog from $PREVIOUS_TAG to HEAD"
+            git cliff --output CHANGELOG_RELEASE.md "$PREVIOUS_TAG"..HEAD
+          fi
+
+          {
+            echo 'changelog<<EOF'
+            cat CHANGELOG_RELEASE.md
+            echo 'EOF'
+          } >> $GITHUB_OUTPUT
+
+      - name: Check for breaking changes
+        id: breaking
+        run: |
+          if grep -q "BREAKING CHANGE\|⚠" CHANGELOG_RELEASE.md; then
+            echo "has_breaking=true" >> $GITHUB_OUTPUT
+            echo "Warning: Breaking changes detected!"
+          else
+            echo "has_breaking=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Update CHANGELOG.md
+        if: github.event.inputs.dry_run != 'true'
+        run: |
+          git cliff --output CHANGELOG.md
+
+          if ! git diff --quiet CHANGELOG.md; then
+            git config user.name github-actions
+            git config user.email github-actions@github.com
+            git add CHANGELOG.md
+            git commit -m "chore: update CHANGELOG.md for ${{ needs.validate.outputs.version }}"
+            git push
           fi
 
   test:
@@ -47,39 +138,59 @@ jobs:
     needs: validate
     uses: ./.github/workflows/quick-checks.yml
 
+  security-check:
+    name: Security Audit
+    needs: validate
+    uses: ./.github/workflows/security.yml
+
   build:
     name: Build ${{ matrix.target }}
-    needs: [validate, test]
+    needs: [validate, test, security-check]
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
         include:
-          # Linux
+          # Linux x86_64
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             binary: ant-quic
             archive: ant-quic-x86_64-linux.tar.gz
-          
+
+          # Linux musl (Alpine)
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            binary: ant-quic
+            archive: ant-quic-x86_64-linux-musl.tar.gz
+            use-cross: true
+
           # Linux ARM64
           - os: ubuntu-latest
             target: aarch64-unknown-linux-gnu
             binary: ant-quic
             archive: ant-quic-aarch64-linux.tar.gz
             use-cross: true
-          
+
+          # Linux ARMv7
+          - os: ubuntu-latest
+            target: armv7-unknown-linux-gnueabihf
+            binary: ant-quic
+            archive: ant-quic-armv7-linux.tar.gz
+            use-cross: true
+
           # macOS Intel
           - os: macos-latest
             target: x86_64-apple-darwin
             binary: ant-quic
             archive: ant-quic-x86_64-macos.tar.gz
-          
+
           # macOS Apple Silicon
           - os: macos-latest
             target: aarch64-apple-darwin
             binary: ant-quic
             archive: ant-quic-aarch64-macos.tar.gz
-          
-          # Windows
+
+          # Windows MSVC
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             binary: ant-quic.exe
@@ -88,7 +199,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        if: ${{ !startsWith(runner.name, 'nektos/act') }}
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -101,7 +211,18 @@ jobs:
         with:
           tool: cross
 
-      - name: Build ant-quic
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: cargo-${{ matrix.target }}-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build
         run: |
           if [ "${{ matrix.use-cross }}" = "true" ]; then
             cross build --release --target ${{ matrix.target }} --bin ant-quic
@@ -110,49 +231,20 @@ jobs:
           fi
         shell: bash
 
-      - name: Build e2e-dashboard
+      - name: Strip binary (Unix)
+        if: matrix.os != 'windows-latest'
         run: |
-          if [ "${{ matrix.use-cross }}" = "true" ]; then
-            cross build --release --target ${{ matrix.target }} --manifest-path e2e-dashboard/Cargo.toml
-          else
-            cargo build --release --target ${{ matrix.target }} --manifest-path e2e-dashboard/Cargo.toml
+          if command -v strip &> /dev/null; then
+            strip target/${{ matrix.target }}/release/${{ matrix.binary }} || true
           fi
-        shell: bash
 
-      - name: Package ant-quic (Unix)
+      - name: Package (Unix)
         if: matrix.os != 'windows-latest'
         run: |
           cd target/${{ matrix.target }}/release
           tar czf ../../../${{ matrix.archive }} ${{ matrix.binary }}
           cd -
-
-      - name: Package e2e-dashboard (Unix)
-        if: matrix.os != 'windows-latest'
-        run: |
-          # Determine archive name based on target (matching ant-quic naming pattern)
-          case "${{ matrix.target }}" in
-            x86_64-unknown-linux-gnu) ARCH="x86_64-linux" ;;
-            aarch64-unknown-linux-gnu) ARCH="aarch64-linux" ;;
-            x86_64-apple-darwin) ARCH="x86_64-macos" ;;
-            aarch64-apple-darwin) ARCH="aarch64-macos" ;;
-            *) ARCH="${{ matrix.target }}" ;;
-          esac
-
-          DASHBOARD_BIN="e2e-dashboard"
-          ARCHIVE="e2e-dashboard-${ARCH}.tar.gz"
-
-          # Dashboard binary might be in e2e-dashboard/target or root target depending on workspace setup
-          if [ -f "e2e-dashboard/target/${{ matrix.target }}/release/${DASHBOARD_BIN}" ]; then
-            cd e2e-dashboard/target/${{ matrix.target }}/release
-            tar czf ../../../../${ARCHIVE} ${DASHBOARD_BIN}
-            cd -
-          elif [ -f "target/${{ matrix.target }}/release/${DASHBOARD_BIN}" ]; then
-            cd target/${{ matrix.target }}/release
-            tar czf ../../../${ARCHIVE} ${DASHBOARD_BIN}
-            cd -
-          fi
-
-          echo "DASHBOARD_ARCHIVE=${ARCHIVE}" >> $GITHUB_ENV
+          sha256sum ${{ matrix.archive }} > ${{ matrix.archive }}.sha256
 
       - name: Package (Windows)
         if: matrix.os == 'windows-latest'
@@ -160,65 +252,163 @@ jobs:
           cd target/${{ matrix.target }}/release
           7z a ../../../${{ matrix.archive }} ${{ matrix.binary }}
           cd -
+          certutil -hashfile ${{ matrix.archive }} SHA256 > ${{ matrix.archive }}.sha256
 
-      - name: Upload ant-quic Artifact
+      - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.archive }}
-          path: ${{ matrix.archive }}
+          path: |
+            ${{ matrix.archive }}
+            ${{ matrix.archive }}.sha256
           retention-days: 1
 
-      - name: Upload e2e-dashboard Artifact
-        if: matrix.os != 'windows-latest'
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ env.DASHBOARD_ARCHIVE }}
-          path: ${{ env.DASHBOARD_ARCHIVE }}
-          retention-days: 1
-          if-no-files-found: ignore
-
-  release:
-    name: Create Release
-    needs: build
+  build-docker:
+    name: Build Docker Images
+    needs: [validate, test]
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        if: ${{ !startsWith(runner.name, 'nektos/act') }}
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        if: github.event.inputs.dry_run != 'true'
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Login to GitHub Container Registry
+        if: github.event.inputs.dry_run != 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push Docker images
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64,linux/arm/v7
+          push: ${{ github.event.inputs.dry_run != 'true' }}
+          tags: |
+            ${{ secrets.DOCKER_USERNAME }}/ant-quic:${{ needs.validate.outputs.version_number }}
+            ${{ secrets.DOCKER_USERNAME }}/ant-quic:latest
+            ghcr.io/${{ github.repository }}:${{ needs.validate.outputs.version_number }}
+            ghcr.io/${{ github.repository }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  publish-crate:
+    name: Publish to crates.io
+    needs: [validate, build, changelog]
+    runs-on: ubuntu-latest
+    if: github.event.inputs.dry_run != 'true'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Verify crate
+        run: cargo publish --dry-run
+
+      - name: Publish to crates.io
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: cargo publish --no-verify
+
+  release:
+    name: Create GitHub Release
+    needs: [validate, build, build-docker, changelog, publish-crate]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    if: github.event.inputs.dry_run != 'true'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
 
       - name: Download Artifacts
         uses: actions/download-artifact@v4
         with:
           path: artifacts
 
+      - name: Prepare release assets
+        run: |
+          mkdir -p release
+          find artifacts -name "*.tar.gz*" -o -name "*.zip*" | xargs -I {} mv {} release/
+          cd release
+          sha256sum * | grep -v ".sha256" > checksums.txt
+          cd ..
+
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          files: artifacts/**/*
+          files: release/*
           draft: false
-          prerelease: false
-          generate_release_notes: true
+          prerelease: ${{ needs.validate.outputs.is_prerelease }}
+          generate_release_notes: false
           body: |
-            ## ant-quic Release ${{ github.ref_name }}
-            
+            ## ant-quic ${{ needs.validate.outputs.version }}
+
+            ${{ needs.changelog.outputs.breaking_changes == 'true' && '⚠️ **This release contains breaking changes!**' || '' }}
+
             ### Installation
-            
-            Download the appropriate binary for your platform from the assets below.
-            
-            #### Linux/macOS
+
+            #### From crates.io
+            ```bash
+            cargo install ant-quic
+            ```
+
+            #### Pre-built binaries
+            Download the appropriate binary for your platform below.
+
+            **Linux/macOS:**
             ```bash
             tar -xzf ant-quic-*.tar.gz
             chmod +x ant-quic
             ./ant-quic --help
             ```
-            
-            #### Windows
+
+            **Windows:**
             ```powershell
             Expand-Archive ant-quic-*.zip
             .\ant-quic.exe --help
             ```
-            
+
+            #### Docker
+            ```bash
+            docker pull ghcr.io/${{ github.repository }}:${{ needs.validate.outputs.version_number }}
+            ```
+
             ### What's Changed
-            See the automatically generated release notes below for a complete list of changes.
+
+            ${{ needs.changelog.outputs.changelog }}
+
+            ### Checksums
+
+            See checksums.txt for SHA256 checksums of all binaries.
+
+  notify:
+    name: Notify Release
+    needs: [validate, release]
+    runs-on: ubuntu-latest
+    if: github.event.inputs.dry_run != 'true' && always()
+    steps:
+      - name: Notify Discord
+        if: env.DISCORD_WEBHOOK != ''
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+        run: |
+          curl -H "Content-Type: application/json" \
+            -d "{\"content\": \"ant-quic ${{ needs.validate.outputs.version }} released! https://github.com/${{ github.repository }}/releases/tag/${{ needs.validate.outputs.version }}\"}" \
+            $DISCORD_WEBHOOK

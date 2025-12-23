@@ -1,0 +1,219 @@
+# Platforms - Cross-platform testing (Ubuntu, macOS, Windows, ARM)
+# Tests on major platforms with dynamic matrix selection
+
+name: Platforms
+
+on:
+  workflow_call:
+    inputs:
+      rust-version:
+        description: 'Rust version to test'
+        required: false
+        default: 'stable'
+        type: string
+  workflow_dispatch:
+    inputs:
+      platforms:
+        description: 'Platform set (minimal/full)'
+        required: false
+        default: 'full'
+        type: choice
+        options:
+          - minimal
+          - full
+  push:
+    branches: [master, main]
+    paths:
+      - '**.rs'
+      - '**/Cargo.toml'
+      - '**/Cargo.lock'
+  pull_request:
+    branches: [master, main]
+  schedule:
+    # Run weekly
+    - cron: '0 2 * * 1'
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+  CARGO_INCREMENTAL: 0
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  define-matrix:
+    name: Define Matrix
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - name: Define platform matrix
+        id: set-matrix
+        run: |
+          EVENT="${{ github.event_name }}"
+          PLAT_INPUT="${{ github.event.inputs.platforms }}"
+
+          # Minimal matrix for PRs and pushes
+          if [ "$EVENT" = "push" ] || [ "$EVENT" = "pull_request" ]; then
+            echo 'matrix={"include":[
+              {"os":"ubuntu-latest","rust":"stable","target":"x86_64-unknown-linux-gnu"},
+              {"os":"macos-latest","rust":"stable","target":"x86_64-apple-darwin"}
+            ]}' | tr -d '\n' >> $GITHUB_OUTPUT
+          # Minimal on request
+          elif [ "$PLAT_INPUT" = "minimal" ]; then
+            echo 'matrix={"include":[
+              {"os":"ubuntu-latest","rust":"stable","target":"x86_64-unknown-linux-gnu"},
+              {"os":"windows-latest","rust":"stable","target":"x86_64-pc-windows-msvc"},
+              {"os":"macos-latest","rust":"stable","target":"x86_64-apple-darwin"}
+            ]}' | tr -d '\n' >> $GITHUB_OUTPUT
+          # Full matrix for schedule/manual
+          else
+            echo 'matrix={"include":[
+              {"os":"ubuntu-latest","rust":"stable","target":"x86_64-unknown-linux-gnu"},
+              {"os":"ubuntu-latest","rust":"beta","target":"x86_64-unknown-linux-gnu"},
+              {"os":"ubuntu-latest","rust":"1.85.0","target":"x86_64-unknown-linux-gnu"},
+              {"os":"ubuntu-latest","rust":"stable","target":"aarch64-unknown-linux-gnu","cross":true},
+              {"os":"macos-latest","rust":"stable","target":"x86_64-apple-darwin"},
+              {"os":"macos-14","rust":"stable","target":"aarch64-apple-darwin"},
+              {"os":"windows-latest","rust":"stable","target":"x86_64-pc-windows-msvc"}
+            ]}' | tr -d '\n' >> $GITHUB_OUTPUT
+          fi
+
+  test:
+    name: ${{ matrix.target }} / ${{ matrix.rust }}
+    needs: define-matrix
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.define-matrix.outputs.matrix) }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}-${{ matrix.rust }}
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: ${{ matrix.rust }}
+          targets: ${{ matrix.target }}
+
+      - name: Install cross
+        if: matrix.cross == true
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cross
+
+      - name: Setup cross-compilation (Linux)
+        if: runner.os == 'Linux' && matrix.cross == true
+        run: |
+          case "${{ matrix.target }}" in
+            aarch64-unknown-linux-gnu)
+              sudo apt-get update
+              sudo apt-get install -y gcc-aarch64-linux-gnu
+              ;;
+          esac
+
+      - name: Build (native)
+        if: matrix.cross != true
+        run: cargo build --target ${{ matrix.target }} --all-features
+
+      - name: Build (cross)
+        if: matrix.cross == true
+        run: cross build --target ${{ matrix.target }} --all-features
+
+      - name: Test (native)
+        if: matrix.cross != true
+        run: |
+          cargo test --target ${{ matrix.target }} --lib --all-features -- \
+            --skip long_ --skip stress_ --skip performance_
+
+      - name: Test (cross)
+        if: matrix.cross == true && !contains(matrix.target, 'apple')
+        run: |
+          cross test --target ${{ matrix.target }} --lib --all-features -- \
+            --skip long_ --skip stress_ --skip performance_
+
+      - name: Build examples
+        if: matrix.cross != true
+        run: cargo build --target ${{ matrix.target }} --examples
+
+      - name: Generate report
+        if: always()
+        run: |
+          mkdir -p test-results
+          echo "platform=${{ matrix.os }}" > test-results/report-${{ matrix.target }}.txt
+          echo "target=${{ matrix.target }}" >> test-results/report-${{ matrix.target }}.txt
+          echo "rust=${{ matrix.rust }}" >> test-results/report-${{ matrix.target }}.txt
+          echo "status=${{ job.status }}" >> test-results/report-${{ matrix.target }}.txt
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: results-${{ matrix.target }}-${{ matrix.rust }}
+          path: test-results/
+
+  msrv:
+    name: MSRV (1.85.0)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install MSRV
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: 1.85.0
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Check MSRV
+        run: |
+          cargo check --all-features
+          cargo check --no-default-features --features rustls-aws-lc-rs
+
+  summary:
+    name: Summary
+    needs: test
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download results
+        uses: actions/download-artifact@v4
+        with:
+          pattern: results-*
+          path: all-results/
+
+      - name: Generate summary
+        run: |
+          echo "# Platform Test Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Target | Rust | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|------|--------|" >> $GITHUB_STEP_SUMMARY
+
+          for report in all-results/*/report-*.txt; do
+            if [ -f "$report" ]; then
+              target=$(grep "target=" "$report" | cut -d= -f2)
+              rust=$(grep "rust=" "$report" | cut -d= -f2)
+              status=$(grep "status=" "$report" | cut -d= -f2)
+              [ "$status" = "success" ] && status="Pass" || status="Fail"
+              echo "| $target | $rust | $status |" >> $GITHUB_STEP_SUMMARY
+            fi
+          done
+
+      - name: Check status
+        run: |
+          for report in all-results/*/report-*.txt; do
+            if [ -f "$report" ] && ! grep -q "status=success" "$report"; then
+              echo "Failed: $report"
+              exit 1
+            fi
+          done

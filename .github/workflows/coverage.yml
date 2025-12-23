@@ -1,0 +1,91 @@
+# Coverage - Code coverage using llvm-cov
+# Generates coverage reports and uploads to Codecov
+
+name: Coverage
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+    branches: [master, main]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  COVERAGE_THRESHOLD: 40
+  RUST_BACKTRACE: 1
+
+jobs:
+  coverage:
+    name: Coverage (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest]
+        # Only run on Ubuntu for faster feedback - expand to multi-OS if needed
+        # os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
+
+      - name: Install bc
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y bc
+
+      - name: Run coverage
+        run: |
+          cargo llvm-cov \
+            --features="rustls-aws-lc-rs" \
+            --lib \
+            --lcov \
+            --output-path lcov.info \
+            --ignore-filename-regex '(tests/|examples/|benches/|build\.rs)' \
+            -- --test-threads=1
+        shell: bash
+
+      - name: Generate HTML report
+        run: cargo llvm-cov report --html --output-dir coverage
+
+      - name: Check coverage threshold
+        if: runner.os == 'Linux'
+        run: |
+          COVERAGE=$(cargo llvm-cov report --json | jq '.data[0].totals.lines.percent')
+          echo "Coverage: ${COVERAGE}%"
+
+          if (( $(echo "$COVERAGE < $COVERAGE_THRESHOLD" | bc -l) )); then
+            echo "::warning::Coverage ${COVERAGE}% is below threshold of ${COVERAGE_THRESHOLD}%"
+          else
+            echo "Coverage ${COVERAGE}% meets threshold of ${COVERAGE_THRESHOLD}%"
+          fi
+
+      - name: Upload to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: lcov.info
+          flags: unittests
+          name: ant-quic-coverage-${{ matrix.os }}
+          fail_ci_if_error: false
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-report-${{ matrix.os }}
+          path: coverage/
+          retention-days: 30

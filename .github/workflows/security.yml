@@ -1,4 +1,7 @@
-name: Security Audit
+# Security - Vulnerability scanning, dependency review, and policy enforcement
+# Comprehensive security auditing for dependencies and supply chain
+
+name: Security
 
 on:
   workflow_call:
@@ -25,6 +28,7 @@ on:
 
 permissions:
   contents: read
+  pull-requests: write
 
 jobs:
   # Vulnerability scanning with cargo-audit
@@ -280,10 +284,33 @@ jobs:
           name: security-report
           path: security-report.md
 
+  # Dependency review for PRs (GitHub's dependency review action)
+  dependency-review:
+    name: Dependency Review
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Dependency Review
+        uses: actions/dependency-review-action@v4
+        with:
+          fail-on-severity: high
+          license-check: true
+          vulnerability-check: true
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Check for outdated dependencies
+        run: |
+          cargo install cargo-outdated --locked || true
+          cargo outdated --exit-code 1 || echo "::warning::Some dependencies are outdated"
+
   # Fail the workflow if critical vulnerabilities are found
   security-gate:
     name: Security Gate
-    needs: [vulnerability-scan, policy-check]
+    needs: [vulnerability-scan, policy-check, dependency-review]
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
@@ -299,4 +326,9 @@ jobs:
             exit 1
           fi
 
-          echo "✅ All security checks passed!"
+          if [ "${{ needs.dependency-review.result }}" == "failure" ]; then
+            echo "::error::Dependency review failed. Please fix before merging."
+            exit 1
+          fi
+
+          echo "All security checks passed!"
