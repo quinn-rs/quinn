@@ -319,6 +319,17 @@
             box-shadow: 0 4px 20px rgba(0, 217, 255, 0.4);
         }
 
+        .download-btn.coming-soon {
+            background: linear-gradient(135deg, #666, #444);
+            color: #aaa;
+            cursor: not-allowed;
+        }
+
+        .download-btn.coming-soon:hover {
+            transform: none;
+            box-shadow: none;
+        }
+
         /* Instructions */
         .instructions {
             max-width: 700px;
@@ -435,6 +446,277 @@
         .legend-dot.active { background: var(--accent-green); box-shadow: 0 0 10px var(--accent-green); }
         .legend-dot.idle { background: var(--accent-cyan); }
         .legend-dot.registry { background: var(--accent-gold); box-shadow: 0 0 10px var(--accent-gold); }
+
+        /* Node Detail Panel */
+        .node-detail-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.7);
+            backdrop-filter: blur(5px);
+            z-index: 200;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            padding: 2rem;
+        }
+
+        .node-detail-overlay.active {
+            display: flex;
+        }
+
+        .node-detail-panel {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 20px;
+            max-width: 600px;
+            width: 100%;
+            max-height: 90vh;
+            overflow-y: auto;
+            padding: 2rem;
+            position: relative;
+        }
+
+        .node-detail-close {
+            position: absolute;
+            top: 1rem;
+            right: 1rem;
+            background: none;
+            border: none;
+            color: var(--text-secondary);
+            font-size: 1.5rem;
+            cursor: pointer;
+            padding: 0.5rem;
+            line-height: 1;
+        }
+
+        .node-detail-close:hover {
+            color: var(--text-primary);
+        }
+
+        .node-detail-header {
+            margin-bottom: 1.5rem;
+            padding-bottom: 1rem;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .node-detail-header h2 {
+            font-size: 1.5rem;
+            margin-bottom: 0.5rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .node-status-badge {
+            display: inline-block;
+            padding: 0.25rem 0.6rem;
+            border-radius: 12px;
+            font-size: 0.7rem;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        .node-status-badge.active {
+            background: rgba(0, 255, 136, 0.2);
+            color: var(--accent-green);
+        }
+
+        .node-status-badge.idle {
+            background: rgba(0, 217, 255, 0.2);
+            color: var(--accent-cyan);
+        }
+
+        .node-detail-peer-id {
+            font-family: 'SF Mono', Monaco, monospace;
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+            word-break: break-all;
+        }
+
+        .node-detail-section {
+            margin-bottom: 1.5rem;
+        }
+
+        .node-detail-section h3 {
+            font-size: 0.85rem;
+            font-weight: 600;
+            color: var(--accent-cyan);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 0.75rem;
+        }
+
+        .connectivity-score {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            padding: 1rem;
+            background: rgba(0, 255, 136, 0.05);
+            border: 1px solid rgba(0, 255, 136, 0.2);
+            border-radius: 12px;
+            margin-bottom: 1rem;
+        }
+
+        .score-circle {
+            width: 60px;
+            height: 60px;
+            border-radius: 50%;
+            background: conic-gradient(var(--accent-green) var(--score-percent), rgba(255,255,255,0.1) 0);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.25rem;
+            font-weight: 700;
+        }
+
+        .score-inner {
+            width: 48px;
+            height: 48px;
+            border-radius: 50%;
+            background: var(--bg-dark);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .connectivity-info h4 {
+            font-size: 1rem;
+            margin-bottom: 0.25rem;
+        }
+
+        .connectivity-info p {
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+        }
+
+        .full-connectivity-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.4rem;
+            margin-top: 0.5rem;
+            padding: 0.3rem 0.75rem;
+            background: linear-gradient(135deg, rgba(0, 255, 136, 0.2), rgba(0, 217, 255, 0.2));
+            border: 1px solid var(--accent-green);
+            border-radius: 20px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            color: var(--accent-green);
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 0.75rem;
+        }
+
+        .stat-box {
+            padding: 1rem;
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid var(--border-color);
+            border-radius: 10px;
+        }
+
+        .stat-box .label {
+            font-size: 0.7rem;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.3px;
+            margin-bottom: 0.25rem;
+        }
+
+        .stat-box .value {
+            font-size: 1.1rem;
+            font-weight: 600;
+        }
+
+        .stat-box .value.success { color: var(--accent-green); }
+        .stat-box .value.cyan { color: var(--accent-cyan); }
+        .stat-box .value.gold { color: var(--accent-gold); }
+
+        .capability-list {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+        }
+
+        .capability-badge {
+            display: flex;
+            align-items: center;
+            gap: 0.3rem;
+            padding: 0.4rem 0.75rem;
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            font-size: 0.8rem;
+        }
+
+        .capability-badge.enabled {
+            background: rgba(0, 255, 136, 0.1);
+            border-color: rgba(0, 255, 136, 0.3);
+            color: var(--accent-green);
+        }
+
+        .capability-badge.disabled {
+            opacity: 0.5;
+        }
+
+        .nat-breakdown {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 0.5rem;
+            margin-top: 0.75rem;
+        }
+
+        .nat-item {
+            text-align: center;
+            padding: 0.75rem 0.5rem;
+            background: rgba(255, 255, 255, 0.03);
+            border-radius: 8px;
+        }
+
+        .nat-item .value {
+            font-size: 1.25rem;
+            font-weight: 600;
+        }
+
+        .nat-item .label {
+            font-size: 0.65rem;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+        }
+
+        .nat-item.direct .value { color: var(--accent-green); }
+        .nat-item.punched .value { color: var(--accent-cyan); }
+        .nat-item.relayed .value { color: var(--accent-gold); }
+        .nat-item.failed .value { color: #ff6b6b; }
+
+        .address-list {
+            font-family: 'SF Mono', Monaco, monospace;
+            font-size: 0.8rem;
+        }
+
+        .address-item {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.5rem;
+            background: rgba(255, 255, 255, 0.03);
+            border-radius: 6px;
+            margin-bottom: 0.4rem;
+        }
+
+        .address-type {
+            padding: 0.15rem 0.4rem;
+            border-radius: 4px;
+            font-size: 0.65rem;
+            font-weight: 600;
+        }
+
+        .address-type.ipv4 { background: rgba(0, 217, 255, 0.2); color: var(--accent-cyan); }
+        .address-type.ipv6 { background: rgba(168, 85, 247, 0.2); color: var(--accent-purple); }
 
         /* Footer */
         .footer {
@@ -568,6 +850,122 @@
         </div>
     </div>
 
+    <!-- Node Detail Panel (hidden by default) -->
+    <div class="node-detail-overlay" id="node-detail-overlay">
+        <div class="node-detail-panel">
+            <button class="node-detail-close" onclick="closeNodeDetail()">&times;</button>
+
+            <div class="node-detail-header">
+                <h2>
+                    Node Details
+                    <span class="node-status-badge" id="node-status-badge">Active</span>
+                </h2>
+                <div class="node-detail-peer-id" id="node-peer-id">Loading...</div>
+            </div>
+
+            <!-- Connectivity Score -->
+            <div class="node-detail-section">
+                <h3>Connectivity Assessment</h3>
+                <div class="connectivity-score">
+                    <div class="score-circle" id="score-circle" style="--score-percent: 0%;">
+                        <div class="score-inner">
+                            <span id="connectivity-score">0</span>
+                        </div>
+                    </div>
+                    <div class="connectivity-info">
+                        <h4 id="connectivity-rating">Assessing...</h4>
+                        <p id="connectivity-message">Calculating connectivity potential...</p>
+                        <div class="full-connectivity-badge" id="full-connectivity-badge" style="display: none;">
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>
+                            100% P2P Connectivity Possible!
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Capabilities -->
+            <div class="node-detail-section">
+                <h3>Capabilities</h3>
+                <div class="capability-list" id="capability-list">
+                    <!-- Populated by JS -->
+                </div>
+            </div>
+
+            <!-- Connection Stats -->
+            <div class="node-detail-section">
+                <h3>Connection Statistics</h3>
+                <div class="stats-grid">
+                    <div class="stat-box">
+                        <div class="label">Connected Peers</div>
+                        <div class="value cyan" id="node-connected-peers">0</div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="label">Success Rate</div>
+                        <div class="value success" id="node-success-rate">0%</div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="label">Data Sent</div>
+                        <div class="value" id="node-bytes-sent">0 B</div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="label">Data Received</div>
+                        <div class="value" id="node-bytes-received">0 B</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- NAT Traversal Stats -->
+            <div class="node-detail-section">
+                <h3>NAT Traversal Breakdown</h3>
+                <div class="stat-box">
+                    <div class="label">NAT Type</div>
+                    <div class="value gold" id="node-nat-type">Unknown</div>
+                </div>
+                <div class="nat-breakdown">
+                    <div class="nat-item direct">
+                        <div class="value" id="nat-direct">0</div>
+                        <div class="label">Direct</div>
+                    </div>
+                    <div class="nat-item punched">
+                        <div class="value" id="nat-punched">0</div>
+                        <div class="label">Hole Punch</div>
+                    </div>
+                    <div class="nat-item relayed">
+                        <div class="value" id="nat-relayed">0</div>
+                        <div class="label">Relayed</div>
+                    </div>
+                    <div class="nat-item failed">
+                        <div class="value" id="nat-failed">0</div>
+                        <div class="label">Failed</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Network Addresses -->
+            <div class="node-detail-section">
+                <h3>Network Addresses</h3>
+                <div class="address-list" id="address-list">
+                    <!-- Populated by JS -->
+                </div>
+            </div>
+
+            <!-- Node Info -->
+            <div class="node-detail-section">
+                <h3>Node Information</h3>
+                <div class="stats-grid">
+                    <div class="stat-box">
+                        <div class="label">Version</div>
+                        <div class="value" id="node-version">-</div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="label">Location</div>
+                        <div class="value" id="node-location">-</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Legend -->
     <div class="legend">
         <div class="legend-item">
@@ -597,9 +995,7 @@
                 </svg>
                 <h3>Windows</h3>
                 <p>Windows 10 or later (64-bit)</p>
-                <a href="https://github.com/dirvine/ant-quic/releases/latest/download/ant-quic-test-x86_64-windows.zip" class="download-btn">
-                    Download for Windows
-                </a>
+                <span class="download-btn coming-soon">Coming Soon</span>
             </div>
 
             <!-- macOS -->
@@ -707,7 +1103,13 @@
             .pointColor('color')
             .pointAltitude(0.01)
             .pointRadius('size')
-            .pointsMerge(true)
+            .pointsMerge(false)
+            .onPointClick((point) => {
+                if (point.peer_id) {
+                    showNodeDetail(point.peer_id);
+                }
+            })
+            .pointLabel((point) => point.peer_id ? `Click for details: ${point.peer_id.substring(0, 8)}...` : point.name)
             .arcsData(arcs)
             .arcColor('color')
             .arcAltitude(0.2)
@@ -825,6 +1227,109 @@
 
             ws.onclose = () => setTimeout(connectWS, 3000);
         }
+
+        // Node detail panel functions
+        async function showNodeDetail(peerId) {
+            const overlay = document.getElementById('node-detail-overlay');
+            overlay.style.display = 'flex';
+
+            // Show loading state
+            document.getElementById('node-peer-id').textContent = peerId;
+            document.getElementById('connectivity-score').textContent = '...';
+
+            try {
+                const response = await fetch(`/api/node/${peerId}`);
+                const data = await response.json();
+
+                if (data.error) {
+                    document.getElementById('connectivity-message').textContent = 'Node not found';
+                    return;
+                }
+
+                // Update peer ID and status
+                document.getElementById('node-peer-id').textContent = data.peer_id;
+                const statusBadge = document.getElementById('node-status-badge');
+                statusBadge.textContent = data.is_active ? 'Active' : 'Idle';
+                statusBadge.className = `node-status-badge ${data.is_active ? 'active' : 'idle'}`;
+
+                // Connectivity score
+                document.getElementById('connectivity-score').textContent = data.connectivity?.score || 0;
+                document.getElementById('connectivity-rating').textContent = data.connectivity?.rating || 'Unknown';
+                document.getElementById('connectivity-message').textContent = data.connectivity?.message || '';
+
+                // Update score circle color
+                const scoreCircle = document.querySelector('.score-circle');
+                const score = data.connectivity?.score || 0;
+                if (score >= 90) {
+                    scoreCircle.style.background = 'linear-gradient(135deg, #00ff88 0%, #00cc6a 100%)';
+                } else if (score >= 75) {
+                    scoreCircle.style.background = 'linear-gradient(135deg, #00d9ff 0%, #0099cc 100%)';
+                } else if (score >= 50) {
+                    scoreCircle.style.background = 'linear-gradient(135deg, #ffd700 0%, #cc9900 100%)';
+                } else {
+                    scoreCircle.style.background = 'linear-gradient(135deg, #ff6b6b 0%, #cc4444 100%)';
+                }
+
+                // Capabilities
+                const capList = document.getElementById('capabilities-list');
+                capList.innerHTML = '';
+                const caps = data.capabilities || {};
+                if (caps.pqc) capList.innerHTML += '<span class="capability-badge pqc">Quantum-Safe (ML-KEM-768)</span>';
+                if (caps.ipv4) capList.innerHTML += '<span class="capability-badge ipv4">IPv4</span>';
+                if (caps.ipv6) capList.innerHTML += '<span class="capability-badge ipv6">IPv6</span>';
+                if (caps.nat_traversal) capList.innerHTML += '<span class="capability-badge nat">NAT Traversal</span>';
+
+                // Connection stats
+                document.getElementById('node-connected-peers').textContent = data.connection_stats?.connected_peers || 0;
+                document.getElementById('node-bytes-sent').textContent = data.connection_stats?.bytes_sent_formatted || '0 B';
+                document.getElementById('node-bytes-received').textContent = data.connection_stats?.bytes_received_formatted || '0 B';
+
+                // NAT stats
+                const natType = data.nat_type || 'Unknown';
+                document.getElementById('node-nat-type').textContent = natType.replace('_', ' ');
+                document.getElementById('nat-direct').textContent = data.nat_stats?.direct_success || 0;
+                document.getElementById('nat-punched').textContent = data.nat_stats?.hole_punch_success || 0;
+                document.getElementById('nat-relayed').textContent = data.nat_stats?.relay_success || 0;
+                document.getElementById('nat-failed').textContent = data.nat_stats?.failures || 0;
+
+                // Addresses
+                const addrList = document.getElementById('address-list');
+                addrList.innerHTML = '';
+                if (data.addresses && data.addresses.length > 0) {
+                    data.addresses.forEach(addr => {
+                        const div = document.createElement('div');
+                        div.className = 'address-item';
+                        const isIPv6 = addr.includes(':') && addr.includes('::');
+                        div.innerHTML = `<span class="address-type">${isIPv6 ? 'IPv6' : 'IPv4'}</span>${addr}`;
+                        addrList.appendChild(div);
+                    });
+                } else {
+                    addrList.innerHTML = '<div class="address-item">No addresses available</div>';
+                }
+
+                // Node info
+                document.getElementById('node-version').textContent = data.version || '-';
+                document.getElementById('node-location').textContent = data.country_code ? `${data.country_code} (${data.latitude?.toFixed(2)}, ${data.longitude?.toFixed(2)})` : 'Unknown';
+
+            } catch (e) {
+                console.error('Error fetching node details:', e);
+                document.getElementById('connectivity-message').textContent = 'Error loading node details';
+            }
+        }
+
+        function closeNodeDetail() {
+            document.getElementById('node-detail-overlay').style.display = 'none';
+        }
+
+        // Close on escape key
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') closeNodeDetail();
+        });
+
+        // Close on overlay click (not panel click)
+        document.getElementById('node-detail-overlay').addEventListener('click', (e) => {
+            if (e.target.id === 'node-detail-overlay') closeNodeDetail();
+        });
 
         // Init
         fetchData();

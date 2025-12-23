@@ -23,7 +23,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
             Constraint::Length(6), // Your Node
             Constraint::Min(8),    // Connected Peers
             Constraint::Length(5), // Network Stats
-            Constraint::Length(3), // Footer
+            Constraint::Length(4), // Footer (2 lines)
         ])
         .split(frame.area());
 
@@ -308,15 +308,12 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::DarkGray));
 
-    let line = Line::from(vec![
+    let line1 = Line::from(vec![
         Span::styled("  [Q]", Style::default().fg(Color::Yellow)),
-        Span::raw(" Quit    "),
-        Span::raw("Dashboard: "),
+        Span::raw(" Quit "),
         Span::styled(
-            app.dashboard_url.clone(),
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::UNDERLINED),
+            "(please leave running as long as you can for this test!)",
+            Style::default().fg(Color::Magenta),
         ),
         Span::raw("    "),
         Span::styled("ML-KEM-768", Style::default().fg(Color::Green)),
@@ -324,7 +321,24 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
         Span::styled("ML-DSA-65", Style::default().fg(Color::Green)),
     ]);
 
-    let paragraph = Paragraph::new(vec![line]).block(block);
+    let line2 = Line::from(vec![
+        Span::raw("  Dashboard: "),
+        Span::styled(
+            app.dashboard_url.clone(),
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::UNDERLINED),
+        ),
+        Span::raw("                                        "),
+        Span::styled(
+            "We will be legion!!",
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        ),
+    ]);
+
+    let paragraph = Paragraph::new(vec![line1, line2]).block(block);
     frame.render_widget(paragraph, area);
 }
 

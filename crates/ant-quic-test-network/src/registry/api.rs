@@ -69,6 +69,12 @@ pub async fn start_registry_server(config: RegistryConfig) -> anyhow::Result<()>
         .and(store_filter.clone())
         .and_then(handle_get_stats);
 
+    // GET /api/node/:peer_id - Get detailed node info
+    let node_detail = warp::path!("api" / "node" / String)
+        .and(warp::get())
+        .and(store_filter.clone())
+        .and_then(handle_get_node_detail);
+
     // GET /ws/live - WebSocket for real-time updates
     let websocket = warp::path!("ws" / "live")
         .and(warp::ws())
@@ -92,6 +98,7 @@ pub async fn start_registry_server(config: RegistryConfig) -> anyhow::Result<()>
         .or(heartbeat)
         .or(peers)
         .or(stats)
+        .or(node_detail)
         .or(websocket)
         .or(health)
         .with(warp::cors().allow_any_origin())
@@ -172,6 +179,218 @@ async fn handle_get_peers(store: Arc<PeerStore>) -> Result<impl Reply, Rejection
 async fn handle_get_stats(store: Arc<PeerStore>) -> Result<impl Reply, Rejection> {
     let stats = store.get_stats();
     Ok(warp::reply::json(&stats))
+}
+
+/// Detailed node information for the dashboard.
+#[derive(Debug, Clone, serde::Serialize)]
+struct NodeDetailResponse {
+    /// Basic peer info
+    #[serde(flatten)]
+    peer: PeerInfo,
+    /// NAT traversal statistics
+    nat_stats: NodeNatStats,
+    /// Connection statistics
+    connection_stats: NodeConnectionStats,
+    /// Network connectivity summary
+    connectivity: ConnectivitySummary,
+}
+
+/// NAT statistics for a node.
+#[derive(Debug, Clone, serde::Serialize)]
+struct NodeNatStats {
+    /// Total connection attempts
+    attempts: u64,
+    /// Successful direct connections
+    direct_success: u64,
+    /// Successful hole-punched connections
+    hole_punch_success: u64,
+    /// Successful relayed connections
+    relay_success: u64,
+    /// Failed connection attempts
+    failures: u64,
+    /// Overall success rate percentage
+    success_rate_percent: f64,
+}
+
+/// Connection statistics for a node.
+#[derive(Debug, Clone, serde::Serialize)]
+struct NodeConnectionStats {
+    /// Currently connected peers
+    connected_peers: usize,
+    /// Total bytes sent
+    bytes_sent: u64,
+    /// Total bytes received
+    bytes_received: u64,
+    /// Formatted bytes sent
+    bytes_sent_formatted: String,
+    /// Formatted bytes received
+    bytes_received_formatted: String,
+}
+
+/// Connectivity assessment summary.
+#[derive(Debug, Clone, serde::Serialize)]
+struct ConnectivitySummary {
+    /// Overall connectivity score (0-100)
+    score: u8,
+    /// Human-readable connectivity rating
+    rating: String,
+    /// Assessment message
+    message: String,
+    /// Whether 100% connectivity is achievable
+    full_connectivity_possible: bool,
+}
+
+/// Handle get node detail request.
+async fn handle_get_node_detail(
+    peer_id: String,
+    store: Arc<PeerStore>,
+) -> Result<impl Reply, Rejection> {
+    let peers = store.get_all_peers();
+    let peer = peers.iter().find(|p| p.peer_id.starts_with(&peer_id));
+
+    match peer {
+        Some(peer) => {
+            // Get the detailed entry from store
+            let nat_stats = store.get_node_nat_stats(&peer.peer_id);
+            let conn_stats = store.get_node_connection_stats(&peer.peer_id);
+
+            let total_attempts = nat_stats.attempts.max(1);
+            let total_success = nat_stats.direct_success + nat_stats.hole_punch_success + nat_stats.relay_success;
+            let success_rate = (total_success as f64 / total_attempts as f64) * 100.0;
+
+            // Calculate connectivity score
+            let (score, rating, message, full_connectivity) = assess_connectivity(
+                &peer.capabilities,
+                peer.nat_type,
+                success_rate,
+            );
+
+            let response = NodeDetailResponse {
+                peer: peer.clone(),
+                nat_stats: NodeNatStats {
+                    attempts: nat_stats.attempts,
+                    direct_success: nat_stats.direct_success,
+                    hole_punch_success: nat_stats.hole_punch_success,
+                    relay_success: nat_stats.relay_success,
+                    failures: nat_stats.failures,
+                    success_rate_percent: success_rate,
+                },
+                connection_stats: NodeConnectionStats {
+                    connected_peers: conn_stats.0,
+                    bytes_sent: conn_stats.1,
+                    bytes_received: conn_stats.2,
+                    bytes_sent_formatted: format_bytes(conn_stats.1),
+                    bytes_received_formatted: format_bytes(conn_stats.2),
+                },
+                connectivity: ConnectivitySummary {
+                    score,
+                    rating,
+                    message,
+                    full_connectivity_possible: full_connectivity,
+                },
+            };
+            Ok(warp::reply::json(&response))
+        }
+        None => Ok(warp::reply::json(&serde_json::json!({
+            "error": "Node not found",
+            "peer_id": peer_id
+        }))),
+    }
+}
+
+/// Assess connectivity based on capabilities and NAT type.
+fn assess_connectivity(
+    capabilities: &crate::registry::types::NodeCapabilities,
+    nat_type: crate::registry::types::NatType,
+    success_rate: f64,
+) -> (u8, String, String, bool) {
+    use crate::registry::types::NatType;
+
+    let mut score: u8 = 50; // Base score
+    let mut factors = Vec::new();
+
+    // PQC support (required for ant-quic)
+    if capabilities.pqc {
+        score = score.saturating_add(10);
+        factors.push("Quantum-safe (ML-KEM-768)");
+    }
+
+    // IPv4 support
+    if capabilities.ipv4 {
+        score = score.saturating_add(15);
+        factors.push("IPv4 enabled");
+    }
+
+    // IPv6 support (bonus)
+    if capabilities.ipv6 {
+        score = score.saturating_add(10);
+        factors.push("IPv6 enabled (dual-stack)");
+    }
+
+    // NAT traversal capability
+    if capabilities.nat_traversal {
+        score = score.saturating_add(10);
+    }
+
+    // NAT type assessment
+    let (nat_bonus, nat_msg) = match nat_type {
+        NatType::None => (15, "Direct public IP - optimal connectivity"),
+        NatType::FullCone => (12, "Full cone NAT - excellent connectivity"),
+        NatType::AddressRestricted => (8, "Address restricted NAT - good connectivity"),
+        NatType::PortRestricted => (5, "Port restricted NAT - moderate connectivity"),
+        NatType::Symmetric => (0, "Symmetric NAT - requires relay for some peers"),
+        NatType::Unknown => (3, "NAT type unknown - connectivity assessment pending"),
+    };
+    score = score.saturating_add(nat_bonus);
+
+    // Success rate bonus
+    if success_rate >= 90.0 {
+        score = score.saturating_add(5);
+    } else if success_rate >= 75.0 {
+        score = score.saturating_add(3);
+    }
+
+    // Cap at 100
+    score = score.min(100);
+
+    let rating = match score {
+        90..=100 => "Excellent".to_string(),
+        75..=89 => "Very Good".to_string(),
+        60..=74 => "Good".to_string(),
+        40..=59 => "Moderate".to_string(),
+        _ => "Limited".to_string(),
+    };
+
+    // Full connectivity assessment
+    let full_connectivity = matches!(
+        nat_type,
+        NatType::None | NatType::FullCone | NatType::AddressRestricted | NatType::PortRestricted
+    ) && capabilities.nat_traversal;
+
+    let message = if full_connectivity {
+        format!("{}. This node can achieve 100% peer-to-peer connectivity!", nat_msg)
+    } else {
+        format!("{}. Some connections may require relay assistance.", nat_msg)
+    };
+
+    (score, rating, message, full_connectivity)
+}
+
+/// Format bytes into human-readable string.
+fn format_bytes(bytes: u64) -> String {
+    const KB: u64 = 1024;
+    const MB: u64 = KB * 1024;
+    const GB: u64 = MB * 1024;
+
+    if bytes >= GB {
+        format!("{:.2} GB", bytes as f64 / GB as f64)
+    } else if bytes >= MB {
+        format!("{:.2} MB", bytes as f64 / MB as f64)
+    } else if bytes >= KB {
+        format!("{:.2} KB", bytes as f64 / KB as f64)
+    } else {
+        format!("{} B", bytes)
+    }
 }
 
 /// Handle WebSocket connection for real-time updates.
