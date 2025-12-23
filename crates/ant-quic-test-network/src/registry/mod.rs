@@ -54,6 +54,7 @@
 //! ```
 
 mod api;
+mod geo;
 mod store;
 mod types;
 

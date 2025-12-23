@@ -49,6 +49,9 @@ hex = "0.4"
 tracing = "0.1"
 tracing-subscriber = "0.3"
 
+# Concurrent locks
+parking_lot = "0.12"
+
 # Embedded static files for web dashboard
 rust-embed = "8"
 mime_guess = "2"
