@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.7] - 2025-12-23
+
+### Maintenance
+
+- Update Cargo.lock for Rust 1.92.0 compatibility
+- Update dependencies (zerocopy, zeroize, windows, etc.)
+
 ## [0.14.6] - 2025-12-23
 
 ### Bug Fixes
