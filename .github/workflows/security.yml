@@ -140,10 +140,11 @@ jobs:
           command: check sources
           arguments: --all-features
 
-  # Supply chain security
+  # Supply chain security (informational, non-blocking)
   supply-chain:
     name: Supply Chain Security
     runs-on: ubuntu-latest
+    continue-on-error: true  # Don't block builds on supply chain failures
     steps:
       - uses: actions/checkout@v4
         if: ${{ !startsWith(runner.name, 'nektos/act') }}

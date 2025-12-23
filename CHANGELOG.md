@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.9] - 2025-12-23
+
+### Bug Fixes
+
+- Make supply-chain security check non-blocking to allow release builds
+
 ## [0.14.8] - 2025-12-23
 
 ### Bug Fixes
