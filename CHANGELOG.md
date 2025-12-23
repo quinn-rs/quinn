@@ -17,6 +17,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Modernize globe visualization with Globe.gl and add simple download page ([57955db](https://github.com/dirvine/ant-quic/commit/57955db96114abd4a1e95e39f3eaf3052fd05c97))
 - Add clickable nodes with detailed stats panel ([317a498](https://github.com/dirvine/ant-quic/commit/317a49828b9b369ba48a0458b6a27856a5edde38))
 
+### Miscellaneous Tasks
+
+- Update CHANGELOG.md for v0.14.2 ([6b4c8d2](https://github.com/dirvine/ant-quic/commit/6b4c8d2f334c00560f63ff351339e35d5bc8acfe))
+
+### Styling
+
+- Fix formatting issues in test-network crate ([acc91de](https://github.com/dirvine/ant-quic/commit/acc91de5e839e82a883c9daa29359f8424dad6e2))
+
 ## [0.14.2] - 2025-12-23
 
 ### Bug Fixes
