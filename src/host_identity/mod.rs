@@ -69,5 +69,8 @@
 pub mod derivation;
 pub mod storage;
 
-pub use derivation::{EndpointKeyPolicy, HostIdentity, HOSTKEY_VERSION};
-pub use storage::{auto_storage, HostKeyStorage, StorageError, StorageResult};
+pub use derivation::{EndpointKeyPolicy, HOSTKEY_VERSION, HostIdentity};
+pub use storage::{
+    HostKeyStorage, KeyringStorage, PlainFileStorage, StorageError, StorageResult,
+    StorageSecurityLevel, StorageSelection, auto_storage,
+};

@@ -438,9 +438,8 @@ impl P2pConfigBuilder {
         network_id: &[u8],
         storage_dir: impl AsRef<std::path::Path>,
     ) -> Result<Self, ConfigError> {
-        let keypair =
-            load_or_generate_endpoint_keypair(host, network_id, storage_dir.as_ref())
-                .map_err(|e| ConfigError::PqcError(format!("Failed to load/generate keypair: {e}")))?;
+        let keypair = load_or_generate_endpoint_keypair(host, network_id, storage_dir.as_ref())
+            .map_err(|e| ConfigError::PqcError(format!("Failed to load/generate keypair: {e}")))?;
         self.keypair = Some(keypair);
         Ok(self)
     }
@@ -524,12 +523,11 @@ pub fn load_or_generate_endpoint_keypair(
 
 /// Encrypt keypair data using ChaCha20-Poly1305
 fn encrypt_keypair_data(plaintext: &[u8], key: &[u8; 32]) -> Result<Vec<u8>, std::io::Error> {
-    use aws_lc_rs::aead::{Aad, LessSafeKey, Nonce, UnboundKey, CHACHA20_POLY1305};
+    use aws_lc_rs::aead::{Aad, CHACHA20_POLY1305, LessSafeKey, Nonce, UnboundKey};
 
     // Generate random nonce
     let mut nonce_bytes = [0u8; 12];
-    aws_lc_rs::rand::fill(&mut nonce_bytes)
-        .map_err(|e| std::io::Error::other(e.to_string()))?;
+    aws_lc_rs::rand::fill(&mut nonce_bytes).map_err(|e| std::io::Error::other(e.to_string()))?;
 
     // Create cipher
     let unbound_key = UnboundKey::new(&CHACHA20_POLY1305, key)
@@ -550,7 +548,7 @@ fn encrypt_keypair_data(plaintext: &[u8], key: &[u8; 32]) -> Result<Vec<u8>, std
 
 /// Decrypt keypair data using ChaCha20-Poly1305
 fn decrypt_keypair_data(ciphertext: &[u8], key: &[u8; 32]) -> Result<Vec<u8>, std::io::Error> {
-    use aws_lc_rs::aead::{Aad, LessSafeKey, Nonce, UnboundKey, CHACHA20_POLY1305};
+    use aws_lc_rs::aead::{Aad, CHACHA20_POLY1305, LessSafeKey, Nonce, UnboundKey};
 
     if ciphertext.len() < 12 {
         return Err(std::io::Error::new(

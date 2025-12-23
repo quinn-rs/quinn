@@ -28,7 +28,7 @@
 //! ant-quic --known-peers 1.2.3.4:9000 --connect 5.6.7.8:9001 --throughput-test
 //! ```
 
-use ant_quic::host_identity::{auto_storage, HostIdentity};
+use ant_quic::host_identity::{HostIdentity, auto_storage};
 use ant_quic::{MtuConfig, P2pConfig, P2pEndpoint, P2pEvent, PeerId, TraversalPhase};
 use clap::{Parser, Subcommand};
 use sha2::{Digest, Sha256};
@@ -1193,20 +1193,23 @@ async fn handle_command(command: Command) -> anyhow::Result<()> {
 }
 
 /// Expand tilde to home directory
-fn expand_tilde(path: &PathBuf) -> PathBuf {
+fn expand_tilde(path: &std::path::Path) -> PathBuf {
     let path_str = path.to_string_lossy();
-    if path_str.starts_with("~/") {
+    if let Some(stripped) = path_str.strip_prefix("~/") {
         if let Some(home) = dirs::home_dir() {
-            return home.join(&path_str[2..]);
+            return home.join(stripped);
         }
     }
-    path.clone()
+    path.to_path_buf()
 }
 
 /// Handle identity subcommands
 async fn handle_identity_command(action: IdentityAction) -> anyhow::Result<()> {
     match action {
-        IdentityAction::Show { all_networks, data_dir } => {
+        IdentityAction::Show {
+            all_networks,
+            data_dir,
+        } => {
             let data_dir = expand_tilde(&data_dir);
 
             println!("═══════════════════════════════════════════════════════════════");
@@ -1214,13 +1217,18 @@ async fn handle_identity_command(action: IdentityAction) -> anyhow::Result<()> {
             println!("═══════════════════════════════════════════════════════════════");
 
             // Try to load existing host identity
-            let storage = auto_storage()?;
-            match storage.load() {
+            let storage_selection = auto_storage()?;
+            match storage_selection.storage.load() {
                 Ok(secret) => {
                     let host = HostIdentity::from_secret(secret);
                     println!("Fingerprint: {}", host.fingerprint());
                     println!("Policy: {:?}", host.policy());
-                    println!("Storage: {}", storage.backend_name());
+                    println!("Storage: {}", storage_selection.storage.backend_name());
+                    println!("Security: {:?}", storage_selection.security_level);
+                    if let Some(warning) = storage_selection.security_level.warning_message() {
+                        println!();
+                        println!("{}", warning);
+                    }
                     println!("Data Directory: {}", data_dir.display());
 
                     if all_networks {
@@ -1234,7 +1242,8 @@ async fn handle_identity_command(action: IdentityAction) -> anyhow::Result<()> {
                                     let name = entry.file_name();
                                     let name_str = name.to_string_lossy();
                                     if name_str.ends_with("_keypair.enc") {
-                                        let network_id_hex = name_str.trim_end_matches("_keypair.enc");
+                                        let network_id_hex =
+                                            name_str.trim_end_matches("_keypair.enc");
                                         println!("  - Network: {}", network_id_hex);
                                         found = true;
                                     }
@@ -1262,7 +1271,9 @@ async fn handle_identity_command(action: IdentityAction) -> anyhow::Result<()> {
             let data_dir = expand_tilde(&data_dir);
 
             if !force {
-                println!("WARNING: This will permanently delete your host identity and all derived keys!");
+                println!(
+                    "WARNING: This will permanently delete your host identity and all derived keys!"
+                );
                 println!("All stored endpoint keypairs will be lost.");
                 println!();
                 print!("Type 'DELETE' to confirm: ");
@@ -1278,9 +1289,9 @@ async fn handle_identity_command(action: IdentityAction) -> anyhow::Result<()> {
             }
 
             // Delete host key from storage
-            let storage = auto_storage()?;
-            if storage.exists() {
-                storage.delete()?;
+            let storage_selection = auto_storage()?;
+            if storage_selection.storage.exists() {
+                storage_selection.storage.delete()?;
                 println!("Host identity deleted from secure storage.");
             } else {
                 println!("No host identity found in secure storage.");
@@ -1293,10 +1304,10 @@ async fn handle_identity_command(action: IdentityAction) -> anyhow::Result<()> {
                     for entry in entries.flatten() {
                         let name = entry.file_name();
                         let name_str = name.to_string_lossy();
-                        if name_str.ends_with("_keypair.enc") {
-                            if std::fs::remove_file(entry.path()).is_ok() {
-                                deleted += 1;
-                            }
+                        if name_str.ends_with("_keypair.enc")
+                            && std::fs::remove_file(entry.path()).is_ok()
+                        {
+                            deleted += 1;
                         }
                     }
                 }
@@ -1307,8 +1318,8 @@ async fn handle_identity_command(action: IdentityAction) -> anyhow::Result<()> {
         }
 
         IdentityAction::Fingerprint => {
-            let storage = auto_storage()?;
-            match storage.load() {
+            let storage_selection = auto_storage()?;
+            match storage_selection.storage.load() {
                 Ok(secret) => {
                     let host = HostIdentity::from_secret(secret);
                     println!("{}", host.fingerprint());
@@ -1409,9 +1420,14 @@ async fn handle_doctor_command() -> anyhow::Result<()> {
 
     // Check 1: Host identity storage
     print!("Checking host identity storage... ");
-    let storage = match auto_storage() {
+    let storage_selection = match auto_storage() {
         Ok(s) => {
-            println!("{}", s.backend_name());
+            println!("{} ({:?})", s.storage.backend_name(), s.security_level);
+            if let Some(warning) = s.security_level.warning_message() {
+                println!();
+                println!("{}", warning);
+                println!();
+            }
             passed += 1;
             s
         }
@@ -1425,7 +1441,7 @@ async fn handle_doctor_command() -> anyhow::Result<()> {
 
     // Check 2: Host identity exists
     print!("Checking host identity... ");
-    match storage.load() {
+    match storage_selection.storage.load() {
         Ok(secret) => {
             let host = HostIdentity::from_secret(secret);
             println!("OK (fingerprint: {})", host.fingerprint());
@@ -1454,9 +1470,7 @@ async fn handle_doctor_command() -> anyhow::Result<()> {
     print!("Checking bootstrap cache... ");
     let cache_file = data_dir.join("bootstrap_cache.enc");
     if cache_file.exists() {
-        let size = std::fs::metadata(&cache_file)
-            .map(|m| m.len())
-            .unwrap_or(0);
+        let size = std::fs::metadata(&cache_file).map(|m| m.len()).unwrap_or(0);
         println!("OK ({} bytes)", size);
         passed += 1;
     } else {
@@ -1468,7 +1482,9 @@ async fn handle_doctor_command() -> anyhow::Result<()> {
     print!("Checking network... ");
     match tokio::net::UdpSocket::bind("[::]:0").await {
         Ok(socket) => {
-            let addr = socket.local_addr().unwrap_or_else(|_| "[::]:0".parse().unwrap());
+            let addr = socket
+                .local_addr()
+                .unwrap_or_else(|_| std::net::SocketAddr::from(([0, 0, 0, 0, 0, 0, 0, 0], 0)));
             println!("OK (can bind UDP on {})", addr);
             passed += 1;
         }
@@ -1490,7 +1506,11 @@ async fn handle_doctor_command() -> anyhow::Result<()> {
         println!("OK ({} nodes resolved)", dns_ok);
         passed += 1;
     } else if dns_ok > 0 {
-        println!("PARTIAL ({}/{} nodes resolved)", dns_ok, DEFAULT_BOOTSTRAP_NODES.len());
+        println!(
+            "PARTIAL ({}/{} nodes resolved)",
+            dns_ok,
+            DEFAULT_BOOTSTRAP_NODES.len()
+        );
         passed += 1;
     } else {
         println!("FAILED");

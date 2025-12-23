@@ -54,7 +54,6 @@ use tracing::info;
 
 use crate::crypto::raw_public_keys::key_utils::derive_peer_id_from_public_key;
 use crate::host_identity::HostIdentity;
-use crate::unified_config::load_or_generate_endpoint_keypair;
 use crate::nat_traversal_api::PeerId;
 use crate::node_config::NodeConfig;
 use crate::node_event::{DisconnectReason as NodeDisconnectReason, NodeEvent};
@@ -63,6 +62,7 @@ use crate::p2p_endpoint::{
     DisconnectReason as P2pDisconnectReason, EndpointError, P2pEndpoint, P2pEvent, PeerConnection,
 };
 use crate::unified_config::P2pConfig;
+use crate::unified_config::load_or_generate_endpoint_keypair;
 
 /// Error type for Node operations
 #[derive(Debug, thiserror::Error)]
@@ -908,10 +908,8 @@ mod tests {
         use crate::host_identity::HostIdentity;
 
         // Create a temporary directory for storage
-        let temp_dir = std::env::temp_dir().join(format!(
-            "ant-quic-test-node-{}",
-            std::process::id()
-        ));
+        let temp_dir =
+            std::env::temp_dir().join(format!("ant-quic-test-node-{}", std::process::id()));
         let _ = std::fs::create_dir_all(&temp_dir);
 
         // Generate a HostIdentity
@@ -953,10 +951,8 @@ mod tests {
         use crate::host_identity::HostIdentity;
 
         // Create a temporary directory for storage
-        let temp_dir = std::env::temp_dir().join(format!(
-            "ant-quic-test-isolation-{}",
-            std::process::id()
-        ));
+        let temp_dir =
+            std::env::temp_dir().join(format!("ant-quic-test-isolation-{}", std::process::id()));
         let _ = std::fs::create_dir_all(&temp_dir);
 
         // Generate a HostIdentity

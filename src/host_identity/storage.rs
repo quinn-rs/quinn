@@ -83,6 +83,40 @@ pub enum StorageError {
 pub type StorageResult<T> = Result<T, StorageError>;
 
 // =============================================================================
+// Storage Security Level
+// =============================================================================
+
+/// Security level of the storage backend
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StorageSecurityLevel {
+    /// Platform keychain (macOS Keychain, GNOME Keyring, Windows Credential Manager)
+    Secure,
+    /// Encrypted file with password
+    Encrypted,
+    /// Plain file with permissions only - INSECURE
+    Insecure,
+}
+
+impl StorageSecurityLevel {
+    /// Get a warning message if this security level requires user attention
+    pub fn warning_message(&self) -> Option<&'static str> {
+        match self {
+            Self::Secure | Self::Encrypted => None,
+            Self::Insecure => Some(
+                "⚠️  HostKey stored WITHOUT ENCRYPTION!\n\
+                 Anyone with file access can read and impersonate this node.\n\
+                 To secure: set ANTQ_HOSTKEY_PASSWORD environment variable.",
+            ),
+        }
+    }
+
+    /// Check if this storage level is considered secure
+    pub fn is_secure(&self) -> bool {
+        matches!(self, Self::Secure | Self::Encrypted)
+    }
+}
+
+// =============================================================================
 // Storage Trait
 // =============================================================================
 
@@ -122,6 +156,9 @@ pub trait HostKeyStorage: Send + Sync {
 
     /// Get the storage backend name for diagnostics
     fn backend_name(&self) -> &'static str;
+
+    /// Get the security level of this storage backend
+    fn security_level(&self) -> StorageSecurityLevel;
 }
 
 // =============================================================================
@@ -200,7 +237,9 @@ impl EncryptedFileStorage {
 
     /// Encrypt data using XChaCha20-Poly1305
     fn encrypt(key: &[u8; 32], plaintext: &[u8; 32]) -> StorageResult<Vec<u8>> {
-        use aws_lc_rs::aead::{self, Aad, BoundKey, Nonce, NonceSequence, UnboundKey, CHACHA20_POLY1305};
+        use aws_lc_rs::aead::{
+            self, Aad, BoundKey, CHACHA20_POLY1305, Nonce, NonceSequence, UnboundKey,
+        };
 
         // Generate random nonce (12 bytes for ChaCha20-Poly1305)
         let mut nonce_bytes = [0u8; 12];
@@ -214,7 +253,10 @@ impl EncryptedFileStorage {
         struct SingleNonce(Option<[u8; 12]>);
         impl NonceSequence for SingleNonce {
             fn advance(&mut self) -> Result<Nonce, aws_lc_rs::error::Unspecified> {
-                self.0.take().map(Nonce::assume_unique_for_key).ok_or(aws_lc_rs::error::Unspecified)
+                self.0
+                    .take()
+                    .map(Nonce::assume_unique_for_key)
+                    .ok_or(aws_lc_rs::error::Unspecified)
             }
         }
 
@@ -235,10 +277,14 @@ impl EncryptedFileStorage {
 
     /// Decrypt data using XChaCha20-Poly1305
     fn decrypt(key: &[u8; 32], ciphertext: &[u8]) -> StorageResult<[u8; 32]> {
-        use aws_lc_rs::aead::{self, Aad, BoundKey, Nonce, NonceSequence, UnboundKey, CHACHA20_POLY1305};
+        use aws_lc_rs::aead::{
+            self, Aad, BoundKey, CHACHA20_POLY1305, Nonce, NonceSequence, UnboundKey,
+        };
 
         if ciphertext.len() < 12 + 16 {
-            return Err(StorageError::InvalidFormat("Ciphertext too short".to_string()));
+            return Err(StorageError::InvalidFormat(
+                "Ciphertext too short".to_string(),
+            ));
         }
 
         let nonce_bytes: [u8; 12] = ciphertext[..12]
@@ -252,7 +298,10 @@ impl EncryptedFileStorage {
         struct SingleNonce(Option<[u8; 12]>);
         impl NonceSequence for SingleNonce {
             fn advance(&mut self) -> Result<Nonce, aws_lc_rs::error::Unspecified> {
-                self.0.take().map(Nonce::assume_unique_for_key).ok_or(aws_lc_rs::error::Unspecified)
+                self.0
+                    .take()
+                    .map(Nonce::assume_unique_for_key)
+                    .ok_or(aws_lc_rs::error::Unspecified)
             }
         }
 
@@ -262,7 +311,11 @@ impl EncryptedFileStorage {
         let mut in_out = ciphertext[12..].to_vec();
         let plaintext = opening_key
             .open_in_place(Aad::empty(), &mut in_out)
-            .map_err(|_| StorageError::CryptoError("Decryption failed - wrong password or corrupted data".to_string()))?;
+            .map_err(|_| {
+                StorageError::CryptoError(
+                    "Decryption failed - wrong password or corrupted data".to_string(),
+                )
+            })?;
 
         if plaintext.len() != 32 {
             return Err(StorageError::InvalidFormat(format!(
@@ -378,181 +431,239 @@ impl HostKeyStorage for EncryptedFileStorage {
     fn backend_name(&self) -> &'static str {
         "EncryptedFile"
     }
+
+    fn security_level(&self) -> StorageSecurityLevel {
+        StorageSecurityLevel::Encrypted
+    }
 }
 
 // =============================================================================
-// macOS Keychain Storage
+// Cross-Platform Keyring Storage
 // =============================================================================
 
-#[cfg(target_os = "macos")]
-mod macos {
-    use super::*;
+/// Cross-platform keyring storage using the `keyring` crate
+///
+/// Supports:
+/// - macOS: Keychain Services
+/// - Linux: Secret Service (GNOME Keyring, KWallet)
+/// - Windows: Credential Manager
+pub struct KeyringStorage {
+    service: &'static str,
+    username: &'static str,
+}
 
-    /// macOS Keychain storage using Security.framework
-    ///
-    /// Currently falls back to encrypted file storage.
-    /// TODO: Implement native Keychain access when security-framework crate is added.
-    pub struct KeychainStorage {
-        // Placeholder for future Keychain implementation
-        // Fields will be used when native Keychain support is added
+impl KeyringStorage {
+    const SERVICE: &'static str = "ant-quic";
+    const USERNAME: &'static str = "hostkey";
+
+    /// Create a new keyring storage instance
+    pub fn new() -> StorageResult<Self> {
+        // Verify keyring is available by trying to create an entry
+        let _ = keyring::Entry::new(Self::SERVICE, Self::USERNAME)
+            .map_err(|e| StorageError::KeychainError(format!("Keyring unavailable: {e}")))?;
+        Ok(Self {
+            service: Self::SERVICE,
+            username: Self::USERNAME,
+        })
     }
 
-    impl KeychainStorage {
-        /// Create a new Keychain storage instance
-        pub fn new() -> Self {
-            Self {}
+    /// Check if keyring is available on this platform
+    pub fn is_available() -> bool {
+        keyring::Entry::new(Self::SERVICE, Self::USERNAME).is_ok()
+    }
+
+    /// Get the keyring entry
+    fn entry(&self) -> StorageResult<keyring::Entry> {
+        keyring::Entry::new(self.service, self.username)
+            .map_err(|e| StorageError::KeychainError(e.to_string()))
+    }
+}
+
+impl HostKeyStorage for KeyringStorage {
+    fn store(&self, hostkey: &[u8; 32]) -> StorageResult<()> {
+        let entry = self.entry()?;
+        // Store as hex string (keyring stores strings)
+        let hex = hex::encode(hostkey);
+        entry
+            .set_password(&hex)
+            .map_err(|e| StorageError::KeychainError(e.to_string()))
+    }
+
+    fn load(&self) -> StorageResult<[u8; 32]> {
+        let entry = self.entry()?;
+        let hex = entry.get_password().map_err(|e| match e {
+            keyring::Error::NoEntry => StorageError::NotFound,
+            _ => StorageError::KeychainError(e.to_string()),
+        })?;
+
+        let bytes = hex::decode(&hex).map_err(|e| StorageError::InvalidFormat(e.to_string()))?;
+
+        if bytes.len() != 32 {
+            return Err(StorageError::InvalidFormat(format!(
+                "Expected 32 bytes, got {}",
+                bytes.len()
+            )));
+        }
+
+        let mut result = [0u8; 32];
+        result.copy_from_slice(&bytes);
+        Ok(result)
+    }
+
+    fn delete(&self) -> StorageResult<()> {
+        let entry = self.entry()?;
+        match entry.delete_credential() {
+            Ok(()) => Ok(()),
+            Err(keyring::Error::NoEntry) => Ok(()), // Already deleted
+            Err(e) => Err(StorageError::KeychainError(e.to_string())),
         }
     }
 
-    impl HostKeyStorage for KeychainStorage {
-        fn store(&self, hostkey: &[u8; 32]) -> StorageResult<()> {
-            // Use security-framework crate for keychain access
-            // For now, fall back to encrypted file storage
-            // TODO: Implement proper Keychain access when security-framework is added
-            let file_storage = EncryptedFileStorage::new()?;
-            file_storage.store(hostkey)
-        }
+    fn exists(&self) -> bool {
+        self.entry()
+            .map(|e| e.get_password().is_ok())
+            .unwrap_or(false)
+    }
 
-        fn load(&self) -> StorageResult<[u8; 32]> {
-            let file_storage = EncryptedFileStorage::new()?;
-            file_storage.load()
-        }
-
-        fn delete(&self) -> StorageResult<()> {
-            let file_storage = EncryptedFileStorage::new()?;
-            file_storage.delete()
-        }
-
-        fn exists(&self) -> bool {
-            EncryptedFileStorage::new()
-                .map(|s| s.exists())
-                .unwrap_or(false)
-        }
-
-        fn backend_name(&self) -> &'static str {
+    fn backend_name(&self) -> &'static str {
+        #[cfg(target_os = "macos")]
+        {
             "macOS-Keychain"
         }
-    }
-}
-
-// =============================================================================
-// Linux Secret Service Storage
-// =============================================================================
-
-#[cfg(target_os = "linux")]
-mod linux {
-    use super::*;
-
-    /// Linux Secret Service storage using GNOME Keyring / KWallet
-    pub struct SecretServiceStorage {
-        collection: String,
-        label: String,
-    }
-
-    impl SecretServiceStorage {
-        /// Create a new Secret Service storage instance
-        pub fn new() -> Self {
-            Self {
-                collection: "ant-quic".to_string(),
-                label: "hostkey".to_string(),
-            }
-        }
-
-        /// Check if Secret Service is available
-        pub fn is_available() -> bool {
-            // Check for GNOME Keyring or similar
-            std::env::var("DBUS_SESSION_BUS_ADDRESS").is_ok()
-        }
-    }
-
-    impl HostKeyStorage for SecretServiceStorage {
-        fn store(&self, hostkey: &[u8; 32]) -> StorageResult<()> {
-            // Use secret-service crate for D-Bus access
-            // For now, fall back to encrypted file storage
-            // TODO: Implement proper Secret Service access when secret-service is added
-            let file_storage = EncryptedFileStorage::new()?;
-            file_storage.store(hostkey)
-        }
-
-        fn load(&self) -> StorageResult<[u8; 32]> {
-            let file_storage = EncryptedFileStorage::new()?;
-            file_storage.load()
-        }
-
-        fn delete(&self) -> StorageResult<()> {
-            let file_storage = EncryptedFileStorage::new()?;
-            file_storage.delete()
-        }
-
-        fn exists(&self) -> bool {
-            EncryptedFileStorage::new()
-                .map(|s| s.exists())
-                .unwrap_or(false)
-        }
-
-        fn backend_name(&self) -> &'static str {
+        #[cfg(target_os = "linux")]
+        {
             "Linux-SecretService"
         }
+        #[cfg(target_os = "windows")]
+        {
+            "Windows-CredentialManager"
+        }
+        #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+        {
+            "Keyring"
+        }
+    }
+
+    fn security_level(&self) -> StorageSecurityLevel {
+        StorageSecurityLevel::Secure
     }
 }
 
 // =============================================================================
-// Windows DPAPI Storage
+// Plain File Storage (Insecure Fallback)
 // =============================================================================
 
-#[cfg(target_os = "windows")]
-mod windows_storage {
-    use super::*;
+/// Plain file storage with file permission protection only
+///
+/// **SECURITY WARNING**: This stores the HostKey unencrypted!
+/// Anyone with file access can read and copy your identity.
+///
+/// Use only when:
+/// - Platform keychain is unavailable
+/// - You haven't set `ANTQ_HOSTKEY_PASSWORD`
+///
+/// File location: `~/.config/ant-quic/hostkey.key`
+pub struct PlainFileStorage {
+    path: PathBuf,
+}
 
-    /// Windows DPAPI storage
-    pub struct DpapiStorage {
-        path: PathBuf,
+impl PlainFileStorage {
+    /// Create a new plain file storage at the default location
+    pub fn new() -> StorageResult<Self> {
+        let path = Self::default_path()?;
+        Ok(Self { path })
     }
 
-    impl DpapiStorage {
-        /// Create a new DPAPI storage instance
-        pub fn new() -> StorageResult<Self> {
-            let config_dir = dirs::config_dir().ok_or_else(|| {
-                StorageError::IoError(std::io::Error::new(
-                    std::io::ErrorKind::NotFound,
-                    "Could not determine config directory",
-                ))
-            })?;
-
-            let path = config_dir.join("ant-quic").join("hostkey.dpapi");
-            Ok(Self { path })
-        }
+    /// Create plain file storage at a custom path
+    pub fn with_path(path: PathBuf) -> Self {
+        Self { path }
     }
 
-    impl HostKeyStorage for DpapiStorage {
-        fn store(&self, hostkey: &[u8; 32]) -> StorageResult<()> {
-            // Use Windows DPAPI for encryption
-            // For now, fall back to encrypted file storage
-            // TODO: Implement proper DPAPI access when windows crate features are added
-            let file_storage = EncryptedFileStorage::new()?;
-            file_storage.store(hostkey)
-        }
-
-        fn load(&self) -> StorageResult<[u8; 32]> {
-            let file_storage = EncryptedFileStorage::new()?;
-            file_storage.load()
-        }
-
-        fn delete(&self) -> StorageResult<()> {
-            let file_storage = EncryptedFileStorage::new()?;
-            file_storage.delete()
-        }
-
-        fn exists(&self) -> bool {
-            EncryptedFileStorage::new()
-                .map(|s| s.exists())
-                .unwrap_or(false)
-        }
-
-        fn backend_name(&self) -> &'static str {
-            "Windows-DPAPI"
-        }
+    /// Get the default storage path
+    fn default_path() -> StorageResult<PathBuf> {
+        let config_dir = dirs::config_dir().ok_or_else(|| {
+            StorageError::IoError(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "Could not determine config directory",
+            ))
+        })?;
+        Ok(config_dir.join("ant-quic").join("hostkey.key"))
     }
+}
+
+impl HostKeyStorage for PlainFileStorage {
+    fn store(&self, hostkey: &[u8; 32]) -> StorageResult<()> {
+        // Create parent directories
+        if let Some(parent) = self.path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+
+        // Write atomically using temp file
+        let temp_path = self.path.with_extension("tmp");
+        std::fs::write(&temp_path, hostkey)?;
+        std::fs::rename(&temp_path, &self.path)?;
+
+        // Set restrictive permissions (0600 on Unix)
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let permissions = std::fs::Permissions::from_mode(0o600);
+            std::fs::set_permissions(&self.path, permissions)?;
+        }
+
+        Ok(())
+    }
+
+    fn load(&self) -> StorageResult<[u8; 32]> {
+        if !self.path.exists() {
+            return Err(StorageError::NotFound);
+        }
+
+        let data = std::fs::read(&self.path)?;
+        if data.len() != 32 {
+            return Err(StorageError::InvalidFormat(format!(
+                "Expected 32 bytes, got {}",
+                data.len()
+            )));
+        }
+
+        let mut result = [0u8; 32];
+        result.copy_from_slice(&data);
+        Ok(result)
+    }
+
+    fn delete(&self) -> StorageResult<()> {
+        if self.path.exists() {
+            // Overwrite with zeros before deleting (defense in depth)
+            let _ = std::fs::write(&self.path, [0u8; 32]);
+            std::fs::remove_file(&self.path)?;
+        }
+        Ok(())
+    }
+
+    fn exists(&self) -> bool {
+        self.path.exists()
+    }
+
+    fn backend_name(&self) -> &'static str {
+        "PlainFile-INSECURE"
+    }
+
+    fn security_level(&self) -> StorageSecurityLevel {
+        StorageSecurityLevel::Insecure
+    }
+}
+
+// =============================================================================
+// Storage Selection Result
+// =============================================================================
+
+/// Result of auto-selecting storage, includes security info
+pub struct StorageSelection {
+    /// The selected storage backend
+    pub storage: Box<dyn HostKeyStorage>,
+    /// Security level of the selected backend
+    pub security_level: StorageSecurityLevel,
 }
 
 // =============================================================================
@@ -562,37 +673,45 @@ mod windows_storage {
 /// Automatically select the best available storage backend for this platform
 ///
 /// Priority order:
-/// 1. Platform-specific secure storage (Keychain, Secret Service, DPAPI)
-/// 2. Encrypted file with environment variable password
-pub fn auto_storage() -> StorageResult<Box<dyn HostKeyStorage>> {
-    #[cfg(target_os = "macos")]
-    {
-        Ok(Box::new(macos::KeychainStorage::new()))
-    }
-
-    #[cfg(target_os = "linux")]
-    {
-        if linux::SecretServiceStorage::is_available() {
-            return Ok(Box::new(linux::SecretServiceStorage::new()));
+/// 1. Platform keychain (via `keyring` crate) - Secure, zero-config
+/// 2. Encrypted file (if `ANTQ_HOSTKEY_PASSWORD` env var set)
+/// 3. Plain file with warning (zero-config fallback)
+pub fn auto_storage() -> StorageResult<StorageSelection> {
+    // 1. Try platform keychain first
+    if KeyringStorage::is_available() {
+        if let Ok(storage) = KeyringStorage::new() {
+            let security_level = storage.security_level();
+            return Ok(StorageSelection {
+                storage: Box::new(storage),
+                security_level,
+            });
         }
     }
 
-    #[cfg(target_os = "windows")]
-    {
-        return Ok(Box::new(windows_storage::DpapiStorage::new()?));
+    // 2. Try encrypted file if password is available
+    if std::env::var("ANTQ_HOSTKEY_PASSWORD").is_ok() {
+        let storage = EncryptedFileStorage::new()?;
+        return Ok(StorageSelection {
+            storage: Box::new(storage),
+            security_level: StorageSecurityLevel::Encrypted,
+        });
     }
 
-    // Fallback to encrypted file storage
-    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
-    {
-        Ok(Box::new(EncryptedFileStorage::new()?))
-    }
+    // 3. Fall back to plain file with warning
+    let storage = PlainFileStorage::new()?;
+    Ok(StorageSelection {
+        storage: Box::new(storage),
+        security_level: StorageSecurityLevel::Insecure,
+    })
+}
 
-    #[cfg(all(target_os = "linux", not(target_os = "macos"), not(target_os = "windows")))]
-    {
-        // Linux without Secret Service - use encrypted file
-        Ok(Box::new(EncryptedFileStorage::new()?))
-    }
+/// Legacy function for backwards compatibility - returns just the storage
+#[deprecated(
+    since = "0.15.0",
+    note = "Use auto_storage() which returns StorageSelection"
+)]
+pub fn auto_storage_legacy() -> StorageResult<Box<dyn HostKeyStorage>> {
+    Ok(auto_storage()?.storage)
 }
 
 /// Get encrypted file storage directly (useful for testing or when env var is available)
@@ -767,5 +886,218 @@ mod tests {
 
         let result = EncryptedFileStorage::decrypt(&key2, &ciphertext);
         assert!(result.is_err());
+    }
+
+    // =========================================================================
+    // PlainFileStorage Tests
+    // =========================================================================
+
+    #[test]
+    fn test_plain_file_storage_roundtrip() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let path = temp_dir.path().join("hostkey.key");
+        let storage = PlainFileStorage::with_path(path);
+
+        let hostkey = [0xAB; 32];
+
+        // Store
+        storage.store(&hostkey).expect("Failed to store");
+
+        // Load
+        let loaded = storage.load().expect("Failed to load");
+        assert_eq!(loaded, hostkey);
+    }
+
+    #[test]
+    fn test_plain_file_storage_not_found() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let path = temp_dir.path().join("nonexistent.key");
+        let storage = PlainFileStorage::with_path(path);
+
+        let result = storage.load();
+        assert!(matches!(result, Err(StorageError::NotFound)));
+    }
+
+    #[test]
+    fn test_plain_file_storage_delete() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let path = temp_dir.path().join("hostkey.key");
+        let storage = PlainFileStorage::with_path(path.clone());
+
+        let hostkey = [0xEF; 32];
+        storage.store(&hostkey).expect("Failed to store");
+        assert!(path.exists());
+
+        storage.delete().expect("Failed to delete");
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn test_plain_file_storage_exists() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let path = temp_dir.path().join("hostkey.key");
+        let storage = PlainFileStorage::with_path(path);
+
+        assert!(!storage.exists());
+
+        let hostkey = [0xAB; 32];
+        storage.store(&hostkey).expect("Failed to store");
+        assert!(storage.exists());
+    }
+
+    #[test]
+    fn test_plain_file_storage_security_level() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let path = temp_dir.path().join("hostkey.key");
+        let storage = PlainFileStorage::with_path(path);
+
+        assert_eq!(storage.security_level(), StorageSecurityLevel::Insecure);
+        assert!(storage.security_level().warning_message().is_some());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_plain_file_storage_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let path = temp_dir.path().join("hostkey.key");
+        let storage = PlainFileStorage::with_path(path.clone());
+
+        let hostkey = [0xAB; 32];
+        storage.store(&hostkey).expect("Failed to store");
+
+        let metadata = std::fs::metadata(&path).expect("Failed to get metadata");
+        let permissions = metadata.permissions();
+
+        // Should be 0600 (owner read/write only)
+        assert_eq!(permissions.mode() & 0o777, 0o600);
+    }
+
+    #[test]
+    fn test_plain_file_storage_invalid_size() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let path = temp_dir.path().join("hostkey.key");
+
+        // Write invalid data (wrong size)
+        std::fs::write(&path, [0u8; 16]).expect("Failed to write");
+
+        let storage = PlainFileStorage::with_path(path);
+        let result = storage.load();
+        assert!(matches!(result, Err(StorageError::InvalidFormat(_))));
+    }
+
+    // =========================================================================
+    // KeyringStorage Tests (require system keyring, may be ignored in CI)
+    // =========================================================================
+
+    #[test]
+    #[ignore = "Requires system keyring daemon (run manually)"]
+    fn test_keyring_storage_roundtrip() {
+        if !KeyringStorage::is_available() {
+            println!("Keyring not available, skipping test");
+            return;
+        }
+
+        let storage = KeyringStorage::new().expect("Failed to create keyring storage");
+
+        // Clean up any existing entry first
+        let _ = storage.delete();
+
+        let hostkey = [0xAB; 32];
+
+        // Store
+        storage.store(&hostkey).expect("Failed to store");
+
+        // Load
+        let loaded = storage.load().expect("Failed to load");
+        assert_eq!(loaded, hostkey);
+
+        // Cleanup
+        storage.delete().expect("Failed to delete");
+    }
+
+    #[test]
+    #[ignore = "Requires system keyring daemon (run manually)"]
+    fn test_keyring_storage_not_found() {
+        if !KeyringStorage::is_available() {
+            println!("Keyring not available, skipping test");
+            return;
+        }
+
+        let storage = KeyringStorage::new().expect("Failed to create keyring storage");
+
+        // Clean up any existing entry first
+        let _ = storage.delete();
+
+        let result = storage.load();
+        assert!(matches!(result, Err(StorageError::NotFound)));
+    }
+
+    #[test]
+    #[ignore = "Requires system keyring daemon (run manually)"]
+    fn test_keyring_storage_security_level() {
+        if !KeyringStorage::is_available() {
+            println!("Keyring not available, skipping test");
+            return;
+        }
+
+        let storage = KeyringStorage::new().expect("Failed to create keyring storage");
+        assert_eq!(storage.security_level(), StorageSecurityLevel::Secure);
+        assert!(storage.security_level().warning_message().is_none());
+    }
+
+    // =========================================================================
+    // StorageSecurityLevel Tests
+    // =========================================================================
+
+    #[test]
+    fn test_security_level_warning_messages() {
+        assert!(StorageSecurityLevel::Secure.warning_message().is_none());
+        assert!(StorageSecurityLevel::Encrypted.warning_message().is_none());
+        assert!(StorageSecurityLevel::Insecure.warning_message().is_some());
+    }
+
+    #[test]
+    fn test_security_level_is_secure() {
+        assert!(StorageSecurityLevel::Secure.is_secure());
+        assert!(StorageSecurityLevel::Encrypted.is_secure());
+        assert!(!StorageSecurityLevel::Insecure.is_secure());
+    }
+
+    // =========================================================================
+    // auto_storage Tests
+    // =========================================================================
+
+    #[test]
+    fn test_auto_storage_fallback_to_plain_file() {
+        // Without password and without keyring, should fall back to plain file
+        with_password(None, || {
+            // This test may succeed with keyring if available,
+            // but should at least not fail
+            let result = auto_storage();
+            assert!(result.is_ok());
+            let selection = result.expect("auto_storage should succeed");
+            // Should be either Secure (keyring) or Insecure (plain file)
+            assert!(
+                selection.security_level == StorageSecurityLevel::Secure
+                    || selection.security_level == StorageSecurityLevel::Insecure
+            );
+        });
+    }
+
+    #[test]
+    fn test_auto_storage_with_password() {
+        with_password(Some("test-password"), || {
+            // With password, if keyring not available, should use encrypted file
+            let result = auto_storage();
+            assert!(result.is_ok());
+            let selection = result.expect("auto_storage should succeed");
+            // Should be Secure (keyring) or Encrypted (file with password)
+            assert!(
+                selection.security_level == StorageSecurityLevel::Secure
+                    || selection.security_level == StorageSecurityLevel::Encrypted
+            );
+        });
     }
 }

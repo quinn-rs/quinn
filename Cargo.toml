@@ -107,6 +107,9 @@ lru-slab = "0.1.2"
 # Bootstrap cache dependencies
 dirs = "5.0"
 
+# Platform keychain/keyring for secure credential storage
+keyring = "3"
+
 # Crypto dependencies
 rustls = { version = "0.23.35", default-features = false, features = ["std"], optional = true }
 aws-lc-rs = { version = "1.12", default-features = false, features = ["unstable"], optional = true }

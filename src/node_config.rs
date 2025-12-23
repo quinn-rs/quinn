@@ -170,8 +170,9 @@ impl NodeConfigBuilder {
         network_id: &[u8],
         storage_dir: &Path,
     ) -> Result<Self, String> {
-        let (public_key, secret_key) = load_or_generate_endpoint_keypair(host, network_id, storage_dir)
-            .map_err(|e| format!("Failed to load/generate keypair: {e}"))?;
+        let (public_key, secret_key) =
+            load_or_generate_endpoint_keypair(host, network_id, storage_dir)
+                .map_err(|e| format!("Failed to load/generate keypair: {e}"))?;
         self.keypair = Some((public_key, secret_key));
         Ok(self)
     }

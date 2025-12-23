@@ -200,8 +200,7 @@ impl HostIdentity {
             .prk
             .expand(&[b"antq:fingerprint:v1"], hkdf::HKDF_SHA256)
             .expect("HKDF expand should succeed");
-        okm.fill(&mut full_bytes)
-            .expect("OKM fill should succeed");
+        okm.fill(&mut full_bytes).expect("OKM fill should succeed");
 
         // Use first 8 bytes for fingerprint
         hex::encode(&full_bytes[..8])

@@ -114,7 +114,11 @@ impl CachePersistence {
     }
 
     /// Create new persistence layer with custom filename
-    pub fn new_with_filename(cache_dir: &Path, filename: &str, enable_locking: bool) -> io::Result<Self> {
+    pub fn new_with_filename(
+        cache_dir: &Path,
+        filename: &str,
+        enable_locking: bool,
+    ) -> io::Result<Self> {
         fs::create_dir_all(cache_dir)?;
 
         let cache_file = cache_dir.join(filename);
@@ -365,7 +369,8 @@ impl EncryptedCachePersistence {
         enable_locking: bool,
         encryption_key: [u8; 32],
     ) -> io::Result<Self> {
-        let inner = CachePersistence::new_with_filename(cache_dir, "bootstrap_cache.enc", enable_locking)?;
+        let inner =
+            CachePersistence::new_with_filename(cache_dir, "bootstrap_cache.enc", enable_locking)?;
         Ok(Self {
             inner,
             encryption_key,
@@ -411,8 +416,8 @@ impl EncryptedCachePersistence {
         cache.instance_id.clone_from(&self.inner.instance_id);
         cache.finalize();
 
-        let json_data = serde_json::to_vec(cache)
-            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+        let json_data =
+            serde_json::to_vec(cache).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
 
         let encrypted_data = self.encrypt(&json_data)?;
 
@@ -432,7 +437,9 @@ impl EncryptedCachePersistence {
 
     /// Encrypt data using ChaCha20-Poly1305
     fn encrypt(&self, plaintext: &[u8]) -> io::Result<Vec<u8>> {
-        use aws_lc_rs::aead::{self, Aad, BoundKey, Nonce, NonceSequence, UnboundKey, CHACHA20_POLY1305};
+        use aws_lc_rs::aead::{
+            self, Aad, BoundKey, CHACHA20_POLY1305, Nonce, NonceSequence, UnboundKey,
+        };
 
         // Generate random nonce
         let mut nonce_bytes = [0u8; 12];
@@ -446,7 +453,10 @@ impl EncryptedCachePersistence {
         struct SingleNonce(Option<[u8; 12]>);
         impl NonceSequence for SingleNonce {
             fn advance(&mut self) -> Result<Nonce, aws_lc_rs::error::Unspecified> {
-                self.0.take().map(Nonce::assume_unique_for_key).ok_or(aws_lc_rs::error::Unspecified)
+                self.0
+                    .take()
+                    .map(Nonce::assume_unique_for_key)
+                    .ok_or(aws_lc_rs::error::Unspecified)
             }
         }
 
@@ -468,10 +478,15 @@ impl EncryptedCachePersistence {
 
     /// Decrypt data using ChaCha20-Poly1305
     fn decrypt(&self, ciphertext: &[u8]) -> io::Result<Vec<u8>> {
-        use aws_lc_rs::aead::{self, Aad, BoundKey, Nonce, NonceSequence, UnboundKey, CHACHA20_POLY1305};
+        use aws_lc_rs::aead::{
+            self, Aad, BoundKey, CHACHA20_POLY1305, Nonce, NonceSequence, UnboundKey,
+        };
 
         if ciphertext.len() < 1 + 12 + 16 {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "Ciphertext too short"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Ciphertext too short",
+            ));
         }
 
         let version = ciphertext[0];
@@ -493,7 +508,10 @@ impl EncryptedCachePersistence {
         struct SingleNonce(Option<[u8; 12]>);
         impl NonceSequence for SingleNonce {
             fn advance(&mut self) -> Result<Nonce, aws_lc_rs::error::Unspecified> {
-                self.0.take().map(Nonce::assume_unique_for_key).ok_or(aws_lc_rs::error::Unspecified)
+                self.0
+                    .take()
+                    .map(Nonce::assume_unique_for_key)
+                    .ok_or(aws_lc_rs::error::Unspecified)
             }
         }
 
@@ -503,7 +521,12 @@ impl EncryptedCachePersistence {
         let mut in_out = ciphertext[13..].to_vec();
         let plaintext = opening_key
             .open_in_place(Aad::empty(), &mut in_out)
-            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "Decryption failed - wrong key or corrupted"))?;
+            .map_err(|_| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "Decryption failed - wrong key or corrupted",
+                )
+            })?;
 
         Ok(plaintext.to_vec())
     }
