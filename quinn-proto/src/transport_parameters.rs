@@ -307,11 +307,12 @@ impl From<UnexpectedEnd> for Error {
 impl TransportParameters {
     /// Encode `TransportParameters` into buffer
     pub fn write<W: BufMut>(&self, w: &mut W) {
-        for idx in self
-            .write_order
-            .as_ref()
-            .unwrap_or(&std::array::from_fn(|i| i as u8))
-        {
+        let ids = match &self.write_order {
+            Some(order) => order,
+            None => &std::array::from_fn(|i| i as u8),
+        };
+
+        for idx in ids {
             let id = TransportParameterId::SUPPORTED[*idx as usize];
             match id {
                 TransportParameterId::ReservedTransportParameter => {

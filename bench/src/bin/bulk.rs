@@ -204,7 +204,7 @@ struct ClientStats {
 }
 
 impl ClientStats {
-    pub fn print(&self, client_id: usize) {
+    fn print(&self, client_id: usize) {
         println!();
         println!("Client {client_id} stats:");
 

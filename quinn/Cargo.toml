@@ -87,6 +87,9 @@ url = { workspace = true }
 [build-dependencies]
 cfg_aliases = { workspace = true }
 
+[lints]
+workspace = true
+
 [[example]]
 name = "server"
 required-features = ["rustls-ring"]

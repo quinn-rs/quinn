@@ -87,8 +87,8 @@ impl PathData {
                 .mtu_discovery_config
                 .as_ref()
                 .filter(|_| allow_mtud)
-                .map_or(
-                    MtuDiscovery::disabled(config.get_initial_mtu(), config.min_mtu),
+                .map_or_else(
+                    || MtuDiscovery::disabled(config.get_initial_mtu(), config.min_mtu),
                     |mtud_config| {
                         MtuDiscovery::new(
                             config.get_initial_mtu(),

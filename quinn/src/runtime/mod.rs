@@ -36,7 +36,7 @@ pub trait AsyncTimer: Send + Debug + 'static {
     /// Update the timer to expire at `i`
     fn reset(self: Pin<&mut Self>, i: Instant);
     /// Check whether the timer has expired, and register to be woken if not
-    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<()>;
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<()>;
 }
 
 /// Abstract implementation of a UDP socket for runtime independence
@@ -56,7 +56,7 @@ pub trait AsyncUdpSocket: Send + Sync + Debug + 'static {
     /// Receive UDP datagrams, or register to be woken if receiving may succeed in the future
     fn poll_recv(
         &mut self,
-        cx: &mut Context,
+        cx: &mut Context<'_>,
         bufs: &mut [IoSliceMut<'_>],
         meta: &mut [RecvMeta],
     ) -> Poll<io::Result<usize>>;
@@ -95,8 +95,8 @@ pub trait UdpSender: Send + Sync + Debug + 'static {
     /// unlike [`Future::poll`], so calling it again after readiness should not panic.
     fn poll_send(
         self: Pin<&mut Self>,
-        transmit: &Transmit,
-        cx: &mut Context,
+        transmit: &Transmit<'_>,
+        cx: &mut Context<'_>,
     ) -> Poll<io::Result<()>>;
 
     /// Maximum number of datagrams that a [`Transmit`] may encode.
@@ -160,8 +160,8 @@ where
 {
     fn poll_send(
         self: Pin<&mut Self>,
-        transmit: &udp::Transmit,
-        cx: &mut Context,
+        transmit: &udp::Transmit<'_>,
+        cx: &mut Context<'_>,
     ) -> Poll<io::Result<()>> {
         let mut this = self.project();
         loop {
@@ -209,7 +209,7 @@ trait UdpSenderHelperSocket: Send + Sync + 'static {
     /// If not write-ready, this is allowed to return [`std::io::ErrorKind::WouldBlock`].
     ///
     /// The [`UdpSenderHelper`] will use this to implement [`UdpSender::poll_send`].
-    fn try_send(&self, transmit: &udp::Transmit) -> io::Result<()>;
+    fn try_send(&self, transmit: &udp::Transmit<'_>) -> io::Result<()>;
 
     /// See [`UdpSender::max_transmit_segments`].
     fn max_transmit_segments(&self) -> usize;

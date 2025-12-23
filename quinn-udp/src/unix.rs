@@ -540,7 +540,7 @@ fn recv(io: SockRef<'_>, bufs: &mut [IoSliceMut<'_>], meta: &mut [RecvMeta]) -> 
         }
     };
     for i in 0..(msg_count as usize) {
-        meta[i] = decode_recv(&names[i], &hdrs[i], hdrs[i].msg_datalen as usize)?;
+        meta[i] = decode_recv(&names[i], &hdrs[i], hdrs[i].msg_datalen)?;
     }
     Ok(msg_count as usize)
 }
@@ -617,6 +617,7 @@ fn prepare_msg(
     if is_ipv4 {
         if !sendmsg_einval {
             #[cfg(not(target_os = "netbsd"))]
+            #[expect(trivial_numeric_casts)]
             {
                 encoder.push(libc::IPPROTO_IP, libc::IP_TOS, ecn as IpTosTy);
             }
@@ -693,14 +694,14 @@ fn prepare_recv(
 
 #[cfg(apple_fast)]
 fn prepare_recv(
-    buf: &mut IoSliceMut,
+    buf: &mut IoSliceMut<'_>,
     name: &mut MaybeUninit<libc::sockaddr_storage>,
     ctrl: &mut cmsg::Aligned<[u8; CMSG_LEN]>,
     hdr: &mut msghdr_x,
 ) {
     hdr.msg_name = name.as_mut_ptr() as _;
     hdr.msg_namelen = mem::size_of::<libc::sockaddr_storage>() as _;
-    hdr.msg_iov = buf as *mut IoSliceMut as *mut libc::iovec;
+    hdr.msg_iov = buf as *mut IoSliceMut<'_> as *mut libc::iovec;
     hdr.msg_iovlen = 1;
     hdr.msg_control = ctrl.0.as_mut_ptr() as _;
     hdr.msg_controllen = CMSG_LEN as _;
@@ -765,7 +766,7 @@ fn decode_recv(
             (libc::IPPROTO_IPV6, libc::IPV6_PKTINFO) => {
                 let pktinfo = unsafe { cmsg::decode::<libc::in6_pktinfo, libc::cmsghdr>(cmsg) };
                 dst_ip = Some(IpAddr::V6(Ipv6Addr::from(pktinfo.ipi6_addr.s6_addr)));
-                interface_index = Some(pktinfo.ipi6_ifindex as u32);
+                interface_index = Some(pktinfo.ipi6_ifindex);
             }
             #[cfg(any(target_os = "linux", target_os = "android"))]
             (libc::SOL_UDP, libc::UDP_GRO) => unsafe {
@@ -997,7 +998,7 @@ mod gso {
 
     pub(super) fn set_segment_size(
         #[cfg(not(apple_fast))] _encoder: &mut cmsg::Encoder<libc::msghdr>,
-        #[cfg(apple_fast)] _encoder: &mut cmsg::Encoder<msghdr_x>,
+        #[cfg(apple_fast)] _encoder: &mut cmsg::Encoder<'_, msghdr_x>,
         _segment_size: u16,
     ) {
     }

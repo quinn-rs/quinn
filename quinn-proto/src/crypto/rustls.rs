@@ -173,9 +173,8 @@ impl crypto::Session for TlsSession {
     }
 
     fn is_valid_retry(&self, orig_dst_cid: ConnectionId, header: &[u8], payload: &[u8]) -> bool {
-        let tag_start = match payload.len().checked_sub(16) {
-            Some(x) => x,
-            None => return false,
+        let Some(tag_start) = payload.len().checked_sub(16) else {
+            return false;
         };
 
         let mut pseudo_packet =
@@ -416,7 +415,7 @@ pub struct NoInitialCipherSuite {
 }
 
 impl std::fmt::Display for NoInitialCipherSuite {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self.specific {
             true => "invalid cipher suite specified",
             false => "no initial cipher suite found",

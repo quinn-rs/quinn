@@ -282,7 +282,7 @@ fn socket_buffers() {
     );
 }
 
-fn test_send_recv(send: &Socket, recv: &Socket, transmit: Transmit) {
+fn test_send_recv(send: &Socket, recv: &Socket, transmit: Transmit<'_>) {
     let send_state = UdpSocketState::new(send.into()).unwrap();
     let recv_state = UdpSocketState::new(recv.into()).unwrap();
 
