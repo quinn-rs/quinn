@@ -1553,9 +1553,32 @@
             .arcDashAnimateTime(1500)
             (document.getElementById('globe'));
 
-        // Auto-rotate
-        globe.controls().autoRotate = true;
-        globe.controls().autoRotateSpeed = 0.3;
+        // Auto-rotate with user interaction handling
+        const controls = globe.controls();
+        controls.autoRotate = true;
+        controls.autoRotateSpeed = 0.3;
+
+        // Track user interaction to pause/resume auto-rotation
+        let autoRotateTimeout = null;
+        const AUTO_ROTATE_RESUME_DELAY = 5000; // 5 seconds
+
+        function pauseAutoRotate() {
+            controls.autoRotate = false;
+            // Clear any existing timeout
+            if (autoRotateTimeout) {
+                clearTimeout(autoRotateTimeout);
+            }
+            // Set timeout to resume auto-rotation
+            autoRotateTimeout = setTimeout(() => {
+                controls.autoRotate = true;
+            }, AUTO_ROTATE_RESUME_DELAY);
+        }
+
+        // Pause auto-rotation on user interaction
+        const globeContainer = document.getElementById('globe');
+        globeContainer.addEventListener('mousedown', pauseAutoRotate);
+        globeContainer.addEventListener('touchstart', pauseAutoRotate);
+        globeContainer.addEventListener('wheel', pauseAutoRotate);
 
         // Add registry server marker
         nodes.push({

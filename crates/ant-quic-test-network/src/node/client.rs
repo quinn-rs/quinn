@@ -48,6 +48,18 @@ impl Default for TestNodeConfig {
     }
 }
 
+/// Maximum consecutive failures before disconnecting a peer.
+const MAX_CONSECUTIVE_FAILURES: u32 = 5;
+
+/// Maximum time without activity before considering a peer stale (seconds).
+const STALE_PEER_TIMEOUT_SECS: u64 = 60;
+
+/// Interval for health checks (seconds).
+const HEALTH_CHECK_INTERVAL_SECS: u64 = 15;
+
+/// Chance to rotate a peer each health check cycle (1 in N).
+const PEER_ROTATION_CHANCE: u32 = 10;
+
 /// Statistics for a connected peer.
 #[derive(Debug, Clone, Default)]
 pub struct PeerStats {
@@ -73,10 +85,14 @@ struct TrackedPeer {
     method: ConnectionMethod,
     /// When connection was established.
     connected_at: Instant,
+    /// Last successful activity timestamp.
+    last_activity: Instant,
     /// Stats for this peer.
     stats: PeerStats,
     /// Sequence counter for test packets.
     sequence: AtomicU64,
+    /// Consecutive failures (for health checking).
+    consecutive_failures: u32,
 }
 
 impl TrackedPeer {
@@ -201,6 +217,7 @@ impl TestNode {
         let heartbeat_handle = self.spawn_heartbeat_loop();
         let connect_handle = self.spawn_connect_loop();
         let test_handle = self.spawn_test_loop();
+        let health_handle = self.spawn_health_check_loop();
 
         // Wait for shutdown
         while !shutdown.load(Ordering::SeqCst) {
@@ -211,6 +228,7 @@ impl TestNode {
         heartbeat_handle.abort();
         connect_handle.abort();
         test_handle.abort();
+        health_handle.abort();
 
         info!("Test node shutting down");
         Ok(())
@@ -400,12 +418,15 @@ impl TestNode {
                             }
                         }
 
+                        let now = Instant::now();
                         let tracked = TrackedPeer {
                             info: (*candidate).clone(),
                             method,
-                            connected_at: Instant::now(),
+                            connected_at: now,
+                            last_activity: now,
                             stats: PeerStats::default(),
                             sequence: AtomicU64::new(0),
+                            consecutive_failures: 0,
                         };
 
                         // Create TUI peer from tracked peer
@@ -477,6 +498,8 @@ impl TestNode {
                                 tracked.stats.last_rtt = Some(rtt);
                                 tracked.stats.packets_sent += 1;
                                 tracked.stats.packets_received += 1;
+                                tracked.last_activity = Instant::now();
+                                tracked.consecutive_failures = 0; // Reset on success
 
                                 total_sent.fetch_add(packet_size, Ordering::Relaxed);
                                 total_received.fetch_add(packet_size, Ordering::Relaxed);
@@ -492,6 +515,7 @@ impl TestNode {
                             }
                             Err(e) => {
                                 tracked.stats.tests_failed += 1;
+                                tracked.consecutive_failures += 1;
                                 warn!("Test packet to {} failed: {}", &peer_id[..8], e);
 
                                 let _ = event_tx
@@ -504,6 +528,100 @@ impl TestNode {
                             }
                         }
                     }
+                }
+            }
+        })
+    }
+
+    /// Spawn the health check background task.
+    ///
+    /// This task periodically:
+    /// 1. Removes peers with too many consecutive failures
+    /// 2. Removes stale peers (no activity for too long)
+    /// 3. Occasionally rotates peers to keep the network fresh
+    fn spawn_health_check_loop(&self) -> tokio::task::JoinHandle<()> {
+        let shutdown = Arc::clone(&self.shutdown);
+        let connected_peers = Arc::clone(&self.connected_peers);
+        let event_tx = self.event_tx.clone();
+
+        tokio::spawn(async move {
+            let mut ticker = tokio::time::interval(Duration::from_secs(HEALTH_CHECK_INTERVAL_SECS));
+
+            while !shutdown.load(Ordering::SeqCst) {
+                ticker.tick().await;
+
+                let now = Instant::now();
+                let mut peers_to_remove = Vec::new();
+                let mut should_rotate = false;
+
+                // Check all peers for health issues
+                {
+                    let peers = connected_peers.read().await;
+
+                    for (peer_id, tracked) in peers.iter() {
+                        let time_since_activity = now.duration_since(tracked.last_activity);
+
+                        // Check for too many consecutive failures
+                        if tracked.consecutive_failures >= MAX_CONSECUTIVE_FAILURES {
+                            info!(
+                                "Removing peer {} - {} consecutive failures",
+                                &peer_id[..8.min(peer_id.len())],
+                                tracked.consecutive_failures
+                            );
+                            peers_to_remove.push(peer_id.clone());
+                            continue;
+                        }
+
+                        // Check for stale peers
+                        if time_since_activity.as_secs() > STALE_PEER_TIMEOUT_SECS {
+                            info!(
+                                "Removing peer {} - stale (no activity for {}s)",
+                                &peer_id[..8.min(peer_id.len())],
+                                time_since_activity.as_secs()
+                            );
+                            peers_to_remove.push(peer_id.clone());
+                        }
+                    }
+
+                    // Decide whether to rotate a peer (for network freshness)
+                    if peers.len() > 1 && peers_to_remove.is_empty() {
+                        use rand::Rng;
+                        let mut rng = rand::thread_rng();
+                        if rng.gen_ratio(1, PEER_ROTATION_CHANCE) {
+                            // Find the oldest connected peer to rotate out
+                            if let Some((oldest_id, _)) = peers
+                                .iter()
+                                .min_by_key(|(_, p)| p.connected_at)
+                            {
+                                info!(
+                                    "Rotating out peer {} for network freshness",
+                                    &oldest_id[..8.min(oldest_id.len())]
+                                );
+                                peers_to_remove.push(oldest_id.clone());
+                                should_rotate = true;
+                            }
+                        }
+                    }
+                }
+
+                // Remove unhealthy/rotated peers
+                if !peers_to_remove.is_empty() {
+                    let mut peers = connected_peers.write().await;
+                    for peer_id in &peers_to_remove {
+                        peers.remove(peer_id);
+
+                        // Notify TUI
+                        let _ = event_tx.send(TuiEvent::RemovePeer(peer_id.clone())).await;
+                    }
+
+                    let removed_count = peers_to_remove.len();
+                    let reason = if should_rotate { "rotation" } else { "health" };
+                    debug!(
+                        "Removed {} peer(s) for {}, {} remaining",
+                        removed_count,
+                        reason,
+                        peers.len()
+                    );
                 }
             }
         })
