@@ -29,14 +29,14 @@ ant-quic is a QUIC transport protocol implementation with advanced NAT traversal
 
 We use **Pure Post-Quantum Cryptography** with raw public keys (inspired by RFC 7250):
 - Reference: `rfcs/ant-quic-pqc-authentication.md` (our specification)
-- Identity: Ed25519 key pairs (32-byte PeerId compact identifier ONLY)
+- Identity: ML-DSA-65 key pairs (PeerId = SHA-256 hash → 32 bytes compact identifier)
 - Key Exchange: ML-KEM-768 (IANA 0x0201) - FIPS 203
 - Signatures: ML-DSA-65 (IANA 0x0901) - FIPS 204
 - No PKI infrastructure required
 - No CA dependency - peers authenticate directly via public key fingerprints
 
 v0.2: This is a greenfield network - NO hybrid algorithms, NO classical fallback.
-Ed25519 is used ONLY for the 32-byte PeerId identifier, NOT for TLS authentication.
+Single ML-DSA-65 key pair for identity and auth. PeerId = SHA-256(public_key) for compact 32-byte identifiers.
 
 ### Post-Quantum Cryptography: Always On (v0.13.0+)
 

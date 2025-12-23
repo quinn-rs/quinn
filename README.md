@@ -7,8 +7,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE-MIT)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE-APACHE)
 
-[![CI Status](https://github.com/dirvine/ant-quic/actions/workflows/quick-checks.yml/badge.svg)](https://github.com/dirvine/ant-quic/actions/workflows/quick-checks.yml)
-[![Build Status](https://github.com/dirvine/ant-quic/actions/workflows/ci-consolidated.yml/badge.svg)](https://github.com/dirvine/ant-quic/actions/workflows/ci-consolidated.yml)
+[![CI Status](https://github.com/dirvine/ant-quic/actions/workflows/ci.yml/badge.svg)](https://github.com/dirvine/ant-quic/actions/workflows/ci.yml)
 [![Security Audit](https://github.com/dirvine/ant-quic/actions/workflows/security.yml/badge.svg)](https://github.com/dirvine/ant-quic/actions/workflows/security.yml)
 
 ## Key Features
@@ -126,7 +125,7 @@ let pqc = PqcConfig::builder()
 
 ### Identity Model
 
-- **Ed25519 PeerId** - 32-byte identifier for addressing (NOT for TLS authentication)
+- **32-byte PeerId** - SHA-256 hash of ML-DSA-65 public key (compact identifier for addressing)
 - **ML-DSA-65 Authentication** - All TLS handshake signatures use pure PQC
 - **ML-KEM-768 Key Exchange** - All key agreement uses pure PQC
 
@@ -175,24 +174,25 @@ See [docs/NAT_TRAVERSAL_GUIDE.md](docs/NAT_TRAVERSAL_GUIDE.md) for detailed info
 
 ## Raw Public Key Identity (v0.2)
 
-Each node has an Ed25519 key pair for addressing, with ML-DSA-65 for authentication:
+Each node has a single ML-DSA-65 key pair for both identity and authentication:
 
 ```rust
-// PeerId = Ed25519 public key (32 bytes) - used for addressing ONLY
-let (public_key, secret_key) = generate_ed25519_keypair();
-let peer_id = derive_peer_id_from_public_key(&public_key);
-
-// ML-DSA-65 keypair - used for TLS authentication
+// ML-DSA-65 keypair - used for everything
 let (ml_dsa_pub, ml_dsa_sec) = generate_ml_dsa_65_keypair();
+
+// PeerId = SHA-256(ML-DSA-65 public key) = 32 bytes
+// Compact identifier for addressing and peer tracking
+let peer_id = derive_peer_id_from_public_key(&ml_dsa_pub);
 ```
 
 This follows our [Pure PQC Authentication specification](rfcs/ant-quic-pqc-authentication.md).
 
 ### v0.2 Changes
 
-- **Ed25519**: Used ONLY for compact 32-byte PeerId addressing
-- **ML-DSA-65**: Used for ALL TLS handshake signatures (pure PQC)
-- **No Hybrid**: Previous hybrid Ed25519+ML-DSA scheme removed
+- **Pure PQC Identity**: Single ML-DSA-65 key pair, no classical keys
+- **32-byte PeerId**: SHA-256 hash of ML-DSA-65 public key (1952 bytes → 32 bytes)
+- **ML-DSA-65 Authentication**: ALL TLS handshake signatures use pure PQC
+- **No Classical Keys**: Ed25519 completely removed, pure ML-DSA-65 only
 
 ### Trust Model
 

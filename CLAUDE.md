@@ -30,14 +30,14 @@ ant-quic is a QUIC transport protocol implementation with advanced NAT traversal
 
 We use **Pure Post-Quantum Cryptography** with raw public keys (inspired by RFC 7250):
 - **Reference**: `rfcs/ant-quic-pqc-authentication.md` (our specification)
-- **Identity**: Ed25519 key pairs (32-byte PeerId compact identifier ONLY)
+- **Identity**: ML-DSA-65 key pairs (PeerId = SHA-256 hash → 32 bytes compact identifier)
 - **Key Exchange**: ML-KEM-768 (IANA 0x0201) - FIPS 203
 - **Signatures**: ML-DSA-65 (IANA 0x0901) - FIPS 204
 - **Benefits**: Full quantum safety, no classical crypto, no PKI infrastructure
 - **No CA dependency**: Peers authenticate directly via public key fingerprints
 
 v0.2: This is a greenfield network - NO hybrid algorithms, NO classical fallback.
-Ed25519 is used ONLY for the 32-byte PeerId identifier, NOT for TLS authentication.
+Single ML-DSA-65 key pair for identity and auth. PeerId = SHA-256(public_key) for compact 32-byte identifiers.
 
 ### Network: Dual-Stack IPv4 and IPv6 Support
 
@@ -276,13 +276,13 @@ cargo test -- --ignored stress
 - Transport parameter negotiation (0x3d7e9f0bca12fea6+) and extension frames
 - NAT traversal frames: ADD_ADDRESS (0x3d7e90-91), PUNCH_ME_NOW (0x3d7e92-93), REMOVE_ADDRESS (0x3d7e94)
 - Priority-based candidate pairing (inspired by ICE, but native QUIC implementation)
-- **Pure PQC Raw Public Keys** with Ed25519 PeerId + ML-DSA-65 auth (v0.2) - NO X.509 certificates
+- **Pure PQC Raw Public Keys** with SHA-256(ML-DSA-65) PeerId + ML-DSA-65 auth (v0.2) - NO X.509 certificates
 - **Dual-stack IPv4/IPv6** support with transparent address handling
 - High-level APIs: `QuicP2PNode` and `NatTraversalEndpoint`
 - Production binary `ant-quic` with full QUIC implementation
 - Comprehensive test suite (580+ tests)
 - Automatic connection to known peers on startup (v0.4.1+)
-- Peer authentication with Ed25519 signatures
+- Peer authentication with ML-DSA-65 signatures
 - Secure chat protocol with message versioning
 - Real-time monitoring dashboard
 - GitHub Actions for automated releases
@@ -303,7 +303,7 @@ cargo test -- --ignored stress
 - **Symmetric P2P**: All nodes are equal - can connect, accept, and coordinate NAT traversal
 - **100% PQC**: ML-KEM-768 key exchange on every connection, no classical fallback
 - **Native QUIC NAT traversal**: All hole-punching via QUIC extension frames, NO external protocols
-- **Pure PQC Raw Public Keys**: Authentication via ML-DSA-65 (Ed25519 for PeerId only), NO X.509 certificate chains
+- **Pure PQC Raw Public Keys**: Authentication via ML-DSA-65, PeerId = SHA-256(public_key), NO X.509 certificate chains
 - **Dual-stack networking**: Full IPv4 and IPv6 support with transparent handling
 - Address discovery via connected peers (per draft-ietf-quic-address-discovery-00)
 - Three-layer architecture: Protocol → Integration APIs → Applications

@@ -1,8 +1,8 @@
 # ant-quic Pure Post-Quantum Authentication Specification
 
-**Version:** 2.0  
-**Date:** December 2025  
-**Status:** Draft (Supersedes v1.0 Hybrid Spec)  
+**Version:** 2.1
+**Date:** December 2025
+**Status:** Draft (Supersedes v2.0 - single ML-DSA-65 key pair)
 **Authors:** Saorsa Labs Ltd.
 
 ## Abstract
@@ -42,7 +42,7 @@ ant-quic is a QUIC transport implementation optimized for P2P networks with
 advanced NAT traversal capabilities. This specification defines the
 cryptographic mechanisms used for:
 
-- **Peer Identity**: Node identification using Ed25519-derived PeerIds
+- **Peer Identity**: Node identification using SHA-256(ML-DSA-65 public key) PeerIds
 - **Key Exchange**: Quantum-resistant session key establishment using ML-KEM-768
 - **Authentication**: Handshake signing using ML-DSA-65
 
@@ -78,55 +78,57 @@ This enables a pure PQC approach:
 - **PQC**: Post-Quantum Cryptography resistant to quantum computer attacks
 - **ML-KEM**: Module-Lattice Key Encapsulation Mechanism (FIPS 203)
 - **ML-DSA**: Module-Lattice Digital Signature Algorithm (FIPS 204)
-- **PeerId**: 32-byte node identifier derived from Ed25519 public key
+- **PeerId**: 32-byte node identifier derived from SHA-256 hash of ML-DSA-65 public key
 
 ---
 
 ## 2. Identity Model
 
-### 2.1 PeerId: Ed25519-Derived Identifier
+### 2.1 PeerId: SHA-256 Hash of ML-DSA-65 Public Key
 
-Each ant-quic node has a persistent identity based on an Ed25519 key pair.
-The Ed25519 public key serves as a **compact identifier only**:
+Each ant-quic node has a persistent identity based on a single ML-DSA-65 key pair.
+The PeerId is derived by hashing the ML-DSA-65 public key:
 
 ```
-Ed25519 Public Key:  32 bytes → PeerId (used for routing, addressing)
-ML-DSA-65 Public Key: 1952 bytes → Authentication (used for handshake)
+ML-DSA-65 Public Key: 1952 bytes → SHA-256 → PeerId (32 bytes)
 ```
 
-**Rationale:** Ed25519 provides a compact 32-byte identifier suitable for DHT
-routing and peer addressing. The actual cryptographic authentication uses
-ML-DSA-65, which is quantum-resistant. Even if Ed25519 were broken, an
-attacker could only forge identifiers but could not authenticate as those
-identities without the corresponding ML-DSA-65 private key.
+**Rationale:** This provides a compact 32-byte identifier suitable for DHT
+routing and peer addressing while maintaining a single quantum-resistant key
+pair for both identity and authentication. The SHA-256 hash provides:
+- Uniform 32-byte identifiers regardless of public key size
+- Collision resistance (2^128 security level)
+- One-way function prevents recovering public key from PeerId
+- Simplicity: one key pair to manage
 
-### 2.2 Dual Key Pairs
+### 2.2 Single Key Pair (Pure PQC)
 
-Each node maintains two key pairs:
+Each node maintains a single ML-DSA-65 key pair:
 
 | Purpose | Algorithm | Key Sizes | Usage |
 |---------|-----------|-----------|-------|
-| Identity | Ed25519 | 32B pub / 32B priv | PeerId derivation, addressing |
-| Authentication | ML-DSA-65 | 1952B pub / 4032B priv | TLS handshake signatures |
+| Identity & Auth | ML-DSA-65 | 1952B pub / 4032B priv | PeerId derivation, TLS handshake signatures |
 
-The Ed25519 and ML-DSA-65 keys are **cryptographically bound** during initial
-key generation. The ML-DSA-65 key pair is generated deterministically from a
-seed that includes the Ed25519 private key, ensuring a 1:1 correspondence.
+This is simpler than the dual-key approach and provides full quantum resistance
+for both identity and authentication.
 
 ### 2.3 PeerId Derivation
 
 ```
-PeerId = Ed25519_Public_Key  (32 bytes, used directly)
+PeerId = SHA-256(ML-DSA-65_Public_Key)  (32 bytes)
+```
+
+Implementation:
+```rust
+pub fn derive_peer_id_from_public_key(public_key: &MlDsa65PublicKey) -> PeerId {
+    let digest = sha256(public_key.as_bytes());
+    PeerId(digest[..32].try_into().unwrap())
+}
 ```
 
 ### 2.4 SubjectPublicKeyInfo Encoding
 
-For TLS integration, keys are encoded as DER-encoded SubjectPublicKeyInfo:
-
-**Ed25519 (44 bytes):**
-```
-30 2a 30 05 06 03 2b 65 70 03 21 00 [32-byte Ed25519 public key]
-```
+For TLS integration, the ML-DSA-65 key is encoded as DER-encoded SubjectPublicKeyInfo:
 
 **ML-DSA-65 (variable, ~1960 bytes):**
 ```
@@ -312,15 +314,13 @@ All cryptographic operations use NIST-standardized post-quantum algorithms:
 |----------|-----------|-------------------|
 | Key Exchange | ML-KEM-768 | ✅ NIST Level 3 |
 | Authentication | ML-DSA-65 | ✅ NIST Level 3 |
-| Identity | Ed25519 | ⚠️ Classical only |
+| Identity (PeerId) | SHA-256(ML-DSA-65) | ✅ Quantum-safe hash |
 
-**Note on Ed25519 Identity:** The Ed25519 key is used only as a compact
-identifier. Cryptographic authentication uses ML-DSA-65. An attacker with a
-quantum computer could potentially forge PeerIds but could not authenticate
-connections without the corresponding ML-DSA-65 private key.
-
-For applications requiring fully quantum-safe identities, a future version
-may support ML-DSA-65 public key hashes as PeerIds.
+**Fully Quantum-Resistant Identity:** The PeerId is derived from the ML-DSA-65
+public key via SHA-256. This provides:
+- Complete quantum resistance for both identity and authentication
+- No classical algorithm attack surface
+- Single key pair simplifies key management and reduces attack vectors
 
 ### 6.2 Forward Secrecy
 
@@ -420,7 +420,7 @@ rejected:
 Since ant-quic has not launched publicly, this is a clean break:
 
 1. Update cryptographic provider to pure PQC
-2. Regenerate node keys (Ed25519 identity + ML-DSA-65 auth)
+2. Regenerate node keys (single ML-DSA-65 key pair)
 3. Update configuration to use new code points
 4. Test interoperability with updated peers
 
@@ -465,6 +465,7 @@ The reference implementation is available in the ant-quic source code:
 |---------|------|---------|
 | 1.0 | December 2025 | Initial hybrid specification |
 | 2.0 | December 2025 | **Pure PQC** - removed all hybrid algorithms |
+| 2.1 | December 2025 | **Single key pair** - PeerId from SHA-256(ML-DSA-65), removed Ed25519 identity |
 
 ---
 
