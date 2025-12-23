@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.4] - 2025-12-23
+
+### Features
+
+- Add interactive ADR modal system with formatted architecture decision summaries
+- Implement scroll-aware stats panel that auto-minimizes when scrolling
+- Add Architecture navigation link in header for easy access to ADRs
+- Add keyboard navigation support (Escape to close modals, Tab for focus)
+
+### Bug Fixes
+
+- Fix endpoint validation workflow to not create issues for 0/0 endpoints
+- Update remaining registry URLs from quic.saorsalabs.com to saorsa-1.saorsalabs.com
+
 ## [0.14.3] - 2025-12-23
 
 ### Features
