@@ -204,6 +204,7 @@ dependencies = [
  "tracing-subscriber",
  "unicode-width 0.2.0",
  "uuid",
+ "warp",
  "webpki-roots",
  "windows",
  "x25519-dalek",

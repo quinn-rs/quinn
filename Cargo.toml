@@ -78,7 +78,7 @@ low_memory = []
 
 # Metrics features
 # Note: prometheus feature is excluded from docs.rs builds due to compilation issues
-prometheus = ["dep:prometheus"]
+prometheus = ["dep:prometheus", "dep:warp"]
 
 # Web dashboard with 3D globe visualization
 web-dashboard = ["dep:rust-embed", "dep:tokio-tungstenite"]
@@ -150,7 +150,7 @@ qlog = { version = "0.13", optional = true }
 
 # Metrics dependencies (optional)
 prometheus = { version = "0.14", optional = true }
-
+warp = { version = "0.3", optional = true }
 
 # Web dashboard dependencies (optional)
 rust-embed = { version = "8.0", optional = true }
