@@ -271,6 +271,84 @@ jobs:
             strip target/${{ matrix.target }}/release/${{ matrix.test_binary }} || true
           fi
 
+      # macOS Code Signing
+      - name: Import Code Signing Certificate
+        if: matrix.os == 'macos-latest' && env.MACOS_CERTIFICATE != ''
+        env:
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          # Create temporary keychain
+          KEYCHAIN_PATH=$RUNNER_TEMP/signing.keychain-db
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          # Import certificate
+          echo "$MACOS_CERTIFICATE" | base64 --decode > $RUNNER_TEMP/certificate.p12
+          security import $RUNNER_TEMP/certificate.p12 -P "$MACOS_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security list-keychain -d user -s "$KEYCHAIN_PATH" login.keychain
+
+          # Allow codesign to access the key
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+      - name: Sign macOS Binaries
+        if: matrix.os == 'macos-latest' && env.MACOS_SIGNING_IDENTITY != ''
+        env:
+          MACOS_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
+        run: |
+          # Sign the main binary
+          codesign --force --options runtime --sign "$MACOS_SIGNING_IDENTITY" \
+            target/${{ matrix.target }}/release/${{ matrix.binary }}
+
+          # Sign the test binary
+          codesign --force --options runtime --sign "$MACOS_SIGNING_IDENTITY" \
+            target/${{ matrix.target }}/release/${{ matrix.test_binary }}
+
+          # Verify signatures
+          codesign --verify --verbose target/${{ matrix.target }}/release/${{ matrix.binary }}
+          codesign --verify --verbose target/${{ matrix.target }}/release/${{ matrix.test_binary }}
+
+          echo "✅ Binaries signed successfully"
+
+      - name: Notarize macOS Binaries
+        if: matrix.os == 'macos-latest' && env.MACOS_NOTARIZATION_APPLE_ID != ''
+        env:
+          MACOS_NOTARIZATION_APPLE_ID: ${{ secrets.MACOS_NOTARIZATION_APPLE_ID }}
+          MACOS_NOTARIZATION_PASSWORD: ${{ secrets.MACOS_NOTARIZATION_PASSWORD }}
+          MACOS_NOTARIZATION_TEAM_ID: ${{ secrets.MACOS_NOTARIZATION_TEAM_ID }}
+        run: |
+          # Create ZIP for notarization (required format)
+          cd target/${{ matrix.target }}/release
+          zip ant-quic-notarize.zip ${{ matrix.binary }}
+          zip ant-quic-test-notarize.zip ${{ matrix.test_binary }}
+
+          # Submit for notarization
+          echo "Submitting ant-quic for notarization..."
+          xcrun notarytool submit ant-quic-notarize.zip \
+            --apple-id "$MACOS_NOTARIZATION_APPLE_ID" \
+            --password "$MACOS_NOTARIZATION_PASSWORD" \
+            --team-id "$MACOS_NOTARIZATION_TEAM_ID" \
+            --wait
+
+          echo "Submitting ant-quic-test for notarization..."
+          xcrun notarytool submit ant-quic-test-notarize.zip \
+            --apple-id "$MACOS_NOTARIZATION_APPLE_ID" \
+            --password "$MACOS_NOTARIZATION_PASSWORD" \
+            --team-id "$MACOS_NOTARIZATION_TEAM_ID" \
+            --wait
+
+          # Staple the notarization ticket to binaries
+          xcrun stapler staple ${{ matrix.binary }} || echo "Stapling main binary (may fail for CLI tools)"
+          xcrun stapler staple ${{ matrix.test_binary }} || echo "Stapling test binary (may fail for CLI tools)"
+
+          # Cleanup
+          rm -f ant-quic-notarize.zip ant-quic-test-notarize.zip
+          cd -
+
+          echo "✅ Notarization complete"
+
       - name: Package ant-quic (Unix)
         if: matrix.os != 'windows-latest'
         run: |
