@@ -84,7 +84,7 @@ pub struct NodeCapabilities {
 impl Default for NodeCapabilities {
     fn default() -> Self {
         Self {
-            pqc: true,  // Always true for ant-quic
+            pqc: true, // Always true for ant-quic
             ipv4: true,
             ipv6: false,
             nat_traversal: true,

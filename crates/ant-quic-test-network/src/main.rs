@@ -6,10 +6,10 @@
 //! for the large-scale ant-quic network testing infrastructure.
 
 use ant_quic_test_network::{
-    node::TestNodeConfig,
-    registry::{start_registry_server, RegistryConfig},
-    tui::{App, run_tui, TuiEvent},
     TestNode,
+    node::TestNodeConfig,
+    registry::{RegistryConfig, start_registry_server},
+    tui::{App, TuiEvent, run_tui},
 };
 use std::net::SocketAddr;
 use tokio::sync::mpsc;

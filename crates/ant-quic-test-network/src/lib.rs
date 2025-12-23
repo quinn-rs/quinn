@@ -70,8 +70,8 @@ pub use registry::{
 };
 
 pub use tui::{
-    App, AppState, ConnectedPeer, ConnectionQuality, InputEvent, LocalNodeInfo,
-    NetworkStatistics, TuiConfig, TuiEvent, run_tui,
+    App, AppState, ConnectedPeer, ConnectionQuality, InputEvent, LocalNodeInfo, NetworkStatistics,
+    TuiConfig, TuiEvent, run_tui,
 };
 
 pub use node::{GlobalStats, TestNode, TestNodeConfig, TestPacket, TestResult};

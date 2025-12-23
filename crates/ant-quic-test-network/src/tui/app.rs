@@ -195,13 +195,11 @@ impl App {
     pub fn peers_sorted(&self) -> Vec<&ConnectedPeer> {
         let mut peers: Vec<_> = self.connected_peers.values().collect();
         // Sort by RTT (fastest first), then by connection time
-        peers.sort_by(|a, b| {
-            match (a.rtt, b.rtt) {
-                (Some(a_rtt), Some(b_rtt)) => a_rtt.cmp(&b_rtt),
-                (Some(_), None) => std::cmp::Ordering::Less,
-                (None, Some(_)) => std::cmp::Ordering::Greater,
-                (None, None) => a.connected_at.cmp(&b.connected_at),
-            }
+        peers.sort_by(|a, b| match (a.rtt, b.rtt) {
+            (Some(a_rtt), Some(b_rtt)) => a_rtt.cmp(&b_rtt),
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (None, None) => a.connected_at.cmp(&b.connected_at),
         });
         peers
     }

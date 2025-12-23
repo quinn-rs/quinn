@@ -6,11 +6,11 @@
 use crate::tui::app::App;
 use crate::tui::types::country_flag;
 use ratatui::{
+    Frame,
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Cell, Paragraph, Row, Table},
-    Frame,
 };
 
 /// Main UI rendering function.
@@ -19,11 +19,11 @@ pub fn draw(frame: &mut Frame, app: &App) {
         .direction(Direction::Vertical)
         .margin(1)
         .constraints([
-            Constraint::Length(3),  // Header
-            Constraint::Length(6),  // Your Node
-            Constraint::Min(8),     // Connected Peers
-            Constraint::Length(5),  // Network Stats
-            Constraint::Length(3),  // Footer
+            Constraint::Length(3), // Header
+            Constraint::Length(6), // Your Node
+            Constraint::Min(8),    // Connected Peers
+            Constraint::Length(5), // Network Stats
+            Constraint::Length(3), // Footer
         ])
         .split(frame.area());
 
@@ -36,23 +36,21 @@ pub fn draw(frame: &mut Frame, app: &App) {
 
 /// Draw the header with title.
 fn draw_header(frame: &mut Frame, area: Rect) {
-    let title = vec![
-        Line::from(vec![
-            Span::styled(
-                "ant-quic Network Test",
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::raw("                         "),
-            Span::styled(
-                "\"We will be legion!!\"",
-                Style::default()
-                    .fg(Color::Yellow)
-                    .add_modifier(Modifier::ITALIC),
-            ),
-        ]),
-    ];
+    let title = vec![Line::from(vec![
+        Span::styled(
+            "ant-quic Network Test",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw("                         "),
+        Span::styled(
+            "\"We will be legion!!\"",
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::ITALIC),
+        ),
+    ])];
 
     let block = Block::default()
         .borders(Borders::ALL)
@@ -179,15 +177,11 @@ fn draw_peers(frame: &mut Frame, app: &App, area: Rect) {
         .iter()
         .map(|peer| {
             let method_style = match peer.method {
-                crate::registry::ConnectionMethod::Direct => {
-                    Style::default().fg(Color::Green)
-                }
+                crate::registry::ConnectionMethod::Direct => Style::default().fg(Color::Green),
                 crate::registry::ConnectionMethod::HolePunched => {
                     Style::default().fg(Color::Yellow)
                 }
-                crate::registry::ConnectionMethod::Relayed => {
-                    Style::default().fg(Color::Red)
-                }
+                crate::registry::ConnectionMethod::Relayed => Style::default().fg(Color::Red),
             };
 
             let method_str = format!("{}", peer.method);
@@ -256,7 +250,10 @@ fn draw_stats(frame: &mut Frame, app: &App, area: Rect) {
             Style::default().fg(Color::Red),
         ),
         Span::raw(" ("),
-        Span::styled(format!("{:.1}%", success_rate), Style::default().fg(success_color)),
+        Span::styled(
+            format!("{:.1}%", success_rate),
+            Style::default().fg(success_color),
+        ),
         Span::raw(")    Direct: "),
         Span::styled(
             format!("{}", app.stats.direct_connections),

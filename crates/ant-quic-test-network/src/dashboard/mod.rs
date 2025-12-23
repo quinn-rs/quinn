@@ -89,7 +89,7 @@ async fn get_peers(store: Arc<PeerStore>) -> Result<impl warp::Reply, warp::Reje
 
 async fn handle_websocket(ws: warp::ws::WebSocket, store: Arc<PeerStore>) {
     use futures_util::{SinkExt, StreamExt};
-    use tokio::time::{interval, Duration};
+    use tokio::time::{Duration, interval};
 
     let (mut tx, mut rx) = ws.split();
 

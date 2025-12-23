@@ -10,10 +10,10 @@ use crate::registry::{
 use crate::tui::{ConnectedPeer, TuiEvent, country_flag};
 use std::collections::HashMap;
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
-use tokio::sync::{mpsc, RwLock};
+use tokio::sync::{RwLock, mpsc};
 use tracing::{debug, error, info, warn};
 
 use super::test_protocol::TestPacket;
@@ -64,7 +64,6 @@ pub struct PeerStats {
     /// Last RTT measurement.
     pub last_rtt: Option<Duration>,
 }
-
 
 /// Internal peer tracking.
 struct TrackedPeer {
@@ -242,7 +241,9 @@ impl TestNode {
                     // Send registration success to TUI
                     let _ = self.event_tx.send(TuiEvent::RegistrationComplete).await;
                 } else {
-                    let err = response.error.unwrap_or_else(|| "Unknown error".to_string());
+                    let err = response
+                        .error
+                        .unwrap_or_else(|| "Unknown error".to_string());
                     error!("Registration failed: {}", err);
                     return Err(anyhow::anyhow!("Registration failed: {}", err));
                 }
@@ -521,7 +522,10 @@ impl TestNode {
     /// Get all connected peers for TUI display.
     pub async fn get_connected_peers(&self) -> Vec<ConnectedPeer> {
         let peers = self.connected_peers.read().await;
-        peers.values().map(|tracked| tracked.to_connected_peer()).collect()
+        peers
+            .values()
+            .map(|tracked| tracked.to_connected_peer())
+            .collect()
     }
 
     /// Get global statistics.

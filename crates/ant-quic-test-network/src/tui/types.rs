@@ -193,11 +193,7 @@ impl LocalNodeInfo {
 
     /// Get registration status string.
     pub fn registration_status(&self) -> &'static str {
-        if self.registered {
-            "✓"
-        } else {
-            "✗"
-        }
+        if self.registered { "✓" } else { "✗" }
     }
 
     /// Get last heartbeat string.

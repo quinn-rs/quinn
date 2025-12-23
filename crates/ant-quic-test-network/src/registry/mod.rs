@@ -58,7 +58,7 @@ mod store;
 mod types;
 
 // Re-export main types
-pub use api::{start_registry_server, RegistryClient, RegistryConfig};
+pub use api::{RegistryClient, RegistryConfig, start_registry_server};
 pub use store::PeerStore;
 pub use types::{
     ConnectionBreakdown, ConnectionMethod, NatStats, NatType, NetworkEvent, NetworkStats,
