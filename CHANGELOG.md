@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Update registry URL to saorsa-1.saorsalabs.com ([68354db](https://github.com/dirvine/ant-quic/commit/68354db1ebef128a73bd4e6cd59c64fb369f7671))
 - Improve Windows build support and release resilience ([4656fe6](https://github.com/dirvine/ant-quic/commit/4656fe64fc0094cf0b670defba0ead4589a0e1e1))
 - Fix artifact path handling in release job ([cf39f37](https://github.com/dirvine/ant-quic/commit/cf39f3704b8c081c978447560910ce80f0bd7ee5))
+- Add tag_name for workflow_dispatch releases ([1e68bf3](https://github.com/dirvine/ant-quic/commit/1e68bf3ad784a694ce5fa6fc756639b66b4683c5))
 
 ### Features
 
@@ -22,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Update CHANGELOG.md for v0.14.2 ([6b4c8d2](https://github.com/dirvine/ant-quic/commit/6b4c8d2f334c00560f63ff351339e35d5bc8acfe))
 - Update CHANGELOG.md for v0.14.2 ([30a4345](https://github.com/dirvine/ant-quic/commit/30a4345e7de616a2b0dfa1d386c6758df76575e1))
+- Update CHANGELOG.md for v0.14.2 ([52603e6](https://github.com/dirvine/ant-quic/commit/52603e65528f9c3500c284422b850766e835d732))
 
 ### Styling
 
