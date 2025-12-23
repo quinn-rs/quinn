@@ -357,6 +357,21 @@ impl Connection {
         }
     }
 
+    /// Try to receive an application datagram, if application datagram is unavailable, will return
+    /// `Ok(None)`
+    pub fn try_read_datagram(&self) -> Result<Option<Bytes>, ConnectionError> {
+        let mut state = self.0.state.lock("Connection::try_read_datagram");
+        // Check for buffered datagrams before checking `state.error` so that already-received
+        // datagrams, which are necessarily finite, can be drained from a closed connection.
+        if let Some(x) = state.inner.datagrams().recv() {
+            Ok(Some(x))
+        } else if let Some(e) = state.error.clone() {
+            Err(e)
+        } else {
+            Ok(None)
+        }
+    }
+
     /// Wait for the connection to be closed for any reason
     ///
     /// Despite the return type's name, closed connections are often not an error condition at the
