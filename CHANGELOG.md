@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.5] - 2025-12-23
+
+### Features
+
+- Add connection health checking with automatic stale peer removal
+- Add peer rotation for network freshness (randomly rotates oldest peer)
+- Add globe interaction - pause auto-rotation on user interaction, resume after 5 seconds
+
+### Bug Fixes
+
+- Fix deployment script to use HTTPS registry URL
+- Add --quiet flag to node service for headless operation
+
 ## [0.14.4] - 2025-12-23
 
 ### Features
