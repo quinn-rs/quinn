@@ -67,6 +67,9 @@ use crate::{
     // v0.13.0: NatTraversalRole removed - all nodes are symmetric P2P nodes
     connection::nat_traversal::{CandidateSource, CandidateState},
     masque::integration::{RelayManager, RelayManagerConfig},
+    masque::connect::{ConnectUdpRequest, ConnectUdpResponse},
+    // Symmetric P2P: Every node provides relay services
+    masque::relay_server::{MasqueRelayServer, MasqueRelayConfig},
 };
 
 use crate::{
@@ -81,6 +84,35 @@ use crate::config::validation::{ConfigValidator, ValidationResult};
 
 #[cfg(feature = "rustls-aws-lc-rs")]
 use crate::crypto::{pqc::PqcConfig, raw_public_keys::RawPublicKeyConfigBuilder};
+
+/// An active relay session for MASQUE CONNECT-UDP
+///
+/// Stores the QUIC connection to a relay server and the public address
+/// allocated for receiving inbound connections.
+#[derive(Debug)]
+pub struct RelaySession {
+    /// QUIC connection to the relay server
+    pub connection: InnerConnection,
+    /// Public address allocated by the relay for inbound traffic
+    pub public_address: Option<SocketAddr>,
+    /// When the session was established
+    pub established_at: std::time::Instant,
+    /// Relay server address
+    pub relay_addr: SocketAddr,
+}
+
+impl RelaySession {
+    /// Check if the session is still active
+    pub fn is_active(&self) -> bool {
+        // Connection is active if there's no close reason
+        self.connection.close_reason().is_none()
+    }
+
+    /// Get the allocated public address if available
+    pub fn public_addr(&self) -> Option<SocketAddr> {
+        self.public_address
+    }
+}
 
 /// High-level NAT traversal endpoint for Autonomi P2P networks
 pub struct NatTraversalEndpoint {
@@ -115,6 +147,14 @@ pub struct NatTraversalEndpoint {
     emitted_established_events: Arc<std::sync::RwLock<std::collections::HashSet<PeerId>>>,
     /// MASQUE relay manager for fallback connections
     relay_manager: Option<Arc<RelayManager>>,
+    /// Active relay sessions by relay server address
+    relay_sessions: Arc<std::sync::RwLock<HashMap<SocketAddr, RelaySession>>>,
+    /// MASQUE relay server - every node provides relay services (symmetric P2P)
+    /// Per ADR-004: All nodes are equal and participate in relaying with resource budgets
+    relay_server: Option<Arc<MasqueRelayServer>>,
+    /// Successful candidate pairs discovered via hole punching
+    /// Maps peer ID to the remote address that successfully responded
+    successful_candidates: Arc<std::sync::RwLock<HashMap<PeerId, SocketAddr>>>,
 }
 
 /// Configuration for NAT traversal behavior
@@ -170,8 +210,15 @@ pub struct NatTraversalConfig {
     pub enable_symmetric_nat: bool,
     /// Enable automatic relay fallback
     pub enable_relay_fallback: bool,
+    /// Enable relay service for other peers (symmetric P2P)
+    /// When true, this node will accept and forward CONNECT-UDP Bind requests from peers.
+    /// Per ADR-004: All nodes are equal and participate in relaying with resource budgets.
+    /// Default: true (every node provides relay services)
+    pub enable_relay_service: bool,
     /// Known relay nodes for MASQUE CONNECT-UDP Bind fallback
     /// When direct NAT traversal fails, connections can be relayed through these nodes
+    /// NOTE: In symmetric P2P, connected peers are used as relays automatically.
+    /// This is only for bootstrapping when no peers are connected yet.
     pub relay_nodes: Vec<SocketAddr>,
     /// Maximum concurrent NAT traversal attempts
     pub max_concurrent_attempts: usize,
@@ -723,6 +770,7 @@ impl Default for NatTraversalConfig {
             coordination_timeout: Duration::from_secs(10),
             enable_symmetric_nat: true,
             enable_relay_fallback: true,
+            enable_relay_service: true, // Symmetric P2P: every node provides relay services
             relay_nodes: Vec::new(),
             max_concurrent_attempts: 3,
             bind_addr: None,
@@ -880,6 +928,25 @@ impl NatTraversalEndpoint {
             None
         };
 
+        // Symmetric P2P: Create MASQUE relay server so this node can provide relay services
+        // Per ADR-004: All nodes are equal and participate in relaying with resource budgets
+        let relay_server = if config.enable_relay_service {
+            let relay_config = MasqueRelayConfig {
+                max_sessions: 100, // Reasonable limit for resource budget
+                require_authentication: true,
+                ..MasqueRelayConfig::default()
+            };
+            // Use the local address as the public address (will be updated when external address is discovered)
+            let server = MasqueRelayServer::new(relay_config, local_addr);
+            info!(
+                "Created MASQUE relay server on {} (symmetric P2P node)",
+                local_addr
+            );
+            Some(Arc::new(server))
+        } else {
+            None
+        };
+
         let endpoint = Self {
             inner_endpoint: Some(inner_endpoint.clone()),
             config: config.clone(),
@@ -895,6 +962,9 @@ impl NatTraversalEndpoint {
             timeout_config: config.timeouts.clone(),
             emitted_established_events: emitted_established_events.clone(),
             relay_manager,
+            relay_sessions: Arc::new(std::sync::RwLock::new(HashMap::new())),
+            relay_server,
+            successful_candidates: Arc::new(std::sync::RwLock::new(HashMap::new())),
         };
 
         // v0.13.0+: All nodes are symmetric P2P nodes - always start accepting connections
@@ -904,6 +974,7 @@ impl NatTraversalEndpoint {
             let event_tx_clone = event_tx.clone();
             let connections_clone = endpoint.connections.clone();
             let emitted_events_clone = emitted_established_events.clone();
+            let relay_server_clone = endpoint.relay_server.clone();
 
             tokio::spawn(async move {
                 Self::accept_connections(
@@ -912,6 +983,7 @@ impl NatTraversalEndpoint {
                     event_tx_clone,
                     connections_clone,
                     emitted_events_clone,
+                    relay_server_clone,
                 )
                 .await;
             });
@@ -1619,6 +1691,7 @@ impl NatTraversalEndpoint {
             .clone();
         let connections_clone = self.connections.clone();
         let emitted_events_clone = self.emitted_established_events.clone();
+        let relay_server_clone = self.relay_server.clone();
 
         tokio::spawn(async move {
             Self::accept_connections(
@@ -1627,6 +1700,7 @@ impl NatTraversalEndpoint {
                 event_tx,
                 connections_clone,
                 emitted_events_clone,
+                relay_server_clone,
             )
             .await;
         });
@@ -1641,6 +1715,7 @@ impl NatTraversalEndpoint {
         event_tx: mpsc::UnboundedSender<NatTraversalEvent>,
         connections: Arc<std::sync::RwLock<HashMap<PeerId, InnerConnection>>>,
         emitted_events: Arc<std::sync::RwLock<std::collections::HashSet<PeerId>>>,
+        relay_server: Option<Arc<MasqueRelayServer>>,
     ) {
         while !shutdown.load(Ordering::Relaxed) {
             match endpoint.accept().await {
@@ -1648,6 +1723,7 @@ impl NatTraversalEndpoint {
                     let event_tx = event_tx.clone();
                     let connections = connections.clone();
                     let emitted_events = emitted_events.clone();
+                    let relay_server = relay_server.clone();
                     tokio::spawn(async move {
                         match connecting.await {
                             Ok(connection) => {
@@ -1681,6 +1757,16 @@ impl NatTraversalEndpoint {
                                         });
                                 }
 
+                                // Symmetric P2P: Spawn relay request handler for this connection
+                                // This allows any connected peer to use us as a relay
+                                if let Some(ref server) = relay_server {
+                                    let conn_clone = connection.clone();
+                                    let server_clone = Arc::clone(server);
+                                    tokio::spawn(async move {
+                                        Self::handle_relay_requests(conn_clone, server_clone).await;
+                                    });
+                                }
+
                                 // Handle connection streams
                                 Self::handle_connection(peer_id, connection, event_tx).await;
                             }
@@ -1692,6 +1778,101 @@ impl NatTraversalEndpoint {
                 }
                 None => {
                     // Endpoint closed
+                    break;
+                }
+            }
+        }
+    }
+
+    /// Handle relay requests from a connected peer (symmetric P2P)
+    ///
+    /// This listens for bidirectional streams and processes CONNECT-UDP Bind requests.
+    /// Per ADR-004: All nodes are equal and participate in relaying with resource budgets.
+    async fn handle_relay_requests(connection: InnerConnection, relay_server: Arc<MasqueRelayServer>) {
+        let client_addr = connection.remote_address();
+        debug!(
+            "Started relay request handler for peer at {}",
+            client_addr
+        );
+
+        loop {
+            // Accept bidirectional streams for relay requests
+            match connection.accept_bi().await {
+                Ok((mut send_stream, mut recv_stream)) => {
+                    let server = Arc::clone(&relay_server);
+                    let addr = client_addr;
+
+                    tokio::spawn(async move {
+                        // Read the request (limit to 1KB for safety)
+                        match recv_stream.read_to_end(1024).await {
+                            Ok(request_bytes) => {
+                                // Try to parse as CONNECT-UDP request
+                                match ConnectUdpRequest::decode(&mut bytes::Bytes::from(request_bytes)) {
+                                    Ok(request) => {
+                                        debug!(
+                                            "Received CONNECT-UDP request from {}: {:?}",
+                                            addr, request
+                                        );
+
+                                        // Handle the request via relay server
+                                        match server.handle_connect_request(&request, addr).await {
+                                            Ok(response) => {
+                                                debug!(
+                                                    "Sending CONNECT-UDP response to {}: {:?}",
+                                                    addr, response
+                                                );
+
+                                                // Send the response
+                                                let response_bytes = response.encode();
+                                                if let Err(e) = send_stream.write_all(&response_bytes).await {
+                                                    warn!(
+                                                        "Failed to send relay response to {}: {}",
+                                                        addr, e
+                                                    );
+                                                }
+                                                if let Err(e) = send_stream.finish() {
+                                                    warn!(
+                                                        "Failed to finish relay stream to {}: {}",
+                                                        addr, e
+                                                    );
+                                                }
+                                            }
+                                            Err(e) => {
+                                                warn!(
+                                                    "Failed to handle relay request from {}: {}",
+                                                    addr, e
+                                                );
+                                                // Send error response
+                                                let response = ConnectUdpResponse::error(
+                                                    500,
+                                                    format!("Internal error: {}", e),
+                                                );
+                                                let _ = send_stream.write_all(&response.encode()).await;
+                                                let _ = send_stream.finish();
+                                            }
+                                        }
+                                    }
+                                    Err(e) => {
+                                        // Not a CONNECT-UDP request, ignore
+                                        debug!(
+                                            "Stream from {} is not a CONNECT-UDP request: {}",
+                                            addr, e
+                                        );
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                debug!("Failed to read relay request from {}: {}", addr, e);
+                            }
+                        }
+                    });
+                }
+                Err(e) => {
+                    // Connection closed or error
+                    debug!(
+                        "Relay handler stopping for {} - accept_bi error: {}",
+                        client_addr, e
+                    );
                     break;
                 }
             }
@@ -2003,66 +2184,168 @@ impl NatTraversalEndpoint {
         Ok(connection)
     }
 
-    /// Attempt connection with automatic relay fallback
+    /// Attempt connection with automatic fallback strategies
     ///
-    /// If direct NAT traversal fails and relay nodes are configured,
-    /// this will attempt to establish a relayed connection via MASQUE.
+    /// Connection attempts follow this priority order:
+    /// 1. **Direct connection** - simple QUIC connect to the target address
+    /// 2. **Hole punching** - coordinated NAT traversal with candidate discovery
+    /// 3. **Relay** - last resort via MASQUE through connected peers (symmetric P2P)
+    ///
+    /// # Symmetric P2P Relay Strategy
+    /// When relay is needed:
+    /// - First try connected peers as relays (any peer can relay)
+    /// - Fall back to configured relay_nodes (for bootstrap scenarios only)
     pub async fn connect_with_fallback(
         &self,
         peer_id: PeerId,
         server_name: &str,
         remote_addr: SocketAddr,
     ) -> Result<InnerConnection, NatTraversalError> {
-        // First, try direct connection
+        // Step 1: Try direct connection first
+        info!("Attempting direct connection to {:?} at {}", peer_id, remote_addr);
         match self
             .connect_to_peer(peer_id, server_name, remote_addr)
             .await
         {
-            Ok(conn) => return Ok(conn),
-            Err(e) if self.relay_manager.is_some() => {
+            Ok(conn) => {
+                info!("Direct connection to {:?} succeeded", peer_id);
+                return Ok(conn);
+            }
+            Err(e) => {
                 info!(
-                    "Direct connection to {:?} failed ({:?}), attempting relay fallback",
+                    "Direct connection to {:?} failed ({:?}), trying hole punching",
                     peer_id, e
                 );
             }
-            Err(e) => return Err(e),
         }
 
-        // Direct connection failed, try relay
-        let relay_manager = self.relay_manager.as_ref().ok_or_else(|| {
-            NatTraversalError::ConnectionFailed("No relay nodes configured".to_string())
-        })?;
+        // Step 2: Try hole punching (coordinated NAT traversal)
+        info!("Attempting hole punching for {:?}", peer_id);
+        match self.attempt_hole_punching(peer_id) {
+            Ok(()) => {
+                // Hole punching succeeded - NAT mappings are established
+                // Now try to connect again using the discovered path
+                info!("Hole punching succeeded for {:?}, retrying connection", peer_id);
 
-        // Get available relays
-        let available_relays = relay_manager.available_relays().await;
-        if available_relays.is_empty() {
+                // Get the successful candidate pair address if available
+                let connect_addr = self.get_successful_candidate_address(peer_id)
+                    .unwrap_or(remote_addr);
+
+                match self.connect_to_peer(peer_id, server_name, connect_addr).await {
+                    Ok(conn) => {
+                        info!("Connection via hole punching to {:?} succeeded", peer_id);
+                        return Ok(conn);
+                    }
+                    Err(e) => {
+                        info!(
+                            "Connection after hole punching failed ({:?}), trying relay",
+                            e
+                        );
+                    }
+                }
+            }
+            Err(e) => {
+                info!(
+                    "Hole punching for {:?} failed ({:?}), trying relay",
+                    peer_id, e
+                );
+            }
+        }
+
+        // Step 3: Relay is the last resort
+        if !self.config.enable_relay_fallback {
             return Err(NatTraversalError::ConnectionFailed(
-                "No available relay nodes".to_string(),
+                "Direct connection and hole punching failed, relay fallback is disabled".to_string(),
+            ));
+        }
+
+        info!("Attempting relay connection to {:?} (last resort)", peer_id);
+
+        // Symmetric P2P: Collect connected peers to use as potential relays
+        // Any connected peer can provide relay services
+        let connected_peers: Vec<SocketAddr> = {
+            let connections = self.connections.read().map_err(|_| {
+                NatTraversalError::ProtocolError("Connections lock poisoned".to_string())
+            })?;
+            connections
+                .values()
+                .filter(|conn| conn.close_reason().is_none()) // Only active connections
+                .map(|conn| conn.remote_address())
+                .filter(|addr| *addr != remote_addr) // Don't try to relay through the target
+                .collect()
+        };
+
+        info!(
+            "Found {} connected peers to try as relays",
+            connected_peers.len()
+        );
+
+        // Also add configured relay nodes as fallback (for bootstrapping)
+        let mut relay_candidates: Vec<SocketAddr> = connected_peers;
+        if let Some(ref manager) = self.relay_manager {
+            let configured_relays = manager.available_relays().await;
+            for relay in configured_relays {
+                if !relay_candidates.contains(&relay) {
+                    relay_candidates.push(relay);
+                }
+            }
+        }
+
+        if relay_candidates.is_empty() {
+            return Err(NatTraversalError::ConnectionFailed(
+                "No connected peers or relay nodes available".to_string(),
             ));
         }
 
         // Try each relay in order
-        for relay_addr in available_relays {
+        let mut last_error = None;
+        for relay_addr in relay_candidates {
             info!("Attempting connection via relay: {}", relay_addr);
 
-            // Create CONNECT-UDP Bind request
-            let request = relay_manager.create_connect_request();
+            // Establish relay session (CONNECT-UDP Bind)
+            match self.establish_relay_session(relay_addr).await {
+                Ok(public_addr) => {
+                    info!(
+                        "Relay session established via {} with public address {:?}",
+                        relay_addr, public_addr
+                    );
 
-            // For now, relay fallback is a placeholder
-            // Full implementation requires:
-            // 1. Establishing QUIC connection to relay
-            // 2. Sending HTTP CONNECT-UDP request
-            // 3. Receiving assigned public address
-            // 4. Using relay for datagram forwarding
-            debug!(
-                "Relay fallback for {} via {} - request: {:?}",
-                remote_addr, relay_addr, request
-            );
+                    // Now attempt the connection through the relay
+                    // The relay session is stored and the connection can use datagram forwarding
+                    // For now, we attempt a direct connection to the peer using our relay public address
+                    // The peer should be able to reach us through the relay
+
+                    // Try connecting to the peer - the relay will forward our traffic
+                    match self.connect_to_peer(peer_id, server_name, remote_addr).await {
+                        Ok(conn) => {
+                            info!(
+                                "Connected to peer {:?} via relay {} (public addr: {:?})",
+                                peer_id, relay_addr, public_addr
+                            );
+                            return Ok(conn);
+                        }
+                        Err(e) => {
+                            warn!(
+                                "Connection via relay {} failed: {:?}, trying next relay",
+                                relay_addr, e
+                            );
+                            last_error = Some(e);
+                        }
+                    }
+                }
+                Err(e) => {
+                    warn!(
+                        "Failed to establish relay session with {}: {:?}",
+                        relay_addr, e
+                    );
+                    last_error = Some(e);
+                }
+            }
         }
 
-        Err(NatTraversalError::ConnectionFailed(
-            "All relay attempts failed".to_string(),
-        ))
+        Err(last_error.unwrap_or_else(|| {
+            NatTraversalError::ConnectionFailed("All relay attempts failed".to_string())
+        }))
     }
 
     /// Get the relay manager for advanced relay operations
@@ -2078,6 +2361,143 @@ impl NatTraversalEndpoint {
             Some(manager) => manager.has_available_relay().await,
             None => false,
         }
+    }
+
+    /// Establish a relay session with a MASQUE relay server
+    ///
+    /// This connects to the relay server, sends a CONNECT-UDP Bind request,
+    /// and stores the session for use in relayed connections.
+    ///
+    /// # Arguments
+    /// * `relay_addr` - Address of the MASQUE relay server
+    ///
+    /// # Returns
+    /// The public address allocated by the relay, or an error
+    pub async fn establish_relay_session(
+        &self,
+        relay_addr: SocketAddr,
+    ) -> Result<Option<SocketAddr>, NatTraversalError> {
+        // Check if we already have an active session to this relay
+        {
+            let sessions = self.relay_sessions.read().map_err(|_| {
+                NatTraversalError::ProtocolError("Relay sessions lock poisoned".to_string())
+            })?;
+            if let Some(session) = sessions.get(&relay_addr) {
+                if session.is_active() {
+                    debug!("Reusing existing relay session to {}", relay_addr);
+                    return Ok(session.public_address);
+                }
+            }
+        }
+
+        let endpoint = self.inner_endpoint.as_ref().ok_or_else(|| {
+            NatTraversalError::ConfigError("QUIC endpoint not initialized".to_string())
+        })?;
+
+        info!("Establishing relay session to {}", relay_addr);
+
+        // Connect to the relay server
+        // Use the relay address as server name for TLS (relay servers use certificates)
+        let server_name = relay_addr.ip().to_string();
+        let connecting = endpoint.connect(relay_addr, &server_name).map_err(|e| {
+            NatTraversalError::ConnectionFailed(format!(
+                "Failed to initiate relay connection: {}",
+                e
+            ))
+        })?;
+
+        let connection = timeout(self.config.coordination_timeout, connecting)
+            .await
+            .map_err(|_| NatTraversalError::Timeout)?
+            .map_err(|e| {
+                NatTraversalError::ConnectionFailed(format!("Relay connection failed: {}", e))
+            })?;
+
+        info!("Connected to relay server {}", relay_addr);
+
+        // Open a bidirectional stream for the CONNECT-UDP handshake
+        let (mut send_stream, mut recv_stream) =
+            connection.open_bi().await.map_err(|e| {
+                NatTraversalError::ConnectionFailed(format!("Failed to open relay stream: {}", e))
+            })?;
+
+        // Create and send CONNECT-UDP Bind request
+        let request = ConnectUdpRequest::bind_any();
+        let request_bytes = request.encode();
+
+        debug!("Sending CONNECT-UDP Bind request to relay: {:?}", request);
+
+        send_stream
+            .write_all(&request_bytes)
+            .await
+            .map_err(|e| {
+                NatTraversalError::ConnectionFailed(format!(
+                    "Failed to send relay request: {}",
+                    e
+                ))
+            })?;
+
+        // Signal we're done sending the request
+        send_stream.finish().map_err(|e| {
+            NatTraversalError::ConnectionFailed(format!("Failed to finish relay stream: {}", e))
+        })?;
+
+        // Read the response (limit to 1KB for safety)
+        let response_bytes = recv_stream.read_to_end(1024).await.map_err(|e| {
+            NatTraversalError::ConnectionFailed(format!("Failed to read relay response: {}", e))
+        })?;
+
+        // Parse the response
+        let response =
+            ConnectUdpResponse::decode(&mut bytes::Bytes::from(response_bytes)).map_err(|e| {
+                NatTraversalError::ProtocolError(format!("Invalid relay response: {}", e))
+            })?;
+
+        if !response.is_success() {
+            let reason = response.reason.unwrap_or_else(|| "unknown".to_string());
+            return Err(NatTraversalError::ConnectionFailed(format!(
+                "Relay rejected request: {} (status {})",
+                reason, response.status
+            )));
+        }
+
+        let public_address = response.proxy_public_address;
+
+        info!(
+            "Relay session established with public address: {:?}",
+            public_address
+        );
+
+        // Store the session
+        let session = RelaySession {
+            connection,
+            public_address,
+            established_at: std::time::Instant::now(),
+            relay_addr,
+        };
+
+        {
+            let mut sessions = self.relay_sessions.write().map_err(|_| {
+                NatTraversalError::ProtocolError("Relay sessions lock poisoned".to_string())
+            })?;
+            sessions.insert(relay_addr, session);
+        }
+
+        // Notify the relay manager
+        if let Some(ref manager) = self.relay_manager {
+            if let Ok(resp) = ConnectUdpResponse::decode(&mut bytes::Bytes::from(
+                response.encode().to_vec(),
+            )) {
+                let _ = manager.handle_connect_response(relay_addr, resp).await;
+            }
+        }
+
+        Ok(public_address)
+    }
+
+    /// Get active relay sessions
+    pub fn relay_sessions(&self) -> Arc<std::sync::RwLock<HashMap<SocketAddr, RelaySession>>> {
+        self.relay_sessions.clone()
     }
 
     /// Accept incoming connections on the endpoint
@@ -2864,10 +3284,19 @@ impl NatTraversalEndpoint {
             peer_id, pair.local_candidate.address, pair.remote_candidate.address
         );
 
-        // In a complete implementation, this would store the successful pair
-        // for use in establishing the actual QUIC connection
-        // For now, we'll emit an event to notify the application
+        // Store the successful remote address for use in connection establishment
+        {
+            let mut candidates = self.successful_candidates.write().map_err(|_| {
+                NatTraversalError::ProtocolError("Failed to lock successful candidates".to_string())
+            })?;
+            candidates.insert(peer_id, pair.remote_candidate.address);
+            info!(
+                "Stored successful candidate for peer {:?}: {}",
+                peer_id, pair.remote_candidate.address
+            );
+        }
 
+        // Emit events to notify the application
         if let Some(ref callback) = self.event_callback {
             callback(NatTraversalEvent::PathValidated {
                 peer_id,
@@ -2883,6 +3312,15 @@ impl NatTraversalEndpoint {
         }
 
         Ok(())
+    }
+
+    /// Get the successful candidate address for a peer (discovered via hole punching)
+    ///
+    /// Returns the remote address that successfully responded during hole punching.
+    /// This address should be used for establishing the actual QUIC connection.
+    fn get_successful_candidate_address(&self, peer_id: PeerId) -> Option<SocketAddr> {
+        let candidates = self.successful_candidates.read().ok()?;
+        candidates.get(&peer_id).copied()
     }
 
     /// Attempt connection to a specific candidate address

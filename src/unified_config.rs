@@ -94,6 +94,11 @@ pub struct NatConfig {
     /// Enable automatic relay fallback when direct connection fails
     pub enable_relay_fallback: bool,
 
+    /// Enable relay service for other peers (symmetric P2P)
+    /// When true, this node will accept and forward CONNECT-UDP Bind requests from peers.
+    /// Per ADR-004: All nodes are equal and participate in relaying with resource budgets.
+    pub enable_relay_service: bool,
+
     /// Known relay nodes for MASQUE CONNECT-UDP Bind fallback
     pub relay_nodes: Vec<std::net::SocketAddr>,
 
@@ -110,6 +115,7 @@ impl Default for NatConfig {
             max_candidates: 10,
             enable_symmetric_nat: true,
             enable_relay_fallback: true,
+            enable_relay_service: true, // Symmetric P2P: every node provides relay services
             relay_nodes: Vec::new(),
             max_concurrent_attempts: 3,
             prefer_rfc_nat_traversal: true,
@@ -237,6 +243,7 @@ impl P2pConfig {
             coordination_timeout: self.timeouts.nat_traversal.coordination_timeout,
             enable_symmetric_nat: self.nat.enable_symmetric_nat,
             enable_relay_fallback: self.nat.enable_relay_fallback,
+            enable_relay_service: self.nat.enable_relay_service,
             relay_nodes: self.nat.relay_nodes.clone(),
             max_concurrent_attempts: self.nat.max_concurrent_attempts,
             bind_addr: self.bind_addr,

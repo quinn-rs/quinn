@@ -102,6 +102,7 @@ mod nat_traversal_api_tests {
             timeouts: TimeoutConfig::default(),
             identity_key: None,
             relay_nodes: vec![],
+            enable_relay_service: true,
         };
 
         assert_eq!(config.known_peers.len(), 1);
@@ -233,6 +234,7 @@ mod functional_tests {
             timeouts: TimeoutConfig::default(),
             identity_key: None,
             relay_nodes: vec![],
+            enable_relay_service: true,
         };
 
         // May fail due to zero values or other validation
@@ -254,6 +256,7 @@ mod functional_tests {
             timeouts: TimeoutConfig::default(),
             identity_key: None,
             relay_nodes: vec![],
+            enable_relay_service: true,
         };
 
         let result = NatTraversalEndpoint::new(valid_config, None).await;
@@ -432,6 +435,7 @@ mod performance_tests {
                 timeouts: TimeoutConfig::default(),
                 identity_key: None,
                 relay_nodes: vec![],
+                enable_relay_service: true,
             };
 
             // Use the config to prevent optimization
@@ -497,6 +501,7 @@ mod relay_functionality_tests {
             timeouts: TimeoutConfig::default(),
             identity_key: None,
             relay_nodes: vec![],
+            enable_relay_service: true,
         };
 
         // This might be accepted or rejected depending on implementation

@@ -18,7 +18,7 @@ use tokio::sync::{RwLock, mpsc};
 use tracing::{debug, error, info, warn};
 
 // Real QUIC P2P endpoint imports
-use ant_quic::{P2pConfig, P2pEndpoint, P2pEvent, PeerId as QuicPeerId};
+use ant_quic::{NatConfig, P2pConfig, P2pEndpoint, P2pEvent, PeerId as QuicPeerId};
 
 use super::test_protocol::TestPacket;
 
@@ -403,8 +403,36 @@ impl TestNode {
 
         // Create REAL P2pEndpoint configuration
         info!("Creating REAL P2pEndpoint for QUIC connections...");
+
+        // Configure relay nodes for fallback when direct connection fails
+        // Note: MASQUE relay is not yet fully implemented in ant-quic,
+        // but we configure it here for future readiness.
+        // These are the saorsa registry nodes which could also serve as relays.
+        let relay_nodes: Vec<SocketAddr> = vec![
+            // saorsa-1.saorsalabs.com QUIC port
+            "77.42.75.115:9000".parse().ok(),
+            // TODO: Add more relay nodes as they become available
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+
+        if !relay_nodes.is_empty() {
+            info!(
+                "Configured {} relay nodes for fallback (MASQUE not yet implemented)",
+                relay_nodes.len()
+            );
+        }
+
+        let nat_config = NatConfig {
+            enable_relay_fallback: true,
+            relay_nodes,
+            ..Default::default()
+        };
+
         let p2p_config = P2pConfig::builder()
             .bind_addr(config.bind_addr)
+            .nat(nat_config)
             .build()
             .map_err(|e| anyhow::anyhow!("Failed to build P2P config: {}", e))?;
 

@@ -1,0 +1,280 @@
+
+
+
+
+Multiplexed Application Substrate over QUIC Encryption        M. Seemann
+Internet-Draft                                                 Smallstep
+Intended status: Standards Track                             7 July 2025
+Expires: 8 January 2026
+
+
+                  Using ECN when Proxying UDP in HTTP
+                draft-seemann-masque-connect-udp-ecn-01
+
+Abstract
+
+   This document describes how to proxy the ECN bits when proxying UDP
+   in HTTP.
+
+About This Document
+
+   This note is to be removed before publishing as an RFC.
+
+   The latest revision of this draft can be found at https://marten-
+   seemann.github.io/draft-seemann-masque-connect-udp-ecn/draft-seemann-
+   masque-connect-udp-ecn.html.  Status information for this document
+   may be found at https://datatracker.ietf.org/doc/draft-seemann-
+   masque-connect-udp-ecn/.
+
+   Discussion of this document takes place on the Multiplexed
+   Application Substrate over QUIC Encryption Working Group mailing list
+   (mailto:masque@ietf.org), which is archived at
+   https://mailarchive.ietf.org/arch/browse/masque/.  Subscribe at
+   https://www.ietf.org/mailman/listinfo/masque/.
+
+   Source for this draft and an issue tracker can be found at
+   https://github.com/marten-seemann/draft-seemann-masque-connect-udp-
+   ecn.
+
+Status of This Memo
+
+   This Internet-Draft is submitted in full conformance with the
+   provisions of BCP 78 and BCP 79.
+
+   Internet-Drafts are working documents of the Internet Engineering
+   Task Force (IETF).  Note that other groups may also distribute
+   working documents as Internet-Drafts.  The list of current Internet-
+   Drafts is at https://datatracker.ietf.org/drafts/current/.
+
+   Internet-Drafts are draft documents valid for a maximum of six months
+   and may be updated, replaced, or obsoleted by other documents at any
+   time.  It is inappropriate to use Internet-Drafts as reference
+   material or to cite them other than as "work in progress."
+
+
+
+Seemann                  Expires 8 January 2026                 [Page 1]
+
+Internet-Draft               CONNECT-UDP ECN                   July 2025
+
+
+   This Internet-Draft will expire on 8 January 2026.
+
+Copyright Notice
+
+   Copyright (c) 2025 IETF Trust and the persons identified as the
+   document authors.  All rights reserved.
+
+   This document is subject to BCP 78 and the IETF Trust's Legal
+   Provisions Relating to IETF Documents (https://trustee.ietf.org/
+   license-info) in effect on the date of publication of this document.
+   Please review these documents carefully, as they describe your rights
+   and restrictions with respect to this document.  Code Components
+   extracted from this document must include Revised BSD License text as
+   described in Section 4.e of the Trust Legal Provisions and are
+   provided without warranty as described in the Revised BSD License.
+
+Table of Contents
+
+   1.  Introduction  . . . . . . . . . . . . . . . . . . . . . . . .   2
+   2.  Conventions and Definitions . . . . . . . . . . . . . . . . .   3
+   3.  Proxying ECN  . . . . . . . . . . . . . . . . . . . . . . . .   3
+     3.1.  Sending UDP datagrams from the client to the proxy  . . .   3
+     3.2.  Sending UDP datagrams from the proxy to the client  . . .   3
+   4.  Negotiating Extension and Registration of Context
+           Identifiers . . . . . . . . . . . . . . . . . . . . . . .   3
+     4.1.  Optimistic Sending of ECN Markings  . . . . . . . . . . .   4
+   5.  Security Considerations . . . . . . . . . . . . . . . . . . .   4
+   6.  IANA Considerations . . . . . . . . . . . . . . . . . . . . .   5
+   7.  Normative References  . . . . . . . . . . . . . . . . . . . .   5
+   Acknowledgments . . . . . . . . . . . . . . . . . . . . . . . . .   5
+   Author's Address  . . . . . . . . . . . . . . . . . . . . . . . .   5
+
+1.  Introduction
+
+   Explicit Congestion Notification marking [RFC3168] uses two bits in
+   the IP header to signal congestion from a network to endpoints.
+
+   [RFC9298] describes how UDP datagrams can be proxied in HTTP.  This
+   allows the proxying of the payload of UDP datagrams, however, it is
+   not possible to proxy the ECN bits.  This document defines an
+   extension to [RFC9298] that allows the proxying of the ECN bits
+   without imposing any encoding overhead.
+
+   When establishing a tunnel, the client registers four context
+   identifiers, one for each ECN marking.  These context identifiers are
+   then used to:
+
+
+
+
+
+Seemann                  Expires 8 January 2026                 [Page 2]
+
+Internet-Draft               CONNECT-UDP ECN                   July 2025
+
+
+   1.  For UDP datagrams sent from the client to the proxy: To request
+       the proxy to set the ECN marking on the UDP datagram sent to the
+       target.
+
+   2.  For UDP datagrams sent from the proxy to the client: To inform
+       the client about the ECN marking of the UDP datagram received
+       from the target.
+
+2.  Conventions and Definitions
+
+   The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT",
+   "SHOULD", "SHOULD NOT", "RECOMMENDED", "NOT RECOMMENDED", "MAY", and
+   "OPTIONAL" in this document are to be interpreted as described in
+   BCP 14 [RFC2119] [RFC8174] when, and only when, they appear in all
+   capitals, as shown here.
+
+3.  Proxying ECN
+
+   The proxy fulfills a dual role: First, it sends UDP datagrams
+   received from the client over HTTP to the target, and sends UDP
+   datagrams received from the target over HTTP to the client.  Second,
+   it also acts as a router that can experience congestion in both
+   directions.
+
+3.1.  Sending UDP datagrams from the client to the proxy
+
+   When sending UDP datagrams over the tunnel, the client uses the
+   context identifier as negotiated during establishment of the tunnel
+   (see Section 4).  Under normal circumstances, the proxy MUST set the
+   ECN marking on the UDP datagram sent to the target based on the
+   context identifier.  However, if the proxy is experiencing congestion
+   on the link to the target, it SHOULD apply ECN markings according to
+   [RFC3168] and [RFC8331].
+
+3.2.  Sending UDP datagrams from the proxy to the client
+
+   When receiving UDP datagrams from the target, the proxy uses the
+   context identifier negotiated during establishment of the tunnel to
+   indicate the ECN marking the UDP datagram was received with.
+   Similarly, if the HTTP connection to the client is experiencing
+   congestion, the proxy SHOULD apply ECN markings.
+
+4.  Negotiating Extension and Registration of Context Identifiers
+
+   To support ECN mode, both clients and proxies need to include the
+   "Proxy-ECN" header field.  This indicates support for ECN mode and
+   registers the context IDs.
+
+
+
+
+Seemann                  Expires 8 January 2026                 [Page 3]
+
+Internet-Draft               CONNECT-UDP ECN                   July 2025
+
+
+   proxy-ecn = ?1; ect1 = 100; ect0 = 1234; ce = 42
+
+   "Proxy-ECN" is an Item Structured Header [RFC8941].  Its value MUST
+   be a boolean.
+
+   If the client wants to enable proxying of ECN markings, it sets the
+   value to "?1".  The client MUST add the following three parameters:
+   "ect1", "ect0", and "ce", each of which is of type sf-integer.  The
+   Not-ECT context ID always uses context ID 0.  The values are used to
+   register the context IDs for the different ECN markings.  The numbers
+   MUST be even according to the rules for context identifiers in
+   Section 4 of [RFC9298].
+
+   It is RECOMMENDED to use context identifier values that can be
+   encoded using the same QUIC Variable-Length Integer encoding (see
+   Section 16 of [RFC9000]).
+
+   If the proxy wants to enable proxying of ECN markings, it sets the
+   value to "?1".  It MUST NOT add any of the four parameters defined
+   above.
+
+   If the proxy wants to disable proxying of ECN markings, it either
+   omits the "Proxy-ECN" header field or sets the value to "?0".  This
+   also refuses the registration of the context IDs.
+
+4.1.  Optimistic Sending of ECN Markings
+
+   [RFC9298] allows the client to send UDP datagrams to the proxy
+   without waiting for the proxy to send a response.  This is useful for
+   applications that need to send UDP datagrams to the proxy as soon as
+   possible.
+
+   When sending datagrams to the proxy, the client MAY optimistically
+   use the context identifiers proposed in the "Proxy-ECN" header field.
+   However, these datagrams will be dropped if the server does not
+   enable ECN mode.  This is therefore only recommended if the client
+   has prior knowledge that the server likely supports ECN mode.
+
+   A client that wishes to avoid the loss of packets if ECN mode is not
+   enabled SHOULD NOT optimistically use the context identifiers
+   proposed in the "Proxy-ECN" header field.
+
+5.  Security Considerations
+
+   TODO Security
+
+
+
+
+
+
+Seemann                  Expires 8 January 2026                 [Page 4]
+
+Internet-Draft               CONNECT-UDP ECN                   July 2025
+
+
+6.  IANA Considerations
+
+   This document has no IANA actions.
+
+7.  Normative References
+
+   [RFC2119]  Bradner, S., "Key words for use in RFCs to Indicate
+              Requirement Levels", BCP 14, RFC 2119,
+              DOI 10.17487/RFC2119, March 1997,
+              <https://www.rfc-editor.org/rfc/rfc2119>.
+
+   [RFC3168]  Ramakrishnan, K., Floyd, S., and D. Black, "The Addition
+              of Explicit Congestion Notification (ECN) to IP",
+              RFC 3168, DOI 10.17487/RFC3168, September 2001,
+              <https://www.rfc-editor.org/rfc/rfc3168>.
+
+   [RFC8174]  Leiba, B., "Ambiguity of Uppercase vs Lowercase in RFC
+              2119 Key Words", BCP 14, RFC 8174, DOI 10.17487/RFC8174,
+              May 2017, <https://www.rfc-editor.org/rfc/rfc8174>.
+
+   [RFC8331]  Edwards, T., "RTP Payload for Society of Motion Picture
+              and Television Engineers (SMPTE) ST 291-1 Ancillary Data",
+              RFC 8331, DOI 10.17487/RFC8331, February 2018,
+              <https://www.rfc-editor.org/rfc/rfc8331>.
+
+   [RFC8941]  Nottingham, M. and P. Kamp, "Structured Field Values for
+              HTTP", RFC 8941, DOI 10.17487/RFC8941, February 2021,
+              <https://www.rfc-editor.org/rfc/rfc8941>.
+
+   [RFC9000]  Iyengar, J., Ed. and M. Thomson, Ed., "QUIC: A UDP-Based
+              Multiplexed and Secure Transport", RFC 9000,
+              DOI 10.17487/RFC9000, May 2021,
+              <https://www.rfc-editor.org/rfc/rfc9000>.
+
+   [RFC9298]  Schinazi, D., "Proxying UDP in HTTP", RFC 9298,
+              DOI 10.17487/RFC9298, August 2022,
+              <https://www.rfc-editor.org/rfc/rfc9298>.
+
+Acknowledgments
+
+   TODO acknowledge.
+
+Author's Address
+
+   Marten Seemann
+   Smallstep
+   Email: martenseemann@gmail.com
+
+
+
+
+Seemann                  Expires 8 January 2026                 [Page 5]
