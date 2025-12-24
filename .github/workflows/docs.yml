@@ -3,10 +3,14 @@ name: Documentation
 on:
   push:
     branches: ['master', 'main']
+    paths:
+      - 'docs/book/**'  # Only run when mdbook content changes
   workflow_dispatch:
 
 jobs:
   deploy:
+    # Disabled until mdbook is set up properly
+    if: false
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
