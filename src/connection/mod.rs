@@ -4807,9 +4807,9 @@ impl Connection {
         observed_address: &crate::frame::ObservedAddress,
         now: Instant,
     ) -> Result<(), TransportError> {
-        println!(
-            "DEBUG: handle_observed_address_frame: received address {}",
-            observed_address.address
+        tracing::trace!(
+            address = %observed_address.address,
+            "handle_observed_address_frame: received address"
         );
         // Get the address discovery state
         let state = self.address_discovery_state.as_mut().ok_or_else(|| {
@@ -6427,9 +6427,10 @@ impl AddressDiscoveryState {
         info.observed_address = Some(address);
         info.notified = true;
 
-        println!(
-            "DEBUG: queue_observed_address_frame: ACTUALLY QUEUING frame for path {} with address {}",
-            path_id, address
+        tracing::trace!(
+            path_id = ?path_id,
+            address = %address,
+            "queue_observed_address_frame: queuing frame"
         );
 
         // Create and return the frame with sequence number

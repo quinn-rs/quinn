@@ -113,47 +113,58 @@ fn detect_local_addresses(bind_port: u16) -> (Option<SocketAddr>, Option<SocketA
     let mut local_ipv4: Option<SocketAddr> = None;
     let mut local_ipv6: Option<SocketAddr> = None;
 
+    debug!("Detecting local addresses with bind_port: {}", bind_port);
+
     #[cfg(target_os = "macos")]
     {
         use std::process::Command;
 
         // macOS doesn't have the 'ip' command, use ifconfig instead
-        if let Ok(output) = Command::new("ifconfig").output() {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            for line in stdout.lines() {
-                let line = line.trim();
+        match Command::new("ifconfig").output() {
+            Ok(output) => {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                for line in stdout.lines() {
+                    let line = line.trim();
 
-                // Look for IPv4: "inet 192.168.1.100 netmask ..."
-                if line.starts_with("inet ") && !line.contains("127.0.0.1") && local_ipv4.is_none()
-                {
-                    if let Some(ip_str) = line.split_whitespace().nth(1) {
-                        if let Ok(ip) = ip_str.parse::<std::net::Ipv4Addr>() {
-                            if !ip.is_loopback() && !ip.is_link_local() {
-                                local_ipv4 = Some(SocketAddr::new(ip.into(), bind_port));
+                    // Look for IPv4: "inet 192.168.1.100 netmask ..."
+                    if line.starts_with("inet ")
+                        && !line.contains("127.0.0.1")
+                        && local_ipv4.is_none()
+                    {
+                        if let Some(ip_str) = line.split_whitespace().nth(1) {
+                            if let Ok(ip) = ip_str.parse::<std::net::Ipv4Addr>() {
+                                if !ip.is_loopback() && !ip.is_link_local() {
+                                    local_ipv4 = Some(SocketAddr::new(ip.into(), bind_port));
+                                    debug!("Found local IPv4: {}", ip);
+                                }
+                            }
+                        }
+                    }
+
+                    // Look for IPv6: "inet6 2001:db8::1 prefixlen ..."
+                    if line.starts_with("inet6 ")
+                        && !line.contains("::1")
+                        && !line.contains("fe80::")
+                        && local_ipv6.is_none()
+                    {
+                        if let Some(ip_str) = line.split_whitespace().nth(1) {
+                            // Remove scope ID if present (e.g., "fe80::1%en0" -> "fe80::1")
+                            let ip_str = ip_str.split('%').next().unwrap_or(ip_str);
+                            if let Ok(ip) = ip_str.parse::<std::net::Ipv6Addr>() {
+                                if !ip.is_loopback()
+                                    && !ip.is_unspecified()
+                                    && ((ip.segments()[0] & 0xffc0) != 0xfe80)
+                                {
+                                    local_ipv6 = Some(SocketAddr::new(ip.into(), bind_port));
+                                    debug!("Found local IPv6: {}", ip);
+                                }
                             }
                         }
                     }
                 }
-
-                // Look for IPv6: "inet6 2001:db8::1 prefixlen ..."
-                if line.starts_with("inet6 ")
-                    && !line.contains("::1")
-                    && !line.contains("fe80::")
-                    && local_ipv6.is_none()
-                {
-                    if let Some(ip_str) = line.split_whitespace().nth(1) {
-                        // Remove scope ID if present (e.g., "fe80::1%en0" -> "fe80::1")
-                        let ip_str = ip_str.split('%').next().unwrap_or(ip_str);
-                        if let Ok(ip) = ip_str.parse::<std::net::Ipv6Addr>() {
-                            if !ip.is_loopback()
-                                && !ip.is_unspecified()
-                                && ((ip.segments()[0] & 0xffc0) != 0xfe80)
-                            {
-                                local_ipv6 = Some(SocketAddr::new(ip.into(), bind_port));
-                            }
-                        }
-                    }
-                }
+            }
+            Err(e) => {
+                warn!("Failed to run ifconfig: {}", e);
             }
         }
     }
@@ -251,6 +262,16 @@ fn detect_local_addresses(bind_port: u16) -> (Option<SocketAddr>, Option<SocketA
                 }
             }
         }
+    }
+
+    // Log summary of detected addresses
+    if local_ipv4.is_none() && local_ipv6.is_none() {
+        warn!("No local addresses detected - TUI will show 'Not bound'");
+    } else {
+        info!(
+            "Local addresses detected: IPv4={:?}, IPv6={:?}",
+            local_ipv4, local_ipv6
+        );
     }
 
     (local_ipv4, local_ipv6)

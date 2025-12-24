@@ -126,16 +126,23 @@ fn draw_node_info(frame: &mut Frame, app: &App, area: Rect) {
         .local_node
         .local_ipv6
         .map(|a| a.to_string())
-        .unwrap_or_else(|| "::1".to_string());
+        .unwrap_or_else(|| "Not available".to_string());
     let ipv6_external = app
         .local_node
         .external_ipv6
         .map(|a| a.to_string())
         .unwrap_or_else(|| "Not discovered".to_string());
 
+    // Only show IPv6 line if we have local IPv6 or it's just informational
+    let ipv6_color = if app.local_node.local_ipv6.is_some() {
+        Color::White
+    } else {
+        Color::DarkGray
+    };
+
     let line3 = Line::from(vec![
         Span::raw("  IPv6: "),
-        Span::styled(ipv6_local, Style::default().fg(Color::White)),
+        Span::styled(ipv6_local, Style::default().fg(ipv6_color)),
         Span::raw(" → "),
         Span::styled(ipv6_external, Style::default().fg(Color::Cyan)),
     ]);
@@ -201,13 +208,32 @@ fn draw_peers(frame: &mut Frame, app: &App, area: Rect) {
                 peer.location.clone()
             };
 
+            // Status indicator with clear separation
+            let status_indicator = match peer.quality {
+                crate::tui::types::ConnectionQuality::Excellent => "●",
+                crate::tui::types::ConnectionQuality::Good => "●",
+                crate::tui::types::ConnectionQuality::Fair => "●",
+                crate::tui::types::ConnectionQuality::Poor => "●",
+                crate::tui::types::ConnectionQuality::VeryPoor => "○",
+            };
+            let status_color = match peer.quality {
+                crate::tui::types::ConnectionQuality::Excellent => Color::Green,
+                crate::tui::types::ConnectionQuality::Good => Color::LightGreen,
+                crate::tui::types::ConnectionQuality::Fair => Color::Yellow,
+                crate::tui::types::ConnectionQuality::Poor => Color::LightRed,
+                crate::tui::types::ConnectionQuality::VeryPoor => Color::Red,
+            };
+
             Row::new(vec![
                 Cell::from(peer.short_id.clone()),
                 Cell::from(location),
                 Cell::from(method_str).style(method_style),
                 Cell::from(peer.rtt_string()),
                 Cell::from(peer.traffic_indicator()),
-                Cell::from(format!("{} Connected", peer.quality.as_bar())),
+                Cell::from(Span::styled(
+                    format!("{} OK", status_indicator),
+                    Style::default().fg(status_color),
+                )),
             ])
         })
         .collect();
@@ -215,12 +241,12 @@ fn draw_peers(frame: &mut Frame, app: &App, area: Rect) {
     let table = Table::new(
         rows,
         [
-            Constraint::Length(12),
-            Constraint::Length(10),
-            Constraint::Length(12),
-            Constraint::Length(8),
-            Constraint::Length(12),
-            Constraint::Length(18),
+            Constraint::Length(12), // Peer ID
+            Constraint::Length(10), // Location
+            Constraint::Length(12), // Method
+            Constraint::Length(8),  // RTT
+            Constraint::Length(12), // TX/RX
+            Constraint::Length(8),  // Status (simplified)
         ],
     )
     .header(header)
