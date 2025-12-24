@@ -1524,7 +1524,7 @@
 
     <!-- Download Section -->
     <section class="download-section" id="download">
-        <h2>Help Test the Network Layer</h2>
+        <h2>Help Test the Network Layer <span id="version-badge" style="font-size: 0.5em; background: linear-gradient(135deg, var(--accent-cyan), var(--accent-green)); color: var(--bg-dark); padding: 4px 12px; border-radius: 20px; margin-left: 10px; vertical-align: middle;">Loading...</span></h2>
         <p>Download the test client for your platform. Just run it - that's all you need to do! Your node will automatically connect and help validate this critical network infrastructure.</p>
 
         <div class="download-grid">
@@ -2162,8 +2162,25 @@
             closeNodeDetail();
         }
 
+        // Fetch latest version from GitHub releases
+        async function fetchVersion() {
+            try {
+                const response = await fetch('https://api.github.com/repos/dirvine/ant-quic/releases/latest');
+                const release = await response.json();
+                const badge = document.getElementById('version-badge');
+                if (badge && release.tag_name) {
+                    badge.textContent = release.tag_name;
+                    badge.title = `Released: ${new Date(release.published_at).toLocaleDateString()}`;
+                }
+            } catch (e) {
+                const badge = document.getElementById('version-badge');
+                if (badge) badge.textContent = 'Latest';
+            }
+        }
+
         // Init
         fetchData();
+        fetchVersion();
         setInterval(fetchData, 15000);
         connectWS();
 

@@ -34,8 +34,9 @@ pub fn draw(frame: &mut Frame, app: &App) {
     draw_footer(frame, app, chunks[4]);
 }
 
-/// Draw the header with title.
+/// Draw the header with title and version.
 fn draw_header(frame: &mut Frame, area: Rect) {
+    let version = env!("CARGO_PKG_VERSION");
     let title = vec![Line::from(vec![
         Span::styled(
             "ant-quic Network Test",
@@ -43,7 +44,14 @@ fn draw_header(frame: &mut Frame, area: Rect) {
                 .fg(Color::Cyan)
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::raw("                         "),
+        Span::raw(" "),
+        Span::styled(
+            format!("v{}", version),
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw("                    "),
         Span::styled(
             "\"We will be legion!!\"",
             Style::default()

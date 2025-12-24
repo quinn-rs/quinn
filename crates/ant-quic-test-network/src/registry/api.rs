@@ -60,8 +60,7 @@ pub async fn start_registry_server(config: RegistryConfig) -> anyhow::Result<()>
     let persistence_config = PersistenceConfig {
         data_dir: config.data_dir.clone(),
         enabled: config.persistence_enabled,
-        save_interval_secs: 60,
-        snapshot_interval_secs: 300,
+        ..Default::default()
     };
     let persistence = PersistentStorage::new(persistence_config);
     if let Err(e) = persistence.initialize().await {

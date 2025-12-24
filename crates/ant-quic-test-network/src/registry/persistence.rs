@@ -3,13 +3,21 @@
 //! This module provides JSON-based persistence for all experiment data,
 //! ensuring that historical records are preserved across registry restarts.
 //!
+//! # Design for Long-Running Experiments
+//!
+//! - **In-memory buffering**: Records are kept in memory until thresholds are reached
+//! - **Record-count based saves**: Data is saved when buffer reaches threshold (not time-based)
+//! - **File rotation**: Large files are rotated to new versions (events.jsonl -> events.1.jsonl)
+//! - **Append-only**: Events are always appended, never overwritten
+//!
 //! # Data Files
 //!
+//! - `experiment_summary.json` - Current experiment summary (overwritten each save)
 //! - `nodes.json` - All node registrations (active and historical)
 //! - `connections.json` - All connection records
 //! - `events.jsonl` - Append-only event log (JSON Lines format)
-//! - `stats_snapshots.json` - Periodic network statistics snapshots
-//! - `experiment_summary.json` - Current experiment summary
+//! - `events.N.jsonl` - Rotated event logs when size exceeded
+//! - `stats_snapshots.json` - Network statistics snapshots
 
 use crate::registry::types::{
     ConnectionBreakdown, ConnectionRecord, ExperimentResults, NatStats, NetworkEvent, NetworkStats,
@@ -24,11 +32,17 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
 
-/// Interval between automatic saves (in seconds).
-const AUTO_SAVE_INTERVAL_SECS: u64 = 60;
+/// Maximum events to keep in memory before flushing to disk.
+const EVENT_BUFFER_THRESHOLD: usize = 500;
 
-/// Interval between statistics snapshots (in seconds).
-const STATS_SNAPSHOT_INTERVAL_SECS: u64 = 300; // 5 minutes
+/// Maximum file size before rotation (10MB).
+const MAX_FILE_SIZE_BYTES: u64 = 10 * 1024 * 1024;
+
+/// Maximum events per file before rotation (100k).
+const MAX_EVENTS_PER_FILE: usize = 100_000;
+
+/// Maximum stats snapshots to keep in memory before saving.
+const STATS_BUFFER_THRESHOLD: usize = 100;
 
 /// Persistent data store configuration.
 #[derive(Debug, Clone)]
@@ -37,10 +51,12 @@ pub struct PersistenceConfig {
     pub data_dir: PathBuf,
     /// Whether to enable persistence.
     pub enabled: bool,
-    /// Auto-save interval in seconds.
-    pub save_interval_secs: u64,
-    /// Stats snapshot interval in seconds.
-    pub snapshot_interval_secs: u64,
+    /// Events in memory before flush (default: 500).
+    pub event_buffer_size: usize,
+    /// Max file size before rotation (default: 10MB).
+    pub max_file_size: u64,
+    /// Max events per file before rotation (default: 100k).
+    pub max_events_per_file: usize,
 }
 
 impl Default for PersistenceConfig {
@@ -48,8 +64,9 @@ impl Default for PersistenceConfig {
         Self {
             data_dir: PathBuf::from("./data"),
             enabled: true,
-            save_interval_secs: AUTO_SAVE_INTERVAL_SECS,
-            snapshot_interval_secs: STATS_SNAPSHOT_INTERVAL_SECS,
+            event_buffer_size: EVENT_BUFFER_THRESHOLD,
+            max_file_size: MAX_FILE_SIZE_BYTES,
+            max_events_per_file: MAX_EVENTS_PER_FILE,
         }
     }
 }
@@ -99,14 +116,30 @@ pub struct TimestampedEvent {
     pub event: NetworkEvent,
 }
 
-/// Persistent storage manager.
+/// Tracks state for file rotation.
+struct EventLogState {
+    /// Current file writer.
+    writer: BufWriter<File>,
+    /// Current file path.
+    path: PathBuf,
+    /// Events written to current file.
+    event_count: usize,
+}
+
+/// Persistent storage manager with buffering and rotation.
 pub struct PersistentStorage {
     /// Configuration.
     config: PersistenceConfig,
     /// Current persisted data.
     data: RwLock<PersistedData>,
-    /// Event log file handle.
-    event_log: RwLock<Option<BufWriter<File>>>,
+    /// Buffered events (not yet flushed).
+    event_buffer: RwLock<Vec<TimestampedEvent>>,
+    /// Event log state.
+    event_log: RwLock<Option<EventLogState>>,
+    /// Buffered stats snapshots.
+    stats_buffer: RwLock<Vec<StatsSnapshot>>,
+    /// Flag indicating if data has changed since last save.
+    dirty: RwLock<bool>,
 }
 
 impl PersistentStorage {
@@ -115,7 +148,10 @@ impl PersistentStorage {
         let storage = Arc::new(Self {
             config: config.clone(),
             data: RwLock::new(PersistedData::default()),
+            event_buffer: RwLock::new(Vec::with_capacity(EVENT_BUFFER_THRESHOLD)),
             event_log: RwLock::new(None),
+            stats_buffer: RwLock::new(Vec::with_capacity(STATS_BUFFER_THRESHOLD)),
+            dirty: RwLock::new(false),
         });
 
         if config.enabled {
@@ -168,23 +204,21 @@ impl PersistentStorage {
 
     /// Load existing data from disk.
     async fn load_data(&self) -> Result<(), String> {
-        let nodes_path = self.config.data_dir.join("nodes.json");
-        let connections_path = self.config.data_dir.join("connections.json");
-        let snapshots_path = self.config.data_dir.join("stats_snapshots.json");
         let summary_path = self.config.data_dir.join("experiment_summary.json");
 
         let mut data = self.data.write().await;
 
-        // Try to load experiment summary first
+        // Try to load experiment summary
         if summary_path.exists() {
             match fs::read_to_string(&summary_path) {
                 Ok(content) => match serde_json::from_str::<PersistedData>(&content) {
                     Ok(loaded) => {
                         *data = loaded;
                         info!(
-                            "Loaded experiment data: {} nodes, {} connections",
+                            "Loaded experiment data: {} nodes, {} connections, {} snapshots",
                             data.nodes.len(),
-                            data.connections.len()
+                            data.connections.len(),
+                            data.stats_snapshots.len()
                         );
                         return Ok(());
                     }
@@ -198,49 +232,6 @@ impl PersistentStorage {
             }
         }
 
-        // Load individual files if summary doesn't exist
-        if nodes_path.exists() {
-            match fs::read_to_string(&nodes_path) {
-                Ok(content) => match serde_json::from_str::<Vec<PeerInfo>>(&content) {
-                    Ok(nodes) => {
-                        data.nodes = nodes;
-                        info!("Loaded {} nodes from disk", data.nodes.len());
-                    }
-                    Err(e) => warn!("Failed to parse nodes.json: {}", e),
-                },
-                Err(e) => warn!("Failed to read nodes.json: {}", e),
-            }
-        }
-
-        if connections_path.exists() {
-            match fs::read_to_string(&connections_path) {
-                Ok(content) => match serde_json::from_str::<Vec<ConnectionRecord>>(&content) {
-                    Ok(connections) => {
-                        data.connections = connections;
-                        info!("Loaded {} connections from disk", data.connections.len());
-                    }
-                    Err(e) => warn!("Failed to parse connections.json: {}", e),
-                },
-                Err(e) => warn!("Failed to read connections.json: {}", e),
-            }
-        }
-
-        if snapshots_path.exists() {
-            match fs::read_to_string(&snapshots_path) {
-                Ok(content) => match serde_json::from_str::<Vec<StatsSnapshot>>(&content) {
-                    Ok(snapshots) => {
-                        data.stats_snapshots = snapshots;
-                        info!(
-                            "Loaded {} stats snapshots from disk",
-                            data.stats_snapshots.len()
-                        );
-                    }
-                    Err(e) => warn!("Failed to parse stats_snapshots.json: {}", e),
-                },
-                Err(e) => warn!("Failed to read stats_snapshots.json: {}", e),
-            }
-        }
-
         // Set start time if not set
         if data.start_time == 0 {
             data.start_time = current_timestamp();
@@ -249,9 +240,52 @@ impl PersistentStorage {
         Ok(())
     }
 
+    /// Find the next rotation number for event logs.
+    fn find_next_rotation(&self) -> usize {
+        let mut max_rotation = 0;
+        if let Ok(entries) = fs::read_dir(&self.config.data_dir) {
+            for entry in entries.flatten() {
+                let name = entry.file_name();
+                let name_str = name.to_string_lossy();
+                if name_str.starts_with("events.") && name_str.ends_with(".jsonl") {
+                    // Extract rotation number from events.N.jsonl
+                    if let Some(num_str) = name_str
+                        .strip_prefix("events.")
+                        .and_then(|s| s.strip_suffix(".jsonl"))
+                    {
+                        if let Ok(num) = num_str.parse::<usize>() {
+                            max_rotation = max_rotation.max(num);
+                        }
+                    }
+                }
+            }
+        }
+        max_rotation + 1
+    }
+
     /// Open event log for appending.
     async fn open_event_log(&self) -> Result<(), String> {
         let log_path = self.config.data_dir.join("events.jsonl");
+
+        // Check if we need to rotate on startup
+        if log_path.exists() {
+            let metadata = fs::metadata(&log_path).ok();
+            let size = metadata.as_ref().map(|m| m.len()).unwrap_or(0);
+
+            if size >= self.config.max_file_size {
+                // Rotate the current file
+                let rotation = self.find_next_rotation();
+                let rotated_path = self
+                    .config
+                    .data_dir
+                    .join(format!("events.{}.jsonl", rotation));
+                if let Err(e) = fs::rename(&log_path, &rotated_path) {
+                    warn!("Failed to rotate event log: {}", e);
+                } else {
+                    info!("Rotated event log to {:?}", rotated_path);
+                }
+            }
+        }
 
         let file = OpenOptions::new()
             .create(true)
@@ -259,18 +293,66 @@ impl PersistentStorage {
             .open(&log_path)
             .map_err(|e| format!("Failed to open event log: {}", e))?;
 
-        let writer = BufWriter::new(file);
-        *self.event_log.write().await = Some(writer);
+        // Count existing events in the file
+        let event_count = if log_path.exists() {
+            BufReader::new(
+                File::open(&log_path).unwrap_or_else(|_| File::open("/dev/null").unwrap()),
+            )
+            .lines()
+            .count()
+        } else {
+            0
+        };
 
-        debug!("Event log opened at {:?}", log_path);
+        let state = EventLogState {
+            writer: BufWriter::new(file),
+            path: log_path,
+            event_count,
+        };
+
+        *self.event_log.write().await = Some(state);
+
+        debug!("Event log opened with {} existing events", event_count);
         Ok(())
     }
 
-    /// Save all data to disk.
+    /// Rotate event log if needed.
+    async fn maybe_rotate_event_log(&self) -> Result<(), String> {
+        let log_guard = self.event_log.write().await;
+
+        if let Some(ref state) = *log_guard {
+            let needs_rotation = state.event_count >= self.config.max_events_per_file
+                || fs::metadata(&state.path)
+                    .map(|m| m.len() >= self.config.max_file_size)
+                    .unwrap_or(false);
+
+            if needs_rotation {
+                drop(log_guard);
+                // Flush and close current file
+                if let Some(ref mut state) = *self.event_log.write().await {
+                    let _ = state.writer.flush();
+                }
+                *self.event_log.write().await = None;
+
+                // Open new file (will rotate the old one)
+                self.open_event_log().await?;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Save all data to disk (only if dirty or forced).
     pub async fn save(&self) -> Result<(), String> {
         if !self.config.enabled {
             return Ok(());
         }
+
+        // Flush event buffer first
+        self.flush_event_buffer().await?;
+
+        // Flush stats buffer
+        self.flush_stats_buffer().await;
 
         let mut data = self.data.write().await;
         data.last_save_time = current_timestamp();
@@ -282,7 +364,7 @@ impl PersistentStorage {
         fs::write(&summary_path, content)
             .map_err(|e| format!("Failed to write experiment_summary.json: {}", e))?;
 
-        // Also save individual files for easier access
+        // Save individual files for easier analysis
         let nodes_path = self.config.data_dir.join("nodes.json");
         let nodes_content = serde_json::to_string_pretty(&data.nodes)
             .map_err(|e| format!("Failed to serialize nodes: {}", e))?;
@@ -295,16 +377,14 @@ impl PersistentStorage {
         fs::write(&connections_path, connections_content)
             .map_err(|e| format!("Failed to write connections.json: {}", e))?;
 
+        // Save stats snapshots
         let snapshots_path = self.config.data_dir.join("stats_snapshots.json");
         let snapshots_content = serde_json::to_string_pretty(&data.stats_snapshots)
             .map_err(|e| format!("Failed to serialize snapshots: {}", e))?;
         fs::write(&snapshots_path, snapshots_content)
             .map_err(|e| format!("Failed to write stats_snapshots.json: {}", e))?;
 
-        // Flush event log
-        if let Some(ref mut writer) = *self.event_log.write().await {
-            let _ = writer.flush();
-        }
+        *self.dirty.write().await = false;
 
         debug!(
             "Saved {} nodes, {} connections, {} snapshots",
@@ -316,7 +396,65 @@ impl PersistentStorage {
         Ok(())
     }
 
-    /// Log an event to the append-only event log.
+    /// Save only if data has changed (call this from periodic tasks).
+    pub async fn save_if_dirty(&self) -> Result<(), String> {
+        if *self.dirty.read().await {
+            self.save().await
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Flush buffered events to disk.
+    async fn flush_event_buffer(&self) -> Result<(), String> {
+        let mut buffer = self.event_buffer.write().await;
+
+        if buffer.is_empty() {
+            return Ok(());
+        }
+
+        // Check for rotation before writing
+        self.maybe_rotate_event_log().await?;
+
+        if let Some(ref mut state) = *self.event_log.write().await {
+            for event in buffer.drain(..) {
+                if let Ok(line) = serde_json::to_string(&event) {
+                    if writeln!(state.writer, "{}", line).is_ok() {
+                        state.event_count += 1;
+                    }
+                }
+            }
+            let _ = state.writer.flush();
+        }
+
+        Ok(())
+    }
+
+    /// Flush buffered stats snapshots to main data.
+    async fn flush_stats_buffer(&self) {
+        let mut buffer = self.stats_buffer.write().await;
+
+        if buffer.is_empty() {
+            return;
+        }
+
+        let mut data = self.data.write().await;
+        data.stats_snapshots.append(&mut *buffer);
+
+        // Update peak concurrent nodes
+        if let Some(max_active) = data
+            .stats_snapshots
+            .iter()
+            .map(|s| s.stats.active_nodes)
+            .max()
+        {
+            if max_active > data.peak_concurrent_nodes {
+                data.peak_concurrent_nodes = max_active;
+            }
+        }
+    }
+
+    /// Log an event (buffered, auto-flushes when threshold reached).
     pub async fn log_event(&self, event: NetworkEvent) {
         if !self.config.enabled {
             return;
@@ -327,9 +465,14 @@ impl PersistentStorage {
             event,
         };
 
-        if let Some(ref mut writer) = *self.event_log.write().await {
-            if let Ok(line) = serde_json::to_string(&timestamped) {
-                let _ = writeln!(writer, "{}", line);
+        let mut buffer = self.event_buffer.write().await;
+        buffer.push(timestamped);
+
+        // Flush if buffer is full
+        if buffer.len() >= self.config.event_buffer_size {
+            drop(buffer);
+            if let Err(e) = self.flush_event_buffer().await {
+                warn!("Failed to flush event buffer: {}", e);
             }
         }
     }
@@ -343,6 +486,8 @@ impl PersistentStorage {
         let mut data = self.data.write().await;
         data.nodes = nodes;
         data.total_unique_nodes = data.nodes.len();
+
+        *self.dirty.write().await = true;
     }
 
     /// Update connections data.
@@ -377,9 +522,11 @@ impl PersistentStorage {
         data.connection_breakdown = breakdown;
         data.ipv4_connections = ipv4;
         data.ipv6_connections = ipv6;
+
+        *self.dirty.write().await = true;
     }
 
-    /// Add a statistics snapshot.
+    /// Add a statistics snapshot (buffered).
     pub async fn add_stats_snapshot(&self, stats: NetworkStats) {
         if !self.config.enabled {
             return;
@@ -390,22 +537,14 @@ impl PersistentStorage {
             stats,
         };
 
-        let mut data = self.data.write().await;
-        data.stats_snapshots.push(snapshot);
+        let mut buffer = self.stats_buffer.write().await;
+        buffer.push(snapshot);
 
-        // Update peak if needed
-        if data
-            .stats_snapshots
-            .last()
-            .map(|s| s.stats.active_nodes)
-            .unwrap_or(0)
-            > data.peak_concurrent_nodes
-        {
-            data.peak_concurrent_nodes = data
-                .stats_snapshots
-                .last()
-                .map(|s| s.stats.active_nodes)
-                .unwrap_or(0);
+        // Flush if buffer is full
+        if buffer.len() >= STATS_BUFFER_THRESHOLD {
+            drop(buffer);
+            self.flush_stats_buffer().await;
+            *self.dirty.write().await = true;
         }
     }
 
@@ -417,15 +556,22 @@ impl PersistentStorage {
 
         let mut data = self.data.write().await;
         data.nat_stats = nat_stats;
+
+        *self.dirty.write().await = true;
     }
 
     /// Get persisted data for export.
     pub async fn get_data(&self) -> PersistedData {
+        // Flush buffers first to get complete data
+        self.flush_stats_buffer().await;
         self.data.read().await.clone()
     }
 
     /// Get experiment results from persisted data.
     pub async fn get_experiment_results(&self) -> ExperimentResults {
+        // Flush buffers first
+        self.flush_stats_buffer().await;
+
         let data = self.data.read().await;
 
         // Build geographic distribution from nodes
@@ -459,15 +605,48 @@ impl PersistentStorage {
         }
     }
 
-    /// Read all events from the event log.
+    /// Read all events from the event log (current and rotated files).
     pub fn read_events(&self) -> Result<Vec<TimestampedEvent>, String> {
-        let log_path = self.config.data_dir.join("events.jsonl");
+        let mut all_events = Vec::new();
 
-        if !log_path.exists() {
-            return Ok(Vec::new());
+        // Read rotated files first (oldest first)
+        let mut rotated_files: Vec<PathBuf> = Vec::new();
+        if let Ok(entries) = fs::read_dir(&self.config.data_dir) {
+            for entry in entries.flatten() {
+                let name = entry.file_name();
+                let name_str = name.to_string_lossy();
+                if name_str.starts_with("events.")
+                    && name_str.ends_with(".jsonl")
+                    && name_str != "events.jsonl"
+                {
+                    rotated_files.push(entry.path());
+                }
+            }
+        }
+        rotated_files.sort();
+
+        // Read rotated files
+        for path in rotated_files {
+            if let Ok(events) = self.read_events_from_file(&path) {
+                all_events.extend(events);
+            }
         }
 
-        let file = File::open(&log_path).map_err(|e| format!("Failed to open event log: {}", e))?;
+        // Read current file
+        let current_path = self.config.data_dir.join("events.jsonl");
+        if current_path.exists() {
+            if let Ok(events) = self.read_events_from_file(&current_path) {
+                all_events.extend(events);
+            }
+        }
+
+        Ok(all_events)
+    }
+
+    /// Read events from a single file.
+    fn read_events_from_file(&self, path: &Path) -> Result<Vec<TimestampedEvent>, String> {
+        let file =
+            File::open(path).map_err(|e| format!("Failed to open {}: {}", path.display(), e))?;
 
         let reader = BufReader::new(file);
         let mut events = Vec::new();
@@ -490,6 +669,13 @@ impl PersistentStorage {
     pub fn is_enabled(&self) -> bool {
         self.config.enabled
     }
+
+    /// Force flush all buffers (call before shutdown).
+    pub async fn flush_all(&self) -> Result<(), String> {
+        self.flush_event_buffer().await?;
+        self.flush_stats_buffer().await;
+        self.save().await
+    }
 }
 
 /// Get current Unix timestamp.
@@ -511,8 +697,7 @@ mod tests {
         let config = PersistenceConfig {
             data_dir: temp_dir.path().to_path_buf(),
             enabled: true,
-            save_interval_secs: 60,
-            snapshot_interval_secs: 300,
+            ..Default::default()
         };
 
         let storage = PersistentStorage::new(config.clone());
@@ -529,7 +714,7 @@ mod tests {
             last_seen: 12345,
             connection_success_rate: 0.95,
             capabilities: Default::default(),
-            version: "0.14.12".to_string(),
+            version: "0.14.13".to_string(),
             is_active: true,
             status: crate::registry::types::PeerStatus::Active,
             bytes_sent: 1000,
@@ -550,32 +735,75 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_event_logging() {
+    async fn test_event_logging_and_buffering() {
         let temp_dir = TempDir::new().unwrap();
         let config = PersistenceConfig {
             data_dir: temp_dir.path().to_path_buf(),
             enabled: true,
-            save_interval_secs: 60,
-            snapshot_interval_secs: 300,
+            event_buffer_size: 5, // Small buffer for testing
+            ..Default::default()
         };
 
         let storage = PersistentStorage::new(config);
         storage.initialize().await.unwrap();
 
-        // Log some events
-        storage
-            .log_event(NetworkEvent::NodeRegistered {
-                peer_id: "peer1".to_string(),
-                country_code: Some("US".to_string()),
-                latitude: 40.0,
-                longitude: -74.0,
-            })
-            .await;
+        // Log events (less than buffer size)
+        for i in 0..3 {
+            storage
+                .log_event(NetworkEvent::NodeRegistered {
+                    peer_id: format!("peer{}", i),
+                    country_code: Some("US".to_string()),
+                    latitude: 40.0,
+                    longitude: -74.0,
+                })
+                .await;
+        }
 
-        storage.save().await.unwrap();
+        // Buffer should still hold events
+        assert_eq!(storage.event_buffer.read().await.len(), 3);
 
-        // Read events back
+        // Add more to trigger flush
+        for i in 3..6 {
+            storage
+                .log_event(NetworkEvent::NodeRegistered {
+                    peer_id: format!("peer{}", i),
+                    country_code: Some("US".to_string()),
+                    latitude: 40.0,
+                    longitude: -74.0,
+                })
+                .await;
+        }
+
+        // Buffer should be flushed
+        assert!(storage.event_buffer.read().await.len() < 5);
+
+        // Force flush and read back
+        storage.flush_all().await.unwrap();
         let events = storage.read_events().unwrap();
-        assert_eq!(events.len(), 1);
+        assert_eq!(events.len(), 6);
+    }
+
+    #[tokio::test]
+    async fn test_dirty_flag() {
+        let temp_dir = TempDir::new().unwrap();
+        let config = PersistenceConfig {
+            data_dir: temp_dir.path().to_path_buf(),
+            enabled: true,
+            ..Default::default()
+        };
+
+        let storage = PersistentStorage::new(config);
+        storage.initialize().await.unwrap();
+
+        // Initially not dirty
+        assert!(!*storage.dirty.read().await);
+
+        // Update nodes makes it dirty
+        storage.update_nodes(vec![]).await;
+        assert!(*storage.dirty.read().await);
+
+        // Save clears dirty flag
+        storage.save().await.unwrap();
+        assert!(!*storage.dirty.read().await);
     }
 }

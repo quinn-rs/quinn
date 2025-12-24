@@ -1,0 +1,69 @@
+# Cross.toml - Cross-compilation configuration
+# See: https://github.com/cross-rs/cross
+
+[build]
+# Use docker by default
+default-target = "x86_64-unknown-linux-gnu"
+
+[build.env]
+passthrough = [
+    "RUST_BACKTRACE",
+    "RUST_LOG",
+    "CARGO_TERM_COLOR",
+]
+
+# x86_64 MUSL static builds
+[target.x86_64-unknown-linux-musl]
+# Use the rust-musl-cross image which has proper musl toolchain
+image = "ghcr.io/rust-cross/rust-musl-cross:x86_64-musl"
+# Pre-build hook to install any additional dependencies
+pre-build = []
+
+[target.x86_64-unknown-linux-musl.env]
+passthrough = [
+    "OPENSSL_STATIC=1",
+    "PKG_CONFIG_ALLOW_CROSS=1",
+]
+
+# ARM64 Linux builds
+[target.aarch64-unknown-linux-gnu]
+# Use cross's default image with proper ARM toolchain
+image = "ghcr.io/cross-rs/aarch64-unknown-linux-gnu:main"
+pre-build = []
+
+[target.aarch64-unknown-linux-gnu.env]
+passthrough = [
+    "PKG_CONFIG_ALLOW_CROSS=1",
+]
+
+# ARM64 MUSL static builds
+[target.aarch64-unknown-linux-musl]
+image = "ghcr.io/rust-cross/rust-musl-cross:aarch64-musl"
+pre-build = []
+
+[target.aarch64-unknown-linux-musl.env]
+passthrough = [
+    "OPENSSL_STATIC=1",
+    "PKG_CONFIG_ALLOW_CROSS=1",
+]
+
+# ARMv7 Linux builds (Raspberry Pi, etc.)
+[target.armv7-unknown-linux-gnueabihf]
+image = "ghcr.io/cross-rs/armv7-unknown-linux-gnueabihf:main"
+pre-build = []
+
+[target.armv7-unknown-linux-gnueabihf.env]
+passthrough = [
+    "PKG_CONFIG_ALLOW_CROSS=1",
+]
+
+# ARMv7 MUSL static builds
+[target.armv7-unknown-linux-musleabihf]
+image = "ghcr.io/rust-cross/rust-musl-cross:armv7-musleabihf"
+pre-build = []
+
+[target.armv7-unknown-linux-musleabihf.env]
+passthrough = [
+    "OPENSSL_STATIC=1",
+    "PKG_CONFIG_ALLOW_CROSS=1",
+]
