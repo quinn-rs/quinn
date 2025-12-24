@@ -12,8 +12,8 @@
 //! - `experiment_summary.json` - Current experiment summary
 
 use crate::registry::types::{
-    ConnectionBreakdown, ConnectionRecord, ExperimentResults, NatStats, NetworkEvent,
-    NetworkStats, PeerInfo,
+    ConnectionBreakdown, ConnectionRecord, ExperimentResults, NatStats, NetworkEvent, NetworkStats,
+    PeerInfo,
 };
 use serde::{Deserialize, Serialize};
 use std::fs::{self, File, OpenOptions};
@@ -230,7 +230,10 @@ impl PersistentStorage {
                 Ok(content) => match serde_json::from_str::<Vec<StatsSnapshot>>(&content) {
                     Ok(snapshots) => {
                         data.stats_snapshots = snapshots;
-                        info!("Loaded {} stats snapshots from disk", data.stats_snapshots.len());
+                        info!(
+                            "Loaded {} stats snapshots from disk",
+                            data.stats_snapshots.len()
+                        );
                     }
                     Err(e) => warn!("Failed to parse stats_snapshots.json: {}", e),
                 },
@@ -359,7 +362,9 @@ impl PersistentStorage {
         for conn in &data.connections {
             match conn.method {
                 crate::registry::types::ConnectionMethod::Direct => breakdown.direct += 1,
-                crate::registry::types::ConnectionMethod::HolePunched => breakdown.hole_punched += 1,
+                crate::registry::types::ConnectionMethod::HolePunched => {
+                    breakdown.hole_punched += 1
+                }
                 crate::registry::types::ConnectionMethod::Relayed => breakdown.relayed += 1,
             }
             if conn.is_ipv6 {
@@ -389,10 +394,18 @@ impl PersistentStorage {
         data.stats_snapshots.push(snapshot);
 
         // Update peak if needed
-        if data.stats_snapshots.last().map(|s| s.stats.active_nodes).unwrap_or(0)
+        if data
+            .stats_snapshots
+            .last()
+            .map(|s| s.stats.active_nodes)
+            .unwrap_or(0)
             > data.peak_concurrent_nodes
         {
-            data.peak_concurrent_nodes = data.stats_snapshots.last().map(|s| s.stats.active_nodes).unwrap_or(0);
+            data.peak_concurrent_nodes = data
+                .stats_snapshots
+                .last()
+                .map(|s| s.stats.active_nodes)
+                .unwrap_or(0);
         }
     }
 
@@ -454,8 +467,7 @@ impl PersistentStorage {
             return Ok(Vec::new());
         }
 
-        let file = File::open(&log_path)
-            .map_err(|e| format!("Failed to open event log: {}", e))?;
+        let file = File::open(&log_path).map_err(|e| format!("Failed to open event log: {}", e))?;
 
         let reader = BufReader::new(file);
         let mut events = Vec::new();

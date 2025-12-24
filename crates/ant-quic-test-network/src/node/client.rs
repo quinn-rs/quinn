@@ -412,7 +412,10 @@ impl TestNode {
                     P2pEvent::ExternalAddressDiscovered { addr } => {
                         info!("External address discovered: {}", addr);
                         let _ = event_tx_for_events
-                            .send(TuiEvent::Info(format!("Discovered external address: {}", addr)))
+                            .send(TuiEvent::Info(format!(
+                                "Discovered external address: {}",
+                                addr
+                            )))
                             .await;
                     }
                     P2pEvent::PeerConnected { peer_id, addr } => {
@@ -1038,10 +1041,7 @@ fn peer_id_to_bytes(peer_id: &str) -> [u8; 32] {
 /// Make a REAL QUIC connection to a peer using P2pEndpoint.
 ///
 /// This is NOT a simulation - it creates an actual QUIC connection.
-async fn real_connect(
-    endpoint: &P2pEndpoint,
-    peer: &PeerInfo,
-) -> Result<ConnectionMethod, String> {
+async fn real_connect(endpoint: &P2pEndpoint, peer: &PeerInfo) -> Result<ConnectionMethod, String> {
     // Get addresses to try
     if peer.addresses.is_empty() {
         return Err("Peer has no addresses".to_string());
@@ -1064,8 +1064,11 @@ async fn real_connect(
             for addr in &peer.addresses {
                 match tokio::time::timeout(Duration::from_secs(10), endpoint.connect(*addr)).await {
                     Ok(Ok(_conn)) => {
-                        info!("REAL QUIC connection established to {} at {}",
-                            &peer.peer_id[..8.min(peer.peer_id.len())], addr);
+                        info!(
+                            "REAL QUIC connection established to {} at {}",
+                            &peer.peer_id[..8.min(peer.peer_id.len())],
+                            addr
+                        );
                         return Ok(ConnectionMethod::Direct);
                     }
                     Ok(Err(e)) => {
@@ -1092,8 +1095,8 @@ async fn real_test_exchange(
     packet: &TestPacket,
 ) -> Result<Duration, String> {
     // Convert hex peer ID to QuicPeerId
-    let peer_id_bytes = hex::decode(peer_id_hex)
-        .map_err(|e| format!("Invalid peer ID hex: {}", e))?;
+    let peer_id_bytes =
+        hex::decode(peer_id_hex).map_err(|e| format!("Invalid peer ID hex: {}", e))?;
 
     if peer_id_bytes.len() < 32 {
         return Err("Peer ID too short".to_string());
@@ -1110,8 +1113,8 @@ async fn real_test_exchange(
         .ok_or_else(|| "No connection to peer".to_string())?;
 
     // Serialize the test packet
-    let packet_data = serde_json::to_vec(packet)
-        .map_err(|e| format!("Failed to serialize packet: {}", e))?;
+    let packet_data =
+        serde_json::to_vec(packet).map_err(|e| format!("Failed to serialize packet: {}", e))?;
 
     let start = Instant::now();
 

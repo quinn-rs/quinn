@@ -204,7 +204,9 @@ pub async fn start_registry_server(config: RegistryConfig) -> anyhow::Result<()>
             save_persistence.update_nodes(all_peers).await;
 
             let results = save_store.get_experiment_results().await;
-            save_persistence.update_connections(results.connections).await;
+            save_persistence
+                .update_connections(results.connections)
+                .await;
             save_persistence.update_nat_stats(results.nat_stats).await;
 
             // Save to disk
@@ -238,27 +240,20 @@ pub async fn start_registry_server(config: RegistryConfig) -> anyhow::Result<()>
     });
 
     tracing::info!("Starting registry server on {}", config.bind_addr);
-    tracing::info!(
-        "Experiment data will be saved to {:?}",
-        config.data_dir
-    );
+    tracing::info!("Experiment data will be saved to {:?}", config.data_dir);
     warp::serve(routes).run(config.bind_addr).await;
 
     Ok(())
 }
 
 /// Handle export of all persisted data.
-async fn handle_export_data(
-    persistence: Arc<PersistentStorage>,
-) -> Result<impl Reply, Rejection> {
+async fn handle_export_data(persistence: Arc<PersistentStorage>) -> Result<impl Reply, Rejection> {
     let data = persistence.get_data().await;
     Ok(warp::reply::json(&data))
 }
 
 /// Handle get events from event log.
-async fn handle_get_events(
-    persistence: Arc<PersistentStorage>,
-) -> Result<impl Reply, Rejection> {
+async fn handle_get_events(persistence: Arc<PersistentStorage>) -> Result<impl Reply, Rejection> {
     match persistence.read_events() {
         Ok(events) => Ok(warp::reply::json(&events)),
         Err(e) => Ok(warp::reply::json(&serde_json::json!({
