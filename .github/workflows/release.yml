@@ -142,6 +142,12 @@ jobs:
   security-check:
     name: Security Audit
     needs: validate
+    permissions:
+      contents: read
+      pull-requests: write
+      security-events: write
+      id-token: write
+      actions: read
     uses: ./.github/workflows/security.yml
 
   build:

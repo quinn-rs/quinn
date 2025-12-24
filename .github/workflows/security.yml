@@ -180,10 +180,11 @@ jobs:
           path: supply-chain-report.json
 
   # Security scorecard (informational, non-blocking)
+  # Only runs on default branch pushes (not tags) - Scorecard requirement
   scorecard:
     name: Security Scorecard
     runs-on: ubuntu-latest
-    if: github.event_name != 'pull_request'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
     continue-on-error: true  # Don't block builds on scorecard failures
     permissions:
       contents: read
