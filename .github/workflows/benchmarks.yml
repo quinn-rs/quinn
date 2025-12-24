@@ -241,6 +241,8 @@ jobs:
   benchmark-history:
     name: Track History
     runs-on: ubuntu-latest
+    # Allow this job to fail - benchmark history is optional and may fail on forks
+    continue-on-error: true
     if: github.event_name == 'push' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main')
     needs: benchmark
     steps:
