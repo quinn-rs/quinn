@@ -491,7 +491,10 @@ impl TestNode {
                         use ant_quic::TraversalPhase;
                         if matches!(phase, TraversalPhase::Punching) {
                             let peer_hex = hex::encode(peer_id.0);
-                            debug!("Peer {} entered Punching phase - marking as hole-punched", &peer_hex[..8.min(peer_hex.len())]);
+                            debug!(
+                                "Peer {} entered Punching phase - marking as hole-punched",
+                                &peer_hex[..8.min(peer_hex.len())]
+                            );
                             hole_punched_for_events.write().await.insert(peer_hex, true);
                         }
                     }
