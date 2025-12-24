@@ -1,3 +1,10 @@
+// Copyright 2024 Saorsa Labs Ltd.
+//
+// This Saorsa Network Software is licensed under the General Public License (GPL), version 3.
+// Please see the file LICENSE-GPL, or visit <http://www.gnu.org/licenses/> for the full text.
+//
+// Full details available at https://saorsalabs.com/licenses
+
 //! Token v2: bind address-validation tokens to (PeerId || CID || nonce).
 //!
 //! This module provides secure token encryption using AES-256-GCM with proper
