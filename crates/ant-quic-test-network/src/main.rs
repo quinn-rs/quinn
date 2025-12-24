@@ -21,6 +21,8 @@ struct Args {
     registry: bool,
     /// HTTP server port (for registry mode)
     port: u16,
+    /// QUIC bind port (for client mode)
+    bind_port: u16,
     /// Registry URL to connect to (for client mode)
     registry_url: String,
     /// Maximum peer connections
@@ -34,6 +36,7 @@ impl Default for Args {
         Self {
             registry: false,
             port: 8080,
+            bind_port: 0, // 0 = random available port
             registry_url: "https://saorsa-1.saorsalabs.com".to_string(),
             max_peers: 10,
             quiet: false,
@@ -67,6 +70,13 @@ fn parse_args() -> Args {
                     }
                 }
             }
+            "--bind-port" => {
+                if let Some(port) = argv.next() {
+                    if let Ok(p) = port.parse() {
+                        args.bind_port = p;
+                    }
+                }
+            }
             "-q" | "--quiet" => args.quiet = true,
             "-h" | "--help" => {
                 print_help();
@@ -96,6 +106,7 @@ USAGE:
 OPTIONS:
     --registry              Run as central registry server
     --port <PORT>           HTTP server port (registry mode) [default: 8080]
+    --bind-port <PORT>      QUIC UDP bind port (client mode) [default: 0 = random]
     --registry-url <URL>    Registry URL to connect to [default: https://saorsa-1.saorsalabs.com]
     --max-peers <N>         Maximum peer connections [default: 10]
     -q, --quiet             Disable TUI, log mode only
@@ -105,8 +116,15 @@ EXAMPLES:
     # Run as registry server
     ant-quic-test --registry --port 8080
 
-    # Run as test node (default mode)
+    # Run as test node (default mode, random port)
     ant-quic-test
+
+    # Run multiple local instances (each on different random ports)
+    ant-quic-test &
+    ant-quic-test &
+
+    # Run on specific port
+    ant-quic-test --bind-port 9001
 
     # Connect to custom registry
     ant-quic-test --registry-url https://my-registry.example.com:8080
@@ -148,10 +166,12 @@ async fn main() -> anyhow::Result<()> {
         let app = App::new();
 
         // Create test node configuration
+        // Use specified bind port or 0 for random port (allows multiple local instances)
+        let bind_addr: SocketAddr = format!("0.0.0.0:{}", args.bind_port).parse()?;
         let node_config = TestNodeConfig {
             registry_url: args.registry_url.clone(),
             max_peers: args.max_peers,
-            bind_addr: "0.0.0.0:9000".parse()?,
+            bind_addr,
             ..Default::default()
         };
 
