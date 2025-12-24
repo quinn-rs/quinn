@@ -675,6 +675,8 @@ impl TestNode {
     fn spawn_heartbeat_loop(&self) -> tokio::task::JoinHandle<()> {
         let registry = RegistryClient::new(&self.config.registry_url);
         let peer_id = self.peer_id.clone();
+        let public_key = self.public_key.clone();
+        let listen_addresses = self.listen_addresses.clone();
         let shutdown = Arc::clone(&self.shutdown);
         let connected_peers = Arc::clone(&self.connected_peers);
         let external_addresses = Arc::clone(&self.external_addresses);
@@ -685,6 +687,7 @@ impl TestNode {
 
         tokio::spawn(async move {
             let mut ticker = tokio::time::interval(interval);
+            let mut consecutive_failures = 0u32;
 
             while !shutdown.load(Ordering::SeqCst) {
                 ticker.tick().await;
@@ -701,15 +704,68 @@ impl TestNode {
                     external_addresses: if ext_addrs.is_empty() {
                         None
                     } else {
-                        Some(ext_addrs)
+                        Some(ext_addrs.clone())
                     },
                     nat_stats: Some(stats),
                 };
                 drop(peers);
 
                 if let Err(e) = registry.heartbeat(&heartbeat).await {
-                    warn!("Heartbeat failed: {}", e);
+                    consecutive_failures += 1;
+                    warn!("Heartbeat failed (attempt {}): {}", consecutive_failures, e);
+
+                    // Re-register after 2 consecutive failures (peer likely expired)
+                    if consecutive_failures >= 2 {
+                        info!("Re-registering with registry after heartbeat failures...");
+
+                        // Detect actual network capabilities
+                        let ipv6_available = has_global_ipv6();
+                        let capabilities = NodeCapabilities {
+                            pqc: true,
+                            ipv4: true,
+                            ipv6: ipv6_available,
+                            nat_traversal: true,
+                            relay: false,
+                        };
+
+                        let registration = NodeRegistration {
+                            peer_id: peer_id.clone(),
+                            public_key: public_key.clone(),
+                            listen_addresses: listen_addresses.clone(),
+                            external_addresses: ext_addrs.clone(),
+                            nat_type: NatType::Unknown,
+                            version: env!("CARGO_PKG_VERSION").to_string(),
+                            capabilities,
+                            location_label: None,
+                        };
+
+                        match registry.register(&registration).await {
+                            Ok(response) if response.success => {
+                                info!(
+                                    "Re-registered successfully, got {} peers",
+                                    response.peers.len()
+                                );
+                                consecutive_failures = 0;
+                            }
+                            Ok(response) => {
+                                let err = response
+                                    .error
+                                    .unwrap_or_else(|| "Unknown error".to_string());
+                                error!("Re-registration failed: {}", err);
+                            }
+                            Err(e) => {
+                                error!("Re-registration request failed: {}", e);
+                            }
+                        }
+                    }
                 } else {
+                    if consecutive_failures > 0 {
+                        info!(
+                            "Heartbeat recovered after {} failures",
+                            consecutive_failures
+                        );
+                    }
+                    consecutive_failures = 0;
                     debug!("Heartbeat sent successfully");
                 }
             }

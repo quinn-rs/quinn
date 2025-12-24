@@ -343,10 +343,17 @@ async fn handle_heartbeat(
     store: Arc<PeerStore>,
 ) -> Result<impl Reply, Rejection> {
     match store.heartbeat(heartbeat) {
-        Ok(()) => Ok(warp::reply::json(&serde_json::json!({"success": true}))),
-        Err(e) => Ok(warp::reply::json(
-            &serde_json::json!({"success": false, "error": e}),
+        Ok(()) => Ok(warp::reply::with_status(
+            warp::reply::json(&serde_json::json!({"success": true})),
+            warp::http::StatusCode::OK,
         )),
+        Err(e) => {
+            tracing::warn!("Heartbeat failed: {}", e);
+            Ok(warp::reply::with_status(
+                warp::reply::json(&serde_json::json!({"success": false, "error": e})),
+                warp::http::StatusCode::NOT_FOUND,
+            ))
+        }
     }
 }
 
@@ -694,7 +701,9 @@ impl RegistryClient {
     /// Send heartbeat to registry.
     pub async fn heartbeat(&self, heartbeat: &NodeHeartbeat) -> anyhow::Result<()> {
         let url = format!("{}/api/heartbeat", self.base_url);
-        self.client.post(&url).json(heartbeat).send().await?;
+        let response = self.client.post(&url).json(heartbeat).send().await?;
+        // Check for HTTP error status (including 404 for unknown peer)
+        response.error_for_status()?;
         Ok(())
     }
 

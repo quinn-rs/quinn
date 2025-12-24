@@ -26,7 +26,7 @@ CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
 # Configuration
-GITHUB_REPO="dirvine/ant-quic"
+GITHUB_REPO="saorsa-labs/ant-quic"
 INSTALL_DIR="/opt/ant-quic-test"
 SERVICE_NAME="ant-quic-test"
 REGISTRY_PORT="8080"
