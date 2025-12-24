@@ -383,6 +383,9 @@ pub struct TestNode {
     has_ipv6: bool,
     /// Actual bound port (may differ from config if port 0 was used).
     actual_port: u16,
+    /// Track peers that used hole-punching (saw Punching phase before Connected).
+    /// Key is hex-encoded peer ID, value is true if hole-punching was used.
+    hole_punched_peers: Arc<RwLock<HashMap<String, bool>>>,
 }
 
 impl TestNode {
@@ -462,9 +465,14 @@ impl TestNode {
             .send(TuiEvent::UpdateLocalNode(local_node.clone()))
             .await;
 
+        // Create hole-punching tracker before spawning event handler
+        let hole_punched_peers: Arc<RwLock<HashMap<String, bool>>> =
+            Arc::new(RwLock::new(HashMap::new()));
+
         // Spawn event handler for P2P events to update TUI
         let endpoint_for_events = endpoint.clone();
         let event_tx_for_events = event_tx.clone();
+        let hole_punched_for_events = Arc::clone(&hole_punched_peers);
         tokio::spawn(async move {
             let mut events = endpoint_for_events.subscribe();
             while let Ok(event) = events.recv().await {
@@ -477,6 +485,15 @@ impl TestNode {
                                 addr
                             )))
                             .await;
+                    }
+                    P2pEvent::NatTraversalProgress { peer_id, phase } => {
+                        // Track if this peer went through the Punching phase
+                        use ant_quic::TraversalPhase;
+                        if matches!(phase, TraversalPhase::Punching) {
+                            let peer_hex = hex::encode(peer_id.0);
+                            debug!("Peer {} entered Punching phase - marking as hole-punched", &peer_hex[..8.min(peer_hex.len())]);
+                            hole_punched_for_events.write().await.insert(peer_hex, true);
+                        }
                     }
                     P2pEvent::PeerConnected { peer_id, addr } => {
                         debug!("P2P event: peer connected {:?} at {}", peer_id, addr);
@@ -514,6 +531,7 @@ impl TestNode {
             nat_stats: Arc::new(RwLock::new(NatStats::default())),
             has_ipv6: has_global_ipv6(),
             actual_port,
+            hole_punched_peers,
         })
     }
 
@@ -714,6 +732,8 @@ impl TestNode {
         let endpoint = Arc::clone(&self.endpoint);
         // Capture our IPv6 capability for filtering
         let our_has_ipv6 = self.has_ipv6;
+        // Clone hole-punching tracker for connection method detection
+        let hole_punched_peers = Arc::clone(&self.hole_punched_peers);
 
         tokio::spawn(async move {
             let mut ticker = tokio::time::interval(interval);
@@ -779,8 +799,23 @@ impl TestNode {
                 let connection_result = real_connect(&endpoint, candidate).await;
 
                 match connection_result {
-                    Ok(method) => {
+                    Ok(_base_method) => {
                         success.fetch_add(1, Ordering::Relaxed);
+
+                        // Check if this peer used hole-punching based on tracked NAT traversal phases
+                        let method = {
+                            let tracker = hole_punched_peers.read().await;
+                            if tracker.get(&candidate.peer_id).copied().unwrap_or(false) {
+                                info!(
+                                    "Peer {} used hole-punching (detected via Punching phase)",
+                                    &candidate.peer_id[..8.min(candidate.peer_id.len())]
+                                );
+                                ConnectionMethod::HolePunched
+                            } else {
+                                ConnectionMethod::Direct
+                            }
+                        };
+
                         match method {
                             ConnectionMethod::Direct => {
                                 direct.fetch_add(1, Ordering::Relaxed);

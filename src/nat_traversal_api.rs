@@ -1707,7 +1707,7 @@ impl NatTraversalEndpoint {
     ) {
         use tokio::time::{Duration, interval};
 
-        let mut poll_interval = interval(Duration::from_millis(100));
+        let mut poll_interval = interval(Duration::from_secs(1));
         let mut emitted_discovery = std::collections::HashSet::new();
 
         while !shutdown.load(Ordering::Relaxed) {
@@ -1715,19 +1715,14 @@ impl NatTraversalEndpoint {
 
             // 1. Check active connections for observed addresses and feed them to discovery
             if let Ok(conns) = connections.read() {
-                if !conns.is_empty() {
-                    debug!("Polling {} connections for observed addresses", conns.len());
-                }
                 for (peer_id, conn) in conns.iter() {
                     if let Some(observed_addr) = conn.observed_address() {
-                        debug!(
-                            "Found observed address {} for peer {:?}",
-                            observed_addr, peer_id
-                        );
-
                         // Emit event if this is the first time this peer reported this address
                         if emitted_discovery.insert((*peer_id, observed_addr)) {
-                            debug!("Emitting ExternalAddressDiscovered for peer {:?}", peer_id);
+                            debug!(
+                                "New external address discovered: {} from peer {:?}",
+                                observed_addr, peer_id
+                            );
                             let _ = event_tx.send(NatTraversalEvent::ExternalAddressDiscovered {
                                 reported_by: conn.remote_address(),
                                 address: observed_addr,
