@@ -6,7 +6,7 @@ members = [
 
 [package]
 name = "ant-quic"
-version = "0.14.17"
+version = "0.14.18"
 edition = "2024"
 rust-version = "1.85.0"
 license = "MIT OR Apache-2.0"
@@ -159,7 +159,7 @@ tokio-tungstenite = { version = "0.23", optional = true }
 
 # Essential dependencies
 uuid = { version = "1.0", features = ["v4", "serde"] }
-unicode-width = "0.2"
+unicode-width = "=0.2.0"  # Pinned to match ratatui's requirement
 hex = "0.4"
 sha2 = "0.10"
 once_cell = "1.21"

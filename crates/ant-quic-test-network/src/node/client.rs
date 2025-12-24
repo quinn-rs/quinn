@@ -402,7 +402,10 @@ impl TestNode {
         );
 
         // Get the actual bound port (may differ from config if port 0 was used)
-        let actual_port = endpoint.local_addr().map(|a| a.port()).unwrap_or(config.bind_addr.port());
+        let actual_port = endpoint
+            .local_addr()
+            .map(|a| a.port())
+            .unwrap_or(config.bind_addr.port());
 
         // Detect actual local addresses (not 0.0.0.0)
         let (local_ipv4, local_ipv6) = detect_local_addresses(actual_port);
