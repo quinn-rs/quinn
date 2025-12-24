@@ -88,6 +88,26 @@ fn has_global_ipv6() -> bool {
     false
 }
 
+/// Check if we can potentially reach a peer based on IP version compatibility.
+///
+/// A peer is reachable if:
+/// - They have at least one IPv4 address (we always have IPv4), OR
+/// - They have IPv6 addresses AND we have IPv6 connectivity
+///
+/// This prevents connection attempts to peers we cannot possibly reach,
+/// avoiding false "connection failed" statistics.
+fn can_reach_peer(peer: &PeerInfo, our_has_ipv6: bool) -> bool {
+    let has_ipv4_addr = peer
+        .addresses
+        .iter()
+        .any(|addr| addr.ip().is_ipv4() || addr.ip().to_canonical().is_ipv4());
+    let has_ipv6_addr = peer.addresses.iter().any(|addr| addr.ip().is_ipv6());
+
+    // Can reach if peer has IPv4 (we always have IPv4)
+    // OR if peer has IPv6 AND we have IPv6
+    has_ipv4_addr || (has_ipv6_addr && our_has_ipv6)
+}
+
 /// Detect local IPv4 and IPv6 addresses.
 fn detect_local_addresses(bind_port: u16) -> (Option<SocketAddr>, Option<SocketAddr>) {
     let mut local_ipv4: Option<SocketAddr> = None;
@@ -338,6 +358,8 @@ pub struct TestNode {
     event_tx: mpsc::Sender<TuiEvent>,
     /// NAT stats for heartbeat.
     nat_stats: Arc<RwLock<NatStats>>,
+    /// Whether this node has IPv6 connectivity.
+    has_ipv6: bool,
 }
 
 impl TestNode {
@@ -452,6 +474,7 @@ impl TestNode {
             shutdown: Arc::new(AtomicBool::new(false)),
             event_tx,
             nat_stats: Arc::new(RwLock::new(NatStats::default())),
+            has_ipv6: has_global_ipv6(),
         })
     }
 
@@ -651,6 +674,8 @@ impl TestNode {
         let relay = Arc::clone(&self.relay_connections);
         // Clone the endpoint for real QUIC connections
         let endpoint = Arc::clone(&self.endpoint);
+        // Capture our IPv6 capability for filtering
+        let our_has_ipv6 = self.has_ipv6;
 
         tokio::spawn(async move {
             let mut ticker = tokio::time::interval(interval);
@@ -676,13 +701,16 @@ impl TestNode {
                     }
                 };
 
-                // Filter out ourselves and already-connected peers
+                // Filter out ourselves, already-connected peers, and unreachable peers
                 let connected = connected_peers.read().await;
                 let candidates: Vec<&PeerInfo> = peers
                     .iter()
                     .filter(|p| p.peer_id != our_peer_id)
                     .filter(|p| !connected.contains_key(&p.peer_id))
                     .filter(|p| p.is_active)
+                    // Filter out peers we can't reach due to IP version incompatibility
+                    // This prevents false "connection failed" statistics
+                    .filter(|p| can_reach_peer(p, our_has_ipv6))
                     .collect();
                 drop(connected);
 
