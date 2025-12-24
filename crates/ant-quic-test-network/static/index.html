@@ -2162,7 +2162,8 @@
                     data.addresses.forEach(addr => {
                         const div = document.createElement('div');
                         div.className = 'address-item';
-                        const isIPv6 = addr.includes(':') && addr.includes('::');
+                        // IPv6 socket addresses in Rust are formatted as [ip]:port
+                        const isIPv6 = addr.startsWith('[');
                         div.innerHTML = `<span class="address-type">${isIPv6 ? 'IPv6' : 'IPv4'}</span>${addr}`;
                         addrList.appendChild(div);
                     });
