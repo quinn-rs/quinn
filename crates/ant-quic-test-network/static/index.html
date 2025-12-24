@@ -1860,6 +1860,48 @@
         let nodes = [];
         let arcs = [];
 
+        // Jitter function to spread overlapping nodes in a spiral pattern
+        function addJitter(lat, lng, index, total) {
+            if (total <= 1) return { lat, lng };
+
+            // Spiral pattern to spread nodes
+            const radius = 2 + Math.floor(index / 8) * 1.5; // Increasing radius for each "ring"
+            const angle = (index * 137.5) * (Math.PI / 180); // Golden angle for optimal distribution
+
+            return {
+                lat: lat + radius * Math.cos(angle),
+                lng: lng + radius * Math.sin(angle)
+            };
+        }
+
+        // Track nodes per location for jitter calculation
+        function calculateJitteredCoords(peers) {
+            // Group peers by location key
+            const locationGroups = {};
+            for (const peer of peers) {
+                const baseCoords = peer.latitude && peer.longitude
+                    ? { lat: peer.latitude, lng: peer.longitude }
+                    : countryCentroids[peer.country_code] || { lat: 0, lng: 0 };
+
+                const key = `${baseCoords.lat.toFixed(2)},${baseCoords.lng.toFixed(2)}`;
+                if (!locationGroups[key]) {
+                    locationGroups[key] = { coords: baseCoords, peers: [] };
+                }
+                locationGroups[key].peers.push(peer);
+            }
+
+            // Apply jitter to each group
+            const result = [];
+            for (const key in locationGroups) {
+                const group = locationGroups[key];
+                group.peers.forEach((peer, index) => {
+                    const jittered = addJitter(group.coords.lat, group.coords.lng, index, group.peers.length);
+                    result.push({ peer, coords: jittered });
+                });
+            }
+            return result;
+        }
+
         // Initialize Globe
         const globe = Globe()
             .globeImageUrl('https://unpkg.com/three-globe@2.27.2/example/img/earth-blue-marble.jpg')
@@ -1979,11 +2021,9 @@
                     color: '#ffd700', size: 0.5
                 }];
 
-                for (const peer of peers) {
-                    const coords = peer.latitude && peer.longitude
-                        ? { lat: peer.latitude, lng: peer.longitude }
-                        : countryCentroids[peer.country_code] || { lat: 0, lng: 0 };
-
+                // Use jitter to spread overlapping nodes
+                const jitteredPeers = calculateJitteredCoords(peers);
+                for (const { peer, coords } of jitteredPeers) {
                     // Determine color and size based on status
                     let color, size;
                     if (peer.status === 'historical') {

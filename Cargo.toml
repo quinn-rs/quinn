@@ -6,7 +6,7 @@ members = [
 
 [package]
 name = "ant-quic"
-version = "0.14.25"
+version = "0.14.26"
 edition = "2024"
 rust-version = "1.85.0"
 license = "MIT OR Apache-2.0"
@@ -304,6 +304,10 @@ path = "tests/property_tests/main.rs"
 [package.metadata.docs.rs]
 features = ["rustls-aws-lc-rs", "platform-verifier", "log"]
 # Note: "prometheus" feature is intentionally excluded to avoid docs.rs compilation issues
+
+# cargo-machete false positives: these are optional/feature-gated dependencies
+[package.metadata.cargo-machete]
+ignored = ["proptest-derive", "rust-embed", "tokio-tungstenite", "x25519-dalek"]
 
  # Realistic clippy configuration - focus on meaningful issues
  [lints.clippy]
