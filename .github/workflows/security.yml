@@ -246,7 +246,7 @@ jobs:
   # Security metrics and reporting
   security-report:
     name: Security Report
-    needs: [vulnerability-scan, policy-check, supply-chain, scorecard]
+    needs: [vulnerability-scan, policy-check, supply-chain]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -267,7 +267,6 @@ jobs:
           echo "- Vulnerability Scan: ${{ needs.vulnerability-scan.result }}" >> security-report.md
           echo "- Policy Check: ${{ needs.policy-check.result }}" >> security-report.md
           echo "- Supply Chain: ${{ needs.supply-chain.result }}" >> security-report.md
-          echo "- Scorecard: ${{ needs.scorecard.result }}" >> security-report.md
           echo "" >> security-report.md
 
           # Add vulnerability summary if available
