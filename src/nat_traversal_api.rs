@@ -66,10 +66,10 @@ use crate::{
     candidate_discovery::{CandidateDiscoveryManager, DiscoveryConfig, DiscoveryEvent},
     // v0.13.0: NatTraversalRole removed - all nodes are symmetric P2P nodes
     connection::nat_traversal::{CandidateSource, CandidateState},
-    masque::integration::{RelayManager, RelayManagerConfig},
     masque::connect::{ConnectUdpRequest, ConnectUdpResponse},
+    masque::integration::{RelayManager, RelayManagerConfig},
     // Symmetric P2P: Every node provides relay services
-    masque::relay_server::{MasqueRelayServer, MasqueRelayConfig},
+    masque::relay_server::{MasqueRelayConfig, MasqueRelayServer},
 };
 
 use crate::{
@@ -1788,12 +1788,12 @@ impl NatTraversalEndpoint {
     ///
     /// This listens for bidirectional streams and processes CONNECT-UDP Bind requests.
     /// Per ADR-004: All nodes are equal and participate in relaying with resource budgets.
-    async fn handle_relay_requests(connection: InnerConnection, relay_server: Arc<MasqueRelayServer>) {
+    async fn handle_relay_requests(
+        connection: InnerConnection,
+        relay_server: Arc<MasqueRelayServer>,
+    ) {
         let client_addr = connection.remote_address();
-        debug!(
-            "Started relay request handler for peer at {}",
-            client_addr
-        );
+        debug!("Started relay request handler for peer at {}", client_addr);
 
         loop {
             // Accept bidirectional streams for relay requests
@@ -1807,7 +1807,9 @@ impl NatTraversalEndpoint {
                         match recv_stream.read_to_end(1024).await {
                             Ok(request_bytes) => {
                                 // Try to parse as CONNECT-UDP request
-                                match ConnectUdpRequest::decode(&mut bytes::Bytes::from(request_bytes)) {
+                                match ConnectUdpRequest::decode(&mut bytes::Bytes::from(
+                                    request_bytes,
+                                )) {
                                     Ok(request) => {
                                         debug!(
                                             "Received CONNECT-UDP request from {}: {:?}",
@@ -1824,7 +1826,9 @@ impl NatTraversalEndpoint {
 
                                                 // Send the response
                                                 let response_bytes = response.encode();
-                                                if let Err(e) = send_stream.write_all(&response_bytes).await {
+                                                if let Err(e) =
+                                                    send_stream.write_all(&response_bytes).await
+                                                {
                                                     warn!(
                                                         "Failed to send relay response to {}: {}",
                                                         addr, e
@@ -1847,7 +1851,8 @@ impl NatTraversalEndpoint {
                                                     500,
                                                     format!("Internal error: {}", e),
                                                 );
-                                                let _ = send_stream.write_all(&response.encode()).await;
+                                                let _ =
+                                                    send_stream.write_all(&response.encode()).await;
                                                 let _ = send_stream.finish();
                                             }
                                         }
@@ -2202,7 +2207,10 @@ impl NatTraversalEndpoint {
         remote_addr: SocketAddr,
     ) -> Result<InnerConnection, NatTraversalError> {
         // Step 1: Try direct connection first
-        info!("Attempting direct connection to {:?} at {}", peer_id, remote_addr);
+        info!(
+            "Attempting direct connection to {:?} at {}",
+            peer_id, remote_addr
+        );
         match self
             .connect_to_peer(peer_id, server_name, remote_addr)
             .await
@@ -2225,13 +2233,20 @@ impl NatTraversalEndpoint {
             Ok(()) => {
                 // Hole punching succeeded - NAT mappings are established
                 // Now try to connect again using the discovered path
-                info!("Hole punching succeeded for {:?}, retrying connection", peer_id);
+                info!(
+                    "Hole punching succeeded for {:?}, retrying connection",
+                    peer_id
+                );
 
                 // Get the successful candidate pair address if available
-                let connect_addr = self.get_successful_candidate_address(peer_id)
+                let connect_addr = self
+                    .get_successful_candidate_address(peer_id)
                     .unwrap_or(remote_addr);
 
-                match self.connect_to_peer(peer_id, server_name, connect_addr).await {
+                match self
+                    .connect_to_peer(peer_id, server_name, connect_addr)
+                    .await
+                {
                     Ok(conn) => {
                         info!("Connection via hole punching to {:?} succeeded", peer_id);
                         return Ok(conn);
@@ -2255,7 +2270,8 @@ impl NatTraversalEndpoint {
         // Step 3: Relay is the last resort
         if !self.config.enable_relay_fallback {
             return Err(NatTraversalError::ConnectionFailed(
-                "Direct connection and hole punching failed, relay fallback is disabled".to_string(),
+                "Direct connection and hole punching failed, relay fallback is disabled"
+                    .to_string(),
             ));
         }
 
@@ -2316,7 +2332,10 @@ impl NatTraversalEndpoint {
                     // The peer should be able to reach us through the relay
 
                     // Try connecting to the peer - the relay will forward our traffic
-                    match self.connect_to_peer(peer_id, server_name, remote_addr).await {
+                    match self
+                        .connect_to_peer(peer_id, server_name, remote_addr)
+                        .await
+                    {
                         Ok(conn) => {
                             info!(
                                 "Connected to peer {:?} via relay {} (public addr: {:?})",
@@ -2416,10 +2435,9 @@ impl NatTraversalEndpoint {
         info!("Connected to relay server {}", relay_addr);
 
         // Open a bidirectional stream for the CONNECT-UDP handshake
-        let (mut send_stream, mut recv_stream) =
-            connection.open_bi().await.map_err(|e| {
-                NatTraversalError::ConnectionFailed(format!("Failed to open relay stream: {}", e))
-            })?;
+        let (mut send_stream, mut recv_stream) = connection.open_bi().await.map_err(|e| {
+            NatTraversalError::ConnectionFailed(format!("Failed to open relay stream: {}", e))
+        })?;
 
         // Create and send CONNECT-UDP Bind request
         let request = ConnectUdpRequest::bind_any();
@@ -2427,15 +2445,9 @@ impl NatTraversalEndpoint {
 
         debug!("Sending CONNECT-UDP Bind request to relay: {:?}", request);
 
-        send_stream
-            .write_all(&request_bytes)
-            .await
-            .map_err(|e| {
-                NatTraversalError::ConnectionFailed(format!(
-                    "Failed to send relay request: {}",
-                    e
-                ))
-            })?;
+        send_stream.write_all(&request_bytes).await.map_err(|e| {
+            NatTraversalError::ConnectionFailed(format!("Failed to send relay request: {}", e))
+        })?;
 
         // Signal we're done sending the request
         send_stream.finish().map_err(|e| {
@@ -2448,8 +2460,8 @@ impl NatTraversalEndpoint {
         })?;
 
         // Parse the response
-        let response =
-            ConnectUdpResponse::decode(&mut bytes::Bytes::from(response_bytes)).map_err(|e| {
+        let response = ConnectUdpResponse::decode(&mut bytes::Bytes::from(response_bytes))
+            .map_err(|e| {
                 NatTraversalError::ProtocolError(format!("Invalid relay response: {}", e))
             })?;
 
@@ -2485,9 +2497,9 @@ impl NatTraversalEndpoint {
 
         // Notify the relay manager
         if let Some(ref manager) = self.relay_manager {
-            if let Ok(resp) = ConnectUdpResponse::decode(&mut bytes::Bytes::from(
-                response.encode().to_vec(),
-            )) {
+            if let Ok(resp) =
+                ConnectUdpResponse::decode(&mut bytes::Bytes::from(response.encode().to_vec()))
+            {
                 let _ = manager.handle_connect_response(relay_addr, resp).await;
             }
         }
