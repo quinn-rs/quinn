@@ -56,6 +56,9 @@ parking_lot = "0.12"
 rust-embed = "8"
 mime_guess = "2"
 
+[dev-dependencies]
+tempfile = "3"
+
 [[bin]]
 name = "ant-quic-test"
 path = "src/main.rs"

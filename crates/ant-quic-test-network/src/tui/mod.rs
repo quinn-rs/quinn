@@ -286,9 +286,9 @@ fn handle_tui_event(app: &mut App, event: TuiEvent) {
     }
 }
 
-/// Create a simple standalone TUI for testing.
+/// Create a standalone TUI for visual testing and development.
 ///
-/// This creates the TUI with a dummy event channel.
+/// Creates the TUI with an empty event channel (no TestNode backend).
 pub async fn run_standalone() -> anyhow::Result<()> {
     let app = App::new();
     let (_tx, rx) = mpsc::channel(100);

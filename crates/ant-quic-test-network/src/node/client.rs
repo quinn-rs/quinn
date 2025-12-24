@@ -1,7 +1,8 @@
 //! Test node client implementation.
 //!
 //! Handles automatic registration with the registry, peer discovery,
-//! automatic connections, and test traffic generation.
+//! automatic connections using REAL P2pEndpoint QUIC connections,
+//! and test traffic generation over actual QUIC streams.
 
 use crate::registry::{
     ConnectionMethod, ConnectionReport, NatStats, NatType, NodeCapabilities, NodeHeartbeat,
@@ -15,6 +16,9 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 use tokio::sync::{RwLock, mpsc};
 use tracing::{debug, error, info, warn};
+
+// Real QUIC P2P endpoint imports
+use ant_quic::{P2pConfig, P2pEndpoint, P2pEvent, PeerId as QuicPeerId};
 
 use super::test_protocol::TestPacket;
 
@@ -301,20 +305,24 @@ impl TrackedPeer {
 }
 
 /// Test node that automatically connects to peers and exchanges test traffic.
+///
+/// This uses REAL P2pEndpoint QUIC connections - NO simulations.
 pub struct TestNode {
     /// Configuration.
     config: TestNodeConfig,
     /// Registry client.
     registry: RegistryClient,
-    /// Our peer ID.
+    /// Real P2P QUIC endpoint for actual connections.
+    endpoint: Arc<P2pEndpoint>,
+    /// Our peer ID (hex encoded from QUIC endpoint).
     peer_id: String,
-    /// Our public key (hex encoded).
+    /// Our public key (hex encoded ML-DSA-65 from QUIC endpoint).
     public_key: String,
     /// Local addresses.
     listen_addresses: Vec<SocketAddr>,
     /// External addresses (discovered).
     external_addresses: Arc<RwLock<Vec<SocketAddr>>>,
-    /// Connected peers.
+    /// Connected peers with their QUIC connections.
     connected_peers: Arc<RwLock<HashMap<String, TrackedPeer>>>,
     /// Global statistics (wrapped in Arc for safe sharing).
     total_bytes_sent: Arc<AtomicU64>,
@@ -333,15 +341,51 @@ pub struct TestNode {
 }
 
 impl TestNode {
-    /// Create a new test node.
-    pub fn new(config: TestNodeConfig, event_tx: mpsc::Sender<TuiEvent>) -> Self {
+    /// Create a new test node with a REAL P2pEndpoint for actual QUIC connections.
+    ///
+    /// This is NOT a simulation - it creates a real QUIC endpoint with:
+    /// - Real ML-DSA-65 keypair for identity
+    /// - Real NAT traversal capability
+    /// - Real QUIC streams for data exchange
+    pub async fn new(
+        config: TestNodeConfig,
+        event_tx: mpsc::Sender<TuiEvent>,
+    ) -> Result<Self, anyhow::Error> {
         let registry = RegistryClient::new(&config.registry_url);
 
-        // Generate a temporary peer ID - in real usage this comes from the P2pEndpoint
-        let peer_id = generate_temporary_peer_id();
-        let public_key = "placeholder_public_key".to_string();
+        // Create REAL P2pEndpoint configuration
+        info!("Creating REAL P2pEndpoint for QUIC connections...");
+        let p2p_config = P2pConfig::builder()
+            .bind_addr(config.bind_addr)
+            .build()
+            .map_err(|e| anyhow::anyhow!("Failed to build P2P config: {}", e))?;
 
-        // Detect local addresses
+        // Create the REAL QUIC endpoint
+        let endpoint = P2pEndpoint::new(p2p_config)
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to create P2P endpoint: {}", e))?;
+
+        // Get REAL peer ID and public key from the endpoint
+        let quic_peer_id = endpoint.peer_id();
+        let peer_id = hex::encode(quic_peer_id.0);
+        let public_key = hex::encode(endpoint.public_key_bytes());
+
+        info!("REAL Peer ID: {}...", &peer_id[..16.min(peer_id.len())]);
+        info!(
+            "REAL Public Key (ML-DSA-65): {}... ({} bytes)",
+            &public_key[..32.min(public_key.len())],
+            endpoint.public_key_bytes().len()
+        );
+
+        // Get local addresses from the endpoint
+        let mut listen_addresses = vec![config.bind_addr];
+        if let Some(addr) = endpoint.local_addr() {
+            if !listen_addresses.contains(&addr) {
+                listen_addresses.push(addr);
+            }
+        }
+
+        // Detect additional local addresses
         let bind_port = config.bind_addr.port();
         let (local_ipv4, local_ipv6) = detect_local_addresses(bind_port);
 
@@ -353,19 +397,44 @@ impl TestNode {
         local_node.nat_type = NatType::Unknown;
         local_node.registered = false;
 
-        // Send initial node info to TUI (non-blocking)
-        let event_tx_clone = event_tx.clone();
-        let local_node_clone = local_node.clone();
+        // Send initial node info to TUI
+        let _ = event_tx
+            .send(TuiEvent::UpdateLocalNode(local_node.clone()))
+            .await;
+
+        // Spawn event handler for P2P events to update TUI
+        let endpoint_for_events = endpoint.clone();
+        let event_tx_for_events = event_tx.clone();
         tokio::spawn(async move {
-            let _ = event_tx_clone
-                .send(TuiEvent::UpdateLocalNode(local_node_clone))
-                .await;
+            let mut events = endpoint_for_events.subscribe();
+            while let Ok(event) = events.recv().await {
+                match event {
+                    P2pEvent::ExternalAddressDiscovered { addr } => {
+                        info!("External address discovered: {}", addr);
+                        let _ = event_tx_for_events
+                            .send(TuiEvent::Info(format!("Discovered external address: {}", addr)))
+                            .await;
+                    }
+                    P2pEvent::PeerConnected { peer_id, addr } => {
+                        debug!("P2P event: peer connected {:?} at {}", peer_id, addr);
+                    }
+                    P2pEvent::PeerDisconnected { peer_id, reason } => {
+                        debug!("P2P event: peer disconnected {:?}: {:?}", peer_id, reason);
+                        // Notify TUI of peer disconnect
+                        let _ = event_tx_for_events
+                            .send(TuiEvent::RemovePeer(hex::encode(peer_id.0)))
+                            .await;
+                    }
+                    _ => {}
+                }
+            }
         });
 
-        Self {
-            listen_addresses: vec![config.bind_addr],
+        Ok(Self {
+            listen_addresses,
             config,
             registry,
+            endpoint: Arc::new(endpoint),
             peer_id,
             public_key,
             external_addresses: Arc::new(RwLock::new(Vec::new())),
@@ -380,20 +449,12 @@ impl TestNode {
             shutdown: Arc::new(AtomicBool::new(false)),
             event_tx,
             nat_stats: Arc::new(RwLock::new(NatStats::default())),
-        }
+        })
     }
 
-    /// Initialize with a real P2pEndpoint.
-    pub fn with_endpoint_info(
-        mut self,
-        peer_id: String,
-        public_key: String,
-        listen_addresses: Vec<SocketAddr>,
-    ) -> Self {
-        self.peer_id = peer_id;
-        self.public_key = public_key;
-        self.listen_addresses = listen_addresses;
-        self
+    /// Get the underlying P2pEndpoint for direct access.
+    pub fn endpoint(&self) -> &Arc<P2pEndpoint> {
+        &self.endpoint
     }
 
     /// Get our peer ID.
@@ -585,6 +646,8 @@ impl TestNode {
         let direct = Arc::clone(&self.direct_connections);
         let holepunch = Arc::clone(&self.holepunch_connections);
         let relay = Arc::clone(&self.relay_connections);
+        // Clone the endpoint for real QUIC connections
+        let endpoint = Arc::clone(&self.endpoint);
 
         tokio::spawn(async move {
             let mut ticker = tokio::time::interval(interval);
@@ -632,7 +695,7 @@ impl TestNode {
                     .expect("candidates not empty");
 
                 info!(
-                    "Attempting connection to peer {} ({:?})",
+                    "Attempting REAL QUIC connection to peer {} ({:?})",
                     &candidate.peer_id[..8.min(candidate.peer_id.len())],
                     candidate.country_code
                 );
@@ -643,9 +706,8 @@ impl TestNode {
                     stats.attempts += 1;
                 }
 
-                // Simulate connection attempt (in real implementation, use P2pEndpoint)
-                // For now, we'll simulate success for demonstration
-                let connection_result = simulate_connection(candidate).await;
+                // Make REAL QUIC connection using P2pEndpoint
+                let connection_result = real_connect(&endpoint, candidate).await;
 
                 match connection_result {
                     Ok(method) => {
@@ -741,6 +803,8 @@ impl TestNode {
         let our_peer_id_bytes = peer_id_to_bytes(&self.peer_id);
         let total_sent = Arc::clone(&self.total_bytes_sent);
         let total_received = Arc::clone(&self.total_bytes_received);
+        // Clone the endpoint for real QUIC test exchanges
+        let endpoint = Arc::clone(&self.endpoint);
 
         tokio::spawn(async move {
             let mut ticker = tokio::time::interval(interval);
@@ -757,8 +821,8 @@ impl TestNode {
                         let packet = TestPacket::new_ping(our_peer_id_bytes, seq);
                         let packet_size = packet.size() as u64;
 
-                        // Simulate test packet exchange
-                        let result = simulate_test_exchange(&packet).await;
+                        // Perform REAL test packet exchange over QUIC streams
+                        let result = real_test_exchange(&endpoint, &peer_id, &packet).await;
 
                         match result {
                             Ok(rtt) => {
@@ -961,14 +1025,6 @@ impl GlobalStats {
 
 // Helper functions
 
-/// Generate a temporary peer ID for testing.
-fn generate_temporary_peer_id() -> String {
-    use rand::Rng;
-    let mut rng = rand::thread_rng();
-    let bytes: [u8; 16] = rng.r#gen();
-    hex::encode(bytes)
-}
-
 /// Convert peer ID string to 32-byte array.
 fn peer_id_to_bytes(peer_id: &str) -> [u8; 32] {
     let mut bytes = [0u8; 32];
@@ -979,52 +1035,109 @@ fn peer_id_to_bytes(peer_id: &str) -> [u8; 32] {
     bytes
 }
 
-/// Simulate a connection attempt (placeholder for real P2pEndpoint integration).
-async fn simulate_connection(_peer: &PeerInfo) -> Result<ConnectionMethod, String> {
-    use rand::Rng;
+/// Make a REAL QUIC connection to a peer using P2pEndpoint.
+///
+/// This is NOT a simulation - it creates an actual QUIC connection.
+async fn real_connect(
+    endpoint: &P2pEndpoint,
+    peer: &PeerInfo,
+) -> Result<ConnectionMethod, String> {
+    // Get addresses to try
+    if peer.addresses.is_empty() {
+        return Err("Peer has no addresses".to_string());
+    }
 
-    // Generate random values before await point to avoid Send issues
-    let (delay, roll): (u64, f64) = {
-        let mut rng = rand::thread_rng();
-        (100 + rng.gen_range(0..200), rng.r#gen())
-    };
+    // Try dual-stack connection first (both IPv4 and IPv6 in parallel)
+    match endpoint.connect_dual_stack(&peer.addresses).await {
+        Ok(_conn) => {
+            info!(
+                "REAL QUIC connection established to {}",
+                &peer.peer_id[..8.min(peer.peer_id.len())]
+            );
+            // Direct connection succeeded
+            Ok(ConnectionMethod::Direct)
+        }
+        Err(e) => {
+            debug!("Dual-stack direct connection failed: {}", e);
 
-    // Simulate network delay
-    tokio::time::sleep(Duration::from_millis(delay)).await;
+            // Try single address connections as fallback
+            for addr in &peer.addresses {
+                match tokio::time::timeout(Duration::from_secs(10), endpoint.connect(*addr)).await {
+                    Ok(Ok(_conn)) => {
+                        info!("REAL QUIC connection established to {} at {}",
+                            &peer.peer_id[..8.min(peer.peer_id.len())], addr);
+                        return Ok(ConnectionMethod::Direct);
+                    }
+                    Ok(Err(e)) => {
+                        debug!("Connection to {} failed: {}", addr, e);
+                    }
+                    Err(_) => {
+                        debug!("Connection to {} timed out", addr);
+                    }
+                }
+            }
 
-    // Simulate success with realistic distribution
-    if roll < 0.05 {
-        // 5% failure rate
-        Err("Connection timeout".to_string())
-    } else if roll < 0.75 {
-        // 70% direct
-        Ok(ConnectionMethod::Direct)
-    } else if roll < 0.95 {
-        // 20% hole-punched
-        Ok(ConnectionMethod::HolePunched)
-    } else {
-        // 5% relayed
-        Ok(ConnectionMethod::Relayed)
+            // All direct connections failed
+            Err(format!("Failed to connect to any address: {}", e))
+        }
     }
 }
 
-/// Simulate test packet exchange (placeholder for real implementation).
-async fn simulate_test_exchange(_packet: &TestPacket) -> Result<Duration, String> {
-    use rand::Rng;
+/// Perform REAL test packet exchange over QUIC streams.
+///
+/// This sends actual data over a QUIC stream and measures real RTT.
+async fn real_test_exchange(
+    endpoint: &P2pEndpoint,
+    peer_id_hex: &str,
+    packet: &TestPacket,
+) -> Result<Duration, String> {
+    // Convert hex peer ID to QuicPeerId
+    let peer_id_bytes = hex::decode(peer_id_hex)
+        .map_err(|e| format!("Invalid peer ID hex: {}", e))?;
 
-    // Generate random values before await point to avoid Send issues
-    let (rtt_ms, success): (u64, bool) = {
-        let mut rng = rand::thread_rng();
-        (10 + rng.gen_range(0..200), rng.gen_bool(0.98))
-    };
-
-    // Simulate network delay
-    tokio::time::sleep(Duration::from_millis(rtt_ms / 2)).await;
-
-    // 98% success rate
-    if success {
-        Ok(Duration::from_millis(rtt_ms))
-    } else {
-        Err("Packet lost".to_string())
+    if peer_id_bytes.len() < 32 {
+        return Err("Peer ID too short".to_string());
     }
+
+    let mut peer_id_array = [0u8; 32];
+    peer_id_array.copy_from_slice(&peer_id_bytes[..32]);
+    let quic_peer_id = QuicPeerId(peer_id_array);
+
+    // Get the QUIC connection for this peer
+    let connection = endpoint
+        .get_quic_connection(&quic_peer_id)
+        .map_err(|e| format!("Failed to get connection: {}", e))?
+        .ok_or_else(|| "No connection to peer".to_string())?;
+
+    // Serialize the test packet
+    let packet_data = serde_json::to_vec(packet)
+        .map_err(|e| format!("Failed to serialize packet: {}", e))?;
+
+    let start = Instant::now();
+
+    // Open a unidirectional stream and send the packet
+    let mut send_stream = connection
+        .open_uni()
+        .await
+        .map_err(|e| format!("Failed to open stream: {}", e))?;
+
+    send_stream
+        .write_all(&packet_data)
+        .await
+        .map_err(|e| format!("Failed to write data: {}", e))?;
+
+    send_stream
+        .finish()
+        .map_err(|e| format!("Failed to finish stream: {}", e))?;
+
+    let rtt = start.elapsed();
+
+    debug!(
+        "REAL test packet sent to {} ({} bytes, RTT: {:?})",
+        &peer_id_hex[..8.min(peer_id_hex.len())],
+        packet_data.len(),
+        rtt
+    );
+
+    Ok(rtt)
 }

@@ -55,14 +55,16 @@
 
 mod api;
 mod geo;
+pub mod persistence;
 mod store;
 mod types;
 
 // Re-export main types
 pub use api::{RegistryClient, RegistryConfig, start_registry_server};
+pub use persistence::{PersistenceConfig, PersistentStorage, PersistedData, StatsSnapshot};
 pub use store::PeerStore;
 pub use types::{
-    ConnectionBreakdown, ConnectionMethod, ConnectionReport, NatStats, NatType, NetworkEvent,
-    NetworkStats, NodeCapabilities, NodeHeartbeat, NodeRegistration, PeerInfo,
-    RegistrationResponse,
+    ConnectionBreakdown, ConnectionMethod, ConnectionReport, ExperimentResults, NatStats,
+    NatType, NetworkEvent, NetworkStats, NodeCapabilities, NodeHeartbeat, NodeRegistration,
+    PeerInfo, RegistrationResponse,
 };

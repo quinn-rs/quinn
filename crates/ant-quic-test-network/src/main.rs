@@ -130,6 +130,8 @@ async fn main() -> anyhow::Result<()> {
             bind_addr: SocketAddr::from(([0, 0, 0, 0], args.port)),
             ttl_secs: 120,
             cleanup_interval_secs: 30,
+            data_dir: std::path::PathBuf::from("./data"),
+            persistence_enabled: true,
         };
 
         start_registry_server(config).await?;
@@ -153,8 +155,8 @@ async fn main() -> anyhow::Result<()> {
             ..Default::default()
         };
 
-        // Create test node
-        let test_node = TestNode::new(node_config, event_tx.clone());
+        // Create test node with REAL P2pEndpoint (async initialization)
+        let test_node = TestNode::new(node_config, event_tx.clone()).await?;
 
         if args.quiet {
             // Quiet mode: run without TUI

@@ -119,7 +119,7 @@ dependencies = [
 
 [[package]]
 name = "ant-quic"
-version = "0.14.10"
+version = "0.14.12"
 dependencies = [
  "anyhow",
  "arbitrary",
@@ -209,6 +209,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "tempfile",
  "tokio",
  "tracing",
  "tracing-subscriber",

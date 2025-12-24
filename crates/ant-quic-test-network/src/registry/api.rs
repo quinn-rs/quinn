@@ -2,14 +2,25 @@
 //!
 //! Provides REST endpoints for node registration, heartbeat, peer discovery,
 //! and network statistics. Also includes WebSocket support for real-time updates.
+//!
+//! # Persistent Storage
+//!
+//! All experiment data is persisted to JSON files in the data directory:
+//! - `experiment_summary.json` - Complete experiment data
+//! - `nodes.json` - All nodes (active and historical)
+//! - `connections.json` - All connection records
+//! - `events.jsonl` - Append-only event log
+//! - `stats_snapshots.json` - Periodic statistics snapshots
 
 use crate::dashboard::dashboard_routes;
+use crate::registry::persistence::{PersistenceConfig, PersistentStorage};
 use crate::registry::store::PeerStore;
 use crate::registry::types::{
     ConnectionReport, NetworkEvent, NetworkStats, NodeHeartbeat, NodeRegistration, PeerInfo,
     RegistrationResponse,
 };
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 use warp::{Filter, Rejection, Reply};
@@ -23,6 +34,10 @@ pub struct RegistryConfig {
     pub ttl_secs: u64,
     /// Cleanup interval for expired entries
     pub cleanup_interval_secs: u64,
+    /// Data directory for persistent storage
+    pub data_dir: PathBuf,
+    /// Whether to enable persistent storage
+    pub persistence_enabled: bool,
 }
 
 impl Default for RegistryConfig {
@@ -31,6 +46,8 @@ impl Default for RegistryConfig {
             bind_addr: "0.0.0.0:8080".parse().expect("valid default address"),
             ttl_secs: 120,
             cleanup_interval_secs: 30,
+            data_dir: PathBuf::from("./data"),
+            persistence_enabled: true,
         }
     }
 }
@@ -39,10 +56,31 @@ impl Default for RegistryConfig {
 pub async fn start_registry_server(config: RegistryConfig) -> anyhow::Result<()> {
     let store = PeerStore::with_ttl(config.ttl_secs);
 
+    // Initialize persistent storage
+    let persistence_config = PersistenceConfig {
+        data_dir: config.data_dir.clone(),
+        enabled: config.persistence_enabled,
+        save_interval_secs: 60,
+        snapshot_interval_secs: 300,
+    };
+    let persistence = PersistentStorage::new(persistence_config);
+    if let Err(e) = persistence.initialize().await {
+        tracing::warn!("Failed to initialize persistence: {}", e);
+    } else if persistence.is_enabled() {
+        tracing::info!("Persistent storage enabled at {:?}", config.data_dir);
+    }
+
     // Clone for cleanup task before moving into filter
     let cleanup_store = Arc::clone(&store);
+    let save_store = Arc::clone(&store);
+    let snapshot_store = Arc::clone(&store);
+    let event_store = Arc::clone(&store);
 
     let store_filter = warp::any().map(move || Arc::clone(&store));
+    let persistence_filter = {
+        let p = Arc::clone(&persistence);
+        warp::any().map(move || Arc::clone(&p))
+    };
 
     // POST /api/register - Node registration
     let register = warp::path!("api" / "register")
@@ -95,6 +133,18 @@ pub async fn start_registry_server(config: RegistryConfig) -> anyhow::Result<()>
         .and(store_filter.clone())
         .and_then(handle_connection_report);
 
+    // GET /api/export - Export all persisted data
+    let export = warp::path!("api" / "export")
+        .and(warp::get())
+        .and(persistence_filter.clone())
+        .and_then(handle_export_data);
+
+    // GET /api/events - Get event log
+    let events = warp::path!("api" / "events")
+        .and(warp::get())
+        .and(persistence_filter.clone())
+        .and_then(handle_get_events);
+
     // GET /ws/live - WebSocket for real-time updates
     let websocket = warp::path!("ws" / "live")
         .and(warp::ws())
@@ -122,6 +172,8 @@ pub async fn start_registry_server(config: RegistryConfig) -> anyhow::Result<()>
         .or(peers)
         .or(stats)
         .or(results)
+        .or(export)
+        .or(events)
         .or(node_detail)
         .or(websocket)
         .or(health)
@@ -141,10 +193,79 @@ pub async fn start_registry_server(config: RegistryConfig) -> anyhow::Result<()>
         }
     });
 
+    // Start periodic save task
+    let save_persistence = Arc::clone(&persistence);
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_secs(60));
+        loop {
+            interval.tick().await;
+            // Update persistence with current state
+            let all_peers = save_store.get_all_peers_with_historical();
+            save_persistence.update_nodes(all_peers).await;
+
+            let results = save_store.get_experiment_results().await;
+            save_persistence.update_connections(results.connections).await;
+            save_persistence.update_nat_stats(results.nat_stats).await;
+
+            // Save to disk
+            if let Err(e) = save_persistence.save().await {
+                tracing::warn!("Failed to save persistence data: {}", e);
+            } else {
+                tracing::debug!("Persisted experiment data to disk");
+            }
+        }
+    });
+
+    // Start periodic stats snapshot task
+    let snapshot_persistence = Arc::clone(&persistence);
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_secs(300)); // 5 minutes
+        loop {
+            interval.tick().await;
+            let stats = snapshot_store.get_stats();
+            snapshot_persistence.add_stats_snapshot(stats).await;
+            tracing::debug!("Created statistics snapshot");
+        }
+    });
+
+    // Start event logging task
+    let event_persistence = Arc::clone(&persistence);
+    tokio::spawn(async move {
+        let mut event_rx = event_store.subscribe();
+        while let Ok(event) = event_rx.recv().await {
+            event_persistence.log_event(event).await;
+        }
+    });
+
     tracing::info!("Starting registry server on {}", config.bind_addr);
+    tracing::info!(
+        "Experiment data will be saved to {:?}",
+        config.data_dir
+    );
     warp::serve(routes).run(config.bind_addr).await;
 
     Ok(())
+}
+
+/// Handle export of all persisted data.
+async fn handle_export_data(
+    persistence: Arc<PersistentStorage>,
+) -> Result<impl Reply, Rejection> {
+    let data = persistence.get_data().await;
+    Ok(warp::reply::json(&data))
+}
+
+/// Handle get events from event log.
+async fn handle_get_events(
+    persistence: Arc<PersistentStorage>,
+) -> Result<impl Reply, Rejection> {
+    match persistence.read_events() {
+        Ok(events) => Ok(warp::reply::json(&events)),
+        Err(e) => Ok(warp::reply::json(&serde_json::json!({
+            "error": e,
+            "events": []
+        }))),
+    }
 }
 
 /// Handle node registration.
