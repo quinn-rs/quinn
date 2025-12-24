@@ -133,6 +133,18 @@ impl PeerStore {
 
     /// Register a new node or update existing registration.
     pub fn register(&self, registration: NodeRegistration) -> Result<Vec<PeerInfo>, String> {
+        self.register_with_client_ip(registration, None)
+    }
+
+    /// Register a new node with optional client IP for geo-location fallback.
+    ///
+    /// When external_addresses is empty, uses the client_ip from the HTTP request
+    /// for geographic location lookup.
+    pub fn register_with_client_ip(
+        &self,
+        registration: NodeRegistration,
+        client_ip: Option<IpAddr>,
+    ) -> Result<Vec<PeerInfo>, String> {
         let peer_id = registration.peer_id.clone();
         let now = Instant::now();
 
@@ -140,9 +152,9 @@ impl PeerStore {
         let was_historical = self.historical_peers.remove(&peer_id).is_some();
 
         // Resolve geographic coordinates from IP
-        // For now, use (0, 0) - will be enhanced with GeoIP module
+        // Use client_ip as fallback when external_addresses is empty
         let (latitude, longitude, country_code) =
-            self.resolve_geo(&registration.external_addresses);
+            self.resolve_geo_with_fallback(&registration.external_addresses, client_ip);
 
         let entry = NodeEntry {
             registration: registration.clone(),
@@ -580,25 +592,47 @@ impl PeerStore {
 
     /// Resolve geographic coordinates from IP addresses.
     /// Uses BGP-based IP-to-ASN-to-country lookup with jitter.
+    #[allow(dead_code)]
     fn resolve_geo(&self, addresses: &[SocketAddr]) -> (f64, f64, Option<String>) {
-        let Some(addr) = addresses.first() else {
-            // No address - return London as default
-            return (51.5, -0.1, Some("GB".to_string()));
-        };
+        self.resolve_geo_with_fallback(addresses, None)
+    }
 
-        let ip = match addr.ip() {
-            IpAddr::V4(v4) => IpAddr::V4(v4),
-            IpAddr::V6(v6) => {
-                // Handle IPv4-mapped IPv6 addresses
-                if let Some(v4) = v6.to_ipv4_mapped() {
-                    IpAddr::V4(v4)
-                } else {
-                    IpAddr::V6(v6)
+    /// Resolve geographic coordinates with optional client IP fallback.
+    ///
+    /// Priority:
+    /// 1. First address in external_addresses list
+    /// 2. Client IP from HTTP request (if external_addresses is empty)
+    /// 3. Default London coordinates
+    fn resolve_geo_with_fallback(
+        &self,
+        addresses: &[SocketAddr],
+        client_ip: Option<IpAddr>,
+    ) -> (f64, f64, Option<String>) {
+        // Try to get IP from external addresses first
+        let ip = if let Some(addr) = addresses.first() {
+            match addr.ip() {
+                IpAddr::V4(v4) => Some(IpAddr::V4(v4)),
+                IpAddr::V6(v6) => {
+                    // Handle IPv4-mapped IPv6 addresses
+                    if let Some(v4) = v6.to_ipv4_mapped() {
+                        Some(IpAddr::V4(v4))
+                    } else {
+                        Some(IpAddr::V6(v6))
+                    }
                 }
             }
+        } else {
+            // No external addresses - use client IP from HTTP request
+            client_ip
         };
 
-        self.geo_provider.lookup(ip)
+        match ip {
+            Some(ip) => self.geo_provider.lookup(ip),
+            None => {
+                // No IP available - return London as default
+                (51.5, -0.1, Some("GB".to_string()))
+            }
+        }
     }
 }
 

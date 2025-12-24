@@ -19,11 +19,43 @@ use crate::registry::types::{
     ConnectionReport, NetworkEvent, NetworkStats, NodeHeartbeat, NodeRegistration, PeerInfo,
     RegistrationResponse,
 };
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 use warp::{Filter, Rejection, Reply};
+
+/// Extract the real client IP from proxy headers or remote address.
+///
+/// Priority order:
+/// 1. X-Forwarded-For header (first IP in chain)
+/// 2. X-Real-IP header
+/// 3. Direct remote address
+fn extract_client_ip(
+    x_forwarded_for: Option<String>,
+    x_real_ip: Option<String>,
+    remote_addr: Option<SocketAddr>,
+) -> Option<IpAddr> {
+    // Try X-Forwarded-For first (nginx adds this)
+    if let Some(xff) = x_forwarded_for {
+        // X-Forwarded-For can be a comma-separated list; take the first (original client)
+        if let Some(first_ip) = xff.split(',').next() {
+            if let Ok(ip) = first_ip.trim().parse::<IpAddr>() {
+                return Some(ip);
+            }
+        }
+    }
+
+    // Try X-Real-IP
+    if let Some(xri) = x_real_ip {
+        if let Ok(ip) = xri.trim().parse::<IpAddr>() {
+            return Some(ip);
+        }
+    }
+
+    // Fall back to remote address
+    remote_addr.map(|addr| addr.ip())
+}
 
 /// Registry API server configuration.
 #[derive(Debug, Clone)]
@@ -81,11 +113,14 @@ pub async fn start_registry_server(config: RegistryConfig) -> anyhow::Result<()>
         warp::any().map(move || Arc::clone(&p))
     };
 
-    // POST /api/register - Node registration
+    // POST /api/register - Node registration with client IP extraction
     let register = warp::path!("api" / "register")
         .and(warp::post())
         .and(warp::body::json())
         .and(store_filter.clone())
+        .and(warp::header::optional::<String>("X-Forwarded-For"))
+        .and(warp::header::optional::<String>("X-Real-IP"))
+        .and(warp::addr::remote())
         .and_then(handle_register);
 
     // POST /api/heartbeat - Node heartbeat
@@ -266,14 +301,21 @@ async fn handle_get_events(persistence: Arc<PersistentStorage>) -> Result<impl R
 async fn handle_register(
     registration: NodeRegistration,
     store: Arc<PeerStore>,
+    x_forwarded_for: Option<String>,
+    x_real_ip: Option<String>,
+    remote_addr: Option<SocketAddr>,
 ) -> Result<impl Reply, Rejection> {
+    // Extract the real client IP from headers or remote address
+    let client_ip = extract_client_ip(x_forwarded_for, x_real_ip, remote_addr);
+
     tracing::info!(
-        "Registration from peer {} ({})",
+        "Registration from peer {} ({}) client_ip={:?}",
         &registration.peer_id[..8.min(registration.peer_id.len())],
-        registration.version
+        registration.version,
+        client_ip
     );
 
-    match store.register(registration) {
+    match store.register_with_client_ip(registration, client_ip) {
         Ok(peers) => {
             let response = RegistrationResponse {
                 success: true,
