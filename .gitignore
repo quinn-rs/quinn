@@ -1,33 +1,44 @@
-
+# Build artifacts
 **/target/
 **/*.rs.bk
 
-.idea
+# IDE
+.idea/
+.vscode/
+.zed/
 .DS_Store
-.vscode
-.zed
 
+# Test artifacts
 cargo-test-*
-tarpaulin-report.html
-
-# Log files
 *.log
+*_output.txt
+test-results.json
+server_addr.tmp
 
-# Claude sub-project management
+# Coverage
+tarpaulin-report.html
+coverage/
+
+# Claude Code
 .claude/
 
-# Docker test artifacts and runtime files
-docker/logs/
-docker/results/
-docker/shared/*.addr
-docker/artifacts/
-
-# GitHub Actions local runner cache
+# GitHub Actions local runner
 .act-cache/
+act-logs/
 
-# Scripts runtime files
-scripts/*.pid
-scripts/*.log.bak
-scripts/workflow_monitor.log
-docs/book/book/
+# Build artifacts
+release-build/
 release-artifacts/
+frame_test
+multi_node_test
+platform_test
+
+# Temporary files
+tmp/
+*.tmp
+*.bak
+
+# Old config files (removed from repo)
+compliance_report/
+results/
+docker/
