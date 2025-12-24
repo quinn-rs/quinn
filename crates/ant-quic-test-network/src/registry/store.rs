@@ -15,8 +15,8 @@ use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
-use tokio::sync::broadcast;
 use tokio::sync::RwLock;
+use tokio::sync::broadcast;
 
 /// Default time-to-live for registrations (2 minutes).
 const DEFAULT_TTL_SECS: u64 = 120;
@@ -411,8 +411,14 @@ impl PeerStore {
         let id = self.next_connection_id.fetch_add(1, Ordering::Relaxed);
 
         // Get country codes from peer entries
-        let from_country = self.peers.get(&from_peer).and_then(|e| e.country_code.clone());
-        let to_country = self.peers.get(&to_peer).and_then(|e| e.country_code.clone());
+        let from_country = self
+            .peers
+            .get(&from_peer)
+            .and_then(|e| e.country_code.clone());
+        let to_country = self
+            .peers
+            .get(&to_peer)
+            .and_then(|e| e.country_code.clone());
 
         let record = ConnectionRecord {
             id,

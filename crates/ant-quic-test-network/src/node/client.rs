@@ -100,9 +100,7 @@ fn detect_local_addresses(bind_port: u16) -> (Option<SocketAddr>, Option<SocketA
                 let line = line.trim();
 
                 // Look for IPv4: "inet 192.168.1.100 netmask ..."
-                if line.starts_with("inet ")
-                    && !line.contains("127.0.0.1")
-                    && local_ipv4.is_none()
+                if line.starts_with("inet ") && !line.contains("127.0.0.1") && local_ipv4.is_none()
                 {
                     if let Some(ip_str) = line.split_whitespace().nth(1) {
                         if let Ok(ip) = ip_str.parse::<std::net::Ipv4Addr>() {

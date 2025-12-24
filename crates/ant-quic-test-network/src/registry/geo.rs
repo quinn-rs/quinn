@@ -144,7 +144,7 @@ impl BgpGeoProvider {
         match segment >> 12 {
             0x2 => (51.5, -0.1, Some("GB".to_string())), // 2000::/4 - Europe heavy
             0x2a | 0x2b => (48.8, 2.3, Some("FR".to_string())), // European allocations
-            _ => (40.7, -74.0, Some("US".to_string())),         // Default to US
+            _ => (40.7, -74.0, Some("US".to_string())),  // Default to US
         }
     }
 
@@ -267,14 +267,14 @@ impl BgpGeoProvider {
             // LeaseWeb
             (60781, "NL"),
             // Major ISPs - US
-            (7922, "US"),  // Comcast
-            (701, "US"),   // Verizon
-            (209, "US"),   // CenturyLink
-            (7018, "US"),  // AT&T
-            (2914, "US"),  // NTT America
-            (174, "US"),   // Cogent
-            (3356, "US"),  // Lumen/Level3
-            (6939, "US"),  // Hurricane Electric
+            (7922, "US"), // Comcast
+            (701, "US"),  // Verizon
+            (209, "US"),  // CenturyLink
+            (7018, "US"), // AT&T
+            (2914, "US"), // NTT America
+            (174, "US"),  // Cogent
+            (3356, "US"), // Lumen/Level3
+            (6939, "US"), // Hurricane Electric
             // Major ISPs - Europe
             (3320, "DE"),  // Deutsche Telekom
             (5089, "GB"),  // Virgin Media
@@ -288,9 +288,9 @@ impl BgpGeoProvider {
             (12389, "RU"), // Rostelecom
             (1299, "SE"),  // Telia
             // Major ISPs - Asia Pacific
-            (4766, "KR"),  // Korea Telecom
-            (45102, "CN"), // Alibaba
-            (37963, "CN"), // Alibaba
+            (4766, "KR"),   // Korea Telecom
+            (45102, "CN"),  // Alibaba
+            (37963, "CN"),  // Alibaba
             (132203, "CN"), // Tencent
             (45090, "CN"),  // Tencent
             (9498, "IN"),   // Bharti Airtel
