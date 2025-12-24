@@ -125,7 +125,7 @@ fn detect_local_addresses(bind_port: u16) -> (Option<SocketAddr>, Option<SocketA
                         if let Ok(ip) = ip_str.parse::<std::net::Ipv6Addr>() {
                             if !ip.is_loopback()
                                 && !ip.is_unspecified()
-                                && ((ip.segments()[0] & 0xfe00) != 0xfe80)
+                                && ((ip.segments()[0] & 0xffc0) != 0xfe80)
                             {
                                 local_ipv6 = Some(SocketAddr::new(ip.into(), bind_port));
                             }
@@ -174,7 +174,7 @@ fn detect_local_addresses(bind_port: u16) -> (Option<SocketAddr>, Option<SocketA
                         if let Ok(ip) = ip_str.parse::<std::net::Ipv6Addr>() {
                             if !ip.is_loopback()
                                 && !ip.is_unspecified()
-                                && ((ip.segments()[0] & 0xfe00) != 0xfe80)
+                                && ((ip.segments()[0] & 0xffc0) != 0xfe80)
                             {
                                 // Not link-local
                                 local_ipv6 = Some(SocketAddr::new(ip.into(), bind_port));
@@ -220,7 +220,7 @@ fn detect_local_addresses(bind_port: u16) -> (Option<SocketAddr>, Option<SocketA
                         if let Ok(ip) = ip_str.parse::<std::net::Ipv6Addr>() {
                             if !ip.is_loopback()
                                 && !ip.is_unspecified()
-                                && ((ip.segments()[0] & 0xfe00) != 0xfe80)
+                                && ((ip.segments()[0] & 0xffc0) != 0xfe80)
                             {
                                 local_ipv6 = Some(SocketAddr::new(ip.into(), bind_port));
                             }
