@@ -159,15 +159,15 @@ jobs:
       matrix:
         include:
           # Linux x86_64
-          - os: ubuntu-latest
+          - os: ubuntu-24.04
             target: x86_64-unknown-linux-gnu
             binary: ant-quic
             test_binary: ant-quic-test
             archive: ant-quic-x86_64-linux.tar.gz
             test_archive: ant-quic-test-x86_64-linux.tar.gz
 
-          # Linux musl (Alpine)
-          - os: ubuntu-latest
+          # Linux musl (static, Alpine-compatible)
+          - os: ubuntu-24.04
             target: x86_64-unknown-linux-musl
             binary: ant-quic
             test_binary: ant-quic-test
@@ -176,7 +176,7 @@ jobs:
             use-cross: true
 
           # Linux ARM64
-          - os: ubuntu-latest
+          - os: ubuntu-24.04
             target: aarch64-unknown-linux-gnu
             binary: ant-quic
             test_binary: ant-quic-test
@@ -184,8 +184,8 @@ jobs:
             test_archive: ant-quic-test-aarch64-linux.tar.gz
             use-cross: true
 
-          # Linux ARMv7
-          - os: ubuntu-latest
+          # Linux ARMv7 (Raspberry Pi, etc.)
+          - os: ubuntu-24.04
             target: armv7-unknown-linux-gnueabihf
             binary: ant-quic
             test_binary: ant-quic-test
@@ -217,30 +217,43 @@ jobs:
             archive: ant-quic-x86_64-windows.zip
             test_archive: ant-quic-test-x86_64-windows.zip
 
-    # Allow cross-compile jobs to fail without blocking release
-    continue-on-error: ${{ matrix.use-cross == true }}
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.target }}
-
-      - name: Install Cross
-        if: matrix.use-cross == true
-        uses: taiki-e/install-action@v2
-        with:
-          tool: cross
 
       # Install NASM for Windows builds (required by aws-lc-rs)
       - name: Install NASM
         if: matrix.os == 'windows-latest'
         uses: ilammy/setup-nasm@v1
 
-      - name: Cache cargo
+      # Use actions-rust-cross for cross-compilation (handles everything)
+      - name: Build ant-quic (cross)
+        if: matrix.use-cross == true
+        uses: houseabsolute/actions-rust-cross@v1
+        with:
+          command: build
+          target: ${{ matrix.target }}
+          args: "--locked --release --bin ant-quic"
+          strip: true
+
+      - name: Build ant-quic-test (cross)
+        if: matrix.use-cross == true
+        uses: houseabsolute/actions-rust-cross@v1
+        with:
+          command: build
+          target: ${{ matrix.target }}
+          args: "--locked --release -p ant-quic-test-network --bin ant-quic-test"
+          strip: true
+
+      # Native builds for non-cross targets
+      - name: Install Rust (native)
+        if: matrix.use-cross != true
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache cargo (native)
+        if: matrix.use-cross != true
         uses: actions/cache@v4
         with:
           path: |
@@ -251,26 +264,18 @@ jobs:
             target/
           key: cargo-${{ matrix.target }}-${{ hashFiles('**/Cargo.lock') }}
 
-      - name: Build ant-quic
-        run: |
-          if [ "${{ matrix.use-cross }}" = "true" ]; then
-            cross build --release --target ${{ matrix.target }} --bin ant-quic
-          else
-            cargo build --release --target ${{ matrix.target }} --bin ant-quic
-          fi
+      - name: Build ant-quic (native)
+        if: matrix.use-cross != true
+        run: cargo build --release --target ${{ matrix.target }} --bin ant-quic
         shell: bash
 
-      - name: Build ant-quic-test
-        run: |
-          if [ "${{ matrix.use-cross }}" = "true" ]; then
-            cross build --release --target ${{ matrix.target }} -p ant-quic-test-network --bin ant-quic-test
-          else
-            cargo build --release --target ${{ matrix.target }} -p ant-quic-test-network --bin ant-quic-test
-          fi
+      - name: Build ant-quic-test (native)
+        if: matrix.use-cross != true
+        run: cargo build --release --target ${{ matrix.target }} -p ant-quic-test-network --bin ant-quic-test
         shell: bash
 
-      - name: Strip binaries (Unix)
-        if: matrix.os != 'windows-latest'
+      - name: Strip binaries (Unix, native builds only)
+        if: matrix.os != 'windows-latest' && matrix.use-cross != true
         run: |
           if command -v strip &> /dev/null; then
             strip target/${{ matrix.target }}/release/${{ matrix.binary }} || true
