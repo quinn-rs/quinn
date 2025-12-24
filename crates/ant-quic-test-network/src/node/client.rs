@@ -360,6 +360,8 @@ pub struct TestNode {
     nat_stats: Arc<RwLock<NatStats>>,
     /// Whether this node has IPv6 connectivity.
     has_ipv6: bool,
+    /// Actual bound port (may differ from config if port 0 was used).
+    actual_port: u16,
 }
 
 impl TestNode {
@@ -399,17 +401,29 @@ impl TestNode {
             endpoint.public_key_bytes().len()
         );
 
-        // Get local addresses from the endpoint
-        let mut listen_addresses = vec![config.bind_addr];
-        if let Some(addr) = endpoint.local_addr() {
-            if !listen_addresses.contains(&addr) {
-                listen_addresses.push(addr);
+        // Get the actual bound port (may differ from config if port 0 was used)
+        let actual_port = endpoint.local_addr().map(|a| a.port()).unwrap_or(config.bind_addr.port());
+
+        // Detect actual local addresses (not 0.0.0.0)
+        let (local_ipv4, local_ipv6) = detect_local_addresses(actual_port);
+
+        // Build listen_addresses from actual IPs, NOT the bind address (which could be 0.0.0.0)
+        let mut listen_addresses = Vec::new();
+        if let Some(addr) = local_ipv4 {
+            listen_addresses.push(addr);
+        }
+        if let Some(addr) = local_ipv6 {
+            listen_addresses.push(addr);
+        }
+        // Fallback: if no addresses detected, use endpoint's local addr (but not if it's 0.0.0.0)
+        if listen_addresses.is_empty() {
+            if let Some(addr) = endpoint.local_addr() {
+                if !addr.ip().is_unspecified() {
+                    listen_addresses.push(addr);
+                }
             }
         }
-
-        // Detect additional local addresses
-        let bind_port = config.bind_addr.port();
-        let (local_ipv4, local_ipv6) = detect_local_addresses(bind_port);
+        info!("Detected listen addresses: {:?}", listen_addresses);
 
         // Create initial local node info and send it to TUI
         let mut local_node = LocalNodeInfo::default();
@@ -475,6 +489,7 @@ impl TestNode {
             event_tx,
             nat_stats: Arc::new(RwLock::new(NatStats::default())),
             has_ipv6: has_global_ipv6(),
+            actual_port,
         })
     }
 
@@ -561,8 +576,7 @@ impl TestNode {
                     );
 
                     // Update local node info with registration status
-                    let bind_port = self.config.bind_addr.port();
-                    let (local_ipv4, local_ipv6) = detect_local_addresses(bind_port);
+                    let (local_ipv4, local_ipv6) = detect_local_addresses(self.actual_port);
 
                     let mut local_node = LocalNodeInfo::default();
                     local_node.set_peer_id(&self.peer_id);
