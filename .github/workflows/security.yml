@@ -179,38 +179,6 @@ jobs:
           name: supply-chain-report
           path: supply-chain-report.json
 
-  # Security scorecard (informational, non-blocking)
-  # Only runs on default branch pushes (not tags) - Scorecard requirement
-  scorecard:
-    name: Security Scorecard
-    runs-on: ubuntu-latest
-    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
-    continue-on-error: true  # Don't block builds on scorecard failures
-    permissions:
-      contents: read
-      security-events: write
-      id-token: write
-      actions: read
-    steps:
-      - uses: actions/checkout@v4
-        if: ${{ !startsWith(runner.name, 'nektos/act') }}
-        with:
-          persist-credentials: false
-          fetch-depth: 0  # Scorecard needs full git history for proper analysis
-
-      - name: Run Scorecard analysis
-        uses: ossf/scorecard-action@v2.3.1
-        with:
-          results_file: scorecard-results.sarif
-          results_format: sarif
-          publish_results: true
-
-      - name: Upload Scorecard results
-        uses: github/codeql-action/upload-sarif@v3
-        with:
-          sarif_file: scorecard-results.sarif
-          category: scorecard
-
   # SBOM generation
   sbom-generation:
     name: Generate SBOM
