@@ -5414,34 +5414,45 @@ impl Connection {
     fn negotiate_address_discovery(&mut self, peer_params: &TransportParameters) {
         let now = Instant::now();
 
+        info!(
+            "negotiate_address_discovery: peer_params.address_discovery = {:?}",
+            peer_params.address_discovery
+        );
+
         // Check if peer supports address discovery
         match &peer_params.address_discovery {
             Some(peer_config) => {
                 // Peer supports address discovery
+                info!(
+                    "Peer supports address discovery: {:?}",
+                    peer_config
+                );
                 if let Some(state) = &mut self.address_discovery_state {
                     if state.enabled {
                         // Both support - no additional negotiation needed with enum-based config
                         // Rate limiting and path observation use fixed defaults from state creation
-                        debug!(
-                            "Address discovery negotiated: rate={}, all_paths={}",
+                        info!(
+                            "Address discovery negotiated successfully: rate={}, all_paths={}",
                             state.max_observation_rate, state.observe_all_paths
                         );
                     } else {
                         // We don't support it but peer does
-                        debug!("Address discovery disabled locally, ignoring peer support");
+                        info!("Address discovery disabled locally, ignoring peer support");
                     }
                 } else {
                     // Initialize state based on peer config if we don't have one
                     self.address_discovery_state =
                         Some(AddressDiscoveryState::new(peer_config, now));
-                    debug!("Address discovery initialized from peer config");
+                    info!("Address discovery initialized from peer config");
                 }
             }
             _ => {
                 // Peer doesn't support address discovery
+                warn!(
+                    "Peer does NOT support address discovery (transport parameter not present)"
+                );
                 if let Some(state) = &mut self.address_discovery_state {
                     state.enabled = false;
-                    debug!("Address discovery disabled - peer doesn't support it");
                 }
             }
         }
@@ -6396,25 +6407,35 @@ impl AddressDiscoveryState {
     ) -> Option<frame::ObservedAddress> {
         // Check if address discovery is enabled
         if !self.enabled {
+            tracing::debug!("queue_observed_address_frame: BLOCKED - address discovery disabled");
             return None;
         }
 
         // Check path restrictions
         if !self.observe_all_paths && path_id != 0 {
+            tracing::debug!("queue_observed_address_frame: BLOCKED - path {} not allowed (observe_all_paths={})", path_id, self.observe_all_paths);
             return None;
         }
 
         // Check if this path has already been notified
         if let Some(info) = self.sent_observations.get(&path_id) {
             if info.notified {
+                tracing::trace!("queue_observed_address_frame: BLOCKED - path {} already notified", path_id);
                 return None;
             }
         }
 
         // Check rate limiting
         if self.rate_limiter.tokens < 1.0 {
+            tracing::debug!("queue_observed_address_frame: BLOCKED - rate limited (tokens={})", self.rate_limiter.tokens);
             return None;
         }
+
+        tracing::info!(
+            "queue_observed_address_frame: SENDING OBSERVED_ADDRESS to {} for path {}",
+            address,
+            path_id
+        );
 
         // Consume a token and update path info
         self.rate_limiter.tokens -= 1.0;
