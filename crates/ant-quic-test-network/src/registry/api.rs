@@ -489,6 +489,11 @@ struct NodeNatStats {
     relay_success: u64,
     /// Failed connection attempts
     failures: u64,
+    /// Inbound connections received (they initiated to us)
+    /// This is the key metric for nodes behind NAT
+    inbound_connections: u64,
+    /// Whether this node is behind NAT
+    is_behind_nat: bool,
     /// Overall success rate percentage
     success_rate_percent: f64,
 }
@@ -553,6 +558,8 @@ async fn handle_get_node_detail(
                     hole_punch_success: nat_stats.hole_punch_success,
                     relay_success: nat_stats.relay_success,
                     failures: nat_stats.failures,
+                    inbound_connections: nat_stats.inbound_connections,
+                    is_behind_nat: nat_stats.is_behind_nat,
                     success_rate_percent: success_rate,
                 },
                 connection_stats: NodeConnectionStats {

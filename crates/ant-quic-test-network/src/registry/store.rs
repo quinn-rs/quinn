@@ -169,6 +169,8 @@ impl PeerStore {
                 hole_punch_success: 0,
                 relay_success: 0,
                 failures: 0,
+                inbound_connections: 0,
+                is_behind_nat: false,
             },
             connected_peers: 0,
             bytes_sent: 0,
@@ -737,6 +739,8 @@ mod tests {
                 hole_punch_success: 1,
                 relay_success: 0,
                 failures: 1,
+                inbound_connections: 0,
+                is_behind_nat: false,
             }),
         };
 

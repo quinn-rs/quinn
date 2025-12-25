@@ -9,7 +9,7 @@ use crate::registry::{
     NodeRegistration, PeerInfo, RegistryClient,
 };
 use crate::tui::{ConnectedPeer, LocalNodeInfo, TuiEvent, country_flag};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -396,6 +396,12 @@ pub struct TestNode {
     /// Used for bidirectional connectivity testing - we only attempt fresh connections
     /// to peers we've been disconnected from for >30 seconds (to ensure NAT mappings expired).
     disconnection_times: Arc<RwLock<HashMap<String, Instant>>>,
+    /// Track peer IDs we're currently trying to connect to (outbound).
+    /// When PeerConnected fires, if the peer is in this set it's outbound, otherwise inbound.
+    pending_outbound: Arc<RwLock<HashSet<String>>>,
+    /// Count of inbound connections (they initiated to us).
+    /// This is the key metric for nodes behind NAT.
+    inbound_connections: Arc<AtomicU64>,
 }
 
 impl TestNode {
@@ -534,12 +540,22 @@ impl TestNode {
         let disconnection_times: Arc<RwLock<HashMap<String, Instant>>> =
             Arc::new(RwLock::new(HashMap::new()));
 
+        // Create pending outbound tracker for detecting inbound vs outbound connections
+        // When PeerConnected fires, if peer is NOT in pending_outbound, it's inbound
+        let pending_outbound: Arc<RwLock<HashSet<String>>> = Arc::new(RwLock::new(HashSet::new()));
+
+        // Counter for inbound connections - key metric for nodes behind NAT
+        // If we're behind NAT and receive inbound connections, hole-punching works!
+        let inbound_connections: Arc<AtomicU64> = Arc::new(AtomicU64::new(0));
+
         // Spawn event handler for P2P events to update TUI
         let endpoint_for_events = endpoint.clone();
         let event_tx_for_events = event_tx.clone();
         let hole_punched_for_events = Arc::clone(&hole_punched_peers);
         let external_addresses_for_events = Arc::clone(&external_addresses);
         let disconnection_times_for_events = Arc::clone(&disconnection_times);
+        let pending_outbound_for_events = Arc::clone(&pending_outbound);
+        let inbound_connections_for_events = Arc::clone(&inbound_connections);
         tokio::spawn(async move {
             let mut events = endpoint_for_events.subscribe();
             while let Ok(event) = events.recv().await {
@@ -574,7 +590,42 @@ impl TestNode {
                         }
                     }
                     P2pEvent::PeerConnected { peer_id, addr } => {
-                        debug!("P2P event: peer connected {:?} at {}", peer_id, addr);
+                        let peer_hex = hex::encode(peer_id.0);
+                        debug!(
+                            "P2P event: peer connected {} at {}",
+                            &peer_hex[..8.min(peer_hex.len())],
+                            addr
+                        );
+
+                        // Detect if this is an inbound connection (they initiated to us)
+                        // If peer is NOT in pending_outbound, we didn't initiate - it's inbound
+                        let is_inbound = {
+                            let pending = pending_outbound_for_events.read().await;
+                            !pending.contains(&peer_hex)
+                        };
+
+                        if is_inbound {
+                            let count =
+                                inbound_connections_for_events.fetch_add(1, Ordering::Relaxed) + 1;
+                            info!(
+                                "INBOUND connection received from {} (total inbound: {})",
+                                &peer_hex[..8.min(peer_hex.len())],
+                                count
+                            );
+
+                            // This is the key metric for nodes behind NAT!
+                            // If we receive inbound connections, NAT traversal is working
+                            let _ = event_tx_for_events
+                                .send(TuiEvent::Info(format!(
+                                    "Inbound connection from {} (proves hole-punching works!)",
+                                    &peer_hex[..8.min(peer_hex.len())]
+                                )))
+                                .await;
+                        } else {
+                            // Remove from pending since connection completed
+                            let mut pending = pending_outbound_for_events.write().await;
+                            pending.remove(&peer_hex);
+                        }
                     }
                     P2pEvent::PeerDisconnected { peer_id, reason } => {
                         let peer_hex = hex::encode(peer_id.0);
@@ -628,6 +679,8 @@ impl TestNode {
             actual_port,
             hole_punched_peers,
             disconnection_times,
+            pending_outbound,
+            inbound_connections,
         })
     }
 
@@ -866,6 +919,8 @@ impl TestNode {
         let bytes_sent = Arc::clone(&self.total_bytes_sent);
         let bytes_received = Arc::clone(&self.total_bytes_received);
         let interval = self.config.heartbeat_interval;
+        // Clone inbound_connections counter for heartbeat reporting
+        let inbound_connections = Arc::clone(&self.inbound_connections);
 
         tokio::spawn(async move {
             let mut ticker = tokio::time::interval(interval);
@@ -876,7 +931,24 @@ impl TestNode {
 
                 let peers = connected_peers.read().await;
                 let ext_addrs = external_addresses.read().await.clone();
-                let stats = nat_stats.read().await.clone();
+                let mut stats = nat_stats.read().await.clone();
+
+                // Detect NAT status by comparing local vs external addresses
+                // If external IPs differ from local IPs, we're behind NAT
+                let is_behind_nat = if !ext_addrs.is_empty() {
+                    let local_ips: std::collections::HashSet<_> =
+                        listen_addresses.iter().map(|a| a.ip()).collect();
+                    let external_ips: std::collections::HashSet<_> =
+                        ext_addrs.iter().map(|a| a.ip()).collect();
+                    // Behind NAT if external IPs are different from local IPs
+                    local_ips.intersection(&external_ips).count() == 0
+                } else {
+                    false // Unknown without external address discovery
+                };
+
+                // Update stats with inbound connection count and NAT status
+                stats.inbound_connections = inbound_connections.load(Ordering::Relaxed);
+                stats.is_behind_nat = is_behind_nat;
 
                 let heartbeat = NodeHeartbeat {
                     peer_id: peer_id.clone(),
@@ -983,6 +1055,8 @@ impl TestNode {
         let our_has_ipv6 = self.has_ipv6;
         // Clone hole-punching tracker for connection method detection
         let hole_punched_peers = Arc::clone(&self.hole_punched_peers);
+        // Clone pending_outbound to track outbound connection attempts
+        let pending_outbound = Arc::clone(&self.pending_outbound);
 
         // Minimum time since disconnection before attempting fresh connection (30 seconds)
         // This ensures NAT mappings have expired and we're testing real hole-punching
@@ -1087,6 +1161,7 @@ impl TestNode {
                     let relay = Arc::clone(&relay);
                     let connected_peers = Arc::clone(&connected_peers);
                     let hole_punched_peers = Arc::clone(&hole_punched_peers);
+                    let pending_outbound = Arc::clone(&pending_outbound);
                     let event_tx = event_tx.clone();
                     let registry = RegistryClient::new(registry.base_url());
                     let our_peer_id = our_peer_id.clone();
@@ -1097,6 +1172,13 @@ impl TestNode {
                             "Testing FRESH hole-punch to peer {} ({:?})",
                             peer_id_short, candidate.country_code
                         );
+
+                        // Mark this as an outbound connection attempt
+                        // When PeerConnected fires, if peer is in pending_outbound, it's outbound
+                        {
+                            let mut pending = pending_outbound.write().await;
+                            pending.insert(candidate.peer_id.clone());
+                        }
 
                         // Update NAT stats
                         {
@@ -1202,6 +1284,12 @@ impl TestNode {
                                 }
                             }
                             Err(e) => {
+                                // Clean up pending_outbound on failure
+                                {
+                                    let mut pending = pending_outbound.write().await;
+                                    pending.remove(&candidate.peer_id);
+                                }
+
                                 // Only count as failure if peer is still LIVE
                                 // (they might have gone offline, not a hole-punch failure)
                                 if candidate.is_active {

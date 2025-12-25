@@ -66,6 +66,29 @@ impl std::fmt::Display for ConnectionMethod {
     }
 }
 
+/// Connection direction - who initiated the connection.
+///
+/// This is more reliable for NAT testing than trying to detect the traversal method.
+/// If a node behind NAT successfully receives inbound connections, that proves
+/// NAT traversal is working regardless of which code path was used.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ConnectionDirection {
+    /// We initiated the connection to the remote peer (outbound)
+    Outbound,
+    /// Remote peer initiated the connection to us (inbound)
+    Inbound,
+}
+
+impl std::fmt::Display for ConnectionDirection {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Outbound => write!(f, "Outbound"),
+            Self::Inbound => write!(f, "Inbound"),
+        }
+    }
+}
+
 /// Node capabilities advertised during registration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NodeCapabilities {
@@ -147,18 +170,29 @@ pub struct ConnectionReport {
 }
 
 /// NAT traversal statistics included in heartbeats.
+///
+/// Tracks both outbound (we initiated) and inbound (they initiated) connections.
+/// Inbound success is the key metric for NAT traversal - if a node behind NAT
+/// receives inbound connections, that proves hole-punching works.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct NatStats {
-    /// Total connection attempts
+    /// Total outbound connection attempts (we initiated)
     pub attempts: u64,
-    /// Successful direct connections
+    /// Successful direct connections (outbound)
     pub direct_success: u64,
-    /// Successful hole-punched connections
+    /// Successful hole-punched connections (outbound)
     pub hole_punch_success: u64,
-    /// Successful relayed connections
+    /// Successful relayed connections (outbound)
     pub relay_success: u64,
-    /// Failed connection attempts
+    /// Failed connection attempts (outbound)
     pub failures: u64,
+    /// Total inbound connections received (they initiated to us)
+    /// This is the key metric for nodes behind NAT
+    #[serde(default)]
+    pub inbound_connections: u64,
+    /// Whether this node is behind NAT (external != local address)
+    #[serde(default)]
+    pub is_behind_nat: bool,
 }
 
 /// Information about a registered peer (returned by registry).
