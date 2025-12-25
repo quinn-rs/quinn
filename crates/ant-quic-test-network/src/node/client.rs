@@ -595,6 +595,84 @@ impl TestNode {
         &self.peer_id
     }
 
+    /// Discover our external address by connecting to known QUIC peers.
+    ///
+    /// This connects to the saorsa registry nodes via QUIC (port 9000) to receive
+    /// OBSERVED_ADDRESS frames that tell us our external IP:port as seen by them.
+    /// This is part of the native QUIC NAT traversal per draft-ietf-quic-address-discovery.
+    async fn discover_external_address(&self) {
+        // Known QUIC peers (saorsa registry nodes running QUIC on port 9000)
+        let known_quic_peers: Vec<SocketAddr> = vec![
+            "77.42.75.115:9000".parse().ok(),     // saorsa-1
+            "162.243.167.201:9000".parse().ok(),  // saorsa-2
+            "159.65.221.230:9000".parse().ok(),   // saorsa-3
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+
+        if known_quic_peers.is_empty() {
+            warn!("No known QUIC peers configured for address discovery");
+            return;
+        }
+
+        info!(
+            "Discovering external address via QUIC connections to {} known peers...",
+            known_quic_peers.len()
+        );
+
+        // Try to connect to each known peer to discover our external address
+        for peer_addr in &known_quic_peers {
+            info!("Connecting to known peer {} for address discovery...", peer_addr);
+
+            match tokio::time::timeout(
+                Duration::from_secs(10),
+                self.endpoint.connect(*peer_addr),
+            )
+            .await
+            {
+                Ok(Ok(_conn)) => {
+                    info!(
+                        "Connected to {} - waiting for OBSERVED_ADDRESS frame...",
+                        peer_addr
+                    );
+
+                    // Wait a bit for the OBSERVED_ADDRESS frame to arrive
+                    // The P2pEvent::ExternalAddressDiscovered handler will store it
+                    tokio::time::sleep(Duration::from_secs(2)).await;
+
+                    // Check if we discovered an external address
+                    let addrs = self.external_addresses.read().await;
+                    if !addrs.is_empty() {
+                        info!(
+                            "External address discovered via QUIC NAT traversal: {:?}",
+                            *addrs
+                        );
+                        return;
+                    }
+
+                    info!("No external address received yet from {}, trying next peer...", peer_addr);
+                }
+                Ok(Err(e)) => {
+                    warn!("Failed to connect to {} for address discovery: {}", peer_addr, e);
+                }
+                Err(_) => {
+                    warn!("Connection to {} timed out", peer_addr);
+                }
+            }
+        }
+
+        // If we couldn't discover from any peer, log a warning
+        let addrs = self.external_addresses.read().await;
+        if addrs.is_empty() {
+            warn!(
+                "Could not discover external address from any known peer. \
+                 Registration will proceed without external address - \
+                 other nodes may not be able to connect to us."
+            );
+        }
+    }
+
     /// Start the test node (runs all background tasks).
     pub async fn run(&self) -> anyhow::Result<()> {
         info!(
@@ -603,7 +681,11 @@ impl TestNode {
             self.config.registry_url
         );
 
-        // Register with the registry
+        // CRITICAL: Discover external address via native QUIC NAT traversal BEFORE registering
+        // Connect to known QUIC peers first to receive OBSERVED_ADDRESS frames
+        self.discover_external_address().await;
+
+        // Register with the registry (now with external address from QUIC discovery)
         self.register().await?;
 
         // Start background tasks

@@ -285,11 +285,34 @@ impl PeerStore {
             PeerStatus::Historical
         };
 
-        // Combine listen and external addresses
+        // Combine listen and external addresses, prioritizing external (public) addresses
         let mut addresses = entry.registration.external_addresses.clone();
         addresses.extend(entry.registration.listen_addresses.clone());
         addresses.sort();
         addresses.dedup();
+
+        // Filter out non-routable addresses (RFC1918, loopback, link-local)
+        // These private addresses are not reachable by remote peers
+        let addresses: Vec<_> = addresses
+            .into_iter()
+            .filter(|addr| {
+                let ip = addr.ip();
+                match ip {
+                    std::net::IpAddr::V4(v4) => {
+                        !v4.is_private()
+                            && !v4.is_loopback()
+                            && !v4.is_link_local()
+                            && !v4.is_unspecified()
+                    }
+                    std::net::IpAddr::V6(v6) => {
+                        !v6.is_loopback()
+                            && !v6.is_unspecified()
+                            // Filter out link-local IPv6 (fe80::/10)
+                            && (v6.segments()[0] & 0xffc0) != 0xfe80
+                    }
+                }
+            })
+            .collect();
 
         // Calculate success rate
         let total_attempts = entry.nat_stats.attempts.max(1);
