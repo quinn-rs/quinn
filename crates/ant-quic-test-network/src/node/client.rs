@@ -637,9 +637,10 @@ impl TestNode {
                         peer_addr
                     );
 
-                    // Wait a bit for the OBSERVED_ADDRESS frame to arrive
+                    // Wait for the OBSERVED_ADDRESS frame to arrive
                     // The P2pEvent::ExternalAddressDiscovered handler will store it
-                    tokio::time::sleep(Duration::from_secs(2)).await;
+                    // Give 5 seconds for the frame to be sent, received, and processed
+                    tokio::time::sleep(Duration::from_secs(5)).await;
 
                     // Check if we discovered an external address
                     let addrs = self.external_addresses.read().await;

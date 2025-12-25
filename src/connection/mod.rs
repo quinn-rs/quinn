@@ -4109,9 +4109,10 @@ impl Connection {
                 Some(x) => x,
                 None => break,
             };
-            trace!(
+            info!(
                 address = %observed_address.address,
-                "OBSERVED_ADDRESS"
+                sequence = %observed_address.sequence_number,
+                "populate_packet: ENCODING OBSERVED_ADDRESS into packet"
             );
             observed_address.encode(buf);
             sent.retransmits
@@ -4807,9 +4808,10 @@ impl Connection {
         observed_address: &crate::frame::ObservedAddress,
         now: Instant,
     ) -> Result<(), TransportError> {
-        tracing::trace!(
+        tracing::info!(
             address = %observed_address.address,
-            "handle_observed_address_frame: received address"
+            sequence = %observed_address.sequence_number,
+            "handle_observed_address_frame: RECEIVED OBSERVED_ADDRESS from peer"
         );
         // Get the address discovery state
         let state = self.address_discovery_state.as_mut().ok_or_else(|| {

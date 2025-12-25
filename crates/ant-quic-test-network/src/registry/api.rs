@@ -124,16 +124,18 @@ pub async fn start_registry_server(config: RegistryConfig) -> anyhow::Result<()>
                     Some(conn) => {
                         // Get peer ID from the accepted connection
                         let peer_id_short = format!("{}...", &hex::encode(conn.peer_id.0)[..8]);
-                        tracing::debug!(
-                            "QUIC connection accepted from {} - OBSERVED_ADDRESS sent",
+                        tracing::info!(
+                            "QUIC connection accepted from {} - OBSERVED_ADDRESS frame sent",
                             peer_id_short
                         );
                         // Connection automatically sends OBSERVED_ADDRESS frame
                         // The endpoint handles this internally, we just need to keep accepting
                     }
                     None => {
-                        tracing::warn!("QUIC endpoint accept returned None, stopping");
-                        break;
+                        // This can happen on accept timeout - just continue the loop
+                        // Don't break, as we want to keep accepting new connections
+                        tracing::debug!("QUIC endpoint accept returned None (timeout), continuing");
+                        continue;
                     }
                 }
             }
