@@ -47,13 +47,19 @@ impl Default for TestNodeConfig {
             bind_addr: "0.0.0.0:9000".parse().expect("valid default address"),
             connect_interval: Duration::from_secs(10),
             test_interval: Duration::from_secs(5),
-            heartbeat_interval: Duration::from_secs(30),
+            // 5-second heartbeat keeps NAT holes open for hole-punched connections
+            // (NAT devices typically close UDP mappings after 30-60 seconds of inactivity)
+            heartbeat_interval: Duration::from_secs(5),
         }
     }
 }
 
-/// Maximum consecutive failures before disconnecting a peer.
+/// Maximum consecutive failures before disconnecting a direct peer.
 const MAX_CONSECUTIVE_FAILURES: u32 = 5;
+
+/// Maximum consecutive failures for hole-punched connections (more tolerant).
+/// Hole-punched connections are inherently more fragile due to NAT behavior.
+const MAX_CONSECUTIVE_FAILURES_HOLEPUNCHED: u32 = 10;
 
 /// Detect if the system has global IPv6 connectivity.
 fn has_global_ipv6() -> bool {
@@ -493,6 +499,11 @@ impl TestNode {
             .send(TuiEvent::UpdateLocalNode(local_node.clone()))
             .await;
 
+        // Create external addresses storage before spawning event handler
+        // so we can share it with the handler
+        let external_addresses: Arc<RwLock<Vec<SocketAddr>>> =
+            Arc::new(RwLock::new(Vec::new()));
+
         // Create hole-punching tracker before spawning event handler
         let hole_punched_peers: Arc<RwLock<HashMap<String, bool>>> =
             Arc::new(RwLock::new(HashMap::new()));
@@ -501,12 +512,21 @@ impl TestNode {
         let endpoint_for_events = endpoint.clone();
         let event_tx_for_events = event_tx.clone();
         let hole_punched_for_events = Arc::clone(&hole_punched_peers);
+        let external_addresses_for_events = Arc::clone(&external_addresses);
         tokio::spawn(async move {
             let mut events = endpoint_for_events.subscribe();
             while let Ok(event) = events.recv().await {
                 match event {
                     P2pEvent::ExternalAddressDiscovered { addr } => {
                         info!("External address discovered: {}", addr);
+                        // Store the discovered external address
+                        {
+                            let mut addrs = external_addresses_for_events.write().await;
+                            if !addrs.contains(&addr) {
+                                addrs.push(addr);
+                                info!("Stored external address: {} (total: {})", addr, addrs.len());
+                            }
+                        }
                         let _ = event_tx_for_events
                             .send(TuiEvent::Info(format!(
                                 "Discovered external address: {}",
@@ -548,7 +568,7 @@ impl TestNode {
             endpoint: Arc::new(endpoint),
             peer_id,
             public_key,
-            external_addresses: Arc::new(RwLock::new(Vec::new())),
+            external_addresses, // Use the shared Arc created before event handler
             connected_peers: Arc::new(RwLock::new(HashMap::new())),
             total_bytes_sent: Arc::new(AtomicU64::new(0)),
             total_bytes_received: Arc::new(AtomicU64::new(0)),
@@ -886,24 +906,24 @@ impl TestNode {
                 let connection_result = real_connect(&endpoint, candidate).await;
 
                 match connection_result {
-                    Ok(_base_method) => {
+                    Ok(method) => {
                         success.fetch_add(1, Ordering::Relaxed);
 
-                        // Check if this peer used hole-punching based on tracked NAT traversal phases
-                        let method = {
+                        // Use the method returned by real_connect (which now correctly
+                        // distinguishes between Direct and HolePunched connections).
+                        // Also check hole_punched_peers tracker as secondary signal.
+                        let final_method = {
                             let tracker = hole_punched_peers.read().await;
                             if tracker.get(&candidate.peer_id).copied().unwrap_or(false) {
-                                info!(
-                                    "Peer {} used hole-punching (detected via Punching phase)",
-                                    &candidate.peer_id[..8.min(candidate.peer_id.len())]
-                                );
+                                // NAT traversal phase was observed - definitely hole-punched
                                 ConnectionMethod::HolePunched
                             } else {
-                                ConnectionMethod::Direct
+                                // Use the method from real_connect
+                                method
                             }
                         };
 
-                        match method {
+                        match final_method {
                             ConnectionMethod::Direct => {
                                 direct.fetch_add(1, Ordering::Relaxed);
                                 let mut stats = nat_stats.write().await;
@@ -924,7 +944,7 @@ impl TestNode {
                         let now = Instant::now();
                         let tracked = TrackedPeer {
                             info: (*candidate).clone(),
-                            method,
+                            method: final_method,
                             connected_at: now,
                             last_activity: now,
                             stats: PeerStats::default(),
@@ -943,7 +963,7 @@ impl TestNode {
                         info!(
                             "Connected to {} via {:?}",
                             &candidate.peer_id[..8.min(candidate.peer_id.len())],
-                            method
+                            final_method
                         );
 
                         // Notify TUI
@@ -953,7 +973,7 @@ impl TestNode {
                         let report = ConnectionReport {
                             from_peer: our_peer_id.clone(),
                             to_peer: candidate.peer_id.clone(),
-                            method,
+                            method: final_method,
                             is_ipv6: candidate
                                 .addresses
                                 .first()
@@ -1085,12 +1105,21 @@ impl TestNode {
                     for (peer_id, tracked) in peers.iter() {
                         let time_since_activity = now.duration_since(tracked.last_activity);
 
+                        // Use higher tolerance for hole-punched connections (more fragile)
+                        let max_failures = match tracked.method {
+                            ConnectionMethod::HolePunched | ConnectionMethod::Relayed => {
+                                MAX_CONSECUTIVE_FAILURES_HOLEPUNCHED
+                            }
+                            ConnectionMethod::Direct => MAX_CONSECUTIVE_FAILURES,
+                        };
+
                         // Check for too many consecutive failures
-                        if tracked.consecutive_failures >= MAX_CONSECUTIVE_FAILURES {
+                        if tracked.consecutive_failures >= max_failures {
                             info!(
-                                "Removing peer {} - {} consecutive failures",
+                                "Removing peer {} - {} consecutive failures (threshold: {})",
                                 &peer_id[..8.min(peer_id.len())],
-                                tracked.consecutive_failures
+                                tracked.consecutive_failures,
+                                max_failures
                             );
                             peers_to_remove.push(peer_id.clone());
                             continue;
@@ -1229,47 +1258,96 @@ fn peer_id_to_bytes(peer_id: &str) -> [u8; 32] {
 /// Make a REAL QUIC connection to a peer using P2pEndpoint.
 ///
 /// This is NOT a simulation - it creates an actual QUIC connection.
+/// Connection strategy:
+/// 1. Try direct dual-stack connection (IPv4 and IPv6 in parallel)
+/// 2. Try individual direct connections to each address
+/// 3. Fall back to NAT traversal (hole-punching) if direct fails
 async fn real_connect(endpoint: &P2pEndpoint, peer: &PeerInfo) -> Result<ConnectionMethod, String> {
     // Get addresses to try
     if peer.addresses.is_empty() {
         return Err("Peer has no addresses".to_string());
     }
 
+    let peer_id_short = &peer.peer_id[..8.min(peer.peer_id.len())];
+
     // Try dual-stack connection first (both IPv4 and IPv6 in parallel)
     match endpoint.connect_dual_stack(&peer.addresses).await {
         Ok(_conn) => {
             info!(
-                "REAL QUIC connection established to {}",
-                &peer.peer_id[..8.min(peer.peer_id.len())]
+                "REAL QUIC connection established to {} (direct dual-stack)",
+                peer_id_short
             );
             // Direct connection succeeded
-            Ok(ConnectionMethod::Direct)
+            return Ok(ConnectionMethod::Direct);
         }
         Err(e) => {
             debug!("Dual-stack direct connection failed: {}", e);
+        }
+    }
 
-            // Try single address connections as fallback
-            for addr in &peer.addresses {
-                match tokio::time::timeout(Duration::from_secs(10), endpoint.connect(*addr)).await {
-                    Ok(Ok(_conn)) => {
-                        info!(
-                            "REAL QUIC connection established to {} at {}",
-                            &peer.peer_id[..8.min(peer.peer_id.len())],
-                            addr
-                        );
-                        return Ok(ConnectionMethod::Direct);
-                    }
-                    Ok(Err(e)) => {
-                        debug!("Connection to {} failed: {}", addr, e);
-                    }
-                    Err(_) => {
-                        debug!("Connection to {} timed out", addr);
-                    }
-                }
+    // Try single address connections as fallback
+    for addr in &peer.addresses {
+        match tokio::time::timeout(Duration::from_secs(10), endpoint.connect(*addr)).await {
+            Ok(Ok(_conn)) => {
+                info!(
+                    "REAL QUIC connection established to {} at {} (direct)",
+                    peer_id_short, addr
+                );
+                return Ok(ConnectionMethod::Direct);
             }
+            Ok(Err(e)) => {
+                debug!("Direct connection to {} failed: {}", addr, e);
+            }
+            Err(_) => {
+                debug!("Direct connection to {} timed out", addr);
+            }
+        }
+    }
 
-            // All direct connections failed
-            Err(format!("Failed to connect to any address: {}", e))
+    // All direct connections failed - try NAT traversal (hole-punching)
+    info!(
+        "Direct connections to {} failed, attempting NAT traversal...",
+        peer_id_short
+    );
+
+    // Convert hex peer_id to QuicPeerId
+    let peer_id_bytes = hex::decode(&peer.peer_id)
+        .map_err(|e| format!("Invalid peer ID hex: {}", e))?;
+
+    if peer_id_bytes.len() < 32 {
+        return Err("Peer ID too short for NAT traversal".to_string());
+    }
+
+    let mut peer_id_array = [0u8; 32];
+    peer_id_array.copy_from_slice(&peer_id_bytes[..32]);
+    let quic_peer_id = QuicPeerId(peer_id_array);
+
+    // Use first address as potential coordinator hint (P2pEndpoint will use known_peers if None)
+    let coordinator = peer.addresses.first().copied();
+
+    match tokio::time::timeout(
+        Duration::from_secs(30), // NAT traversal can take longer
+        endpoint.connect_to_peer(quic_peer_id, coordinator),
+    )
+    .await
+    {
+        Ok(Ok(_conn)) => {
+            info!(
+                "REAL QUIC connection established to {} via NAT traversal (hole-punched)",
+                peer_id_short
+            );
+            Ok(ConnectionMethod::HolePunched)
+        }
+        Ok(Err(e)) => {
+            warn!(
+                "NAT traversal to {} failed: {}",
+                peer_id_short, e
+            );
+            Err(format!("All connection methods failed: {}", e))
+        }
+        Err(_) => {
+            warn!("NAT traversal to {} timed out after 30s", peer_id_short);
+            Err("NAT traversal timed out".to_string())
         }
     }
 }
