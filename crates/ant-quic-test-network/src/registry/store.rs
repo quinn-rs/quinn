@@ -31,13 +31,6 @@ const ACTIVE_THRESHOLD_SECS: u64 = 60;
 /// Inactive threshold - nodes between active and historical (5 minutes).
 const INACTIVE_THRESHOLD_SECS: u64 = 300;
 
-/// Check if an IPv6 address is link-local (fe80::/10)
-fn is_ipv6_link_local(addr: &std::net::Ipv6Addr) -> bool {
-    let segments = addr.segments();
-    // Link-local addresses start with fe80::/10
-    (segments[0] & 0xffc0) == 0xfe80
-}
-
 /// Internal storage entry for a registered node.
 #[derive(Debug, Clone)]
 struct NodeEntry {
@@ -162,27 +155,6 @@ impl PeerStore {
         // Use client_ip as fallback when external_addresses is empty
         let (latitude, longitude, country_code) =
             self.resolve_geo_with_fallback(&registration.external_addresses, client_ip);
-
-        // CRITICAL FIX: If no external addresses provided, use client_ip as the external address
-        // This ensures nodes behind NAT are reachable via their public IP
-        let mut registration = registration;
-        if registration.external_addresses.is_empty() {
-            if let Some(ip) = client_ip {
-                // Use the first port from listen_addresses, or default to 9000
-                let port = registration
-                    .listen_addresses
-                    .first()
-                    .map(|a| a.port())
-                    .unwrap_or(9000);
-                let external_addr = std::net::SocketAddr::new(ip, port);
-                tracing::info!(
-                    "Node {} has no external addresses, using client IP {} as external address",
-                    &registration.peer_id[..8.min(registration.peer_id.len())],
-                    external_addr
-                );
-                registration.external_addresses.push(external_addr);
-            }
-        }
 
         let entry = NodeEntry {
             registration: registration.clone(),
@@ -313,35 +285,11 @@ impl PeerStore {
             PeerStatus::Historical
         };
 
-        // Combine listen and external addresses, prioritizing external (public) addresses
-        // and filtering out RFC1918 private addresses that aren't routable
+        // Combine listen and external addresses
         let mut addresses = entry.registration.external_addresses.clone();
         addresses.extend(entry.registration.listen_addresses.clone());
         addresses.sort();
         addresses.dedup();
-
-        // Filter out non-routable addresses (RFC1918, loopback, link-local)
-        // Keep only publicly routable addresses for remote peers
-        let addresses: Vec<_> = addresses
-            .into_iter()
-            .filter(|addr| {
-                let ip = addr.ip();
-                match ip {
-                    std::net::IpAddr::V4(v4) => {
-                        !v4.is_private()
-                            && !v4.is_loopback()
-                            && !v4.is_link_local()
-                            && !v4.is_unspecified()
-                    }
-                    std::net::IpAddr::V6(v6) => {
-                        !v6.is_loopback() && !v6.is_unspecified()
-                        // Allow IPv6 addresses - they're usually globally routable
-                        // unless they're link-local (fe80::)
-                        && !is_ipv6_link_local(&v6)
-                    }
-                }
-            })
-            .collect();
 
         // Calculate success rate
         let total_attempts = entry.nat_stats.attempts.max(1);
