@@ -604,6 +604,21 @@ impl Connection {
             .send_nat_punch_coordination(paired_with_sequence_number, address, round)
     }
 
+    /// Queue a PUNCH_ME_NOW frame via a coordinator to reach a target peer behind NAT
+    ///
+    /// This sends a PUNCH_ME_NOW to the current connection (acting as coordinator)
+    /// with a target peer ID, asking the coordinator to relay to the target peer.
+    pub fn send_nat_punch_via_relay(
+        &self,
+        target_peer_id: [u8; 32],
+        our_address: SocketAddr,
+        round: u32,
+    ) -> Result<(), crate::ConnectionError> {
+        let conn = &mut *self.0.state.lock("send_nat_punch_via_relay");
+        conn.inner
+            .send_nat_punch_via_relay(target_peer_id, our_address, round)
+    }
+
     /// The side of the connection (client or server)
     pub fn side(&self) -> Side {
         self.0.state.lock("side").inner.side()

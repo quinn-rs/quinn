@@ -5014,21 +5014,52 @@ impl Connection {
         paired_with_sequence_number: VarInt,
         address: SocketAddr,
     ) {
+        self.queue_punch_me_now_with_target(round, paired_with_sequence_number, address, None);
+    }
+
+    /// Queue a PunchMeNow frame with optional target_peer_id for relay coordination
+    ///
+    /// When `target_peer_id` is `Some`, the frame is sent to a coordinator who will
+    /// relay it to the specified target peer. This enables NAT traversal when neither
+    /// peer can directly reach the other.
+    ///
+    /// # Arguments
+    /// * `round` - Coordination round number for synchronization
+    /// * `paired_with_sequence_number` - Sequence number of the target candidate address
+    /// * `address` - Our address for the hole punching attempt
+    /// * `target_peer_id` - Optional target peer ID for relay coordination
+    pub fn queue_punch_me_now_with_target(
+        &mut self,
+        round: VarInt,
+        paired_with_sequence_number: VarInt,
+        address: SocketAddr,
+        target_peer_id: Option<[u8; 32]>,
+    ) {
         let punch_me_now = frame::PunchMeNow {
             round,
             paired_with_sequence_number,
             address,
-            target_peer_id: None, // Direct peer-to-peer communication
+            target_peer_id,
         };
 
         self.spaces[SpaceId::Data]
             .pending
             .punch_me_now
             .push(punch_me_now);
-        trace!(
-            "Queued PunchMeNow frame: round={}, target={}",
-            round, paired_with_sequence_number
-        );
+
+        if target_peer_id.is_some() {
+            trace!(
+                "Queued PunchMeNow frame for relay: round={}, target_seq={}, target_peer={:?}",
+                round,
+                paired_with_sequence_number,
+                target_peer_id.map(|p| hex::encode(&p[..8]))
+            );
+        } else {
+            trace!(
+                "Queued PunchMeNow frame: round={}, target={}",
+                round, paired_with_sequence_number
+            );
+        }
     }
 
     /// Queue a RemoveAddress frame to remove a candidate
@@ -5354,6 +5385,49 @@ impl Connection {
         debug!(
             "Queued PUNCH_ME_NOW frame: paired_with_seq={}, addr={}, round={}",
             paired_with_sequence_number, address, round
+        );
+        Ok(())
+    }
+
+    /// Send a PUNCH_ME_NOW frame via a coordinator to reach a target peer behind NAT
+    ///
+    /// This method sends a PUNCH_ME_NOW frame to the current connection (acting as coordinator)
+    /// with the target peer's ID set. The coordinator will relay the frame to the target peer.
+    ///
+    /// # Arguments
+    /// * `target_peer_id` - The 32-byte peer ID of the peer we want to reach
+    /// * `our_address` - Our external address where we'll be listening for the punch
+    /// * `round` - Coordination round number for synchronization
+    ///
+    /// # Returns
+    /// * `Ok(())` - Frame queued for transmission
+    /// * `Err(ConnectionError)` - If NAT traversal is not enabled
+    pub fn send_nat_punch_via_relay(
+        &mut self,
+        target_peer_id: [u8; 32],
+        our_address: SocketAddr,
+        round: u32,
+    ) -> Result<(), ConnectionError> {
+        // Verify NAT traversal is enabled
+        let _nat_state = self.nat_traversal.as_ref().ok_or_else(|| {
+            ConnectionError::TransportError(TransportError::PROTOCOL_VIOLATION(
+                "NAT traversal not enabled on this connection",
+            ))
+        })?;
+
+        // Queue the frame with target_peer_id for relay
+        self.queue_punch_me_now_with_target(
+            VarInt::from_u32(round),
+            VarInt::from_u32(0), // Sequence number 0 for initial coordination
+            our_address,
+            Some(target_peer_id),
+        );
+
+        info!(
+            "Queued PUNCH_ME_NOW for relay: target_peer={}, our_addr={}, round={}",
+            hex::encode(&target_peer_id[..8]),
+            our_address,
+            round
         );
         Ok(())
     }

@@ -3886,91 +3886,152 @@ impl NatTraversalEndpoint {
     }
 
     /// Send coordination request to bootstrap node
+    ///
+    /// This sends a PUNCH_ME_NOW frame with `target_peer_id` set to the coordinator,
+    /// asking it to relay the coordination request to the target peer.
     fn send_coordination_request(
         &self,
         peer_id: PeerId,
         coordinator: SocketAddr,
     ) -> Result<(), NatTraversalError> {
-        debug!(
-            "Sending coordination request for peer {:?} to {}",
-            peer_id, coordinator
+        info!(
+            "Sending PUNCH_ME_NOW coordination request for peer {} to coordinator {}",
+            hex::encode(&peer_id.0[..8]),
+            coordinator
         );
 
+        // Get our external address - this is where the target peer should punch to
+        let our_external_address = match self.get_observed_external_address()? {
+            Some(addr) => addr,
+            None => {
+                // Fall back to local bind address if no external address discovered yet
+                if let Some(endpoint) = &self.inner_endpoint {
+                    endpoint.local_addr().map_err(|e| {
+                        NatTraversalError::ProtocolError(format!(
+                            "Failed to get local address: {}",
+                            e
+                        ))
+                    })?
+                } else {
+                    return Err(NatTraversalError::ConfigError(
+                        "No external address and no endpoint".to_string(),
+                    ));
+                }
+            }
+        };
+
+        info!(
+            "Using external address {} for hole punch coordination",
+            our_external_address
+        );
+
+        // Find the connection to the coordinator
         {
-            // Check if we have a connection to the coordinator
-            if let Ok(connections) = self.connections.read() {
-                // Look for coordinator connection
-                for (_peer, conn) in connections.iter() {
-                    if conn.remote_address() == coordinator {
-                        // We have a connection to the coordinator
-                        // In a real implementation, we would send a PUNCH_ME_NOW frame
-                        // For now, we'll mark this as successful
-                        info!("Found existing connection to coordinator {}", coordinator);
-                        return Ok(());
+            let mut connections = self.connections.write().map_err(|_| {
+                NatTraversalError::ProtocolError("Connections lock poisoned".to_string())
+            })?;
+
+            // Look for coordinator connection
+            for (_coord_peer, conn) in connections.iter_mut() {
+                if conn.remote_address() == coordinator {
+                    // Found connection to coordinator - send PUNCH_ME_NOW with target_peer_id
+                    info!(
+                        "Sending PUNCH_ME_NOW via coordinator {} to target peer {}",
+                        coordinator,
+                        hex::encode(&peer_id.0[..8])
+                    );
+
+                    // Use round 1 for initial coordination
+                    match conn.send_nat_punch_via_relay(peer_id.0, our_external_address, 1) {
+                        Ok(()) => {
+                            info!(
+                                "Successfully queued PUNCH_ME_NOW for relay to peer {}",
+                                hex::encode(&peer_id.0[..8])
+                            );
+                            return Ok(());
+                        }
+                        Err(e) => {
+                            warn!("Failed to queue PUNCH_ME_NOW frame: {:?}", e);
+                            return Err(NatTraversalError::CoordinationFailed(format!(
+                                "Failed to send PUNCH_ME_NOW: {:?}",
+                                e
+                            )));
+                        }
                     }
                 }
             }
+        }
 
-            // If no existing connection, try to establish one
-            info!("Establishing connection to coordinator {}", coordinator);
-            if let Some(endpoint) = &self.inner_endpoint {
-                let server_name = format!("bootstrap-{}", coordinator.ip());
-                match endpoint.connect(coordinator, &server_name) {
-                    Ok(connecting) => {
-                        // For sync context, we'll return success and let the connection complete async
-                        info!("Initiated connection to coordinator {}", coordinator);
+        // If no existing connection, try to establish one
+        info!(
+            "No existing connection to coordinator {}, establishing...",
+            coordinator
+        );
+        if let Some(endpoint) = &self.inner_endpoint {
+            let server_name = format!("bootstrap-{}", coordinator.ip());
+            match endpoint.connect(coordinator, &server_name) {
+                Ok(connecting) => {
+                    // For sync context, we spawn async task to complete connection and send
+                    info!("Initiated connection to coordinator {}", coordinator);
 
-                        // Spawn task to handle connection
-                        if let Some(event_tx) = &self.event_tx {
-                            let event_tx = event_tx.clone();
-                            let connections = self.connections.clone();
-                            let peer_id_clone = peer_id;
+                    // Spawn task to handle connection and send coordination
+                    let connections = self.connections.clone();
+                    let target_peer_id = peer_id;
+                    let external_addr = our_external_address;
 
-                            tokio::spawn(async move {
-                                match connecting.await {
-                                    Ok(connection) => {
-                                        info!("Connected to coordinator {}", coordinator);
+                    tokio::spawn(async move {
+                        match connecting.await {
+                            Ok(connection) => {
+                                info!("Connected to coordinator {}", coordinator);
 
-                                        // Generate a peer ID for the bootstrap node
-                                        let bootstrap_peer_id =
-                                            Self::generate_peer_id_from_address(coordinator);
+                                // Generate a peer ID for the bootstrap node
+                                let bootstrap_peer_id =
+                                    Self::generate_peer_id_from_address(coordinator);
 
-                                        // Store the connection
-                                        if let Ok(mut conns) = connections.write() {
-                                            conns.insert(bootstrap_peer_id, connection.clone());
+                                // Store the connection
+                                if let Ok(mut conns) = connections.write() {
+                                    conns.insert(bootstrap_peer_id, connection.clone());
+
+                                    // Now send the PUNCH_ME_NOW via this new connection
+                                    match connection.send_nat_punch_via_relay(
+                                        target_peer_id.0,
+                                        external_addr,
+                                        1,
+                                    ) {
+                                        Ok(()) => {
+                                            info!(
+                                                "Sent PUNCH_ME_NOW to coordinator {} for peer {}",
+                                                coordinator,
+                                                hex::encode(&target_peer_id.0[..8])
+                                            );
                                         }
-
-                                        // Handle the connection
-                                        Self::handle_connection(
-                                            peer_id_clone,
-                                            connection,
-                                            event_tx,
-                                        )
-                                        .await;
-                                    }
-                                    Err(e) => {
-                                        warn!(
-                                            "Failed to connect to coordinator {}: {}",
-                                            coordinator, e
-                                        );
+                                        Err(e) => {
+                                            warn!(
+                                                "Failed to send PUNCH_ME_NOW after connecting: {:?}",
+                                                e
+                                            );
+                                        }
                                     }
                                 }
-                            });
+                            }
+                            Err(e) => {
+                                warn!("Failed to connect to coordinator {}: {}", coordinator, e);
+                            }
                         }
+                    });
 
-                        // Return success to allow traversal to continue
-                        // The actual coordination will happen once connected
-                        Ok(())
-                    }
-                    Err(e) => Err(NatTraversalError::CoordinationFailed(format!(
-                        "Failed to connect to coordinator {coordinator}: {e}"
-                    ))),
+                    // Return success to allow traversal to continue
+                    // The actual coordination will happen once connected
+                    Ok(())
                 }
-            } else {
-                Err(NatTraversalError::ConfigError(
-                    "QUIC endpoint not initialized".to_string(),
-                ))
+                Err(e) => Err(NatTraversalError::CoordinationFailed(format!(
+                    "Failed to connect to coordinator {coordinator}: {e}"
+                ))),
             }
+        } else {
+            Err(NatTraversalError::ConfigError(
+                "QUIC endpoint not initialized".to_string(),
+            ))
         }
     }
 

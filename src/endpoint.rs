@@ -335,6 +335,9 @@ pub struct Endpoint {
     address_discovery_enabled: bool,
     /// Address change callback
     address_change_callback: Option<Box<dyn Fn(Option<SocketAddr>, SocketAddr) + Send + Sync>>,
+    /// Pending relay events to be sent to other connections
+    /// These are generated when a coordinator receives a PUNCH_ME_NOW with target_peer_id
+    pending_relay_events: Vec<(ConnectionHandle, ConnectionEvent)>,
 }
 
 impl Endpoint {
@@ -372,6 +375,7 @@ impl Endpoint {
             relay_stats_collector: RelayStatisticsCollector::new(),
             address_discovery_enabled: true, // Default to enabled
             address_change_callback: None,
+            pending_relay_events: Vec::new(),
         }
     }
 
@@ -459,19 +463,29 @@ impl Endpoint {
         frame: frame::PunchMeNow,
     ) -> bool {
         // Queue the PunchMeNow frame to the connection via a connection event
-        let _event = ConnectionEvent(ConnectionEventInner::QueuePunchMeNow(frame));
-        if let Some(_conn) = self.connections.get_mut(ch.0) {
-            // We cannot call into the connection directly here; return an event to be handled by the
-            // caller's event loop. For immediate relay, we push it into the connection by returning a
-            // ConnectionEvent through the normal endpoint flow.
-            // As Endpoint::handle_event returns Option<ConnectionEvent>, we emulate that path here by
-            // enqueuing the event on the endpoint index for this connection.
-            // Use the same flow as datagram dispatch: construct and return via DatagramEvent::ConnectionEvent
+        let event = ConnectionEvent(ConnectionEventInner::QueuePunchMeNow(frame));
+
+        if self.connections.get(ch.0).is_some() {
+            // Store the event to be processed by the high-level layer
+            // The high-level endpoint will drain these and send to the appropriate connections
+            tracing::info!("Queueing PUNCH_ME_NOW relay event for connection {:?}", ch);
+            self.pending_relay_events.push((ch, event));
+            true
+        } else {
+            tracing::warn!("Cannot relay PUNCH_ME_NOW: connection {:?} not found", ch);
+            false
         }
-        // Fallback: indicate the caller should emit a ConnectionEvent for this handle
-        // Since this method is used internally in endpoint's event loop where we can return a
-        // ConnectionEvent, let the caller path handle it. Here, report success so the queue logic proceeds.
-        true
+    }
+
+    /// Drain pending relay events that need to be sent to connections
+    ///
+    /// This returns events that were queued when a coordinator received a PUNCH_ME_NOW
+    /// with target_peer_id set. The high-level layer should process these by sending
+    /// the events to the appropriate connections.
+    pub fn drain_relay_events(
+        &mut self,
+    ) -> impl Iterator<Item = (ConnectionHandle, ConnectionEvent)> + '_ {
+        self.pending_relay_events.drain(..)
     }
 
     /// Set the peer ID for an existing connection
