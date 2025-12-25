@@ -5423,10 +5423,7 @@ impl Connection {
         match &peer_params.address_discovery {
             Some(peer_config) => {
                 // Peer supports address discovery
-                info!(
-                    "Peer supports address discovery: {:?}",
-                    peer_config
-                );
+                info!("Peer supports address discovery: {:?}", peer_config);
                 if let Some(state) = &mut self.address_discovery_state {
                     if state.enabled {
                         // Both support - no additional negotiation needed with enum-based config
@@ -5448,9 +5445,7 @@ impl Connection {
             }
             _ => {
                 // Peer doesn't support address discovery
-                warn!(
-                    "Peer does NOT support address discovery (transport parameter not present)"
-                );
+                warn!("Peer does NOT support address discovery (transport parameter not present)");
                 if let Some(state) = &mut self.address_discovery_state {
                     state.enabled = false;
                 }
@@ -6413,21 +6408,31 @@ impl AddressDiscoveryState {
 
         // Check path restrictions
         if !self.observe_all_paths && path_id != 0 {
-            tracing::debug!("queue_observed_address_frame: BLOCKED - path {} not allowed (observe_all_paths={})", path_id, self.observe_all_paths);
+            tracing::debug!(
+                "queue_observed_address_frame: BLOCKED - path {} not allowed (observe_all_paths={})",
+                path_id,
+                self.observe_all_paths
+            );
             return None;
         }
 
         // Check if this path has already been notified
         if let Some(info) = self.sent_observations.get(&path_id) {
             if info.notified {
-                tracing::trace!("queue_observed_address_frame: BLOCKED - path {} already notified", path_id);
+                tracing::trace!(
+                    "queue_observed_address_frame: BLOCKED - path {} already notified",
+                    path_id
+                );
                 return None;
             }
         }
 
         // Check rate limiting
         if self.rate_limiter.tokens < 1.0 {
-            tracing::debug!("queue_observed_address_frame: BLOCKED - rate limited (tokens={})", self.rate_limiter.tokens);
+            tracing::debug!(
+                "queue_observed_address_frame: BLOCKED - rate limited (tokens={})",
+                self.rate_limiter.tokens
+            );
             return None;
         }
 

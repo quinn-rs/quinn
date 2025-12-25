@@ -94,7 +94,10 @@ pub async fn start_registry_server(config: RegistryConfig) -> anyhow::Result<()>
     // This allows test nodes to connect via QUIC and receive OBSERVED_ADDRESS frames
     // to discover their external IP:port before registering with the HTTP API
     if let Some(quic_addr) = config.quic_addr {
-        tracing::info!("Starting QUIC endpoint on {} for address discovery...", quic_addr);
+        tracing::info!(
+            "Starting QUIC endpoint on {} for address discovery...",
+            quic_addr
+        );
 
         let quic_config = ant_quic::P2pConfig::builder()
             .bind_addr(quic_addr)

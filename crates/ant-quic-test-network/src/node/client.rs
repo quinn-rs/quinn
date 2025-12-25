@@ -603,9 +603,9 @@ impl TestNode {
     async fn discover_external_address(&self) {
         // Known QUIC peers (saorsa registry nodes running QUIC on port 9000)
         let known_quic_peers: Vec<SocketAddr> = vec![
-            "77.42.75.115:9000".parse().ok(),     // saorsa-1
-            "162.243.167.201:9000".parse().ok(),  // saorsa-2
-            "159.65.221.230:9000".parse().ok(),   // saorsa-3
+            "77.42.75.115:9000".parse().ok(),    // saorsa-1
+            "162.243.167.201:9000".parse().ok(), // saorsa-2
+            "159.65.221.230:9000".parse().ok(),  // saorsa-3
         ]
         .into_iter()
         .flatten()
@@ -623,13 +623,13 @@ impl TestNode {
 
         // Try to connect to each known peer to discover our external address
         for peer_addr in &known_quic_peers {
-            info!("Connecting to known peer {} for address discovery...", peer_addr);
+            info!(
+                "Connecting to known peer {} for address discovery...",
+                peer_addr
+            );
 
-            match tokio::time::timeout(
-                Duration::from_secs(10),
-                self.endpoint.connect(*peer_addr),
-            )
-            .await
+            match tokio::time::timeout(Duration::from_secs(10), self.endpoint.connect(*peer_addr))
+                .await
             {
                 Ok(Ok(_conn)) => {
                     info!(
@@ -651,10 +651,16 @@ impl TestNode {
                         return;
                     }
 
-                    info!("No external address received yet from {}, trying next peer...", peer_addr);
+                    info!(
+                        "No external address received yet from {}, trying next peer...",
+                        peer_addr
+                    );
                 }
                 Ok(Err(e)) => {
-                    warn!("Failed to connect to {} for address discovery: {}", peer_addr, e);
+                    warn!(
+                        "Failed to connect to {} for address discovery: {}",
+                        peer_addr, e
+                    );
                 }
                 Err(_) => {
                     warn!("Connection to {} timed out", peer_addr);
