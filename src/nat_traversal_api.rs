@@ -129,7 +129,8 @@ pub struct NatTraversalEndpoint {
     /// Candidate discovery manager
     discovery_manager: Arc<std::sync::Mutex<CandidateDiscoveryManager>>,
     /// Event callback for coordination (simplified without async channels)
-    event_callback: Option<Box<dyn Fn(NatTraversalEvent) + Send + Sync>>,
+    /// Wrapped in Arc so it can be shared with background tasks
+    event_callback: Option<Arc<dyn Fn(NatTraversalEvent) + Send + Sync>>,
     /// Shutdown flag for async operations
     shutdown: Arc<AtomicBool>,
     /// Channel for internal communication
@@ -857,6 +858,10 @@ impl NatTraversalEndpoint {
         config: NatTraversalConfig,
         event_callback: Option<Box<dyn Fn(NatTraversalEvent) + Send + Sync>>,
     ) -> Result<Self, NatTraversalError> {
+        // Wrap the callback in Arc so it can be shared with background tasks
+        let event_callback: Option<Arc<dyn Fn(NatTraversalEvent) + Send + Sync>> =
+            event_callback.map(|cb| Arc::from(cb) as Arc<dyn Fn(NatTraversalEvent) + Send + Sync>);
+
         // Validate configuration
         config
             .validate()
@@ -947,6 +952,9 @@ impl NatTraversalEndpoint {
             None
         };
 
+        // Clone the callback for background tasks before moving into endpoint
+        let event_callback_for_poll = event_callback.clone();
+
         let endpoint = Self {
             inner_endpoint: Some(inner_endpoint.clone()),
             config: config.clone(),
@@ -1003,6 +1011,7 @@ impl NatTraversalEndpoint {
                 shutdown_clone,
                 event_tx_clone,
                 connections_clone,
+                event_callback_for_poll,
             )
             .await;
         });
@@ -1043,7 +1052,7 @@ impl NatTraversalEndpoint {
     }
 
     /// Get the event callback
-    pub fn get_event_callback(&self) -> Option<&Box<dyn Fn(NatTraversalEvent) + Send + Sync>> {
+    pub fn get_event_callback(&self) -> Option<&Arc<dyn Fn(NatTraversalEvent) + Send + Sync>> {
         self.event_callback.as_ref()
     }
 
@@ -1890,6 +1899,7 @@ impl NatTraversalEndpoint {
         shutdown: Arc<AtomicBool>,
         event_tx: mpsc::UnboundedSender<NatTraversalEvent>,
         connections: Arc<std::sync::RwLock<HashMap<PeerId, InnerConnection>>>,
+        event_callback: Option<Arc<dyn Fn(NatTraversalEvent) + Send + Sync>>,
     ) {
         use tokio::time::{Duration, interval};
 
@@ -1901,18 +1911,38 @@ impl NatTraversalEndpoint {
 
             // 1. Check active connections for observed addresses and feed them to discovery
             if let Ok(conns) = connections.read() {
+                tracing::trace!(
+                    "poll_discovery_task: checking {} connections for observed addresses",
+                    conns.len()
+                );
                 for (peer_id, conn) in conns.iter() {
-                    if let Some(observed_addr) = conn.observed_address() {
+                    let observed = conn.observed_address();
+                    tracing::trace!(
+                        "poll_discovery_task: peer {:?} at {} observed_address={:?}",
+                        peer_id,
+                        conn.remote_address(),
+                        observed
+                    );
+                    if let Some(observed_addr) = observed {
                         // Emit event if this is the first time this peer reported this address
                         if emitted_discovery.insert((*peer_id, observed_addr)) {
-                            debug!(
-                                "New external address discovered: {} from peer {:?}",
+                            info!(
+                                "poll_discovery_task: FOUND external address {} from peer {:?}",
                                 observed_addr, peer_id
                             );
-                            let _ = event_tx.send(NatTraversalEvent::ExternalAddressDiscovered {
+                            let event = NatTraversalEvent::ExternalAddressDiscovered {
                                 reported_by: conn.remote_address(),
                                 address: observed_addr,
-                            });
+                            };
+                            // Send via channel (for poll() to drain)
+                            let _ = event_tx.send(event.clone());
+                            // Also invoke callback directly (critical for P2pEndpoint bridge)
+                            if let Some(ref callback) = event_callback {
+                                info!(
+                                    "poll_discovery_task: invoking event_callback for ExternalAddressDiscovered"
+                                );
+                                callback(event);
+                            }
                         }
 
                         // Feed the observed address to discovery manager
@@ -2619,10 +2649,17 @@ impl NatTraversalEndpoint {
         peer_id: PeerId,
         connection: InnerConnection,
     ) -> Result<(), NatTraversalError> {
+        let remote_addr = connection.remote_address();
+        let observed = connection.observed_address();
+        info!(
+            "add_connection: peer {:?} at {} observed_address={:?}",
+            peer_id, remote_addr, observed
+        );
         let mut connections = self.connections.write().map_err(|_| {
             NatTraversalError::ProtocolError("Connections lock poisoned".to_string())
         })?;
         connections.insert(peer_id, connection);
+        info!("add_connection: now have {} connections", connections.len());
         Ok(())
     }
 
