@@ -578,14 +578,21 @@ impl TestNode {
                     }
                     P2pEvent::PeerDisconnected { peer_id, reason } => {
                         let peer_hex = hex::encode(peer_id.0);
-                        debug!("P2P event: peer disconnected {}: {:?}", &peer_hex[..8.min(peer_hex.len())], reason);
+                        debug!(
+                            "P2P event: peer disconnected {}: {:?}",
+                            &peer_hex[..8.min(peer_hex.len())],
+                            reason
+                        );
 
                         // Record disconnection time for bidirectional testing
                         // This allows us to test fresh hole-punches after NAT mappings expire
                         {
                             let mut times = disconnection_times_for_events.write().await;
                             times.insert(peer_hex.clone(), Instant::now());
-                            debug!("Recorded disconnection time for peer {}", &peer_hex[..8.min(peer_hex.len())]);
+                            debug!(
+                                "Recorded disconnection time for peer {}",
+                                &peer_hex[..8.min(peer_hex.len())]
+                            );
                         }
 
                         // Notify TUI of peer disconnect
