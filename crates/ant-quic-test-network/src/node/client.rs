@@ -448,7 +448,10 @@ impl TestNode {
         .flatten()
         .collect();
 
-        info!("Configured {} known peers for NAT traversal coordination", known_peers.len());
+        info!(
+            "Configured {} known peers for NAT traversal coordination",
+            known_peers.len()
+        );
 
         let p2p_config = P2pConfig::builder()
             .bind_addr(config.bind_addr)
