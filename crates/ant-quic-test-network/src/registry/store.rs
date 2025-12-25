@@ -309,6 +309,8 @@ impl PeerStore {
                             && !v6.is_unspecified()
                             // Filter out link-local IPv6 (fe80::/10)
                             && (v6.segments()[0] & 0xffc0) != 0xfe80
+                            // Filter out Unique Local Addresses (fc00::/7 = fd00::/8)
+                            && (v6.segments()[0] & 0xfe00) != 0xfc00
                     }
                 }
             })
