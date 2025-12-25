@@ -501,8 +501,7 @@ impl TestNode {
 
         // Create external addresses storage before spawning event handler
         // so we can share it with the handler
-        let external_addresses: Arc<RwLock<Vec<SocketAddr>>> =
-            Arc::new(RwLock::new(Vec::new()));
+        let external_addresses: Arc<RwLock<Vec<SocketAddr>>> = Arc::new(RwLock::new(Vec::new()));
 
         // Create hole-punching tracker before spawning event handler
         let hole_punched_peers: Arc<RwLock<HashMap<String, bool>>> =
@@ -1311,8 +1310,8 @@ async fn real_connect(endpoint: &P2pEndpoint, peer: &PeerInfo) -> Result<Connect
     );
 
     // Convert hex peer_id to QuicPeerId
-    let peer_id_bytes = hex::decode(&peer.peer_id)
-        .map_err(|e| format!("Invalid peer ID hex: {}", e))?;
+    let peer_id_bytes =
+        hex::decode(&peer.peer_id).map_err(|e| format!("Invalid peer ID hex: {}", e))?;
 
     if peer_id_bytes.len() < 32 {
         return Err("Peer ID too short for NAT traversal".to_string());
@@ -1339,10 +1338,7 @@ async fn real_connect(endpoint: &P2pEndpoint, peer: &PeerInfo) -> Result<Connect
             Ok(ConnectionMethod::HolePunched)
         }
         Ok(Err(e)) => {
-            warn!(
-                "NAT traversal to {} failed: {}",
-                peer_id_short, e
-            );
+            warn!("NAT traversal to {} failed: {}", peer_id_short, e);
             Err(format!("All connection methods failed: {}", e))
         }
         Err(_) => {
