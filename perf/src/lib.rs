@@ -200,7 +200,6 @@ pub fn parse_byte_size(s: &str) -> Result<u64, ParseIntError> {
 #[derive(Clone, Copy, ValueEnum)]
 pub enum CongestionAlgorithm {
     Cubic,
-    Bbr,
     Bbr3,
     NewReno,
 }
@@ -209,7 +208,6 @@ impl CongestionAlgorithm {
     pub fn build(self) -> Arc<dyn ControllerFactory + Send + Sync + 'static> {
         match self {
             CongestionAlgorithm::Cubic => Arc::new(congestion::CubicConfig::default()),
-            CongestionAlgorithm::Bbr => Arc::new(congestion::BbrConfig::default()),
             CongestionAlgorithm::Bbr3 => Arc::new(congestion::Bbr3Config::default()),
             CongestionAlgorithm::NewReno => Arc::new(congestion::NewRenoConfig::default()),
         }
