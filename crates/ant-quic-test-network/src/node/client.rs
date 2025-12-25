@@ -436,8 +436,23 @@ impl TestNode {
             ..Default::default()
         };
 
+        // Known peers for NAT traversal coordination.
+        // These are publicly reachable nodes that can coordinate hole-punching.
+        // When NAT traversal is needed, we use these as coordinators (not the unreachable target peer).
+        let known_peers: Vec<SocketAddr> = vec![
+            "77.42.75.115:9000".parse().ok(),    // saorsa-1
+            "162.243.167.201:9000".parse().ok(), // saorsa-2 (DO node 1)
+            "159.65.221.230:9000".parse().ok(),  // saorsa-3 (DO node 2)
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+
+        info!("Configured {} known peers for NAT traversal coordination", known_peers.len());
+
         let p2p_config = P2pConfig::builder()
             .bind_addr(config.bind_addr)
+            .known_peers(known_peers)
             .nat(nat_config)
             .build()
             .map_err(|e| anyhow::anyhow!("Failed to build P2P config: {}", e))?;
@@ -1410,12 +1425,13 @@ async fn real_connect(endpoint: &P2pEndpoint, peer: &PeerInfo) -> Result<Connect
     peer_id_array.copy_from_slice(&peer_id_bytes[..32]);
     let quic_peer_id = QuicPeerId(peer_id_array);
 
-    // Use first address as potential coordinator hint (P2pEndpoint will use known_peers if None)
-    let coordinator = peer.addresses.first().copied();
+    // Don't use the peer's address as coordinator - it's likely unreachable (behind NAT).
+    // Passing None lets P2pEndpoint use its known_peers (public bootstrap nodes) as coordinators.
+    // The coordinator must be a publicly reachable node that can relay coordination requests.
 
     match tokio::time::timeout(
         Duration::from_secs(30), // NAT traversal can take longer
-        endpoint.connect_to_peer(quic_peer_id, coordinator),
+        endpoint.connect_to_peer(quic_peer_id, None),
     )
     .await
     {
