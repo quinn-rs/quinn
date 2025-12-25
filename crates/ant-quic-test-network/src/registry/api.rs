@@ -62,6 +62,9 @@ fn extract_client_ip(
 pub struct RegistryConfig {
     /// HTTP server bind address
     pub bind_addr: SocketAddr,
+    /// QUIC server bind address (for address discovery via OBSERVED_ADDRESS frames)
+    /// If None, no QUIC endpoint is started (HTTP-only mode)
+    pub quic_addr: Option<SocketAddr>,
     /// Registration TTL in seconds
     pub ttl_secs: u64,
     /// Cleanup interval for expired entries
@@ -76,6 +79,7 @@ impl Default for RegistryConfig {
     fn default() -> Self {
         Self {
             bind_addr: "0.0.0.0:8080".parse().expect("valid default address"),
+            quic_addr: Some("0.0.0.0:9000".parse().expect("valid default QUIC address")),
             ttl_secs: 120,
             cleanup_interval_secs: 30,
             data_dir: PathBuf::from("./data"),
@@ -86,6 +90,53 @@ impl Default for RegistryConfig {
 
 /// Start the registry HTTP server.
 pub async fn start_registry_server(config: RegistryConfig) -> anyhow::Result<()> {
+    // Start QUIC endpoint for address discovery (if configured)
+    // This allows test nodes to connect via QUIC and receive OBSERVED_ADDRESS frames
+    // to discover their external IP:port before registering with the HTTP API
+    if let Some(quic_addr) = config.quic_addr {
+        tracing::info!("Starting QUIC endpoint on {} for address discovery...", quic_addr);
+
+        let quic_config = ant_quic::P2pConfig::builder()
+            .bind_addr(quic_addr)
+            .build()
+            .map_err(|e| anyhow::anyhow!("Failed to build QUIC config: {}", e))?;
+
+        let endpoint = ant_quic::P2pEndpoint::new(quic_config)
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to create QUIC endpoint: {}", e))?;
+
+        let peer_id = hex::encode(endpoint.peer_id().0);
+        tracing::info!(
+            "QUIC endpoint ready: PeerId={}... (listening on {})",
+            &peer_id[..16.min(peer_id.len())],
+            quic_addr
+        );
+
+        // Spawn a task to keep the endpoint alive and handle incoming connections
+        tokio::spawn(async move {
+            // Accept connections and automatically send OBSERVED_ADDRESS frames
+            // The P2pEndpoint handles this internally via the address discovery extension
+            loop {
+                match endpoint.accept().await {
+                    Some(conn) => {
+                        // Get peer ID from the accepted connection
+                        let peer_id_short = format!("{}...", &hex::encode(conn.peer_id.0)[..8]);
+                        tracing::debug!(
+                            "QUIC connection accepted from {} - OBSERVED_ADDRESS sent",
+                            peer_id_short
+                        );
+                        // Connection automatically sends OBSERVED_ADDRESS frame
+                        // The endpoint handles this internally, we just need to keep accepting
+                    }
+                    None => {
+                        tracing::warn!("QUIC endpoint accept returned None, stopping");
+                        break;
+                    }
+                }
+            }
+        });
+    }
+
     let store = PeerStore::with_ttl(config.ttl_secs);
 
     // Initialize persistent storage

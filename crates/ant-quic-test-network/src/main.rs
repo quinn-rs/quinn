@@ -146,6 +146,8 @@ async fn main() -> anyhow::Result<()> {
 
         let config = RegistryConfig {
             bind_addr: SocketAddr::from(([0, 0, 0, 0], args.port)),
+            // QUIC endpoint on port 9000 for native address discovery via OBSERVED_ADDRESS frames
+            quic_addr: Some(SocketAddr::from(([0, 0, 0, 0], 9000))),
             ttl_secs: 120,
             cleanup_interval_secs: 30,
             data_dir: std::path::PathBuf::from("./data"),
