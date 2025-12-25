@@ -962,6 +962,7 @@ impl TestNode {
     ///    (this ensures NAT mappings have expired and we're testing FRESH hole-punches)
     /// 3. Each node independently tests its own outbound connectivity
     /// 4. When A tests A→B and B tests B→A, registry can correlate for true bidirectional
+    #[allow(clippy::excessive_nesting)]
     fn spawn_connect_loop(&self) -> tokio::task::JoinHandle<()> {
         let registry = RegistryClient::new(&self.config.registry_url);
         let shutdown = Arc::clone(&self.shutdown);
@@ -1103,6 +1104,9 @@ impl TestNode {
                             stats.attempts += 1;
                         }
 
+                        // Capture endpoint stats BEFORE connection to detect NAT traversal
+                        let stats_before = endpoint.stats().await;
+
                         // Make REAL QUIC connection using P2pEndpoint
                         let connection_result = real_connect(&endpoint, &candidate).await;
 
@@ -1110,10 +1114,28 @@ impl TestNode {
                             Ok(method) => {
                                 success.fetch_add(1, Ordering::Relaxed);
 
-                                // Determine final connection method
+                                // Capture endpoint stats AFTER connection
+                                let stats_after = endpoint.stats().await;
+
+                                // Determine final connection method by checking:
+                                // 1. If NAT traversal protocol was triggered (endpoint stats)
+                                // 2. If we saw a Punching phase event (hole_punched_peers tracker)
+                                // 3. What the real_connect function returned
                                 let final_method = {
+                                    // Check if endpoint's nat_traversal_successes increased
+                                    let nat_traversal_used = stats_after.nat_traversal_successes
+                                        > stats_before.nat_traversal_successes;
+
+                                    // Check if we saw a Punching phase event
                                     let tracker = hole_punched_peers.read().await;
-                                    if tracker.get(&candidate.peer_id).copied().unwrap_or(false) {
+                                    let saw_punching =
+                                        tracker.get(&candidate.peer_id).copied().unwrap_or(false);
+
+                                    if nat_traversal_used || saw_punching {
+                                        debug!(
+                                            "Connection to {} used NAT traversal (stats: {}, punching: {})",
+                                            peer_id_short, nat_traversal_used, saw_punching
+                                        );
                                         ConnectionMethod::HolePunched
                                     } else {
                                         method
