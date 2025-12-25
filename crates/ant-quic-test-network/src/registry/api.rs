@@ -737,6 +737,11 @@ impl RegistryClient {
         }
     }
 
+    /// Get the base URL of the registry.
+    pub fn base_url(&self) -> &str {
+        &self.base_url
+    }
+
     /// Register this node with the registry.
     pub async fn register(
         &self,

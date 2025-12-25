@@ -392,6 +392,10 @@ pub struct TestNode {
     /// Track peers that used hole-punching (saw Punching phase before Connected).
     /// Key is hex-encoded peer ID, value is true if hole-punching was used.
     hole_punched_peers: Arc<RwLock<HashMap<String, bool>>>,
+    /// Track when we last disconnected from each peer.
+    /// Used for bidirectional connectivity testing - we only attempt fresh connections
+    /// to peers we've been disconnected from for >30 seconds (to ensure NAT mappings expired).
+    disconnection_times: Arc<RwLock<HashMap<String, Instant>>>,
 }
 
 impl TestNode {
@@ -525,11 +529,17 @@ impl TestNode {
         let hole_punched_peers: Arc<RwLock<HashMap<String, bool>>> =
             Arc::new(RwLock::new(HashMap::new()));
 
+        // Create disconnection times tracker for bidirectional testing
+        // We only attempt fresh connections to peers we've been disconnected from for >30s
+        let disconnection_times: Arc<RwLock<HashMap<String, Instant>>> =
+            Arc::new(RwLock::new(HashMap::new()));
+
         // Spawn event handler for P2P events to update TUI
         let endpoint_for_events = endpoint.clone();
         let event_tx_for_events = event_tx.clone();
         let hole_punched_for_events = Arc::clone(&hole_punched_peers);
         let external_addresses_for_events = Arc::clone(&external_addresses);
+        let disconnection_times_for_events = Arc::clone(&disconnection_times);
         tokio::spawn(async move {
             let mut events = endpoint_for_events.subscribe();
             while let Ok(event) = events.recv().await {
@@ -567,10 +577,20 @@ impl TestNode {
                         debug!("P2P event: peer connected {:?} at {}", peer_id, addr);
                     }
                     P2pEvent::PeerDisconnected { peer_id, reason } => {
-                        debug!("P2P event: peer disconnected {:?}: {:?}", peer_id, reason);
+                        let peer_hex = hex::encode(peer_id.0);
+                        debug!("P2P event: peer disconnected {}: {:?}", &peer_hex[..8.min(peer_hex.len())], reason);
+
+                        // Record disconnection time for bidirectional testing
+                        // This allows us to test fresh hole-punches after NAT mappings expire
+                        {
+                            let mut times = disconnection_times_for_events.write().await;
+                            times.insert(peer_hex.clone(), Instant::now());
+                            debug!("Recorded disconnection time for peer {}", &peer_hex[..8.min(peer_hex.len())]);
+                        }
+
                         // Notify TUI of peer disconnect
                         let _ = event_tx_for_events
-                            .send(TuiEvent::RemovePeer(hex::encode(peer_id.0)))
+                            .send(TuiEvent::RemovePeer(peer_hex))
                             .await;
                     }
                     _ => {}
@@ -600,6 +620,7 @@ impl TestNode {
             has_ipv6: has_global_ipv6(),
             actual_port,
             hole_punched_peers,
+            disconnection_times,
         })
     }
 
@@ -927,11 +948,18 @@ impl TestNode {
     }
 
     /// Spawn the peer connection background task.
+    ///
+    /// Bidirectional connectivity testing strategy:
+    /// 1. Get list of LIVE peers from registry (is_active = recent heartbeat)
+    /// 2. Only attempt connections to peers we've been disconnected from for >30 seconds
+    ///    (this ensures NAT mappings have expired and we're testing FRESH hole-punches)
+    /// 3. Each node independently tests its own outbound connectivity
+    /// 4. When A tests A→B and B tests B→A, registry can correlate for true bidirectional
     fn spawn_connect_loop(&self) -> tokio::task::JoinHandle<()> {
         let registry = RegistryClient::new(&self.config.registry_url);
         let shutdown = Arc::clone(&self.shutdown);
         let connected_peers = Arc::clone(&self.connected_peers);
-        let max_peers = self.config.max_peers;
+        let disconnection_times = Arc::clone(&self.disconnection_times);
         let interval = self.config.connect_interval;
         let event_tx = self.event_tx.clone();
         let our_peer_id = self.peer_id.clone();
@@ -948,22 +976,18 @@ impl TestNode {
         // Clone hole-punching tracker for connection method detection
         let hole_punched_peers = Arc::clone(&self.hole_punched_peers);
 
+        // Minimum time since disconnection before attempting fresh connection (30 seconds)
+        // This ensures NAT mappings have expired and we're testing real hole-punching
+        const RECONNECT_COOLDOWN_SECS: u64 = 30;
+
         tokio::spawn(async move {
             let mut ticker = tokio::time::interval(interval);
 
             while !shutdown.load(Ordering::SeqCst) {
                 ticker.tick().await;
+                let now = Instant::now();
 
-                let current_count = connected_peers.read().await.len();
-                if current_count >= max_peers {
-                    debug!(
-                        "At max peers ({}/{}), skipping connection attempt",
-                        current_count, max_peers
-                    );
-                    continue;
-                }
-
-                // Fetch peer list from registry
+                // Fetch peer list from registry (only LIVE peers with recent heartbeat)
                 let peers = match registry.get_peers().await {
                     Ok(p) => p,
                     Err(e) => {
@@ -972,141 +996,211 @@ impl TestNode {
                     }
                 };
 
-                // Filter out ourselves, already-connected peers, and unreachable peers
+                // Update TUI with total registered count
+                let _ = event_tx
+                    .send(TuiEvent::UpdateRegisteredCount(peers.len()))
+                    .await;
+
+                // Get current connection state and disconnection times
                 let connected = connected_peers.read().await;
-                let candidates: Vec<&PeerInfo> = peers
+                let disc_times = disconnection_times.read().await;
+
+                // Filter candidates:
+                // 1. Not ourselves
+                // 2. Not currently connected
+                // 3. Is active (recent heartbeat = peer is online)
+                // 4. IP version compatible
+                // 5. Either never connected OR disconnected for >30 seconds (fresh hole-punch test)
+                let candidates: Vec<PeerInfo> = peers
                     .iter()
                     .filter(|p| p.peer_id != our_peer_id)
                     .filter(|p| !connected.contains_key(&p.peer_id))
-                    .filter(|p| p.is_active)
-                    // Filter out peers we can't reach due to IP version incompatibility
-                    // This prevents false "connection failed" statistics
+                    .filter(|p| p.is_active) // Only test against LIVE peers
                     .filter(|p| can_reach_peer(p, our_has_ipv6))
+                    .filter(|p| {
+                        // Check if we've been disconnected long enough for NAT to forget
+                        match disc_times.get(&p.peer_id) {
+                            Some(disconnected_at) => {
+                                let elapsed = now.duration_since(*disconnected_at);
+                                if elapsed.as_secs() >= RECONNECT_COOLDOWN_SECS {
+                                    debug!(
+                                        "Peer {} eligible: disconnected {}s ago (>{}s cooldown)",
+                                        &p.peer_id[..8.min(p.peer_id.len())],
+                                        elapsed.as_secs(),
+                                        RECONNECT_COOLDOWN_SECS
+                                    );
+                                    true
+                                } else {
+                                    debug!(
+                                        "Peer {} skipped: only {}s since disconnect (<{}s cooldown)",
+                                        &p.peer_id[..8.min(p.peer_id.len())],
+                                        elapsed.as_secs(),
+                                        RECONNECT_COOLDOWN_SECS
+                                    );
+                                    false
+                                }
+                            }
+                            None => {
+                                // Never connected before - eligible for first connection
+                                debug!(
+                                    "Peer {} eligible: never connected before",
+                                    &p.peer_id[..8.min(p.peer_id.len())]
+                                );
+                                true
+                            }
+                        }
+                    })
+                    .cloned()
                     .collect();
+
                 drop(connected);
+                drop(disc_times);
 
                 if candidates.is_empty() {
-                    debug!("No candidate peers available");
+                    debug!("No eligible peers for fresh hole-punch testing");
                     continue;
                 }
 
-                // Pick a random peer
-                use rand::seq::SliceRandom;
-                let candidate = candidates
-                    .choose(&mut rand::thread_rng())
-                    .expect("candidates not empty");
-
                 info!(
-                    "Attempting REAL QUIC connection to peer {} ({:?})",
-                    &candidate.peer_id[..8.min(candidate.peer_id.len())],
-                    candidate.country_code
+                    "Testing connectivity to {} eligible peers (all disconnected >{}s)",
+                    candidates.len(),
+                    RECONNECT_COOLDOWN_SECS
                 );
 
-                // Update NAT stats
-                {
-                    let mut stats = nat_stats.write().await;
-                    stats.attempts += 1;
-                }
+                // Connect to ALL eligible peers concurrently (max 5 at a time)
+                let mut connect_futures = Vec::new();
+                for candidate in candidates.into_iter().take(5) {
+                    let endpoint = Arc::clone(&endpoint);
+                    let nat_stats = Arc::clone(&nat_stats);
+                    let success = Arc::clone(&success);
+                    let failed = Arc::clone(&failed);
+                    let direct = Arc::clone(&direct);
+                    let holepunch = Arc::clone(&holepunch);
+                    let relay = Arc::clone(&relay);
+                    let connected_peers = Arc::clone(&connected_peers);
+                    let hole_punched_peers = Arc::clone(&hole_punched_peers);
+                    let event_tx = event_tx.clone();
+                    let registry = RegistryClient::new(registry.base_url());
+                    let our_peer_id = our_peer_id.clone();
 
-                // Make REAL QUIC connection using P2pEndpoint
-                let connection_result = real_connect(&endpoint, candidate).await;
-
-                match connection_result {
-                    Ok(method) => {
-                        success.fetch_add(1, Ordering::Relaxed);
-
-                        // Use the method returned by real_connect (which now correctly
-                        // distinguishes between Direct and HolePunched connections).
-                        // Also check hole_punched_peers tracker as secondary signal.
-                        let final_method = {
-                            let tracker = hole_punched_peers.read().await;
-                            if tracker.get(&candidate.peer_id).copied().unwrap_or(false) {
-                                // NAT traversal phase was observed - definitely hole-punched
-                                ConnectionMethod::HolePunched
-                            } else {
-                                // Use the method from real_connect
-                                method
-                            }
-                        };
-
-                        match final_method {
-                            ConnectionMethod::Direct => {
-                                direct.fetch_add(1, Ordering::Relaxed);
-                                let mut stats = nat_stats.write().await;
-                                stats.direct_success += 1;
-                            }
-                            ConnectionMethod::HolePunched => {
-                                holepunch.fetch_add(1, Ordering::Relaxed);
-                                let mut stats = nat_stats.write().await;
-                                stats.hole_punch_success += 1;
-                            }
-                            ConnectionMethod::Relayed => {
-                                relay.fetch_add(1, Ordering::Relaxed);
-                                let mut stats = nat_stats.write().await;
-                                stats.relay_success += 1;
-                            }
-                        }
-
-                        let now = Instant::now();
-                        let tracked = TrackedPeer {
-                            info: (*candidate).clone(),
-                            method: final_method,
-                            connected_at: now,
-                            last_activity: now,
-                            stats: PeerStats::default(),
-                            sequence: AtomicU64::new(0),
-                            consecutive_failures: 0,
-                        };
-
-                        // Create TUI peer from tracked peer
-                        let peer_for_tui = tracked.to_connected_peer();
-
-                        connected_peers
-                            .write()
-                            .await
-                            .insert(candidate.peer_id.clone(), tracked);
-
+                    let fut = async move {
+                        let peer_id_short = &candidate.peer_id[..8.min(candidate.peer_id.len())];
                         info!(
-                            "Connected to {} via {:?}",
-                            &candidate.peer_id[..8.min(candidate.peer_id.len())],
-                            final_method
+                            "Testing FRESH hole-punch to peer {} ({:?})",
+                            peer_id_short, candidate.country_code
                         );
 
-                        // Notify TUI
-                        let _ = event_tx.send(TuiEvent::PeerConnected(peer_for_tui)).await;
-
-                        // Report connection to registry
-                        let report = ConnectionReport {
-                            from_peer: our_peer_id.clone(),
-                            to_peer: candidate.peer_id.clone(),
-                            method: final_method,
-                            is_ipv6: candidate
-                                .addresses
-                                .first()
-                                .map(|a| a.is_ipv6())
-                                .unwrap_or(false),
-                            rtt_ms: None, // Will be updated later with test packets
-                        };
-                        if let Err(e) = registry.report_connection(&report).await {
-                            warn!("Failed to report connection: {}", e);
-                        }
-                    }
-                    Err(e) => {
-                        failed.fetch_add(1, Ordering::Relaxed);
+                        // Update NAT stats
                         {
                             let mut stats = nat_stats.write().await;
-                            stats.failures += 1;
+                            stats.attempts += 1;
                         }
-                        warn!(
-                            "Failed to connect to {}: {}",
-                            &candidate.peer_id[..8.min(candidate.peer_id.len())],
-                            e
-                        );
 
-                        // Notify TUI of connection failure
-                        let _ = event_tx.send(TuiEvent::ConnectionFailed).await;
-                    }
+                        // Make REAL QUIC connection using P2pEndpoint
+                        let connection_result = real_connect(&endpoint, &candidate).await;
+
+                        match connection_result {
+                            Ok(method) => {
+                                success.fetch_add(1, Ordering::Relaxed);
+
+                                // Determine final connection method
+                                let final_method = {
+                                    let tracker = hole_punched_peers.read().await;
+                                    if tracker.get(&candidate.peer_id).copied().unwrap_or(false) {
+                                        ConnectionMethod::HolePunched
+                                    } else {
+                                        method
+                                    }
+                                };
+
+                                match final_method {
+                                    ConnectionMethod::Direct => {
+                                        direct.fetch_add(1, Ordering::Relaxed);
+                                        let mut stats = nat_stats.write().await;
+                                        stats.direct_success += 1;
+                                    }
+                                    ConnectionMethod::HolePunched => {
+                                        holepunch.fetch_add(1, Ordering::Relaxed);
+                                        let mut stats = nat_stats.write().await;
+                                        stats.hole_punch_success += 1;
+                                    }
+                                    ConnectionMethod::Relayed => {
+                                        relay.fetch_add(1, Ordering::Relaxed);
+                                        let mut stats = nat_stats.write().await;
+                                        stats.relay_success += 1;
+                                    }
+                                }
+
+                                let now = Instant::now();
+                                let tracked = TrackedPeer {
+                                    info: candidate.clone(),
+                                    method: final_method,
+                                    connected_at: now,
+                                    last_activity: now,
+                                    stats: PeerStats::default(),
+                                    sequence: AtomicU64::new(0),
+                                    consecutive_failures: 0,
+                                };
+
+                                let peer_for_tui = tracked.to_connected_peer();
+
+                                connected_peers
+                                    .write()
+                                    .await
+                                    .insert(candidate.peer_id.clone(), tracked);
+
+                                info!(
+                                    "FRESH hole-punch SUCCESS to {} via {:?}",
+                                    peer_id_short, final_method
+                                );
+
+                                let _ = event_tx.send(TuiEvent::PeerConnected(peer_for_tui)).await;
+
+                                // Report successful connection to registry
+                                let report = ConnectionReport {
+                                    from_peer: our_peer_id.clone(),
+                                    to_peer: candidate.peer_id.clone(),
+                                    method: final_method,
+                                    is_ipv6: candidate
+                                        .addresses
+                                        .first()
+                                        .map(|a| a.is_ipv6())
+                                        .unwrap_or(false),
+                                    rtt_ms: None,
+                                };
+                                if let Err(e) = registry.report_connection(&report).await {
+                                    warn!("Failed to report connection: {}", e);
+                                }
+                            }
+                            Err(e) => {
+                                // Only count as failure if peer is still LIVE
+                                // (they might have gone offline, not a hole-punch failure)
+                                if candidate.is_active {
+                                    failed.fetch_add(1, Ordering::Relaxed);
+                                    {
+                                        let mut stats = nat_stats.write().await;
+                                        stats.failures += 1;
+                                    }
+                                    warn!(
+                                        "FRESH hole-punch FAILED to {} (peer is LIVE): {}",
+                                        peer_id_short, e
+                                    );
+                                    let _ = event_tx.send(TuiEvent::ConnectionFailed).await;
+                                } else {
+                                    debug!(
+                                        "Connection to {} failed but peer went offline: {}",
+                                        peer_id_short, e
+                                    );
+                                }
+                            }
+                        }
+                    };
+
+                    connect_futures.push(fut);
                 }
+
+                // Execute all connections concurrently
+                futures_util::future::join_all(connect_futures).await;
             }
         })
     }
