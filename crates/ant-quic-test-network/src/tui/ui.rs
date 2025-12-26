@@ -236,32 +236,41 @@ fn draw_stats(frame: &mut Frame, app: &App, area: Rect) {
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::Magenta));
 
-    let success_rate = app.stats.success_rate();
-    let success_color = if success_rate >= 90.0 {
+    // Current reachability: connected peers / (total registered - 1)
+    // This is more meaningful than lifetime success rate which accumulates retries
+    let connected_peers = app.connected_peers.len();
+    let total_nodes = app.stats.total_registered_nodes.max(1);
+    let reachability = if total_nodes > 1 {
+        (connected_peers as f64 / (total_nodes - 1) as f64) * 100.0
+    } else {
+        0.0
+    };
+
+    let success_color = if reachability >= 80.0 {
         Color::Green
-    } else if success_rate >= 70.0 {
+    } else if reachability >= 50.0 {
         Color::Yellow
     } else {
         Color::Red
     };
 
     let line1 = Line::from(vec![
-        Span::raw("  Connections: "),
+        Span::raw("  Connected: "),
         Span::styled(
-            format!("{} success", app.stats.connection_successes),
+            format!("{}", connected_peers),
             Style::default().fg(Color::Green),
         ),
         Span::raw(" / "),
         Span::styled(
-            format!("{} failed", app.stats.connection_failures),
-            Style::default().fg(Color::Red),
+            format!("{}", total_nodes.saturating_sub(1)),
+            Style::default().fg(Color::Cyan),
         ),
-        Span::raw(" ("),
+        Span::raw(" peers ("),
         Span::styled(
-            format!("{:.1}%", success_rate),
+            format!("{:.0}%", reachability),
             Style::default().fg(success_color),
         ),
-        Span::raw(")  Inbound: "),
+        Span::raw(" reach)  Inbound: "),
         Span::styled(
             format!("{}", app.stats.inbound_connections),
             Style::default()
