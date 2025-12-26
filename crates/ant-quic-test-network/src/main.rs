@@ -169,7 +169,8 @@ async fn main() -> anyhow::Result<()> {
 
         // Create test node configuration
         // Use specified bind port or 0 for random port (allows multiple local instances)
-        let bind_addr: SocketAddr = format!("0.0.0.0:{}", args.bind_port).parse()?;
+        // Bind to [::] for dual-stack (IPv4 + IPv6) support
+        let bind_addr: SocketAddr = format!("[::]:{}", args.bind_port).parse()?;
         let node_config = TestNodeConfig {
             registry_url: args.registry_url.clone(),
             max_peers: args.max_peers,
