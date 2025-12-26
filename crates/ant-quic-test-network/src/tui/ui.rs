@@ -21,8 +21,9 @@ pub fn draw(frame: &mut Frame, app: &App) {
         .constraints([
             Constraint::Length(3), // Header
             Constraint::Length(6), // Your Node
-            Constraint::Min(8),    // Connected Peers
+            Constraint::Min(6),    // Connected Peers
             Constraint::Length(5), // Network Stats
+            Constraint::Length(3), // Messages (errors/info)
             Constraint::Length(4), // Footer (2 lines)
         ])
         .split(frame.area());
@@ -31,7 +32,8 @@ pub fn draw(frame: &mut Frame, app: &App) {
     draw_node_info(frame, app, chunks[1]);
     draw_peers(frame, app, chunks[2]);
     draw_stats(frame, app, chunks[3]);
-    draw_footer(frame, app, chunks[4]);
+    draw_messages(frame, app, chunks[4]);
+    draw_footer(frame, app, chunks[5]);
 }
 
 /// Draw the header with title and version.
@@ -278,15 +280,15 @@ fn draw_stats(frame: &mut Frame, app: &App, area: Rect) {
             format!("{:.1}%", success_rate),
             Style::default().fg(success_color),
         ),
-        Span::raw(")    Direct: "),
+        Span::raw(")  Inbound: "),
         Span::styled(
-            format!("{}", app.stats.direct_connections),
-            Style::default().fg(Color::Green),
+            format!("{}", app.stats.inbound_connections),
+            Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
         ),
-        Span::raw("  Punched: "),
+        Span::raw("  Outbound: "),
         Span::styled(
-            format!("{}", app.stats.hole_punched_connections),
-            Style::default().fg(Color::Yellow),
+            format!("{}", app.stats.outbound_connections),
+            Style::default().fg(Color::Cyan),
         ),
     ]);
 
@@ -323,6 +325,30 @@ fn draw_stats(frame: &mut Frame, app: &App, area: Rect) {
 
     let text = vec![line1, line2, line3];
     let paragraph = Paragraph::new(text).block(block);
+    frame.render_widget(paragraph, area);
+}
+
+/// Draw messages panel (errors and info).
+fn draw_messages(frame: &mut Frame, app: &App, area: Rect) {
+    let (border_color, message) = if let Some(ref err) = app.error_message {
+        (Color::Red, format!("❌ ERROR: {}", err))
+    } else if let Some(ref info) = app.info_message {
+        (Color::Green, format!("ℹ️  {}", info))
+    } else {
+        (Color::DarkGray, "No messages".to_string())
+    };
+
+    let block = Block::default()
+        .title(" MESSAGES ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(border_color));
+
+    let paragraph = Paragraph::new(Line::from(vec![
+        Span::raw("  "),
+        Span::styled(message, Style::default().fg(border_color)),
+    ]))
+    .block(block);
+
     frame.render_widget(paragraph, area);
 }
 

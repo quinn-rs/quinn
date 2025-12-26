@@ -101,6 +101,10 @@ pub enum TuiEvent {
     ConnectionFailed,
     /// Connection attempt started
     ConnectionAttempted,
+    /// Inbound connection received (they connected to us - proves NAT traversal works!)
+    InboundConnection,
+    /// Outbound connection established (we connected to them)
+    OutboundConnection,
 }
 
 /// Configuration for the TUI.
@@ -140,6 +144,12 @@ pub async fn run_tui(mut app: App, mut event_rx: mpsc::Receiver<TuiEvent>) -> an
 
     let tick_rate = Duration::from_millis(250);
     let mut last_tick = std::time::Instant::now();
+
+    // Process any pending events BEFORE first draw
+    // This ensures local node info is displayed immediately
+    while let Ok(event) = event_rx.try_recv() {
+        handle_tui_event(&mut app, event);
+    }
 
     loop {
         // Draw UI
@@ -282,6 +292,12 @@ fn handle_tui_event(app: &mut App, event: TuiEvent) {
                     app.update_peer_rtt(&peer_id, rtt);
                 }
             }
+        }
+        TuiEvent::InboundConnection => {
+            app.stats.inbound_connections += 1;
+        }
+        TuiEvent::OutboundConnection => {
+            app.stats.outbound_connections += 1;
         }
     }
 }

@@ -530,6 +530,17 @@ impl TestNode {
             .send(TuiEvent::UpdateLocalNode(local_node.clone()))
             .await;
 
+        // Send an info message with peer ID and addresses so user sees confirmation
+        let ipv4_str = local_ipv4
+            .map(|a| a.to_string())
+            .unwrap_or_else(|| "None".to_string());
+        let info_msg = format!(
+            "Peer ID: {}... | IPv4: {}",
+            &peer_id[..8.min(peer_id.len())],
+            ipv4_str
+        );
+        let _ = event_tx.send(TuiEvent::Info(info_msg)).await;
+
         // Create external addresses storage before spawning event handler
         // so we can share it with the handler
         let external_addresses: Arc<RwLock<Vec<SocketAddr>>> = Arc::new(RwLock::new(Vec::new()));
@@ -619,8 +630,11 @@ impl TestNode {
                             // This is the key metric for nodes behind NAT!
                             // If we receive inbound connections, NAT traversal is working
                             let _ = event_tx_for_events
+                                .send(TuiEvent::InboundConnection)
+                                .await;
+                            let _ = event_tx_for_events
                                 .send(TuiEvent::Info(format!(
-                                    "Inbound connection from {} (proves hole-punching works!)",
+                                    "← INBOUND from {} (NAT traversal works!)",
                                     &peer_hex[..8.min(peer_hex.len())]
                                 )))
                                 .await;
@@ -628,6 +642,10 @@ impl TestNode {
                             // Remove from pending since connection completed
                             let mut pending = pending_outbound_for_events.write().await;
                             pending.remove(&peer_hex);
+                            // Track outbound connection
+                            let _ = event_tx_for_events
+                                .send(TuiEvent::OutboundConnection)
+                                .await;
                         }
                     }
                     P2pEvent::PeerDisconnected { peer_id, reason } => {
@@ -771,14 +789,17 @@ impl TestNode {
             }
         }
 
-        // If we couldn't discover from any peer, log a warning
+        // If we couldn't discover from any peer, log a warning and notify TUI
         let addrs = self.external_addresses.read().await;
         if addrs.is_empty() {
+            let msg = "No external address discovered - inbound connections may not work";
             warn!(
                 "Could not discover external address from any known peer. \
                  Registration will proceed without external address - \
                  other nodes may not be able to connect to us."
             );
+            // Send warning to TUI so user sees it
+            let _ = self.event_tx.send(TuiEvent::Info(msg.to_string())).await;
         }
     }
 
@@ -897,11 +918,21 @@ impl TestNode {
                         .error
                         .unwrap_or_else(|| "Unknown error".to_string());
                     error!("Registration failed: {}", err);
+                    // Send error to TUI
+                    let _ = self
+                        .event_tx
+                        .send(TuiEvent::Error(format!("Registration failed: {}", err)))
+                        .await;
                     return Err(anyhow::anyhow!("Registration failed: {}", err));
                 }
             }
             Err(e) => {
                 error!("Failed to connect to registry: {}", e);
+                // Send error to TUI
+                let _ = self
+                    .event_tx
+                    .send(TuiEvent::Error(format!("Registry connection failed: {}", e)))
+                    .await;
                 return Err(e);
             }
         }

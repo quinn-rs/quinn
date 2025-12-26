@@ -235,6 +235,10 @@ pub struct NetworkStatistics {
     pub hole_punched_connections: u64,
     /// Relayed connections
     pub relayed_connections: u64,
+    /// Inbound connections (they connected to us - proves NAT traversal works!)
+    pub inbound_connections: u64,
+    /// Outbound connections (we connected to them)
+    pub outbound_connections: u64,
     /// Test packets sent
     pub packets_sent: u64,
     /// Test packets received
