@@ -1216,9 +1216,10 @@ impl TestNode {
                     RECONNECT_COOLDOWN_SECS
                 );
 
-                // Connect to ALL eligible peers concurrently (max 5 at a time)
+                // Connect to ALL eligible peers concurrently (max 20 at a time)
+                // Higher limit ensures DO nodes quickly reach all community test nodes
                 let mut connect_futures = Vec::new();
-                for candidate in candidates.into_iter().take(5) {
+                for candidate in candidates.into_iter().take(20) {
                     let endpoint = Arc::clone(&endpoint);
                     let nat_stats = Arc::clone(&nat_stats);
                     let success = Arc::clone(&success);
