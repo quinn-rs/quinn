@@ -1746,7 +1746,7 @@
                     <div class="value green" id="results-peak-nodes">0</div>
                 </div>
                 <div class="results-stat-card">
-                    <div class="label">Total Connections</div>
+                    <div class="label">Pairs Connected</div>
                     <div class="value gold" id="results-total-connections">0</div>
                 </div>
                 <div class="results-stat-card">
@@ -2563,27 +2563,32 @@
             // Overview stats
             document.getElementById('results-total-nodes').textContent = results.total_nodes_seen || 0;
             document.getElementById('results-peak-nodes').textContent = results.peak_concurrent_nodes || 0;
-            document.getElementById('results-total-connections').textContent = results.connections?.length || 0;
-
-            // Connection Success Rate - based on actual peer connectivity, not individual attempts
-            // "Attempt Success Rate" counts every method attempt (IPv4, IPv6, hole punch, etc.)
-            // which gives misleading low numbers since each connection tries multiple methods.
-            // Instead, we calculate actual network connectivity:
-            // - Count unique active connections
-            // - Compare to maximum possible connections (n * (n-1) for n nodes)
+            // Mesh Coverage: unique peer pairs connected / total possible pairs
+            // A pair is "connected" if EITHER direction succeeded (A→B or B→A)
+            // regardless of method (direct IPv4, IPv6, hole-punch, relay)
             const connections = results.connections || [];
             const activeConnections = connections.filter(c => c.is_active !== false);
             const totalNodes = results.total_nodes_seen || 0;
 
-            // Maximum possible directed connections = n * (n-1)
-            const maxConnections = totalNodes > 1 ? totalNodes * (totalNodes - 1) : 0;
+            // Count unique peer pairs (treat A→B and B→A as same pair)
+            const uniquePairs = new Set();
+            activeConnections.forEach(c => {
+                // Sort peer IDs to create canonical pair key
+                const pair = [c.from_peer, c.to_peer].sort().join('-');
+                uniquePairs.add(pair);
+            });
 
-            // Connection success rate: active connections / max possible
-            // This shows actual network mesh connectivity
-            const connectionRate = maxConnections > 0
-                ? ((activeConnections.length / maxConnections) * 100).toFixed(1)
+            // Maximum possible undirected pairs = n * (n-1) / 2
+            const maxPairs = totalNodes > 1 ? (totalNodes * (totalNodes - 1)) / 2 : 0;
+
+            // Mesh coverage: what % of possible peer pairs are connected?
+            const meshCoverage = maxPairs > 0
+                ? ((uniquePairs.size / maxPairs) * 100).toFixed(0)
                 : 0;
-            document.getElementById('results-success-rate').textContent = `${connectionRate}%`;
+            document.getElementById('results-success-rate').textContent = `${meshCoverage}%`;
+
+            // Show unique pairs as "connections" (more meaningful than raw count)
+            document.getElementById('results-total-connections').textContent = uniquePairs.size;
 
             // Connection breakdown
             const breakdown = results.connection_breakdown || {};
