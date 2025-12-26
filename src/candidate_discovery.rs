@@ -172,6 +172,8 @@ pub struct DiscoveryConfig {
     pub server_reflexive_cache_ttl: Duration,
     /// Actual bound address of the local endpoint (if known)
     pub bound_address: Option<SocketAddr>,
+    /// Minimum time to wait before completing discovery (allows time for OBSERVED_ADDRESS)
+    pub min_discovery_time: Duration,
 }
 
 /// Current phase of the discovery process
@@ -486,6 +488,10 @@ impl Default for DiscoveryConfig {
             interface_cache_ttl: Duration::from_secs(60),
             server_reflexive_cache_ttl: Duration::from_secs(300),
             bound_address: None,
+            // Wait at least 10 seconds for external address discovery (OBSERVED_ADDRESS)
+            // before completing discovery. This ensures we don't complete before
+            // connecting to peers who can tell us our external address.
+            min_discovery_time: Duration::from_secs(10),
         }
     }
 }
@@ -1291,6 +1297,20 @@ impl CandidateDiscoveryManager {
         events: &mut Vec<DiscoveryEvent>,
         now: Instant,
     ) {
+        // Check if we should delay completion to wait for OBSERVED_ADDRESS frames
+        let elapsed = now.duration_since(session.started_at);
+        let has_external_addresses = session.statistics.server_reflexive_candidates_found > 0;
+
+        if elapsed < self.config.min_discovery_time && !has_external_addresses {
+            // Don't complete yet - we haven't waited long enough for external address discovery
+            // via OBSERVED_ADDRESS frames from connected peers
+            debug!(
+                "Delaying discovery completion for peer {:?}: elapsed {:?} < min {:?}, no external addresses yet",
+                session.peer_id, elapsed, self.config.min_discovery_time
+            );
+            return;
+        }
+
         // Calculate statistics
         let duration = now.duration_since(session.started_at);
         session.statistics.total_discovery_time = Some(duration);
@@ -3457,6 +3477,8 @@ mod tests {
             interface_cache_ttl: Duration::from_secs(300),
             server_reflexive_cache_ttl: Duration::from_secs(600),
             bound_address: None,
+            // For tests, allow immediate completion (no waiting for OBSERVED_ADDRESS)
+            min_discovery_time: Duration::ZERO,
         };
         CandidateDiscoveryManager::new(config)
     }

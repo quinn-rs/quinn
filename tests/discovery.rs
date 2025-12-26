@@ -57,6 +57,7 @@ async fn test_discovery_basic_functionality() {
         interface_cache_ttl: Duration::from_secs(60),
         server_reflexive_cache_ttl: Duration::from_secs(30),
         bound_address: None,
+        min_discovery_time: Duration::ZERO,
     };
 
     let discovery = CandidateDiscoveryManager::new(config);
@@ -112,6 +113,7 @@ async fn test_discovery_manager_creation() {
         interface_cache_ttl: Duration::from_secs(30),
         server_reflexive_cache_ttl: Duration::from_secs(15),
         bound_address: None,
+        min_discovery_time: Duration::ZERO,
     };
 
     let _discovery = CandidateDiscoveryManager::new(config);
@@ -132,6 +134,7 @@ async fn test_discovery_with_timeout() {
         interface_cache_ttl: Duration::from_secs(30),
         server_reflexive_cache_ttl: Duration::from_secs(15),
         bound_address: None,
+        min_discovery_time: Duration::ZERO,
     };
 
     let discovery = CandidateDiscoveryManager::new(config);
@@ -167,6 +170,7 @@ mod mock_tests {
             interface_cache_ttl: Duration::from_secs(30),
             server_reflexive_cache_ttl: Duration::from_secs(15),
             bound_address: None,
+            min_discovery_time: Duration::ZERO,
         };
 
         let discovery = CandidateDiscoveryManager::new(config);
@@ -209,6 +213,7 @@ mod linux_tests {
                 interface_cache_ttl: Duration::from_secs(60),
                 server_reflexive_cache_ttl: Duration::from_secs(30),
                 bound_address: None,
+                min_discovery_time: Duration::ZERO,
             };
 
             let mut discovery = CandidateDiscoveryManager::new(config);
@@ -259,6 +264,7 @@ mod macos_tests {
             interface_cache_ttl: Duration::from_secs(60),
             server_reflexive_cache_ttl: Duration::from_secs(30),
             bound_address: None,
+            min_discovery_time: Duration::ZERO,
         };
 
         let discovery = CandidateDiscoveryManager::new(config);
@@ -321,6 +327,7 @@ mod windows_tests {
             interface_cache_ttl: Duration::from_secs(60),
             server_reflexive_cache_ttl: Duration::from_secs(30),
             bound_address: None,
+            min_discovery_time: Duration::ZERO,
         };
 
         let mut discovery = CandidateDiscoveryManager::new(config);

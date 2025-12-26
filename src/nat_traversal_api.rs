@@ -1005,6 +1005,7 @@ impl NatTraversalEndpoint {
         let event_tx_clone = event_tx;
         let connections_clone = endpoint.connections.clone();
 
+        let local_peer_id_for_poll = endpoint.local_peer_id;
         tokio::spawn(async move {
             Self::poll_discovery(
                 discovery_manager_clone,
@@ -1012,6 +1013,7 @@ impl NatTraversalEndpoint {
                 event_tx_clone,
                 connections_clone,
                 event_callback_for_poll,
+                local_peer_id_for_poll,
             )
             .await;
         });
@@ -1900,6 +1902,7 @@ impl NatTraversalEndpoint {
         event_tx: mpsc::UnboundedSender<NatTraversalEvent>,
         connections: Arc<std::sync::RwLock<HashMap<PeerId, InnerConnection>>>,
         event_callback: Option<Arc<dyn Fn(NatTraversalEvent) + Send + Sync>>,
+        local_peer_id: PeerId,
     ) {
         use tokio::time::{Duration, interval};
 
@@ -1945,10 +1948,11 @@ impl NatTraversalEndpoint {
                             }
                         }
 
-                        // Feed the observed address to discovery manager
+                        // Feed the observed address to discovery manager for OUR local peer
+                        // (OBSERVED_ADDRESS tells us our external address as seen by the remote peer)
                         if let Ok(mut discovery) = discovery_manager.lock() {
-                            let _ =
-                                discovery.accept_quic_discovered_address(*peer_id, observed_addr);
+                            let _ = discovery
+                                .accept_quic_discovered_address(local_peer_id, observed_addr);
                         }
                     }
                 }
