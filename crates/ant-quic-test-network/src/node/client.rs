@@ -5,8 +5,8 @@
 //! and test traffic generation over actual QUIC streams.
 
 use crate::registry::{
-    ConnectionDirection, ConnectionMethod, ConnectionReport, ConnectivityMatrix, NatStats,
-    NatType, NodeCapabilities, NodeHeartbeat, NodeRegistration, PeerInfo, RegistryClient,
+    ConnectionDirection, ConnectionMethod, ConnectionReport, ConnectivityMatrix, NatStats, NatType,
+    NodeCapabilities, NodeHeartbeat, NodeRegistration, PeerInfo, RegistryClient,
 };
 use crate::tui::{ConnectedPeer, LocalNodeInfo, TuiEvent, country_flag};
 use std::collections::{HashMap, HashSet};
@@ -1234,12 +1234,12 @@ impl TestNode {
                                 tracker.get(&candidate.peer_id).copied().unwrap_or(false);
 
                             // Final method considers both comprehensive test and punching events
-                            let final_method = if saw_punching || result.matrix.nat_traversal_success
-                            {
-                                ConnectionMethod::HolePunched
-                            } else {
-                                result.best_method
-                            };
+                            let final_method =
+                                if saw_punching || result.matrix.nat_traversal_success {
+                                    ConnectionMethod::HolePunched
+                                } else {
+                                    result.best_method
+                                };
 
                             match final_method {
                                 ConnectionMethod::Direct => {
@@ -1260,8 +1260,9 @@ impl TestNode {
                             }
 
                             let now = Instant::now();
-                            // Extract values before moving the matrix
+                            // Extract values and clone matrix before moving
                             let is_ipv6 = result.matrix.active_is_ipv6;
+                            let connectivity_for_report = result.matrix.clone();
                             let tracked = TrackedPeer {
                                 info: candidate.clone(),
                                 method: final_method,
@@ -1297,6 +1298,7 @@ impl TestNode {
                                 method: final_method,
                                 is_ipv6,
                                 rtt_ms: None,
+                                connectivity: connectivity_for_report,
                             };
                             if let Err(e) = registry.report_connection(&report).await {
                                 warn!("Failed to report connection: {}", e);
@@ -1639,7 +1641,10 @@ async fn real_connect_comprehensive(
                 Ok(Ok(_conn)) => {
                     matrix.ipv4_direct_success = true;
                     matrix.ipv4_direct_rtt_ms = Some(start.elapsed().as_millis() as u64);
-                    info!("IPv4 direct connection to {} at {} succeeded", peer_id_short, addr);
+                    info!(
+                        "IPv4 direct connection to {} at {} succeeded",
+                        peer_id_short, addr
+                    );
                     break;
                 }
                 Ok(Err(e)) => {
@@ -1661,7 +1666,10 @@ async fn real_connect_comprehensive(
                 Ok(Ok(_conn)) => {
                     matrix.ipv6_direct_success = true;
                     matrix.ipv6_direct_rtt_ms = Some(start.elapsed().as_millis() as u64);
-                    info!("IPv6 direct connection to {} at {} succeeded", peer_id_short, addr);
+                    info!(
+                        "IPv6 direct connection to {} at {} succeeded",
+                        peer_id_short, addr
+                    );
                     break;
                 }
                 Ok(Err(e)) => {

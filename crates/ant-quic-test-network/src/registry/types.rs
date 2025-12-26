@@ -167,6 +167,9 @@ pub struct ConnectionReport {
     pub is_ipv6: bool,
     /// Round-trip time in milliseconds (optional)
     pub rtt_ms: Option<u64>,
+    /// Comprehensive connectivity matrix (all paths tested)
+    #[serde(default)]
+    pub connectivity: ConnectivityMatrix,
 }
 
 /// NAT traversal statistics included in heartbeats.
@@ -344,6 +347,9 @@ pub struct ConnectionRecord {
     pub to_country: Option<String>,
     /// Whether connection is still active
     pub is_active: bool,
+    /// Comprehensive connectivity matrix (all paths tested)
+    #[serde(default)]
+    pub connectivity: ConnectivityMatrix,
 }
 
 /// Experiment results summary.
@@ -442,17 +448,29 @@ impl ConnectivityMatrix {
         let mut parts = Vec::new();
 
         if self.ipv4_direct_tested {
-            let status = if self.ipv4_direct_success { "✓" } else { "✗" };
+            let status = if self.ipv4_direct_success {
+                "✓"
+            } else {
+                "✗"
+            };
             parts.push(format!("IPv4:{}", status));
         }
 
         if self.ipv6_direct_tested {
-            let status = if self.ipv6_direct_success { "✓" } else { "✗" };
+            let status = if self.ipv6_direct_success {
+                "✓"
+            } else {
+                "✗"
+            };
             parts.push(format!("IPv6:{}", status));
         }
 
         if self.nat_traversal_tested {
-            let status = if self.nat_traversal_success { "✓" } else { "✗" };
+            let status = if self.nat_traversal_success {
+                "✓"
+            } else {
+                "✗"
+            };
             parts.push(format!("NAT:{}", status));
         }
 

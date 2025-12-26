@@ -6,8 +6,8 @@
 
 use crate::registry::geo::BgpGeoProvider;
 use crate::registry::types::{
-    ConnectionBreakdown, ConnectionMethod, ConnectionRecord, ExperimentResults, NatStats,
-    NetworkEvent, NetworkStats, NodeHeartbeat, NodeRegistration, PeerInfo, PeerStatus,
+    ConnectionBreakdown, ConnectionMethod, ConnectionRecord, ConnectivityMatrix, ExperimentResults,
+    NatStats, NetworkEvent, NetworkStats, NodeHeartbeat, NodeRegistration, PeerInfo, PeerStatus,
 };
 use dashmap::DashMap;
 use std::collections::HashMap;
@@ -446,6 +446,7 @@ impl PeerStore {
         method: ConnectionMethod,
         is_ipv6: bool,
         rtt_ms: Option<u64>,
+        connectivity: ConnectivityMatrix,
     ) {
         let id = self.next_connection_id.fetch_add(1, Ordering::Relaxed);
 
@@ -470,6 +471,7 @@ impl PeerStore {
             from_country,
             to_country,
             is_active: true,
+            connectivity,
         };
 
         // Update IP version counters

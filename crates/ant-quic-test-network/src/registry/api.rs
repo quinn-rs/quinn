@@ -456,6 +456,7 @@ async fn handle_connection_report(
             report.method,
             report.is_ipv6,
             report.rtt_ms,
+            report.connectivity,
         )
         .await;
 
