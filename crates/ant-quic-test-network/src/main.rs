@@ -37,7 +37,7 @@ impl Default for Args {
             registry: false,
             port: 8080,
             bind_port: 0, // 0 = random available port
-            registry_url: "https://saorsa-1.saorsalabs.com".to_string(),
+            registry_url: "http://saorsa-1.saorsalabs.com:8080".to_string(),
             max_peers: 10,
             quiet: false,
         }
@@ -107,7 +107,7 @@ OPTIONS:
     --registry              Run as central registry server
     --port <PORT>           HTTP server port (registry mode) [default: 8080]
     --bind-port <PORT>      QUIC UDP bind port (client mode) [default: 0 = random]
-    --registry-url <URL>    Registry URL to connect to [default: https://saorsa-1.saorsalabs.com]
+    --registry-url <URL>    Registry URL to connect to [default: http://saorsa-1.saorsalabs.com:8080]
     --max-peers <N>         Maximum peer connections [default: 10]
     -q, --quiet             Disable TUI, log mode only
     -h, --help              Print this help message
@@ -134,10 +134,13 @@ EXAMPLES:
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // Initialize logging
-    tracing_subscriber::fmt::init();
-
     let args = parse_args();
+
+    // Only initialize logging for non-TUI modes (registry or quiet)
+    // TUI mode handles its own display - tracing to stderr ruins the interface
+    if args.registry || args.quiet {
+        tracing_subscriber::fmt::init();
+    }
 
     if args.registry {
         // Run as registry server
