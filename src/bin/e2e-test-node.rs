@@ -730,8 +730,16 @@ async fn handle_event(
     json: bool,
 ) {
     match event {
-        P2pEvent::PeerConnected { peer_id, addr, side } => {
-            let direction = if side.is_client() { "outbound" } else { "inbound" };
+        P2pEvent::PeerConnected {
+            peer_id,
+            addr,
+            side,
+        } => {
+            let direction = if side.is_client() {
+                "outbound"
+            } else {
+                "inbound"
+            };
             if json {
                 println!(
                     r#"{{"event":"peer_connected","peer_id":"{}","addr":"{}","direction":"{}"}}"#,
@@ -740,7 +748,12 @@ async fn handle_event(
                     direction
                 );
             } else {
-                info!("Peer connected: {} at {} ({})", format_peer_id(peer_id), addr, direction);
+                info!(
+                    "Peer connected: {} at {} ({})",
+                    format_peer_id(peer_id),
+                    addr,
+                    direction
+                );
             }
         }
         P2pEvent::PeerDisconnected { peer_id, reason } => {

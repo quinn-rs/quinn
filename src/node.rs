@@ -325,7 +325,11 @@ impl Node {
     /// Convert a P2pEvent to a NodeEvent
     fn convert_event(p2p_event: P2pEvent) -> Option<NodeEvent> {
         match p2p_event {
-            P2pEvent::PeerConnected { peer_id, addr, side: _ } => {
+            P2pEvent::PeerConnected {
+                peer_id,
+                addr,
+                side: _,
+            } => {
                 Some(NodeEvent::PeerConnected {
                     peer_id,
                     addr,

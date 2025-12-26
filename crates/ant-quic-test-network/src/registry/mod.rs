@@ -54,13 +54,14 @@
 //! ```
 
 mod api;
-mod geo;
+pub mod geo;
 pub mod persistence;
 mod store;
 mod types;
 
 // Re-export main types
 pub use api::{RegistryClient, RegistryConfig, start_registry_server};
+pub use geo::BgpGeoProvider;
 pub use persistence::{PersistedData, PersistenceConfig, PersistentStorage, StatsSnapshot};
 pub use store::PeerStore;
 pub use types::{

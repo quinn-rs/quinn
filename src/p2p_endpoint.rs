@@ -68,9 +68,9 @@ use crate::nat_traversal_api::{
 };
 
 // Re-export TraversalPhase from nat_traversal_api for convenience
+use crate::Side;
 pub use crate::nat_traversal_api::TraversalPhase;
 use crate::unified_config::P2pConfig;
-use crate::Side;
 
 /// Event channel capacity
 const EVENT_CHANNEL_CAPACITY: usize = 256;
@@ -741,7 +741,7 @@ impl P2pEndpoint {
                     NatTraversalEvent::ConnectionEstablished {
                         peer_id: evt_peer,
                         remote_address,
-                        side: _,  // We initiated this NAT traversal, side is Client
+                        side: _, // We initiated this NAT traversal, side is Client
                     } if evt_peer == peer_id => {
                         // v0.2: Peer is authenticated via TLS (ML-DSA-65) during handshake
                         let peer_conn = PeerConnection {
@@ -802,9 +802,9 @@ impl P2pEndpoint {
                 }
 
                 // They initiated the connection to us = Server side
-                if let Err(e) = self
-                    .inner
-                    .spawn_connection_handler(resolved_peer_id, connection, Side::Server)
+                if let Err(e) =
+                    self.inner
+                        .spawn_connection_handler(resolved_peer_id, connection, Side::Server)
                 {
                     error!("Failed to spawn connection handler: {}", e);
                     return None;

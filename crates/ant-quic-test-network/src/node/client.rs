@@ -5,8 +5,8 @@
 //! and test traffic generation over actual QUIC streams.
 
 use crate::registry::{
-    ConnectionDirection, ConnectionMethod, ConnectionReport, ConnectivityMatrix, NatStats, NatType,
-    NodeCapabilities, NodeHeartbeat, NodeRegistration, PeerInfo, RegistryClient,
+    BgpGeoProvider, ConnectionDirection, ConnectionMethod, ConnectionReport, ConnectivityMatrix,
+    NatStats, NatType, NodeCapabilities, NodeHeartbeat, NodeRegistration, PeerInfo, RegistryClient,
 };
 use crate::tui::{ConnectedPeer, LocalNodeInfo, TuiEvent, country_flag};
 use std::collections::{HashMap, HashSet};
@@ -565,6 +565,9 @@ impl TestNode {
         // If we're behind NAT and receive inbound connections, hole-punching works!
         let inbound_connections: Arc<AtomicU64> = Arc::new(AtomicU64::new(0));
 
+        // Geo provider for looking up country codes from IP addresses
+        let geo_provider = Arc::new(BgpGeoProvider::new());
+
         // Spawn event handler for P2P events to update TUI
         let endpoint_for_events = endpoint.clone();
         let event_tx_for_events = event_tx.clone();
@@ -573,6 +576,7 @@ impl TestNode {
         let disconnection_times_for_events = Arc::clone(&disconnection_times);
         let pending_outbound_for_events = Arc::clone(&pending_outbound);
         let inbound_connections_for_events = Arc::clone(&inbound_connections);
+        let geo_provider_for_events = Arc::clone(&geo_provider);
         tokio::spawn(async move {
             let mut events = endpoint_for_events.subscribe();
             while let Ok(event) = events.recv().await {
@@ -606,7 +610,11 @@ impl TestNode {
                             hole_punched_for_events.write().await.insert(peer_hex, true);
                         }
                     }
-                    P2pEvent::PeerConnected { peer_id, addr, side } => {
+                    P2pEvent::PeerConnected {
+                        peer_id,
+                        addr,
+                        side,
+                    } => {
                         let peer_hex = hex::encode(peer_id.0);
                         debug!(
                             "P2P event: peer connected {} at {} (side: {:?})",
@@ -649,6 +657,13 @@ impl TestNode {
                             inbound_peer.addresses = vec![addr];
                             // Mark connectivity matrix to show NAT traversal succeeded
                             inbound_peer.connectivity.nat_traversal_success = true;
+
+                            // Look up country code from the peer's IP address
+                            let (_lat, _lon, country_code) =
+                                geo_provider_for_events.lookup(addr.ip());
+                            if let Some(cc) = country_code {
+                                inbound_peer.location = format!("{} {}", country_flag(&cc), cc);
+                            }
 
                             let _ = event_tx_for_events
                                 .send(TuiEvent::PeerConnected(inbound_peer))
@@ -1129,9 +1144,10 @@ impl TestNode {
                     }
                 };
 
-                // Update TUI with total registered count
+                // Update TUI with total registered count (+1 to include ourselves)
+                // The registry.get_peers() returns all peers EXCEPT us
                 let _ = event_tx
-                    .send(TuiEvent::UpdateRegisteredCount(peers.len()))
+                    .send(TuiEvent::UpdateRegisteredCount(peers.len() + 1))
                     .await;
 
                 // Get current connection state and disconnection times

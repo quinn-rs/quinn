@@ -187,7 +187,7 @@ impl StatsDashboard {
             NatTraversalEvent::ConnectionEstablished {
                 peer_id,
                 remote_address,
-                side: _,  // Direction not tracked in dashboard stats yet
+                side: _, // Direction not tracked in dashboard stats yet
             } => {
                 let mut connections = self.connections.write().await;
                 connections.insert(

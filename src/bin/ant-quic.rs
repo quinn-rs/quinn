@@ -751,12 +751,16 @@ async fn handle_event_with_state(
     json: bool,
 ) {
     match event {
-        P2pEvent::PeerConnected { peer_id, addr, side } => {
+        P2pEvent::PeerConnected {
+            peer_id,
+            addr,
+            side,
+        } => {
             // Track peer state with connection direction
             let connection_type = if side.is_client() {
-                "outbound"  // We connected to them
+                "outbound" // We connected to them
             } else {
-                "inbound"   // They connected to us
+                "inbound" // They connected to us
             };
             let state = PeerState {
                 peer_id: *peer_id,
