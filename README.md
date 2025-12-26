@@ -14,9 +14,9 @@
 
 - **🔐 Pure Post-Quantum Cryptography (v0.2)** - ML-KEM-768 + ML-DSA-65 ONLY - no classical fallback
 - **Symmetric P2P Nodes** - Every node is identical: connect, accept, coordinate
-- **Automatic NAT Traversal** - Per [draft-seemann-quic-nat-traversal-02](rfcs/draft-seemann-quic-nat-traversal-02.txt)
-- **External Address Discovery** - Per [draft-ietf-quic-address-discovery-00](rfcs/draft-ietf-quic-address-discovery-00.txt)
-- **Pure PQC Raw Public Keys** - ML-DSA-65 authentication per [our specification](rfcs/ant-quic-pqc-authentication.md)
+- **Automatic NAT Traversal** - Per [draft-seemann-quic-nat-traversal-02](docs/rfcs/draft-seemann-quic-nat-traversal-02.txt)
+- **External Address Discovery** - Per [draft-ietf-quic-address-discovery-00](docs/rfcs/draft-ietf-quic-address-discovery-00.txt)
+- **Pure PQC Raw Public Keys** - ML-DSA-65 authentication per [our specification](docs/rfcs/ant-quic-pqc-authentication.md)
 - **Zero Configuration Required** - Sensible defaults, just create and connect
 - **Powered by [saorsa-pqc](https://crates.io/crates/saorsa-pqc)** - NIST FIPS 203/204 compliant implementations
 
@@ -185,7 +185,7 @@ let (ml_dsa_pub, ml_dsa_sec) = generate_ml_dsa_65_keypair();
 let peer_id = derive_peer_id_from_public_key(&ml_dsa_pub);
 ```
 
-This follows our [Pure PQC Authentication specification](rfcs/ant-quic-pqc-authentication.md).
+This follows our [Pure PQC Authentication specification](docs/rfcs/ant-quic-pqc-authentication.md).
 
 ### v0.2 Changes
 
@@ -333,13 +333,13 @@ ant-quic implements these specifications:
 
 | Specification | Status | Notes |
 |---------------|--------|-------|
-| [RFC 9000](rfcs/rfc9000.txt) | Full | QUIC Transport Protocol |
-| [RFC 9001](rfcs/rfc9001.txt) | Full | QUIC TLS |
-| [Pure PQC Auth](rfcs/ant-quic-pqc-authentication.md) | Full | Raw Public Keys + Pure PQC (v0.2) |
-| [draft-seemann-quic-nat-traversal-02](rfcs/draft-seemann-quic-nat-traversal-02.txt) | Full | NAT Traversal |
-| [draft-ietf-quic-address-discovery-00](rfcs/draft-ietf-quic-address-discovery-00.txt) | Full | Address Discovery |
-| [FIPS 203](rfcs/fips-203-ml-kem.pdf) | Full | ML-KEM (via saorsa-pqc) |
-| [FIPS 204](rfcs/fips-204-ml-dsa.pdf) | Full | ML-DSA (via saorsa-pqc) |
+| [RFC 9000](docs/rfcs/rfc9000.txt) | Full | QUIC Transport Protocol |
+| [RFC 9001](docs/rfcs/rfc9001.txt) | Full | QUIC TLS |
+| [Pure PQC Auth](docs/rfcs/ant-quic-pqc-authentication.md) | Full | Raw Public Keys + Pure PQC (v0.2) |
+| [draft-seemann-quic-nat-traversal-02](docs/rfcs/draft-seemann-quic-nat-traversal-02.txt) | Full | NAT Traversal |
+| [draft-ietf-quic-address-discovery-00](docs/rfcs/draft-ietf-quic-address-discovery-00.txt) | Full | Address Discovery |
+| [FIPS 203](docs/rfcs/fips-203-ml-kem.pdf) | Full | ML-KEM (via saorsa-pqc) |
+| [FIPS 204](docs/rfcs/fips-204-ml-dsa.pdf) | Full | ML-DSA (via saorsa-pqc) |
 
 See [docs/review.md](docs/review.md) for detailed RFC compliance analysis.
 

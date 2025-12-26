@@ -29,7 +29,7 @@ ant-quic is a QUIC transport protocol implementation with advanced NAT traversal
 ### Authentication: Pure PQC with Raw Public Keys (v0.2)
 
 We use **Pure Post-Quantum Cryptography** with raw public keys (inspired by RFC 7250):
-- **Reference**: `rfcs/ant-quic-pqc-authentication.md` (our specification)
+- **Reference**: `docs/rfcs/ant-quic-pqc-authentication.md` (our specification)
 - **Identity**: ML-DSA-65 key pairs (PeerId = SHA-256 hash → 32 bytes compact identifier)
 - **Key Exchange**: ML-KEM-768 (IANA 0x0201) - FIPS 203
 - **Signatures**: ML-DSA-65 (IANA 0x0901) - FIPS 204
@@ -159,7 +159,7 @@ ant-quic has a three-layer architecture:
 **CRITICAL: Native QUIC NAT Traversal - NO STUN, NO ICE, NO TURN**
 
 This implementation uses **native QUIC protocol extensions** based on the Seemann draft specification:
-- **Reference**: `rfcs/draft-seemann-quic-nat-traversal-02.txt` (local copy)
+- **Reference**: `docs/rfcs/draft-seemann-quic-nat-traversal-02.txt` (local copy)
 - **Specification**: [draft-seemann-quic-nat-traversal](https://datatracker.ietf.org/doc/draft-seemann-quic-nat-traversal/)
 
 We do **NOT** use:
@@ -364,9 +364,9 @@ Use `examples/nat_simulation.rs` for testing different network topologies and NA
 - **Binary**: `src/bin/ant-quic.rs` - Main executable with CLI
 - **Config**: `Cargo.toml` - Feature flags, dependencies, build configuration
 
-## Reference Specifications (rfcs/ directory)
+## Reference Specifications (docs/rfcs/ directory)
 
-Local copies of all relevant specifications are in the `rfcs/` directory:
+Local copies of all relevant specifications are in the `docs/rfcs/` directory:
 
 ### Core Protocol
 - `rfc9000.txt` - QUIC: A UDP-Based Multiplexed and Secure Transport
@@ -399,7 +399,7 @@ This project maintains three AI assistant configuration files that should be kep
 Key shared information that must stay synchronized:
 - Repository independence (not a Quinn fork for contributions)
 - Native QUIC NAT traversal (NO STUN/ICE/TURN)
-- Pure PQC Raw Public Keys (v0.2 - see `rfcs/ant-quic-pqc-authentication.md`)
+- Pure PQC Raw Public Keys (v0.2 - see `docs/rfcs/ant-quic-pqc-authentication.md`)
 - IPv4 and IPv6 dual-stack support
 - Development commands and code conventions
 - Architecture overview and key file locations

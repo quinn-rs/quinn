@@ -8,7 +8,7 @@ ant-quic is a QUIC transport protocol implementation with advanced NAT traversal
 - Every node is identical - can connect, accept, and coordinate
 - 100% Post-Quantum Cryptography (ML-KEM-768, ML-DSA-65) on every connection
 - No client/server/bootstrap role distinctions
-- Hybrid PQC Raw Public Keys for authentication (see `rfcs/ant-quic-pqc-authentication.md`)
+- Hybrid PQC Raw Public Keys for authentication (see `docs/rfcs/ant-quic-pqc-authentication.md`)
 
 ## Three-Layer Architecture
 
@@ -153,7 +153,7 @@ There are no special roles. The term "known_peers" replaces "bootstrap_nodes" - 
 - Ed25519 keys for peer identity
 - X25519 + ML-KEM-768 hybrid key exchange (IANA 0x11EC)
 - Ed25519 + ML-DSA-65 hybrid signatures (0x0920)
-- See `rfcs/ant-quic-pqc-authentication.md` for full specification
+- See `docs/rfcs/ant-quic-pqc-authentication.md` for full specification
 
 ### 100% Post-Quantum Cryptography (v0.13.0+)
 - ML-KEM-768 key encapsulation on every connection

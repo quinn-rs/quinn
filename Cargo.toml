@@ -23,7 +23,7 @@ exclude = [
     ".DS_Store",
     "*.DS_Store",
     "release-build/",
-    "rfcs/*.pdf",
+    "docs/rfcs/*.pdf",
     "docs/diagrams/",
     "docs/planning/",
     "target/",

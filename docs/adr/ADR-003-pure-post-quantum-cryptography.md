@@ -71,7 +71,7 @@ Adopt **pure post-quantum cryptography** with no classical fallback:
 
 ## References
 
-- Specification: `rfcs/ant-quic-pqc-authentication.md` (v0.2)
+- Specification: `docs/rfcs/ant-quic-pqc-authentication.md` (v0.2)
 - Standards: FIPS 203 (ML-KEM), FIPS 204 (ML-DSA)
 - Files: `src/crypto/pqc/*.rs`
 - Implementation: saorsa-pqc library

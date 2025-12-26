@@ -17,6 +17,7 @@ ADRs document significant architectural decisions made in the project. Each reco
 | [ADR-005](ADR-005-native-quic-nat-traversal.md) | Native QUIC NAT Traversal | Accepted | 2025-12-21 |
 | [ADR-006](ADR-006-masque-relay-fallback.md) | MASQUE CONNECT-UDP Bind Relay | Accepted | 2025-12-21 |
 | [ADR-007](ADR-007-local-only-hostkey.md) | Local-only HostKey | Accepted | 2025-12-22 |
+| [ADR-008](ADR-008-universal-connectivity-architecture.md) | Universal Connectivity Architecture | Accepted | 2025-12-26 |
 
 ## ADR Template
 
@@ -49,4 +50,4 @@ Relevant commits, RFCs, code paths.
 - [Architecture Overview](../architecture/ARCHITECTURE.md)
 - [Symmetric P2P Design](../SYMMETRIC_P2P.md)
 - [NAT Traversal Guide](../NAT_TRAVERSAL_GUIDE.md)
-- [PQC Authentication Spec](../../rfcs/ant-quic-pqc-authentication.md)
+- [PQC Authentication Spec](../rfcs/ant-quic-pqc-authentication.md)

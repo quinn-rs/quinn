@@ -28,7 +28,7 @@ ant-quic is a QUIC transport protocol implementation with advanced NAT traversal
 ### Authentication: Pure PQC with Raw Public Keys (v0.2)
 
 We use **Pure Post-Quantum Cryptography** with raw public keys (inspired by RFC 7250):
-- Reference: `rfcs/ant-quic-pqc-authentication.md` (our specification)
+- Reference: `docs/rfcs/ant-quic-pqc-authentication.md` (our specification)
 - Identity: ML-DSA-65 key pairs (PeerId = SHA-256 hash → 32 bytes compact identifier)
 - Key Exchange: ML-KEM-768 (IANA 0x0201) - FIPS 203
 - Signatures: ML-DSA-65 (IANA 0x0901) - FIPS 204
@@ -43,7 +43,7 @@ Single ML-DSA-65 key pair for identity and auth. PeerId = SHA-256(public_key) fo
 **100% PQC on every connection** - there is no classical-only mode:
 - **ML-KEM-768**: Key encapsulation (FIPS 203, NIST Level 3)
 - **ML-DSA-65**: Digital signatures (FIPS 204, optional)
-- Reference: `rfcs/fips-203-ml-kem.pdf`, `rfcs/fips-204-ml-dsa.pdf`
+- Reference: `docs/rfcs/fips-203-ml-kem.pdf`, `docs/rfcs/fips-204-ml-dsa.pdf`
 
 ### Network: Dual-Stack IPv4 and IPv6 Support
 
@@ -55,7 +55,7 @@ Single ML-DSA-65 key pair for identity and auth. PeerId = SHA-256(public_key) fo
 ### NAT Traversal: Native QUIC (NO STUN, NO ICE, NO TURN)
 
 We use **native QUIC protocol extensions** based on the Seemann draft:
-- Reference: `rfcs/draft-seemann-quic-nat-traversal-02.txt`
+- Reference: `docs/rfcs/draft-seemann-quic-nat-traversal-02.txt`
 - Specification: [draft-seemann-quic-nat-traversal](https://datatracker.ietf.org/doc/draft-seemann-quic-nat-traversal/)
 
 We do **NOT** use:
@@ -94,7 +94,7 @@ All nodes are equal. Any connected peer can:
 - `examples/`: Runnable demos (`simple_chat`, dashboard, PQC)
 - `benches/`: Criterion benchmarks
 - `scripts/`: CI/coverage helpers
-- `rfcs/`: Local copies of reference specifications
+- `docs/rfcs/`: Local copies of reference specifications
 - `.github/`: Workflows and CI configuration
 - `docs/`: Documentation
 
@@ -177,7 +177,7 @@ Conventional Commits required (see `cliff.toml`):
 - `fix(frame): correct varint parse`
 - `test: add pqc regressions`
 
-## Reference Specifications (rfcs/)
+## Reference Specifications (docs/rfcs/)
 
 ### Core Protocol
 - `rfc9000.txt` - QUIC base protocol
@@ -218,5 +218,5 @@ Conventional Commits required (see `cliff.toml`):
 - v0.2 Pure PQC: ML-KEM-768 (0x0201) + ML-DSA-65 (0x0901)
 - Native QUIC NAT traversal (NO STUN/ICE/TURN)
 - Correct frame IDs (0x3d7e90+, 0x9f81a6+)
-- Pure PQC Raw Public Keys (v0.2 - see `rfcs/ant-quic-pqc-authentication.md`)
+- Pure PQC Raw Public Keys (v0.2 - see `docs/rfcs/ant-quic-pqc-authentication.md`)
 - IPv4 and IPv6 dual-stack support
