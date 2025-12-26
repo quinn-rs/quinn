@@ -49,7 +49,7 @@ fn extract_ml_dsa_from_spki(spki: &[u8]) -> Option<crate::crypto::pqc::types::Ml
     crate::crypto::raw_public_keys::pqc::extract_public_key_from_spki(spki).ok()
 }
 
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info, trace, warn};
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -259,6 +259,15 @@ pub struct NatTraversalConfig {
         crate::crypto::pqc::types::MlDsaPublicKey,
         crate::crypto::pqc::types::MlDsaSecretKey,
     )>,
+    /// Allow IPv4-mapped IPv6 addresses (::ffff:x.x.x.x) as valid candidates
+    ///
+    /// When true, IPv4-mapped addresses are accepted. These addresses represent
+    /// IPv4 connections on dual-stack sockets (sockets with IPV6_V6ONLY=0).
+    /// When a dual-stack socket accepts an IPv4 connection, the remote address
+    /// appears as an IPv4-mapped IPv6 address.
+    ///
+    /// Default: true (required for dual-stack socket support)
+    pub allow_ipv4_mapped: bool,
 }
 
 // v0.13.0: EndpointRole enum has been removed.
@@ -491,8 +500,44 @@ impl CandidateAddress {
         })
     }
 
+    /// Create a new candidate address with custom validation options
+    ///
+    /// Use this constructor when working with dual-stack sockets that may
+    /// produce IPv4-mapped IPv6 addresses.
+    pub fn new_with_options(
+        address: SocketAddr,
+        priority: u32,
+        source: CandidateSource,
+        allow_ipv4_mapped: bool,
+    ) -> Result<Self, CandidateValidationError> {
+        Self::validate_address_with_options(&address, allow_ipv4_mapped)?;
+        Ok(Self {
+            address,
+            priority,
+            source,
+            state: CandidateState::New,
+        })
+    }
+
     /// Validate a candidate address for security and correctness
+    ///
+    /// This is the strict version that rejects IPv4-mapped addresses.
+    /// For dual-stack socket support, use `validate_address_with_options`.
     pub fn validate_address(addr: &SocketAddr) -> Result<(), CandidateValidationError> {
+        Self::validate_address_with_options(addr, false)
+    }
+
+    /// Validate a candidate address with configurable options
+    ///
+    /// # Arguments
+    /// * `addr` - The address to validate
+    /// * `allow_ipv4_mapped` - If true, accept IPv4-mapped IPv6 addresses (::ffff:x.x.x.x)
+    ///   These addresses are produced by dual-stack sockets (IPV6_V6ONLY=0) when accepting
+    ///   IPv4 connections.
+    pub fn validate_address_with_options(
+        addr: &SocketAddr,
+        allow_ipv4_mapped: bool,
+    ) -> Result<(), CandidateValidationError> {
         // Port validation
         if addr.port() == 0 {
             return Err(CandidateValidationError::InvalidPort(0));
@@ -539,7 +584,8 @@ impl CandidateAddress {
                     return Err(CandidateValidationError::DocumentationAddress);
                 }
                 // IPv4-mapped IPv6 addresses (::ffff:0:0/96)
-                if ipv6.to_ipv4_mapped().is_some() {
+                // These are valid when using dual-stack sockets (IPV6_V6ONLY=0)
+                if ipv6.to_ipv4_mapped().is_some() && !allow_ipv4_mapped {
                     return Err(CandidateValidationError::IPv4MappedAddress);
                 }
             }
@@ -781,6 +827,7 @@ impl Default for NatTraversalConfig {
             pqc: Some(crate::crypto::pqc::PqcConfig::default()),
             timeouts: crate::config::nat_timeouts::TimeoutConfig::default(),
             identity_key: None, // Generate random key if not provided
+            allow_ipv4_mapped: true, // Required for dual-stack socket support
         }
     }
 }
@@ -3153,8 +3200,21 @@ impl NatTraversalEndpoint {
             .collect::<Vec<_>>();
 
         // Pair each local candidate with each remote candidate
+        // Skip cross-family pairs (IPv4 ↔ IPv6) as they cannot connect at the socket level
         for local in &local_candidates {
             for remote in &remote_candidates {
+                // Cross-family pairs will always fail - skip them
+                let local_is_v4 = local.address.ip().is_ipv4();
+                let remote_is_v4 = remote.address.ip().is_ipv4();
+                if local_is_v4 != remote_is_v4 {
+                    trace!(
+                        "Skipping cross-family candidate pair: {} ↔ {}",
+                        local.address,
+                        remote.address
+                    );
+                    continue;
+                }
+
                 let pair_priority = self.calculate_candidate_pair_priority(local, remote);
                 candidate_pairs.push(CandidatePair {
                     local_candidate: (*local).clone(),

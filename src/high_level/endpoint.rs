@@ -129,11 +129,51 @@ impl Endpoint {
 
     /// Helper to construct an endpoint for use with both incoming and outgoing connections
     ///
+    /// When binding to an IPv6 address, this creates a dual-stack socket (IPV6_V6ONLY=0)
+    /// that can accept both IPv4 and IPv6 connections. IPv4 connections will appear as
+    /// IPv4-mapped IPv6 addresses (::ffff:x.x.x.x).
+    ///
     /// Platform defaults for dual-stack sockets vary. For example, any socket bound to a wildcard
     /// IPv6 address on Windows will not by default be able to communicate with IPv4
-    /// addresses. Portable applications should bind an address that matches the family they wish to
-    /// communicate within.
-    #[cfg(all(not(wasm_browser), feature = "aws-lc-rs"))] // `EndpointConfig::default()` is only available with aws-lc-rs
+    /// addresses. This method explicitly enables dual-stack for IPv6 sockets.
+    #[cfg(all(not(wasm_browser), feature = "aws-lc-rs", feature = "network-discovery"))]
+    pub fn server(config: ServerConfig, addr: SocketAddr) -> io::Result<Self> {
+        let socket = Socket::new(Domain::for_address(addr), Type::DGRAM, Some(Protocol::UDP))?;
+
+        // Enable dual-stack for IPv6 sockets (consistent with client() behavior)
+        if addr.is_ipv6() {
+            if let Err(e) = socket.set_only_v6(false) {
+                tracing::debug!(%e, "unable to make server socket dual-stack");
+            }
+        }
+
+        socket.set_nonblocking(true)?;
+
+        // Apply platform-appropriate buffer sizes to avoid WSAEMSGSIZE errors on Windows
+        // and ensure reliable QUIC connections, especially with PQC
+        use crate::config::buffer_defaults;
+        let buffer_size = buffer_defaults::PLATFORM_DEFAULT;
+        if let Err(e) = socket.set_send_buffer_size(buffer_size) {
+            tracing::debug!(%e, "unable to set send buffer size to {}", buffer_size);
+        }
+        if let Err(e) = socket.set_recv_buffer_size(buffer_size) {
+            tracing::debug!(%e, "unable to set recv buffer size to {}", buffer_size);
+        }
+
+        socket.bind(&addr.into())?;
+        let runtime =
+            default_runtime().ok_or_else(|| io::Error::other("no async runtime found"))?;
+        Self::new_with_abstract_socket(
+            EndpointConfig::default(),
+            Some(config),
+            runtime.wrap_udp_socket(socket.into())?,
+            runtime,
+        )
+    }
+
+    /// Helper to construct an endpoint for use with both incoming and outgoing connections
+    /// (fallback without network-discovery feature)
+    #[cfg(all(not(wasm_browser), feature = "aws-lc-rs", not(feature = "network-discovery")))]
     pub fn server(config: ServerConfig, addr: SocketAddr) -> io::Result<Self> {
         let socket = std::net::UdpSocket::bind(addr)?;
         let runtime =

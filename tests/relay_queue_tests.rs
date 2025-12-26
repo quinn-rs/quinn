@@ -103,6 +103,7 @@ mod nat_traversal_api_tests {
             identity_key: None,
             relay_nodes: vec![],
             enable_relay_service: true,
+            allow_ipv4_mapped: true,
         };
 
         assert_eq!(config.known_peers.len(), 1);
@@ -235,6 +236,7 @@ mod functional_tests {
             identity_key: None,
             relay_nodes: vec![],
             enable_relay_service: true,
+            allow_ipv4_mapped: true,
         };
 
         // May fail due to zero values or other validation
@@ -257,6 +259,7 @@ mod functional_tests {
             identity_key: None,
             relay_nodes: vec![],
             enable_relay_service: true,
+            allow_ipv4_mapped: true,
         };
 
         let result = NatTraversalEndpoint::new(valid_config, None).await;
@@ -436,6 +439,7 @@ mod performance_tests {
                 identity_key: None,
                 relay_nodes: vec![],
                 enable_relay_service: true,
+                allow_ipv4_mapped: true,
             };
 
             // Use the config to prevent optimization
@@ -502,6 +506,7 @@ mod relay_functionality_tests {
             identity_key: None,
             relay_nodes: vec![],
             enable_relay_service: true,
+            allow_ipv4_mapped: true,
         };
 
         // This might be accepted or rejected depending on implementation

@@ -106,6 +106,86 @@ mod socket2_impl {
         socket.recv_buffer_size()
     }
 
+    /// Create a true dual-stack socket (IPv6 with IPV6_V6ONLY=0)
+    ///
+    /// This creates a single socket that can accept both IPv4 and IPv6 connections.
+    /// IPv4 connections will appear as IPv4-mapped IPv6 addresses (::ffff:x.x.x.x).
+    ///
+    /// # Arguments
+    /// * `port` - Port to bind to (0 for OS-assigned)
+    /// * `opts` - Socket options to apply
+    ///
+    /// # Returns
+    /// A UDP socket bound to [::]:port with dual-stack enabled
+    pub fn create_dual_stack_socket(
+        port: u16,
+        opts: &SocketOptions,
+    ) -> PortConfigResult<UdpSocket> {
+        use std::net::{Ipv6Addr, SocketAddrV6};
+
+        let socket = socket2::Socket::new(
+            socket2::Domain::IPV6,
+            socket2::Type::DGRAM,
+            Some(socket2::Protocol::UDP),
+        )
+        .map_err(|e| EndpointConfigError::BindFailed(e.to_string()))?;
+
+        // CRITICAL: Set IPV6_V6ONLY=0 to enable dual-stack
+        // This allows the socket to accept both IPv4 and IPv6 connections
+        socket
+            .set_only_v6(false)
+            .map_err(|e| EndpointConfigError::BindFailed(format!("Failed to enable dual-stack: {e}")))?;
+
+        // Set socket to non-blocking mode
+        socket
+            .set_nonblocking(true)
+            .map_err(|e| EndpointConfigError::BindFailed(e.to_string()))?;
+
+        // Apply socket options
+        if opts.reuse_address {
+            socket
+                .set_reuse_address(true)
+                .map_err(|e| EndpointConfigError::BindFailed(e.to_string()))?;
+        }
+
+        // Apply buffer sizes with graceful fallback
+        if let Some(size) = opts.send_buffer_size {
+            if let Err(e) = try_set_send_buffer(&socket, size) {
+                tracing::warn!(
+                    "Failed to set send buffer to {} bytes: {}. Using OS default.",
+                    size,
+                    e
+                );
+            }
+        }
+
+        if let Some(size) = opts.recv_buffer_size {
+            if let Err(e) = try_set_recv_buffer(&socket, size) {
+                tracing::warn!(
+                    "Failed to set recv buffer to {} bytes: {}. Using OS default.",
+                    size,
+                    e
+                );
+            }
+        }
+
+        // Bind to IPv6 unspecified address (::) with the requested port
+        let addr = SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, port, 0, 0);
+        socket.bind(&socket2::SockAddr::from(addr)).map_err(|e| {
+            if e.kind() == std::io::ErrorKind::AddrInUse {
+                EndpointConfigError::PortInUse(port)
+            } else if e.kind() == std::io::ErrorKind::PermissionDenied {
+                EndpointConfigError::PermissionDenied(port)
+            } else {
+                EndpointConfigError::BindFailed(e.to_string())
+            }
+        })?;
+
+        // Convert to std::net::UdpSocket
+        let std_socket: UdpSocket = socket.into();
+        Ok(std_socket)
+    }
+
     /// Create a socket with specified options using socket2 for advanced features
     pub fn create_socket(addr: &SocketAddr, opts: &SocketOptions) -> PortConfigResult<UdpSocket> {
         let socket = socket2::Socket::new(
@@ -251,7 +331,33 @@ fn bind_single_socket(
             Ok(vec![local_addr])
         }
         IpMode::DualStack => {
-            // Try binding both stacks to same port
+            // Try true dual-stack socket first (single IPv6 socket with IPV6_V6ONLY=0)
+            // This is more efficient than separate sockets and handles IPv4-mapped addresses
+            #[cfg(feature = "network-discovery")]
+            {
+                match socket2_impl::create_dual_stack_socket(port, socket_opts) {
+                    Ok(socket) => {
+                        let local_addr = socket
+                            .local_addr()
+                            .map_err(|e| EndpointConfigError::BindFailed(e.to_string()))?;
+                        tracing::info!(
+                            "Created true dual-stack socket on {} (accepts IPv4 and IPv6)",
+                            local_addr
+                        );
+                        std::mem::forget(socket);
+                        return Ok(vec![local_addr]);
+                    }
+                    Err(e) => {
+                        tracing::debug!(
+                            "True dual-stack socket failed: {:?}, falling back to separate sockets",
+                            e
+                        );
+                        // Fall through to separate socket binding
+                    }
+                }
+            }
+
+            // Fallback: Try binding separate IPv4 and IPv6 sockets to same port
             let v4_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), port);
             let v6_addr = SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), port);
 
@@ -260,15 +366,36 @@ fn bind_single_socket(
                 .local_addr()
                 .map_err(|e| EndpointConfigError::BindFailed(e.to_string()))?;
 
-            let v6_socket = create_socket(&v6_addr, socket_opts)
-                .map_err(|_| EndpointConfigError::DualStackNotSupported)?;
-            let v6_local = v6_socket
-                .local_addr()
-                .map_err(|e| EndpointConfigError::BindFailed(e.to_string()))?;
+            // Try IPv6 socket - if it fails, gracefully degrade to IPv4-only
+            // This handles IPv4-only systems without erroring
+            match create_socket(&v6_addr, socket_opts) {
+                Ok(v6_socket) => {
+                    let v6_local = v6_socket
+                        .local_addr()
+                        .map_err(|e| EndpointConfigError::BindFailed(e.to_string()))?;
 
-            std::mem::forget(v4_socket);
-            std::mem::forget(v6_socket);
-            Ok(vec![v4_local, v6_local])
+                    tracing::info!(
+                        "Created separate IPv4 ({}) and IPv6 ({}) sockets (fallback mode)",
+                        v4_local, v6_local
+                    );
+                    std::mem::forget(v4_socket);
+                    std::mem::forget(v6_socket);
+                    Ok(vec![v4_local, v6_local])
+                }
+                Err(e) => {
+                    // IPv6 not available - gracefully degrade to IPv4-only
+                    tracing::debug!(
+                        "IPv6 socket creation failed ({:?}), using IPv4-only mode",
+                        e
+                    );
+                    tracing::info!(
+                        "Created IPv4-only socket on {} (IPv6 not available on this system)",
+                        v4_local
+                    );
+                    std::mem::forget(v4_socket);
+                    Ok(vec![v4_local])
+                }
+            }
         }
         IpMode::DualStackSeparate {
             ipv4_port,

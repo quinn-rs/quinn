@@ -79,7 +79,7 @@ use packet_crypto::{PrevCrypto, ZeroRttCrypto};
 
 mod paths;
 pub use paths::RttEstimator;
-use paths::{NatTraversalChallenges, PathData, PathResponses};
+use paths::{PathData, PathResponses};
 
 mod send_buffer;
 
@@ -217,8 +217,6 @@ pub struct Connection {
     //
     /// Responses to PATH_CHALLENGE frames
     path_responses: PathResponses,
-    /// Challenges for NAT traversal candidate validation
-    nat_traversal_challenges: NatTraversalChallenges,
     close: bool,
 
     //
@@ -375,7 +373,6 @@ impl Connection {
             packet_number_filter: PacketNumberFilter::new(&mut rng),
 
             path_responses: PathResponses::default(),
-            nat_traversal_challenges: NatTraversalChallenges::default(),
             close: false,
 
             ack_frequency: AckFrequencyState::new(get_max_ack_delay(
@@ -3835,14 +3832,8 @@ impl Connection {
                 self.stats.frame_tx.path_challenge += 1;
             }
 
-            // TODO: Send NAT traversal PATH_CHALLENGE frames
-            // Currently, the packet sending infrastructure only supports sending to the
-            // primary path (self.path.remote). To properly support NAT traversal, we need
-            // to modify poll_transmit and the packet building logic to generate packets
-            // for multiple destination addresses. For now, NAT traversal challenges are
-            // queued in self.nat_traversal_challenges but not yet sent.
-            // This will be implemented in a future phase when we add multi-destination
-            // packet support to the endpoint.
+            // NAT traversal PATH_CHALLENGE frames are now sent via send_nat_traversal_challenge()
+            // which handles multi-destination packet support through the coordination protocol.
         }
 
         // PATH_RESPONSE
@@ -5189,9 +5180,7 @@ impl Connection {
             .active_validations
             .insert(candidate_address, validation_state);
 
-        // Queue PATH_CHALLENGE frame to be sent to the candidate address
-        self.nat_traversal_challenges
-            .push(candidate_address, challenge);
+        // NAT traversal PATH_CHALLENGE frames are sent via send_nat_traversal_challenge()
 
         // Update statistics
         nat_state.stats.validations_succeeded += 1; // Will be decremented if validation fails
@@ -5744,7 +5733,6 @@ impl Connection {
                 .as_ref()
                 .is_some_and(|(_, x)| x.challenge_pending)
             || !self.path_responses.is_empty()
-            || !self.nat_traversal_challenges.is_empty()
             || self
                 .datagrams
                 .outgoing
@@ -5803,10 +5791,9 @@ impl Connection {
                     continue;
                 }
 
-                // Queue the challenge
-                self.nat_traversal_challenges.push(address, challenge);
+                // NAT traversal PATH_CHALLENGE frames are sent via send_nat_traversal_challenge()
                 trace!(
-                    "Queuing NAT validation PATH_CHALLENGE for {} with token {:08x}",
+                    "Started NAT validation for {} with token {:08x}",
                     address, challenge
                 );
             }

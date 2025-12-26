@@ -251,6 +251,7 @@ impl P2pConfig {
             pqc: Some(self.pqc.clone()),
             timeouts: self.timeouts.clone(),
             identity_key: None,
+            allow_ipv4_mapped: true, // Required for dual-stack socket support
         }
     }
 
