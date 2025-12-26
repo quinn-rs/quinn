@@ -5,8 +5,8 @@
 //! and test traffic generation over actual QUIC streams.
 
 use crate::registry::{
-    ConnectionMethod, ConnectionReport, NatStats, NatType, NodeCapabilities, NodeHeartbeat,
-    NodeRegistration, PeerInfo, RegistryClient,
+    ConnectionDirection, ConnectionMethod, ConnectionReport, NatStats, NatType, NodeCapabilities,
+    NodeHeartbeat, NodeRegistration, PeerInfo, RegistryClient,
 };
 use crate::tui::{ConnectedPeer, LocalNodeInfo, TuiEvent, country_flag};
 use std::collections::{HashMap, HashSet};
@@ -315,6 +315,8 @@ struct TrackedPeer {
     info: PeerInfo,
     /// Connection method used.
     method: ConnectionMethod,
+    /// Connection direction (we initiated or they initiated).
+    direction: ConnectionDirection,
     /// When connection was established.
     connected_at: Instant,
     /// Last successful activity timestamp.
@@ -330,7 +332,8 @@ struct TrackedPeer {
 impl TrackedPeer {
     /// Convert to a ConnectedPeer for TUI display.
     fn to_connected_peer(&self) -> ConnectedPeer {
-        let mut peer = ConnectedPeer::new(&self.info.peer_id, self.method);
+        let mut peer =
+            ConnectedPeer::with_direction(&self.info.peer_id, self.method, self.direction);
 
         // Set location with flag
         if let Some(ref cc) = self.info.country_code {
@@ -1246,6 +1249,7 @@ impl TestNode {
                                 let tracked = TrackedPeer {
                                     info: candidate.clone(),
                                     method: final_method,
+                                    direction: ConnectionDirection::Outbound,
                                     connected_at: now,
                                     last_activity: now,
                                     stats: PeerStats::default(),

@@ -3,7 +3,7 @@
 //! This module defines the data structures used by the terminal UI
 //! to display network state and peer connections.
 
-use crate::registry::{ConnectionMethod, NatType};
+use crate::registry::{ConnectionDirection, ConnectionMethod, NatType};
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
@@ -73,6 +73,8 @@ pub struct ConnectedPeer {
     pub location: String,
     /// Connection method used
     pub method: ConnectionMethod,
+    /// Connection direction (who initiated)
+    pub direction: ConnectionDirection,
     /// Current RTT measurement
     pub rtt: Option<Duration>,
     /// Connection quality
@@ -94,6 +96,15 @@ pub struct ConnectedPeer {
 impl ConnectedPeer {
     /// Create a new connected peer.
     pub fn new(peer_id: &str, method: ConnectionMethod) -> Self {
+        Self::with_direction(peer_id, method, ConnectionDirection::Outbound)
+    }
+
+    /// Create a new connected peer with explicit direction.
+    pub fn with_direction(
+        peer_id: &str,
+        method: ConnectionMethod,
+        direction: ConnectionDirection,
+    ) -> Self {
         let short_id = if peer_id.len() > 8 {
             peer_id[..8].to_string()
         } else {
@@ -105,6 +116,7 @@ impl ConnectedPeer {
             full_id: peer_id.to_string(),
             location: "??".to_string(),
             method,
+            direction,
             rtt: None,
             quality: ConnectionQuality::Fair,
             tx_active: false,

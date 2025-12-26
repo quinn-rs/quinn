@@ -121,31 +121,21 @@ fn draw_node_info(frame: &mut Frame, app: &App, area: Rect) {
         ),
     ]);
 
-    // IPv6 line
-    let ipv6_local = app
-        .local_node
-        .local_ipv6
-        .map(|a| a.to_string())
-        .unwrap_or_else(|| "Not available".to_string());
-    let ipv6_external = app
-        .local_node
-        .external_ipv6
-        .map(|a| a.to_string())
-        .unwrap_or_else(|| "Not discovered".to_string());
-
-    // Only show IPv6 line if we have local IPv6 or it's just informational
-    let ipv6_color = if app.local_node.local_ipv6.is_some() {
-        Color::White
+    // IPv6 line - Note: IPv6 is typically not NATted, so local = global
+    let ipv6_display = if let Some(addr) = app.local_node.local_ipv6 {
+        Line::from(vec![
+            Span::raw("  IPv6: "),
+            Span::styled(addr.to_string(), Style::default().fg(Color::White)),
+            Span::styled(" (global - no NAT)", Style::default().fg(Color::DarkGray)),
+        ])
     } else {
-        Color::DarkGray
+        Line::from(vec![
+            Span::raw("  IPv6: "),
+            Span::styled("Not available", Style::default().fg(Color::DarkGray)),
+        ])
     };
 
-    let line3 = Line::from(vec![
-        Span::raw("  IPv6: "),
-        Span::styled(ipv6_local, Style::default().fg(ipv6_color)),
-        Span::raw(" → "),
-        Span::styled(ipv6_external, Style::default().fg(Color::Cyan)),
-    ]);
+    let line3 = ipv6_display;
 
     let text = vec![line1, line2, line3];
     let paragraph = Paragraph::new(text).block(block);
@@ -178,7 +168,7 @@ fn draw_peers(frame: &mut Frame, app: &App, area: Rect) {
     let header = Row::new(vec![
         Cell::from("Peer").style(Style::default().add_modifier(Modifier::BOLD)),
         Cell::from("Location").style(Style::default().add_modifier(Modifier::BOLD)),
-        Cell::from("Method").style(Style::default().add_modifier(Modifier::BOLD)),
+        Cell::from("Direction").style(Style::default().add_modifier(Modifier::BOLD)),
         Cell::from("RTT").style(Style::default().add_modifier(Modifier::BOLD)),
         Cell::from("TX/RX").style(Style::default().add_modifier(Modifier::BOLD)),
         Cell::from("Status").style(Style::default().add_modifier(Modifier::BOLD)),
@@ -191,15 +181,15 @@ fn draw_peers(frame: &mut Frame, app: &App, area: Rect) {
         .peers_sorted()
         .iter()
         .map(|peer| {
-            let method_style = match peer.method {
-                crate::registry::ConnectionMethod::Direct => Style::default().fg(Color::Green),
-                crate::registry::ConnectionMethod::HolePunched => {
-                    Style::default().fg(Color::Yellow)
+            // Show connection direction with descriptive text
+            let (direction_str, direction_style) = match peer.direction {
+                crate::registry::ConnectionDirection::Outbound => {
+                    ("→ We connected", Style::default().fg(Color::Cyan))
                 }
-                crate::registry::ConnectionMethod::Relayed => Style::default().fg(Color::Red),
+                crate::registry::ConnectionDirection::Inbound => {
+                    ("← They connected", Style::default().fg(Color::Green))
+                }
             };
-
-            let method_str = format!("{}", peer.method);
 
             // Get country flag
             let location = if peer.location.len() == 2 {
@@ -227,7 +217,7 @@ fn draw_peers(frame: &mut Frame, app: &App, area: Rect) {
             Row::new(vec![
                 Cell::from(peer.short_id.clone()),
                 Cell::from(location),
-                Cell::from(method_str).style(method_style),
+                Cell::from(direction_str).style(direction_style),
                 Cell::from(peer.rtt_string()),
                 Cell::from(peer.traffic_indicator()),
                 Cell::from(Span::styled(
@@ -243,7 +233,7 @@ fn draw_peers(frame: &mut Frame, app: &App, area: Rect) {
         [
             Constraint::Length(12), // Peer ID
             Constraint::Length(10), // Location
-            Constraint::Length(12), // Method
+            Constraint::Length(16), // Direction (wider for "← They connected")
             Constraint::Length(8),  // RTT
             Constraint::Length(12), // TX/RX
             Constraint::Length(8),  // Status (simplified)
@@ -327,7 +317,7 @@ fn draw_stats(frame: &mut Frame, app: &App, area: Rect) {
     let line3 = Line::from(vec![
         Span::raw("  Uptime: "),
         Span::styled(app.stats.uptime(), Style::default().fg(Color::White)),
-        Span::raw("                              Last heartbeat: "),
+        Span::raw("                         Registry heartbeat: "),
         Span::styled(heartbeat_status, Style::default().fg(Color::Green)),
     ]);
 

@@ -64,7 +64,7 @@ pub use api::{RegistryClient, RegistryConfig, start_registry_server};
 pub use persistence::{PersistedData, PersistenceConfig, PersistentStorage, StatsSnapshot};
 pub use store::PeerStore;
 pub use types::{
-    ConnectionBreakdown, ConnectionMethod, ConnectionReport, ExperimentResults, NatStats, NatType,
-    NetworkEvent, NetworkStats, NodeCapabilities, NodeHeartbeat, NodeRegistration, PeerInfo,
-    RegistrationResponse,
+    ConnectionBreakdown, ConnectionDirection, ConnectionMethod, ConnectionReport,
+    ExperimentResults, NatStats, NatType, NetworkEvent, NetworkStats, NodeCapabilities,
+    NodeHeartbeat, NodeRegistration, PeerInfo, RegistrationResponse,
 };
