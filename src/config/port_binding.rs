@@ -132,9 +132,9 @@ mod socket2_impl {
 
         // CRITICAL: Set IPV6_V6ONLY=0 to enable dual-stack
         // This allows the socket to accept both IPv4 and IPv6 connections
-        socket
-            .set_only_v6(false)
-            .map_err(|e| EndpointConfigError::BindFailed(format!("Failed to enable dual-stack: {e}")))?;
+        socket.set_only_v6(false).map_err(|e| {
+            EndpointConfigError::BindFailed(format!("Failed to enable dual-stack: {e}"))
+        })?;
 
         // Set socket to non-blocking mode
         socket
@@ -376,7 +376,8 @@ fn bind_single_socket(
 
                     tracing::info!(
                         "Created separate IPv4 ({}) and IPv6 ({}) sockets (fallback mode)",
-                        v4_local, v6_local
+                        v4_local,
+                        v6_local
                     );
                     std::mem::forget(v4_socket);
                     std::mem::forget(v6_socket);

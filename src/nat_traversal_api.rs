@@ -826,7 +826,7 @@ impl Default for NatTraversalConfig {
             // This ensures non-PQC handshakes cannot happen
             pqc: Some(crate::crypto::pqc::PqcConfig::default()),
             timeouts: crate::config::nat_timeouts::TimeoutConfig::default(),
-            identity_key: None, // Generate random key if not provided
+            identity_key: None,      // Generate random key if not provided
             allow_ipv4_mapped: true, // Required for dual-stack socket support
         }
     }
@@ -3209,8 +3209,7 @@ impl NatTraversalEndpoint {
                 if local_is_v4 != remote_is_v4 {
                     trace!(
                         "Skipping cross-family candidate pair: {} ↔ {}",
-                        local.address,
-                        remote.address
+                        local.address, remote.address
                     );
                     continue;
                 }
