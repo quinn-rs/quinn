@@ -96,7 +96,7 @@ async fn test_external_address_discovery_live() -> anyhow::Result<()> {
 
         // Check for events
         match tokio::time::timeout(Duration::from_millis(500), events.recv()).await {
-            Ok(Ok(P2pEvent::PeerConnected { peer_id, addr })) => {
+            Ok(Ok(P2pEvent::PeerConnected { peer_id, addr, .. })) => {
                 println!("Connected to peer {} at {}", peer_id, addr);
                 connected = true;
             }

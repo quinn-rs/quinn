@@ -751,24 +751,30 @@ async fn handle_event_with_state(
     json: bool,
 ) {
     match event {
-        P2pEvent::PeerConnected { peer_id, addr } => {
-            // Track peer state
+        P2pEvent::PeerConnected { peer_id, addr, side } => {
+            // Track peer state with connection direction
+            let connection_type = if side.is_client() {
+                "outbound"  // We connected to them
+            } else {
+                "inbound"   // They connected to us
+            };
             let state = PeerState {
                 peer_id: *peer_id,
                 remote_addr: *addr,
                 connected_at: Instant::now(),
                 bytes_sent: 0,
                 bytes_received: 0,
-                connection_type: "direct".to_string(),
+                connection_type: connection_type.to_string(),
             };
             peer_states.write().await.insert(*peer_id, state);
             stats.direct_connections.fetch_add(1, Ordering::SeqCst);
 
             if json {
                 println!(
-                    r#"{{"event":"peer_connected","peer_id":"{}","addr":"{}"}}"#,
+                    r#"{{"event":"peer_connected","peer_id":"{}","addr":"{}","direction":"{}"}}"#,
                     format_peer_id(peer_id),
-                    addr
+                    addr,
+                    connection_type
                 );
             } else {
                 info!("Peer connected: {} at {}", format_peer_id(peer_id), addr);

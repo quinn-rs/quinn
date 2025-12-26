@@ -332,7 +332,7 @@ mod address_discovery_tests {
                 P2pEvent::ExternalAddressDiscovered { addr } => {
                     println!("Discovered external address: {}", addr);
                 }
-                P2pEvent::PeerConnected { peer_id, addr } => {
+                P2pEvent::PeerConnected { peer_id, addr, .. } => {
                     println!("Peer connected: {:?} at {}", peer_id, addr);
                 }
                 _ => {}
@@ -731,7 +731,7 @@ mod nat_traversal_tests {
                 P2pEvent::NatTraversalProgress { peer_id, phase } => {
                     println!("NAT traversal progress: {:?} -> {:?}", peer_id, phase);
                 }
-                P2pEvent::PeerConnected { peer_id, addr } => {
+                P2pEvent::PeerConnected { peer_id, addr, .. } => {
                     println!("Connection established: {:?} at {}", peer_id, addr);
                 }
                 _ => {}

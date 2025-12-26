@@ -606,20 +606,19 @@ impl TestNode {
                             hole_punched_for_events.write().await.insert(peer_hex, true);
                         }
                     }
-                    P2pEvent::PeerConnected { peer_id, addr } => {
+                    P2pEvent::PeerConnected { peer_id, addr, side } => {
                         let peer_hex = hex::encode(peer_id.0);
                         debug!(
-                            "P2P event: peer connected {} at {}",
+                            "P2P event: peer connected {} at {} (side: {:?})",
                             &peer_hex[..8.min(peer_hex.len())],
-                            addr
+                            addr,
+                            side
                         );
 
-                        // Detect if this is an inbound connection (they initiated to us)
-                        // If peer is NOT in pending_outbound, we didn't initiate - it's inbound
-                        let is_inbound = {
-                            let pending = pending_outbound_for_events.read().await;
-                            !pending.contains(&peer_hex)
-                        };
+                        // Use the actual connection side from the QUIC layer
+                        // Side::Server means THEY connected to US (inbound)
+                        // Side::Client means WE connected to THEM (outbound)
+                        let is_inbound = side.is_server();
 
                         if is_inbound {
                             let count =
@@ -655,6 +654,7 @@ impl TestNode {
                                 .send(TuiEvent::PeerConnected(inbound_peer))
                                 .await;
                         } else {
+                            // Outbound connection - we initiated
                             // Remove from pending since connection completed
                             let mut pending = pending_outbound_for_events.write().await;
                             pending.remove(&peer_hex);

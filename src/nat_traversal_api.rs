@@ -73,7 +73,7 @@ use crate::{
 };
 
 use crate::{
-    ClientConfig, ConnectionError, EndpointConfig, ServerConfig, TransportConfig,
+    ClientConfig, ConnectionError, EndpointConfig, ServerConfig, Side, TransportConfig,
     high_level::{Connection as InnerConnection, Endpoint as InnerEndpoint},
 };
 
@@ -732,6 +732,8 @@ pub enum NatTraversalEvent {
         peer_id: PeerId,
         /// The socket address where the connection was established
         remote_address: SocketAddr,
+        /// Who initiated the connection (Client = we connected, Server = they connected)
+        side: Side,
     },
     /// NAT traversal failed
     TraversalFailed {
@@ -1808,10 +1810,12 @@ impl NatTraversalEndpoint {
                                 };
 
                                 if should_emit {
+                                    // Background accept = they connected to us = Server side
                                     let _ =
                                         event_tx.send(NatTraversalEvent::ConnectionEstablished {
                                             peer_id,
                                             remote_address: connection.remote_address(),
+                                            side: Side::Server,
                                         });
                                 }
 
@@ -2259,11 +2263,12 @@ impl NatTraversalEndpoint {
             peer_id, remote_addr
         );
 
-        // Send event notification
+        // Send event notification (we initiated = Client side)
         if let Some(ref event_tx) = self.event_tx {
             let _ = event_tx.send(NatTraversalEvent::ConnectionEstablished {
                 peer_id,
                 remote_address: remote_addr,
+                side: Side::Client,
             });
         }
 
@@ -2627,10 +2632,11 @@ impl NatTraversalEndpoint {
                     Ok(NatTraversalEvent::ConnectionEstablished {
                         peer_id,
                         remote_address,
+                        side,
                     }) => {
                         info!(
-                            "Received ConnectionEstablished event for peer {:?} at {}",
-                            peer_id, remote_address
+                            "Received ConnectionEstablished event for peer {:?} at {} (side: {:?})",
+                            peer_id, remote_address, side
                         );
 
                         // Retrieve the already-accepted connection from storage
@@ -2715,10 +2721,16 @@ impl NatTraversalEndpoint {
     }
 
     /// Spawn the NAT traversal handler loop for an existing connection referenced by the endpoint.
+    ///
+    /// # Arguments
+    /// * `peer_id` - The peer ID of the remote endpoint
+    /// * `connection` - The established QUIC connection
+    /// * `side` - Who initiated the connection (Client = we connected, Server = they connected)
     pub fn spawn_connection_handler(
         &self,
         peer_id: PeerId,
         connection: InnerConnection,
+        side: Side,
     ) -> Result<(), NatTraversalError> {
         let event_tx = self.event_tx.as_ref().cloned().ok_or_else(|| {
             NatTraversalError::ConfigError("NAT traversal event channel not configured".to_string())
@@ -2737,6 +2749,7 @@ impl NatTraversalEndpoint {
             let _ = event_tx.send(NatTraversalEvent::ConnectionEstablished {
                 peer_id,
                 remote_address,
+                side,
             });
         }
 
@@ -3482,11 +3495,12 @@ impl NatTraversalEndpoint {
                                         conns.insert(peer_id_clone, connection.clone());
                                     }
 
-                                    // Send connection established event
+                                    // Send connection established event (we initiated hole punch = Client side)
                                     let _ =
                                         event_tx.send(NatTraversalEvent::ConnectionEstablished {
                                             peer_id: peer_id_clone,
                                             remote_address: address,
+                                            side: Side::Client,
                                         });
 
                                     // Handle the connection
@@ -4591,11 +4605,12 @@ impl NatTraversalEndpoint {
             }
         }
 
-        // Trigger success callback
+        // Trigger success callback (we initiated connection attempt = Client side)
         if let Some(ref callback) = self.event_callback {
             callback(NatTraversalEvent::ConnectionEstablished {
                 peer_id,
                 remote_address: candidate_address,
+                side: Side::Client,
             });
         }
 

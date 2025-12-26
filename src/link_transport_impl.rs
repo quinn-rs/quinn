@@ -340,7 +340,7 @@ impl P2pLinkTransport {
             match rx.recv().await {
                 Ok(event) => {
                     let link_event = match event {
-                        P2pEvent::PeerConnected { peer_id, addr } => {
+                        P2pEvent::PeerConnected { peer_id, addr, side: _ } => {
                             let caps = Capabilities::new_connected(addr);
                             // Update capabilities cache
                             if let Ok(mut state) = state.write() {

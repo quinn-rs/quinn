@@ -70,6 +70,7 @@ use crate::nat_traversal_api::{
 // Re-export TraversalPhase from nat_traversal_api for convenience
 pub use crate::nat_traversal_api::TraversalPhase;
 use crate::unified_config::P2pConfig;
+use crate::Side;
 
 /// Event channel capacity
 const EVENT_CHANNEL_CAPACITY: usize = 256;
@@ -219,6 +220,8 @@ pub enum P2pEvent {
         peer_id: PeerId,
         /// Remote address
         addr: SocketAddr,
+        /// Who initiated the connection (Client = we connected, Server = they connected)
+        side: Side,
     },
 
     /// Peer disconnected
@@ -366,15 +369,17 @@ impl P2pEndpoint {
                     NatTraversalEvent::ConnectionEstablished {
                         peer_id,
                         remote_address,
+                        side,
                     } => {
                         stats_guard.nat_traversal_successes += 1;
                         stats_guard.active_connections += 1;
                         stats_guard.successful_connections += 1;
 
-                        // Broadcast event
+                        // Broadcast event with connection direction
                         let _ = event_tx.send(P2pEvent::PeerConnected {
                             peer_id: *peer_id,
                             addr: *remote_address,
+                            side: *side,
                         });
                     }
                     NatTraversalEvent::TraversalFailed { peer_id, .. } => {
@@ -493,9 +498,9 @@ impl P2pEndpoint {
             .add_connection(peer_id, connection.clone())
             .map_err(EndpointError::NatTraversal)?;
 
-        // Spawn handler
+        // Spawn handler (we initiated the connection = Client side)
         self.inner
-            .spawn_connection_handler(peer_id, connection)
+            .spawn_connection_handler(peer_id, connection, Side::Client)
             .map_err(EndpointError::NatTraversal)?;
 
         // Create peer connection record
@@ -522,10 +527,12 @@ impl P2pEndpoint {
             stats.direct_connections += 1;
         }
 
-        // Broadcast event
-        let _ = self
-            .event_tx
-            .send(P2pEvent::PeerConnected { peer_id, addr });
+        // Broadcast event (we initiated the connection = Client side)
+        let _ = self.event_tx.send(P2pEvent::PeerConnected {
+            peer_id,
+            addr,
+            side: Side::Client,
+        });
 
         Ok(peer_conn)
     }
@@ -734,6 +741,7 @@ impl P2pEndpoint {
                     NatTraversalEvent::ConnectionEstablished {
                         peer_id: evt_peer,
                         remote_address,
+                        side: _,  // We initiated this NAT traversal, side is Client
                     } if evt_peer == peer_id => {
                         // v0.2: Peer is authenticated via TLS (ML-DSA-65) during handshake
                         let peer_conn = PeerConnection {
@@ -793,9 +801,10 @@ impl P2pEndpoint {
                     }
                 }
 
+                // They initiated the connection to us = Server side
                 if let Err(e) = self
                     .inner
-                    .spawn_connection_handler(resolved_peer_id, connection)
+                    .spawn_connection_handler(resolved_peer_id, connection, Side::Server)
                 {
                     error!("Failed to spawn connection handler: {}", e);
                     return None;
@@ -821,9 +830,11 @@ impl P2pEndpoint {
                     stats.successful_connections += 1;
                 }
 
+                // They initiated the connection to us = Server side
                 let _ = self.event_tx.send(P2pEvent::PeerConnected {
                     peer_id: resolved_peer_id,
                     addr: remote_addr,
+                    side: Side::Server,
                 });
 
                 Some(peer_conn)
