@@ -390,6 +390,121 @@ impl Default for PeerStatus {
     }
 }
 
+/// Connectivity matrix for comprehensive path testing.
+///
+/// Tracks which connection paths have been tested and their results for each peer.
+/// This enables comprehensive network testing by trying ALL paths, not just the first
+/// successful one.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ConnectivityMatrix {
+    /// IPv4 direct connection tested
+    pub ipv4_direct_tested: bool,
+    /// IPv4 direct connection succeeded
+    pub ipv4_direct_success: bool,
+    /// IPv4 direct connection RTT in ms
+    pub ipv4_direct_rtt_ms: Option<u64>,
+
+    /// IPv6 direct connection tested
+    pub ipv6_direct_tested: bool,
+    /// IPv6 direct connection succeeded
+    pub ipv6_direct_success: bool,
+    /// IPv6 direct connection RTT in ms
+    pub ipv6_direct_rtt_ms: Option<u64>,
+
+    /// NAT traversal (hole-punch) tested
+    pub nat_traversal_tested: bool,
+    /// NAT traversal succeeded
+    pub nat_traversal_success: bool,
+    /// NAT traversal RTT in ms
+    pub nat_traversal_rtt_ms: Option<u64>,
+
+    /// Relay tested
+    pub relay_tested: bool,
+    /// Relay succeeded
+    pub relay_success: bool,
+    /// Relay RTT in ms
+    pub relay_rtt_ms: Option<u64>,
+
+    /// Active connection method (which path we're using for data)
+    pub active_method: Option<ConnectionMethod>,
+    /// Active connection is IPv6
+    pub active_is_ipv6: bool,
+}
+
+impl ConnectivityMatrix {
+    /// Create a new empty connectivity matrix.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Get a summary string of tested paths.
+    pub fn summary(&self) -> String {
+        let mut parts = Vec::new();
+
+        if self.ipv4_direct_tested {
+            let status = if self.ipv4_direct_success { "✓" } else { "✗" };
+            parts.push(format!("IPv4:{}", status));
+        }
+
+        if self.ipv6_direct_tested {
+            let status = if self.ipv6_direct_success { "✓" } else { "✗" };
+            parts.push(format!("IPv6:{}", status));
+        }
+
+        if self.nat_traversal_tested {
+            let status = if self.nat_traversal_success { "✓" } else { "✗" };
+            parts.push(format!("NAT:{}", status));
+        }
+
+        if self.relay_tested {
+            let status = if self.relay_success { "✓" } else { "✗" };
+            parts.push(format!("Relay:{}", status));
+        }
+
+        if parts.is_empty() {
+            "Not tested".to_string()
+        } else {
+            parts.join(" ")
+        }
+    }
+
+    /// Count successful paths.
+    pub fn successful_paths(&self) -> usize {
+        let mut count = 0;
+        if self.ipv4_direct_success {
+            count += 1;
+        }
+        if self.ipv6_direct_success {
+            count += 1;
+        }
+        if self.nat_traversal_success {
+            count += 1;
+        }
+        if self.relay_success {
+            count += 1;
+        }
+        count
+    }
+
+    /// Count tested paths.
+    pub fn tested_paths(&self) -> usize {
+        let mut count = 0;
+        if self.ipv4_direct_tested {
+            count += 1;
+        }
+        if self.ipv6_direct_tested {
+            count += 1;
+        }
+        if self.nat_traversal_tested {
+            count += 1;
+        }
+        if self.relay_tested {
+            count += 1;
+        }
+        count
+    }
+}
+
 /// Helper function to get current unix timestamp.
 pub fn unix_timestamp() -> u64 {
     SystemTime::now()

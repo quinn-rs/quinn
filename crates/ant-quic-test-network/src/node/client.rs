@@ -5,8 +5,8 @@
 //! and test traffic generation over actual QUIC streams.
 
 use crate::registry::{
-    ConnectionDirection, ConnectionMethod, ConnectionReport, NatStats, NatType, NodeCapabilities,
-    NodeHeartbeat, NodeRegistration, PeerInfo, RegistryClient,
+    ConnectionDirection, ConnectionMethod, ConnectionReport, ConnectivityMatrix, NatStats,
+    NatType, NodeCapabilities, NodeHeartbeat, NodeRegistration, PeerInfo, RegistryClient,
 };
 use crate::tui::{ConnectedPeer, LocalNodeInfo, TuiEvent, country_flag};
 use std::collections::{HashMap, HashSet};
@@ -327,6 +327,8 @@ struct TrackedPeer {
     sequence: AtomicU64,
     /// Consecutive failures (for health checking).
     consecutive_failures: u32,
+    /// Connectivity matrix showing all tested paths.
+    connectivity: ConnectivityMatrix,
 }
 
 impl TrackedPeer {
@@ -349,6 +351,7 @@ impl TrackedPeer {
         peer.packets_received = self.stats.packets_received;
         peer.connected_at = self.connected_at;
         peer.addresses = self.info.addresses.clone();
+        peer.connectivity = self.connectivity.clone();
 
         peer
     }
@@ -1219,130 +1222,111 @@ impl TestNode {
                             stats.attempts += 1;
                         }
 
-                        // Capture endpoint stats BEFORE connection to detect NAT traversal
-                        let stats_before = endpoint.stats().await;
+                        // Use comprehensive connection testing to try ALL paths
+                        let result = real_connect_comprehensive(&endpoint, &candidate).await;
 
-                        // Make REAL QUIC connection using P2pEndpoint
-                        let connection_result = real_connect(&endpoint, &candidate).await;
+                        if result.success {
+                            success.fetch_add(1, Ordering::Relaxed);
 
-                        match connection_result {
-                            Ok(method) => {
-                                success.fetch_add(1, Ordering::Relaxed);
+                            // Check if we saw a Punching phase event
+                            let tracker = hole_punched_peers.read().await;
+                            let saw_punching =
+                                tracker.get(&candidate.peer_id).copied().unwrap_or(false);
 
-                                // Capture endpoint stats AFTER connection
-                                let stats_after = endpoint.stats().await;
+                            // Final method considers both comprehensive test and punching events
+                            let final_method = if saw_punching || result.matrix.nat_traversal_success
+                            {
+                                ConnectionMethod::HolePunched
+                            } else {
+                                result.best_method
+                            };
 
-                                // Determine final connection method by checking:
-                                // 1. If NAT traversal protocol was triggered (endpoint stats)
-                                // 2. If we saw a Punching phase event (hole_punched_peers tracker)
-                                // 3. What the real_connect function returned
-                                let final_method = {
-                                    // Check if endpoint's nat_traversal_successes increased
-                                    let nat_traversal_used = stats_after.nat_traversal_successes
-                                        > stats_before.nat_traversal_successes;
-
-                                    // Check if we saw a Punching phase event
-                                    let tracker = hole_punched_peers.read().await;
-                                    let saw_punching =
-                                        tracker.get(&candidate.peer_id).copied().unwrap_or(false);
-
-                                    if nat_traversal_used || saw_punching {
-                                        debug!(
-                                            "Connection to {} used NAT traversal (stats: {}, punching: {})",
-                                            peer_id_short, nat_traversal_used, saw_punching
-                                        );
-                                        ConnectionMethod::HolePunched
-                                    } else {
-                                        method
-                                    }
-                                };
-
-                                match final_method {
-                                    ConnectionMethod::Direct => {
-                                        direct.fetch_add(1, Ordering::Relaxed);
-                                        let mut stats = nat_stats.write().await;
-                                        stats.direct_success += 1;
-                                    }
-                                    ConnectionMethod::HolePunched => {
-                                        holepunch.fetch_add(1, Ordering::Relaxed);
-                                        let mut stats = nat_stats.write().await;
-                                        stats.hole_punch_success += 1;
-                                    }
-                                    ConnectionMethod::Relayed => {
-                                        relay.fetch_add(1, Ordering::Relaxed);
-                                        let mut stats = nat_stats.write().await;
-                                        stats.relay_success += 1;
-                                    }
+                            match final_method {
+                                ConnectionMethod::Direct => {
+                                    direct.fetch_add(1, Ordering::Relaxed);
+                                    let mut stats = nat_stats.write().await;
+                                    stats.direct_success += 1;
                                 }
-
-                                let now = Instant::now();
-                                let tracked = TrackedPeer {
-                                    info: candidate.clone(),
-                                    method: final_method,
-                                    direction: ConnectionDirection::Outbound,
-                                    connected_at: now,
-                                    last_activity: now,
-                                    stats: PeerStats::default(),
-                                    sequence: AtomicU64::new(0),
-                                    consecutive_failures: 0,
-                                };
-
-                                let peer_for_tui = tracked.to_connected_peer();
-
-                                connected_peers
-                                    .write()
-                                    .await
-                                    .insert(candidate.peer_id.clone(), tracked);
-
-                                info!(
-                                    "FRESH hole-punch SUCCESS to {} via {:?}",
-                                    peer_id_short, final_method
-                                );
-
-                                let _ = event_tx.send(TuiEvent::PeerConnected(peer_for_tui)).await;
-
-                                // Report successful connection to registry
-                                let report = ConnectionReport {
-                                    from_peer: our_peer_id.clone(),
-                                    to_peer: candidate.peer_id.clone(),
-                                    method: final_method,
-                                    is_ipv6: candidate
-                                        .addresses
-                                        .first()
-                                        .map(|a| a.is_ipv6())
-                                        .unwrap_or(false),
-                                    rtt_ms: None,
-                                };
-                                if let Err(e) = registry.report_connection(&report).await {
-                                    warn!("Failed to report connection: {}", e);
+                                ConnectionMethod::HolePunched => {
+                                    holepunch.fetch_add(1, Ordering::Relaxed);
+                                    let mut stats = nat_stats.write().await;
+                                    stats.hole_punch_success += 1;
+                                }
+                                ConnectionMethod::Relayed => {
+                                    relay.fetch_add(1, Ordering::Relaxed);
+                                    let mut stats = nat_stats.write().await;
+                                    stats.relay_success += 1;
                                 }
                             }
-                            Err(e) => {
-                                // Clean up pending_outbound on failure
-                                {
-                                    let mut pending = pending_outbound.write().await;
-                                    pending.remove(&candidate.peer_id);
-                                }
 
-                                // Only count as failure if peer is still LIVE
-                                // (they might have gone offline, not a hole-punch failure)
-                                if candidate.is_active {
-                                    failed.fetch_add(1, Ordering::Relaxed);
-                                    {
-                                        let mut stats = nat_stats.write().await;
-                                        stats.failures += 1;
-                                    }
-                                    warn!(
-                                        "FRESH hole-punch FAILED to {} (peer is LIVE): {}",
-                                        peer_id_short, e
-                                    );
-                                    let _ = event_tx.send(TuiEvent::ConnectionFailed).await;
-                                } else {
-                                    debug!(
-                                        "Connection to {} failed but peer went offline: {}",
-                                        peer_id_short, e
-                                    );
+                            let now = Instant::now();
+                            // Extract values before moving the matrix
+                            let is_ipv6 = result.matrix.active_is_ipv6;
+                            let tracked = TrackedPeer {
+                                info: candidate.clone(),
+                                method: final_method,
+                                direction: ConnectionDirection::Outbound,
+                                connected_at: now,
+                                last_activity: now,
+                                stats: PeerStats::default(),
+                                sequence: AtomicU64::new(0),
+                                consecutive_failures: 0,
+                                connectivity: result.matrix,
+                            };
+
+                            let peer_for_tui = tracked.to_connected_peer();
+
+                            connected_peers
+                                .write()
+                                .await
+                                .insert(candidate.peer_id.clone(), tracked);
+
+                            info!(
+                                "COMPREHENSIVE test SUCCESS to {} via {:?} (matrix: {})",
+                                peer_id_short,
+                                final_method,
+                                peer_for_tui.connectivity_summary()
+                            );
+
+                            let _ = event_tx.send(TuiEvent::PeerConnected(peer_for_tui)).await;
+
+                            // Report successful connection to registry
+                            let report = ConnectionReport {
+                                from_peer: our_peer_id.clone(),
+                                to_peer: candidate.peer_id.clone(),
+                                method: final_method,
+                                is_ipv6,
+                                rtt_ms: None,
+                            };
+                            if let Err(e) = registry.report_connection(&report).await {
+                                warn!("Failed to report connection: {}", e);
+                            }
+                        } else {
+                            // Connection failed - clean up and report
+                            {
+                                let mut pending = pending_outbound.write().await;
+                                pending.remove(&candidate.peer_id);
+                            }
+
+                            // Only count as failure if peer is still LIVE
+                            // (they might have gone offline, not a hole-punch failure)
+                            if candidate.is_active {
+                                failed.fetch_add(1, Ordering::Relaxed);
+                                {
+                                    let mut stats = nat_stats.write().await;
+                                    stats.failures += 1;
                                 }
+                                warn!(
+                                    "COMPREHENSIVE test FAILED to {} (peer is LIVE, matrix: {})",
+                                    peer_id_short,
+                                    result.matrix.summary()
+                                );
+                                let _ = event_tx.send(TuiEvent::ConnectionFailed).await;
+                            } else {
+                                debug!(
+                                    "Connection to {} failed but peer went offline",
+                                    peer_id_short
+                                );
                             }
                         }
                     };
@@ -1609,95 +1593,155 @@ fn peer_id_to_bytes(peer_id: &str) -> [u8; 32] {
 /// Make a REAL QUIC connection to a peer using P2pEndpoint.
 ///
 /// This is NOT a simulation - it creates an actual QUIC connection.
-/// Connection strategy:
-/// 1. Try direct dual-stack connection (IPv4 and IPv6 in parallel)
-/// 2. Try individual direct connections to each address
-/// 3. Fall back to NAT traversal (hole-punching) if direct fails
-async fn real_connect(endpoint: &P2pEndpoint, peer: &PeerInfo) -> Result<ConnectionMethod, String> {
-    // Get addresses to try
-    if peer.addresses.is_empty() {
-        return Err("Peer has no addresses".to_string());
-    }
+/// Result of comprehensive connection testing.
+struct ComprehensiveConnectResult {
+    /// The connectivity matrix with all tested paths.
+    matrix: ConnectivityMatrix,
+    /// The best connection method to use.
+    best_method: ConnectionMethod,
+    /// Whether connection succeeded at all.
+    success: bool,
+}
 
+/// Comprehensive connection test that tries ALL paths for complete network analysis.
+///
+/// Unlike real_connect which returns on first success, this function tests:
+/// 1. IPv4 direct connections (all IPv4 addresses)
+/// 2. IPv6 direct connections (all IPv6 addresses)
+/// 3. NAT traversal (hole-punching)
+/// 4. Relay (if available)
+///
+/// This enables comprehensive network testing for studies and design.
+async fn real_connect_comprehensive(
+    endpoint: &P2pEndpoint,
+    peer: &PeerInfo,
+) -> ComprehensiveConnectResult {
     let peer_id_short = &peer.peer_id[..8.min(peer.peer_id.len())];
+    let mut matrix = ConnectivityMatrix::default();
 
-    // Try dual-stack connection first (both IPv4 and IPv6 in parallel)
-    match endpoint.connect_dual_stack(&peer.addresses).await {
-        Ok(_conn) => {
-            info!(
-                "REAL QUIC connection established to {} (direct dual-stack)",
-                peer_id_short
-            );
-            // Direct connection succeeded
-            return Ok(ConnectionMethod::Direct);
-        }
-        Err(e) => {
-            debug!("Dual-stack direct connection failed: {}", e);
-        }
-    }
+    // Separate addresses by IP version
+    let ipv4_addrs: Vec<_> = peer.addresses.iter().filter(|a| a.is_ipv4()).collect();
+    let ipv6_addrs: Vec<_> = peer.addresses.iter().filter(|a| a.is_ipv6()).collect();
 
-    // Try single address connections as fallback
-    for addr in &peer.addresses {
-        match tokio::time::timeout(Duration::from_secs(10), endpoint.connect(*addr)).await {
-            Ok(Ok(_conn)) => {
-                info!(
-                    "REAL QUIC connection established to {} at {} (direct)",
-                    peer_id_short, addr
-                );
-                return Ok(ConnectionMethod::Direct);
-            }
-            Ok(Err(e)) => {
-                debug!("Direct connection to {} failed: {}", addr, e);
-            }
-            Err(_) => {
-                debug!("Direct connection to {} timed out", addr);
-            }
-        }
-    }
-
-    // All direct connections failed - try NAT traversal (hole-punching)
     info!(
-        "Direct connections to {} failed, attempting NAT traversal...",
-        peer_id_short
+        "Testing comprehensive connectivity to {}: {} IPv4, {} IPv6 addresses",
+        peer_id_short,
+        ipv4_addrs.len(),
+        ipv6_addrs.len()
     );
 
-    // Convert hex peer_id to QuicPeerId
-    let peer_id_bytes =
-        hex::decode(&peer.peer_id).map_err(|e| format!("Invalid peer ID hex: {}", e))?;
-
-    if peer_id_bytes.len() < 32 {
-        return Err("Peer ID too short for NAT traversal".to_string());
+    // Test IPv4 direct connections
+    if !ipv4_addrs.is_empty() {
+        matrix.ipv4_direct_tested = true;
+        let start = Instant::now();
+        for addr in &ipv4_addrs {
+            match tokio::time::timeout(Duration::from_secs(10), endpoint.connect(**addr)).await {
+                Ok(Ok(_conn)) => {
+                    matrix.ipv4_direct_success = true;
+                    matrix.ipv4_direct_rtt_ms = Some(start.elapsed().as_millis() as u64);
+                    info!("IPv4 direct connection to {} at {} succeeded", peer_id_short, addr);
+                    break;
+                }
+                Ok(Err(e)) => {
+                    debug!("IPv4 direct to {} failed: {}", addr, e);
+                }
+                Err(_) => {
+                    debug!("IPv4 direct to {} timed out", addr);
+                }
+            }
+        }
     }
 
-    let mut peer_id_array = [0u8; 32];
-    peer_id_array.copy_from_slice(&peer_id_bytes[..32]);
-    let quic_peer_id = QuicPeerId(peer_id_array);
+    // Test IPv6 direct connections (even if IPv4 succeeded - comprehensive testing)
+    if !ipv6_addrs.is_empty() {
+        matrix.ipv6_direct_tested = true;
+        let start = Instant::now();
+        for addr in &ipv6_addrs {
+            match tokio::time::timeout(Duration::from_secs(10), endpoint.connect(**addr)).await {
+                Ok(Ok(_conn)) => {
+                    matrix.ipv6_direct_success = true;
+                    matrix.ipv6_direct_rtt_ms = Some(start.elapsed().as_millis() as u64);
+                    info!("IPv6 direct connection to {} at {} succeeded", peer_id_short, addr);
+                    break;
+                }
+                Ok(Err(e)) => {
+                    debug!("IPv6 direct to {} failed: {}", addr, e);
+                }
+                Err(_) => {
+                    debug!("IPv6 direct to {} timed out", addr);
+                }
+            }
+        }
+    }
 
-    // Don't use the peer's address as coordinator - it's likely unreachable (behind NAT).
-    // Passing None lets P2pEndpoint use its known_peers (public bootstrap nodes) as coordinators.
-    // The coordinator must be a publicly reachable node that can relay coordination requests.
+    // Test NAT traversal (even if direct succeeded - comprehensive testing)
+    if let Ok(peer_id_bytes) = hex::decode(&peer.peer_id) {
+        if peer_id_bytes.len() >= 32 {
+            let mut peer_id_array = [0u8; 32];
+            peer_id_array.copy_from_slice(&peer_id_bytes[..32]);
+            let quic_peer_id = QuicPeerId(peer_id_array);
 
-    match tokio::time::timeout(
-        Duration::from_secs(30), // NAT traversal can take longer
-        endpoint.connect_to_peer(quic_peer_id, None),
-    )
-    .await
-    {
-        Ok(Ok(_conn)) => {
-            info!(
-                "REAL QUIC connection established to {} via NAT traversal (hole-punched)",
-                peer_id_short
-            );
-            Ok(ConnectionMethod::HolePunched)
+            matrix.nat_traversal_tested = true;
+            let start = Instant::now();
+
+            match tokio::time::timeout(
+                Duration::from_secs(30),
+                endpoint.connect_to_peer(quic_peer_id, None),
+            )
+            .await
+            {
+                Ok(Ok(_conn)) => {
+                    matrix.nat_traversal_success = true;
+                    matrix.nat_traversal_rtt_ms = Some(start.elapsed().as_millis() as u64);
+                    info!("NAT traversal to {} succeeded", peer_id_short);
+                }
+                Ok(Err(e)) => {
+                    debug!("NAT traversal to {} failed: {}", peer_id_short, e);
+                }
+                Err(_) => {
+                    debug!("NAT traversal to {} timed out", peer_id_short);
+                }
+            }
         }
-        Ok(Err(e)) => {
-            warn!("NAT traversal to {} failed: {}", peer_id_short, e);
-            Err(format!("All connection methods failed: {}", e))
-        }
-        Err(_) => {
-            warn!("NAT traversal to {} timed out after 30s", peer_id_short);
-            Err("NAT traversal timed out".to_string())
-        }
+    }
+
+    // TODO: Test relay when available
+    // matrix.relay_tested = true;
+    // matrix.relay_success = ...;
+
+    // Determine best method and whether we have any connection
+    let (best_method, active_is_ipv6) = if matrix.ipv6_direct_success {
+        // Prefer IPv6 if available (typically better for P2P)
+        (ConnectionMethod::Direct, true)
+    } else if matrix.ipv4_direct_success {
+        (ConnectionMethod::Direct, false)
+    } else if matrix.nat_traversal_success {
+        (ConnectionMethod::HolePunched, false)
+    } else if matrix.relay_success {
+        (ConnectionMethod::Relayed, false)
+    } else {
+        // No connection succeeded, but still report Direct as default
+        (ConnectionMethod::Direct, false)
+    };
+
+    let success =
+        matrix.ipv4_direct_success || matrix.ipv6_direct_success || matrix.nat_traversal_success;
+
+    matrix.active_method = if success { Some(best_method) } else { None };
+    matrix.active_is_ipv6 = active_is_ipv6;
+
+    info!(
+        "Comprehensive test to {}: {} paths tested, {} succeeded (best: {:?})",
+        peer_id_short,
+        matrix.tested_paths(),
+        matrix.successful_paths(),
+        if success { Some(best_method) } else { None }
+    );
+
+    ComprehensiveConnectResult {
+        matrix,
+        best_method,
+        success,
     }
 }
 

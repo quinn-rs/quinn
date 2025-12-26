@@ -3,7 +3,7 @@
 //! This module defines the data structures used by the terminal UI
 //! to display network state and peer connections.
 
-use crate::registry::{ConnectionDirection, ConnectionMethod, NatType};
+use crate::registry::{ConnectionDirection, ConnectionMethod, ConnectivityMatrix, NatType};
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
@@ -91,6 +91,8 @@ pub struct ConnectedPeer {
     pub connected_at: Instant,
     /// Remote addresses
     pub addresses: Vec<SocketAddr>,
+    /// Connectivity matrix showing all tested paths
+    pub connectivity: ConnectivityMatrix,
 }
 
 impl ConnectedPeer {
@@ -125,6 +127,7 @@ impl ConnectedPeer {
             packets_received: 0,
             connected_at: Instant::now(),
             addresses: Vec::new(),
+            connectivity: ConnectivityMatrix::default(),
         }
     }
 
@@ -147,6 +150,16 @@ impl ConnectedPeer {
         let tx = if self.tx_active { ">>" } else { "  " };
         let rx = if self.rx_active { "<<" } else { "  " };
         format!("[{}] [{}]", tx, rx)
+    }
+
+    /// Get connectivity summary string.
+    pub fn connectivity_summary(&self) -> String {
+        self.connectivity.summary()
+    }
+
+    /// Update connectivity matrix from test results.
+    pub fn update_connectivity(&mut self, matrix: ConnectivityMatrix) {
+        self.connectivity = matrix;
     }
 }
 

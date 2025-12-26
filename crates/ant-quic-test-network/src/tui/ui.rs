@@ -172,8 +172,7 @@ fn draw_peers(frame: &mut Frame, app: &App, area: Rect) {
         Cell::from("Location").style(Style::default().add_modifier(Modifier::BOLD)),
         Cell::from("Direction").style(Style::default().add_modifier(Modifier::BOLD)),
         Cell::from("RTT").style(Style::default().add_modifier(Modifier::BOLD)),
-        Cell::from("TX/RX").style(Style::default().add_modifier(Modifier::BOLD)),
-        Cell::from("Status").style(Style::default().add_modifier(Modifier::BOLD)),
+        Cell::from("Connectivity").style(Style::default().add_modifier(Modifier::BOLD)),
     ])
     .height(1)
     .style(Style::default().fg(Color::White));
@@ -200,32 +199,15 @@ fn draw_peers(frame: &mut Frame, app: &App, area: Rect) {
                 peer.location.clone()
             };
 
-            // Status indicator with clear separation
-            let status_indicator = match peer.quality {
-                crate::tui::types::ConnectionQuality::Excellent => "●",
-                crate::tui::types::ConnectionQuality::Good => "●",
-                crate::tui::types::ConnectionQuality::Fair => "●",
-                crate::tui::types::ConnectionQuality::Poor => "●",
-                crate::tui::types::ConnectionQuality::VeryPoor => "○",
-            };
-            let status_color = match peer.quality {
-                crate::tui::types::ConnectionQuality::Excellent => Color::Green,
-                crate::tui::types::ConnectionQuality::Good => Color::LightGreen,
-                crate::tui::types::ConnectionQuality::Fair => Color::Yellow,
-                crate::tui::types::ConnectionQuality::Poor => Color::LightRed,
-                crate::tui::types::ConnectionQuality::VeryPoor => Color::Red,
-            };
+            // Get connectivity matrix summary (shows which paths tested and results)
+            let connectivity = peer.connectivity_summary();
 
             Row::new(vec![
                 Cell::from(peer.short_id.clone()),
                 Cell::from(location),
                 Cell::from(direction_str).style(direction_style),
                 Cell::from(peer.rtt_string()),
-                Cell::from(peer.traffic_indicator()),
-                Cell::from(Span::styled(
-                    format!("{} OK", status_indicator),
-                    Style::default().fg(status_color),
-                )),
+                Cell::from(connectivity),
             ])
         })
         .collect();
@@ -237,8 +219,7 @@ fn draw_peers(frame: &mut Frame, app: &App, area: Rect) {
             Constraint::Length(10), // Location
             Constraint::Length(16), // Direction (wider for "← They connected")
             Constraint::Length(8),  // RTT
-            Constraint::Length(12), // TX/RX
-            Constraint::Length(8),  // Status (simplified)
+            Constraint::Min(30),    // Connectivity matrix (e.g., "IPv4:✓ IPv6:✗ NAT:✓ Relay:✗")
         ],
     )
     .header(header)
