@@ -37,7 +37,7 @@ impl Default for Args {
             registry: false,
             port: 8080,
             bind_port: 0, // 0 = random available port
-            registry_url: "http://saorsa-1.saorsalabs.com:8080".to_string(),
+            registry_url: "https://saorsa-1.saorsalabs.com".to_string(),
             max_peers: 10,
             quiet: false,
         }
