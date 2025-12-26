@@ -303,6 +303,12 @@ impl BgpGeoProvider {
             (31898, "US"),
             // M247 (VPN infrastructure - UK based)
             (9009, "GB"),
+            // Starlink / SpaceX
+            // NOTE: Starlink IPs are registered in US regardless of user's physical location.
+            // This is a known limitation of satellite internet - all traffic routes through
+            // US ground stations. We mark as US which is technically correct for the IP registry.
+            (14593, "US"),  // Starlink (primary)
+            (396986, "US"), // SpaceX Services, Inc.
         ];
 
         for &(asn, country) in asns {
@@ -352,6 +358,14 @@ impl BgpGeoProvider {
             // OVH
             ([51, 68, 0, 0], 16, 16276),
             ([51, 77, 0, 0], 16, 16276),
+            // Starlink / SpaceX
+            // NOTE: Shows as US because Starlink IPs route through US ground stations
+            ([98, 97, 0, 0], 16, 14593),
+            ([98, 98, 0, 0], 15, 14593),
+            ([143, 131, 0, 0], 16, 14593),
+            ([150, 228, 0, 0], 16, 14593), // Europe/UK region
+            ([206, 214, 0, 0], 16, 14593),
+            ([206, 220, 0, 0], 16, 14593),
         ];
 
         for &(octets, len, asn) in prefix_data {

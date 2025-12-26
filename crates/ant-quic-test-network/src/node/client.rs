@@ -639,6 +639,21 @@ impl TestNode {
                                     &peer_hex[..8.min(peer_hex.len())]
                                 )))
                                 .await;
+
+                            // Create a ConnectedPeer for TUI display with Inbound direction
+                            // This ensures inbound connections appear in the peer list
+                            let mut inbound_peer = ConnectedPeer::with_direction(
+                                &peer_hex,
+                                ConnectionMethod::HolePunched, // They punched through to us
+                                ConnectionDirection::Inbound,
+                            );
+                            inbound_peer.addresses = vec![addr];
+                            // Mark connectivity matrix to show NAT traversal succeeded
+                            inbound_peer.connectivity.nat_traversal_success = true;
+
+                            let _ = event_tx_for_events
+                                .send(TuiEvent::PeerConnected(inbound_peer))
+                                .await;
                         } else {
                             // Remove from pending since connection completed
                             let mut pending = pending_outbound_for_events.write().await;
