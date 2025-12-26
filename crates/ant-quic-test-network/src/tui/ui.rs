@@ -283,7 +283,9 @@ fn draw_stats(frame: &mut Frame, app: &App, area: Rect) {
         Span::raw(")  Inbound: "),
         Span::styled(
             format!("{}", app.stats.inbound_connections),
-            Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
         ),
         Span::raw("  Outbound: "),
         Span::styled(

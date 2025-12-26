@@ -629,9 +629,7 @@ impl TestNode {
 
                             // This is the key metric for nodes behind NAT!
                             // If we receive inbound connections, NAT traversal is working
-                            let _ = event_tx_for_events
-                                .send(TuiEvent::InboundConnection)
-                                .await;
+                            let _ = event_tx_for_events.send(TuiEvent::InboundConnection).await;
                             let _ = event_tx_for_events
                                 .send(TuiEvent::Info(format!(
                                     "← INBOUND from {} (NAT traversal works!)",
@@ -643,9 +641,7 @@ impl TestNode {
                             let mut pending = pending_outbound_for_events.write().await;
                             pending.remove(&peer_hex);
                             // Track outbound connection
-                            let _ = event_tx_for_events
-                                .send(TuiEvent::OutboundConnection)
-                                .await;
+                            let _ = event_tx_for_events.send(TuiEvent::OutboundConnection).await;
                         }
                     }
                     P2pEvent::PeerDisconnected { peer_id, reason } => {
@@ -931,7 +927,10 @@ impl TestNode {
                 // Send error to TUI
                 let _ = self
                     .event_tx
-                    .send(TuiEvent::Error(format!("Registry connection failed: {}", e)))
+                    .send(TuiEvent::Error(format!(
+                        "Registry connection failed: {}",
+                        e
+                    )))
                     .await;
                 return Err(e);
             }
