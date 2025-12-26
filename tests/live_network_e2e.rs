@@ -43,11 +43,19 @@ async fn test_external_address_discovery_live() -> anyhow::Result<()> {
     let _ = tracing_subscriber::fmt::try_init();
     println!("Testing external address discovery via live saorsa nodes...");
 
-    // Parse known peer addresses
-    let known_peers: Vec<SocketAddr> = SAORSA_NODES
-        .iter()
-        .filter_map(|addr| addr.parse().ok())
-        .collect();
+    // Resolve known peer addresses via DNS
+    let mut known_peers = Vec::new();
+    for addr in SAORSA_NODES {
+        match tokio::net::lookup_host(*addr).await {
+            Ok(mut addrs) => {
+                if let Some(sock_addr) = addrs.next() {
+                    println!("Resolved {} -> {}", addr, sock_addr);
+                    known_peers.push(sock_addr);
+                }
+            }
+            Err(e) => println!("Failed to resolve {}: {}", addr, e),
+        }
+    }
 
     if known_peers.is_empty() {
         println!("No resolvable known peers - skipping test");
@@ -139,9 +147,15 @@ async fn test_dual_stack_connectivity() -> anyhow::Result<()> {
             _ => unreachable!(),
         };
 
+        // Resolve the known peer address
+        let peer_addr = tokio::net::lookup_host("saorsa-2.saorsalabs.com:9000")
+            .await?
+            .next()
+            .ok_or_else(|| anyhow::anyhow!("Failed to resolve saorsa-2"))?;
+
         let config = P2pConfig::builder()
             .bind_addr(bind_addr)
-            .known_peers(vec!["saorsa-2.saorsalabs.com:9000".parse()?])
+            .known_peers(vec![peer_addr])
             .pqc(ant_quic::PqcConfig::default())
             .build()?;
 
@@ -176,7 +190,11 @@ async fn test_dual_stack_connectivity() -> anyhow::Result<()> {
 async fn connect_to_node(addr: &str) -> anyhow::Result<()> {
     println!("Connecting to {}...", addr);
 
-    let peer_addr: SocketAddr = addr.parse()?;
+    // Resolve DNS hostname to socket address
+    let peer_addr: SocketAddr = tokio::net::lookup_host(addr)
+        .await?
+        .next()
+        .ok_or_else(|| anyhow::anyhow!("Failed to resolve {}", addr))?;
 
     let config = P2pConfig::builder()
         .bind_addr(SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0))
