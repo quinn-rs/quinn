@@ -1209,6 +1209,18 @@
         .ip-badge.ipv4 { background: rgba(0, 217, 255, 0.2); color: var(--accent-cyan); }
         .ip-badge.ipv6 { background: rgba(168, 85, 247, 0.2); color: var(--accent-purple); }
 
+        .conn-badge {
+            display: inline-block;
+            padding: 0.1rem 0.3rem;
+            border-radius: 4px;
+            font-size: 0.6rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            margin-right: 0.2rem;
+        }
+        .conn-badge.success { background: rgba(0, 255, 136, 0.2); color: var(--accent-green); }
+        .conn-badge.failed { background: rgba(255, 100, 100, 0.2); color: #ff6b6b; }
+
         .geo-distribution {
             display: flex;
             flex-wrap: wrap;
@@ -1797,11 +1809,12 @@
                                 <th>Method</th>
                                 <th>IP</th>
                                 <th>RTT</th>
+                                <th>Connectivity</th>
                                 <th>Time</th>
                             </tr>
                         </thead>
                         <tbody id="results-connections">
-                            <tr><td colspan="6" style="text-align: center; color: var(--text-secondary);">Loading...</td></tr>
+                            <tr><td colspan="7" style="text-align: center; color: var(--text-secondary);">Loading...</td></tr>
                         </tbody>
                     </table>
                 </div>
@@ -1976,6 +1989,39 @@
             const sizes = ['B', 'KB', 'MB', 'GB'];
             const i = Math.floor(Math.log(bytes) / Math.log(k));
             return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+        }
+
+        // Format connectivity matrix as badges
+        function formatConnectivityMatrix(matrix) {
+            if (!matrix || Object.keys(matrix).length === 0) {
+                return '<span style="color: var(--text-secondary);">-</span>';
+            }
+            const parts = [];
+            if (matrix.ipv4_direct_tested) {
+                const ok = matrix.ipv4_direct_success;
+                const cls = ok ? 'success' : 'failed';
+                const rtt = matrix.ipv4_direct_rtt_ms ? ` (${matrix.ipv4_direct_rtt_ms}ms)` : '';
+                parts.push(`<span class="conn-badge ${cls}">IPv4${rtt}</span>`);
+            }
+            if (matrix.ipv6_direct_tested) {
+                const ok = matrix.ipv6_direct_success;
+                const cls = ok ? 'success' : 'failed';
+                const rtt = matrix.ipv6_direct_rtt_ms ? ` (${matrix.ipv6_direct_rtt_ms}ms)` : '';
+                parts.push(`<span class="conn-badge ${cls}">IPv6${rtt}</span>`);
+            }
+            if (matrix.nat_traversal_tested) {
+                const ok = matrix.nat_traversal_success;
+                const cls = ok ? 'success' : 'failed';
+                const rtt = matrix.nat_traversal_rtt_ms ? ` (${matrix.nat_traversal_rtt_ms}ms)` : '';
+                parts.push(`<span class="conn-badge ${cls}">NAT${rtt}</span>`);
+            }
+            if (matrix.relay_tested) {
+                const ok = matrix.relay_success;
+                const cls = ok ? 'success' : 'failed';
+                const rtt = matrix.relay_rtt_ms ? ` (${matrix.relay_rtt_ms}ms)` : '';
+                parts.push(`<span class="conn-badge ${cls}">Relay${rtt}</span>`);
+            }
+            return parts.length > 0 ? parts.join(' ') : '<span style="color: var(--text-secondary);">-</span>';
         }
 
         // Update stats
@@ -2552,17 +2598,21 @@
                     const methodClass = conn.method.toLowerCase();
                     const ipType = conn.is_ipv6 ? 'ipv6' : 'ipv4';
                     const rtt = conn.rtt_ms ? `${conn.rtt_ms}ms` : '-';
+                    // Generate connectivity matrix summary
+                    const matrix = conn.connectivity || {};
+                    const connectivity = formatConnectivityMatrix(matrix);
                     return `<tr>
                         <td><code>${conn.from_peer.substring(0, 8)}...</code></td>
                         <td><code>${conn.to_peer.substring(0, 8)}...</code></td>
                         <td><span class="method-badge ${methodClass}">${conn.method}</span></td>
                         <td><span class="ip-badge ${ipType}">${ipType.toUpperCase()}</span></td>
                         <td>${rtt}</td>
+                        <td>${connectivity}</td>
                         <td>${time}</td>
                     </tr>`;
                 }).join('');
             } else {
-                tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; color: var(--text-secondary);">No connections recorded yet</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="7" style="text-align: center; color: var(--text-secondary);">No connections recorded yet</td></tr>';
             }
         }
 
