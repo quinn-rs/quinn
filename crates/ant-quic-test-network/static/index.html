@@ -1448,7 +1448,7 @@
                         <div class="value cyan" id="node-connected-peers">0</div>
                     </div>
                     <div class="stat-box">
-                        <div class="label">Success Rate</div>
+                        <div class="label">Reach</div>
                         <div class="value success" id="node-success-rate">0%</div>
                     </div>
                     <div class="stat-box">
@@ -1750,7 +1750,7 @@
                     <div class="value gold" id="results-total-connections">0</div>
                 </div>
                 <div class="results-stat-card">
-                    <div class="label">Success Rate</div>
+                    <div class="label">Mesh Coverage</div>
                     <div class="value green" id="results-success-rate">0%</div>
                 </div>
             </div>
@@ -2189,9 +2189,17 @@
                 if (caps.nat_traversal) capList.innerHTML += '<span class="capability-badge nat">NAT Traversal</span>';
 
                 // Connection stats
-                document.getElementById('node-connected-peers').textContent = data.connection_stats?.connected_peers || 0;
+                const connectedPeers = data.connection_stats?.connected_peers || 0;
+                document.getElementById('node-connected-peers').textContent = connectedPeers;
                 document.getElementById('node-bytes-sent').textContent = data.connection_stats?.bytes_sent_formatted || '0 B';
                 document.getElementById('node-bytes-received').textContent = data.connection_stats?.bytes_received_formatted || '0 B';
+
+                // Node success rate: connected peers / (total network nodes - 1)
+                // This shows what % of the network this node can reach
+                const totalNodes = globeData?.length || 1;
+                const possiblePeers = Math.max(1, totalNodes - 1);
+                const nodeSuccessRate = ((connectedPeers / possiblePeers) * 100).toFixed(0);
+                document.getElementById('node-success-rate').textContent = `${nodeSuccessRate}%`;
 
                 // NAT stats
                 const natType = data.nat_type || 'Unknown';
@@ -2557,12 +2565,25 @@
             document.getElementById('results-peak-nodes').textContent = results.peak_concurrent_nodes || 0;
             document.getElementById('results-total-connections').textContent = results.connections?.length || 0;
 
-            // Success rate
-            const natStats = results.nat_stats || {};
-            const totalAttempts = natStats.attempts || 0;
-            const totalSuccess = (natStats.direct_success || 0) + (natStats.hole_punch_success || 0) + (natStats.relay_success || 0);
-            const successRate = totalAttempts > 0 ? ((totalSuccess / totalAttempts) * 100).toFixed(1) : 0;
-            document.getElementById('results-success-rate').textContent = `${successRate}%`;
+            // Connection Success Rate - based on actual peer connectivity, not individual attempts
+            // "Attempt Success Rate" counts every method attempt (IPv4, IPv6, hole punch, etc.)
+            // which gives misleading low numbers since each connection tries multiple methods.
+            // Instead, we calculate actual network connectivity:
+            // - Count unique active connections
+            // - Compare to maximum possible connections (n * (n-1) for n nodes)
+            const connections = results.connections || [];
+            const activeConnections = connections.filter(c => c.is_active !== false);
+            const totalNodes = results.total_nodes_seen || 0;
+
+            // Maximum possible directed connections = n * (n-1)
+            const maxConnections = totalNodes > 1 ? totalNodes * (totalNodes - 1) : 0;
+
+            // Connection success rate: active connections / max possible
+            // This shows actual network mesh connectivity
+            const connectionRate = maxConnections > 0
+                ? ((activeConnections.length / maxConnections) * 100).toFixed(1)
+                : 0;
+            document.getElementById('results-success-rate').textContent = `${connectionRate}%`;
 
             // Connection breakdown
             const breakdown = results.connection_breakdown || {};
