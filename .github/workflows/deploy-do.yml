@@ -11,15 +11,23 @@ on:
       version:
         description: 'Release version to deploy (e.g., v0.14.64)'
         required: true
+      binary:
+        description: 'Binary to deploy'
+        type: choice
+        options:
+          - ant-quic
+          - ant-quic-test
+        default: ant-quic
       dry_run:
         description: 'Dry run (download only, no deploy)'
         type: boolean
         default: false
 
 env:
-  BINARY_NAME: ant-quic
-  REMOTE_BIN_PATH: /usr/local/bin/ant-quic
-  SERVICE_NAME: ant-quic
+  # Default binary (overridden for ant-quic-test)
+  DEFAULT_BINARY: ant-quic
+  DEFAULT_REMOTE_PATH: /usr/local/bin/ant-quic
+  DEFAULT_SERVICE: ant-quic
 
 jobs:
   deploy:
@@ -49,21 +57,38 @@ jobs:
             description: "Symmetric NAT simulation (lon1)"
 
     steps:
-      - name: Determine version
-        id: version
+      - name: Determine version and binary
+        id: config
         run: |
+          # Determine version
           if [[ "${{ github.event_name }}" == "release" ]]; then
             VERSION="${{ github.event.release.tag_name }}"
+            BINARY="ant-quic"  # Default for auto-deploy on release
           else
             VERSION="${{ github.event.inputs.version }}"
+            BINARY="${{ github.event.inputs.binary }}"
           fi
           echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "Deploying version: $VERSION to ${{ matrix.node.name }}"
+          echo "binary=$BINARY" >> $GITHUB_OUTPUT
+
+          # Set binary-specific paths
+          if [[ "$BINARY" == "ant-quic-test" ]]; then
+            echo "archive=ant-quic-test-x86_64-linux.tar.gz" >> $GITHUB_OUTPUT
+            echo "remote_path=/usr/local/bin/ant-quic-test" >> $GITHUB_OUTPUT
+            echo "service=ant-quic-test" >> $GITHUB_OUTPUT
+          else
+            echo "archive=ant-quic-x86_64-linux.tar.gz" >> $GITHUB_OUTPUT
+            echo "remote_path=/usr/local/bin/ant-quic" >> $GITHUB_OUTPUT
+            echo "service=ant-quic" >> $GITHUB_OUTPUT
+          fi
+
+          echo "Deploying $BINARY version: $VERSION to ${{ matrix.node.name }}"
 
       - name: Download Linux binary from release
         run: |
-          VERSION="${{ steps.version.outputs.version }}"
-          ARCHIVE="ant-quic-x86_64-linux.tar.gz"
+          VERSION="${{ steps.config.outputs.version }}"
+          BINARY="${{ steps.config.outputs.binary }}"
+          ARCHIVE="${{ steps.config.outputs.archive }}"
 
           echo "Downloading $ARCHIVE from release $VERSION..."
           gh release download "$VERSION" \
@@ -72,11 +97,11 @@ jobs:
 
           echo "Extracting binary..."
           tar -xzf "$ARCHIVE"
-          chmod +x ant-quic
+          chmod +x "$BINARY"
 
           echo "Binary info:"
-          file ant-quic
-          ./ant-quic --version || true
+          file "$BINARY"
+          ./"$BINARY" --version || true
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -92,62 +117,72 @@ jobs:
       - name: Pre-deployment health check
         continue-on-error: true
         run: |
+          REMOTE_PATH="${{ steps.config.outputs.remote_path }}"
+          SERVICE="${{ steps.config.outputs.service }}"
           echo "Checking current status on ${{ matrix.node.name }}..."
           ssh -i ~/.ssh/deploy_key -o ConnectTimeout=10 \
             root@${{ matrix.node.host }} \
-            "systemctl status ${{ env.SERVICE_NAME }} || true; ${{ env.REMOTE_BIN_PATH }} --version || echo 'Binary not found or not running'"
+            "systemctl status $SERVICE || true; $REMOTE_PATH --version || echo 'Binary not found or not running'"
 
       - name: Deploy binary
         if: github.event.inputs.dry_run != 'true'
         run: |
-          echo "Deploying to ${{ matrix.node.name }} (${{ matrix.node.host }})..."
+          BINARY="${{ steps.config.outputs.binary }}"
+          REMOTE_PATH="${{ steps.config.outputs.remote_path }}"
+          SERVICE="${{ steps.config.outputs.service }}"
+
+          echo "Deploying $BINARY to ${{ matrix.node.name }} (${{ matrix.node.host }})..."
 
           # Upload new binary
           scp -i ~/.ssh/deploy_key \
-            ant-quic root@${{ matrix.node.host }}:/tmp/ant-quic-new
+            "$BINARY" root@${{ matrix.node.host }}:/tmp/binary-new
 
           # Stop service, replace binary, restart
-          ssh -i ~/.ssh/deploy_key root@${{ matrix.node.host }} << 'EOF'
+          ssh -i ~/.ssh/deploy_key root@${{ matrix.node.host }} << EOF
           set -e
 
           echo "Stopping service..."
-          systemctl stop ${{ env.SERVICE_NAME }} || true
+          systemctl stop $SERVICE || true
           sleep 2
 
           # Kill any remaining processes
-          pkill -9 ant-quic || true
+          pkill -9 $BINARY || true
           sleep 1
 
           echo "Replacing binary..."
-          mv /tmp/ant-quic-new ${{ env.REMOTE_BIN_PATH }}
-          chmod +x ${{ env.REMOTE_BIN_PATH }}
+          mv /tmp/binary-new $REMOTE_PATH
+          chmod +x $REMOTE_PATH
 
           echo "Starting service..."
-          systemctl start ${{ env.SERVICE_NAME }}
+          systemctl start $SERVICE || echo "Service $SERVICE not configured, skipping start"
           sleep 3
 
           echo "Verifying..."
-          systemctl status ${{ env.SERVICE_NAME }} --no-pager
-          ${{ env.REMOTE_BIN_PATH }} --version
+          systemctl status $SERVICE --no-pager || echo "Service not running"
+          $REMOTE_PATH --version
           EOF
 
       - name: Post-deployment verification
         if: github.event.inputs.dry_run != 'true'
         run: |
+          BINARY="${{ steps.config.outputs.binary }}"
+          REMOTE_PATH="${{ steps.config.outputs.remote_path }}"
+          SERVICE="${{ steps.config.outputs.service }}"
+
           echo "Verifying deployment on ${{ matrix.node.name }}..."
           sleep 5
 
-          ssh -i ~/.ssh/deploy_key root@${{ matrix.node.host }} << 'EOF'
+          ssh -i ~/.ssh/deploy_key root@${{ matrix.node.host }} << EOF
           echo "=== Service Status ==="
-          systemctl status ${{ env.SERVICE_NAME }} --no-pager
+          systemctl status $SERVICE --no-pager || echo "Service not active"
 
           echo ""
           echo "=== Binary Version ==="
-          ${{ env.REMOTE_BIN_PATH }} --version
+          $REMOTE_PATH --version
 
           echo ""
           echo "=== Process Check ==="
-          pgrep -a ant-quic || echo "Warning: ant-quic not running"
+          pgrep -a $BINARY || echo "Warning: $BINARY not running"
 
           echo ""
           echo "=== Port Check ==="
@@ -171,10 +206,13 @@ jobs:
 
           if [[ "${{ github.event_name }}" == "release" ]]; then
             VERSION="${{ github.event.release.tag_name }}"
+            BINARY="ant-quic"
           else
             VERSION="${{ github.event.inputs.version }}"
+            BINARY="${{ github.event.inputs.binary }}"
           fi
 
+          echo "**Binary:** $BINARY" >> $GITHUB_STEP_SUMMARY
           echo "**Version:** $VERSION" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### Node Status" >> $GITHUB_STEP_SUMMARY
