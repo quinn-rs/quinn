@@ -1,0 +1,173 @@
+# Deploy to DigitalOcean - Auto-deploy on release
+# Deploys ant-quic binaries to DO nodes when a GitHub release is published
+
+name: Deploy to DigitalOcean
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version to deploy (e.g., v0.14.64)'
+        required: true
+      dry_run:
+        description: 'Dry run (download only, no deploy)'
+        type: boolean
+        default: false
+
+env:
+  BINARY_NAME: ant-quic
+  REMOTE_BIN_PATH: /usr/local/bin/ant-quic
+  SERVICE_NAME: ant-quic
+
+jobs:
+  deploy:
+    name: Deploy to ${{ matrix.node.name }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node:
+          - name: full-cone
+            host: 67.205.158.158
+            description: "Full Cone NAT node (coordinator)"
+          - name: nat-node
+            host: 161.35.231.80
+            description: "NAT node (behind restrictive NAT)"
+
+    steps:
+      - name: Determine version
+        id: version
+        run: |
+          if [[ "${{ github.event_name }}" == "release" ]]; then
+            VERSION="${{ github.event.release.tag_name }}"
+          else
+            VERSION="${{ github.event.inputs.version }}"
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Deploying version: $VERSION to ${{ matrix.node.name }}"
+
+      - name: Download Linux binary from release
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          ARCHIVE="ant-quic-x86_64-linux.tar.gz"
+
+          echo "Downloading $ARCHIVE from release $VERSION..."
+          gh release download "$VERSION" \
+            --repo "${{ github.repository }}" \
+            --pattern "$ARCHIVE"
+
+          echo "Extracting binary..."
+          tar -xzf "$ARCHIVE"
+          chmod +x ant-quic
+
+          echo "Binary info:"
+          file ant-quic
+          ./ant-quic --version || true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.DO_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+
+          # Add host to known_hosts to avoid prompt
+          ssh-keyscan -H ${{ matrix.node.host }} >> ~/.ssh/known_hosts 2>/dev/null || true
+
+      - name: Pre-deployment health check
+        continue-on-error: true
+        run: |
+          echo "Checking current status on ${{ matrix.node.name }}..."
+          ssh -i ~/.ssh/deploy_key -o ConnectTimeout=10 \
+            root@${{ matrix.node.host }} \
+            "systemctl status ${{ env.SERVICE_NAME }} || true; ${{ env.REMOTE_BIN_PATH }} --version || echo 'Binary not found or not running'"
+
+      - name: Deploy binary
+        if: github.event.inputs.dry_run != 'true'
+        run: |
+          echo "Deploying to ${{ matrix.node.name }} (${{ matrix.node.host }})..."
+
+          # Upload new binary
+          scp -i ~/.ssh/deploy_key \
+            ant-quic root@${{ matrix.node.host }}:/tmp/ant-quic-new
+
+          # Stop service, replace binary, restart
+          ssh -i ~/.ssh/deploy_key root@${{ matrix.node.host }} << 'EOF'
+          set -e
+
+          echo "Stopping service..."
+          systemctl stop ${{ env.SERVICE_NAME }} || true
+          sleep 2
+
+          # Kill any remaining processes
+          pkill -9 ant-quic || true
+          sleep 1
+
+          echo "Replacing binary..."
+          mv /tmp/ant-quic-new ${{ env.REMOTE_BIN_PATH }}
+          chmod +x ${{ env.REMOTE_BIN_PATH }}
+
+          echo "Starting service..."
+          systemctl start ${{ env.SERVICE_NAME }}
+          sleep 3
+
+          echo "Verifying..."
+          systemctl status ${{ env.SERVICE_NAME }} --no-pager
+          ${{ env.REMOTE_BIN_PATH }} --version
+          EOF
+
+      - name: Post-deployment verification
+        if: github.event.inputs.dry_run != 'true'
+        run: |
+          echo "Verifying deployment on ${{ matrix.node.name }}..."
+          sleep 5
+
+          ssh -i ~/.ssh/deploy_key root@${{ matrix.node.host }} << 'EOF'
+          echo "=== Service Status ==="
+          systemctl status ${{ env.SERVICE_NAME }} --no-pager
+
+          echo ""
+          echo "=== Binary Version ==="
+          ${{ env.REMOTE_BIN_PATH }} --version
+
+          echo ""
+          echo "=== Process Check ==="
+          pgrep -a ant-quic || echo "Warning: ant-quic not running"
+
+          echo ""
+          echo "=== Port Check ==="
+          ss -tulpn | grep 9000 || echo "Warning: Port 9000 not listening"
+          EOF
+
+      - name: Cleanup SSH key
+        if: always()
+        run: rm -f ~/.ssh/deploy_key
+
+  notify:
+    name: Deployment Summary
+    needs: deploy
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Summary
+        run: |
+          echo "## Deployment Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          if [[ "${{ github.event_name }}" == "release" ]]; then
+            VERSION="${{ github.event.release.tag_name }}"
+          else
+            VERSION="${{ github.event.inputs.version }}"
+          fi
+
+          echo "**Version:** $VERSION" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Node Status" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Node | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Full Cone (67.205.158.158) | ${{ needs.deploy.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| NAT Node (161.35.231.80) | ${{ needs.deploy.result }} |" >> $GITHUB_STEP_SUMMARY
