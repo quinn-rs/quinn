@@ -29,12 +29,24 @@ jobs:
       fail-fast: false
       matrix:
         node:
-          - name: full-cone
+          - name: node-1
+            host: 162.243.167.201
+            description: "Primary coordinator node (nyc1)"
+          - name: node-2
+            host: 159.65.221.230
+            description: "Secondary node (nyc1)"
+          - name: nat-fullcone
             host: 67.205.158.158
-            description: "Full Cone NAT node (coordinator)"
-          - name: nat-node
+            description: "Full Cone NAT simulation (nyc1)"
+          - name: nat-restricted
             host: 161.35.231.80
-            description: "NAT node (behind restrictive NAT)"
+            description: "Address Restricted NAT simulation (sfo3)"
+          - name: nat-portrestricted
+            host: 178.62.192.11
+            description: "Port Restricted NAT simulation (ams3)"
+          - name: nat-symmetric
+            host: 159.65.90.128
+            description: "Symmetric NAT simulation (lon1)"
 
     steps:
       - name: Determine version
@@ -167,7 +179,11 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### Node Status" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Node | Status |" >> $GITHUB_STEP_SUMMARY
-          echo "|------|--------|" >> $GITHUB_STEP_SUMMARY
-          echo "| Full Cone (67.205.158.158) | ${{ needs.deploy.result }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| NAT Node (161.35.231.80) | ${{ needs.deploy.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Node | IP | Region | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|------|-----|--------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| node-1 | 162.243.167.201 | nyc1 | ${{ needs.deploy.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| node-2 | 159.65.221.230 | nyc1 | ${{ needs.deploy.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| nat-fullcone | 67.205.158.158 | nyc1 | ${{ needs.deploy.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| nat-restricted | 161.35.231.80 | sfo3 | ${{ needs.deploy.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| nat-portrestricted | 178.62.192.11 | ams3 | ${{ needs.deploy.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| nat-symmetric | 159.65.90.128 | lon1 | ${{ needs.deploy.result }} |" >> $GITHUB_STEP_SUMMARY
