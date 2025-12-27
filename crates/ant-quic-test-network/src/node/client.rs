@@ -20,7 +20,10 @@ use tracing::{debug, error, info, warn};
 // Real QUIC P2P endpoint imports
 use ant_quic::{NatConfig, P2pConfig, P2pEndpoint, P2pEvent, PeerId as QuicPeerId};
 
-use super::test_protocol::TestPacket;
+use super::test_protocol::{
+    CanYouReachRequest, RELAY_MAGIC, ReachResponse, RelayAckResponse, RelayMessage,
+    RelayPunchMeNowRequest, RelayState, TestPacket,
+};
 
 /// Configuration for the test node.
 #[derive(Debug, Clone)]
@@ -408,6 +411,9 @@ pub struct TestNode {
     /// Count of inbound connections (they initiated to us).
     /// This is the key metric for nodes behind NAT.
     inbound_connections: Arc<AtomicU64>,
+    /// Relay discovery state for NAT traversal fallback.
+    /// Tracks public nodes and manages relay connections.
+    relay_state: Arc<RwLock<RelayState>>,
 }
 
 impl TestNode {
@@ -565,6 +571,12 @@ impl TestNode {
         // If we're behind NAT and receive inbound connections, hole-punching works!
         let inbound_connections: Arc<AtomicU64> = Arc::new(AtomicU64::new(0));
 
+        // Create relay state for NAT traversal fallback (before event handler spawn)
+        let our_peer_id_bytes = peer_id_to_bytes(&peer_id);
+        let mut relay_state_inner = RelayState::new(our_peer_id_bytes);
+        relay_state_inner.our_local_addresses = listen_addresses.clone();
+        let relay_state: Arc<RwLock<RelayState>> = Arc::new(RwLock::new(relay_state_inner));
+
         // Geo provider for looking up country codes from IP addresses
         let geo_provider = Arc::new(BgpGeoProvider::new());
 
@@ -577,6 +589,8 @@ impl TestNode {
         let pending_outbound_for_events = Arc::clone(&pending_outbound);
         let inbound_connections_for_events = Arc::clone(&inbound_connections);
         let geo_provider_for_events = Arc::clone(&geo_provider);
+        let relay_state_for_events = Arc::clone(&relay_state);
+        let listen_addresses_for_events = listen_addresses.clone();
         tokio::spawn(async move {
             let mut events = endpoint_for_events.subscribe();
             while let Ok(event) = events.recv().await {
@@ -589,6 +603,19 @@ impl TestNode {
                             if !addrs.contains(&addr) {
                                 addrs.push(addr);
                                 info!("Stored external address: {} (total: {})", addr, addrs.len());
+                            }
+
+                            // Update relay state with our external addresses
+                            let mut rs = relay_state_for_events.write().await;
+                            rs.our_external_addresses = addrs.clone();
+                            rs.our_local_addresses = listen_addresses_for_events.clone();
+
+                            // Check if we're a public node (external == local)
+                            let is_public = rs.are_we_public();
+                            if is_public {
+                                info!("We appear to be a PUBLIC node (external matches local)");
+                            } else {
+                                debug!("We appear to be behind NAT (external != local)");
                             }
                         }
                         let _ = event_tx_for_events
@@ -676,6 +703,22 @@ impl TestNode {
                             // Track outbound connection
                             let _ = event_tx_for_events.send(TuiEvent::OutboundConnection).await;
                         }
+
+                        // Update relay state to track this connected peer
+                        // We use the address we connected to as their external address
+                        {
+                            let mut rs = relay_state_for_events.write().await;
+                            rs.update_peer(
+                                peer_id.0,
+                                vec![addr], // Assume their local = addr for now
+                                vec![addr], // Their external address is what we connected to
+                                true,       // They are now connected
+                            );
+                            debug!(
+                                "Relay state: added connected peer {}",
+                                &peer_hex[..8.min(peer_hex.len())]
+                            );
+                        }
                     }
                     P2pEvent::PeerDisconnected { peer_id, reason } => {
                         let peer_hex = hex::encode(peer_id.0);
@@ -692,6 +735,20 @@ impl TestNode {
                             times.insert(peer_hex.clone(), Instant::now());
                             debug!(
                                 "Recorded disconnection time for peer {}",
+                                &peer_hex[..8.min(peer_hex.len())]
+                            );
+                        }
+
+                        // Update relay state to mark peer as disconnected
+                        {
+                            let mut rs = relay_state_for_events.write().await;
+                            rs.set_peer_connected(peer_id.0, false);
+                            // Also remove any relay routes through this peer
+                            // (we can't relay through a disconnected peer)
+                            rs.active_relays
+                                .retain(|_, relay_id| *relay_id != peer_id.0);
+                            debug!(
+                                "Relay state: marked peer {} as disconnected",
                                 &peer_hex[..8.min(peer_hex.len())]
                             );
                         }
@@ -731,6 +788,7 @@ impl TestNode {
             disconnection_times,
             pending_outbound,
             inbound_connections,
+            relay_state,
         })
     }
 
@@ -742,6 +800,525 @@ impl TestNode {
     /// Get our peer ID.
     pub fn peer_id(&self) -> &str {
         &self.peer_id
+    }
+
+    /// Check if we appear to be a public node (not behind NAT).
+    ///
+    /// A node is public if its external address IP matches its local address IP.
+    pub async fn is_public_node(&self) -> bool {
+        let rs = self.relay_state.read().await;
+        rs.are_we_public()
+    }
+
+    /// Get a list of relay candidates sorted by priority.
+    ///
+    /// Public nodes are preferred, followed by currently connected peers.
+    pub async fn get_relay_candidates(&self) -> Vec<super::test_protocol::RelayCandidate> {
+        let rs = self.relay_state.read().await;
+        rs.get_relay_candidates()
+    }
+
+    /// Get public nodes we're connected to (best relay candidates).
+    pub async fn get_public_nodes(&self) -> Vec<super::test_protocol::PeerNetworkInfo> {
+        let rs = self.relay_state.read().await;
+        rs.get_public_nodes().into_iter().cloned().collect()
+    }
+
+    /// Try to find a relay that can reach the target peer.
+    ///
+    /// This implements the relay discovery protocol:
+    /// 1. Get list of connected peers sorted by priority (public nodes first)
+    /// 2. Send CAN_YOU_REACH request to each
+    /// 3. Return first peer that responds positively
+    ///
+    /// Returns the relay peer's ID if found, None otherwise.
+    pub async fn find_relay_for(&self, target_peer_id: &[u8; 32]) -> Option<[u8; 32]> {
+        let candidates = self.get_relay_candidates().await;
+        let target_hex = hex::encode(target_peer_id);
+
+        if candidates.is_empty() {
+            debug!(
+                "No relay candidates available to reach {}",
+                &target_hex[..8.min(target_hex.len())]
+            );
+            return None;
+        }
+
+        info!(
+            "Looking for relay to reach {} among {} candidates",
+            &target_hex[..8.min(target_hex.len())],
+            candidates.len()
+        );
+
+        // For now, log candidates - actual CAN_YOU_REACH protocol will be added next
+        for (i, candidate) in candidates.iter().enumerate() {
+            let peer_hex = hex::encode(candidate.peer_id);
+            info!(
+                "  Candidate {}: {} (public={}, connected={}, priority={})",
+                i + 1,
+                &peer_hex[..8.min(peer_hex.len())],
+                candidate.is_public,
+                candidate.is_connected,
+                candidate.priority()
+            );
+        }
+
+        // TODO: Implement CAN_YOU_REACH message exchange
+        // For now, return the highest priority connected peer as potential relay
+        // This will be enhanced with actual reachability checking
+        if let Some(best) = candidates.first() {
+            if best.is_connected {
+                let peer_hex = hex::encode(best.peer_id);
+                info!(
+                    "Selected {} as potential relay (priority={})",
+                    &peer_hex[..8.min(peer_hex.len())],
+                    best.priority()
+                );
+                return Some(best.peer_id);
+            }
+        }
+
+        None
+    }
+
+    /// Set an active relay for reaching a target peer.
+    pub async fn set_relay(&self, target_peer_id: [u8; 32], relay_peer_id: [u8; 32]) {
+        let mut rs = self.relay_state.write().await;
+        rs.set_relay_for(target_peer_id, relay_peer_id);
+    }
+
+    /// Remove relay for a target (e.g., when direct connection succeeds).
+    pub async fn remove_relay(&self, target_peer_id: &[u8; 32]) {
+        let mut rs = self.relay_state.write().await;
+        rs.remove_relay_for(target_peer_id);
+    }
+
+    /// Get current relay for a target peer, if any.
+    pub async fn get_relay(&self, target_peer_id: &[u8; 32]) -> Option<[u8; 32]> {
+        let rs = self.relay_state.read().await;
+        rs.get_relay_for(target_peer_id)
+    }
+
+    /// Connect to a peer with relay fallback.
+    ///
+    /// This implements the connection strategy:
+    /// 1. Try direct IPv4 connection
+    /// 2. Try direct IPv6 connection (if available)
+    /// 3. Try NAT traversal (hole-punching via ant-quic)
+    /// 4. If all fail, find a relay and use it for PUNCH_ME_NOW exchange
+    /// 5. If relay-assisted holepunch fails, keep the relay for traffic
+    ///
+    /// Returns the connection method used and whether we're using a relay.
+    pub async fn connect_with_relay_fallback(
+        &self,
+        peer: &crate::PeerInfo,
+    ) -> Result<(ConnectionMethod, Option<[u8; 32]>), String> {
+        let peer_id_short = &peer.peer_id[..8.min(peer.peer_id.len())];
+        let target_peer_id = peer_id_to_bytes(&peer.peer_id);
+
+        info!(
+            "Connecting to {} with relay fallback enabled",
+            peer_id_short
+        );
+
+        // 1. Try direct IPv4 connections
+        for addr in peer.addresses.iter().filter(|a| a.is_ipv4()) {
+            match tokio::time::timeout(Duration::from_secs(10), self.endpoint.connect(*addr)).await
+            {
+                Ok(Ok(_conn)) => {
+                    info!("Direct IPv4 connection to {} succeeded", peer_id_short);
+                    // Clear any existing relay since direct works
+                    self.remove_relay(&target_peer_id).await;
+                    return Ok((ConnectionMethod::Direct, None));
+                }
+                Ok(Err(e)) => {
+                    debug!("Direct IPv4 to {} at {} failed: {}", peer_id_short, addr, e);
+                }
+                Err(_) => {
+                    debug!("Direct IPv4 to {} at {} timed out", peer_id_short, addr);
+                }
+            }
+        }
+
+        // 2. Try direct IPv6 connections
+        for addr in peer.addresses.iter().filter(|a| a.is_ipv6()) {
+            match tokio::time::timeout(Duration::from_secs(10), self.endpoint.connect(*addr)).await
+            {
+                Ok(Ok(_conn)) => {
+                    info!("Direct IPv6 connection to {} succeeded", peer_id_short);
+                    self.remove_relay(&target_peer_id).await;
+                    return Ok((ConnectionMethod::Direct, None));
+                }
+                Ok(Err(e)) => {
+                    debug!("Direct IPv6 to {} at {} failed: {}", peer_id_short, addr, e);
+                }
+                Err(_) => {
+                    debug!("Direct IPv6 to {} at {} timed out", peer_id_short, addr);
+                }
+            }
+        }
+
+        // 3. Try NAT traversal (hole-punching)
+        if let Ok(peer_id_bytes) = hex::decode(&peer.peer_id) {
+            if peer_id_bytes.len() >= 32 {
+                let mut peer_id_array = [0u8; 32];
+                peer_id_array.copy_from_slice(&peer_id_bytes[..32]);
+                let quic_peer_id = QuicPeerId(peer_id_array);
+
+                match tokio::time::timeout(
+                    Duration::from_secs(30),
+                    self.endpoint.connect_to_peer(quic_peer_id, None),
+                )
+                .await
+                {
+                    Ok(Ok(_conn)) => {
+                        info!("NAT traversal to {} succeeded", peer_id_short);
+                        self.remove_relay(&target_peer_id).await;
+                        return Ok((ConnectionMethod::HolePunched, None));
+                    }
+                    Ok(Err(e)) => {
+                        debug!("NAT traversal to {} failed: {}", peer_id_short, e);
+                    }
+                    Err(_) => {
+                        debug!("NAT traversal to {} timed out", peer_id_short);
+                    }
+                }
+            }
+        }
+
+        // 4. All direct methods failed - try to find a relay
+        info!(
+            "All direct connections failed for {}, looking for relay...",
+            peer_id_short
+        );
+
+        if let Some(relay_peer_id) = self.find_relay_for(&target_peer_id).await {
+            let relay_hex = hex::encode(relay_peer_id);
+            info!(
+                "Found relay {} for reaching {}",
+                &relay_hex[..8.min(relay_hex.len())],
+                peer_id_short
+            );
+
+            // Store the relay for this target
+            self.set_relay(target_peer_id, relay_peer_id).await;
+
+            // TODO: Send PUNCH_ME_NOW via relay and attempt hole-punch
+            // For now, just return that we're using a relay
+            // The actual relay data forwarding will be added in the next step
+
+            info!(
+                "Using relay {} for {} (relay-assisted holepunch not yet implemented)",
+                &relay_hex[..8.min(relay_hex.len())],
+                peer_id_short
+            );
+
+            // TODO: Return Relayed when we actually implement data relay
+            // For now, return HolePunched placeholder to indicate we found a relay
+            return Ok((ConnectionMethod::Relayed, Some(relay_peer_id)));
+        }
+
+        Err(format!(
+            "Failed to connect to {} via any method (no relay available)",
+            peer_id_short
+        ))
+    }
+
+    /// Log relay statistics for debugging.
+    pub async fn log_relay_stats(&self) {
+        let rs = self.relay_state.read().await;
+        let public_nodes = rs.get_public_nodes();
+        let candidates = rs.get_relay_candidates();
+
+        info!("=== Relay State ===");
+        info!("  We are public: {}", rs.are_we_public());
+        info!("  Known peers: {}", rs.known_peers.len());
+        info!(
+            "  Public nodes: {} (connected)",
+            public_nodes.iter().filter(|p| p.is_connected).count()
+        );
+        info!("  Relay candidates: {}", candidates.len());
+        info!("  Active relays: {}", rs.active_relays.len());
+
+        for (target, relay) in &rs.active_relays {
+            let target_hex = hex::encode(target);
+            let relay_hex = hex::encode(relay);
+            info!(
+                "    {} -> {}",
+                &target_hex[..8.min(target_hex.len())],
+                &relay_hex[..8.min(relay_hex.len())]
+            );
+        }
+    }
+
+    /// Spawn a background loop that periodically logs relay state.
+    fn spawn_relay_stats_loop(&self) -> tokio::task::JoinHandle<()> {
+        let shutdown = Arc::clone(&self.shutdown);
+        let relay_state = Arc::clone(&self.relay_state);
+        let peer_id = self.peer_id.clone();
+
+        tokio::spawn(async move {
+            // Log every 60 seconds
+            let mut ticker = tokio::time::interval(Duration::from_secs(60));
+
+            while !shutdown.load(Ordering::SeqCst) {
+                ticker.tick().await;
+
+                let rs = relay_state.read().await;
+                let public_nodes: Vec<_> = rs.get_public_nodes();
+                let candidates = rs.get_relay_candidates();
+                let is_public = rs.are_we_public();
+
+                info!(
+                    "=== Relay State for {} ===",
+                    &peer_id[..8.min(peer_id.len())]
+                );
+                info!("  We are public: {}", is_public);
+                info!("  Known peers: {}", rs.known_peers.len());
+                info!("  Connected public nodes: {}", public_nodes.len());
+                info!("  Total relay candidates: {}", candidates.len());
+                info!("  Active relays: {}", rs.active_relays.len());
+
+                // Log public nodes
+                for (i, p) in public_nodes.iter().enumerate().take(5) {
+                    let peer_hex = hex::encode(p.peer_id);
+                    info!(
+                        "    Public #{}: {} ({} addrs)",
+                        i + 1,
+                        &peer_hex[..8.min(peer_hex.len())],
+                        p.external_addresses.len()
+                    );
+                }
+            }
+        })
+    }
+
+    // ========================================================================
+    // Relay Message Handling
+    // ========================================================================
+
+    /// Handle an incoming relay message.
+    ///
+    /// This processes:
+    /// - CAN_YOU_REACH: Check if we're connected to the target and respond
+    /// - RELAY_PUNCH_ME_NOW: Forward PUNCH_ME_NOW data to the target peer
+    /// - RELAY_DATA: Forward data to the target peer
+    ///
+    /// Returns the response message to send back (if any).
+    pub async fn handle_relay_message(&self, data: &[u8]) -> Option<Vec<u8>> {
+        // First check if this looks like a relay message
+        if !RelayMessage::is_relay_message(data) {
+            return None;
+        }
+
+        // Try to parse as relay message
+        let msg = match RelayMessage::from_bytes(data) {
+            Ok(msg) => msg,
+            Err(e) => {
+                debug!("Failed to parse relay message: {}", e);
+                return None;
+            }
+        };
+
+        match msg {
+            RelayMessage::CanYouReach(req) => self.handle_can_you_reach(req).await,
+            RelayMessage::RelayPunchMeNow(req) => self.handle_relay_punch_me_now(req).await,
+            RelayMessage::RelayData(req) => self.handle_relay_data(req).await,
+            // Responses are handled by the requester, not here
+            RelayMessage::ReachResponse(_) => None,
+            RelayMessage::RelayAck(_) => None,
+            RelayMessage::RelayedData(_) => None,
+        }
+    }
+
+    /// Handle CAN_YOU_REACH request.
+    ///
+    /// Check if we're connected to the target peer and respond with reachability info.
+    async fn handle_can_you_reach(&self, req: CanYouReachRequest) -> Option<Vec<u8>> {
+        let target_hex = hex::encode(req.target_peer_id);
+        let requester_hex = hex::encode(req.requester_peer_id);
+        info!(
+            "CAN_YOU_REACH request from {} for target {}",
+            &requester_hex[..8.min(requester_hex.len())],
+            &target_hex[..8.min(target_hex.len())]
+        );
+
+        // Check relay state for target peer
+        let rs = self.relay_state.read().await;
+        let peer_info = rs.known_peers.get(&req.target_peer_id);
+
+        let (reachable, is_connected, is_public, addresses) = if let Some(info) = peer_info {
+            (
+                info.is_connected,
+                info.is_connected,
+                info.is_public,
+                info.external_addresses.clone(),
+            )
+        } else {
+            (false, false, false, Vec::new())
+        };
+        drop(rs); // Release the lock
+
+        let response = ReachResponse {
+            magic: RELAY_MAGIC,
+            request_id: req.request_id,
+            target_peer_id: req.target_peer_id,
+            reachable,
+            target_addresses: addresses,
+            currently_connected: is_connected,
+            is_public_node: is_public,
+        };
+
+        info!(
+            "Responding to CAN_YOU_REACH: reachable={}, connected={}, public={}",
+            reachable, is_connected, is_public
+        );
+
+        response.to_bytes().ok()
+    }
+
+    /// Handle RELAY_PUNCH_ME_NOW request.
+    ///
+    /// Forward the PUNCH_ME_NOW data to the target peer.
+    async fn handle_relay_punch_me_now(&self, req: RelayPunchMeNowRequest) -> Option<Vec<u8>> {
+        let target_hex = hex::encode(req.target_peer_id);
+        let requester_hex = hex::encode(req.requester_peer_id);
+        info!(
+            "RELAY_PUNCH_ME_NOW from {} for target {} (round={}, {} addresses)",
+            &requester_hex[..8.min(requester_hex.len())],
+            &target_hex[..8.min(target_hex.len())],
+            req.round,
+            req.requester_addresses.len()
+        );
+
+        // Check if we're connected to the target
+        let rs = self.relay_state.read().await;
+        let target_connected = rs
+            .known_peers
+            .get(&req.target_peer_id)
+            .is_some_and(|p| p.is_connected);
+        drop(rs);
+
+        if !target_connected {
+            warn!(
+                "Cannot relay PUNCH_ME_NOW to {} - not connected",
+                &target_hex[..8.min(target_hex.len())]
+            );
+
+            // Send failure response
+            return RelayAckResponse::failure(
+                req.request_id,
+                "Not connected to target".to_string(),
+            )
+            .to_bytes()
+            .ok();
+        }
+
+        // TODO: Forward the PUNCH_ME_NOW data to the target peer
+        // This requires sending the data on the connection to the target.
+        // For now, we'll just acknowledge that we received it.
+        // The actual forwarding will require integrating with the QUIC connection.
+
+        info!(
+            "Would forward PUNCH_ME_NOW to {} (forwarding not yet implemented)",
+            &target_hex[..8.min(target_hex.len())]
+        );
+
+        RelayAckResponse::success(req.request_id).to_bytes().ok()
+    }
+
+    /// Handle RELAY_DATA request.
+    ///
+    /// Forward data to the target peer.
+    async fn handle_relay_data(
+        &self,
+        req: super::test_protocol::RelayDataRequest,
+    ) -> Option<Vec<u8>> {
+        let target_hex = hex::encode(req.target_peer_id);
+        let source_hex = hex::encode(req.source_peer_id);
+        debug!(
+            "RELAY_DATA from {} for target {} ({} bytes)",
+            &source_hex[..8.min(source_hex.len())],
+            &target_hex[..8.min(target_hex.len())],
+            req.data.len()
+        );
+
+        // Check if we're connected to the target
+        let rs = self.relay_state.read().await;
+        let target_connected = rs
+            .known_peers
+            .get(&req.target_peer_id)
+            .is_some_and(|p| p.is_connected);
+        drop(rs);
+
+        if !target_connected {
+            warn!(
+                "Cannot relay data to {} - not connected",
+                &target_hex[..8.min(target_hex.len())]
+            );
+            return None;
+        }
+
+        // TODO: Forward the data to the target peer
+        // For now, just log it
+        debug!(
+            "Would relay {} bytes from {} to {}",
+            req.data.len(),
+            &source_hex[..8.min(source_hex.len())],
+            &target_hex[..8.min(target_hex.len())]
+        );
+
+        None
+    }
+
+    /// Send a CAN_YOU_REACH request to a peer.
+    ///
+    /// Returns the encoded request bytes.
+    pub fn create_can_you_reach_request(
+        &self,
+        target_peer_id: [u8; 32],
+        request_id: u64,
+    ) -> Result<Vec<u8>, serde_json::Error> {
+        let our_peer_id_bytes = peer_id_to_bytes(&self.peer_id);
+
+        let request = CanYouReachRequest {
+            magic: RELAY_MAGIC,
+            request_id,
+            target_peer_id,
+            requester_peer_id: our_peer_id_bytes,
+        };
+
+        request.to_bytes()
+    }
+
+    /// Send a RELAY_PUNCH_ME_NOW request to a relay peer.
+    ///
+    /// Returns the encoded request bytes.
+    pub async fn create_relay_punch_me_now_request(
+        &self,
+        target_peer_id: [u8; 32],
+        request_id: u64,
+        round: u64,
+        paired_with_sequence: u64,
+    ) -> Result<Vec<u8>, serde_json::Error> {
+        let our_peer_id_bytes = peer_id_to_bytes(&self.peer_id);
+
+        // Get our external addresses for hole-punching
+        let requester_addresses = self.external_addresses.read().await.clone();
+
+        let request = RelayPunchMeNowRequest::new(
+            target_peer_id,
+            our_peer_id_bytes,
+            requester_addresses,
+            round,
+            paired_with_sequence,
+        );
+
+        // Override the request_id
+        let mut request = request;
+        request.request_id = request_id;
+
+        request.to_bytes()
     }
 
     /// Discover our external address by connecting to known QUIC peers.
@@ -844,6 +1421,13 @@ impl TestNode {
         // Connect to known QUIC peers first to receive OBSERVED_ADDRESS frames
         self.discover_external_address().await;
 
+        // Log our public/NAT status for relay testing
+        if self.is_public_node().await {
+            info!("=== RELAY: This node appears to be PUBLIC (can relay for others) ===");
+        } else {
+            info!("=== RELAY: This node appears to be behind NAT ===");
+        }
+
         // Register with the registry (now with external address from QUIC discovery)
         self.register().await?;
 
@@ -855,6 +1439,7 @@ impl TestNode {
         let connect_handle = self.spawn_connect_loop();
         let test_handle = self.spawn_test_loop();
         let health_handle = self.spawn_health_check_loop();
+        let relay_stats_handle = self.spawn_relay_stats_loop();
 
         // Wait for shutdown
         while !shutdown.load(Ordering::SeqCst) {
@@ -866,6 +1451,7 @@ impl TestNode {
         connect_handle.abort();
         test_handle.abort();
         health_handle.abort();
+        relay_stats_handle.abort();
 
         info!("Test node shutting down");
         Ok(())

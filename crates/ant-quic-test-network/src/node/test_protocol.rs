@@ -2,9 +2,16 @@
 //!
 //! Implements a simple 5KB test packet exchange protocol to verify
 //! connectivity and measure round-trip times.
+//!
+//! Also includes relay discovery protocol for NAT traversal:
+//! - CAN_YOU_REACH: Ask a peer if they can connect to a target
+//! - REACH_RESPONSE: Reply with reachability status
+//! - RELAY_PUNCH_ME_NOW: Forward PUNCH_ME_NOW via relay
+//! - RELAY_ACK: Acknowledge relay request
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
 /// Size of test packet payload (approximately 5KB total with headers).
@@ -160,6 +167,526 @@ fn current_timestamp_ns() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_nanos() as u64)
         .unwrap_or(0)
+}
+
+// ============================================================================
+// Relay Discovery Protocol
+// ============================================================================
+//
+// This protocol enables NAT traversal when direct connection and hole-punching
+// fail. It works by discovering a relay peer that can reach the target, then
+// using that relay to forward PUNCH_ME_NOW frames for coordinated hole-punching.
+//
+// Flow:
+// 1. A wants to connect to B but cannot (NAT blocks)
+// 2. A asks connected peers: "Can you reach B?"
+// 3. First peer (R) that says "yes" becomes the relay
+// 4. A sends RELAY_PUNCH_ME_NOW to R, R forwards to B
+// 5. A and B attempt simultaneous hole-punch
+// 6. If successful, migrate off relay; if not, keep relay for traffic
+
+/// Magic bytes to identify relay protocol messages.
+pub const RELAY_MAGIC: [u8; 4] = *b"RLAY";
+
+/// Relay protocol message types.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum RelayMessage {
+    /// Request: Ask if peer can reach a target.
+    CanYouReach(CanYouReachRequest),
+
+    /// Response: Reply with reachability status.
+    ReachResponse(ReachResponse),
+
+    /// Request: Forward PUNCH_ME_NOW to target via relay.
+    RelayPunchMeNow(RelayPunchMeNowRequest),
+
+    /// Response: Acknowledge relay request.
+    RelayAck(RelayAckResponse),
+
+    /// Request: Forward data to target via relay (when hole-punch fails).
+    RelayData(RelayDataRequest),
+
+    /// Response: Data forwarded from relay.
+    RelayedData(RelayedDataResponse),
+}
+
+/// Request to check if peer can reach a target.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CanYouReachRequest {
+    /// Magic bytes for protocol identification.
+    pub magic: [u8; 4],
+    /// Request ID for correlation.
+    pub request_id: u64,
+    /// Target peer ID we want to reach.
+    pub target_peer_id: [u8; 32],
+    /// Our peer ID (requester).
+    pub requester_peer_id: [u8; 32],
+}
+
+impl CanYouReachRequest {
+    /// Create a new CAN_YOU_REACH request.
+    pub fn new(target_peer_id: [u8; 32], requester_peer_id: [u8; 32]) -> Self {
+        Self {
+            magic: RELAY_MAGIC,
+            request_id: current_timestamp_ns(),
+            target_peer_id,
+            requester_peer_id,
+        }
+    }
+
+    /// Serialize to bytes.
+    pub fn to_bytes(&self) -> Result<Vec<u8>, serde_json::Error> {
+        serde_json::to_vec(&RelayMessage::CanYouReach(self.clone()))
+    }
+}
+
+/// Response to CAN_YOU_REACH request.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReachResponse {
+    /// Magic bytes for protocol identification.
+    pub magic: [u8; 4],
+    /// Request ID this responds to.
+    pub request_id: u64,
+    /// Target peer ID that was queried.
+    pub target_peer_id: [u8; 32],
+    /// Whether we can reach the target.
+    pub reachable: bool,
+    /// If reachable, the addresses we have for the target.
+    pub target_addresses: Vec<SocketAddr>,
+    /// Whether we're currently connected to the target.
+    pub currently_connected: bool,
+    /// Whether we appear to be a public node (external == local address).
+    pub is_public_node: bool,
+}
+
+impl ReachResponse {
+    /// Create a positive response (we can reach the target).
+    pub fn reachable(
+        request_id: u64,
+        target_peer_id: [u8; 32],
+        target_addresses: Vec<SocketAddr>,
+        currently_connected: bool,
+        is_public_node: bool,
+    ) -> Self {
+        Self {
+            magic: RELAY_MAGIC,
+            request_id,
+            target_peer_id,
+            reachable: true,
+            target_addresses,
+            currently_connected,
+            is_public_node,
+        }
+    }
+
+    /// Create a negative response (we cannot reach the target).
+    pub fn unreachable(request_id: u64, target_peer_id: [u8; 32], is_public_node: bool) -> Self {
+        Self {
+            magic: RELAY_MAGIC,
+            request_id,
+            target_peer_id,
+            reachable: false,
+            target_addresses: Vec::new(),
+            currently_connected: false,
+            is_public_node,
+        }
+    }
+
+    /// Serialize to bytes.
+    pub fn to_bytes(&self) -> Result<Vec<u8>, serde_json::Error> {
+        serde_json::to_vec(&RelayMessage::ReachResponse(self.clone()))
+    }
+}
+
+/// Request to relay a PUNCH_ME_NOW frame to target.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RelayPunchMeNowRequest {
+    /// Magic bytes for protocol identification.
+    pub magic: [u8; 4],
+    /// Request ID for correlation.
+    pub request_id: u64,
+    /// Target peer ID to relay to.
+    pub target_peer_id: [u8; 32],
+    /// Requester's peer ID.
+    pub requester_peer_id: [u8; 32],
+    /// Requester's address candidates for hole-punching.
+    pub requester_addresses: Vec<SocketAddr>,
+    /// Round number for NAT traversal coordination.
+    pub round: u64,
+    /// Sequence number of the address to pair with.
+    pub paired_with_sequence: u64,
+}
+
+impl RelayPunchMeNowRequest {
+    /// Create a new RELAY_PUNCH_ME_NOW request.
+    pub fn new(
+        target_peer_id: [u8; 32],
+        requester_peer_id: [u8; 32],
+        requester_addresses: Vec<SocketAddr>,
+        round: u64,
+        paired_with_sequence: u64,
+    ) -> Self {
+        Self {
+            magic: RELAY_MAGIC,
+            request_id: current_timestamp_ns(),
+            target_peer_id,
+            requester_peer_id,
+            requester_addresses,
+            round,
+            paired_with_sequence,
+        }
+    }
+
+    /// Serialize to bytes.
+    pub fn to_bytes(&self) -> Result<Vec<u8>, serde_json::Error> {
+        serde_json::to_vec(&RelayMessage::RelayPunchMeNow(self.clone()))
+    }
+}
+
+/// Acknowledge relay request.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RelayAckResponse {
+    /// Magic bytes for protocol identification.
+    pub magic: [u8; 4],
+    /// Request ID this acknowledges.
+    pub request_id: u64,
+    /// Whether the relay was successful.
+    pub success: bool,
+    /// Error message if relay failed.
+    pub error: Option<String>,
+}
+
+impl RelayAckResponse {
+    /// Create a success acknowledgment.
+    pub fn success(request_id: u64) -> Self {
+        Self {
+            magic: RELAY_MAGIC,
+            request_id,
+            success: true,
+            error: None,
+        }
+    }
+
+    /// Create a failure acknowledgment.
+    pub fn failure(request_id: u64, error: String) -> Self {
+        Self {
+            magic: RELAY_MAGIC,
+            request_id,
+            success: false,
+            error: Some(error),
+        }
+    }
+
+    /// Serialize to bytes.
+    pub fn to_bytes(&self) -> Result<Vec<u8>, serde_json::Error> {
+        serde_json::to_vec(&RelayMessage::RelayAck(self.clone()))
+    }
+}
+
+/// Request to relay data to target (when hole-punch fails, keep relay for traffic).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RelayDataRequest {
+    /// Magic bytes for protocol identification.
+    pub magic: [u8; 4],
+    /// Target peer ID to relay to.
+    pub target_peer_id: [u8; 32],
+    /// Source peer ID.
+    pub source_peer_id: [u8; 32],
+    /// Data payload to relay.
+    pub data: Vec<u8>,
+}
+
+impl RelayDataRequest {
+    /// Create a new relay data request.
+    pub fn new(target_peer_id: [u8; 32], source_peer_id: [u8; 32], data: Vec<u8>) -> Self {
+        Self {
+            magic: RELAY_MAGIC,
+            target_peer_id,
+            source_peer_id,
+            data,
+        }
+    }
+
+    /// Serialize to bytes.
+    pub fn to_bytes(&self) -> Result<Vec<u8>, serde_json::Error> {
+        serde_json::to_vec(&RelayMessage::RelayData(self.clone()))
+    }
+}
+
+/// Data relayed from another peer.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RelayedDataResponse {
+    /// Magic bytes for protocol identification.
+    pub magic: [u8; 4],
+    /// Source peer ID (who sent the original data).
+    pub source_peer_id: [u8; 32],
+    /// Relay peer ID (who forwarded the data).
+    pub relay_peer_id: [u8; 32],
+    /// Data payload.
+    pub data: Vec<u8>,
+}
+
+impl RelayedDataResponse {
+    /// Create a new relayed data response.
+    pub fn new(source_peer_id: [u8; 32], relay_peer_id: [u8; 32], data: Vec<u8>) -> Self {
+        Self {
+            magic: RELAY_MAGIC,
+            source_peer_id,
+            relay_peer_id,
+            data,
+        }
+    }
+
+    /// Serialize to bytes.
+    pub fn to_bytes(&self) -> Result<Vec<u8>, serde_json::Error> {
+        serde_json::to_vec(&RelayMessage::RelayedData(self.clone()))
+    }
+}
+
+impl RelayMessage {
+    /// Deserialize from bytes.
+    pub fn from_bytes(data: &[u8]) -> Result<Self, serde_json::Error> {
+        serde_json::from_slice(data)
+    }
+
+    /// Check if bytes look like a relay message (check magic).
+    pub fn is_relay_message(data: &[u8]) -> bool {
+        // JSON-encoded, so we look for the magic in the content
+        if data.len() < 10 {
+            return false;
+        }
+        // Quick heuristic: relay messages contain "RLAY" magic
+        data.windows(4).any(|w| w == RELAY_MAGIC)
+    }
+}
+
+/// Information about a potential relay peer.
+#[derive(Debug, Clone)]
+pub struct RelayCandidate {
+    /// Peer ID of the relay candidate.
+    pub peer_id: [u8; 32],
+    /// Whether this peer appears to be public (external == local address).
+    pub is_public: bool,
+    /// Whether we're currently connected to this peer.
+    pub is_connected: bool,
+    /// Addresses of this peer.
+    pub addresses: Vec<SocketAddr>,
+}
+
+impl RelayCandidate {
+    /// Priority score for relay selection.
+    /// Higher is better.
+    pub fn priority(&self) -> u32 {
+        let mut score = 0;
+
+        // Public nodes are best (no NAT to traverse)
+        if self.is_public {
+            score += 100;
+        }
+
+        // Currently connected is better (no connection overhead)
+        if self.is_connected {
+            score += 50;
+        }
+
+        // More addresses = more reachable
+        score += self.addresses.len() as u32;
+
+        score
+    }
+}
+
+// ============================================================================
+// Public Node Detection
+// ============================================================================
+//
+// A node is considered "public" if its external address equals its local address,
+// meaning it's not behind NAT and can be directly reached from anywhere.
+// These nodes are ideal relay candidates because:
+// 1. They can accept incoming connections from any peer
+// 2. No NAT traversal needed to reach them
+// 3. They can coordinate hole-punching between NATted peers
+
+/// Information about a peer's network visibility.
+#[derive(Debug, Clone)]
+pub struct PeerNetworkInfo {
+    /// Peer ID (32 bytes).
+    pub peer_id: [u8; 32],
+    /// Local addresses reported by the peer.
+    pub local_addresses: Vec<SocketAddr>,
+    /// External addresses observed for the peer.
+    pub external_addresses: Vec<SocketAddr>,
+    /// Whether this peer appears to be public (external == local).
+    pub is_public: bool,
+    /// Whether we're currently connected to this peer.
+    pub is_connected: bool,
+    /// When we last confirmed connectivity.
+    pub last_seen: std::time::Instant,
+}
+
+impl PeerNetworkInfo {
+    /// Create new peer network info.
+    pub fn new(peer_id: [u8; 32]) -> Self {
+        Self {
+            peer_id,
+            local_addresses: Vec::new(),
+            external_addresses: Vec::new(),
+            is_public: false,
+            is_connected: false,
+            last_seen: std::time::Instant::now(),
+        }
+    }
+
+    /// Determine if this peer is public by comparing addresses.
+    ///
+    /// A peer is public if any external address IP matches any local address IP.
+    /// This means the peer is not behind NAT.
+    pub fn compute_is_public(&mut self) {
+        if self.external_addresses.is_empty() || self.local_addresses.is_empty() {
+            self.is_public = false;
+            return;
+        }
+
+        // Check if any external IP matches any local IP
+        let external_ips: std::collections::HashSet<_> =
+            self.external_addresses.iter().map(|a| a.ip()).collect();
+        let local_ips: std::collections::HashSet<_> =
+            self.local_addresses.iter().map(|a| a.ip()).collect();
+
+        self.is_public = external_ips.intersection(&local_ips).next().is_some();
+    }
+
+    /// Convert to a RelayCandidate for relay selection.
+    pub fn to_relay_candidate(&self) -> RelayCandidate {
+        RelayCandidate {
+            peer_id: self.peer_id,
+            is_public: self.is_public,
+            is_connected: self.is_connected,
+            addresses: self.external_addresses.clone(),
+        }
+    }
+}
+
+// ============================================================================
+// Relay State Tracking
+// ============================================================================
+
+/// State for managing relay discovery and forwarding.
+#[derive(Debug)]
+pub struct RelayState {
+    /// Known peers and their network info (for public node detection).
+    pub known_peers: std::collections::HashMap<[u8; 32], PeerNetworkInfo>,
+    /// Pending CAN_YOU_REACH requests (request_id -> target_peer_id).
+    pub pending_reach_requests: std::collections::HashMap<u64, [u8; 32]>,
+    /// Active relay connections: target_peer_id -> relay_peer_id.
+    /// When we can't reach a target directly, we use the relay to forward.
+    pub active_relays: std::collections::HashMap<[u8; 32], [u8; 32]>,
+    /// Our own peer ID.
+    pub our_peer_id: [u8; 32],
+    /// Our external addresses (for public node self-detection).
+    pub our_external_addresses: Vec<SocketAddr>,
+    /// Our local addresses.
+    pub our_local_addresses: Vec<SocketAddr>,
+}
+
+impl RelayState {
+    /// Create new relay state.
+    pub fn new(our_peer_id: [u8; 32]) -> Self {
+        Self {
+            known_peers: std::collections::HashMap::new(),
+            pending_reach_requests: std::collections::HashMap::new(),
+            active_relays: std::collections::HashMap::new(),
+            our_peer_id,
+            our_external_addresses: Vec::new(),
+            our_local_addresses: Vec::new(),
+        }
+    }
+
+    /// Check if we appear to be a public node.
+    pub fn are_we_public(&self) -> bool {
+        if self.our_external_addresses.is_empty() || self.our_local_addresses.is_empty() {
+            return false;
+        }
+
+        let external_ips: std::collections::HashSet<_> =
+            self.our_external_addresses.iter().map(|a| a.ip()).collect();
+        let local_ips: std::collections::HashSet<_> =
+            self.our_local_addresses.iter().map(|a| a.ip()).collect();
+
+        external_ips.intersection(&local_ips).next().is_some()
+    }
+
+    /// Update peer network info.
+    pub fn update_peer(
+        &mut self,
+        peer_id: [u8; 32],
+        local_addresses: Vec<SocketAddr>,
+        external_addresses: Vec<SocketAddr>,
+        is_connected: bool,
+    ) {
+        let entry = self
+            .known_peers
+            .entry(peer_id)
+            .or_insert_with(|| PeerNetworkInfo::new(peer_id));
+
+        entry.local_addresses = local_addresses;
+        entry.external_addresses = external_addresses;
+        entry.is_connected = is_connected;
+        entry.last_seen = std::time::Instant::now();
+        entry.compute_is_public();
+    }
+
+    /// Mark a peer as connected/disconnected.
+    pub fn set_peer_connected(&mut self, peer_id: [u8; 32], connected: bool) {
+        if let Some(peer) = self.known_peers.get_mut(&peer_id) {
+            peer.is_connected = connected;
+            if connected {
+                peer.last_seen = std::time::Instant::now();
+            }
+        }
+    }
+
+    /// Get all public nodes (sorted by priority).
+    pub fn get_public_nodes(&self) -> Vec<&PeerNetworkInfo> {
+        let mut public: Vec<_> = self
+            .known_peers
+            .values()
+            .filter(|p| p.is_public && p.is_connected)
+            .collect();
+
+        // Sort by address count (more addresses = more likely reachable)
+        public.sort_by(|a, b| b.external_addresses.len().cmp(&a.external_addresses.len()));
+        public
+    }
+
+    /// Get all connected peers as relay candidates (sorted by priority).
+    pub fn get_relay_candidates(&self) -> Vec<RelayCandidate> {
+        let mut candidates: Vec<_> = self
+            .known_peers
+            .values()
+            .filter(|p| p.is_connected)
+            .map(|p| p.to_relay_candidate())
+            .collect();
+
+        // Sort by priority (highest first)
+        candidates.sort_by_key(|c| std::cmp::Reverse(c.priority()));
+        candidates
+    }
+
+    /// Check if we can reach a target through any relay.
+    pub fn get_relay_for(&self, target_peer_id: &[u8; 32]) -> Option<[u8; 32]> {
+        self.active_relays.get(target_peer_id).copied()
+    }
+
+    /// Set an active relay for a target.
+    pub fn set_relay_for(&mut self, target_peer_id: [u8; 32], relay_peer_id: [u8; 32]) {
+        self.active_relays.insert(target_peer_id, relay_peer_id);
+    }
+
+    /// Remove relay for a target (e.g., when direct connection succeeds).
+    pub fn remove_relay_for(&mut self, target_peer_id: &[u8; 32]) {
+        self.active_relays.remove(target_peer_id);
+    }
 }
 
 #[cfg(test)]

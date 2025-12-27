@@ -7,4 +7,20 @@ mod client;
 mod test_protocol;
 
 pub use client::{GlobalStats, TestNode, TestNodeConfig};
-pub use test_protocol::{TestPacket, TestResult};
+pub use test_protocol::{
+    // Relay discovery protocol
+    CanYouReachRequest,
+    PeerNetworkInfo,
+    RELAY_MAGIC,
+    ReachResponse,
+    RelayAckResponse,
+    RelayCandidate,
+    RelayDataRequest,
+    RelayMessage,
+    RelayPunchMeNowRequest,
+    RelayState,
+    RelayedDataResponse,
+    // Test packet protocol
+    TestPacket,
+    TestResult,
+};
