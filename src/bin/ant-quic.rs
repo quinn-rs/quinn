@@ -29,7 +29,9 @@
 //! ```
 
 use ant_quic::host_identity::{HostIdentity, auto_storage};
-use ant_quic::{MtuConfig, P2pConfig, P2pEndpoint, P2pEvent, PeerId, TraversalPhase};
+use ant_quic::{
+    ConnectionMethod, MtuConfig, P2pConfig, P2pEndpoint, P2pEvent, PeerId, TraversalPhase,
+};
 use clap::{Parser, Subcommand};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
@@ -81,6 +83,14 @@ struct Args {
     /// Peer address to connect to directly
     #[arg(short, long)]
     connect: Option<SocketAddr>,
+
+    /// Use fallback strategy: IPv4 → IPv6 → HolePunch → Relay
+    #[arg(long)]
+    connect_fallback: bool,
+
+    /// IPv6 address for fallback connection
+    #[arg(long)]
+    connect_ipv6: Option<SocketAddr>,
 
     /// Run throughput test after connecting
     #[arg(long)]
@@ -665,19 +675,50 @@ async fn main() -> anyhow::Result<()> {
 
     // Connect to specific peer if specified
     if let Some(peer_addr) = args.connect {
-        info!("Connecting to peer at {}...", peer_addr);
-        match endpoint.connect(peer_addr).await {
-            Ok(peer) => {
-                info!("Connected to peer: {}", format_peer_id(&peer.peer_id));
-                stats.connections_initiated.fetch_add(1, Ordering::SeqCst);
+        if args.connect_fallback {
+            // Use progressive fallback: IPv4 → IPv6 → HolePunch → Relay
+            info!(
+                "Connecting to peer with fallback strategy: IPv4={}, IPv6={:?}",
+                peer_addr, args.connect_ipv6
+            );
+            match endpoint
+                .connect_with_fallback(Some(peer_addr), args.connect_ipv6, None)
+                .await
+            {
+                Ok((peer, method)) => {
+                    let method: ConnectionMethod = method;
+                    info!(
+                        "✓ Connected to peer {} via {}",
+                        format_peer_id(&peer.peer_id),
+                        method
+                    );
+                    stats.connections_initiated.fetch_add(1, Ordering::SeqCst);
 
-                // Run throughput test if requested
-                if args.throughput_test {
-                    run_throughput_test(&endpoint, &peer.peer_id, args.test_size).await?;
+                    // Run throughput test if requested
+                    if args.throughput_test {
+                        run_throughput_test(&endpoint, &peer.peer_id, args.test_size).await?;
+                    }
+                }
+                Err(e) => {
+                    error!("Failed to connect with fallback: {}", e);
                 }
             }
-            Err(e) => {
-                error!("Failed to connect to peer: {}", e);
+        } else {
+            // Direct connection (original behavior)
+            info!("Connecting to peer at {}...", peer_addr);
+            match endpoint.connect(peer_addr).await {
+                Ok(peer) => {
+                    info!("Connected to peer: {}", format_peer_id(&peer.peer_id));
+                    stats.connections_initiated.fetch_add(1, Ordering::SeqCst);
+
+                    // Run throughput test if requested
+                    if args.throughput_test {
+                        run_throughput_test(&endpoint, &peer.peer_id, args.test_size).await?;
+                    }
+                }
+                Err(e) => {
+                    error!("Failed to connect to peer: {}", e);
+                }
             }
         }
     }

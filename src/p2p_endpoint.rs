@@ -60,6 +60,9 @@ use tracing::{debug, error, info, warn};
 
 // v0.2: auth module removed - TLS handles peer authentication via ML-DSA-65
 use crate::bounded_pending_buffer::BoundedPendingBuffer;
+use crate::connection_strategy::{
+    ConnectionMethod, ConnectionStage, ConnectionStrategy, StrategyConfig,
+};
 use crate::crypto::raw_public_keys::key_utils::{
     MlDsaPublicKey, MlDsaSecretKey, derive_peer_id_from_public_key, generate_ml_dsa_keypair,
 };
@@ -322,6 +325,14 @@ pub enum EndpointError {
     /// Shutdown in progress
     #[error("Endpoint is shutting down")]
     ShuttingDown,
+
+    /// All connection strategies failed
+    #[error("All connection strategies failed: {0}")]
+    AllStrategiesFailed(String),
+
+    /// No target address provided
+    #[error("No target address provided")]
+    NoAddress,
 }
 
 impl P2pEndpoint {
@@ -774,6 +785,313 @@ impl P2pEndpoint {
         }
 
         Err(EndpointError::Timeout)
+    }
+
+    /// Connect with automatic fallback: IPv4 → IPv6 → HolePunch → Relay
+    ///
+    /// This method implements a progressive connection strategy that automatically
+    /// falls back through increasingly aggressive NAT traversal techniques:
+    ///
+    /// 1. **Direct IPv4** (5s timeout) - Simple direct connection
+    /// 2. **Direct IPv6** (5s timeout) - Bypasses NAT when IPv6 available
+    /// 3. **Hole-Punch** (15s timeout) - Coordinated NAT traversal via common peer
+    /// 4. **Relay** (30s timeout) - MASQUE relay as last resort
+    ///
+    /// # Arguments
+    ///
+    /// * `target_ipv4` - Optional IPv4 address of the target peer
+    /// * `target_ipv6` - Optional IPv6 address of the target peer
+    /// * `strategy_config` - Optional custom strategy configuration
+    ///
+    /// # Returns
+    ///
+    /// A tuple of (PeerConnection, ConnectionMethod) indicating how the connection
+    /// was established.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// let (conn, method) = endpoint.connect_with_fallback(
+    ///     Some("1.2.3.4:9000".parse()?),
+    ///     Some("[2001:db8::1]:9000".parse()?),
+    ///     None, // Use default strategy config
+    /// ).await?;
+    ///
+    /// match method {
+    ///     ConnectionMethod::DirectIPv4 => println!("Direct IPv4"),
+    ///     ConnectionMethod::DirectIPv6 => println!("Direct IPv6"),
+    ///     ConnectionMethod::HolePunched { coordinator } => println!("Via {}", coordinator),
+    ///     ConnectionMethod::Relayed { relay } => println!("Relayed via {}", relay),
+    /// }
+    /// ```
+    pub async fn connect_with_fallback(
+        &self,
+        target_ipv4: Option<SocketAddr>,
+        target_ipv6: Option<SocketAddr>,
+        strategy_config: Option<StrategyConfig>,
+    ) -> Result<(PeerConnection, ConnectionMethod), EndpointError> {
+        use tokio::time::timeout;
+
+        if self.shutdown.load(Ordering::SeqCst) {
+            return Err(EndpointError::ShuttingDown);
+        }
+
+        // Build strategy config with coordinator and relay from our config
+        let mut config = strategy_config.unwrap_or_default();
+        if config.coordinator.is_none() {
+            config.coordinator = self.config.known_peers.first().copied();
+        }
+        if config.relay_addr.is_none() {
+            config.relay_addr = self.config.nat.relay_nodes.first().copied();
+        }
+
+        let mut strategy = ConnectionStrategy::new(config);
+
+        info!(
+            "Starting fallback connection: IPv4={:?}, IPv6={:?}",
+            target_ipv4, target_ipv6
+        );
+
+        loop {
+            match strategy.current_stage().clone() {
+                ConnectionStage::DirectIPv4 { .. } => {
+                    if let Some(addr) = target_ipv4 {
+                        info!("Trying direct IPv4 connection to {}", addr);
+                        match timeout(strategy.ipv4_timeout(), self.connect(addr)).await {
+                            Ok(Ok(conn)) => {
+                                info!("✓ Direct IPv4 connection succeeded to {}", addr);
+                                return Ok((conn, ConnectionMethod::DirectIPv4));
+                            }
+                            Ok(Err(e)) => {
+                                debug!("Direct IPv4 failed: {}", e);
+                                strategy.transition_to_ipv6(e.to_string());
+                            }
+                            Err(_) => {
+                                debug!("Direct IPv4 timed out");
+                                strategy.transition_to_ipv6("Timeout");
+                            }
+                        }
+                    } else {
+                        debug!("No IPv4 address provided, skipping");
+                        strategy.transition_to_ipv6("No IPv4 address");
+                    }
+                }
+
+                ConnectionStage::DirectIPv6 { .. } => {
+                    if let Some(addr) = target_ipv6 {
+                        info!("Trying direct IPv6 connection to {}", addr);
+                        match timeout(strategy.ipv6_timeout(), self.connect(addr)).await {
+                            Ok(Ok(conn)) => {
+                                info!("✓ Direct IPv6 connection succeeded to {}", addr);
+                                return Ok((conn, ConnectionMethod::DirectIPv6));
+                            }
+                            Ok(Err(e)) => {
+                                debug!("Direct IPv6 failed: {}", e);
+                                strategy.transition_to_holepunch(e.to_string());
+                            }
+                            Err(_) => {
+                                debug!("Direct IPv6 timed out");
+                                strategy.transition_to_holepunch("Timeout");
+                            }
+                        }
+                    } else {
+                        debug!("No IPv6 address provided, skipping");
+                        strategy.transition_to_holepunch("No IPv6 address");
+                    }
+                }
+
+                ConnectionStage::HolePunching {
+                    coordinator, round, ..
+                } => {
+                    let target = target_ipv4
+                        .or(target_ipv6)
+                        .ok_or(EndpointError::NoAddress)?;
+
+                    info!(
+                        "Trying hole-punch to {} via {} (round {})",
+                        target, coordinator, round
+                    );
+
+                    // Use our existing NAT traversal infrastructure
+                    let peer_id = self.derive_peer_id_from_address(target);
+                    match timeout(
+                        strategy.holepunch_timeout(),
+                        self.try_hole_punch(target, coordinator, peer_id),
+                    )
+                    .await
+                    {
+                        Ok(Ok(conn)) => {
+                            info!("✓ Hole-punch succeeded to {} via {}", target, coordinator);
+                            return Ok((conn, ConnectionMethod::HolePunched { coordinator }));
+                        }
+                        Ok(Err(e)) => {
+                            strategy.record_holepunch_error(round, e.to_string());
+                            if strategy.should_retry_holepunch() {
+                                debug!("Hole-punch round {} failed, retrying", round);
+                                strategy.increment_round();
+                            } else {
+                                debug!("Hole-punch failed after {} rounds", round);
+                                strategy.transition_to_relay(e.to_string());
+                            }
+                        }
+                        Err(_) => {
+                            strategy.record_holepunch_error(round, "Timeout".to_string());
+                            if strategy.should_retry_holepunch() {
+                                debug!("Hole-punch round {} timed out, retrying", round);
+                                strategy.increment_round();
+                            } else {
+                                debug!("Hole-punch timed out after {} rounds", round);
+                                strategy.transition_to_relay("Timeout");
+                            }
+                        }
+                    }
+                }
+
+                ConnectionStage::Relay { relay_addr, .. } => {
+                    let target = target_ipv4
+                        .or(target_ipv6)
+                        .ok_or(EndpointError::NoAddress)?;
+
+                    info!("Trying relay connection to {} via {}", target, relay_addr);
+
+                    match timeout(
+                        strategy.relay_timeout(),
+                        self.try_relay_connection(target, relay_addr),
+                    )
+                    .await
+                    {
+                        Ok(Ok(conn)) => {
+                            info!(
+                                "✓ Relay connection succeeded to {} via {}",
+                                target, relay_addr
+                            );
+                            return Ok((conn, ConnectionMethod::Relayed { relay: relay_addr }));
+                        }
+                        Ok(Err(e)) => {
+                            debug!("Relay connection failed: {}", e);
+                            strategy.transition_to_failed(e.to_string());
+                        }
+                        Err(_) => {
+                            debug!("Relay connection timed out");
+                            strategy.transition_to_failed("Timeout");
+                        }
+                    }
+                }
+
+                ConnectionStage::Failed { errors } => {
+                    let error_summary = errors
+                        .iter()
+                        .map(|e| format!("{:?}: {}", e.method, e.error))
+                        .collect::<Vec<_>>()
+                        .join("; ");
+                    return Err(EndpointError::AllStrategiesFailed(error_summary));
+                }
+
+                ConnectionStage::Connected { via } => {
+                    // This shouldn't happen in the loop, but handle it
+                    unreachable!("Connected stage reached in loop: {:?}", via);
+                }
+            }
+        }
+    }
+
+    /// Internal helper for hole-punch attempt
+    async fn try_hole_punch(
+        &self,
+        target: SocketAddr,
+        coordinator: SocketAddr,
+        peer_id: PeerId,
+    ) -> Result<PeerConnection, EndpointError> {
+        // First ensure we're connected to the coordinator
+        if !self.is_connected_to_addr(coordinator).await {
+            debug!("Connecting to coordinator {} first", coordinator);
+            self.connect(coordinator).await?;
+        }
+
+        // Initiate NAT traversal
+        self.inner
+            .initiate_nat_traversal(peer_id, coordinator)
+            .map_err(EndpointError::NatTraversal)?;
+
+        // Poll for completion with shorter timeout
+        let start = Instant::now();
+        let timeout_duration = Duration::from_secs(15);
+
+        while start.elapsed() < timeout_duration {
+            if self.shutdown.load(Ordering::SeqCst) {
+                return Err(EndpointError::ShuttingDown);
+            }
+
+            let events = self
+                .inner
+                .poll(Instant::now())
+                .map_err(EndpointError::NatTraversal)?;
+
+            for event in events {
+                match event {
+                    NatTraversalEvent::ConnectionEstablished {
+                        peer_id: evt_peer,
+                        remote_address,
+                        side: _,
+                    } if evt_peer == peer_id || remote_address == target => {
+                        let peer_conn = PeerConnection {
+                            peer_id: evt_peer,
+                            remote_addr: remote_address,
+                            authenticated: true,
+                            connected_at: Instant::now(),
+                            last_activity: Instant::now(),
+                        };
+
+                        self.connected_peers
+                            .write()
+                            .await
+                            .insert(evt_peer, peer_conn.clone());
+
+                        return Ok(peer_conn);
+                    }
+                    NatTraversalEvent::TraversalFailed {
+                        peer_id: evt_peer,
+                        error,
+                        ..
+                    } if evt_peer == peer_id => {
+                        return Err(EndpointError::NatTraversal(error));
+                    }
+                    _ => {}
+                }
+            }
+
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+
+        Err(EndpointError::Timeout)
+    }
+
+    /// Internal helper for relay connection attempt
+    async fn try_relay_connection(
+        &self,
+        target: SocketAddr,
+        relay_addr: SocketAddr,
+    ) -> Result<PeerConnection, EndpointError> {
+        // First connect to the relay
+        if !self.is_connected_to_addr(relay_addr).await {
+            debug!("Connecting to relay {} first", relay_addr);
+            self.connect(relay_addr).await?;
+        }
+
+        // TODO: Implement MASQUE CONNECT-UDP protocol
+        // For now, fall back to direct connection through relay
+        // This is a placeholder that will be replaced with proper relay logic
+
+        // Try to connect to target (relay should forward)
+        let conn = self.connect(target).await?;
+
+        Ok(conn)
+    }
+
+    /// Check if we're connected to a specific address
+    async fn is_connected_to_addr(&self, addr: SocketAddr) -> bool {
+        let peers = self.connected_peers.read().await;
+        peers.values().any(|p| p.remote_addr == addr)
     }
 
     /// Accept incoming connections

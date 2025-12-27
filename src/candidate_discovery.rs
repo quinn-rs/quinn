@@ -727,11 +727,7 @@ impl CandidateDiscoveryManager {
 
                     // Process discovered interfaces
                     // Get the bound port to use for interface addresses (they come with port 0)
-                    let bound_port = self
-                        .config
-                        .bound_address
-                        .map(|a| a.port())
-                        .unwrap_or(9000);
+                    let bound_port = self.config.bound_address.map(|a| a.port()).unwrap_or(9000);
 
                     for interface in &interfaces {
                         for address in &interface.addresses {
@@ -754,7 +750,8 @@ impl CandidateDiscoveryManager {
 
                             if self.is_valid_local_address(&candidate_addr) {
                                 // Calculate priority before borrowing session mutably
-                                let priority = self.calculate_local_priority(&candidate_addr, interface);
+                                let priority =
+                                    self.calculate_local_priority(&candidate_addr, interface);
                                 if let Some(session) = self.active_sessions.get_mut(&peer_id) {
                                     let candidate = DiscoveryCandidate {
                                         address: candidate_addr,
@@ -1228,11 +1225,7 @@ impl CandidateDiscoveryManager {
 
         // Then process discovered interfaces
         // Get the bound port to use for interface addresses (they come with port 0)
-        let bound_port = self
-            .config
-            .bound_address
-            .map(|a| a.port())
-            .unwrap_or(9000);
+        let bound_port = self.config.bound_address.map(|a| a.port()).unwrap_or(9000);
 
         for interface in &interfaces {
             for address in &interface.addresses {

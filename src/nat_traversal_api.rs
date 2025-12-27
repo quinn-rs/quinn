@@ -49,6 +49,25 @@ fn extract_ml_dsa_from_spki(spki: &[u8]) -> Option<crate::crypto::pqc::types::Ml
     crate::crypto::raw_public_keys::pqc::extract_public_key_from_spki(spki).ok()
 }
 
+/// Normalize a socket address by converting IPv4-mapped IPv6 addresses to plain IPv4.
+///
+/// This is critical for address comparison when connections may use either format.
+/// For example, `[::ffff:192.168.1.1]:9000` normalizes to `192.168.1.1:9000`.
+fn normalize_socket_addr(addr: SocketAddr) -> SocketAddr {
+    use std::net::IpAddr;
+    match addr {
+        SocketAddr::V6(v6_addr) => {
+            // Check if this is an IPv4-mapped IPv6 address (::ffff:a.b.c.d)
+            if let Some(ipv4) = v6_addr.ip().to_ipv4_mapped() {
+                SocketAddr::new(IpAddr::V4(ipv4), v6_addr.port())
+            } else {
+                addr
+            }
+        }
+        SocketAddr::V4(_) => addr,
+    }
+}
+
 use tracing::{debug, error, info, trace, warn};
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -4068,12 +4087,16 @@ impl NatTraversalEndpoint {
             })?;
 
             // Look for coordinator connection
+            // Normalize addresses to handle IPv4-mapped IPv6 (e.g., [::ffff:1.2.3.4]:9000 == 1.2.3.4:9000)
+            let normalized_coordinator = normalize_socket_addr(coordinator);
             for (_coord_peer, conn) in connections.iter_mut() {
-                if conn.remote_address() == coordinator {
+                let normalized_remote = normalize_socket_addr(conn.remote_address());
+                if normalized_remote == normalized_coordinator {
                     // Found connection to coordinator - send PUNCH_ME_NOW with target_peer_id
                     info!(
-                        "Sending PUNCH_ME_NOW via coordinator {} to target peer {}",
+                        "Sending PUNCH_ME_NOW via coordinator {} (normalized: {}) to target peer {}",
                         coordinator,
+                        normalized_coordinator,
                         hex::encode(&peer_id.0[..8])
                     );
 
@@ -4535,17 +4558,56 @@ impl NatTraversalEndpoint {
             }
 
             crate::shared::EndpointEventInner::RelayPunchMeNow(target_peer_id, punch_frame) => {
-                info!("Relaying PUNCH_ME_NOW to peer {:?}", target_peer_id);
+                // RFC-compliant address-based relay: find peer by address, not synthetic peer ID
+                let target_address = punch_frame.address;
+                let normalized_target = normalize_socket_addr(target_address);
 
-                // Convert target_peer_id to PeerId
-                let target_peer = PeerId(target_peer_id);
+                info!(
+                    "Relaying PUNCH_ME_NOW to address {} (normalized: {}) or peer {:?}",
+                    target_address,
+                    normalized_target,
+                    hex::encode(&target_peer_id[..8])
+                );
 
-                // Find the connection to the target peer and send the coordination frame
                 let connections = self.connections.read().map_err(|_| {
                     NatTraversalError::ProtocolError("Connections lock poisoned".to_string())
                 })?;
 
-                if let Some(connection) = connections.get(&target_peer) {
+                // First try peer ID lookup (if we have actual peer ID)
+                let target_peer = PeerId(target_peer_id);
+                let connection_found = if let Some(conn) = connections.get(&target_peer) {
+                    Some((target_peer, conn.clone()))
+                } else {
+                    // RFC approach: find connection by address match
+                    // Check both remote_address and observed_address for the target
+                    connections.iter().find_map(|(peer_id, conn)| {
+                        let remote_normalized = normalize_socket_addr(conn.remote_address());
+                        let observed_normalized = conn.observed_address().map(normalize_socket_addr);
+
+                        // Match on IP (port may differ due to NAT)
+                        let remote_ip_match = remote_normalized.ip() == normalized_target.ip();
+                        let observed_ip_match = observed_normalized
+                            .map(|obs| obs.ip() == normalized_target.ip())
+                            .unwrap_or(false);
+
+                        if remote_ip_match || observed_ip_match {
+                            debug!(
+                                "Found peer {} by address match: remote={}, observed={:?}, target={}",
+                                hex::encode(&peer_id.0[..8]),
+                                remote_normalized,
+                                observed_normalized,
+                                normalized_target
+                            );
+                            Some((*peer_id, conn.clone()))
+                        } else {
+                            None
+                        }
+                    })
+                };
+
+                drop(connections); // Release lock before async operations
+
+                if let Some((_peer_id, connection)) = connection_found {
                     // Send the PUNCH_ME_NOW frame via a unidirectional stream
                     let mut send_stream = connection.open_uni().await.map_err(|e| {
                         NatTraversalError::NetworkError(format!("Failed to open stream: {e}"))
@@ -4561,13 +4623,17 @@ impl NatTraversalEndpoint {
 
                     let _ = send_stream.finish();
 
-                    debug!(
-                        "Successfully relayed PUNCH_ME_NOW frame to peer {:?}",
-                        target_peer
+                    info!(
+                        "Successfully relayed PUNCH_ME_NOW frame to address {}",
+                        normalized_target
                     );
                     Ok(())
                 } else {
-                    warn!("No connection found for target peer {:?}", target_peer);
+                    warn!(
+                        "No connection found for target address {} (checked {} connections)",
+                        normalized_target,
+                        self.connections.read().map(|c| c.len()).unwrap_or(0)
+                    );
                     Err(NatTraversalError::PeerNotConnected)
                 }
             }

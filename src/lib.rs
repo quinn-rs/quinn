@@ -135,6 +135,9 @@ pub mod fair_polling;
 /// Graceful transport degradation
 pub mod transport_resilience;
 
+/// Connection strategy state machine for progressive NAT traversal fallback
+pub mod connection_strategy;
+
 /// Discovery trait for stream composition
 pub mod discovery_trait;
 
@@ -346,6 +349,12 @@ pub use p2p_endpoint::{
 
 /// P2P configuration with builder pattern
 pub use unified_config::{ConfigError, MtuConfig, NatConfig, P2pConfig, P2pConfigBuilder};
+
+/// Connection strategy for progressive NAT traversal fallback
+pub use connection_strategy::{
+    AttemptedMethod, ConnectionAttemptError, ConnectionMethod, ConnectionStage, ConnectionStrategy,
+    StrategyConfig,
+};
 
 pub use relay::{
     AuthToken,
