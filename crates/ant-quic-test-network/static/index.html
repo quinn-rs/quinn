@@ -2613,9 +2613,8 @@
                 geoContainer.innerHTML = '<span style="color: var(--text-secondary);">No geographic data available</span>';
             }
 
-            // Connection history (last 50)
+            // Connection history (last 50) - reuse connections from above
             const tbody = document.getElementById('results-connections');
-            const connections = results.connections || [];
             const recent = connections.slice(-50).reverse();
 
             if (recent.length > 0) {
