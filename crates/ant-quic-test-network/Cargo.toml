@@ -49,6 +49,11 @@ hex = "0.4"
 tracing = "0.1"
 tracing-subscriber = "0.3"
 
+# Gossip protocol for decentralized peer/relay discovery
+saorsa-gossip-pubsub = "0.1.11"
+saorsa-gossip-membership = "0.1.11"
+saorsa-gossip-types = "0.1.11"
+
 # Concurrent locks
 parking_lot = "0.12"
 

@@ -22,7 +22,7 @@ use ant_quic::{NatConfig, P2pConfig, P2pEndpoint, P2pEvent, PeerId as QuicPeerId
 
 use super::test_protocol::{
     CanYouReachRequest, RELAY_MAGIC, ReachResponse, RelayAckResponse, RelayMessage,
-    RelayPunchMeNowRequest, RelayState, TestPacket,
+    RelayPunchMeNowRequest, RelayState, RelayedDataResponse, TestPacket,
 };
 
 /// Configuration for the test node.
@@ -1214,17 +1214,79 @@ impl TestNode {
             .ok();
         }
 
-        // TODO: Forward the PUNCH_ME_NOW data to the target peer
-        // This requires sending the data on the connection to the target.
-        // For now, we'll just acknowledge that we received it.
-        // The actual forwarding will require integrating with the QUIC connection.
+        // Forward the PUNCH_ME_NOW request to the target peer
+        let target_peer_id = QuicPeerId(req.target_peer_id);
 
-        info!(
-            "Would forward PUNCH_ME_NOW to {} (forwarding not yet implemented)",
-            &target_hex[..8.min(target_hex.len())]
-        );
+        // Serialize the relay message for forwarding
+        let forward_data = match req.to_bytes() {
+            Ok(data) => data,
+            Err(e) => {
+                warn!("Failed to serialize PUNCH_ME_NOW for forwarding: {}", e);
+                return RelayAckResponse::failure(req.request_id, format!("Serialize error: {}", e))
+                    .to_bytes()
+                    .ok();
+            }
+        };
 
-        RelayAckResponse::success(req.request_id).to_bytes().ok()
+        // Get connection to target
+        let connection = match self.endpoint.get_quic_connection(&target_peer_id) {
+            Ok(Some(conn)) => conn,
+            Ok(None) => {
+                warn!(
+                    "No active connection to target {} for relay",
+                    &target_hex[..8.min(target_hex.len())]
+                );
+                return RelayAckResponse::failure(
+                    req.request_id,
+                    "No connection to target".to_string(),
+                )
+                .to_bytes()
+                .ok();
+            }
+            Err(e) => {
+                warn!("Failed to get connection to target: {}", e);
+                return RelayAckResponse::failure(
+                    req.request_id,
+                    format!("Connection error: {}", e),
+                )
+                .to_bytes()
+                .ok();
+            }
+        };
+
+        // Open a unidirectional stream and forward the message
+        match connection.open_uni().await {
+            Ok(mut stream) => {
+                if let Err(e) = stream.write_all(&forward_data).await {
+                    warn!("Failed to write PUNCH_ME_NOW to target: {}", e);
+                    return RelayAckResponse::failure(
+                        req.request_id,
+                        format!("Write error: {}", e),
+                    )
+                    .to_bytes()
+                    .ok();
+                }
+                if let Err(e) = stream.finish() {
+                    warn!("Failed to finish stream to target: {}", e);
+                    // Still return success since data was written
+                }
+
+                info!(
+                    "Forwarded PUNCH_ME_NOW to {} ({} bytes, round={})",
+                    &target_hex[..8.min(target_hex.len())],
+                    forward_data.len(),
+                    req.round
+                );
+
+                RelayAckResponse::success(req.request_id).to_bytes().ok()
+            }
+            Err(e) => {
+                warn!("Failed to open stream to target: {}", e);
+                RelayAckResponse::failure(req.request_id, format!("Stream error: {}", e))
+                    .to_bytes()
+                    .ok()
+            }
+        }
     }
 
     /// Handle RELAY_DATA request.
@@ -1259,16 +1321,61 @@ impl TestNode {
             return None;
         }
 
-        // TODO: Forward the data to the target peer
-        // For now, just log it
-        debug!(
-            "Would relay {} bytes from {} to {}",
-            req.data.len(),
-            &source_hex[..8.min(source_hex.len())],
-            &target_hex[..8.min(target_hex.len())]
-        );
+        // Forward the data to the target peer
+        let target_peer_id = QuicPeerId(req.target_peer_id);
+        let our_peer_id_bytes = peer_id_to_bytes(&self.peer_id);
 
-        None
+        // Create the relayed data response for the target
+        let relayed = RelayedDataResponse::new(req.source_peer_id, our_peer_id_bytes, req.data);
+        let forward_data = match serde_json::to_vec(&RelayMessage::RelayedData(relayed)) {
+            Ok(data) => data,
+            Err(e) => {
+                warn!("Failed to serialize relayed data: {}", e);
+                return None;
+            }
+        };
+
+        // Get connection to target
+        let connection = match self.endpoint.get_quic_connection(&target_peer_id) {
+            Ok(Some(conn)) => conn,
+            Ok(None) => {
+                warn!(
+                    "No active connection to target {} for data relay",
+                    &target_hex[..8.min(target_hex.len())]
+                );
+                return None;
+            }
+            Err(e) => {
+                warn!("Failed to get connection to target for relay: {}", e);
+                return None;
+            }
+        };
+
+        // Open a unidirectional stream and forward the data
+        match connection.open_uni().await {
+            Ok(mut stream) => {
+                if let Err(e) = stream.write_all(&forward_data).await {
+                    warn!("Failed to write relayed data to target: {}", e);
+                    return None;
+                }
+                if let Err(e) = stream.finish() {
+                    warn!("Failed to finish relay data stream: {}", e);
+                }
+
+                debug!(
+                    "Relayed {} bytes from {} to {}",
+                    forward_data.len(),
+                    &source_hex[..8.min(source_hex.len())],
+                    &target_hex[..8.min(target_hex.len())]
+                );
+
+                None // No response needed for data relay
+            }
+            Err(e) => {
+                warn!("Failed to open stream for data relay: {}", e);
+                None
+            }
+        }
     }
 
     /// Send a CAN_YOU_REACH request to a peer.

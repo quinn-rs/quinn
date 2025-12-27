@@ -58,6 +58,7 @@
 //! 5. Display real-time statistics in TUI
 
 pub mod dashboard;
+pub mod gossip;
 pub mod node;
 pub mod registry;
 pub mod tui;
@@ -75,5 +76,10 @@ pub use tui::{
 };
 
 pub use node::{GlobalStats, TestNode, TestNodeConfig, TestPacket, TestResult};
+
+pub use gossip::{
+    CoordinatorAnnouncement, GossipConfig, GossipDiscovery, GossipEvent, PeerAnnouncement,
+    PeerCapabilities, RelayAnnouncement, TOPIC_COORDINATORS, TOPIC_PEERS, TOPIC_RELAYS,
+};
 
 pub use dashboard::dashboard_routes;
