@@ -264,6 +264,10 @@ pub struct NetworkStatistics {
     pub started_at: Option<Instant>,
     /// Total registered nodes in network
     pub total_registered_nodes: usize,
+    /// Peers discovered via gossip network
+    pub gossip_peers_discovered: u64,
+    /// Relays discovered via gossip network
+    pub gossip_relays_discovered: u64,
 }
 
 impl NetworkStatistics {

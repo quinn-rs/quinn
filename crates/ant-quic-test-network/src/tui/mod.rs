@@ -105,6 +105,24 @@ pub enum TuiEvent {
     InboundConnection,
     /// Outbound connection established (we connected to them)
     OutboundConnection,
+    /// Gossip: peer discovered via gossip network
+    GossipPeerDiscovered {
+        /// Peer ID of discovered peer
+        peer_id: String,
+        /// Addresses reported by the peer
+        addresses: Vec<String>,
+        /// Whether the peer is publicly reachable
+        is_public: bool,
+    },
+    /// Gossip: relay discovered via gossip network
+    GossipRelayDiscovered {
+        /// Peer ID of the relay
+        peer_id: String,
+        /// Addresses where relay can be reached
+        addresses: Vec<String>,
+        /// Current load (active connections)
+        load: u32,
+    },
 }
 
 /// Configuration for the TUI.
@@ -298,6 +316,34 @@ fn handle_tui_event(app: &mut App, event: TuiEvent) {
         }
         TuiEvent::OutboundConnection => {
             app.stats.outbound_connections += 1;
+        }
+        TuiEvent::GossipPeerDiscovered {
+            peer_id,
+            addresses,
+            is_public,
+        } => {
+            // Log gossip peer discovery - could track in stats later
+            tracing::debug!(
+                "Gossip discovered peer {} ({} addresses, public={})",
+                &peer_id[..16.min(peer_id.len())],
+                addresses.len(),
+                is_public
+            );
+            app.stats.gossip_peers_discovered += 1;
+        }
+        TuiEvent::GossipRelayDiscovered {
+            peer_id,
+            addresses,
+            load,
+        } => {
+            // Log gossip relay discovery - could track in stats later
+            tracing::debug!(
+                "Gossip discovered relay {} ({} addresses, load={})",
+                &peer_id[..16.min(peer_id.len())],
+                addresses.len(),
+                load
+            );
+            app.stats.gossip_relays_discovered += 1;
         }
     }
 }

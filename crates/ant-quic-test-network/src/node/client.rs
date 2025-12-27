@@ -4,6 +4,9 @@
 //! automatic connections using REAL P2pEndpoint QUIC connections,
 //! and test traffic generation over actual QUIC streams.
 
+use crate::gossip::{
+    GossipConfig, GossipDiscovery, GossipEvent, PeerCapabilities as GossipCapabilities,
+};
 use crate::registry::{
     BgpGeoProvider, ConnectionDirection, ConnectionMethod, ConnectionReport, ConnectivityMatrix,
     NatStats, NatType, NodeCapabilities, NodeHeartbeat, NodeRegistration, PeerInfo, RegistryClient,
@@ -414,6 +417,12 @@ pub struct TestNode {
     /// Relay discovery state for NAT traversal fallback.
     /// Tracks public nodes and manages relay connections.
     relay_state: Arc<RwLock<RelayState>>,
+    /// Gossip discovery layer for decentralized peer discovery.
+    gossip_discovery: Arc<GossipDiscovery>,
+    /// Receiver for gossip events.
+    gossip_event_rx: Arc<RwLock<mpsc::Receiver<GossipEvent>>>,
+    /// Whether this node is publicly reachable (for gossip announcements).
+    is_public: Arc<AtomicBool>,
 }
 
 impl TestNode {
@@ -764,6 +773,17 @@ impl TestNode {
             }
         });
 
+        // Initialize gossip discovery layer
+        let (gossip_event_tx, gossip_event_rx) = mpsc::channel(100);
+        let gossip_discovery = GossipDiscovery::new(
+            peer_id.clone(),
+            listen_addresses.clone(),
+            false, // Assume not public initially, will update when external address discovered
+            GossipConfig::default(),
+            gossip_event_tx,
+        );
+        info!("Initialized gossip discovery layer");
+
         Ok(Self {
             listen_addresses,
             config,
@@ -790,6 +810,9 @@ impl TestNode {
             pending_outbound,
             inbound_connections,
             relay_state,
+            gossip_discovery: Arc::new(gossip_discovery),
+            gossip_event_rx: Arc::new(RwLock::new(gossip_event_rx)),
+            is_public: Arc::new(AtomicBool::new(false)),
         })
     }
 
@@ -1092,6 +1115,110 @@ impl TestNode {
                 }
             }
         })
+    }
+
+    /// Spawn the gossip event processing loop.
+    fn spawn_gossip_loop(&self) -> tokio::task::JoinHandle<()> {
+        let shutdown = Arc::clone(&self.shutdown);
+        let gossip_discovery = Arc::clone(&self.gossip_discovery);
+        let gossip_event_rx = Arc::clone(&self.gossip_event_rx);
+        let event_tx = self.event_tx.clone();
+        let peer_id = self.peer_id.clone();
+
+        tokio::spawn(async move {
+            // Periodic cleanup and announcement ticker
+            let mut cleanup_ticker = tokio::time::interval(Duration::from_secs(30));
+
+            while !shutdown.load(Ordering::SeqCst) {
+                tokio::select! {
+                    // Process incoming gossip events
+                    event = async {
+                        let mut rx = gossip_event_rx.write().await;
+                        rx.recv().await
+                    } => {
+                        if let Some(event) = event {
+                            match event {
+                                GossipEvent::PeerDiscovered(announcement) => {
+                                    info!(
+                                        "Gossip: discovered peer {} with {} addresses",
+                                        &announcement.peer_id[..8.min(announcement.peer_id.len())],
+                                        announcement.addresses.len()
+                                    );
+                                    // Send to TUI for visualization
+                                    let _ = event_tx.send(TuiEvent::GossipPeerDiscovered {
+                                        peer_id: announcement.peer_id.clone(),
+                                        addresses: announcement.addresses.iter().map(|a| a.to_string()).collect(),
+                                        is_public: announcement.is_public,
+                                    }).await;
+                                }
+                                GossipEvent::RelayDiscovered(relay) => {
+                                    info!(
+                                        "Gossip: discovered relay {} with {} connections",
+                                        &relay.peer_id[..8.min(relay.peer_id.len())],
+                                        relay.active_connections
+                                    );
+                                    let _ = event_tx.send(TuiEvent::GossipRelayDiscovered {
+                                        peer_id: relay.peer_id.clone(),
+                                        addresses: relay.addresses.iter().map(|a| a.to_string()).collect(),
+                                        load: relay.active_connections,
+                                    }).await;
+                                }
+                                GossipEvent::CoordinatorDiscovered(coord) => {
+                                    info!(
+                                        "Gossip: discovered coordinator {} (success rate: {:.1}%)",
+                                        &coord.peer_id[..8.min(coord.peer_id.len())],
+                                        coord.success_rate * 100.0
+                                    );
+                                }
+                                GossipEvent::PeerOffline(offline_peer_id) => {
+                                    debug!(
+                                        "Gossip: peer {} went offline",
+                                        &offline_peer_id[..8.min(offline_peer_id.len())]
+                                    );
+                                }
+                            }
+                        }
+                    }
+
+                    // Periodic cleanup of stale entries
+                    _ = cleanup_ticker.tick() => {
+                        gossip_discovery.cleanup_stale().await;
+                        debug!("Gossip: cleaned up stale entries for {}", &peer_id[..8.min(peer_id.len())]);
+                    }
+                }
+            }
+        })
+    }
+
+    /// Announce ourselves to the gossip network.
+    pub async fn announce_to_gossip(&self) {
+        let external_addrs = self.external_addresses.read().await.clone();
+        let is_public = self.is_public.load(Ordering::SeqCst);
+
+        let capabilities = GossipCapabilities {
+            direct: is_public,
+            hole_punch: true,
+            relay: is_public,       // Only public nodes can relay
+            coordinator: is_public, // Only public nodes can coordinate
+        };
+
+        let announcement = self.gossip_discovery.create_announcement(capabilities);
+        // Handle the announcement (would broadcast via actual gossip network)
+        self.gossip_discovery
+            .handle_peer_announcement(announcement)
+            .await;
+
+        info!(
+            "Announced ourselves to gossip: {} (public: {}, addrs: {})",
+            &self.peer_id[..8.min(self.peer_id.len())],
+            is_public,
+            external_addrs.len()
+        );
+    }
+
+    /// Get gossip discovery layer for external access.
+    pub fn gossip(&self) -> &Arc<GossipDiscovery> {
+        &self.gossip_discovery
     }
 
     // ========================================================================
@@ -1551,6 +1678,10 @@ impl TestNode {
         let test_handle = self.spawn_test_loop();
         let health_handle = self.spawn_health_check_loop();
         let relay_stats_handle = self.spawn_relay_stats_loop();
+        let gossip_handle = self.spawn_gossip_loop();
+
+        // Announce ourselves to gossip network
+        self.announce_to_gossip().await;
 
         // Wait for shutdown
         while !shutdown.load(Ordering::SeqCst) {
@@ -1563,6 +1694,10 @@ impl TestNode {
         test_handle.abort();
         health_handle.abort();
         relay_stats_handle.abort();
+        gossip_handle.abort();
+
+        // Shutdown gossip discovery
+        self.gossip_discovery.shutdown();
 
         info!("Test node shutting down");
         Ok(())

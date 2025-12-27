@@ -56,6 +56,58 @@ pub enum ConnectionMethod {
     Relayed,
 }
 
+/// Detailed connection technique for comprehensive tracking.
+///
+/// This provides finer granularity than `ConnectionMethod` to track
+/// exactly which NAT traversal techniques were attempted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ConnectionTechnique {
+    /// Direct IPv4 connection
+    DirectIpv4,
+    /// Direct IPv6 connection
+    DirectIpv6,
+    /// Basic hole-punching (simultaneous open)
+    HolePunch,
+    /// Coordinated hole-punching via relay/coordinator
+    HolePunchCoordinated,
+    /// Connection via relay node
+    Relay,
+    /// UPnP port mapping
+    UPnP,
+    /// NAT-PMP port mapping
+    NatPmp,
+}
+
+impl std::fmt::Display for ConnectionTechnique {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::DirectIpv4 => write!(f, "Direct IPv4"),
+            Self::DirectIpv6 => write!(f, "Direct IPv6"),
+            Self::HolePunch => write!(f, "Hole Punch"),
+            Self::HolePunchCoordinated => write!(f, "Coordinated Hole Punch"),
+            Self::Relay => write!(f, "Relay"),
+            Self::UPnP => write!(f, "UPnP"),
+            Self::NatPmp => write!(f, "NAT-PMP"),
+        }
+    }
+}
+
+/// Record of a single technique attempt.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TechniqueAttempt {
+    /// The technique that was tried
+    pub technique: ConnectionTechnique,
+    /// Whether it succeeded
+    pub success: bool,
+    /// Time taken in milliseconds
+    pub duration_ms: u64,
+    /// Error message if failed
+    pub error: Option<String>,
+    /// Timestamp of attempt (unix ms)
+    pub timestamp_ms: u64,
+}
+
 impl std::fmt::Display for ConnectionMethod {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -435,6 +487,31 @@ pub struct ConnectivityMatrix {
     pub active_method: Option<ConnectionMethod>,
     /// Active connection is IPv6
     pub active_is_ipv6: bool,
+
+    // Enhanced per-peer stats tracking (v0.14.68+)
+    /// Ordered list of all technique attempts for this peer
+    #[serde(default)]
+    pub technique_attempts: Vec<TechniqueAttempt>,
+
+    /// Total time to establish connection in milliseconds
+    #[serde(default)]
+    pub connection_time_ms: Option<u64>,
+
+    /// Peer ID of relay used (if connection is relayed)
+    #[serde(default)]
+    pub relay_peer_id: Option<String>,
+
+    /// Number of connection retries before success
+    #[serde(default)]
+    pub retry_count: u32,
+
+    /// Whether connection was initiated by us or them
+    #[serde(default)]
+    pub initiated_by_us: bool,
+
+    /// Unix timestamp when connection was first established
+    #[serde(default)]
+    pub connected_at_ms: Option<u64>,
 }
 
 impl ConnectivityMatrix {
@@ -521,14 +598,128 @@ impl ConnectivityMatrix {
         }
         count
     }
+
+    /// Record a technique attempt.
+    pub fn record_attempt(
+        &mut self,
+        technique: ConnectionTechnique,
+        success: bool,
+        duration_ms: u64,
+        error: Option<String>,
+    ) {
+        let attempt = TechniqueAttempt {
+            technique,
+            success,
+            duration_ms,
+            error,
+            timestamp_ms: unix_timestamp_ms(),
+        };
+        self.technique_attempts.push(attempt);
+
+        // Also update the legacy fields for backward compatibility
+        match technique {
+            ConnectionTechnique::DirectIpv4 => {
+                self.ipv4_direct_tested = true;
+                if success {
+                    self.ipv4_direct_success = true;
+                    self.ipv4_direct_rtt_ms = Some(duration_ms);
+                }
+            }
+            ConnectionTechnique::DirectIpv6 => {
+                self.ipv6_direct_tested = true;
+                if success {
+                    self.ipv6_direct_success = true;
+                    self.ipv6_direct_rtt_ms = Some(duration_ms);
+                }
+            }
+            ConnectionTechnique::HolePunch | ConnectionTechnique::HolePunchCoordinated => {
+                self.nat_traversal_tested = true;
+                if success {
+                    self.nat_traversal_success = true;
+                    self.nat_traversal_rtt_ms = Some(duration_ms);
+                }
+            }
+            ConnectionTechnique::Relay => {
+                self.relay_tested = true;
+                if success {
+                    self.relay_success = true;
+                    self.relay_rtt_ms = Some(duration_ms);
+                }
+            }
+            ConnectionTechnique::UPnP | ConnectionTechnique::NatPmp => {
+                // These map to direct connection once port is mapped
+                self.ipv4_direct_tested = true;
+                if success {
+                    self.ipv4_direct_success = true;
+                    self.ipv4_direct_rtt_ms = Some(duration_ms);
+                }
+            }
+        }
+    }
+
+    /// Get detailed technique breakdown string.
+    ///
+    /// Returns a string like: "Direct ✗ → HolePunch ✗ → Relay ✓ (42ms)"
+    pub fn technique_breakdown(&self) -> String {
+        if self.technique_attempts.is_empty() {
+            return self.summary();
+        }
+
+        let parts: Vec<String> = self
+            .technique_attempts
+            .iter()
+            .map(|attempt| {
+                let status = if attempt.success { "✓" } else { "✗" };
+                let time = if attempt.success {
+                    format!(" ({}ms)", attempt.duration_ms)
+                } else {
+                    String::new()
+                };
+                format!("{} {}{}", attempt.technique, status, time)
+            })
+            .collect();
+
+        parts.join(" → ")
+    }
+
+    /// Get count of successful technique attempts.
+    pub fn successful_attempts(&self) -> usize {
+        self.technique_attempts.iter().filter(|a| a.success).count()
+    }
+
+    /// Get count of total technique attempts.
+    pub fn total_attempts(&self) -> usize {
+        self.technique_attempts.len()
+    }
+
+    /// Get the first successful technique (if any).
+    pub fn first_successful_technique(&self) -> Option<ConnectionTechnique> {
+        self.technique_attempts
+            .iter()
+            .find(|a| a.success)
+            .map(|a| a.technique)
+    }
+
+    /// Get total time spent on all attempts.
+    pub fn total_attempt_time_ms(&self) -> u64 {
+        self.technique_attempts.iter().map(|a| a.duration_ms).sum()
+    }
 }
 
-/// Helper function to get current unix timestamp.
+/// Helper function to get current unix timestamp in seconds.
 pub fn unix_timestamp() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or(Duration::ZERO)
         .as_secs()
+}
+
+/// Helper function to get current unix timestamp in milliseconds.
+pub fn unix_timestamp_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or(Duration::ZERO)
+        .as_millis() as u64
 }
 
 #[cfg(test)]
@@ -557,5 +748,89 @@ mod tests {
         let json = serde_json::to_string(&reg).expect("serialization should work");
         assert!(json.contains("a3b7c9d2"));
         assert!(json.contains("port_restricted"));
+    }
+
+    #[test]
+    fn test_connection_technique_display() {
+        assert_eq!(ConnectionTechnique::DirectIpv4.to_string(), "Direct IPv4");
+        assert_eq!(ConnectionTechnique::HolePunch.to_string(), "Hole Punch");
+        assert_eq!(
+            ConnectionTechnique::HolePunchCoordinated.to_string(),
+            "Coordinated Hole Punch"
+        );
+        assert_eq!(ConnectionTechnique::Relay.to_string(), "Relay");
+    }
+
+    #[test]
+    fn test_connectivity_matrix_record_attempt() {
+        let mut matrix = ConnectivityMatrix::new();
+
+        // Record a failed direct attempt
+        matrix.record_attempt(
+            ConnectionTechnique::DirectIpv4,
+            false,
+            100,
+            Some("timeout".into()),
+        );
+
+        // Record a failed hole punch attempt
+        matrix.record_attempt(
+            ConnectionTechnique::HolePunch,
+            false,
+            200,
+            Some("no response".into()),
+        );
+
+        // Record a successful relay attempt
+        matrix.record_attempt(ConnectionTechnique::Relay, true, 50, None);
+
+        // Verify the attempts were recorded
+        assert_eq!(matrix.total_attempts(), 3);
+        assert_eq!(matrix.successful_attempts(), 1);
+
+        // Verify legacy fields were updated
+        assert!(matrix.ipv4_direct_tested);
+        assert!(!matrix.ipv4_direct_success);
+        assert!(matrix.nat_traversal_tested);
+        assert!(!matrix.nat_traversal_success);
+        assert!(matrix.relay_tested);
+        assert!(matrix.relay_success);
+        assert_eq!(matrix.relay_rtt_ms, Some(50));
+
+        // Verify first successful technique
+        assert_eq!(
+            matrix.first_successful_technique(),
+            Some(ConnectionTechnique::Relay)
+        );
+    }
+
+    #[test]
+    fn test_connectivity_matrix_technique_breakdown() {
+        let mut matrix = ConnectivityMatrix::new();
+
+        matrix.record_attempt(ConnectionTechnique::DirectIpv4, false, 100, None);
+        matrix.record_attempt(ConnectionTechnique::HolePunch, false, 150, None);
+        matrix.record_attempt(ConnectionTechnique::Relay, true, 42, None);
+
+        let breakdown = matrix.technique_breakdown();
+        assert!(breakdown.contains("Direct IPv4 ✗"));
+        assert!(breakdown.contains("Hole Punch ✗"));
+        assert!(breakdown.contains("Relay ✓ (42ms)"));
+        assert!(breakdown.contains("→"));
+    }
+
+    #[test]
+    fn test_technique_attempt_serialization() {
+        let attempt = TechniqueAttempt {
+            technique: ConnectionTechnique::HolePunchCoordinated,
+            success: true,
+            duration_ms: 123,
+            error: None,
+            timestamp_ms: 1234567890123,
+        };
+
+        let json = serde_json::to_string(&attempt).expect("serialization should work");
+        assert!(json.contains("hole_punch_coordinated"));
+        assert!(json.contains("123"));
     }
 }
