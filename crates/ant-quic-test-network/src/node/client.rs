@@ -1222,9 +1222,12 @@ impl TestNode {
             Ok(data) => data,
             Err(e) => {
                 warn!("Failed to serialize PUNCH_ME_NOW for forwarding: {}", e);
-                return RelayAckResponse::failure(req.request_id, format!("Serialize error: {}", e))
-                    .to_bytes()
-                    .ok();
+                return RelayAckResponse::failure(
+                    req.request_id,
+                    format!("Serialize error: {}", e),
+                )
+                .to_bytes()
+                .ok();
             }
         };
 
