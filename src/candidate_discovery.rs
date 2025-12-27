@@ -871,7 +871,10 @@ impl CandidateDiscoveryManager {
             .active_sessions
             .iter()
             .filter_map(|(peer_id, session)| {
-                if let DiscoveryPhase::Completed { completion_time, .. } = &session.current_phase {
+                if let DiscoveryPhase::Completed {
+                    completion_time, ..
+                } = &session.current_phase
+                {
                     if now.duration_since(*completion_time) > max_age {
                         return Some(*peer_id);
                     }
