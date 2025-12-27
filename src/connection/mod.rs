@@ -4625,6 +4625,31 @@ impl Connection {
         peer_id
     }
 
+    /// Normalize a socket address by converting IPv4-mapped IPv6 addresses to pure IPv4.
+    ///
+    /// This is critical for nodes bound to IPv4-only sockets (0.0.0.0:port) that receive
+    /// addresses in IPv4-mapped IPv6 format (::ffff:a.b.c.d). Without normalization,
+    /// attempting to connect to an IPv4-mapped address from an IPv4-only socket fails
+    /// with "Address family not supported by protocol" (EAFNOSUPPORT, error 97).
+    fn normalize_socket_addr(addr: SocketAddr) -> SocketAddr {
+        match addr {
+            SocketAddr::V6(v6_addr) => {
+                // Check if this is an IPv4-mapped IPv6 address (::ffff:a.b.c.d)
+                if let Some(ipv4) = v6_addr.ip().to_ipv4_mapped() {
+                    let normalized = SocketAddr::new(IpAddr::V4(ipv4), v6_addr.port());
+                    debug!(
+                        "Normalized IPv4-mapped IPv6 address {} to {}",
+                        addr, normalized
+                    );
+                    normalized
+                } else {
+                    addr
+                }
+            }
+            SocketAddr::V4(_) => addr,
+        }
+    }
+
     /// Handle AddAddress frame from peer
     fn handle_add_address(
         &mut self,
@@ -4635,25 +4660,29 @@ impl Connection {
             TransportError::PROTOCOL_VIOLATION("AddAddress frame without NAT traversal negotiation")
         })?;
 
+        // Normalize the address to handle IPv4-mapped IPv6 addresses
+        // This is critical for nodes bound to IPv4-only sockets
+        let normalized_addr = Self::normalize_socket_addr(add_address.address);
+
         info!(
-            "handle_add_address: RECEIVED ADD_ADDRESS from peer addr={} seq={} priority={}",
-            add_address.address, add_address.sequence, add_address.priority
+            "handle_add_address: RECEIVED ADD_ADDRESS from peer addr={} (normalized={}) seq={} priority={}",
+            add_address.address, normalized_addr, add_address.sequence, add_address.priority
         );
 
         match nat_state.add_remote_candidate(
             add_address.sequence,
-            add_address.address,
+            normalized_addr,
             add_address.priority,
             now,
         ) {
             Ok(()) => {
                 info!(
                     "Added remote candidate: {} (seq={}, priority={})",
-                    add_address.address, add_address.sequence, add_address.priority
+                    normalized_addr, add_address.sequence, add_address.priority
                 );
 
                 // Trigger validation of this new candidate
-                self.trigger_candidate_validation(add_address.address, now)?;
+                self.trigger_candidate_validation(normalized_addr, now)?;
                 Ok(())
             }
             Err(NatTraversalError::TooManyCandidates) => Err(TransportError::PROTOCOL_VIOLATION(
@@ -4858,12 +4887,15 @@ impl Connection {
             .last_received_sequence
             .insert(path_id, observed_address.sequence_number);
 
+        // Normalize the address to handle IPv4-mapped IPv6 addresses
+        // This ensures consistent address format for later ADD_ADDRESS advertisements
+        let normalized_addr = Self::normalize_socket_addr(observed_address.address);
+
         // Process the observed address
-        state.handle_observed_address(observed_address.address, path_id, now);
+        state.handle_observed_address(normalized_addr, path_id, now);
 
         // Update the path's address info
-        self.path
-            .update_observed_address(observed_address.address, now);
+        self.path.update_observed_address(normalized_addr, now);
 
         // Log the observation
         trace!(
@@ -5300,6 +5332,10 @@ impl Connection {
         address: SocketAddr,
         priority: u32,
     ) -> Result<u64, ConnectionError> {
+        // Normalize the address to handle IPv4-mapped IPv6 addresses
+        // This ensures consistent address format across all peers
+        let normalized_addr = Self::normalize_socket_addr(address);
+
         // Verify NAT traversal is enabled
         let nat_state = self.nat_traversal.as_mut().ok_or_else(|| {
             ConnectionError::TransportError(TransportError::PROTOCOL_VIOLATION(
@@ -5317,7 +5353,7 @@ impl Connection {
         nat_state.local_candidates.insert(
             sequence,
             nat_traversal::AddressCandidate {
-                address,
+                address: normalized_addr,
                 priority,
                 source: nat_traversal::CandidateSource::Local,
                 discovered_at: now,
@@ -5331,11 +5367,11 @@ impl Connection {
         nat_state.stats.local_candidates_sent += 1;
 
         // Queue the frame for transmission (must be done after releasing nat_state borrow)
-        self.queue_add_address(sequence, address, VarInt::from_u32(priority));
+        self.queue_add_address(sequence, normalized_addr, VarInt::from_u32(priority));
 
         debug!(
-            "Queued ADD_ADDRESS frame: addr={}, priority={}, seq={}",
-            address, priority, sequence
+            "Queued ADD_ADDRESS frame: addr={} (normalized from {}), priority={}, seq={}",
+            normalized_addr, address, priority, sequence
         );
         Ok(sequence.into_inner())
     }
