@@ -198,6 +198,12 @@ pub async fn start_registry_server(config: RegistryConfig) -> anyhow::Result<()>
         .and(store_filter.clone())
         .and_then(handle_get_stats);
 
+    // POST /api/stats/reset - Reset statistics for fresh testing
+    let reset_stats = warp::path!("api" / "stats" / "reset")
+        .and(warp::post())
+        .and(store_filter.clone())
+        .and_then(handle_reset_stats);
+
     // GET /api/node/:peer_id - Get detailed node info
     let node_detail = warp::path!("api" / "node" / String)
         .and(warp::get())
@@ -222,6 +228,13 @@ pub async fn start_registry_server(config: RegistryConfig) -> anyhow::Result<()>
         .and(warp::body::json())
         .and(store_filter.clone())
         .and_then(handle_connection_report);
+
+    // POST /api/metrics - Accept metrics from nodes
+    let metrics = warp::path!("api" / "metrics")
+        .and(warp::post())
+        .and(warp::body::json())
+        .and(store_filter.clone())
+        .and_then(handle_metrics_report);
 
     // GET /api/export - Export all persisted data
     let export = warp::path!("api" / "export")
@@ -261,6 +274,8 @@ pub async fn start_registry_server(config: RegistryConfig) -> anyhow::Result<()>
         .or(all_peers)
         .or(peers)
         .or(stats)
+        .or(reset_stats)
+        .or(metrics)
         .or(results)
         .or(export)
         .or(events)
@@ -423,6 +438,52 @@ async fn handle_get_peers(store: Arc<PeerStore>) -> Result<impl Reply, Rejection
 async fn handle_get_stats(store: Arc<PeerStore>) -> Result<impl Reply, Rejection> {
     let stats = store.get_stats();
     Ok(warp::reply::json(&stats))
+}
+
+/// Handle reset statistics for fresh testing.
+async fn handle_reset_stats(store: Arc<PeerStore>) -> Result<impl Reply, Rejection> {
+    store.reset_stats().await;
+    Ok(warp::reply::json(&serde_json::json!({
+        "success": true,
+        "message": "Statistics reset successfully"
+    })))
+}
+
+/// Metrics report from a node.
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct MetricsReport {
+    pub peer_id: String,
+    pub active_connections: u64,
+    pub successful_connections: u64,
+    pub failed_connections: u64,
+    pub nat_traversals_completed: u64,
+    pub external_addresses_discovered: u64,
+    pub bytes_sent: u64,
+    pub bytes_received: u64,
+}
+
+/// Handle metrics report from nodes.
+async fn handle_metrics_report(
+    report: MetricsReport,
+    store: Arc<PeerStore>,
+) -> Result<impl Reply, Rejection> {
+    tracing::debug!(
+        "Metrics from peer {}: {} active, {} success, {} failed",
+        &report.peer_id[..8.min(report.peer_id.len())],
+        report.active_connections,
+        report.successful_connections,
+        report.failed_connections
+    );
+
+    // Update the peer's metrics in the store
+    store.update_peer_metrics(
+        &report.peer_id,
+        report.active_connections,
+        report.bytes_sent,
+        report.bytes_received,
+    );
+
+    Ok(warp::reply::json(&serde_json::json!({"success": true})))
 }
 
 /// Handle get all peers including historical.

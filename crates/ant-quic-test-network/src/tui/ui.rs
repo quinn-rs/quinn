@@ -239,7 +239,7 @@ fn draw_stats(frame: &mut Frame, app: &App, area: Rect) {
     // Current reachability: connected peers / (total registered - 1)
     // This is more meaningful than lifetime success rate which accumulates retries
     let connected_peers = app.connected_peers.len();
-    let total_nodes = app.stats.total_registered_nodes.max(1);
+    let total_nodes = app.total_registered_nodes.max(1);
     let reachability = if total_nodes > 1 {
         (connected_peers as f64 / (total_nodes - 1) as f64) * 100.0
     } else {

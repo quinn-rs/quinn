@@ -1539,6 +1539,17 @@
         <h2>Help Test the Network Layer <span id="version-badge" style="font-size: 0.5em; background: linear-gradient(135deg, var(--accent-cyan), var(--accent-green)); color: var(--bg-dark); padding: 4px 12px; border-radius: 20px; margin-left: 10px; vertical-align: middle;">Loading...</span></h2>
         <p>Download the test client for your platform. Just run it - that's all you need to do! Your node will automatically connect and help validate this critical network infrastructure.</p>
 
+        <!-- Recommended Download (auto-detected) -->
+        <div id="recommended-download" style="text-align: center; margin-bottom: 2rem; padding: 2rem; background: rgba(0, 255, 136, 0.1); border: 1px solid rgba(0, 255, 136, 0.3); border-radius: 12px;">
+            <p style="margin: 0 0 1rem 0; color: var(--accent-green);">Recommended for your system:</p>
+            <a id="recommended-link" href="#" class="download-btn" style="font-size: 1.2rem; padding: 1rem 2rem;">
+                Detecting platform...
+            </a>
+            <p id="detected-platform" style="margin: 1rem 0 0 0; font-size: 0.9rem; opacity: 0.7;"></p>
+        </div>
+
+        <h3 style="text-align: center; margin-bottom: 1.5rem; color: var(--text-secondary);">All Available Downloads</h3>
+
         <div class="download-grid">
             <!-- Windows -->
             <div class="download-card">
@@ -1546,9 +1557,9 @@
                     <path d="M0 3.449L9.75 2.1v9.451H0m10.949-9.602L24 0v11.4H10.949M0 12.6h9.75v9.451L0 20.699M10.949 12.6H24V24l-12.9-1.801"/>
                 </svg>
                 <h3>Windows</h3>
-                <p>Windows 10 or later (64-bit)</p>
+                <p>Windows 10+ (64-bit)</p>
                 <a href="https://github.com/dirvine/ant-quic/releases/latest/download/ant-quic-test-x86_64-windows.zip" class="download-btn">
-                    Download for Windows
+                    x86_64
                 </a>
             </div>
 
@@ -1558,10 +1569,15 @@
                     <path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.81-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/>
                 </svg>
                 <h3>macOS</h3>
-                <p>macOS 11 or later (Intel & Apple Silicon)</p>
-                <a href="https://github.com/dirvine/ant-quic/releases/latest/download/ant-quic-test-aarch64-macos.tar.gz" class="download-btn">
-                    Download for Mac
-                </a>
+                <p>macOS 11+ (Big Sur)</p>
+                <div style="display: flex; gap: 0.5rem; justify-content: center;">
+                    <a href="https://github.com/dirvine/ant-quic/releases/latest/download/ant-quic-test-aarch64-macos.tar.gz" class="download-btn" style="padding: 0.5rem 1rem; font-size: 0.9rem;">
+                        Apple Silicon
+                    </a>
+                    <a href="https://github.com/dirvine/ant-quic/releases/latest/download/ant-quic-test-x86_64-macos.tar.gz" class="download-btn" style="padding: 0.5rem 1rem; font-size: 0.9rem;">
+                        Intel
+                    </a>
+                </div>
             </div>
 
             <!-- Linux -->
@@ -1571,9 +1587,20 @@
                 </svg>
                 <h3>Linux</h3>
                 <p>Ubuntu 20.04+, Debian 11+, Fedora 35+</p>
-                <a href="https://github.com/dirvine/ant-quic/releases/latest/download/ant-quic-test-x86_64-linux.tar.gz" class="download-btn">
-                    Download for Linux
-                </a>
+                <div style="display: flex; flex-wrap: wrap; gap: 0.5rem; justify-content: center;">
+                    <a href="https://github.com/dirvine/ant-quic/releases/latest/download/ant-quic-test-x86_64-linux.tar.gz" class="download-btn" style="padding: 0.5rem 1rem; font-size: 0.9rem;">
+                        x86_64
+                    </a>
+                    <a href="https://github.com/dirvine/ant-quic/releases/latest/download/ant-quic-test-x86_64-linux-musl.tar.gz" class="download-btn" style="padding: 0.5rem 1rem; font-size: 0.9rem;">
+                        x86_64 (musl)
+                    </a>
+                    <a href="https://github.com/dirvine/ant-quic/releases/latest/download/ant-quic-test-aarch64-linux.tar.gz" class="download-btn" style="padding: 0.5rem 1rem; font-size: 0.9rem;">
+                        ARM64
+                    </a>
+                    <a href="https://github.com/dirvine/ant-quic/releases/latest/download/ant-quic-test-armv7-linux.tar.gz" class="download-btn" style="padding: 0.5rem 1rem; font-size: 0.9rem;">
+                        ARMv7
+                    </a>
+                </div>
             </div>
         </div>
 
@@ -2171,8 +2198,12 @@
                 if (data.type === 'node_registered') {
                     const coords = countryCentroids[data.country_code] || { lat: data.latitude || 0, lng: data.longitude || 0 };
                     nodes.push({
-                        lat: coords.lat, lng: coords.lng,
-                        color: '#00ff88', size: 0.3
+                        lat: coords.lat,
+                        lng: coords.lng,
+                        color: '#00ff88',
+                        size: 0.3,
+                        peer_id: data.peer_id,
+                        status: 'active'
                     });
                     globe.pointsData(nodes);
                     addActivity(`<span class="activity-peer">${data.peer_id.substring(0,8)}</span> joined ${data.country_code || ''}`);
@@ -2730,6 +2761,73 @@
                 closeNodeDetail();
             }
         });
+
+        // ============================================
+        // Platform Autodetection for Downloads
+        // ============================================
+        (function() {
+            const platform = navigator.platform?.toLowerCase() || '';
+            const userAgent = navigator.userAgent?.toLowerCase() || '';
+
+            let downloadUrl = '';
+            let downloadText = '';
+            let platformName = '';
+
+            if (platform.includes('win') || userAgent.includes('windows')) {
+                downloadUrl = 'https://github.com/dirvine/ant-quic/releases/latest/download/ant-quic-test-x86_64-windows.zip';
+                downloadText = 'Download for Windows (x86_64)';
+                platformName = 'Windows x86_64 detected';
+            } else if (platform.includes('mac') || userAgent.includes('macintosh')) {
+                // Check for Apple Silicon vs Intel
+                // Modern approach: check for arm in userAgent or use a feature detection
+                // Safari on M1+ reports "arm" in some contexts
+                const isAppleSilicon = userAgent.includes('arm') ||
+                    (navigator.userAgentData?.platform === 'macOS' &&
+                     navigator.userAgentData?.architecture === 'arm');
+
+                if (isAppleSilicon || platform.includes('arm')) {
+                    downloadUrl = 'https://github.com/dirvine/ant-quic/releases/latest/download/ant-quic-test-aarch64-macos.tar.gz';
+                    downloadText = 'Download for macOS (Apple Silicon)';
+                    platformName = 'macOS Apple Silicon detected';
+                } else {
+                    // Default to Apple Silicon as it's more common now, with note
+                    downloadUrl = 'https://github.com/dirvine/ant-quic/releases/latest/download/ant-quic-test-aarch64-macos.tar.gz';
+                    downloadText = 'Download for macOS (Apple Silicon)';
+                    platformName = 'macOS detected - showing Apple Silicon (Intel also available below)';
+                }
+            } else if (platform.includes('linux') || userAgent.includes('linux')) {
+                // Check for ARM
+                if (platform.includes('arm') || userAgent.includes('aarch64') || userAgent.includes('arm64')) {
+                    downloadUrl = 'https://github.com/dirvine/ant-quic/releases/latest/download/ant-quic-test-aarch64-linux.tar.gz';
+                    downloadText = 'Download for Linux (ARM64)';
+                    platformName = 'Linux ARM64 detected';
+                } else if (userAgent.includes('armv7') || platform.includes('armv7')) {
+                    downloadUrl = 'https://github.com/dirvine/ant-quic/releases/latest/download/ant-quic-test-armv7-linux.tar.gz';
+                    downloadText = 'Download for Linux (ARMv7)';
+                    platformName = 'Linux ARMv7 detected';
+                } else {
+                    downloadUrl = 'https://github.com/dirvine/ant-quic/releases/latest/download/ant-quic-test-x86_64-linux.tar.gz';
+                    downloadText = 'Download for Linux (x86_64)';
+                    platformName = 'Linux x86_64 detected';
+                }
+            } else {
+                // Fallback
+                downloadUrl = 'https://github.com/dirvine/ant-quic/releases/latest';
+                downloadText = 'View All Downloads';
+                platformName = 'Platform not detected - see all options below';
+            }
+
+            const link = document.getElementById('recommended-link');
+            const detected = document.getElementById('detected-platform');
+
+            if (link) {
+                link.href = downloadUrl;
+                link.textContent = downloadText;
+            }
+            if (detected) {
+                detected.textContent = platformName;
+            }
+        })();
     </script>
 </body>
 </html>

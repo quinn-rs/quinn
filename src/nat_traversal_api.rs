@@ -4127,7 +4127,8 @@ impl NatTraversalEndpoint {
             coordinator
         );
         if let Some(endpoint) = &self.inner_endpoint {
-            let server_name = format!("bootstrap-{}", coordinator.ip());
+            // Use "localhost" as server name - actual authentication is via PQC raw public keys
+            let server_name = "localhost".to_string();
             match endpoint.connect(coordinator, &server_name) {
                 Ok(connecting) => {
                     // For sync context, we spawn async task to complete connection and send

@@ -438,6 +438,51 @@ impl PeerStore {
         count
     }
 
+    /// Reset all statistics counters for fresh testing.
+    pub async fn reset_stats(&self) {
+        // Reset atomic counters
+        self.total_connections.store(0, Ordering::Relaxed);
+        self.total_bytes.store(0, Ordering::Relaxed);
+        self.ipv4_connections.store(0, Ordering::Relaxed);
+        self.ipv6_connections.store(0, Ordering::Relaxed);
+        self.next_connection_id.store(0, Ordering::Relaxed);
+
+        // Clear connection records
+        {
+            let mut connections = self.connections.write().await;
+            connections.clear();
+        }
+
+        // Clear historical peers
+        self.historical_peers.clear();
+
+        // Reset peer NAT stats and counters
+        for mut entry in self.peers.iter_mut() {
+            entry.nat_stats = NatStats::default();
+            entry.bytes_sent = 0;
+            entry.bytes_received = 0;
+            entry.connected_peers = 0;
+        }
+
+        tracing::info!("Statistics reset - ready for fresh testing");
+    }
+
+    /// Update peer metrics from node reports.
+    pub fn update_peer_metrics(
+        &self,
+        peer_id: &str,
+        connected_peers: u64,
+        bytes_sent: u64,
+        bytes_received: u64,
+    ) {
+        if let Some(mut entry) = self.peers.get_mut(peer_id) {
+            entry.connected_peers = connected_peers as usize;
+            entry.bytes_sent = bytes_sent;
+            entry.bytes_received = bytes_received;
+            entry.last_heartbeat = std::time::Instant::now();
+        }
+    }
+
     /// Record a connection for experiment results.
     pub async fn record_connection(
         &self,
