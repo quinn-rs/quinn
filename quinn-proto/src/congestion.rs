@@ -5,11 +5,11 @@ use crate::connection::RttEstimator;
 use std::any::Any;
 use std::sync::Arc;
 
-mod bbr;
+mod bbr3;
 mod cubic;
 mod new_reno;
 
-pub use bbr::{Bbr, BbrConfig};
+pub use bbr3::{Bbr3, Bbr3Config};
 pub use cubic::{Cubic, CubicConfig};
 pub use new_reno::{NewReno, NewRenoConfig};
 
@@ -18,6 +18,10 @@ pub trait Controller: Send + Sync {
     /// One or more packets were just sent
     #[allow(unused_variables)]
     fn on_sent(&mut self, now: Instant, bytes: u64, last_packet_number: u64) {}
+
+    /// One packet was just sent
+    #[allow(unused_variables)]
+    fn on_packet_sent(&mut self, now: Instant, bytes: u16, packet_number: u64) {}
 
     /// Packet deliveries were confirmed
     ///
@@ -34,12 +38,25 @@ pub trait Controller: Send + Sync {
     ) {
     }
 
+    /// One packet was just acked
+    #[allow(unused_variables)]
+    fn on_packet_acked(
+        &mut self,
+        now: Instant,
+        sent: Instant,
+        bytes: u16,
+        packet_number: u64,
+        rtt: &RttEstimator,
+    ) {
+    }
+
     /// Packets are acked in batches, all with the same `now` argument. This indicates one of those batches has completed.
     #[allow(unused_variables)]
     fn on_end_acks(
         &mut self,
         now: Instant,
         in_flight: u64,
+        in_flight_ack_eliciting: u64,
         app_limited: bool,
         largest_packet_num_acked: Option<u64>,
     ) {
@@ -58,7 +75,12 @@ pub trait Controller: Send + Sync {
         is_persistent_congestion: bool,
         is_ecn: bool,
         lost_bytes: u64,
+        largest_lost: u64,
     );
+
+    /// One packet was just lost
+    #[allow(unused_variables)]
+    fn on_packet_lost(&mut self, lost_bytes: u16, packet_number: u64) {}
 
     /// Packets were incorrectly deemed lost
     ///
@@ -78,6 +100,7 @@ pub trait Controller: Send + Sync {
             congestion_window: self.window(),
             ssthresh: None,
             pacing_rate: None,
+            send_quantum: None,
         }
     }
 
@@ -99,8 +122,10 @@ pub struct ControllerMetrics {
     pub congestion_window: u64,
     /// Slow start threshold (bytes)
     pub ssthresh: Option<u64>,
-    /// Pacing rate (bits/s)
+    /// Pacing rate (bytes/s)
     pub pacing_rate: Option<u64>,
+    /// Send Quantum (bytes) used to control the size of packet bursts
+    pub send_quantum: Option<u64>,
 }
 
 /// Constructs controllers on demand

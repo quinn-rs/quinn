@@ -35,16 +35,18 @@ pub(super) struct MinMax {
 }
 
 impl MinMax {
+    pub(super) fn new(window: u64) -> Self {
+        Self {
+            window,
+            samples: [Default::default(); 3],
+        }
+    }
     pub(super) fn get(&self) -> u64 {
         self.samples[0].value
     }
 
     fn fill(&mut self, sample: MinMaxSample) {
         self.samples.fill(sample);
-    }
-
-    pub(super) fn reset(&mut self) {
-        self.fill(Default::default())
     }
 
     /// update_min is also defined in the original source, but removed here since it is not used.
