@@ -683,6 +683,7 @@ impl TestNode {
                             );
                             inbound_peer.addresses = vec![addr];
                             // Mark connectivity matrix to show NAT traversal succeeded
+                            inbound_peer.connectivity.nat_traversal_tested = true;
                             inbound_peer.connectivity.nat_traversal_success = true;
 
                             // Look up country code from the peer's IP address
