@@ -726,19 +726,38 @@ impl CandidateDiscoveryManager {
                     }
 
                     // Process discovered interfaces
+                    // Get the bound port to use for interface addresses (they come with port 0)
+                    let bound_port = self
+                        .config
+                        .bound_address
+                        .map(|a| a.port())
+                        .unwrap_or(9000);
+
                     for interface in &interfaces {
                         for address in &interface.addresses {
+                            // Interface addresses come with port 0, use our bound port instead
+                            let candidate_addr = if address.port() == 0 {
+                                SocketAddr::new(address.ip(), bound_port)
+                            } else {
+                                *address
+                            };
+
                             // Skip if this is the same as the bound address
-                            if Some(*address) == self.config.bound_address {
+                            if Some(candidate_addr) == self.config.bound_address {
                                 continue;
                             }
 
-                            if self.is_valid_local_address(address) {
+                            // Skip unspecified addresses (0.0.0.0 or ::)
+                            if candidate_addr.ip().is_unspecified() {
+                                continue;
+                            }
+
+                            if self.is_valid_local_address(&candidate_addr) {
                                 // Calculate priority before borrowing session mutably
-                                let priority = self.calculate_local_priority(address, interface);
+                                let priority = self.calculate_local_priority(&candidate_addr, interface);
                                 if let Some(session) = self.active_sessions.get_mut(&peer_id) {
                                     let candidate = DiscoveryCandidate {
-                                        address: *address,
+                                        address: candidate_addr,
                                         priority,
                                         source: DiscoverySourceType::Local,
                                         state: CandidateState::New,
@@ -747,6 +766,11 @@ impl CandidateDiscoveryManager {
                                     session.discovered_candidates.push(candidate.clone());
                                     session.statistics.local_candidates_found += 1;
                                     candidates_added += 1;
+
+                                    debug!(
+                                        "Added local candidate {} for peer {:?}",
+                                        candidate_addr, peer_id
+                                    );
 
                                     all_events.push(DiscoveryEvent::LocalCandidateDiscovered {
                                         candidate: candidate.to_candidate_address(),
@@ -1203,17 +1227,36 @@ impl CandidateDiscoveryManager {
         }
 
         // Then process discovered interfaces
+        // Get the bound port to use for interface addresses (they come with port 0)
+        let bound_port = self
+            .config
+            .bound_address
+            .map(|a| a.port())
+            .unwrap_or(9000);
+
         for interface in &interfaces {
             for address in &interface.addresses {
+                // Interface addresses come with port 0, use our bound port instead
+                let candidate_addr = if address.port() == 0 {
+                    SocketAddr::new(address.ip(), bound_port)
+                } else {
+                    *address
+                };
+
                 // Skip if this is the same as the bound address
-                if Some(*address) == self.config.bound_address {
+                if Some(candidate_addr) == self.config.bound_address {
                     continue;
                 }
 
-                if self.is_valid_local_address(address) {
+                // Skip unspecified addresses (0.0.0.0 or ::)
+                if candidate_addr.ip().is_unspecified() {
+                    continue;
+                }
+
+                if self.is_valid_local_address(&candidate_addr) {
                     let candidate = DiscoveryCandidate {
-                        address: *address,
-                        priority: self.calculate_local_priority(address, interface),
+                        address: candidate_addr,
+                        priority: self.calculate_local_priority(&candidate_addr, interface),
                         source: DiscoverySourceType::Local,
                         state: CandidateState::New,
                     };
@@ -1224,7 +1267,7 @@ impl CandidateDiscoveryManager {
                     // Create validated candidate for caching
                     validated_candidates.push(ValidatedCandidate {
                         id: CandidateId(rand::random()),
-                        address: *address,
+                        address: candidate_addr,
                         source: DiscoverySourceType::Local,
                         priority: candidate.priority,
                         rtt: None,

@@ -4635,6 +4635,11 @@ impl Connection {
             TransportError::PROTOCOL_VIOLATION("AddAddress frame without NAT traversal negotiation")
         })?;
 
+        info!(
+            "handle_add_address: RECEIVED ADD_ADDRESS from peer addr={} seq={} priority={}",
+            add_address.address, add_address.sequence, add_address.priority
+        );
+
         match nat_state.add_remote_candidate(
             add_address.sequence,
             add_address.address,
@@ -4642,7 +4647,7 @@ impl Connection {
             now,
         ) {
             Ok(()) => {
-                trace!(
+                info!(
                     "Added remote candidate: {} (seq={}, priority={})",
                     add_address.address, add_address.sequence, add_address.priority
                 );

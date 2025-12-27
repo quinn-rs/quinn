@@ -1959,9 +1959,14 @@ impl NatTraversalEndpoint {
 
         let mut poll_interval = interval(Duration::from_secs(1));
         let mut emitted_discovery = std::collections::HashSet::new();
+        // Track addresses we've already advertised to avoid spamming
+        let mut advertised_addresses = std::collections::HashSet::new();
 
         while !shutdown.load(Ordering::Relaxed) {
             poll_interval.tick().await;
+
+            // Collect newly discovered addresses (need to do in two passes due to borrow rules)
+            let mut new_addresses = Vec::new();
 
             // 1. Check active connections for observed addresses and feed them to discovery
             if let Ok(conns) = connections.read() {
@@ -1997,6 +2002,11 @@ impl NatTraversalEndpoint {
                                 );
                                 callback(event);
                             }
+
+                            // Track this address for ADD_ADDRESS advertisement
+                            if advertised_addresses.insert(observed_addr) {
+                                new_addresses.push(observed_addr);
+                            }
                         }
 
                         // Feed the observed address to discovery manager for OUR local peer
@@ -2009,7 +2019,32 @@ impl NatTraversalEndpoint {
                 }
             }
 
-            // 2. Poll the discovery manager
+            // 2. Send ADD_ADDRESS to all peers for newly discovered addresses
+            // (Critical for CGNAT - peers need to know our external address to hole-punch back)
+            if !new_addresses.is_empty() {
+                if let Ok(mut conns) = connections.write() {
+                    for addr in &new_addresses {
+                        for (peer_id, conn) in conns.iter_mut() {
+                            match conn.send_nat_address_advertisement(*addr, 100) {
+                                Ok(seq) => {
+                                    info!(
+                                        "Sent ADD_ADDRESS to peer {:?}: addr={}, seq={}",
+                                        peer_id, addr, seq
+                                    );
+                                }
+                                Err(e) => {
+                                    debug!(
+                                        "Failed to send ADD_ADDRESS to peer {:?}: {:?}",
+                                        peer_id, e
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 3. Poll the discovery manager
             let events = match discovery_manager.lock() {
                 Ok(mut discovery) => discovery.poll(std::time::Instant::now()),
                 Err(e) => {
@@ -2067,6 +2102,30 @@ impl NatTraversalEndpoint {
                             reported_by: bootstrap_node,
                             address: candidate.address,
                         });
+
+                        // Send ADD_ADDRESS frame to all connected peers so they know
+                        // how to reach us (critical for CGNAT hole punching)
+                        if let Ok(mut conns) = connections.write() {
+                            for (peer_id, conn) in conns.iter_mut() {
+                                match conn.send_nat_address_advertisement(
+                                    candidate.address,
+                                    candidate.priority,
+                                ) {
+                                    Ok(seq) => {
+                                        info!(
+                                            "Sent ADD_ADDRESS to peer {:?}: addr={}, seq={}",
+                                            peer_id, candidate.address, seq
+                                        );
+                                    }
+                                    Err(e) => {
+                                        debug!(
+                                            "Failed to send ADD_ADDRESS to peer {:?}: {:?}",
+                                            peer_id, e
+                                        );
+                                    }
+                                }
+                            }
+                        }
                     }
                     DiscoveryEvent::BootstrapQueryFailed {
                         bootstrap_node,
