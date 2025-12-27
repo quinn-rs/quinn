@@ -599,10 +599,33 @@ impl CandidateDiscoveryManager {
         _bootstrap_nodes: Vec<BootstrapNode>,
     ) -> Result<(), DiscoveryError> {
         // Check if session already exists for this peer
-        if self.active_sessions.contains_key(&peer_id) {
-            return Err(DiscoveryError::InternalError(format!(
-                "Discovery already in progress for peer {peer_id:?}"
-            )));
+        if let Some(existing) = self.active_sessions.get(&peer_id) {
+            match &existing.current_phase {
+                DiscoveryPhase::Completed { .. } | DiscoveryPhase::Failed { .. } => {
+                    // Old session is done - remove it and allow new discovery
+                    debug!(
+                        "Removing old completed/failed session for peer {:?} to start new discovery",
+                        peer_id
+                    );
+                    self.active_sessions.remove(&peer_id);
+                }
+                DiscoveryPhase::LocalInterfaceScanning { .. } => {
+                    // Discovery is actively in progress
+                    return Err(DiscoveryError::InternalError(format!(
+                        "Discovery already in progress for peer {peer_id:?}"
+                    )));
+                }
+                DiscoveryPhase::Idle => {
+                    // Session exists but is idle - remove and restart
+                    self.active_sessions.remove(&peer_id);
+                }
+                _ => {
+                    // Other phases - discovery is in progress
+                    return Err(DiscoveryError::InternalError(format!(
+                        "Discovery already in progress for peer {peer_id:?}"
+                    )));
+                }
+            }
         }
 
         info!("Starting candidate discovery for peer {:?}", peer_id);
@@ -624,64 +647,243 @@ impl CandidateDiscoveryManager {
     /// Poll for discovery progress and state updates across all active sessions
     pub fn poll(&mut self, now: Instant) -> Vec<DiscoveryEvent> {
         let mut all_events = Vec::new();
-        let mut completed_sessions = Vec::new();
 
-        // Since we need to poll sessions with self methods, we'll do it in phases
-        // First, check for local interface scanning completions
-        let mut local_scan_events = Vec::new();
-        for (peer_id, session) in &mut self.active_sessions {
-            if let DiscoveryPhase::LocalInterfaceScanning { started_at } = &session.current_phase {
-                // Handle timeouts
-                if started_at.elapsed() > self.config.local_scan_timeout {
-                    local_scan_events.push((
-                        *peer_id,
-                        DiscoveryEvent::LocalScanningCompleted {
-                            candidate_count: 0,
+        // Collect peer IDs to process (avoid borrowing issues)
+        let peer_ids: Vec<PeerId> = self.active_sessions.keys().copied().collect();
+
+        for peer_id in peer_ids {
+            // Get the current phase by cloning the needed data
+            let phase_info = self
+                .active_sessions
+                .get(&peer_id)
+                .map(|s| (s.current_phase.clone(), s.started_at));
+
+            if let Some((DiscoveryPhase::LocalInterfaceScanning { started_at }, session_start)) =
+                phase_info
+            {
+                // Step 1: Start interface scan if just entering phase (within first 50ms)
+                if started_at.elapsed().as_millis() < 50 {
+                    let scan_result = match self.interface_discovery.lock() {
+                        Ok(mut interface_discovery) => interface_discovery.start_scan(),
+                        Err(e) => {
+                            error!("Interface discovery mutex poisoned: {}", e);
+                            continue;
+                        }
+                    };
+                    if let Err(e) = scan_result {
+                        error!("Failed to start interface scan for {:?}: {}", peer_id, e);
+                    } else {
+                        debug!("Started local interface scan for peer {:?}", peer_id);
+                        all_events.push(DiscoveryEvent::LocalScanningStarted);
+                    }
+                }
+
+                // Step 2: Check if scanning is complete
+                let scan_complete_result = match self.interface_discovery.lock() {
+                    Ok(mut interface_discovery) => interface_discovery.check_scan_complete(),
+                    Err(e) => {
+                        error!("Interface discovery mutex poisoned: {}", e);
+                        continue;
+                    }
+                };
+
+                if let Some(interfaces) = scan_complete_result {
+                    // Step 3: Process interfaces and add candidates
+                    debug!(
+                        "Processing {} network interfaces for peer {:?}",
+                        interfaces.len(),
+                        peer_id
+                    );
+
+                    let mut candidates_added = 0;
+
+                    // Add the bound address if available
+                    if let Some(bound_addr) = self.config.bound_address {
+                        if self.is_valid_local_address(&bound_addr) || bound_addr.ip().is_loopback()
+                        {
+                            let candidate = DiscoveryCandidate {
+                                address: bound_addr,
+                                priority: 60000, // High priority for the actual bound address
+                                source: DiscoverySourceType::Local,
+                                state: CandidateState::New,
+                            };
+
+                            if let Some(session) = self.active_sessions.get_mut(&peer_id) {
+                                session.discovered_candidates.push(candidate.clone());
+                                session.statistics.local_candidates_found += 1;
+                                candidates_added += 1;
+
+                                all_events.push(DiscoveryEvent::LocalCandidateDiscovered {
+                                    candidate: candidate.to_candidate_address(),
+                                });
+
+                                debug!(
+                                    "Added bound address {} as local candidate for peer {:?}",
+                                    bound_addr, peer_id
+                                );
+                            }
+                        }
+                    }
+
+                    // Process discovered interfaces
+                    for interface in &interfaces {
+                        for address in &interface.addresses {
+                            // Skip if this is the same as the bound address
+                            if Some(*address) == self.config.bound_address {
+                                continue;
+                            }
+
+                            if self.is_valid_local_address(address) {
+                                // Calculate priority before borrowing session mutably
+                                let priority = self.calculate_local_priority(address, interface);
+                                if let Some(session) = self.active_sessions.get_mut(&peer_id) {
+                                    let candidate = DiscoveryCandidate {
+                                        address: *address,
+                                        priority,
+                                        source: DiscoverySourceType::Local,
+                                        state: CandidateState::New,
+                                    };
+
+                                    session.discovered_candidates.push(candidate.clone());
+                                    session.statistics.local_candidates_found += 1;
+                                    candidates_added += 1;
+
+                                    all_events.push(DiscoveryEvent::LocalCandidateDiscovered {
+                                        candidate: candidate.to_candidate_address(),
+                                    });
+                                }
+                            }
+                        }
+                    }
+
+                    all_events.push(DiscoveryEvent::LocalScanningCompleted {
+                        candidate_count: candidates_added,
+                        duration: started_at.elapsed(),
+                    });
+
+                    // Step 4: Check if we should complete discovery
+                    // Wait for min_discovery_time to allow OBSERVED_ADDRESS frames
+                    let elapsed = now.duration_since(session_start);
+                    let has_external = self
+                        .active_sessions
+                        .get(&peer_id)
+                        .is_some_and(|s| s.statistics.server_reflexive_candidates_found > 0);
+
+                    if elapsed >= self.config.min_discovery_time || has_external {
+                        // Complete discovery
+                        if let Some(session) = self.active_sessions.get_mut(&peer_id) {
+                            let final_candidates: Vec<ValidatedCandidate> = session
+                                .discovered_candidates
+                                .iter()
+                                .map(|dc| ValidatedCandidate {
+                                    id: CandidateId(rand::random()),
+                                    address: dc.address,
+                                    source: dc.source,
+                                    priority: dc.priority,
+                                    rtt: None,
+                                    reliability_score: 1.0,
+                                })
+                                .collect();
+
+                            let candidate_count = final_candidates.len();
+                            session.current_phase = DiscoveryPhase::Completed {
+                                final_candidates,
+                                completion_time: now,
+                            };
+
+                            info!(
+                                "Discovery completed for peer {:?}: {} candidates found",
+                                peer_id, candidate_count
+                            );
+
+                            all_events.push(DiscoveryEvent::DiscoveryCompleted {
+                                candidate_count,
+                                total_duration: elapsed,
+                                success_rate: if candidate_count > 0 { 1.0 } else { 0.0 },
+                            });
+                        }
+                    } else {
+                        debug!(
+                            "Delaying discovery completion for peer {:?}: elapsed {:?} < min {:?}",
+                            peer_id, elapsed, self.config.min_discovery_time
+                        );
+                    }
+                } else if started_at.elapsed() > self.config.local_scan_timeout {
+                    // Timeout - complete with whatever we have
+                    warn!(
+                        "Local interface scan timeout for peer {:?}, proceeding with available candidates",
+                        peer_id
+                    );
+
+                    if let Some(session) = self.active_sessions.get_mut(&peer_id) {
+                        let final_candidates: Vec<ValidatedCandidate> = session
+                            .discovered_candidates
+                            .iter()
+                            .map(|dc| ValidatedCandidate {
+                                id: CandidateId(rand::random()),
+                                address: dc.address,
+                                source: dc.source,
+                                priority: dc.priority,
+                                rtt: None,
+                                reliability_score: 1.0,
+                            })
+                            .collect();
+
+                        let candidate_count = final_candidates.len();
+
+                        all_events.push(DiscoveryEvent::LocalScanningCompleted {
+                            candidate_count,
                             duration: started_at.elapsed(),
-                        },
-                    ));
+                        });
+
+                        session.current_phase = DiscoveryPhase::Completed {
+                            final_candidates,
+                            completion_time: now,
+                        };
+
+                        all_events.push(DiscoveryEvent::DiscoveryCompleted {
+                            candidate_count,
+                            total_duration: now.duration_since(session.started_at),
+                            success_rate: if candidate_count > 0 { 1.0 } else { 0.0 },
+                        });
+
+                        info!(
+                            "Discovery completed (timeout) for peer {:?}: {} candidates",
+                            peer_id, candidate_count
+                        );
+                    }
                 }
             }
         }
 
-        // Process local scan events
-        for (peer_id, event) in local_scan_events {
-            all_events.push(event);
-            if let Some(session) = self.active_sessions.get_mut(&peer_id) {
-                // Move to next phase
-                session.current_phase = DiscoveryPhase::Completed {
-                    final_candidates: session
-                        .discovered_candidates
-                        .iter()
-                        .map(|dc| ValidatedCandidate {
-                            id: CandidateId(0),
-                            address: dc.address,
-                            source: dc.source,
-                            priority: dc.priority,
-                            rtt: None,
-                            reliability_score: 1.0,
-                        })
-                        .collect(),
-                    completion_time: now,
-                };
-
-                all_events.push(DiscoveryEvent::DiscoveryCompleted {
-                    candidate_count: session.discovered_candidates.len(),
-                    total_duration: now.duration_since(session.started_at),
-                    success_rate: 1.0,
-                });
-
-                completed_sessions.push(peer_id);
-            }
-        }
-
-        // Remove completed sessions
-        for peer_id in completed_sessions {
-            self.active_sessions.remove(&peer_id);
-            debug!("Removed completed discovery session for peer {:?}", peer_id);
-        }
+        // Note: We intentionally do NOT remove completed sessions here.
+        // Sessions remain in active_sessions so get_candidates_for_peer() can access them.
+        // They will be cleaned up when a new discovery is started for the same peer,
+        // or via cleanup_stale_sessions() if needed.
 
         all_events
+    }
+
+    /// Clean up sessions that have been completed for longer than the specified duration
+    pub fn cleanup_stale_sessions(&mut self, max_age: Duration) {
+        let now = Instant::now();
+        let stale: Vec<PeerId> = self
+            .active_sessions
+            .iter()
+            .filter_map(|(peer_id, session)| {
+                if let DiscoveryPhase::Completed { completion_time, .. } = &session.current_phase {
+                    if now.duration_since(*completion_time) > max_age {
+                        return Some(*peer_id);
+                    }
+                }
+                None
+            })
+            .collect();
+
+        for peer_id in stale {
+            self.active_sessions.remove(&peer_id);
+            debug!("Cleaned up stale discovery session for peer {:?}", peer_id);
+        }
     }
 
     /// Get current discovery status
@@ -786,6 +988,88 @@ impl CandidateDiscoveryManager {
             // No active session for this peer
             debug!("No active discovery session found for peer {:?}", peer_id);
             Vec::new()
+        }
+    }
+
+    /// Add an external address discovered from an OBSERVED_ADDRESS frame
+    ///
+    /// This is called when a connected peer reports our external address via the
+    /// OBSERVED_ADDRESS frame (draft-ietf-quic-address-discovery). These addresses
+    /// are server-reflexive and represent how we appear to external peers.
+    pub fn add_external_address(&mut self, peer_id: PeerId, external_addr: SocketAddr) {
+        if let Some(session) = self.active_sessions.get_mut(&peer_id) {
+            // Check if we already have this address
+            if session
+                .discovered_candidates
+                .iter()
+                .any(|c| c.address == external_addr)
+            {
+                debug!(
+                    "External address {} already known for peer {:?}",
+                    external_addr, peer_id
+                );
+                return;
+            }
+
+            let candidate = DiscoveryCandidate {
+                address: external_addr,
+                priority: 55000, // High priority - external addresses are valuable
+                source: DiscoverySourceType::ServerReflexive,
+                state: CandidateState::New,
+            };
+
+            session.discovered_candidates.push(candidate);
+            session.statistics.server_reflexive_candidates_found += 1;
+
+            info!(
+                "Added external address {} for peer {:?} (from OBSERVED_ADDRESS)",
+                external_addr, peer_id
+            );
+        } else {
+            debug!(
+                "No active session for peer {:?}, cannot add external address {}",
+                peer_id, external_addr
+            );
+        }
+    }
+
+    /// Add an external address for all active sessions
+    ///
+    /// This is useful when we discover our external address from any connected peer -
+    /// it can be used for NAT traversal to other peers as well.
+    pub fn add_external_address_to_all(&mut self, external_addr: SocketAddr) {
+        let peer_ids: Vec<PeerId> = self.active_sessions.keys().copied().collect();
+        let mut added_count = 0;
+
+        for peer_id in peer_ids {
+            if let Some(session) = self.active_sessions.get_mut(&peer_id) {
+                // Check if we already have this address
+                if session
+                    .discovered_candidates
+                    .iter()
+                    .any(|c| c.address == external_addr)
+                {
+                    continue;
+                }
+
+                let candidate = DiscoveryCandidate {
+                    address: external_addr,
+                    priority: 55000,
+                    source: DiscoverySourceType::ServerReflexive,
+                    state: CandidateState::New,
+                };
+
+                session.discovered_candidates.push(candidate);
+                session.statistics.server_reflexive_candidates_found += 1;
+                added_count += 1;
+            }
+        }
+
+        if added_count > 0 {
+            info!(
+                "Added external address {} to {} active discovery sessions",
+                external_addr, added_count
+            );
         }
     }
 
