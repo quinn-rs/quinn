@@ -1392,55 +1392,72 @@ impl TestNode {
             while !shutdown.load(Ordering::SeqCst) {
                 ticker.tick().await;
 
-                let mut peers = connected_peers.write().await;
-                let peer_ids: Vec<String> = peers.keys().cloned().collect();
+                // CRITICAL: Collect peer info WITHOUT holding lock during network operations
+                // This prevents lock starvation that was blocking heartbeats
+                let peer_info: Vec<(String, u64)> = {
+                    let peers = connected_peers.read().await;
+                    peers
+                        .iter()
+                        .map(|(id, tracked)| {
+                            let seq = tracked.sequence.fetch_add(1, Ordering::Relaxed);
+                            (id.clone(), seq)
+                        })
+                        .collect()
+                };
+                // Lock released here before network operations
 
-                for peer_id in peer_ids {
-                    if let Some(tracked) = peers.get_mut(&peer_id) {
-                        let seq = tracked.sequence.fetch_add(1, Ordering::Relaxed);
-                        let packet = TestPacket::new_ping(our_peer_id_bytes, seq);
-                        let packet_size = packet.size() as u64;
+                for (peer_id, seq) in peer_info {
+                    let packet = TestPacket::new_ping(our_peer_id_bytes, seq);
+                    let packet_size = packet.size() as u64;
 
-                        // Perform REAL test packet exchange over QUIC streams
-                        let result = real_test_exchange(&endpoint, &peer_id, &packet).await;
+                    // Perform REAL test packet exchange over QUIC streams
+                    // WITHOUT holding any lock - prevents heartbeat starvation
+                    let result = real_test_exchange(&endpoint, &peer_id, &packet).await;
 
-                        match result {
-                            Ok(rtt) => {
-                                tracked.stats.tests_success += 1;
-                                tracked.stats.total_rtt_ms += rtt.as_millis() as u64;
-                                tracked.stats.last_rtt = Some(rtt);
-                                tracked.stats.packets_sent += 1;
-                                tracked.stats.packets_received += 1;
-                                tracked.last_activity = Instant::now();
-                                tracked.consecutive_failures = 0; // Reset on success
+                    // Now briefly acquire lock to update stats
+                    let success = result.is_ok();
+                    let rtt_for_tui = result.as_ref().ok().copied();
 
-                                total_sent.fetch_add(packet_size, Ordering::Relaxed);
-                                total_received.fetch_add(packet_size, Ordering::Relaxed);
+                    {
+                        let mut peers = connected_peers.write().await;
+                        if let Some(tracked) = peers.get_mut(&peer_id) {
+                            match &result {
+                                Ok(rtt) => {
+                                    tracked.stats.tests_success += 1;
+                                    tracked.stats.total_rtt_ms += rtt.as_millis() as u64;
+                                    tracked.stats.last_rtt = Some(*rtt);
+                                    tracked.stats.packets_sent += 1;
+                                    tracked.stats.packets_received += 1;
+                                    tracked.last_activity = Instant::now();
+                                    tracked.consecutive_failures = 0; // Reset on success
 
-                                // Update TUI
-                                let _ = event_tx
-                                    .send(TuiEvent::TestPacketResult {
-                                        peer_id: peer_id.clone(),
-                                        success: true,
-                                        rtt: Some(rtt),
-                                    })
-                                    .await;
-                            }
-                            Err(e) => {
-                                tracked.stats.tests_failed += 1;
-                                tracked.consecutive_failures += 1;
-                                warn!("Test packet to {} failed: {}", &peer_id[..8], e);
+                                    total_sent.fetch_add(packet_size, Ordering::Relaxed);
+                                    total_received.fetch_add(packet_size, Ordering::Relaxed);
 
-                                let _ = event_tx
-                                    .send(TuiEvent::TestPacketResult {
-                                        peer_id: peer_id.clone(),
-                                        success: false,
-                                        rtt: None,
-                                    })
-                                    .await;
+                                    debug!(
+                                        "REAL test packet sent to {} ({} bytes, RTT: {:?})",
+                                        &peer_id[..8],
+                                        packet_size,
+                                        rtt
+                                    );
+                                }
+                                Err(e) => {
+                                    tracked.stats.tests_failed += 1;
+                                    tracked.consecutive_failures += 1;
+                                    warn!("Test packet to {} failed: {}", &peer_id[..8], e);
+                                }
                             }
                         }
-                    }
+                    } // Lock released here before TUI update
+
+                    // Update TUI outside the lock
+                    let _ = event_tx
+                        .send(TuiEvent::TestPacketResult {
+                            peer_id: peer_id.clone(),
+                            success,
+                            rtt: rtt_for_tui,
+                        })
+                        .await;
                 }
             }
         })
