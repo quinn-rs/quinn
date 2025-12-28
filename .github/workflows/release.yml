@@ -480,8 +480,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-    # Run even if some builds failed (cross-compile), but skip if validation failed
-    if: github.event.inputs.dry_run != 'true' && needs.validate.result == 'success'
+    # Run even if some builds failed, but skip if validation failed
+    if: always() && github.event.inputs.dry_run != 'true' && needs.validate.result == 'success' && needs.changelog.result == 'success'
     steps:
       - name: Checkout
         uses: actions/checkout@v4
