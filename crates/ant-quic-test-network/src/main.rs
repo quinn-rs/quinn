@@ -21,6 +21,8 @@ struct Args {
     registry: bool,
     /// HTTP server port (for registry mode)
     port: u16,
+    /// QUIC port for address discovery (registry mode, 0 to disable)
+    quic_port: u16,
     /// QUIC bind port (for client mode)
     bind_port: u16,
     /// Registry URL to connect to (for client mode)
@@ -36,7 +38,8 @@ impl Default for Args {
         Self {
             registry: false,
             port: 8080,
-            bind_port: 0, // 0 = random available port
+            quic_port: 9001, // Registry QUIC port for address discovery (9001 to avoid conflict with P2P node on 9000)
+            bind_port: 0,    // 0 = random available port
             registry_url: "https://saorsa-1.saorsalabs.com".to_string(),
             max_peers: 10,
             quiet: false,
@@ -77,6 +80,13 @@ fn parse_args() -> Args {
                     }
                 }
             }
+            "--quic-port" => {
+                if let Some(port) = argv.next() {
+                    if let Ok(p) = port.parse() {
+                        args.quic_port = p;
+                    }
+                }
+            }
             "-q" | "--quiet" => args.quiet = true,
             "-h" | "--help" => {
                 print_help();
@@ -106,8 +116,9 @@ USAGE:
 OPTIONS:
     --registry              Run as central registry server
     --port <PORT>           HTTP server port (registry mode) [default: 8080]
+    --quic-port <PORT>      QUIC port for address discovery (registry mode, 0 to disable) [default: 9001]
     --bind-port <PORT>      QUIC UDP bind port (client mode) [default: 0 = random]
-    --registry-url <URL>    Registry URL to connect to [default: http://saorsa-1.saorsalabs.com:8080]
+    --registry-url <URL>    Registry URL to connect to [default: https://saorsa-1.saorsalabs.com]
     --max-peers <N>         Maximum peer connections [default: 10]
     -q, --quiet             Disable TUI, log mode only
     -h, --help              Print this help message
@@ -127,7 +138,7 @@ EXAMPLES:
     ant-quic-test --bind-port 9001
 
     # Connect to custom registry
-    ant-quic-test --registry-url https://my-registry.example.com:8080
+    ant-quic-test --registry-url https://my-registry.example.com
 "#
     );
 }
@@ -147,10 +158,17 @@ async fn main() -> anyhow::Result<()> {
         println!("Starting registry server on port {}...", args.port);
         println!("\"We will be legion!!\"");
 
+        // QUIC port 0 means disable the QUIC endpoint for address discovery
+        let quic_addr = if args.quic_port > 0 {
+            Some(SocketAddr::from(([0, 0, 0, 0], args.quic_port)))
+        } else {
+            None
+        };
+
         let config = RegistryConfig {
             bind_addr: SocketAddr::from(([0, 0, 0, 0], args.port)),
-            // QUIC endpoint on port 9000 for native address discovery via OBSERVED_ADDRESS frames
-            quic_addr: Some(SocketAddr::from(([0, 0, 0, 0], 9000))),
+            // QUIC endpoint for native address discovery via OBSERVED_ADDRESS frames
+            quic_addr,
             ttl_secs: 120,
             cleanup_interval_secs: 30,
             data_dir: std::path::PathBuf::from("./data"),

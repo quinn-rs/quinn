@@ -708,6 +708,194 @@ impl PeerStore {
             }
         }
     }
+
+    /// Get connection matrix showing peer-to-peer connection results.
+    pub async fn get_connection_matrix(&self) -> crate::registry::types::ConnectionMatrixResponse {
+        use crate::registry::types::{
+            ConnectionMatrixResponse, PathTestResult, PeerConnectionMatrix,
+        };
+
+        let connections = self.connections.read().await;
+
+        // Collect unique peer IDs
+        let mut peer_set = std::collections::HashSet::new();
+        for conn in connections.iter() {
+            peer_set.insert(conn.from_peer.clone());
+            peer_set.insert(conn.to_peer.clone());
+        }
+        let peers: Vec<String> = peer_set
+            .into_iter()
+            .map(|p| p[..8.min(p.len())].to_string())
+            .collect();
+
+        // Build matrix entries from connections
+        let mut matrix = Vec::new();
+        let mut total_tested = 0usize;
+        let mut total_success = 0usize;
+
+        for conn in connections.iter() {
+            let entry = PeerConnectionMatrix {
+                from_peer: conn.from_peer[..8.min(conn.from_peer.len())].to_string(),
+                to_peer: conn.to_peer[..8.min(conn.to_peer.len())].to_string(),
+                ipv4: PathTestResult {
+                    tested: conn.connectivity.ipv4_direct_tested,
+                    success: conn.connectivity.ipv4_direct_success,
+                    rtt_ms: conn.connectivity.ipv4_direct_rtt_ms,
+                },
+                ipv6: PathTestResult {
+                    tested: conn.connectivity.ipv6_direct_tested,
+                    success: conn.connectivity.ipv6_direct_success,
+                    rtt_ms: conn.connectivity.ipv6_direct_rtt_ms,
+                },
+                nat: PathTestResult {
+                    tested: conn.connectivity.nat_traversal_tested,
+                    success: conn.connectivity.nat_traversal_success,
+                    rtt_ms: conn.connectivity.nat_traversal_rtt_ms,
+                },
+                relay: PathTestResult {
+                    tested: conn.connectivity.relay_tested,
+                    success: conn.connectivity.relay_success,
+                    rtt_ms: conn.connectivity.relay_rtt_ms,
+                },
+                active_method: conn.connectivity.active_method,
+            };
+
+            // Count tested paths
+            if conn.connectivity.ipv4_direct_tested {
+                total_tested += 1;
+                if conn.connectivity.ipv4_direct_success {
+                    total_success += 1;
+                }
+            }
+            if conn.connectivity.ipv6_direct_tested {
+                total_tested += 1;
+                if conn.connectivity.ipv6_direct_success {
+                    total_success += 1;
+                }
+            }
+            if conn.connectivity.nat_traversal_tested {
+                total_tested += 1;
+                if conn.connectivity.nat_traversal_success {
+                    total_success += 1;
+                }
+            }
+            if conn.connectivity.relay_tested {
+                total_tested += 1;
+                if conn.connectivity.relay_success {
+                    total_success += 1;
+                }
+            }
+
+            matrix.push(entry);
+        }
+
+        ConnectionMatrixResponse {
+            peers,
+            matrix,
+            total_tested,
+            total_success,
+        }
+    }
+
+    /// Get breakdown of connections by method, IP version, and NAT type.
+    pub async fn get_breakdown(&self) -> crate::registry::types::BreakdownResponse {
+        use crate::registry::types::{BreakdownResponse, IpVersionBreakdown};
+
+        let mut by_method = ConnectionBreakdown::default();
+        let mut by_ip_version = IpVersionBreakdown::default();
+        let mut by_nat_type: HashMap<String, u64> = HashMap::new();
+
+        // Aggregate from peer entries
+        for entry in self.peers.iter() {
+            by_method.direct += entry.nat_stats.direct_success;
+            by_method.hole_punched += entry.nat_stats.hole_punch_success;
+            by_method.relayed += entry.nat_stats.relay_success;
+
+            // Count by NAT type
+            let nat_key = format!("{:?}", entry.registration.nat_type);
+            *by_nat_type.entry(nat_key).or_insert(0) += 1;
+        }
+
+        // Get IP version counts from atomic counters
+        by_ip_version.ipv4 = self.ipv4_connections.load(Ordering::Relaxed);
+        by_ip_version.ipv6 = self.ipv6_connections.load(Ordering::Relaxed);
+
+        BreakdownResponse {
+            by_method,
+            by_ip_version,
+            by_nat_type,
+        }
+    }
+
+    /// Get gossip protocol health metrics.
+    /// Note: These are placeholder values until gossip is fully integrated.
+    pub fn get_gossip_health(&self) -> crate::registry::types::GossipHealthResponse {
+        use crate::registry::types::GossipHealthResponse;
+
+        let active_count = self.peers.len();
+        let historical_count = self.historical_peers.len();
+
+        // Determine health status based on peer counts
+        let status = if active_count > 0 {
+            "healthy".to_string()
+        } else if historical_count > 0 {
+            "degraded".to_string()
+        } else {
+            "unhealthy".to_string()
+        };
+
+        GossipHealthResponse {
+            peers_discovered: self.total_unique_nodes.load(Ordering::Relaxed),
+            announcements_received: self.total_connections.load(Ordering::Relaxed),
+            relays_known: 0,       // Placeholder until relay discovery is implemented
+            coordinators_known: 1, // Registry is the coordinator
+            stale_peers_cleaned: historical_count as u64,
+            status,
+        }
+    }
+
+    /// Get bootstrap cache status.
+    pub fn get_cache_status(&self) -> crate::registry::types::CacheStatusResponse {
+        use crate::registry::types::{CacheStatusResponse, NatType, QualityDistribution};
+
+        let now = Instant::now();
+        let active_threshold = Duration::from_secs(ACTIVE_THRESHOLD_SECS);
+
+        let mut active_peers = 0usize;
+        let mut stale_peers = 0usize;
+        let mut high_quality = 0usize;
+        let mut medium_quality = 0usize;
+        let mut low_quality = 0usize;
+
+        for entry in self.peers.iter() {
+            if now.duration_since(entry.last_heartbeat) < active_threshold {
+                active_peers += 1;
+            } else {
+                stale_peers += 1;
+            }
+
+            // Assess quality based on NAT type and capabilities
+            match entry.registration.nat_type {
+                NatType::None => high_quality += 1,
+                NatType::FullCone | NatType::AddressRestricted => medium_quality += 1,
+                _ => low_quality += 1,
+            }
+        }
+
+        // Add historical peers as stale
+        stale_peers += self.historical_peers.len();
+
+        CacheStatusResponse {
+            total_peers: self.peers.len() + self.historical_peers.len(),
+            active_peers,
+            stale_peers,
+            quality_distribution: QualityDistribution {
+                high: high_quality,
+                medium: medium_quality,
+                low: low_quality,
+            },
+        }
+    }
 }
 
 impl Default for PeerStore {

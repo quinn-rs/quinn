@@ -722,6 +722,110 @@ pub fn unix_timestamp_ms() -> u64 {
         .as_millis() as u64
 }
 
+/// Connection test result for a single path.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PathTestResult {
+    /// Whether the path was tested
+    pub tested: bool,
+    /// Whether the test succeeded
+    pub success: bool,
+    /// Round-trip time in milliseconds (if successful)
+    pub rtt_ms: Option<u64>,
+}
+
+/// Peer-to-peer connection matrix entry.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PeerConnectionMatrix {
+    /// Source peer ID (truncated for display)
+    pub from_peer: String,
+    /// Destination peer ID (truncated for display)
+    pub to_peer: String,
+    /// IPv4 direct connection result
+    pub ipv4: PathTestResult,
+    /// IPv6 direct connection result
+    pub ipv6: PathTestResult,
+    /// NAT traversal (hole-punch) result
+    pub nat: PathTestResult,
+    /// Relay connection result
+    pub relay: PathTestResult,
+    /// Currently active method (if any)
+    pub active_method: Option<ConnectionMethod>,
+}
+
+/// Response for /api/results/matrix endpoint.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConnectionMatrixResponse {
+    /// List of peer IDs (truncated)
+    pub peers: Vec<String>,
+    /// Connection matrix entries
+    pub matrix: Vec<PeerConnectionMatrix>,
+    /// Total connections tested
+    pub total_tested: usize,
+    /// Successful connections
+    pub total_success: usize,
+}
+
+/// Response for /api/results/breakdown endpoint.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BreakdownResponse {
+    /// Breakdown by connection method
+    pub by_method: ConnectionBreakdown,
+    /// Breakdown by IP version
+    pub by_ip_version: IpVersionBreakdown,
+    /// Breakdown by NAT type
+    pub by_nat_type: std::collections::HashMap<String, u64>,
+}
+
+/// Breakdown by IP version.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct IpVersionBreakdown {
+    /// IPv4 connections
+    pub ipv4: u64,
+    /// IPv6 connections
+    pub ipv6: u64,
+}
+
+/// Response for /api/gossip/health endpoint.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GossipHealthResponse {
+    /// Number of peers discovered via gossip
+    pub peers_discovered: u64,
+    /// Total announcements received
+    pub announcements_received: u64,
+    /// Known relay nodes
+    pub relays_known: usize,
+    /// Known coordinators
+    pub coordinators_known: usize,
+    /// Stale peers cleaned up
+    pub stale_peers_cleaned: u64,
+    /// Health status (healthy, degraded, unhealthy)
+    pub status: String,
+}
+
+/// Response for /api/cache/status endpoint.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CacheStatusResponse {
+    /// Total peers in bootstrap cache
+    pub total_peers: usize,
+    /// Active peers (recently seen)
+    pub active_peers: usize,
+    /// Stale peers (not seen recently)
+    pub stale_peers: usize,
+    /// Quality distribution (high, medium, low)
+    pub quality_distribution: QualityDistribution,
+}
+
+/// Quality distribution for bootstrap cache.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct QualityDistribution {
+    /// High quality peers (public IP, good latency)
+    pub high: usize,
+    /// Medium quality peers
+    pub medium: usize,
+    /// Low quality peers (behind NAT, high latency)
+    pub low: usize,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
