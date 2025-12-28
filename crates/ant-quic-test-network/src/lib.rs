@@ -60,6 +60,7 @@
 pub mod dashboard;
 pub mod gossip;
 pub mod node;
+pub mod orchestrator;
 pub mod registry;
 pub mod tui;
 
@@ -83,3 +84,8 @@ pub use gossip::{
 };
 
 pub use dashboard::dashboard_routes;
+
+pub use orchestrator::{
+    OrchestratorConfig, OrchestratorStatus, PeerTestResult, TestCommand, TestOrchestrator,
+    TestRound, TestTarget,
+};

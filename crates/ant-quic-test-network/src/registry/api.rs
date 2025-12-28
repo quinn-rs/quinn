@@ -222,6 +222,30 @@ pub async fn start_registry_server(config: RegistryConfig) -> anyhow::Result<()>
         .and(store_filter.clone())
         .and_then(handle_get_results);
 
+    // GET /api/results/matrix - Get connection matrix
+    let results_matrix = warp::path!("api" / "results" / "matrix")
+        .and(warp::get())
+        .and(store_filter.clone())
+        .and_then(handle_get_results_matrix);
+
+    // GET /api/results/breakdown - Get connection breakdown
+    let results_breakdown = warp::path!("api" / "results" / "breakdown")
+        .and(warp::get())
+        .and(store_filter.clone())
+        .and_then(handle_get_results_breakdown);
+
+    // GET /api/gossip/health - Get gossip protocol health
+    let gossip_health = warp::path!("api" / "gossip" / "health")
+        .and(warp::get())
+        .and(store_filter.clone())
+        .and_then(handle_get_gossip_health);
+
+    // GET /api/cache/status - Get bootstrap cache status
+    let cache_status = warp::path!("api" / "cache" / "status")
+        .and(warp::get())
+        .and(store_filter.clone())
+        .and_then(handle_get_cache_status);
+
     // POST /api/connection - Report a connection
     let connection = warp::path!("api" / "connection")
         .and(warp::post())
@@ -248,6 +272,24 @@ pub async fn start_registry_server(config: RegistryConfig) -> anyhow::Result<()>
         .and(persistence_filter.clone())
         .and_then(handle_get_events);
 
+    // Create and start orchestrator
+    let orchestrator_config = crate::orchestrator::OrchestratorConfig::default();
+    let orchestrator =
+        crate::orchestrator::TestOrchestrator::new(Arc::clone(&cleanup_store), orchestrator_config);
+
+    // GET /api/orchestrator/status - Get orchestrator status
+    let orchestrator_for_endpoint = Arc::clone(&orchestrator);
+    let orchestrator_status = warp::path!("api" / "orchestrator" / "status")
+        .and(warp::get())
+        .and(warp::any().map(move || Arc::clone(&orchestrator_for_endpoint)))
+        .and_then(handle_get_orchestrator_status);
+
+    // Start orchestrator in background
+    let orchestrator_task = Arc::clone(&orchestrator);
+    tokio::spawn(async move {
+        orchestrator_task.run_continuous().await;
+    });
+
     // GET /ws/live - WebSocket for real-time updates
     let websocket = warp::path!("ws" / "live")
         .and(warp::ws())
@@ -261,12 +303,18 @@ pub async fn start_registry_server(config: RegistryConfig) -> anyhow::Result<()>
         .and(warp::get())
         .map(|| warp::reply::json(&serde_json::json!({"status": "ok"})));
 
+    // GET /metrics - Prometheus-compatible metrics endpoint
+    let prometheus_metrics = warp::path!("metrics")
+        .and(warp::get())
+        .and(store_filter.clone())
+        .and_then(handle_prometheus_metrics);
+
     // Dashboard routes (serves Three.js globe UI)
     let dashboard = dashboard_routes(Arc::clone(&cleanup_store));
 
     // Combine all routes
     // Note: Dashboard routes are first so "/" serves index.html
-    // all_peers must come before peers to match the more specific path first
+    // More specific paths must come before less specific ones
     let routes = dashboard
         .or(register)
         .or(heartbeat)
@@ -276,12 +324,18 @@ pub async fn start_registry_server(config: RegistryConfig) -> anyhow::Result<()>
         .or(stats)
         .or(reset_stats)
         .or(metrics)
+        .or(results_matrix) // More specific - before results
+        .or(results_breakdown) // More specific - before results
         .or(results)
+        .or(gossip_health)
+        .or(cache_status)
+        .or(orchestrator_status)
         .or(export)
         .or(events)
         .or(node_detail)
         .or(websocket)
         .or(health)
+        .or(prometheus_metrics)
         .with(warp::cors().allow_any_origin())
         .with(warp::log("registry"));
 
@@ -456,8 +510,6 @@ pub struct MetricsReport {
     pub active_connections: u64,
     pub successful_connections: u64,
     pub failed_connections: u64,
-    pub nat_traversals_completed: u64,
-    pub external_addresses_discovered: u64,
     pub bytes_sent: u64,
     pub bytes_received: u64,
 }
@@ -496,6 +548,98 @@ async fn handle_get_all_peers(store: Arc<PeerStore>) -> Result<impl Reply, Rejec
 async fn handle_get_results(store: Arc<PeerStore>) -> Result<impl Reply, Rejection> {
     let results = store.get_experiment_results().await;
     Ok(warp::reply::json(&results))
+}
+
+/// Handle get connection matrix.
+async fn handle_get_results_matrix(store: Arc<PeerStore>) -> Result<impl Reply, Rejection> {
+    let matrix = store.get_connection_matrix().await;
+    Ok(warp::reply::json(&matrix))
+}
+
+/// Handle get connection breakdown.
+async fn handle_get_results_breakdown(store: Arc<PeerStore>) -> Result<impl Reply, Rejection> {
+    let breakdown = store.get_breakdown().await;
+    Ok(warp::reply::json(&breakdown))
+}
+
+/// Handle get gossip health.
+async fn handle_get_gossip_health(store: Arc<PeerStore>) -> Result<impl Reply, Rejection> {
+    let health = store.get_gossip_health();
+    Ok(warp::reply::json(&health))
+}
+
+/// Handle get cache status.
+async fn handle_get_cache_status(store: Arc<PeerStore>) -> Result<impl Reply, Rejection> {
+    let status = store.get_cache_status();
+    Ok(warp::reply::json(&status))
+}
+
+/// Handle get orchestrator status.
+async fn handle_get_orchestrator_status(
+    orchestrator: Arc<crate::orchestrator::TestOrchestrator>,
+) -> Result<impl Reply, Rejection> {
+    let status = crate::orchestrator::OrchestratorStatus {
+        running: orchestrator.is_running(),
+        current_round: orchestrator.current_round_id(),
+        round_interval_secs: 300, // 5 minutes
+        latest_round: orchestrator.get_latest_round().await,
+    };
+    Ok(warp::reply::json(&status))
+}
+
+/// Prometheus-compatible metrics endpoint.
+async fn handle_prometheus_metrics(store: Arc<PeerStore>) -> Result<impl Reply, Rejection> {
+    let stats = store.get_stats();
+    let breakdown = &stats.connection_breakdown;
+
+    // Build Prometheus-format metrics
+    let metrics = format!(
+        r#"# HELP ant_quic_active_nodes Number of currently active nodes
+# TYPE ant_quic_active_nodes gauge
+ant_quic_active_nodes {}
+
+# HELP ant_quic_total_nodes Total nodes (active + historical)
+# TYPE ant_quic_total_nodes gauge
+ant_quic_total_nodes {}
+
+# HELP ant_quic_total_connections Total connections established
+# TYPE ant_quic_total_connections counter
+ant_quic_total_connections {}
+
+# HELP ant_quic_total_bytes_transferred Total bytes transferred
+# TYPE ant_quic_total_bytes_transferred counter
+ant_quic_total_bytes_transferred {}
+
+# HELP ant_quic_connection_success_rate Connection success rate (0.0-1.0)
+# TYPE ant_quic_connection_success_rate gauge
+ant_quic_connection_success_rate {}
+
+# HELP ant_quic_connections_by_method Connections by method
+# TYPE ant_quic_connections_by_method gauge
+ant_quic_connections_by_method{{method="direct"}} {}
+ant_quic_connections_by_method{{method="hole_punched"}} {}
+ant_quic_connections_by_method{{method="relayed"}} {}
+
+# HELP ant_quic_uptime_seconds Server uptime in seconds
+# TYPE ant_quic_uptime_seconds counter
+ant_quic_uptime_seconds {}
+"#,
+        stats.active_nodes,
+        stats.total_nodes,
+        stats.total_connections,
+        stats.total_bytes_transferred,
+        stats.connection_success_rate,
+        breakdown.direct,
+        breakdown.hole_punched,
+        breakdown.relayed,
+        stats.uptime_secs
+    );
+
+    Ok(warp::reply::with_header(
+        metrics,
+        "Content-Type",
+        "text/plain; version=0.0.4",
+    ))
 }
 
 /// Handle connection report from nodes.
