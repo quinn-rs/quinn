@@ -238,3 +238,18 @@ impl EcnCodepoint {
         })
     }
 }
+
+#[derive(Clone, Debug, Copy, PartialEq, Eq)]
+pub struct IcmpError {
+    pub dst: SocketAddr,
+    pub kind: IcmpErrorKind,
+}
+
+#[derive(Clone, Debug, Copy, PartialEq, Eq)]
+pub enum IcmpErrorKind {
+    NetworkUnreachable,
+    HostUnreachable,
+    PortUnreachable,
+    PacketTooBig,
+    Other { icmp_type: u8, icmp_code: u8 },
+}
