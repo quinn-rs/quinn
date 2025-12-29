@@ -1,0 +1,8 @@
+# Windows-specific configuration to avoid PDB linker issues (LNK1318)
+# The PDB file generated for large binaries like ant-quic-test can exceed
+# Windows limits when building in release mode with MSVC
+
+[target.x86_64-pc-windows-msvc]
+# Disable PDB generation entirely by telling the linker not to generate debug info
+# /DEBUG:NONE prevents the linker from creating PDB files
+rustflags = ["-C", "link-arg=/DEBUG:NONE"]
