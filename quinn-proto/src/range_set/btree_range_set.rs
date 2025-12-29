@@ -1,7 +1,8 @@
 #[cfg(test)]
 use std::cmp::Ordering;
+
 use std::{
-    cmp::{Ordering, max},
+    cmp::max,
     collections::{BTreeMap, btree_map},
     ops::{
         Bound::{Excluded, Included},
@@ -58,6 +59,7 @@ impl RangeSet {
         true
     }
 
+    #[rustversion::since(1.91)]
     pub(crate) fn insert(&mut self, mut x: Range<u64>) -> bool {
         if x.is_empty() {
             return false;
@@ -87,6 +89,32 @@ impl RangeSet {
         true
     }
 
+    #[rustversion::before(1.91)]
+    pub(crate) fn insert(&mut self, mut x: Range<u64>) -> bool {
+        if x.is_empty() {
+            return false;
+        }
+        if let Some((start, end)) = self.pred(x.start) {
+            if end >= x.end {
+                // Wholly contained
+                return false;
+            } else if end >= x.start {
+                // Extend overlapping predecessor
+                self.0.remove(&start);
+                x.start = start;
+            }
+        }
+        while let Some((next_start, next_end)) = self.succ(x.start) {
+            if next_start > x.end {
+                break;
+            }
+            // Overlaps with successor
+            self.0.remove(&next_start);
+            x.end = cmp::max(next_end, x.end);
+        }
+        self.0.insert(x.start, x.end);
+        true
+    }
     /// Find closest range to `x` that begins at or before it
     fn pred(&self, x: u64) -> Option<(u64, u64)> {
         self.0
@@ -104,6 +132,7 @@ impl RangeSet {
     }
 
     #[cfg(test)]
+    #[rustversion::since(1.91)]
     pub(super) fn remove(&mut self, x: Range<u64>) -> bool {
         if x.is_empty() {
             return false;
@@ -144,6 +173,45 @@ impl RangeSet {
             }
         }
 
+        before || after
+    }
+
+    #[cfg(test)]
+    #[rustversion::before(1.91)]
+    pub(super) fn remove(&mut self, x: Range<u64>) -> bool {
+        if x.is_empty() {
+            return false;
+        }
+
+        let before = match self.pred(x.start) {
+            Some((start, end)) if end > x.start => {
+                self.0.remove(&start);
+                if start < x.start {
+                    self.0.insert(start, x.start);
+                }
+                if end > x.end {
+                    self.0.insert(x.end, end);
+                }
+                // Short-circuit if we cannot possibly overlap with another range
+                if end >= x.end {
+                    return true;
+                }
+                true
+            }
+            Some(_) | None => false,
+        };
+        let mut after = false;
+        while let Some((start, end)) = self.succ(x.start) {
+            if start >= x.end {
+                break;
+            }
+            after = true;
+            self.0.remove(&start);
+            if end > x.end {
+                self.0.insert(x.end, end);
+                break;
+            }
+        }
         before || after
     }
 
