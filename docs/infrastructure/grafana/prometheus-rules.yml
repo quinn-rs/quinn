@@ -1,0 +1,115 @@
+# Prometheus Recording Rules for ant-quic
+# Deploy to /etc/prometheus/rules/ant-quic.yml
+
+groups:
+  - name: ant_quic_derived_metrics
+    interval: 30s
+    rules:
+      # NAT traversal success rate
+      - record: ant_quic_nat_success_rate
+        expr: |
+          sum(rate(ant_quic_nat_traversal_attempts_total{result="success"}[5m]))
+          /
+          sum(rate(ant_quic_nat_traversal_attempts_total[5m]))
+
+      # Connection success rate
+      - record: ant_quic_connection_success_rate
+        expr: |
+          sum(rate(ant_quic_connections_total{result="success"}[5m]))
+          /
+          sum(rate(ant_quic_connections_total[5m]))
+
+      # Message latency percentiles
+      - record: ant_quic_message_latency_p99
+        expr: |
+          histogram_quantile(0.99,
+            sum(rate(ant_quic_message_latency_seconds_bucket[5m])) by (le))
+
+      - record: ant_quic_message_latency_p95
+        expr: |
+          histogram_quantile(0.95,
+            sum(rate(ant_quic_message_latency_seconds_bucket[5m])) by (le))
+
+      - record: ant_quic_message_latency_p50
+        expr: |
+          histogram_quantile(0.50,
+            sum(rate(ant_quic_message_latency_seconds_bucket[5m])) by (le))
+
+      # NAT traversal duration percentiles
+      - record: ant_quic_nat_traversal_p99
+        expr: |
+          histogram_quantile(0.99,
+            sum(rate(ant_quic_nat_traversal_duration_seconds_bucket[5m])) by (le))
+
+      # PQC handshake duration
+      - record: ant_quic_pqc_handshake_p99
+        expr: |
+          histogram_quantile(0.99,
+            sum(rate(ant_quic_pqc_handshake_duration_seconds_bucket[5m])) by (le))
+
+  - name: ant_quic_alerts
+    rules:
+      # Alert: NAT success rate below 95%
+      - alert: NATSuccessRateLow
+        expr: ant_quic_nat_success_rate < 0.95
+        for: 5m
+        labels:
+          severity: warning
+          team: ant-quic
+        annotations:
+          summary: "NAT traversal success rate below 95%"
+          description: "Current rate: {{ $value | humanizePercentage }}"
+          dashboard: "https://saorsa-1.saorsalabs.com/grafana/d/ant-quic-nat"
+
+      # Alert: NAT success rate critically low
+      - alert: NATSuccessRateCritical
+        expr: ant_quic_nat_success_rate < 0.80
+        for: 2m
+        labels:
+          severity: critical
+          team: ant-quic
+        annotations:
+          summary: "NAT traversal success rate critically low"
+          description: "Current rate: {{ $value | humanizePercentage }}"
+
+      # Alert: High message latency
+      - alert: HighMessageLatency
+        expr: ant_quic_message_latency_p99 > 0.5
+        for: 5m
+        labels:
+          severity: warning
+          team: ant-quic
+        annotations:
+          summary: "Message latency p99 above 500ms"
+          description: "Current p99: {{ $value | humanizeDuration }}"
+
+      # Alert: No active connections
+      - alert: NoActiveConnections
+        expr: sum(ant_quic_connections_active) == 0
+        for: 2m
+        labels:
+          severity: critical
+          team: ant-quic
+        annotations:
+          summary: "No active connections in the network"
+
+      # Alert: Node down
+      - alert: NodeDown
+        expr: up{job="ant-quic"} == 0
+        for: 1m
+        labels:
+          severity: warning
+          team: ant-quic
+        annotations:
+          summary: "ant-quic node {{ $labels.instance }} is down"
+
+      # Alert: PQC handshake too slow
+      - alert: PQCHandshakeSlow
+        expr: ant_quic_pqc_handshake_p99 > 0.1
+        for: 5m
+        labels:
+          severity: warning
+          team: ant-quic
+        annotations:
+          summary: "PQC handshake p99 above 100ms"
+          description: "Current p99: {{ $value | humanizeDuration }}"
