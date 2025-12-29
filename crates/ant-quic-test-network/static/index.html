@@ -1040,229 +1040,6 @@
             color: var(--accent-cyan);
         }
 
-        /* Results Modal */
-        .results-modal-overlay {
-            position: fixed;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background: rgba(0, 0, 0, 0.85);
-            backdrop-filter: blur(10px);
-            z-index: 300;
-            display: none;
-            align-items: flex-start;
-            justify-content: center;
-            padding: 2rem;
-            overflow-y: auto;
-        }
-
-        .results-modal-overlay.active {
-            display: flex;
-        }
-
-        .results-modal {
-            background: var(--bg-card);
-            border: 1px solid var(--border-color);
-            border-radius: 20px;
-            max-width: 1000px;
-            width: 100%;
-            margin: 2rem 0;
-            padding: 2.5rem;
-            position: relative;
-            animation: modalSlideIn 0.3s ease-out;
-        }
-
-        .results-modal-close {
-            position: absolute;
-            top: 1rem;
-            right: 1rem;
-            background: rgba(255, 255, 255, 0.1);
-            border: 1px solid var(--border-color);
-            border-radius: 8px;
-            color: var(--text-secondary);
-            font-size: 1.5rem;
-            cursor: pointer;
-            padding: 0.5rem 0.75rem;
-            line-height: 1;
-            transition: all 0.2s;
-        }
-
-        .results-modal-close:hover {
-            background: rgba(255, 255, 255, 0.15);
-            color: var(--text-primary);
-        }
-
-        .results-header {
-            margin-bottom: 2rem;
-            padding-bottom: 1rem;
-            border-bottom: 1px solid var(--border-color);
-        }
-
-        .results-header h2 {
-            font-size: 1.75rem;
-            margin-bottom: 0.5rem;
-            display: flex;
-            align-items: center;
-            gap: 0.75rem;
-        }
-
-        .results-header p {
-            color: var(--text-secondary);
-            font-size: 0.9rem;
-        }
-
-        .results-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 1rem;
-            margin-bottom: 2rem;
-        }
-
-        .results-stat-card {
-            background: rgba(255, 255, 255, 0.03);
-            border: 1px solid var(--border-color);
-            border-radius: 12px;
-            padding: 1.25rem;
-            text-align: center;
-        }
-
-        .results-stat-card .label {
-            font-size: 0.75rem;
-            color: var(--text-secondary);
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-            margin-bottom: 0.5rem;
-        }
-
-        .results-stat-card .value {
-            font-size: 1.5rem;
-            font-weight: 700;
-        }
-
-        .results-stat-card .value.cyan { color: var(--accent-cyan); }
-        .results-stat-card .value.green { color: var(--accent-green); }
-        .results-stat-card .value.gold { color: var(--accent-gold); }
-        .results-stat-card .value.purple { color: var(--accent-purple); }
-
-        .results-section {
-            margin-bottom: 2rem;
-        }
-
-        .results-section h3 {
-            font-size: 1rem;
-            font-weight: 600;
-            color: var(--accent-cyan);
-            margin-bottom: 1rem;
-            display: flex;
-            align-items: center;
-            gap: 0.5rem;
-        }
-
-        .connection-table {
-            width: 100%;
-            border-collapse: collapse;
-            font-size: 0.85rem;
-        }
-
-        .connection-table th {
-            text-align: left;
-            padding: 0.75rem;
-            background: rgba(255, 255, 255, 0.05);
-            color: var(--text-secondary);
-            font-weight: 500;
-            text-transform: uppercase;
-            font-size: 0.7rem;
-            letter-spacing: 0.5px;
-        }
-
-        .connection-table td {
-            padding: 0.75rem;
-            border-bottom: 1px solid var(--border-color);
-        }
-
-        .connection-table tr:hover td {
-            background: rgba(0, 217, 255, 0.05);
-        }
-
-        .method-badge {
-            display: inline-block;
-            padding: 0.2rem 0.5rem;
-            border-radius: 6px;
-            font-size: 0.7rem;
-            font-weight: 600;
-            text-transform: uppercase;
-        }
-
-        .method-badge.direct { background: rgba(0, 255, 136, 0.2); color: var(--accent-green); }
-        .method-badge.hole_punched { background: rgba(0, 217, 255, 0.2); color: var(--accent-cyan); }
-        .method-badge.relayed { background: rgba(255, 215, 0, 0.2); color: var(--accent-gold); }
-
-        .ip-badge {
-            display: inline-block;
-            padding: 0.15rem 0.4rem;
-            border-radius: 4px;
-            font-size: 0.65rem;
-            font-weight: 600;
-        }
-
-        .ip-badge.ipv4 { background: rgba(0, 217, 255, 0.2); color: var(--accent-cyan); }
-        .ip-badge.ipv6 { background: rgba(168, 85, 247, 0.2); color: var(--accent-purple); }
-
-        .conn-badge {
-            display: inline-block;
-            padding: 0.1rem 0.3rem;
-            border-radius: 4px;
-            font-size: 0.6rem;
-            font-weight: 600;
-            text-transform: uppercase;
-            margin-right: 0.2rem;
-        }
-        .conn-badge.success { background: rgba(0, 255, 136, 0.2); color: var(--accent-green); }
-        .conn-badge.failed { background: rgba(255, 100, 100, 0.2); color: #ff6b6b; }
-
-        .geo-distribution {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 0.5rem;
-        }
-
-        .geo-item {
-            display: flex;
-            align-items: center;
-            gap: 0.4rem;
-            padding: 0.4rem 0.75rem;
-            background: rgba(255, 255, 255, 0.05);
-            border: 1px solid var(--border-color);
-            border-radius: 8px;
-            font-size: 0.85rem;
-        }
-
-        .geo-item .count {
-            font-weight: 600;
-            color: var(--accent-cyan);
-        }
-
-        .download-results-btn {
-            display: inline-flex;
-            align-items: center;
-            gap: 0.5rem;
-            padding: 0.75rem 1.5rem;
-            background: linear-gradient(135deg, var(--accent-cyan), var(--accent-green));
-            color: var(--bg-dark);
-            border: none;
-            border-radius: 10px;
-            font-weight: 600;
-            font-size: 0.9rem;
-            cursor: pointer;
-            transition: transform 0.2s, box-shadow 0.2s;
-        }
-
-        .download-results-btn:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 4px 20px rgba(0, 217, 255, 0.3);
-        }
-
         /* Footer */
         .footer {
             padding: 3rem 2rem;
@@ -1330,10 +1107,10 @@
         </a>
         <div class="nav-links">
             <a href="#network">Network</a>
-            <a href="#results" onclick="showResultsModal(); return false;">Results</a>
             <a href="#download">Download</a>
             <a href="#architecture">Architecture</a>
             <a href="https://github.com/dirvine/ant-quic" target="_blank">GitHub</a>
+            <a href="/grafana/" target="_blank" style="color: var(--accent-gold);">Grafana</a>
         </div>
         <a href="#download" class="nav-cta">Join the Network</a>
     </nav>
@@ -1752,113 +1529,6 @@
         </div>
     </div>
 
-    <!-- Results Modal Overlay -->
-    <div class="results-modal-overlay" id="results-modal-overlay">
-        <div class="results-modal">
-            <button class="results-modal-close" onclick="closeResultsModal()">&times;</button>
-
-            <div class="results-header">
-                <h2>Experiment Results</h2>
-                <p id="results-duration">Loading experiment data...</p>
-            </div>
-
-            <!-- Overview Stats -->
-            <div class="results-grid" id="results-overview">
-                <div class="results-stat-card">
-                    <div class="label">Total Nodes Seen</div>
-                    <div class="value cyan" id="results-total-nodes">0</div>
-                </div>
-                <div class="results-stat-card">
-                    <div class="label">Peak Concurrent</div>
-                    <div class="value green" id="results-peak-nodes">0</div>
-                </div>
-                <div class="results-stat-card">
-                    <div class="label">Pairs Connected</div>
-                    <div class="value gold" id="results-total-connections">0</div>
-                </div>
-                <div class="results-stat-card">
-                    <div class="label">Mesh Coverage</div>
-                    <div class="value green" id="results-success-rate">0%</div>
-                </div>
-            </div>
-
-            <!-- Connection Breakdown -->
-            <div class="results-section">
-                <h3>Connection Methods</h3>
-                <div class="results-grid">
-                    <div class="results-stat-card">
-                        <div class="label">Direct</div>
-                        <div class="value green" id="results-direct">0</div>
-                    </div>
-                    <div class="results-stat-card">
-                        <div class="label">Hole Punched</div>
-                        <div class="value cyan" id="results-punched">0</div>
-                    </div>
-                    <div class="results-stat-card">
-                        <div class="label">Relayed</div>
-                        <div class="value gold" id="results-relayed">0</div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- IP Version Stats -->
-            <div class="results-section">
-                <h3>IP Version Distribution</h3>
-                <div class="results-grid">
-                    <div class="results-stat-card">
-                        <div class="label">IPv4 Connections</div>
-                        <div class="value cyan" id="results-ipv4">0</div>
-                    </div>
-                    <div class="results-stat-card">
-                        <div class="label">IPv6 Connections</div>
-                        <div class="value purple" id="results-ipv6">0</div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Geographic Distribution -->
-            <div class="results-section">
-                <h3>Geographic Distribution</h3>
-                <div class="geo-distribution" id="results-geo">
-                    <span style="color: var(--text-secondary);">Loading...</span>
-                </div>
-            </div>
-
-            <!-- Connection History -->
-            <div class="results-section">
-                <h3>Recent Connections (Last 50)</h3>
-                <div style="overflow-x: auto;">
-                    <table class="connection-table">
-                        <thead>
-                            <tr>
-                                <th>From</th>
-                                <th>To</th>
-                                <th>Method</th>
-                                <th>IP</th>
-                                <th>RTT</th>
-                                <th>Connectivity</th>
-                                <th>Time</th>
-                            </tr>
-                        </thead>
-                        <tbody id="results-connections">
-                            <tr><td colspan="7" style="text-align: center; color: var(--text-secondary);">Loading...</td></tr>
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-
-            <!-- Download Button -->
-            <div style="text-align: center; margin-top: 2rem;">
-                <button class="download-results-btn" onclick="downloadResults()">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-                        <path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/>
-                    </svg>
-                    Download Full Results (JSON)
-                </button>
-            </div>
-        </div>
-    </div>
-
     <!-- Footer -->
     <footer class="footer">
         <p>
@@ -2002,35 +1672,50 @@
             return result;
         }
 
-        // Initialize Globe
-        const globe = Globe()
-            .globeImageUrl('https://unpkg.com/three-globe@2.27.2/example/img/earth-blue-marble.jpg')
-            .bumpImageUrl('https://unpkg.com/three-globe@2.27.2/example/img/earth-topology.png')
-            .backgroundImageUrl('https://unpkg.com/three-globe@2.27.2/example/img/night-sky.png')
-            .showAtmosphere(true)
-            .atmosphereColor('#00d9ff')
-            .atmosphereAltitude(0.15)
-            .pointsData(nodes)
-            .pointLat('lat')
-            .pointLng('lng')
-            .pointColor('color')
-            .pointAltitude(0.01)
-            .pointRadius('size')
-            .pointsMerge(false)
-            .onPointClick((point) => {
-                if (point.peer_id) {
-                    showNodeDetail(point.peer_id);
-                }
-            })
-            .pointLabel((point) => point.peer_id ? `Click for details: ${point.peer_id.substring(0, 8)}...` : point.name)
-            .arcsData(arcs)
-            .arcColor('color')
-            .arcAltitude(0.2)
-            .arcStroke(0.5)
-            .arcDashLength(0.4)
-            .arcDashGap(0.2)
-            .arcDashAnimateTime(1500)
-            (document.getElementById('globe'));
+        // Initialize Globe with error handling
+        console.log('[Globe] Initializing globe...');
+        let globe;
+        try {
+            globe = Globe()
+                .globeImageUrl('https://unpkg.com/three-globe@2.27.2/example/img/earth-blue-marble.jpg')
+                .bumpImageUrl('https://unpkg.com/three-globe@2.27.2/example/img/earth-topology.png')
+                .backgroundImageUrl('https://unpkg.com/three-globe@2.27.2/example/img/night-sky.png')
+                .showAtmosphere(true)
+                .atmosphereColor('#00d9ff')
+                .atmosphereAltitude(0.15)
+                .pointsData([
+                    // Add immediate test points that should render immediately
+                    { lat: 53.35, lng: -6.26, color: '#ffd700', size: 0.5, name: 'Registry (Dublin)' },
+                    { lat: 40.7128, lng: -74.0060, color: '#ff0000', size: 0.8, name: 'Test - NYC' },
+                    { lat: 51.5074, lng: -0.1278, color: '#00ff00', size: 0.8, name: 'Test - London' },
+                    { lat: 35.6762, lng: 139.6503, color: '#0088ff', size: 0.8, name: 'Test - Tokyo' }
+                ])
+                .pointLat('lat')
+                .pointLng('lng')
+                .pointColor('color')
+                .pointAltitude(0.01)
+                .pointRadius('size')
+                .pointsMerge(false)
+                .onPointClick((point) => {
+                    if (point.peer_id) {
+                        showNodeDetail(point.peer_id);
+                    }
+                })
+                .pointLabel((point) => point.peer_id ? `Click for details: ${point.peer_id.substring(0, 8)}...` : point.name)
+                .arcsData(arcs)
+                .arcColor('color')
+                .arcAltitude(0.2)
+                .arcStroke(0.5)
+                .arcDashLength(0.4)
+                .arcDashGap(0.2)
+                .arcDashAnimateTime(1500)
+                (document.getElementById('globe'));
+
+            console.log('[Globe] Globe initialized successfully');
+            console.log('[Globe] Initial points:', globe.pointsData());
+        } catch (error) {
+            console.error('[Globe] Failed to initialize globe:', error);
+        }
 
         // Auto-rotate with user interaction handling
         const controls = globe.controls();
@@ -2059,15 +1744,9 @@
         globeContainer.addEventListener('touchstart', pauseAutoRotate);
         globeContainer.addEventListener('wheel', pauseAutoRotate);
 
-        // Add registry server marker
-        nodes.push({
-            lat: 53.35,
-            lng: -6.26,
-            color: '#ffd700',
-            size: 0.5,
-            name: 'Registry Server (Dublin)'
-        });
-        globe.pointsData(nodes);
+        // Note: Initial points are now set directly in the Globe() initialization above
+        // This ensures points are visible immediately when the globe renders
+        console.log('[Globe Debug] Globe initialized with built-in test points');
 
         // Format bytes
         function formatBytes(bytes) {
@@ -2146,42 +1825,53 @@
                 const stats = await statsRes.json();
                 const peers = await peersRes.json();
 
+                console.log('[Globe Debug] Fetched peers:', peers.length, peers);
+
                 updateStats(stats);
 
-                // Update nodes on globe
-                nodes = [{
-                    lat: 53.35, lng: -6.26,
-                    color: '#ffd700', size: 0.5
-                }];
+                // Update nodes on globe with reasonable sizes (0.3-0.8 range)
+                nodes = [
+                    // Registry server marker (Dublin) - gold, larger
+                    { lat: 53.35, lng: -6.26, color: '#ffd700', size: 0.5, name: 'Registry Server' },
+                    // Test points for debugging
+                    { lat: 40.7128, lng: -74.0060, color: '#ff0000', size: 0.8, name: 'Test - NYC' },
+                    { lat: 51.5074, lng: -0.1278, color: '#00ff00', size: 0.8, name: 'Test - London' },
+                    { lat: 35.6762, lng: 139.6503, color: '#0088ff', size: 0.8, name: 'Test - Tokyo' }
+                ];
 
                 // Use jitter to spread overlapping nodes
                 const jitteredPeers = calculateJitteredCoords(peers);
+                console.log('[Globe Debug] Jittered peers:', jitteredPeers.length, jitteredPeers);
                 for (const { peer, coords } of jitteredPeers) {
                     // Determine color and size based on status
+                    // Using globe.gl standard sizes (0.3-0.6 range)
                     let color, size;
                     if (peer.status === 'historical') {
                         color = '#666666';  // Gray for historical nodes
-                        size = 0.15;
+                        size = 0.3;
                     } else if (peer.status === 'inactive') {
                         color = '#00d9ff';  // Cyan for inactive
-                        size = 0.2;
+                        size = 0.4;
                     } else if (peer.is_active) {
                         color = '#00ff88';  // Green for active
-                        size = 0.3;
+                        size = 0.6;
                     } else {
                         color = '#00d9ff';  // Cyan default
-                        size = 0.2;
+                        size = 0.4;
                     }
 
-                    nodes.push({
+                    const node = {
                         lat: coords.lat,
                         lng: coords.lng,
                         color: color,
                         size: size,
                         peer_id: peer.peer_id,
                         status: peer.status
-                    });
+                    };
+                    console.log('[Globe Debug] Adding node:', node);
+                    nodes.push(node);
                 }
+                console.log('[Globe Debug] Final nodes array:', nodes.length, nodes);
                 globe.pointsData(nodes);
             } catch (e) {
                 console.error('Fetch error:', e);
@@ -2343,7 +2033,6 @@
         // Scroll to top function
         function scrollToTop() {
             window.scrollTo({ top: 0, behavior: 'smooth' });
-            closeResultsModal();
             closeAdrModal();
             closeNodeDetail();
         }
@@ -2609,154 +2298,8 @@
             setTimeout(() => { userManualToggle = false; }, 10000);
         });
 
-        // ============================================
-        // Results Modal System
-        // ============================================
-        let cachedResults = null;
-
-        async function showResultsModal() {
-            const overlay = document.getElementById('results-modal-overlay');
-            overlay.classList.add('active');
-            document.body.style.overflow = 'hidden';
-
-            try {
-                const response = await fetch('/api/results');
-                const results = await response.json();
-                cachedResults = results;
-                updateResultsModal(results);
-            } catch (e) {
-                console.error('Error fetching results:', e);
-                document.getElementById('results-duration').textContent = 'Error loading experiment data';
-            }
-        }
-
-        function closeResultsModal() {
-            document.getElementById('results-modal-overlay').classList.remove('active');
-            document.body.style.overflow = '';
-        }
-
-        function formatDuration(secs) {
-            const hours = Math.floor(secs / 3600);
-            const mins = Math.floor((secs % 3600) / 60);
-            if (hours > 0) {
-                return `${hours}h ${mins}m`;
-            }
-            return `${mins}m`;
-        }
-
-        function updateResultsModal(results) {
-            // Duration
-            const startDate = new Date(results.start_time * 1000);
-            const duration = formatDuration(results.duration_secs);
-            document.getElementById('results-duration').textContent =
-                `Started ${startDate.toLocaleString()} | Duration: ${duration}`;
-
-            // Overview stats
-            document.getElementById('results-total-nodes').textContent = results.total_nodes_seen || 0;
-            document.getElementById('results-peak-nodes').textContent = results.peak_concurrent_nodes || 0;
-            // Mesh Coverage: unique peer pairs connected / total possible pairs
-            // A pair is "connected" if EITHER direction succeeded (A→B or B→A)
-            // regardless of method (direct IPv4, IPv6, hole-punch, relay)
-            const connections = results.connections || [];
-            const activeConnections = connections.filter(c => c.is_active !== false);
-            const totalNodes = results.total_nodes_seen || 0;
-
-            // Count unique peer pairs (treat A→B and B→A as same pair)
-            const uniquePairs = new Set();
-            activeConnections.forEach(c => {
-                // Sort peer IDs to create canonical pair key
-                const pair = [c.from_peer, c.to_peer].sort().join('-');
-                uniquePairs.add(pair);
-            });
-
-            // Maximum possible undirected pairs = n * (n-1) / 2
-            const maxPairs = totalNodes > 1 ? (totalNodes * (totalNodes - 1)) / 2 : 0;
-
-            // Mesh coverage: what % of possible peer pairs are connected?
-            const meshCoverage = maxPairs > 0
-                ? ((uniquePairs.size / maxPairs) * 100).toFixed(0)
-                : 0;
-            document.getElementById('results-success-rate').textContent = `${meshCoverage}%`;
-
-            // Show unique pairs as "connections" (more meaningful than raw count)
-            document.getElementById('results-total-connections').textContent = uniquePairs.size;
-
-            // Connection breakdown
-            const breakdown = results.connection_breakdown || {};
-            document.getElementById('results-direct').textContent = breakdown.direct || 0;
-            document.getElementById('results-punched').textContent = breakdown.hole_punched || 0;
-            document.getElementById('results-relayed').textContent = breakdown.relayed || 0;
-
-            // IP version stats
-            document.getElementById('results-ipv4').textContent = results.ipv4_connections || 0;
-            document.getElementById('results-ipv6').textContent = results.ipv6_connections || 0;
-
-            // Geographic distribution
-            const geoContainer = document.getElementById('results-geo');
-            const geo = results.geographic_distribution || {};
-            const geoEntries = Object.entries(geo).sort((a, b) => b[1] - a[1]);
-
-            if (geoEntries.length > 0) {
-                geoContainer.innerHTML = geoEntries.map(([code, count]) =>
-                    `<div class="geo-item"><span>${code}</span><span class="count">${count}</span></div>`
-                ).join('');
-            } else {
-                geoContainer.innerHTML = '<span style="color: var(--text-secondary);">No geographic data available</span>';
-            }
-
-            // Connection history (last 50) - reuse connections from above
-            const tbody = document.getElementById('results-connections');
-            const recent = connections.slice(-50).reverse();
-
-            if (recent.length > 0) {
-                tbody.innerHTML = recent.map(conn => {
-                    const time = new Date(conn.timestamp * 1000).toLocaleTimeString();
-                    const methodClass = conn.method.toLowerCase();
-                    const ipType = conn.is_ipv6 ? 'ipv6' : 'ipv4';
-                    const rtt = conn.rtt_ms ? `${conn.rtt_ms}ms` : '-';
-                    // Generate connectivity matrix summary
-                    const matrix = conn.connectivity || {};
-                    const connectivity = formatConnectivityMatrix(matrix);
-                    return `<tr>
-                        <td><code>${conn.from_peer.substring(0, 8)}...</code></td>
-                        <td><code>${conn.to_peer.substring(0, 8)}...</code></td>
-                        <td><span class="method-badge ${methodClass}">${conn.method}</span></td>
-                        <td><span class="ip-badge ${ipType}">${ipType.toUpperCase()}</span></td>
-                        <td>${rtt}</td>
-                        <td>${connectivity}</td>
-                        <td>${time}</td>
-                    </tr>`;
-                }).join('');
-            } else {
-                tbody.innerHTML = '<tr><td colspan="7" style="text-align: center; color: var(--text-secondary);">No connections recorded yet</td></tr>';
-            }
-        }
-
-        function downloadResults() {
-            if (!cachedResults) {
-                alert('No results data available');
-                return;
-            }
-
-            const blob = new Blob([JSON.stringify(cachedResults, null, 2)], { type: 'application/json' });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = `ant-quic-experiment-results-${new Date().toISOString().split('T')[0]}.json`;
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            URL.revokeObjectURL(url);
-        }
-
-        // Close results modal on escape or overlay click
-        document.getElementById('results-modal-overlay').addEventListener('click', (e) => {
-            if (e.target.id === 'results-modal-overlay') closeResultsModal();
-        });
-
         document.addEventListener('keydown', (e) => {
             if (e.key === 'Escape') {
-                closeResultsModal();
                 closeAdrModal();
                 closeNodeDetail();
             }

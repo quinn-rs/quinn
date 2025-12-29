@@ -53,6 +53,8 @@ tracing-subscriber = "0.3"
 saorsa-gossip-pubsub = "0.1.11"
 saorsa-gossip-membership = "0.1.11"
 saorsa-gossip-types = "0.1.11"
+saorsa-gossip-coordinator = "0.1.11"
+saorsa-gossip-identity = "0.1.11"
 
 # Concurrent locks
 parking_lot = "0.12"
@@ -60,6 +62,9 @@ parking_lot = "0.12"
 # Embedded static files for web dashboard
 rust-embed = "8"
 mime_guess = "2"
+
+# Platform-specific paths for cache directory
+dirs = "5.0"
 
 [dev-dependencies]
 tempfile = "3"

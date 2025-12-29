@@ -5,7 +5,7 @@
 //! and test traffic generation over actual QUIC streams.
 
 use crate::gossip::{
-    GossipConfig, GossipDiscovery, GossipEvent, PeerCapabilities as GossipCapabilities,
+    GossipConfig, GossipEvent, GossipIntegration, PeerCapabilities as GossipCapabilities,
 };
 use crate::registry::{
     BgpGeoProvider, ConnectionDirection, ConnectionMethod, ConnectionReport, ConnectivityMatrix,
@@ -417,8 +417,8 @@ pub struct TestNode {
     /// Relay discovery state for NAT traversal fallback.
     /// Tracks public nodes and manages relay connections.
     relay_state: Arc<RwLock<RelayState>>,
-    /// Gossip discovery layer for decentralized peer discovery.
-    gossip_discovery: Arc<GossipDiscovery>,
+    /// Gossip integration layer with bootstrap cache for decentralized peer discovery.
+    gossip_integration: Arc<GossipIntegration>,
     /// Receiver for gossip events.
     gossip_event_rx: Arc<RwLock<mpsc::Receiver<GossipEvent>>>,
     /// Whether this node is publicly reachable (for gossip announcements).
@@ -773,16 +773,28 @@ impl TestNode {
             }
         });
 
-        // Initialize gossip discovery layer
+        // Initialize gossip integration layer with bootstrap cache
         let (gossip_event_tx, gossip_event_rx) = mpsc::channel(100);
-        let gossip_discovery = GossipDiscovery::new(
+        let gossip_config = GossipConfig {
+            cache_path: Some(
+                dirs::data_dir()
+                    .unwrap_or_else(|| std::path::PathBuf::from("."))
+                    .join("ant-quic-test")
+                    .join("peer_cache.cbor"),
+            ),
+            ..GossipConfig::default()
+        };
+        let gossip_integration = GossipIntegration::new(
             peer_id.clone(),
             listen_addresses.clone(),
             false, // Assume not public initially, will update when external address discovered
-            GossipConfig::default(),
+            gossip_config,
             gossip_event_tx,
         );
-        info!("Initialized gossip discovery layer");
+        info!(
+            "Initialized gossip integration with bootstrap cache ({} cached peers)",
+            gossip_integration.cache_size()
+        );
 
         Ok(Self {
             listen_addresses,
@@ -810,7 +822,7 @@ impl TestNode {
             pending_outbound,
             inbound_connections,
             relay_state,
-            gossip_discovery: Arc::new(gossip_discovery),
+            gossip_integration: Arc::new(gossip_integration),
             gossip_event_rx: Arc::new(RwLock::new(gossip_event_rx)),
             is_public: Arc::new(AtomicBool::new(false)),
         })
@@ -1120,7 +1132,7 @@ impl TestNode {
     /// Spawn the gossip event processing loop.
     fn spawn_gossip_loop(&self) -> tokio::task::JoinHandle<()> {
         let shutdown = Arc::clone(&self.shutdown);
-        let gossip_discovery = Arc::clone(&self.gossip_discovery);
+        let gossip_integration = Arc::clone(&self.gossip_integration);
         let gossip_event_rx = Arc::clone(&self.gossip_event_rx);
         let event_tx = self.event_tx.clone();
         let peer_id = self.peer_id.clone();
@@ -1176,13 +1188,29 @@ impl TestNode {
                                         &offline_peer_id[..8.min(offline_peer_id.len())]
                                     );
                                 }
+                                GossipEvent::PeerQueryReceived(query) => {
+                                    debug!(
+                                        "Gossip: received peer query from {} for target {}",
+                                        &query.querier_id[..8.min(query.querier_id.len())],
+                                        &query.target_public_key[..16.min(query.target_public_key.len())]
+                                    );
+                                    // TODO: Check if we're connected to the target and respond
+                                }
+                                GossipEvent::PeerResponseReceived(response) => {
+                                    debug!(
+                                        "Gossip: received peer response from {} for query {:?}",
+                                        &response.responder_id[..8.min(response.responder_id.len())],
+                                        &response.query_id[..4]
+                                    );
+                                    // TODO: Use response for NAT coordination
+                                }
                             }
                         }
                     }
 
                     // Periodic cleanup of stale entries
                     _ = cleanup_ticker.tick() => {
-                        gossip_discovery.cleanup_stale().await;
+                        gossip_integration.discovery().cleanup_stale().await;
                         debug!("Gossip: cleaned up stale entries for {}", &peer_id[..8.min(peer_id.len())]);
                     }
                 }
@@ -1202,9 +1230,13 @@ impl TestNode {
             coordinator: is_public, // Only public nodes can coordinate
         };
 
-        let announcement = self.gossip_discovery.create_announcement(capabilities);
+        let announcement = self
+            .gossip_integration
+            .discovery()
+            .create_announcement(capabilities);
         // Handle the announcement (would broadcast via actual gossip network)
-        self.gossip_discovery
+        self.gossip_integration
+            .discovery()
             .handle_peer_announcement(announcement)
             .await;
 
@@ -1216,9 +1248,9 @@ impl TestNode {
         );
     }
 
-    /// Get gossip discovery layer for external access.
-    pub fn gossip(&self) -> &Arc<GossipDiscovery> {
-        &self.gossip_discovery
+    /// Get gossip integration layer for external access.
+    pub fn gossip(&self) -> &Arc<GossipIntegration> {
+        &self.gossip_integration
     }
 
     // ========================================================================
@@ -1696,8 +1728,11 @@ impl TestNode {
         relay_stats_handle.abort();
         gossip_handle.abort();
 
-        // Shutdown gossip discovery
-        self.gossip_discovery.shutdown();
+        // Save peer cache and shutdown gossip integration
+        if let Err(e) = self.gossip_integration.save_cache() {
+            warn!("Failed to save peer cache on shutdown: {}", e);
+        }
+        self.gossip_integration.discovery().shutdown();
 
         info!("Test node shutting down");
         Ok(())

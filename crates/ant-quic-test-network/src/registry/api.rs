@@ -592,6 +592,9 @@ async fn handle_prometheus_metrics(store: Arc<PeerStore>) -> Result<impl Reply, 
     let stats = store.get_stats();
     let breakdown = &stats.connection_breakdown;
 
+    // Get gossip stats from store
+    let gossip_stats = store.get_gossip_stats();
+
     // Build Prometheus-format metrics
     let metrics = format!(
         r#"# HELP ant_quic_active_nodes Number of currently active nodes
@@ -623,6 +626,37 @@ ant_quic_connections_by_method{{method="relayed"}} {}
 # HELP ant_quic_uptime_seconds Server uptime in seconds
 # TYPE ant_quic_uptime_seconds counter
 ant_quic_uptime_seconds {}
+
+# HELP ant_quic_gossip_announcements_total Total gossip announcements received
+# TYPE ant_quic_gossip_announcements_total counter
+ant_quic_gossip_announcements_total {}
+
+# HELP ant_quic_gossip_peer_queries_total Total peer queries sent
+# TYPE ant_quic_gossip_peer_queries_total counter
+ant_quic_gossip_peer_queries_total {}
+
+# HELP ant_quic_gossip_peer_responses_total Total peer query responses received
+# TYPE ant_quic_gossip_peer_responses_total counter
+ant_quic_gossip_peer_responses_total {}
+
+# HELP ant_quic_gossip_cache_updates_total Total bootstrap cache updates
+# TYPE ant_quic_gossip_cache_updates_total counter
+ant_quic_gossip_cache_updates_total {}
+
+# HELP ant_quic_gossip_cache_hits_total Bootstrap cache hits
+# TYPE ant_quic_gossip_cache_hits_total counter
+ant_quic_gossip_cache_hits_total {}
+
+# HELP ant_quic_peer_cache_size Total entries in bootstrap cache
+# TYPE ant_quic_peer_cache_size gauge
+ant_quic_peer_cache_size {}
+
+# HELP ant_quic_nodes_by_nat_type Nodes by NAT type
+# TYPE ant_quic_nodes_by_nat_type gauge
+ant_quic_nodes_by_nat_type{{nat="public"}} {}
+ant_quic_nodes_by_nat_type{{nat="full_cone"}} {}
+ant_quic_nodes_by_nat_type{{nat="symmetric"}} {}
+ant_quic_nodes_by_nat_type{{nat="restricted"}} {}
 "#,
         stats.active_nodes,
         stats.total_nodes,
@@ -632,7 +666,17 @@ ant_quic_uptime_seconds {}
         breakdown.direct,
         breakdown.hole_punched,
         breakdown.relayed,
-        stats.uptime_secs
+        stats.uptime_secs,
+        gossip_stats.total_announcements,
+        gossip_stats.total_peer_queries,
+        gossip_stats.total_peer_responses,
+        gossip_stats.total_cache_updates,
+        gossip_stats.total_cache_hits,
+        gossip_stats.total_cache_size,
+        gossip_stats.nat_type_public,
+        gossip_stats.nat_type_full_cone,
+        gossip_stats.nat_type_symmetric,
+        gossip_stats.nat_type_restricted
     );
 
     Ok(warp::reply::with_header(

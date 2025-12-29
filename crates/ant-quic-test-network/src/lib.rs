@@ -79,8 +79,10 @@ pub use tui::{
 pub use node::{GlobalStats, TestNode, TestNodeConfig, TestPacket, TestResult};
 
 pub use gossip::{
-    CoordinatorAnnouncement, GossipConfig, GossipDiscovery, GossipEvent, PeerAnnouncement,
-    PeerCapabilities, RelayAnnouncement, TOPIC_COORDINATORS, TOPIC_PEERS, TOPIC_RELAYS,
+    CacheStatus, CoordinatorAnnouncement, GossipConfig, GossipDiscovery, GossipEvent,
+    GossipIntegration, GossipMetrics, PeerAnnouncement, PeerCapabilities, PeerConnectionQuery,
+    PeerConnectionResponse, RelayAnnouncement, TOPIC_COORDINATORS, TOPIC_PEER_QUERY,
+    TOPIC_PEER_RESPONSE, TOPIC_PEERS, TOPIC_RELAYS,
 };
 
 pub use dashboard::dashboard_routes;

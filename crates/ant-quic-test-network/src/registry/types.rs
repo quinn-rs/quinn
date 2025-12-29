@@ -327,6 +327,31 @@ pub struct ConnectionBreakdown {
     pub relayed: u64,
 }
 
+/// Gossip network statistics (aggregated from all nodes).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct GossipStats {
+    /// Total gossip announcements received across all nodes
+    pub total_announcements: u64,
+    /// Total peer queries sent across all nodes
+    pub total_peer_queries: u64,
+    /// Total peer query responses received
+    pub total_peer_responses: u64,
+    /// Total bootstrap cache updates
+    pub total_cache_updates: u64,
+    /// Total bootstrap cache hits
+    pub total_cache_hits: u64,
+    /// Total entries in bootstrap caches (sum across nodes)
+    pub total_cache_size: u64,
+    /// Number of nodes with public IP (no NAT)
+    pub nat_type_public: u64,
+    /// Number of nodes with full cone NAT
+    pub nat_type_full_cone: u64,
+    /// Number of nodes with symmetric NAT
+    pub nat_type_symmetric: u64,
+    /// Number of nodes with restricted NAT
+    pub nat_type_restricted: u64,
+}
+
 /// Real-time event for WebSocket streaming.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
