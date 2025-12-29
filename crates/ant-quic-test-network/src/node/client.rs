@@ -1907,9 +1907,14 @@ impl TestNode {
                     cache_size: gossip_integration.cache_size() as u64,
                 };
 
+                // Total connections = outbound (in connected_peers HashMap) + inbound
+                // The connected_peers HashMap only tracks connections WE initiated,
+                // so we must add inbound_connections to get the true total.
+                let total_connected = peers.len() + stats.inbound_connections as usize;
+
                 let heartbeat = NodeHeartbeat {
                     peer_id: peer_id.clone(),
-                    connected_peers: peers.len(),
+                    connected_peers: total_connected,
                     bytes_sent: bytes_sent.load(Ordering::Relaxed),
                     bytes_received: bytes_received.load(Ordering::Relaxed),
                     external_addresses: if ext_addrs.is_empty() {
@@ -2015,6 +2020,8 @@ impl TestNode {
         let hole_punched_peers = Arc::clone(&self.hole_punched_peers);
         // Clone pending_outbound to track outbound connection attempts
         let pending_outbound = Arc::clone(&self.pending_outbound);
+        // Clone gossip integration for decentralized peer discovery
+        let gossip_integration = Arc::clone(&self.gossip_integration);
 
         // Minimum time since disconnection before attempting fresh connection (30 seconds)
         // This ensures NAT mappings have expired and we're testing real hole-punching
@@ -2028,13 +2035,72 @@ impl TestNode {
                 let now = Instant::now();
 
                 // Fetch peer list from registry (only LIVE peers with recent heartbeat)
-                let peers = match registry.get_peers().await {
+                let registry_peers = match registry.get_peers().await {
                     Ok(p) => p,
                     Err(e) => {
-                        warn!("Failed to fetch peers: {}", e);
-                        continue;
+                        warn!("Failed to fetch peers from registry: {}", e);
+                        Vec::new() // Continue with gossip peers only
                     }
                 };
+
+                // Also fetch peers from gossip (decentralized discovery)
+                // Gossip peers are marked is_active=false so we don't count failures
+                // (we don't know if they're actually online without registry confirmation)
+                let gossip_announcements = gossip_integration.discovery().get_peers().await;
+
+                // Build a set of registry peer IDs for deduplication
+                let registry_peer_ids: std::collections::HashSet<_> =
+                    registry_peers.iter().map(|p| p.peer_id.clone()).collect();
+
+                // Convert gossip peers to PeerInfo, excluding those already in registry
+                let gossip_peers: Vec<PeerInfo> = gossip_announcements
+                    .iter()
+                    .filter(|g| !registry_peer_ids.contains(&g.peer_id))
+                    .filter(|g| g.peer_id != our_peer_id) // Not ourselves
+                    .map(|g| {
+                        use crate::registry::{NatType, NodeCapabilities};
+
+                        PeerInfo {
+                            peer_id: g.peer_id.clone(),
+                            addresses: g.addresses.clone(),
+                            nat_type: if g.is_public {
+                                NatType::None
+                            } else {
+                                NatType::Unknown
+                            },
+                            country_code: g.country_code.clone(),
+                            latitude: 0.0,
+                            longitude: 0.0,
+                            last_seen: g.timestamp_ms / 1000,
+                            connection_success_rate: 0.5, // Unknown
+                            capabilities: NodeCapabilities {
+                                pqc: true, // All ant-quic nodes use PQC
+                                ipv4: g.addresses.iter().any(|a| a.is_ipv4()),
+                                ipv6: g.addresses.iter().any(|a| a.is_ipv6()),
+                                nat_traversal: g.capabilities.hole_punch,
+                                relay: g.capabilities.relay,
+                            },
+                            version: String::from("gossip"),
+                            // CRITICAL: Mark as NOT active so connection failures
+                            // are not counted (we don't know if they're online)
+                            is_active: false,
+                            status: Default::default(), // Uses serde default
+                            bytes_sent: 0,
+                            bytes_received: 0,
+                            connected_peers: 0,
+                        }
+                    })
+                    .collect();
+
+                // Merge registry peers with gossip-discovered peers
+                let mut peers = registry_peers;
+                if !gossip_peers.is_empty() {
+                    debug!(
+                        "Gossip discovery found {} additional peers (not in registry)",
+                        gossip_peers.len()
+                    );
+                    peers.extend(gossip_peers);
+                }
 
                 // Update TUI with total registered count (+1 to include ourselves)
                 // The registry.get_peers() returns all peers EXCEPT us

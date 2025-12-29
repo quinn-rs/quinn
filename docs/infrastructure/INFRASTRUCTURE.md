@@ -303,6 +303,47 @@ systemctl status saorsa-node-bootstrap
 systemctl status communitas-bootstrap
 ```
 
+## Grafana Configuration
+
+### Dashboard Access
+The Grafana dashboards are hosted on saorsa-1.saorsalabs.com.
+
+**Dashboard URLs:**
+- NAT Traversal Dashboard: `https://saorsa-1.saorsalabs.com/grafana/d/ant-quic-nat`
+- Testnet Dashboard: `https://saorsa-1.saorsalabs.com/grafana/d/ant-quic-testnet`
+
+### Enable Public Access (No Login)
+To allow anonymous access to dashboards without requiring login, add these settings to `/etc/grafana/grafana.ini` on saorsa-1:
+
+```ini
+[auth.anonymous]
+# Enable anonymous access
+enabled = true
+
+# Organization name for unauthenticated users
+org_name = Main Org.
+
+# Role for unauthenticated users (Viewer = read-only)
+org_role = Viewer
+
+[security]
+# Allow embedding in iframes
+allow_embedding = true
+```
+
+After modifying the configuration:
+```bash
+ssh root@77.42.75.115
+sudo systemctl restart grafana-server
+```
+
+### Prometheus Configuration
+Prometheus runs on saorsa-1 and scrapes metrics from:
+- Registry: `http://localhost:8080/metrics`
+- Bootstrap nodes: `http://saorsa-2:9000/metrics`, `http://saorsa-3:9000/metrics`
+
+Prometheus rules are in `/etc/prometheus/rules/ant-quic.yml`.
+
 ## Cost Estimates
 
 | Provider | Node Type | Monthly Cost | Nodes | Total |
