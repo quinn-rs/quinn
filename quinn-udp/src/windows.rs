@@ -8,7 +8,7 @@ use std::{
     time::Instant,
 };
 
-use libc::{c_int, c_uint};
+use libc::c_int;
 use once_cell::sync::Lazy;
 use windows_sys::Win32::Networking::WinSock;
 
@@ -423,21 +423,67 @@ static WSARECVMSG_PTR: Lazy<WinSock::LPFN_WSARECVMSG> = Lazy::new(|| {
 });
 
 static MAX_GSO_SEGMENTS: Lazy<usize> = Lazy::new(|| {
-    let socket = match std::net::UdpSocket::bind("[::]:0")
-        .or_else(|_| std::net::UdpSocket::bind("127.0.0.1:0"))
-    {
+    let socket = match std::net::UdpSocket::bind("127.0.0.1:0") {
         Ok(socket) => socket,
         Err(_) => return 1,
     };
-    const GSO_SIZE: c_uint = 1500;
-    match set_socket_option(
-        &socket,
-        WinSock::IPPROTO_UDP,
-        WinSock::UDP_SEND_MSG_SIZE,
-        GSO_SIZE,
-    ) {
-        // Empirically found on Windows 11 x64
-        Ok(()) => 512,
+
+    socket.set_nonblocking(true).ok();
+
+    // Test GSO support by actually trying to send with the UDP_SEND_MSG_SIZE control message.
+    // Using setsockopt() alone is not sufficient as it may succeed even when WSASendMsg()
+    // with the control message fails (e.g., due to network adapter/driver limitations).
+    match send_test_packet(&socket) {
+        Ok(()) => 512, // Empirically found on Windows 11 x64
         Err(_) => 1,
     }
 });
+
+/// Send a test packet with GSO control message to verify WSASendMsg works with UDP_SEND_MSG_SIZE.
+fn send_test_packet(socket: &std::net::UdpSocket) -> io::Result<()> {
+    let mut ctrl_buf = cmsg::Aligned([0u8; CMSG_LEN]);
+    // Send to localhost discard port - packet will be dropped but we can test the syscall
+    let dst = socket2::SockAddr::from(std::net::SocketAddr::from((Ipv4Addr::LOCALHOST, 9)));
+    let payload = [0u8; 1];
+
+    let mut data = WinSock::WSABUF {
+        buf: payload.as_ptr() as *mut _,
+        len: payload.len() as _,
+    };
+
+    let ctrl = WinSock::WSABUF {
+        buf: ctrl_buf.0.as_mut_ptr(),
+        len: ctrl_buf.0.len() as _,
+    };
+
+    let mut wsa_msg = WinSock::WSAMSG {
+        name: dst.as_ptr() as *mut _,
+        namelen: dst.len(),
+        lpBuffers: &mut data,
+        Control: ctrl,
+        dwBufferCount: 1,
+        dwFlags: 0,
+    };
+
+    let mut encoder = unsafe { cmsg::Encoder::new(&mut wsa_msg) };
+    // Add GSO control message - this is what we're testing
+    encoder.push(WinSock::IPPROTO_UDP, WinSock::UDP_SEND_MSG_SIZE, 1u32);
+    encoder.finish();
+
+    let mut len = 0;
+    let rc = unsafe {
+        WinSock::WSASendMsg(
+            socket.as_raw_socket() as usize,
+            &wsa_msg,
+            0,
+            &mut len,
+            ptr::null_mut(),
+            None,
+        )
+    };
+
+    match rc {
+        0 => Ok(()),
+        _ => Err(io::Error::last_os_error()),
+    }
+}
