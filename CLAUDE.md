@@ -403,3 +403,58 @@ Key shared information that must stay synchronized:
 - IPv4 and IPv6 dual-stack support
 - Development commands and code conventions
 - Architecture overview and key file locations
+
+---
+
+## 🚨 CRITICAL: Saorsa Network Infrastructure & Port Isolation
+
+### Infrastructure Documentation
+Full infrastructure documentation is available at: `docs/infrastructure/INFRASTRUCTURE.md`
+
+This includes:
+- All 9 VPS nodes across 3 cloud providers (DigitalOcean, Hetzner, Vultr)
+- Bootstrap node endpoints and IP addresses
+- Firewall configurations and SSH access
+- Systemd service templates
+
+### ⚠️ PORT ISOLATION - MANDATORY
+
+**ant-quic uses UDP port range 9000-9999 exclusively.**
+
+| Service | UDP Port Range | Default | Description |
+|---------|----------------|---------|-------------|
+| **ant-quic** | **9000-9999** | **9000** | QUIC transport layer (THIS PROJECT) |
+| saorsa-node | 10000-10999 | 10000 | Core P2P network nodes |
+| communitas | 11000-11999 | 11000 | Collaboration platform nodes |
+
+### 🛑 DO NOT DISTURB OTHER NETWORKS
+
+When testing or developing ant-quic:
+
+1. **ONLY use ports 9000-9999** for ant-quic services
+2. **NEVER** kill processes on ports 10000-10999 or 11000-11999
+3. **NEVER** restart services outside our port range
+4. **NEVER** modify firewall rules for other port ranges
+
+```bash
+# ✅ CORRECT - ant-quic operations (within 9000-9999)
+cargo run --bin ant-quic -- --listen 0.0.0.0:9000
+cargo run --bin ant-quic -- --listen 0.0.0.0:9001  # Second instance OK
+ssh root@saorsa-2.saorsalabs.com "systemctl restart ant-quic-bootstrap"
+
+# ❌ WRONG - Would disrupt other networks
+ssh root@saorsa-2.saorsalabs.com "pkill -f ':10'"   # NEVER - matches saorsa-node ports
+ssh root@saorsa-2.saorsalabs.com "pkill -f ':11'"   # NEVER - matches communitas ports
+ssh root@saorsa-2.saorsalabs.com "systemctl restart saorsa-node-bootstrap"  # NOT OUR SERVICE
+```
+
+### Bootstrap Endpoints (ant-quic)
+```
+saorsa-2.saorsalabs.com:9000  (NYC - 142.93.199.50)
+saorsa-3.saorsalabs.com:9000  (SFO - 147.182.234.192)
+```
+
+### Before Any VPS Operations
+1. Verify you're targeting port 9000 only
+2. Double-check service names contain "ant-quic"
+3. Never run broad `pkill` commands that could affect other services
