@@ -353,3 +353,8 @@ excessive_nesting = { level = "allow", priority = 2 }
 [profile.release]
 debug = false
 strip = "symbols"
+# Completely disable debug info to prevent PDB generation on Windows
+# Without this, the linker still creates PDB files which can exceed limits
+split-debuginfo = "off"
+# Use LTO to reduce binary size and avoid PDB size issues
+lto = "thin"

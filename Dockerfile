@@ -20,7 +20,7 @@ COPY src ./src
 COPY benches ./benches
 COPY tests ./tests
 COPY examples ./examples
-COPY rfcs ./rfcs
+# Note: docs/rfcs/ contains specifications but is not needed for the build
 
 # Build release binary
 RUN cargo build --release --bin ant-quic

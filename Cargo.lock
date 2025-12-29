@@ -119,9 +119,9 @@ dependencies = [
 
 [[package]]
 name = "ant-quic"
-version = "0.14.65"
+version = "0.14.69"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ace00f777b6f9d025fe659050f2d0a9c57dc388fecd43684c28d607ce668c24a"
+checksum = "f64336c0a9d5daa893b6f1ad03ccba728b93bcb17e92083b3d62d63b5c6b5bc8"
 dependencies = [
  "anyhow",
  "aws-lc-rs",
@@ -175,7 +175,7 @@ dependencies = [
 
 [[package]]
 name = "ant-quic"
-version = "0.14.70"
+version = "0.14.71"
 dependencies = [
  "anyhow",
  "arbitrary",
@@ -248,9 +248,9 @@ dependencies = [
 
 [[package]]
 name = "ant-quic-test-network"
-version = "0.14.70"
+version = "0.14.71"
 dependencies = [
- "ant-quic 0.14.70",
+ "ant-quic 0.14.71",
  "anyhow",
  "crossterm",
  "dashmap",
@@ -2076,9 +2076,9 @@ checksum = "469fb0b9cefa57e3ef31275ee7cacb78f2fdca44e4765491884a2b119d4eb130"
 
 [[package]]
 name = "iri-string"
-version = "0.7.9"
+version = "0.7.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4f867b9d1d896b67beb18518eda36fdb77a32ea590de864f1325b294a6d14397"
+checksum = "c91338f0783edbd6195decb37bae672fd3b165faffb89bf7b9e6942f8b1a731a"
 dependencies = [
  "memchr",
  "serde",
@@ -3388,7 +3388,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5b1cf1eb6196428d748b124884564d5937ad37f8f5a1f24eff06352f6c263739"
 dependencies = [
- "ant-quic 0.14.65",
+ "ant-quic 0.14.69",
  "anyhow",
  "async-trait",
  "bincode 1.3.3",
@@ -5174,6 +5174,6 @@ dependencies = [
 
 [[package]]
 name = "zmij"
-version = "1.0.0"
+version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e6d6085d62852e35540689d1f97ad663e3971fc19cf5eceab364d62c646ea167"
+checksum = "0f4a4e8e9dc5c62d159f04fcdbe07f4c3fb710415aab4754bf11505501e3251d"
