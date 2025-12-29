@@ -74,9 +74,8 @@ rcgen = { workspace = true }
 tracing-subscriber = { workspace = true }
 wasm-bindgen-test = { workspace = true }
 
-[lints.rust]
-# https://rust-fuzz.github.io/book/cargo-fuzz/guide.html#cfgfuzzing
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(fuzzing)'] }
+[lints]
+workspace = true
 
 [package.metadata.docs.rs]
 # all non-default features except fips (cannot build on docs.rs environment)

@@ -50,14 +50,6 @@ extern "C" {
     ) -> isize;
 }
 
-// Defined in netinet6/in6.h on OpenBSD, this is not yet exported by the libc crate
-// directly.  See https://github.com/rust-lang/libc/issues/3704 for when we might be able to
-// rely on this from the libc crate.
-#[cfg(any(target_os = "openbsd", target_os = "netbsd"))]
-const IPV6_DONTFRAG: libc::c_int = 62;
-#[cfg(not(any(target_os = "openbsd", target_os = "netbsd")))]
-const IPV6_DONTFRAG: libc::c_int = libc::IPV6_DONTFRAG;
-
 #[cfg(target_os = "freebsd")]
 type IpTosTy = libc::c_uchar;
 #[cfg(not(any(target_os = "freebsd", target_os = "netbsd")))]
@@ -131,7 +123,7 @@ impl UdpSocketState {
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
             // opportunistically try to enable GRO. See gro::gro_segments().
-            let _ = set_socket_option(&*io, libc::SOL_UDP, gro::UDP_GRO, OPTION_ON);
+            let _ = set_socket_option(&*io, libc::SOL_UDP, libc::UDP_GRO, OPTION_ON);
 
             // Forbid IPv4 fragmentation. Set even for IPv6 to account for IPv6 mapped IPv4 addresses.
             // Set `may_fragment` to `true` if this option is not supported on the platform.
@@ -184,8 +176,12 @@ impl UdpSocketState {
             // kernel's path MTU guess, but actually disabling fragmentation requires this too. See
             // __ip6_append_data in ip6_output.c.
             // Set `may_fragment` to `true` if this option is not supported on the platform.
-            may_fragment |=
-                !set_socket_option_supported(&*io, libc::IPPROTO_IPV6, IPV6_DONTFRAG, OPTION_ON)?;
+            may_fragment |= !set_socket_option_supported(
+                &*io,
+                libc::IPPROTO_IPV6,
+                libc::IPV6_DONTFRAG,
+                OPTION_ON,
+            )?;
         }
 
         let now = Instant::now();
@@ -681,14 +677,14 @@ fn prepare_msg(
 
 #[cfg(not(apple_fast))]
 fn prepare_recv(
-    buf: &mut IoSliceMut,
+    buf: &mut IoSliceMut<'_>,
     name: &mut MaybeUninit<libc::sockaddr_storage>,
     ctrl: &mut cmsg::Aligned<MaybeUninit<[u8; CMSG_LEN]>>,
     hdr: &mut libc::msghdr,
 ) {
     hdr.msg_name = name.as_mut_ptr() as _;
     hdr.msg_namelen = mem::size_of::<libc::sockaddr_storage>() as _;
-    hdr.msg_iov = buf as *mut IoSliceMut as *mut libc::iovec;
+    hdr.msg_iov = buf as *mut IoSliceMut<'_> as *mut libc::iovec;
     hdr.msg_iovlen = 1;
     hdr.msg_control = ctrl.0.as_mut_ptr() as _;
     hdr.msg_controllen = CMSG_LEN as _;
@@ -697,14 +693,14 @@ fn prepare_recv(
 
 #[cfg(apple_fast)]
 fn prepare_recv(
-    buf: &mut IoSliceMut,
+    buf: &mut IoSliceMut<'_>,
     name: &mut MaybeUninit<libc::sockaddr_storage>,
     ctrl: &mut cmsg::Aligned<[u8; CMSG_LEN]>,
     hdr: &mut msghdr_x,
 ) {
     hdr.msg_name = name.as_mut_ptr() as _;
     hdr.msg_namelen = mem::size_of::<libc::sockaddr_storage>() as _;
-    hdr.msg_iov = buf as *mut IoSliceMut as *mut libc::iovec;
+    hdr.msg_iov = buf as *mut IoSliceMut<'_> as *mut libc::iovec;
     hdr.msg_iovlen = 1;
     hdr.msg_control = ctrl.0.as_mut_ptr() as _;
     hdr.msg_controllen = CMSG_LEN as _;
@@ -712,10 +708,9 @@ fn prepare_recv(
     hdr.msg_datalen = buf.len();
 }
 
-fn decode_recv(
+fn decode_recv<M: cmsg::MsgHdr<ControlMessage = libc::cmsghdr>>(
     name: &MaybeUninit<libc::sockaddr_storage>,
-    #[cfg(not(apple_fast))] hdr: &libc::msghdr,
-    #[cfg(apple_fast)] hdr: &msghdr_x,
+    hdr: &M,
     len: usize,
 ) -> io::Result<RecvMeta> {
     let name = unsafe { name.assume_init() };
@@ -772,7 +767,7 @@ fn decode_recv(
                 interface_index = Some(pktinfo.ipi6_ifindex as u32);
             }
             #[cfg(any(target_os = "linux", target_os = "android"))]
-            (libc::SOL_UDP, gro::UDP_GRO) => unsafe {
+            (libc::SOL_UDP, libc::UDP_GRO) => unsafe {
                 stride = cmsg::decode::<libc::c_int, libc::cmsghdr>(cmsg) as usize;
             },
             _ => {}
@@ -829,12 +824,6 @@ mod gso {
     use super::*;
     use std::{ffi::CStr, mem, str::FromStr, sync::OnceLock};
 
-    #[cfg(not(target_os = "android"))]
-    const UDP_SEGMENT: libc::c_int = libc::UDP_SEGMENT;
-    #[cfg(target_os = "android")]
-    // TODO: Add this to libc
-    const UDP_SEGMENT: libc::c_int = 103;
-
     // Support for UDP GSO has been added to linux kernel in version 4.18
     // https://github.com/torvalds/linux/commit/cb586c63e3fc5b227c51fd8c4cb40b34d3750645
     const SUPPORTED_SINCE: KernelVersion = KernelVersion {
@@ -851,16 +840,15 @@ mod gso {
             return 1;
         }
 
-        let socket = match std::net::UdpSocket::bind("[::]:0")
+        let Ok(socket) = std::net::UdpSocket::bind("[::]:0")
             .or_else(|_| std::net::UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)))
-        {
-            Ok(socket) => socket,
-            Err(_) => return 1,
+        else {
+            return 1;
         };
 
         // As defined in linux/udp.h
         // #define UDP_MAX_SEGMENTS        (1 << 6UL)
-        match set_socket_option(&socket, libc::SOL_UDP, UDP_SEGMENT, GSO_SIZE) {
+        match set_socket_option(&socket, libc::SOL_UDP, libc::UDP_SEGMENT, GSO_SIZE) {
             Ok(()) => 64,
             Err(_e) => {
                 crate::log::debug!(
@@ -872,8 +860,11 @@ mod gso {
         }
     }
 
-    pub(crate) fn set_segment_size(encoder: &mut cmsg::Encoder<libc::msghdr>, segment_size: u16) {
-        encoder.push(libc::SOL_UDP, UDP_SEGMENT, segment_size);
+    pub(crate) fn set_segment_size(
+        encoder: &mut cmsg::Encoder<'_, libc::msghdr>,
+        segment_size: u16,
+    ) {
+        encoder.push(libc::SOL_UDP, libc::UDP_SEGMENT, segment_size);
     }
 
     // Avoid calling `supported_by_current_kernel` for each socket by using `OnceLock`.
@@ -1006,8 +997,8 @@ mod gso {
     }
 
     pub(super) fn set_segment_size(
-        #[cfg(not(apple_fast))] _encoder: &mut cmsg::Encoder<libc::msghdr>,
-        #[cfg(apple_fast)] _encoder: &mut cmsg::Encoder<msghdr_x>,
+        #[cfg(not(apple_fast))] _encoder: &mut cmsg::Encoder<'_, libc::msghdr>,
+        #[cfg(apple_fast)] _encoder: &mut cmsg::Encoder<'_, msghdr_x>,
         _segment_size: u16,
     ) {
     }
@@ -1017,18 +1008,11 @@ mod gso {
 mod gro {
     use super::*;
 
-    #[cfg(not(target_os = "android"))]
-    pub(crate) const UDP_GRO: libc::c_int = libc::UDP_GRO;
-    #[cfg(target_os = "android")]
-    // TODO: Add this to libc
-    pub(crate) const UDP_GRO: libc::c_int = 104;
-
     pub(crate) fn gro_segments() -> usize {
-        let socket = match std::net::UdpSocket::bind("[::]:0")
+        let Ok(socket) = std::net::UdpSocket::bind("[::]:0")
             .or_else(|_| std::net::UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)))
-        {
-            Ok(socket) => socket,
-            Err(_) => return 1,
+        else {
+            return 1;
         };
 
         // As defined in net/ipv4/udp_offload.c
@@ -1038,7 +1022,7 @@ mod gro {
         // (get_max_udp_payload_size() * gro_segments()) is large enough to hold the largest GRO
         // list the kernel might potentially produce. See
         // https://github.com/quinn-rs/quinn/pull/1354.
-        match set_socket_option(&socket, libc::SOL_UDP, UDP_GRO, OPTION_ON) {
+        match set_socket_option(&socket, libc::SOL_UDP, libc::UDP_GRO, OPTION_ON) {
             Ok(()) => 64,
             Err(_) => 1,
         }

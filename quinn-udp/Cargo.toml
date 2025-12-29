@@ -21,7 +21,7 @@ log = ["dep:log"]
 fast-apple-datapath = []
 
 [dependencies]
-libc = "0.2.158"
+libc = "0.2.175"
 log = { workspace = true, optional = true }
 tracing = { workspace = true, optional = true }
 
@@ -45,6 +45,9 @@ bench = false
 [[bench]]
 name = "throughput"
 harness = false
+
+[lints]
+workspace = true
 
 [package.metadata.docs.rs]
 all-features = true

@@ -667,7 +667,7 @@ impl PendingAcks {
     /// Returns the delay since the packet with the largest packet number was received
     pub(super) fn ack_delay(&self, now: Instant) -> Duration {
         self.largest_packet
-            .map_or(Duration::default(), |(_, received)| now - received)
+            .map_or_else(Duration::default, |(_, received)| now - received)
     }
 
     /// Handle receipt of a new packet
