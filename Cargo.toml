@@ -347,3 +347,9 @@ enum_variant_names = { level = "allow", priority = 2 }
 
 # Allow reasonable nesting in complex state machines and protocol handlers
 excessive_nesting = { level = "allow", priority = 2 }
+
+# Release profile - disable debug info to fix Windows linker LNK1318 error
+# This error occurs when PDB files exceed limits on Windows CI
+[profile.release]
+debug = false
+strip = "symbols"

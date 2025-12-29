@@ -132,15 +132,13 @@ jobs:
 
       - name: Test (native)
         if: matrix.cross != true
-        run: |
-          cargo test --target ${{ matrix.target }} --lib --all-features -- \
-            --skip long_ --skip stress_ --skip performance_
+        shell: bash
+        run: cargo test --target ${{ matrix.target }} --lib --all-features -- --skip long_ --skip stress_ --skip performance_
 
       - name: Test (cross)
         if: matrix.cross == true && !contains(matrix.target, 'apple')
-        run: |
-          cross test --target ${{ matrix.target }} --lib --all-features -- \
-            --skip long_ --skip stress_ --skip performance_
+        shell: bash
+        run: cross test --target ${{ matrix.target }} --lib --all-features -- --skip long_ --skip stress_ --skip performance_
 
       - name: Build examples
         if: matrix.cross != true
