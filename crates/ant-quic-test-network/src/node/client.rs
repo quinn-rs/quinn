@@ -9,8 +9,8 @@ use crate::gossip::{
 };
 use crate::registry::{
     BgpGeoProvider, ConnectionDirection, ConnectionMethod, ConnectionReport, ConnectivityMatrix,
-    NatStats, NatType, NodeCapabilities, NodeGossipStats, NodeHeartbeat, NodeRegistration, PeerInfo,
-    RegistryClient,
+    NatStats, NatType, NodeCapabilities, NodeGossipStats, NodeHeartbeat, NodeRegistration,
+    PeerInfo, RegistryClient,
 };
 use crate::tui::{ConnectedPeer, LocalNodeInfo, TuiEvent, country_flag};
 use std::collections::{HashMap, HashSet};
