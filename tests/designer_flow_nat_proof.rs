@@ -16,10 +16,10 @@ use std::time::Duration;
 fn proof_nat_traversal_success_rate_above_95_percent() {
     // This test DEFINES the requirement
     // Target: >95% success rate across all NAT combinations
-    
+
     // Placeholder until VPS fleet orchestration is integrated
     let simulated_success_rate = 0.96;
-    
+
     assert!(
         simulated_success_rate > 0.95,
         "NAT traversal success rate must be >95%, got {:.1}%",
@@ -35,9 +35,9 @@ fn proof_nat_traversal_success_rate_above_95_percent() {
 #[ignore = "Run on VPS fleet only"]
 fn proof_symmetric_nat_connectivity() {
     // Target: Symmetric NAT connections succeed >80% of the time
-    
+
     let symmetric_success_rate = 0.85;
-    
+
     assert!(
         symmetric_success_rate > 0.80,
         "Symmetric NAT success rate must be >80%, got {:.1}%",
@@ -51,10 +51,10 @@ fn proof_symmetric_nat_connectivity() {
 #[test]
 fn proof_connection_establishment_time_under_2_seconds() {
     // Target: 95th percentile connection time <2s
-    
+
     let p95_connection_time = Duration::from_millis(1500);
     let target = Duration::from_secs(2);
-    
+
     assert!(
         p95_connection_time < target,
         "Connection establishment p95 must be <2s, got {:?}",
@@ -69,10 +69,10 @@ fn proof_connection_establishment_time_under_2_seconds() {
 #[ignore = "Run on VPS fleet only"]
 fn proof_recovery_after_node_failure_under_5_seconds() {
     // Target: Recovery time after node failure <5s
-    
+
     let recovery_time = Duration::from_secs(3);
     let target = Duration::from_secs(5);
-    
+
     assert!(
         recovery_time < target,
         "Recovery time must be <5s, got {:?}",
@@ -86,9 +86,9 @@ fn proof_recovery_after_node_failure_under_5_seconds() {
 #[test]
 fn proof_message_delivery_success_rate_above_99_percent() {
     // Target: >99% message delivery rate
-    
+
     let delivery_rate = 0.995;
-    
+
     assert!(
         delivery_rate > 0.99,
         "Message delivery rate must be >99%, got {:.2}%",
@@ -102,10 +102,10 @@ fn proof_message_delivery_success_rate_above_99_percent() {
 #[test]
 fn proof_pqc_handshake_overhead_under_50ms() {
     // Target: PQC handshake overhead <50ms compared to classical
-    
+
     let pqc_overhead = Duration::from_millis(35);
     let target = Duration::from_millis(50);
-    
+
     assert!(
         pqc_overhead < target,
         "PQC handshake overhead must be <50ms, got {:?}",
@@ -120,9 +120,9 @@ fn proof_pqc_handshake_overhead_under_50ms() {
 #[test]
 fn proof_nat_type_detection_accuracy_above_90_percent() {
     // Target: >90% accuracy in NAT type detection
-    
+
     let detection_accuracy = 0.92;
-    
+
     assert!(
         detection_accuracy > 0.90,
         "NAT type detection accuracy must be >90%, got {:.1}%",
@@ -136,10 +136,10 @@ fn proof_nat_type_detection_accuracy_above_90_percent() {
 #[test]
 fn proof_concurrent_connections_above_100() {
     // Target: Support >100 concurrent connections
-    
+
     let max_concurrent = 150;
     let target = 100;
-    
+
     assert!(
         max_concurrent > target,
         "Must support >100 concurrent connections, got {}",
@@ -161,7 +161,7 @@ mod nat_matrix {
         let expected_success = true;
         assert!(expected_success);
     }
-    
+
     /// Full Cone -> Symmetric: Challenging but possible
     #[test]
     fn test_fullcone_to_symmetric() {
@@ -169,7 +169,7 @@ mod nat_matrix {
         let expected_success_rate = 0.85;
         assert!(expected_success_rate > 0.80);
     }
-    
+
     /// Symmetric -> Symmetric: Hardest case
     #[test]
     fn test_symmetric_to_symmetric() {
@@ -178,7 +178,7 @@ mod nat_matrix {
         let expected_success_rate = 0.60;
         assert!(expected_success_rate > 0.50);
     }
-    
+
     /// Port Restricted -> Symmetric: Difficult
     #[test]
     fn test_portrestricted_to_symmetric() {
@@ -195,7 +195,7 @@ mod nat_matrix {
 #[cfg(test)]
 mod vps_integration {
     use std::process::Command;
-    
+
     /// Run the NAT matrix scenario on VPS fleet
     #[test]
     #[ignore = "Requires VPS fleet access"]
@@ -204,7 +204,7 @@ mod vps_integration {
             .args(["run", "nat_matrix"])
             .output()
             .expect("Failed to run VPS test");
-        
+
         let stdout = String::from_utf8_lossy(&output.stdout);
         assert!(
             stdout.contains("PASS") || output.status.success(),
@@ -212,7 +212,7 @@ mod vps_integration {
             stdout
         );
     }
-    
+
     /// Run chaos test on VPS fleet
     #[test]
     #[ignore = "Requires VPS fleet access"]
@@ -221,10 +221,7 @@ mod vps_integration {
             .args(["run", "chaos_kill_random"])
             .output()
             .expect("Failed to run VPS test");
-        
-        assert!(
-            output.status.success(),
-            "VPS chaos test failed"
-        );
+
+        assert!(output.status.success(), "VPS chaos test failed");
     }
 }
