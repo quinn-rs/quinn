@@ -391,7 +391,7 @@ fn send(socket: UdpSockRef<'_>, transmit: &Transmit<'_>) -> io::Result<()> {
     }
 
     // Segment size is a u32 https://learn.microsoft.com/en-us/windows/win32/api/ws2tcpip/nf-ws2tcpip-wsasetudpsendmessagesize
-    if let Some(segment_size) = transmit.segment_size {
+    if let Some(segment_size) = transmit.effective_segment_size() {
         encoder.push(
             WinSock::IPPROTO_UDP,
             WinSock::UDP_SEND_MSG_SIZE,
