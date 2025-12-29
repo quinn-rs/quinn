@@ -9,7 +9,8 @@ use crate::gossip::{
 };
 use crate::registry::{
     BgpGeoProvider, ConnectionDirection, ConnectionMethod, ConnectionReport, ConnectivityMatrix,
-    NatStats, NatType, NodeCapabilities, NodeHeartbeat, NodeRegistration, PeerInfo, RegistryClient,
+    NatStats, NatType, NodeCapabilities, NodeGossipStats, NodeHeartbeat, NodeRegistration, PeerInfo,
+    RegistryClient,
 };
 use crate::tui::{ConnectedPeer, LocalNodeInfo, TuiEvent, country_flag};
 use std::collections::{HashMap, HashSet};
@@ -1854,6 +1855,8 @@ impl TestNode {
         let interval = self.config.heartbeat_interval;
         // Clone inbound_connections counter for heartbeat reporting
         let inbound_connections = Arc::clone(&self.inbound_connections);
+        // Clone gossip integration for gossip stats reporting
+        let gossip_integration = Arc::clone(&self.gossip_integration);
 
         tokio::spawn(async move {
             let mut ticker = tokio::time::interval(interval);
@@ -1883,6 +1886,27 @@ impl TestNode {
                 stats.inbound_connections = inbound_connections.load(Ordering::Relaxed);
                 stats.is_behind_nat = is_behind_nat;
 
+                // Collect gossip protocol statistics
+                let gossip_metrics = gossip_integration.metrics();
+                let gossip_stats = NodeGossipStats {
+                    announcements_sent: gossip_metrics.announcements_sent.load(Ordering::Relaxed),
+                    announcements_received: gossip_metrics
+                        .announcements_received
+                        .load(Ordering::Relaxed),
+                    peer_queries_sent: gossip_metrics.peer_queries_sent.load(Ordering::Relaxed),
+                    peer_queries_received: gossip_metrics
+                        .peer_queries_received
+                        .load(Ordering::Relaxed),
+                    peer_responses_sent: gossip_metrics.peer_responses_sent.load(Ordering::Relaxed),
+                    peer_responses_received: gossip_metrics
+                        .peer_responses_received
+                        .load(Ordering::Relaxed),
+                    cache_updates: gossip_metrics.cache_updates.load(Ordering::Relaxed),
+                    cache_hits: gossip_metrics.cache_hits.load(Ordering::Relaxed),
+                    cache_misses: gossip_metrics.cache_misses.load(Ordering::Relaxed),
+                    cache_size: gossip_integration.cache_size() as u64,
+                };
+
                 let heartbeat = NodeHeartbeat {
                     peer_id: peer_id.clone(),
                     connected_peers: peers.len(),
@@ -1894,6 +1918,7 @@ impl TestNode {
                         Some(ext_addrs.clone())
                     },
                     nat_stats: Some(stats),
+                    gossip_stats: Some(gossip_stats),
                 };
                 drop(peers);
 

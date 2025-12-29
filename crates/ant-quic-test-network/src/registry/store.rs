@@ -7,8 +7,8 @@
 use crate::registry::geo::BgpGeoProvider;
 use crate::registry::types::{
     ConnectionBreakdown, ConnectionMethod, ConnectionRecord, ConnectivityMatrix, ExperimentResults,
-    GossipStats, NatStats, NatType, NetworkEvent, NetworkStats, NodeHeartbeat, NodeRegistration,
-    PeerInfo, PeerStatus,
+    GossipStats, NatStats, NatType, NetworkEvent, NetworkStats, NodeGossipStats, NodeHeartbeat,
+    NodeRegistration, PeerInfo, PeerStatus,
 };
 use dashmap::DashMap;
 use std::collections::HashMap;
@@ -49,6 +49,8 @@ struct NodeEntry {
     country_code: Option<String>,
     /// Cumulative NAT stats
     nat_stats: NatStats,
+    /// Gossip protocol stats
+    gossip_stats: NodeGossipStats,
     /// Connected peers count (from last heartbeat)
     connected_peers: usize,
     /// Total bytes sent
@@ -173,6 +175,7 @@ impl PeerStore {
                 inbound_connections: 0,
                 is_behind_nat: false,
             },
+            gossip_stats: NodeGossipStats::default(),
             connected_peers: 0,
             bytes_sent: 0,
             bytes_received: 0,
@@ -237,6 +240,11 @@ impl PeerStore {
         // Update NAT stats if provided
         if let Some(stats) = heartbeat.nat_stats {
             entry.nat_stats = stats;
+        }
+
+        // Update gossip stats if provided
+        if let Some(stats) = heartbeat.gossip_stats {
+            entry.gossip_stats = stats;
         }
 
         // Update global counters
@@ -901,15 +909,22 @@ impl PeerStore {
     /// Get gossip protocol statistics for Prometheus metrics.
     ///
     /// These stats aggregate gossip-related metrics from all registered nodes.
-    /// Note: Until nodes report gossip metrics in heartbeats, some values will be estimates.
     pub fn get_gossip_stats(&self) -> GossipStats {
         let mut nat_type_public = 0u64;
         let mut nat_type_full_cone = 0u64;
         let mut nat_type_symmetric = 0u64;
         let mut nat_type_restricted = 0u64;
 
-        // Count NAT types from registered nodes
+        let mut total_announcements = 0u64;
+        let mut total_peer_queries = 0u64;
+        let mut total_peer_responses = 0u64;
+        let mut total_cache_updates = 0u64;
+        let mut total_cache_hits = 0u64;
+        let mut total_cache_size = 0u64;
+
+        // Aggregate gossip stats and NAT types from registered nodes
         for entry in self.peers.iter() {
+            // NAT type distribution
             match entry.registration.nat_type {
                 NatType::None => nat_type_public += 1,
                 NatType::FullCone => nat_type_full_cone += 1,
@@ -917,29 +932,23 @@ impl PeerStore {
                 NatType::AddressRestricted | NatType::PortRestricted => nat_type_restricted += 1,
                 NatType::Unknown => {}
             }
+
+            // Aggregate gossip stats from nodes
+            total_announcements += entry.gossip_stats.announcements_received;
+            total_peer_queries += entry.gossip_stats.peer_queries_sent;
+            total_peer_responses += entry.gossip_stats.peer_responses_received;
+            total_cache_updates += entry.gossip_stats.cache_updates;
+            total_cache_hits += entry.gossip_stats.cache_hits;
+            total_cache_size += entry.gossip_stats.cache_size;
         }
 
-        // Calculate cache size estimate based on total unique nodes seen
-        let total_cache_size = self.total_unique_nodes.load(Ordering::Relaxed);
-
-        // Estimate gossip activity based on connection counts
-        // Until nodes report actual gossip metrics, use connection stats as proxy
-        let total_connections = self.total_connections.load(Ordering::Relaxed);
-
         GossipStats {
-            // Gossip announcements approximated by connection events
-            total_announcements: total_connections,
-            // Peer queries - estimate based on connection attempts
-            total_peer_queries: total_connections / 2,
-            // Peer responses - estimate based on successful connections
-            total_peer_responses: total_connections / 2,
-            // Cache updates - approximated by registration events
-            total_cache_updates: total_cache_size,
-            // Cache hits - estimated from successful connections
-            total_cache_hits: total_connections,
-            // Total entries across all node caches
+            total_announcements,
+            total_peer_queries,
+            total_peer_responses,
+            total_cache_updates,
+            total_cache_hits,
             total_cache_size,
-            // NAT type distribution
             nat_type_public,
             nat_type_full_cone,
             nat_type_symmetric,
@@ -1027,6 +1036,7 @@ mod tests {
                 inbound_connections: 0,
                 is_behind_nat: false,
             }),
+            gossip_stats: None,
         };
 
         assert!(store.heartbeat(heartbeat).is_ok());
@@ -1048,6 +1058,7 @@ mod tests {
             bytes_received: 0,
             external_addresses: None,
             nat_stats: None,
+            gossip_stats: None,
         };
 
         assert!(store.heartbeat(heartbeat).is_err());

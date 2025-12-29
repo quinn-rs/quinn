@@ -170,7 +170,7 @@ fn draw_peers(frame: &mut Frame, app: &App, area: Rect) {
     let header = Row::new(vec![
         Cell::from("Peer").style(Style::default().add_modifier(Modifier::BOLD)),
         Cell::from("Location").style(Style::default().add_modifier(Modifier::BOLD)),
-        Cell::from("Direction").style(Style::default().add_modifier(Modifier::BOLD)),
+        Cell::from("Dir").style(Style::default().add_modifier(Modifier::BOLD)),
         Cell::from("RTT").style(Style::default().add_modifier(Modifier::BOLD)),
         Cell::from("Connectivity").style(Style::default().add_modifier(Modifier::BOLD)),
     ])
@@ -182,13 +182,13 @@ fn draw_peers(frame: &mut Frame, app: &App, area: Rect) {
         .peers_sorted()
         .iter()
         .map(|peer| {
-            // Show connection direction with descriptive text
+            // Show connection direction: Out = we dialed them, In = they dialed us
             let (direction_str, direction_style) = match peer.direction {
                 crate::registry::ConnectionDirection::Outbound => {
-                    ("→ We connected", Style::default().fg(Color::Cyan))
+                    ("→ Out", Style::default().fg(Color::Cyan))
                 }
                 crate::registry::ConnectionDirection::Inbound => {
-                    ("← They connected", Style::default().fg(Color::Green))
+                    ("← In", Style::default().fg(Color::Green))
                 }
             };
 
@@ -217,7 +217,7 @@ fn draw_peers(frame: &mut Frame, app: &App, area: Rect) {
         [
             Constraint::Length(12), // Peer ID
             Constraint::Length(10), // Location
-            Constraint::Length(16), // Direction (wider for "← They connected")
+            Constraint::Length(6),  // Direction (Out/In)
             Constraint::Length(8),  // RTT
             Constraint::Min(30),    // Connectivity matrix (e.g., "IPv4:✓ IPv6:✗ NAT:✓ Relay:✗")
         ],

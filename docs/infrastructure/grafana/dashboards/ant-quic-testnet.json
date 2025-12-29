@@ -19,7 +19,20 @@
   "fiscalYearStartMonth": 0,
   "graphTooltip": 0,
   "id": null,
-  "links": [],
+  "links": [
+    {
+      "asDropdown": false,
+      "icon": "external link",
+      "includeVars": false,
+      "keepTime": false,
+      "tags": [],
+      "targetBlank": false,
+      "title": "Home",
+      "tooltip": "Return to saorsalabs.com",
+      "type": "link",
+      "url": "https://saorsalabs.com"
+    }
+  ],
   "panels": [
     {
       "collapsed": false,

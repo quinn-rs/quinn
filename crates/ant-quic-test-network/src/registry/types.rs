@@ -204,6 +204,9 @@ pub struct NodeHeartbeat {
     pub external_addresses: Option<Vec<SocketAddr>>,
     /// NAT traversal statistics
     pub nat_stats: Option<NatStats>,
+    /// Gossip protocol statistics
+    #[serde(default)]
+    pub gossip_stats: Option<NodeGossipStats>,
 }
 
 /// Connection report sent by nodes to record individual connections.
@@ -325,6 +328,31 @@ pub struct ConnectionBreakdown {
     pub hole_punched: u64,
     /// Relayed connections
     pub relayed: u64,
+}
+
+/// Per-node gossip statistics (reported in heartbeat).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct NodeGossipStats {
+    /// Announcements sent by this node
+    pub announcements_sent: u64,
+    /// Announcements received by this node
+    pub announcements_received: u64,
+    /// Peer queries sent
+    pub peer_queries_sent: u64,
+    /// Peer queries received
+    pub peer_queries_received: u64,
+    /// Peer responses sent
+    pub peer_responses_sent: u64,
+    /// Peer responses received
+    pub peer_responses_received: u64,
+    /// Bootstrap cache updates
+    pub cache_updates: u64,
+    /// Bootstrap cache hits
+    pub cache_hits: u64,
+    /// Bootstrap cache misses
+    pub cache_misses: u64,
+    /// Current cache size
+    pub cache_size: u64,
 }
 
 /// Gossip network statistics (aggregated from all nodes).

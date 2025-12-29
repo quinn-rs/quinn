@@ -67,6 +67,6 @@ pub use store::PeerStore;
 pub use types::{
     ConnectionBreakdown, ConnectionDirection, ConnectionMethod, ConnectionReport,
     ConnectionTechnique, ConnectivityMatrix, ExperimentResults, NatStats, NatType, NetworkEvent,
-    NetworkStats, NodeCapabilities, NodeHeartbeat, NodeRegistration, PeerInfo,
+    NetworkStats, NodeCapabilities, NodeGossipStats, NodeHeartbeat, NodeRegistration, PeerInfo,
     RegistrationResponse, TechniqueAttempt, unix_timestamp_ms,
 };
