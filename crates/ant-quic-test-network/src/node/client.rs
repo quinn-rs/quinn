@@ -490,7 +490,10 @@ fn load_or_generate_keypair() -> Result<(MlDsaPublicKey, MlDsaSecretKey), anyhow
 
     // Save the keypair
     if let Err(e) = save_keypair(&public_key, &secret_key) {
-        warn!("Failed to save keypair: {} (peer ID will change on restart)", e);
+        warn!(
+            "Failed to save keypair: {} (peer ID will change on restart)",
+            e
+        );
     } else {
         info!("Saved new keypair to {:?}", keypair_path());
     }
@@ -499,7 +502,10 @@ fn load_or_generate_keypair() -> Result<(MlDsaPublicKey, MlDsaSecretKey), anyhow
 }
 
 /// Save a keypair to persistent storage.
-fn save_keypair(public_key: &MlDsaPublicKey, secret_key: &MlDsaSecretKey) -> Result<(), anyhow::Error> {
+fn save_keypair(
+    public_key: &MlDsaPublicKey,
+    secret_key: &MlDsaSecretKey,
+) -> Result<(), anyhow::Error> {
     let path = keypair_path();
 
     // Create parent directory if needed

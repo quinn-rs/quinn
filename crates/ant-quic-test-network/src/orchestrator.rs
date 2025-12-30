@@ -524,8 +524,9 @@ impl NatTestMatrix {
 
             // Double NAT - two layers to traverse
             (NatType::DoubleNat, NatType::DoubleNat) => 0.30,
-            (NatType::DoubleNat, NatType::Symmetric)
-            | (NatType::Symmetric, NatType::DoubleNat) => 0.35,
+            (NatType::DoubleNat, NatType::Symmetric) | (NatType::Symmetric, NatType::DoubleNat) => {
+                0.35
+            }
             (NatType::DoubleNat, _) | (_, NatType::DoubleNat) => 0.50,
 
             // Mobile carrier - unpredictable
@@ -623,7 +624,11 @@ impl NatTestMatrix {
             moderate,
             hard,
             very_hard,
-            avg_expected_rate: self.combinations.iter().map(|p| p.expected_success_rate).sum::<f64>()
+            avg_expected_rate: self
+                .combinations
+                .iter()
+                .map(|p| p.expected_success_rate)
+                .sum::<f64>()
                 / self.combinations.len() as f64,
         }
     }

@@ -125,7 +125,7 @@ impl NatType {
                 MappingBehavior::AddressPortDependent
             }
             Self::DoubleNat => MappingBehavior::AddressPortDependent, // Outer NAT dominates
-            Self::Unknown => MappingBehavior::AddressPortDependent, // Assume worst case
+            Self::Unknown => MappingBehavior::AddressPortDependent,   // Assume worst case
         }
     }
 

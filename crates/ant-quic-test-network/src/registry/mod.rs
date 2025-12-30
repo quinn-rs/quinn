@@ -66,8 +66,8 @@ pub use persistence::{PersistedData, PersistenceConfig, PersistentStorage, Stats
 pub use store::PeerStore;
 pub use types::{
     ConnectionBreakdown, ConnectionDirection, ConnectionMethod, ConnectionReport,
-    ConnectionTechnique, ConnectivityMatrix, ExperimentResults, FilteringBehavior,
-    MappingBehavior, NatBehavior, NatStats, NatType, NetworkEvent, NetworkStats, NodeCapabilities,
-    NodeGossipStats, NodeHeartbeat, NodeRegistration, PeerInfo, RegistrationResponse,
-    TechniqueAttempt, unix_timestamp_ms,
+    ConnectionTechnique, ConnectivityMatrix, ExperimentResults, FilteringBehavior, MappingBehavior,
+    NatBehavior, NatStats, NatType, NetworkEvent, NetworkStats, NodeCapabilities, NodeGossipStats,
+    NodeHeartbeat, NodeRegistration, PeerInfo, RegistrationResponse, TechniqueAttempt,
+    unix_timestamp_ms,
 };

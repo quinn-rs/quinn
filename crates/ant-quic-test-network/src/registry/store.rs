@@ -928,12 +928,13 @@ impl PeerStore {
             match entry.registration.nat_type {
                 NatType::None | NatType::Upnp | NatType::NatPmp => nat_type_public += 1,
                 NatType::FullCone => nat_type_full_cone += 1,
-                NatType::Symmetric | NatType::Cgnat | NatType::DoubleNat | NatType::MobileCarrier => {
-                    nat_type_symmetric += 1
+                NatType::Symmetric
+                | NatType::Cgnat
+                | NatType::DoubleNat
+                | NatType::MobileCarrier => nat_type_symmetric += 1,
+                NatType::AddressRestricted | NatType::PortRestricted | NatType::HairpinNat => {
+                    nat_type_restricted += 1
                 }
-                NatType::AddressRestricted
-                | NatType::PortRestricted
-                | NatType::HairpinNat => nat_type_restricted += 1,
                 NatType::Unknown => {}
             }
 
