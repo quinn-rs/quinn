@@ -1333,7 +1333,9 @@ impl NatTraversalEndpoint {
                             ConnectionState::Connecting => {
                                 // Check for connection timeout
                                 if elapsed
-                                    > timeout_config.nat_traversal.connection_establishment_timeout
+                                    > timeout_config
+                                        .nat_traversal
+                                        .connection_establishment_timeout
                                 {
                                     Some((peer_id, SessionUpdate::Timeout))
                                 } else {
@@ -3606,8 +3608,10 @@ impl NatTraversalEndpoint {
                     TraversalPhase::Discovery => {
                         // Get candidates from discovery manager
                         // parking_lot::Mutex doesn't poison
-                        let discovered_candidates =
-                            self.discovery_manager.lock().get_candidates_for_peer(session.peer_id);
+                        let discovered_candidates = self
+                            .discovery_manager
+                            .lock()
+                            .get_candidates_for_peer(session.peer_id);
 
                         // Update session candidates
                         session.candidates = discovered_candidates.clone();
@@ -4378,7 +4382,12 @@ impl NatTraversalEndpoint {
                 // DashMap provides lock-free .iter_mut() that returns RefMulti entries
                 let mut matching_peer_id = None;
                 for mut entry in self.active_sessions.iter_mut() {
-                    if entry.value().candidates.iter().any(|c| c.address == address) {
+                    if entry
+                        .value()
+                        .candidates
+                        .iter()
+                        .any(|c| c.address == address)
+                    {
                         // Update session phase to indicate successful validation
                         entry.value_mut().phase = TraversalPhase::Connected;
                         matching_peer_id = Some(*entry.key());

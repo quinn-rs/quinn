@@ -237,7 +237,6 @@ impl BgpGeoProvider {
 
     /// Load ASN-to-country mappings (called once during construction)
     fn load_asn_data(&mut self) {
-
         // Major cloud and hosting providers
         let asns: &[(u32, &str)] = &[
             // Amazon AWS
@@ -321,7 +320,6 @@ impl BgpGeoProvider {
 
     /// Load IP prefix-to-ASN mappings (called once during construction)
     fn load_prefix_data(&mut self) {
-
         // Major cloud provider ranges
         let prefix_data: &[([u8; 4], u8, u32)] = &[
             // Amazon AWS
