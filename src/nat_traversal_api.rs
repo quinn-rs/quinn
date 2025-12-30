@@ -1840,7 +1840,9 @@ impl NatTraversalEndpoint {
                                     }
                                     retry_count += 1;
                                     if retry_count > 100 {
-                                        warn!("Failed to acquire connections lock after 100 retries");
+                                        warn!(
+                                            "Failed to acquire connections lock after 100 retries"
+                                        );
                                         break;
                                     }
                                     // Yield to other tasks instead of blocking
