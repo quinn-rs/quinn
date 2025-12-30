@@ -36,8 +36,15 @@ pub struct PeerAnnouncement {
     pub peer_id: String,
     /// All known addresses for this peer.
     pub addresses: Vec<SocketAddr>,
-    /// Whether this peer is publicly reachable (not behind NAT).
+    /// Whether this peer is publicly reachable (not behind NAT on any IP family).
+    /// This is `is_public_ipv4 || is_public_ipv6` for backward compatibility.
     pub is_public: bool,
+    /// Whether this peer is public on IPv4 (external IPv4 matches local IPv4).
+    #[serde(default)]
+    pub is_public_ipv4: bool,
+    /// Whether this peer is public on IPv6 (external IPv6 matches local IPv6).
+    #[serde(default)]
+    pub is_public_ipv6: bool,
     /// Timestamp when this announcement was created.
     pub timestamp_ms: u64,
     /// Optional country code for geo-proximity routing.
@@ -49,8 +56,14 @@ pub struct PeerAnnouncement {
 /// Capabilities advertised by a peer.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct PeerCapabilities {
-    /// Supports direct connections (public IP).
+    /// Supports direct connections (public IP on any family).
     pub direct: bool,
+    /// Supports direct IPv4 connections (public IPv4).
+    #[serde(default)]
+    pub direct_ipv4: bool,
+    /// Supports direct IPv6 connections (public IPv6).
+    #[serde(default)]
+    pub direct_ipv6: bool,
     /// Supports hole-punching (can coordinate).
     pub hole_punch: bool,
     /// Can act as a relay for other peers.
@@ -256,8 +269,12 @@ pub struct GossipDiscovery {
     peer_id: String,
     /// Our addresses.
     addresses: Vec<SocketAddr>,
-    /// Whether we're a public node.
+    /// Whether we're a public node (on any IP family).
     is_public: bool,
+    /// Whether we're public on IPv4.
+    is_public_ipv4: bool,
+    /// Whether we're public on IPv6.
+    is_public_ipv6: bool,
     /// Configuration.
     config: GossipConfig,
     /// Known peers from gossip.
@@ -276,10 +293,21 @@ pub struct GossipDiscovery {
 
 impl GossipDiscovery {
     /// Create a new gossip discovery layer.
+    ///
+    /// # Arguments
+    /// * `peer_id` - Our peer ID as hex string
+    /// * `addresses` - Our addresses (both IPv4 and IPv6)
+    /// * `is_public` - Combined public status (backward compat, true if public on either family)
+    /// * `is_public_ipv4` - Whether we're public on IPv4
+    /// * `is_public_ipv6` - Whether we're public on IPv6
+    /// * `config` - Gossip configuration
+    /// * `event_tx` - Channel to send discovery events
     pub fn new(
         peer_id: String,
         addresses: Vec<SocketAddr>,
         is_public: bool,
+        is_public_ipv4: bool,
+        is_public_ipv6: bool,
         config: GossipConfig,
         event_tx: mpsc::Sender<GossipEvent>,
     ) -> Self {
@@ -287,6 +315,8 @@ impl GossipDiscovery {
             peer_id,
             addresses,
             is_public,
+            is_public_ipv4,
+            is_public_ipv6,
             config,
             known_peers: Arc::new(RwLock::new(HashMap::new())),
             known_relays: Arc::new(RwLock::new(HashMap::new())),
@@ -316,6 +346,8 @@ impl GossipDiscovery {
             peer_id: self.peer_id.clone(),
             addresses: self.addresses.clone(),
             is_public: self.is_public,
+            is_public_ipv4: self.is_public_ipv4,
+            is_public_ipv6: self.is_public_ipv6,
             timestamp_ms: Self::timestamp_ms(),
             country_code: None, // TODO: Could be set from config
             capabilities,
@@ -577,10 +609,21 @@ pub struct GossipIntegration {
 
 impl GossipIntegration {
     /// Create a new gossip integration layer.
+    ///
+    /// # Arguments
+    /// * `peer_id` - Our peer ID as hex string
+    /// * `addresses` - Our addresses (both IPv4 and IPv6)
+    /// * `is_public` - Combined public status (backward compat)
+    /// * `is_public_ipv4` - Whether we're public on IPv4
+    /// * `is_public_ipv6` - Whether we're public on IPv6
+    /// * `config` - Gossip configuration
+    /// * `event_tx` - Channel to send discovery events
     pub fn new(
         peer_id: String,
         addresses: Vec<SocketAddr>,
         is_public: bool,
+        is_public_ipv4: bool,
+        is_public_ipv6: bool,
         config: GossipConfig,
         event_tx: mpsc::Sender<GossipEvent>,
     ) -> Self {
@@ -605,7 +648,15 @@ impl GossipIntegration {
             })
             .unwrap_or_default();
 
-        let discovery = GossipDiscovery::new(peer_id, addresses, is_public, config, event_tx);
+        let discovery = GossipDiscovery::new(
+            peer_id,
+            addresses,
+            is_public,
+            is_public_ipv4,
+            is_public_ipv6,
+            config,
+            event_tx,
+        );
 
         Self {
             discovery,
@@ -867,10 +918,14 @@ mod tests {
             peer_id: "abc123".to_string(),
             addresses: vec!["192.168.1.1:9000".parse().expect("valid addr")],
             is_public: true,
+            is_public_ipv4: true,
+            is_public_ipv6: false,
             timestamp_ms: 1234567890,
             country_code: Some("US".to_string()),
             capabilities: PeerCapabilities {
                 direct: true,
+                direct_ipv4: true,
+                direct_ipv6: false,
                 hole_punch: true,
                 relay: false,
                 coordinator: true,
@@ -883,6 +938,16 @@ mod tests {
         assert_eq!(decoded.peer_id, announcement.peer_id);
         assert_eq!(decoded.addresses, announcement.addresses);
         assert_eq!(decoded.is_public, announcement.is_public);
+        assert_eq!(decoded.is_public_ipv4, announcement.is_public_ipv4);
+        assert_eq!(decoded.is_public_ipv6, announcement.is_public_ipv6);
+        assert_eq!(
+            decoded.capabilities.direct_ipv4,
+            announcement.capabilities.direct_ipv4
+        );
+        assert_eq!(
+            decoded.capabilities.direct_ipv6,
+            announcement.capabilities.direct_ipv6
+        );
     }
 
     #[test]
@@ -954,7 +1019,15 @@ mod tests {
         // Create a GossipIntegration without persistence
         let (tx, _rx) = mpsc::channel(10);
         let config = GossipConfig::default();
-        let integration = GossipIntegration::new("test_peer".to_string(), vec![], true, config, tx);
+        let integration = GossipIntegration::new(
+            "test_peer".to_string(),
+            vec![],
+            true,  // is_public
+            true,  // is_public_ipv4
+            false, // is_public_ipv6 (no IPv6 in test)
+            config,
+            tx,
+        );
 
         let status = integration.cache_status();
         assert_eq!(status.total_entries, 0);

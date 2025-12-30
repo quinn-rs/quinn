@@ -465,8 +465,12 @@ impl RelayMessage {
 pub struct RelayCandidate {
     /// Peer ID of the relay candidate.
     pub peer_id: [u8; 32],
-    /// Whether this peer appears to be public (external == local address).
+    /// Whether this peer appears to be public on any IP family (backward compat).
     pub is_public: bool,
+    /// Whether this peer is public on IPv4.
+    pub is_public_ipv4: bool,
+    /// Whether this peer is public on IPv6.
+    pub is_public_ipv6: bool,
     /// Whether we're currently connected to this peer.
     pub is_connected: bool,
     /// Addresses of this peer.
@@ -476,12 +480,21 @@ pub struct RelayCandidate {
 impl RelayCandidate {
     /// Priority score for relay selection.
     /// Higher is better.
+    ///
+    /// Dual-stack public nodes (public on both IPv4 and IPv6) are highest priority
+    /// because they can relay traffic for any peer regardless of IP family.
     pub fn priority(&self) -> u32 {
         let mut score = 0;
 
-        // Public nodes are best (no NAT to traverse)
-        if self.is_public {
+        // Dual-stack public nodes are best (can relay any traffic)
+        if self.is_public_ipv4 && self.is_public_ipv6 {
+            score += 150;
+        } else if self.is_public_ipv4 {
+            // IPv4-only public: good for most traffic (IPv4 still dominant)
             score += 100;
+        } else if self.is_public_ipv6 {
+            // IPv6-only public: useful for IPv6-capable peers
+            score += 80;
         }
 
         // Currently connected is better (no connection overhead)
@@ -489,10 +502,27 @@ impl RelayCandidate {
             score += 50;
         }
 
+        // Prefer nodes with both IPv4 and IPv6 addresses available
+        let has_ipv4 = self.addresses.iter().any(|a| a.ip().is_ipv4());
+        let has_ipv6 = self.addresses.iter().any(|a| a.ip().is_ipv6());
+        if has_ipv4 && has_ipv6 {
+            score += 20;
+        }
+
         // More addresses = more reachable
         score += self.addresses.len() as u32;
 
         score
+    }
+
+    /// Check if this relay can handle traffic for a given IP family.
+    pub fn can_relay_ipv4(&self) -> bool {
+        self.is_public_ipv4 && self.addresses.iter().any(|a| a.ip().is_ipv4())
+    }
+
+    /// Check if this relay can handle IPv6 traffic.
+    pub fn can_relay_ipv6(&self) -> bool {
+        self.is_public_ipv6 && self.addresses.iter().any(|a| a.ip().is_ipv6())
     }
 }
 
@@ -516,8 +546,15 @@ pub struct PeerNetworkInfo {
     pub local_addresses: Vec<SocketAddr>,
     /// External addresses observed for the peer.
     pub external_addresses: Vec<SocketAddr>,
-    /// Whether this peer appears to be public (external == local).
+    /// Whether this peer appears to be public (external == local for any IP family).
+    /// This is the union of `is_public_ipv4 || is_public_ipv6` for backward compatibility.
     pub is_public: bool,
+    /// Whether this peer is public on IPv4 (external IPv4 == local IPv4).
+    /// A peer can be public on IPv4 but NATted on IPv6, or vice versa.
+    pub is_public_ipv4: bool,
+    /// Whether this peer is public on IPv6 (external IPv6 == local IPv6).
+    /// IPv6 is typically globally routable, so this is usually true if IPv6 is available.
+    pub is_public_ipv6: bool,
     /// Whether we're currently connected to this peer.
     pub is_connected: bool,
     /// When we last confirmed connectivity.
@@ -532,28 +569,75 @@ impl PeerNetworkInfo {
             local_addresses: Vec::new(),
             external_addresses: Vec::new(),
             is_public: false,
+            is_public_ipv4: false,
+            is_public_ipv6: false,
             is_connected: false,
             last_seen: std::time::Instant::now(),
         }
     }
 
-    /// Determine if this peer is public by comparing addresses.
+    /// Determine if this peer is public by comparing addresses per IP family.
     ///
-    /// A peer is public if any external address IP matches any local address IP.
-    /// This means the peer is not behind NAT.
+    /// A peer is public on a given IP family if the external address IP matches
+    /// the local address IP for that family. This means the peer is not behind NAT
+    /// for that address family.
+    ///
+    /// # Dual-Stack Behavior
+    ///
+    /// IPv4 and IPv6 are evaluated independently because:
+    /// - A node may be NATted on IPv4 but have global IPv6 (common with ISPs)
+    /// - A node may have public IPv4 but no IPv6 at all
+    /// - A node may be NATted on both (rare, usually carrier-grade NAT)
+    ///
+    /// The combined `is_public` is true if the node is public on either family,
+    /// which maintains backward compatibility.
     pub fn compute_is_public(&mut self) {
+        // Reset both family statuses
+        self.is_public_ipv4 = false;
+        self.is_public_ipv6 = false;
+
         if self.external_addresses.is_empty() || self.local_addresses.is_empty() {
             self.is_public = false;
             return;
         }
 
-        // Check if any external IP matches any local IP
-        let external_ips: std::collections::HashSet<_> =
-            self.external_addresses.iter().map(|a| a.ip()).collect();
-        let local_ips: std::collections::HashSet<_> =
-            self.local_addresses.iter().map(|a| a.ip()).collect();
+        // Separate addresses by IP family
+        let (local_ipv4, local_ipv6): (Vec<_>, Vec<_>) =
+            self.local_addresses.iter().partition(|a| a.ip().is_ipv4());
+        let (external_ipv4, external_ipv6): (Vec<_>, Vec<_>) = self
+            .external_addresses
+            .iter()
+            .partition(|a| a.ip().is_ipv4());
 
-        self.is_public = external_ips.intersection(&local_ips).next().is_some();
+        // Check IPv4: external IPv4 IP matches any local IPv4 IP
+        if !local_ipv4.is_empty() && !external_ipv4.is_empty() {
+            let local_ipv4_ips: std::collections::HashSet<std::net::IpAddr> =
+                local_ipv4.iter().map(|a: &&SocketAddr| a.ip()).collect();
+            let external_ipv4_ips: std::collections::HashSet<std::net::IpAddr> =
+                external_ipv4.iter().map(|a: &&SocketAddr| a.ip()).collect();
+            self.is_public_ipv4 = external_ipv4_ips
+                .intersection(&local_ipv4_ips)
+                .next()
+                .is_some();
+        }
+
+        // Check IPv6: external IPv6 IP matches any local IPv6 IP
+        // Note: IPv6 global addresses are typically not NATted, so if we have
+        // a global IPv6 address (not fe80:: link-local or fd00::/8 ULA),
+        // we're likely public on IPv6.
+        if !local_ipv6.is_empty() && !external_ipv6.is_empty() {
+            let local_ipv6_ips: std::collections::HashSet<std::net::IpAddr> =
+                local_ipv6.iter().map(|a: &&SocketAddr| a.ip()).collect();
+            let external_ipv6_ips: std::collections::HashSet<std::net::IpAddr> =
+                external_ipv6.iter().map(|a: &&SocketAddr| a.ip()).collect();
+            self.is_public_ipv6 = external_ipv6_ips
+                .intersection(&local_ipv6_ips)
+                .next()
+                .is_some();
+        }
+
+        // Combined status for backward compatibility
+        self.is_public = self.is_public_ipv4 || self.is_public_ipv6;
     }
 
     /// Convert to a RelayCandidate for relay selection.
@@ -561,6 +645,8 @@ impl PeerNetworkInfo {
         RelayCandidate {
             peer_id: self.peer_id,
             is_public: self.is_public,
+            is_public_ipv4: self.is_public_ipv4,
+            is_public_ipv6: self.is_public_ipv6,
             is_connected: self.is_connected,
             addresses: self.external_addresses.clone(),
         }
@@ -602,18 +688,98 @@ impl RelayState {
         }
     }
 
-    /// Check if we appear to be a public node.
+    /// Check if we appear to be a public node (on any IP family).
+    /// This is `are_we_public_ipv4() || are_we_public_ipv6()`.
     pub fn are_we_public(&self) -> bool {
+        self.are_we_public_ipv4() || self.are_we_public_ipv6()
+    }
+
+    /// Check if we appear to be a public node on IPv4.
+    ///
+    /// A node is public on IPv4 if any external IPv4 address matches any local IPv4 address.
+    pub fn are_we_public_ipv4(&self) -> bool {
         if self.our_external_addresses.is_empty() || self.our_local_addresses.is_empty() {
             return false;
         }
 
+        // Filter to IPv4 only
+        let external_ipv4: Vec<_> = self
+            .our_external_addresses
+            .iter()
+            .filter(|a| a.ip().is_ipv4())
+            .collect();
+        let local_ipv4: Vec<_> = self
+            .our_local_addresses
+            .iter()
+            .filter(|a| a.ip().is_ipv4())
+            .collect();
+
+        if external_ipv4.is_empty() || local_ipv4.is_empty() {
+            return false;
+        }
+
         let external_ips: std::collections::HashSet<_> =
-            self.our_external_addresses.iter().map(|a| a.ip()).collect();
-        let local_ips: std::collections::HashSet<_> =
-            self.our_local_addresses.iter().map(|a| a.ip()).collect();
+            external_ipv4.iter().map(|a| a.ip()).collect();
+        let local_ips: std::collections::HashSet<_> = local_ipv4.iter().map(|a| a.ip()).collect();
 
         external_ips.intersection(&local_ips).next().is_some()
+    }
+
+    /// Check if we appear to be a public node on IPv6.
+    ///
+    /// A node is public on IPv6 if any external IPv6 address matches any local IPv6 address.
+    /// Note: IPv6 global addresses are typically not NATted.
+    pub fn are_we_public_ipv6(&self) -> bool {
+        if self.our_external_addresses.is_empty() || self.our_local_addresses.is_empty() {
+            return false;
+        }
+
+        // Filter to IPv6 only (excluding link-local fe80::)
+        let external_ipv6: Vec<_> = self
+            .our_external_addresses
+            .iter()
+            .filter(|a| {
+                if let std::net::IpAddr::V6(v6) = a.ip() {
+                    // Exclude link-local addresses (fe80::/10)
+                    let segments = v6.segments();
+                    (segments[0] & 0xffc0) != 0xfe80
+                } else {
+                    false
+                }
+            })
+            .collect();
+        let local_ipv6: Vec<_> = self
+            .our_local_addresses
+            .iter()
+            .filter(|a| {
+                if let std::net::IpAddr::V6(v6) = a.ip() {
+                    // Exclude link-local addresses (fe80::/10)
+                    let segments = v6.segments();
+                    (segments[0] & 0xffc0) != 0xfe80
+                } else {
+                    false
+                }
+            })
+            .collect();
+
+        if external_ipv6.is_empty() || local_ipv6.is_empty() {
+            return false;
+        }
+
+        let external_ips: std::collections::HashSet<_> =
+            external_ipv6.iter().map(|a| a.ip()).collect();
+        let local_ips: std::collections::HashSet<_> = local_ipv6.iter().map(|a| a.ip()).collect();
+
+        external_ips.intersection(&local_ips).next().is_some()
+    }
+
+    /// Get our public status per IP family.
+    ///
+    /// Returns (is_public, is_public_ipv4, is_public_ipv6).
+    pub fn get_public_status(&self) -> (bool, bool, bool) {
+        let ipv4 = self.are_we_public_ipv4();
+        let ipv6 = self.are_we_public_ipv6();
+        (ipv4 || ipv6, ipv4, ipv6)
     }
 
     /// Update peer network info.

@@ -422,8 +422,6 @@ pub struct TestNode {
     gossip_integration: Arc<GossipIntegration>,
     /// Receiver for gossip events.
     gossip_event_rx: Arc<RwLock<mpsc::Receiver<GossipEvent>>>,
-    /// Whether this node is publicly reachable (for gossip announcements).
-    is_public: Arc<AtomicBool>,
 }
 
 impl TestNode {
@@ -620,12 +618,17 @@ impl TestNode {
                             rs.our_external_addresses = addrs.clone();
                             rs.our_local_addresses = listen_addresses_for_events.clone();
 
-                            // Check if we're a public node (external == local)
-                            let is_public = rs.are_we_public();
+                            // Check if we're a public node per IP family
+                            let (is_public, is_public_ipv4, is_public_ipv6) =
+                                rs.get_public_status();
                             if is_public {
-                                info!("We appear to be a PUBLIC node (external matches local)");
+                                info!(
+                                    "We appear to be a PUBLIC node (IPv4: {}, IPv6: {})",
+                                    if is_public_ipv4 { "public" } else { "NAT" },
+                                    if is_public_ipv6 { "public" } else { "NAT/none" }
+                                );
                             } else {
-                                debug!("We appear to be behind NAT (external != local)");
+                                debug!("We appear to be behind NAT on all IP families");
                             }
                         }
                         let _ = event_tx_for_events
@@ -789,6 +792,8 @@ impl TestNode {
             peer_id.clone(),
             listen_addresses.clone(),
             false, // Assume not public initially, will update when external address discovered
+            false, // is_public_ipv4 - will update when external IPv4 discovered
+            false, // is_public_ipv6 - will update when external IPv6 discovered
             gossip_config,
             gossip_event_tx,
         );
@@ -825,7 +830,6 @@ impl TestNode {
             relay_state,
             gossip_integration: Arc::new(gossip_integration),
             gossip_event_rx: Arc::new(RwLock::new(gossip_event_rx)),
-            is_public: Arc::new(AtomicBool::new(false)),
         })
     }
 
@@ -1104,13 +1108,18 @@ impl TestNode {
                 let rs = relay_state.read().await;
                 let public_nodes: Vec<_> = rs.get_public_nodes();
                 let candidates = rs.get_relay_candidates();
-                let is_public = rs.are_we_public();
+                let (is_public, is_public_ipv4, is_public_ipv6) = rs.get_public_status();
 
                 info!(
                     "=== Relay State for {} ===",
                     &peer_id[..8.min(peer_id.len())]
                 );
-                info!("  We are public: {}", is_public);
+                info!(
+                    "  We are public: {} (IPv4: {}, IPv6: {})",
+                    is_public,
+                    if is_public_ipv4 { "yes" } else { "no" },
+                    if is_public_ipv6 { "yes" } else { "no" }
+                );
                 info!("  Known peers: {}", rs.known_peers.len());
                 info!("  Connected public nodes: {}", public_nodes.len());
                 info!("  Total relay candidates: {}", candidates.len());
@@ -1280,10 +1289,14 @@ impl TestNode {
     /// Announce ourselves to the gossip network.
     pub async fn announce_to_gossip(&self) {
         let external_addrs = self.external_addresses.read().await.clone();
-        let is_public = self.is_public.load(Ordering::SeqCst);
+        let rs = self.relay_state.read().await;
+        let (is_public, is_public_ipv4, is_public_ipv6) = rs.get_public_status();
+        drop(rs); // Release lock early
 
         let capabilities = GossipCapabilities {
             direct: is_public,
+            direct_ipv4: is_public_ipv4,
+            direct_ipv6: is_public_ipv6,
             hole_punch: true,
             relay: is_public,       // Only public nodes can relay
             coordinator: is_public, // Only public nodes can coordinate
