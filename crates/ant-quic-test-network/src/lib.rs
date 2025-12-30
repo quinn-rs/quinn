@@ -61,6 +61,7 @@ pub mod dashboard;
 pub mod gossip;
 pub mod node;
 pub mod orchestrator;
+pub mod peer_discovery;
 pub mod registry;
 pub mod tui;
 

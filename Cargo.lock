@@ -175,7 +175,7 @@ dependencies = [
 
 [[package]]
 name = "ant-quic"
-version = "0.14.87"
+version = "0.14.88"
 dependencies = [
  "anyhow",
  "arbitrary",
@@ -249,9 +249,9 @@ dependencies = [
 
 [[package]]
 name = "ant-quic-test-network"
-version = "0.14.87"
+version = "0.14.88"
 dependencies = [
- "ant-quic 0.14.87",
+ "ant-quic 0.14.88",
  "anyhow",
  "crossterm",
  "dashmap",
@@ -3344,8 +3344,6 @@ dependencies = [
 [[package]]
 name = "saorsa-gossip-coordinator"
 version = "0.1.11"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "62b2fd88329b2bba962038f2ac079ab4b2986ba4c4c00a752bbb4277e9be9e30"
 dependencies = [
  "anyhow",
  "bincode 1.3.3",
@@ -3363,8 +3361,6 @@ dependencies = [
 [[package]]
 name = "saorsa-gossip-identity"
 version = "0.1.11"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0d1772d960b334de2bb5b15a00e3bda49eb66615b0c7818a289e3f4991098f40"
 dependencies = [
  "anyhow",
  "bincode 1.3.3",
@@ -3378,8 +3374,6 @@ dependencies = [
 [[package]]
 name = "saorsa-gossip-membership"
 version = "0.1.11"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f002afd4aaa95b7933209b9bf4828a4dd8a72217b81c834dd97892973f124768"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3395,8 +3389,6 @@ dependencies = [
 [[package]]
 name = "saorsa-gossip-pubsub"
 version = "0.1.11"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c122aa7b5075d1a40d44d9ad0fba2505f3c8cdb07ce908bac4ffae224aa2971f"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3417,8 +3409,6 @@ dependencies = [
 [[package]]
 name = "saorsa-gossip-transport"
 version = "0.1.11"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5b1cf1eb6196428d748b124884564d5937ad37f8f5a1f24eff06352f6c263739"
 dependencies = [
  "ant-quic 0.14.69",
  "anyhow",
@@ -3438,8 +3428,6 @@ dependencies = [
 [[package]]
 name = "saorsa-gossip-types"
 version = "0.1.11"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f9b447c18015c002cf5083655d4c854a6c71ea1d09e97ee2831a84553463a4e7"
 dependencies = [
  "anyhow",
  "blake3",
