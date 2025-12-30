@@ -9,10 +9,10 @@
 //!
 //! Registry is used for REPORTING only, not discovery.
 
+use ant_quic::PeerId;
 use ant_quic::bootstrap_cache::{
     BootstrapCache, BootstrapCacheConfig, CachedPeer, NatType as CacheNatType, PeerSource,
 };
-use ant_quic::PeerId;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::net::SocketAddr;
@@ -255,7 +255,10 @@ pub enum RelayConnectionStatus {
         established_at: std::time::Instant,
     },
     /// Attempting upgrade to direct connection.
-    UpgradeInProgress { relay: String, direct_addr: SocketAddr },
+    UpgradeInProgress {
+        relay: String,
+        direct_addr: SocketAddr,
+    },
     /// Successfully upgraded to direct.
     UpgradedToDirect,
     /// Relay connection failed.
@@ -471,7 +474,9 @@ impl PeerDiscoveryService {
     pub async fn generate_full_sync(&self) -> CacheGossipMessage {
         let peers = self.cache.all_peers().await;
         let gossip_peers: Vec<GossipPeerEntry> = peers.into_iter().map(|p| p.into()).collect();
-        CacheGossipMessage::FullSync { peers: gossip_peers }
+        CacheGossipMessage::FullSync {
+            peers: gossip_peers,
+        }
     }
 
     /// Handle incoming cache gossip message.
@@ -828,8 +833,7 @@ impl PeerDiscoveryService {
         }
 
         // Sort by score descending
-        relay_candidates
-            .sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        relay_candidates.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
         // Take top candidates
         relay_candidates
@@ -844,9 +848,11 @@ impl PeerDiscoveryService {
 
                 RelayInfo {
                     peer_id: hex::encode(peer.peer_id.0),
-                    address: peer.addresses.first().cloned().unwrap_or_else(|| {
-                        "0.0.0.0:0".parse().unwrap()
-                    }),
+                    address: peer
+                        .addresses
+                        .first()
+                        .cloned()
+                        .unwrap_or_else(|| "0.0.0.0:0".parse().unwrap()),
                     healthy: true,
                     last_verified_ms,
                     active_connections: 0,
@@ -964,8 +970,11 @@ mod tests {
     use tempfile::TempDir;
 
     /// Helper to create a test discovery service.
-    async fn create_test_discovery(
-    ) -> (PeerDiscoveryService, mpsc::Receiver<DiscoveryEvent>, TempDir) {
+    async fn create_test_discovery() -> (
+        PeerDiscoveryService,
+        mpsc::Receiver<DiscoveryEvent>,
+        TempDir,
+    ) {
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
         let config = DiscoveryConfig {
             cache_dir: temp_dir.path().to_path_buf(),
@@ -1071,7 +1080,10 @@ mod tests {
             .handle_gossip_message("test-peer", CacheGossipMessage::Request)
             .await;
 
-        assert!(response.is_some(), "Should respond to Request with FullSync");
+        assert!(
+            response.is_some(),
+            "Should respond to Request with FullSync"
+        );
         match response.unwrap() {
             CacheGossipMessage::FullSync { .. } => {}
             _ => panic!("Expected FullSync response"),
@@ -1473,10 +1485,7 @@ mod tests {
         let status = PeerDiscoveryService::create_relay_fallback("Punch timeout after 30s");
         match status {
             PunchCoordinationStatus::FallbackToRelay { reason } => {
-                assert!(
-                    reason.contains("timeout"),
-                    "Should indicate timeout reason"
-                );
+                assert!(reason.contains("timeout"), "Should indicate timeout reason");
             }
             _ => panic!("Expected FallbackToRelay status"),
         }
@@ -1540,7 +1549,8 @@ mod tests {
         let relay = discovery.select_relay().await;
         assert!(relay.is_some(), "Should find a relay after failover");
         assert_eq!(
-            relay.unwrap().peer_id, relay2_id,
+            relay.unwrap().peer_id,
+            relay2_id,
             "Should select relay2 after relay1 failed multiple times"
         );
 
@@ -1737,7 +1747,11 @@ mod tests {
                 .report_connection(&hex::encode([0xff; 32]), method, false, None)
                 .await;
             // Should fail due to network, not serialization
-            assert!(result.is_err(), "Should fail due to network for {:?}", method);
+            assert!(
+                result.is_err(),
+                "Should fail due to network for {:?}",
+                method
+            );
         }
     }
 
@@ -1816,10 +1830,7 @@ mod tests {
         assert_eq!(cached.addresses.len(), 1);
         assert!(cached.capabilities.supports_coordination);
         assert!(cached.capabilities.supports_relay);
-        assert_eq!(
-            cached.capabilities.nat_type,
-            Some(CacheNatType::FullCone)
-        );
+        assert_eq!(cached.capabilities.nat_type, Some(CacheNatType::FullCone));
     }
 
     #[tokio::test]
