@@ -873,9 +873,14 @@ fn assess_connectivity(
     let (nat_bonus, nat_msg) = match nat_type {
         NatType::None => (15, "Direct public IP - optimal connectivity"),
         NatType::FullCone => (12, "Full cone NAT - excellent connectivity"),
+        NatType::Upnp | NatType::NatPmp => (11, "Port mapping available - very good connectivity"),
         NatType::AddressRestricted => (8, "Address restricted NAT - good connectivity"),
+        NatType::HairpinNat => (7, "Hairpin NAT - good connectivity with loopback"),
         NatType::PortRestricted => (5, "Port restricted NAT - moderate connectivity"),
         NatType::Symmetric => (0, "Symmetric NAT - requires relay for some peers"),
+        NatType::Cgnat => (0, "CGNAT - limited ports, often needs relay"),
+        NatType::DoubleNat => (0, "Double NAT - very difficult, usually needs relay"),
+        NatType::MobileCarrier => (0, "Mobile carrier NAT - difficult, often needs relay"),
         NatType::Unknown => (3, "NAT type unknown - connectivity assessment pending"),
     };
     score = score.saturating_add(nat_bonus);

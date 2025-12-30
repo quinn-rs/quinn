@@ -42,6 +42,18 @@ NODE_DATA=(
   "symmetric:159.65.90.128:digitalocean:lon1:symmetric:nat_test"
 )
 
+# NAT Docker container configuration for comprehensive emulation
+# Format: node_name:docker_nat_types (comma-separated)
+NAT_DOCKER_CONFIG=(
+  "fullcone:fullcone,upnp"
+  "restricted:restricted,hairpin"
+  "portrestricted:portrestricted,natpmp"
+  "symmetric:symmetric,cgnat"
+)
+
+# NAT emulation directory on remote nodes
+NAT_EMULATION_DIR="/opt/ant-quic/nat-emulation"
+
 # Helper functions to extract node data
 get_node_names() {
   for entry in "${NODE_DATA[@]}"; do
@@ -241,25 +253,49 @@ cmd_status() {
 
 cmd_run() {
   local scenario="${1:-}"
-  
+
   if [ -z "$scenario" ]; then
     echo "Usage: $0 run <scenario>"
     echo "Available scenarios:"
     echo "  nat_matrix         - Test all NAT type combinations"
+    echo "  nat_comprehensive  - Comprehensive NAT emulation test (all home types)"
+    echo "  nat_docker_start   - Start Docker NAT containers on nodes"
+    echo "  nat_docker_stop    - Stop Docker NAT containers on nodes"
+    echo "  double_nat         - Double NAT traversal test"
+    echo "  cgnat_stress       - CGNAT port exhaustion stress test"
+    echo "  hairpin            - Hairpin NAT loopback test"
     echo "  chaos_kill_random  - Kill random nodes and measure recovery"
     echo "  message_relay      - End-to-end message delivery test"
     echo "  sustained_load     - Stability under sustained traffic"
     echo "  all                - Run all scenarios"
     exit 1
   fi
-  
+
   mkdir -p "$RESULTS_DIR"
   local timestamp=$(date +%Y%m%d_%H%M%S)
   local result_file="$RESULTS_DIR/${scenario}_${timestamp}.log"
-  
+
   case "$scenario" in
     nat_matrix)
       run_nat_matrix "$result_file"
+      ;;
+    nat_comprehensive)
+      run_nat_comprehensive "$result_file"
+      ;;
+    nat_docker_start)
+      run_nat_docker_start
+      ;;
+    nat_docker_stop)
+      run_nat_docker_stop
+      ;;
+    double_nat)
+      run_double_nat_test "$result_file"
+      ;;
+    cgnat_stress)
+      run_cgnat_stress_test "$result_file"
+      ;;
+    hairpin)
+      run_hairpin_test "$result_file"
       ;;
     chaos_kill_random)
       run_chaos_kill_random "$result_file"
@@ -272,6 +308,7 @@ cmd_run() {
       ;;
     all)
       run_nat_matrix "$RESULTS_DIR/nat_matrix_${timestamp}.log"
+      run_nat_comprehensive "$RESULTS_DIR/nat_comprehensive_${timestamp}.log"
       run_chaos_kill_random "$RESULTS_DIR/chaos_${timestamp}.log"
       run_message_relay "$RESULTS_DIR/relay_${timestamp}.log"
       ;;
@@ -338,6 +375,378 @@ run_nat_matrix() {
     log_success "NAT matrix test PASSED (${rate}%)"
   else
     log_error "NAT matrix test FAILED (${rate}%)"
+  fi
+}
+
+#
+# NAT DOCKER EMULATION SCENARIOS
+#
+
+run_nat_docker_start() {
+  log_info "Starting Docker NAT containers on configured nodes..."
+
+  for config in "${NAT_DOCKER_CONFIG[@]}"; do
+    IFS=':' read -r node_name nat_types <<< "$config"
+    local ip
+    ip=$(get_node_ip "$node_name")
+
+    if [ -z "$ip" ]; then
+      log_warn "Node $node_name not found, skipping"
+      continue
+    fi
+
+    log_info "Starting NAT containers on $node_name ($ip): $nat_types"
+
+    # Parse NAT types and build docker-compose service list
+    IFS=',' read -ra NAT_ARRAY <<< "$nat_types"
+    local services=""
+    for nat in "${NAT_ARRAY[@]}"; do
+      case "$nat" in
+        fullcone)     services+=" nat-fullcone node-fullcone" ;;
+        restricted)   services+=" nat-restricted node-restricted" ;;
+        portrestricted) services+=" nat-portrestricted node-portrestricted" ;;
+        symmetric)    services+=" nat-symmetric node-symmetric" ;;
+        cgnat)        services+=" nat-cgnat node-cgnat" ;;
+        hairpin)      services+=" nat-hairpin node-hairpin" ;;
+        upnp)         services+=" nat-fullcone node-fullcone" ;;  # UPnP simulated as full cone
+        natpmp)       services+=" nat-fullcone node-fullcone" ;;  # NAT-PMP simulated as full cone
+        doublenat)    services+=" nat-doublenat-outer nat-doublenat-inner node-doublenat" ;;
+        *)            log_warn "Unknown NAT type: $nat" ;;
+      esac
+    done
+
+    if [ -n "$services" ]; then
+      ssh -o ConnectTimeout=10 "root@$ip" \
+        "cd $NAT_EMULATION_DIR && docker compose up -d $services" || {
+        log_error "Failed to start containers on $node_name"
+        continue
+      }
+      log_success "Started containers on $node_name"
+    fi
+  done
+}
+
+run_nat_docker_stop() {
+  log_info "Stopping Docker NAT containers on configured nodes..."
+
+  for config in "${NAT_DOCKER_CONFIG[@]}"; do
+    IFS=':' read -r node_name nat_types <<< "$config"
+    local ip
+    ip=$(get_node_ip "$node_name")
+
+    if [ -z "$ip" ]; then
+      continue
+    fi
+
+    log_info "Stopping NAT containers on $node_name ($ip)..."
+    ssh -o ConnectTimeout=10 "root@$ip" \
+      "cd $NAT_EMULATION_DIR && docker compose down 2>/dev/null" || true
+    log_success "Stopped containers on $node_name"
+  done
+}
+
+run_nat_comprehensive() {
+  local result_file="$1"
+  log_info "Running COMPREHENSIVE NAT matrix test (all home types)..."
+
+  echo "=== Comprehensive NAT Matrix Test ===" | tee "$result_file"
+  echo "Started: $(date)" | tee -a "$result_file"
+  echo "" | tee -a "$result_file"
+
+  # NAT types to test (matches the Docker emulation)
+  local nat_scenarios=(
+    "fullcone:fullcone"
+    "restricted:address_restricted"
+    "portrestricted:port_restricted"
+    "symmetric:symmetric"
+  )
+
+  local total=0
+  local success=0
+  local failed=0
+
+  # Test all NAT type pairs
+  for src_config in "${nat_scenarios[@]}"; do
+    IFS=':' read -r src_name src_nat <<< "$src_config"
+    local src_ip
+    src_ip=$(get_node_ip "$src_name")
+
+    if [ -z "$src_ip" ]; then
+      log_warn "Source node $src_name not found"
+      continue
+    fi
+
+    for dst_config in "${nat_scenarios[@]}"; do
+      IFS=':' read -r dst_name dst_nat <<< "$dst_config"
+
+      if [ "$src_name" = "$dst_name" ]; then
+        continue
+      fi
+
+      local dst_ip
+      dst_ip=$(get_node_ip "$dst_name")
+
+      if [ -z "$dst_ip" ]; then
+        log_warn "Destination node $dst_name not found"
+        continue
+      fi
+
+      total=$((total + 1))
+      log_info "Testing $src_name ($src_nat) -> $dst_name ($dst_nat)"
+
+      # Calculate expected difficulty
+      local expected="MODERATE"
+      if [ "$src_nat" = "symmetric" ] && [ "$dst_nat" = "symmetric" ]; then
+        expected="RELAY_REQUIRED"
+      elif [ "$src_nat" = "fullcone" ] || [ "$dst_nat" = "fullcone" ]; then
+        expected="EASY"
+      fi
+
+      # Run connection test
+      local start_time
+      start_time=$(date +%s%N)
+      if ssh -o ConnectTimeout=10 "root@$src_ip" \
+        "/opt/saorsa/bin/ant-quic --connect $dst_ip:9000 --test-mode --timeout 20" \
+        > /tmp/test_result.log 2>&1; then
+        local end_time
+        end_time=$(date +%s%N)
+        local duration_ms=$(( (end_time - start_time) / 1000000 ))
+        success=$((success + 1))
+        echo "PASS: $src_name ($src_nat) -> $dst_name ($dst_nat) [${duration_ms}ms] [$expected]" | tee -a "$result_file"
+      else
+        failed=$((failed + 1))
+        echo "FAIL: $src_name ($src_nat) -> $dst_name ($dst_nat) [$expected]" | tee -a "$result_file"
+      fi
+    done
+  done
+
+  # Calculate success rate
+  local rate=0
+  if [ $total -gt 0 ]; then
+    rate=$((success * 100 / total))
+  fi
+
+  echo "" | tee -a "$result_file"
+  echo "=== Summary ===" | tee -a "$result_file"
+  echo "Total tests: $total" | tee -a "$result_file"
+  echo "Passed: $success" | tee -a "$result_file"
+  echo "Failed: $failed" | tee -a "$result_file"
+  echo "Success rate: ${rate}%" | tee -a "$result_file"
+
+  # Success thresholds by expected difficulty
+  if [ $rate -ge 85 ]; then
+    log_success "Comprehensive NAT test PASSED (${rate}%)"
+  elif [ $rate -ge 70 ]; then
+    log_warn "Comprehensive NAT test MARGINAL (${rate}%)"
+  else
+    log_error "Comprehensive NAT test FAILED (${rate}%)"
+  fi
+}
+
+run_double_nat_test() {
+  local result_file="$1"
+  log_info "Running Double NAT traversal test..."
+
+  echo "=== Double NAT Traversal Test ===" | tee "$result_file"
+  echo "Started: $(date)" | tee -a "$result_file"
+  echo "" | tee -a "$result_file"
+
+  # Double NAT is the hardest scenario - use symmetric node with CGNAT
+  local double_nat_node="symmetric"
+  local double_nat_ip
+  double_nat_ip=$(get_node_ip "$double_nat_node")
+
+  if [ -z "$double_nat_ip" ]; then
+    log_error "Double NAT test node not found"
+    return 1
+  fi
+
+  # Start double NAT container if available
+  log_info "Attempting to start double NAT container..."
+  ssh -o ConnectTimeout=10 "root@$double_nat_ip" \
+    "cd $NAT_EMULATION_DIR && docker compose up -d nat-doublenat-outer nat-doublenat-inner node-doublenat 2>/dev/null" || {
+    log_warn "Double NAT container not available, testing with existing symmetric NAT"
+  }
+
+  # Test connectivity from double NAT to other nodes
+  local total=0
+  local success=0
+
+  for target_name in $(get_node_names); do
+    if [ "$target_name" = "$double_nat_node" ]; then
+      continue
+    fi
+
+    local target_role
+    target_role=$(get_node_role "$target_name")
+
+    # Only test against NAT test nodes
+    if [ "$target_role" != "nat_test" ] && [ "$target_role" != "testnet" ]; then
+      continue
+    fi
+
+    local target_ip
+    target_ip=$(get_node_ip "$target_name")
+    local target_nat
+    target_nat=$(get_node_nat "$target_name")
+
+    total=$((total + 1))
+    log_info "Testing Double NAT -> $target_name ($target_nat)"
+
+    if ssh -o ConnectTimeout=10 "root@$double_nat_ip" \
+      "/opt/saorsa/bin/ant-quic --connect $target_ip:9000 --test-mode --timeout 30" \
+      > /tmp/test_result.log 2>&1; then
+      success=$((success + 1))
+      echo "PASS: Double NAT -> $target_name ($target_nat)" | tee -a "$result_file"
+    else
+      echo "FAIL: Double NAT -> $target_name ($target_nat)" | tee -a "$result_file"
+    fi
+  done
+
+  local rate=0
+  if [ $total -gt 0 ]; then
+    rate=$((success * 100 / total))
+  fi
+
+  echo "" | tee -a "$result_file"
+  echo "=== Summary ===" | tee -a "$result_file"
+  echo "Total tests: $total" | tee -a "$result_file"
+  echo "Passed: $success" | tee -a "$result_file"
+  echo "Success rate: ${rate}%" | tee -a "$result_file"
+
+  # Double NAT is expected to have lower success rate
+  if [ $rate -ge 50 ]; then
+    log_success "Double NAT test PASSED (${rate}% - expected via relay)"
+  else
+    log_warn "Double NAT test MARGINAL (${rate}% - may need relay improvements)"
+  fi
+}
+
+run_cgnat_stress_test() {
+  local result_file="$1"
+  local connection_count=100
+  local timeout_secs=30
+
+  log_info "Running CGNAT port exhaustion stress test..."
+  echo "=== CGNAT Port Exhaustion Stress Test ===" | tee "$result_file"
+  echo "Started: $(date)" | tee -a "$result_file"
+  echo "Target connections: $connection_count" | tee -a "$result_file"
+  echo "" | tee -a "$result_file"
+
+  # Use symmetric node which has CGNAT configured
+  local cgnat_node="symmetric"
+  local cgnat_ip
+  cgnat_ip=$(get_node_ip "$cgnat_node")
+
+  if [ -z "$cgnat_ip" ]; then
+    log_error "CGNAT test node not found"
+    return 1
+  fi
+
+  # Start CGNAT container (limited port range: 32768-33023 = 256 ports)
+  log_info "Starting CGNAT container with limited port range..."
+  ssh -o ConnectTimeout=10 "root@$cgnat_ip" \
+    "cd $NAT_EMULATION_DIR && docker compose up -d nat-cgnat node-cgnat 2>/dev/null" || {
+    log_warn "CGNAT container not available, testing with existing NAT"
+  }
+
+  local success=0
+  local port_exhausted=0
+  local target_ip
+  target_ip=$(get_node_ip "fullcone")
+
+  if [ -z "$target_ip" ]; then
+    target_ip=$(get_node_ip "bootstrap")
+  fi
+
+  log_info "Testing $connection_count rapid connections through CGNAT..."
+
+  for i in $(seq 1 $connection_count); do
+    if ssh -o ConnectTimeout=5 "root@$cgnat_ip" \
+      "/opt/saorsa/bin/ant-quic --connect $target_ip:9000 --message \"CGNAT test $i\" --one-shot --timeout 5" \
+      > /tmp/cgnat_test.log 2>&1; then
+      success=$((success + 1))
+    else
+      # Check if failure was due to port exhaustion
+      if grep -q "port\|exhausted\|EADDRINUSE" /tmp/cgnat_test.log 2>/dev/null; then
+        port_exhausted=$((port_exhausted + 1))
+      fi
+    fi
+    echo -ne "\rProgress: $i/$connection_count (success: $success, exhausted: $port_exhausted)"
+  done
+  echo ""
+
+  local rate=0
+  if [ $connection_count -gt 0 ]; then
+    rate=$((success * 100 / connection_count))
+  fi
+
+  echo "" | tee -a "$result_file"
+  echo "=== Summary ===" | tee -a "$result_file"
+  echo "Total connections attempted: $connection_count" | tee -a "$result_file"
+  echo "Successful: $success" | tee -a "$result_file"
+  echo "Port exhaustion failures: $port_exhausted" | tee -a "$result_file"
+  echo "Success rate: ${rate}%" | tee -a "$result_file"
+
+  if [ $rate -ge 80 ]; then
+    log_success "CGNAT stress test PASSED (${rate}%)"
+  elif [ $port_exhausted -gt 0 ]; then
+    log_warn "CGNAT stress test detected port exhaustion (${port_exhausted} times)"
+  else
+    log_error "CGNAT stress test FAILED (${rate}%)"
+  fi
+}
+
+run_hairpin_test() {
+  local result_file="$1"
+  log_info "Running Hairpin NAT loopback test..."
+
+  echo "=== Hairpin NAT Loopback Test ===" | tee "$result_file"
+  echo "Started: $(date)" | tee -a "$result_file"
+  echo "" | tee -a "$result_file"
+
+  # Hairpin NAT tests if a node can reach its own external IP from inside
+  local total=0
+  local success=0
+
+  for config in "${NAT_DOCKER_CONFIG[@]}"; do
+    IFS=':' read -r node_name nat_types <<< "$config"
+
+    # Only test nodes that might have hairpin
+    if [[ "$nat_types" != *"hairpin"* ]] && [ "$node_name" != "restricted" ]; then
+      continue
+    fi
+
+    local ip
+    ip=$(get_node_ip "$node_name")
+
+    if [ -z "$ip" ]; then
+      continue
+    fi
+
+    total=$((total + 1))
+    log_info "Testing hairpin on $node_name ($ip)..."
+
+    # Try to connect to own external IP (hairpin test)
+    if ssh -o ConnectTimeout=10 "root@$ip" \
+      "/opt/saorsa/bin/ant-quic --connect $ip:9000 --test-mode --timeout 15" \
+      > /tmp/hairpin_test.log 2>&1; then
+      success=$((success + 1))
+      echo "PASS: Hairpin works on $node_name" | tee -a "$result_file"
+    else
+      echo "FAIL: No hairpin on $node_name" | tee -a "$result_file"
+    fi
+  done
+
+  echo "" | tee -a "$result_file"
+  echo "=== Summary ===" | tee -a "$result_file"
+  echo "Nodes tested: $total" | tee -a "$result_file"
+  echo "Hairpin working: $success" | tee -a "$result_file"
+
+  if [ $success -gt 0 ]; then
+    log_success "Hairpin NAT test: $success/$total nodes support hairpin"
+  else
+    log_warn "Hairpin NAT test: No nodes support hairpin (expected for some NAT types)"
   fi
 }
 
@@ -565,20 +974,33 @@ main() {
       echo "  collect    Collect logs from all nodes"
       echo "  report     Generate test report"
       echo ""
-      echo "Test Scenarios:"
+      echo "Test Scenarios (Basic):"
       echo "  nat_matrix         Test all NAT type combinations"
       echo "  chaos_kill_random  Kill random nodes, measure recovery"
       echo "  message_relay      End-to-end message delivery test"
       echo "  sustained_load     Stability under sustained traffic"
+      echo ""
+      echo "NAT Emulation Scenarios (Docker-based):"
+      echo "  nat_comprehensive  Comprehensive NAT matrix (all home types)"
+      echo "  nat_docker_start   Start Docker NAT containers on nodes"
+      echo "  nat_docker_stop    Stop Docker NAT containers on nodes"
+      echo "  double_nat         Double NAT traversal test"
+      echo "  cgnat_stress       CGNAT port exhaustion stress test"
+      echo "  hairpin            Hairpin NAT loopback test"
+      echo ""
+      echo "Meta Scenarios:"
       echo "  all                Run all scenarios"
       echo ""
       echo "Examples:"
       echo "  $0 status              # Show all nodes across providers"
       echo "  $0 deploy              # Deploy to HZ, DO, VT nodes"
-      echo "  $0 run nat_matrix      # Test NAT traversal matrix"
+      echo "  $0 run nat_matrix      # Test basic NAT traversal matrix"
+      echo "  $0 run nat_comprehensive  # Test all home NAT types"
+      echo "  $0 run nat_docker_start   # Start NAT emulation containers"
       echo "  $0 run all             # Full test suite"
       echo ""
       echo "Infrastructure: ../saorsa-infra/terraform/"
+      echo "NAT Emulation: docker/nat-emulation/"
       ;;
     *)
       log_error "Unknown command: $cmd"

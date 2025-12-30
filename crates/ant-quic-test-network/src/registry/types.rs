@@ -8,21 +8,44 @@ use std::net::SocketAddr;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 /// NAT type classification for connectivity assessment.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+///
+/// Based on RFC 4787 NAT behavioral requirements and RFC 3489 classic NAT types.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum NatType {
     /// No NAT - publicly routable address
     None,
-    /// Full cone NAT - most permissive
+    /// Full cone NAT - most permissive (EIM/EIF)
     FullCone,
-    /// Address-restricted cone NAT
+    /// Address-restricted cone NAT (EIM/ADF)
     AddressRestricted,
-    /// Port-restricted cone NAT
+    /// Port-restricted cone NAT (EIM/APDF)
     PortRestricted,
-    /// Symmetric NAT - most restrictive
+    /// Symmetric NAT - most restrictive (APDM/APDF)
     Symmetric,
     /// Unknown NAT type (not yet determined)
     Unknown,
+    // =========================================================================
+    // Extended NAT types for comprehensive home/ISP emulation
+    // =========================================================================
+    /// Carrier-Grade NAT (shared IP, limited port range)
+    /// Common in: ISPs with IPv4 shortage, mobile carriers
+    Cgnat,
+    /// Double NAT (two layers of NAT - router behind router)
+    /// Common in: apartments, dorms, office networks
+    DoubleNat,
+    /// Hairpin NAT - can reach own external IP from inside
+    /// Common in: better home routers
+    HairpinNat,
+    /// Mobile carrier NAT (often symmetric + CGNAT characteristics)
+    /// Common in: 4G/5G cellular networks
+    MobileCarrier,
+    /// UPnP-enabled NAT (port mapping available)
+    /// Indicates automatic port mapping is possible
+    Upnp,
+    /// NAT-PMP enabled NAT (Apple's port mapping protocol)
+    /// Similar to UPnP but simpler protocol
+    NatPmp,
 }
 
 impl Default for NatType {
@@ -40,7 +63,341 @@ impl std::fmt::Display for NatType {
             Self::PortRestricted => write!(f, "Port Restricted"),
             Self::Symmetric => write!(f, "Symmetric"),
             Self::Unknown => write!(f, "Unknown"),
+            Self::Cgnat => write!(f, "CGNAT"),
+            Self::DoubleNat => write!(f, "Double NAT"),
+            Self::HairpinNat => write!(f, "Hairpin NAT"),
+            Self::MobileCarrier => write!(f, "Mobile Carrier"),
+            Self::Upnp => write!(f, "UPnP"),
+            Self::NatPmp => write!(f, "NAT-PMP"),
         }
+    }
+}
+
+impl NatType {
+    /// Returns the expected hole-punching difficulty for this NAT type.
+    ///
+    /// Lower values are easier, higher values are harder:
+    /// - 1: Very easy (direct or full cone)
+    /// - 2: Easy (cone NATs with filtering)
+    /// - 3: Medium (port-restricted)
+    /// - 4: Hard (symmetric, CGNAT)
+    /// - 5: Very hard (double NAT, mobile carrier)
+    #[must_use]
+    pub fn hole_punch_difficulty(&self) -> u8 {
+        match self {
+            Self::None => 1,
+            Self::FullCone | Self::Upnp | Self::NatPmp => 1,
+            Self::AddressRestricted | Self::HairpinNat => 2,
+            Self::PortRestricted => 3,
+            Self::Symmetric | Self::Cgnat => 4,
+            Self::DoubleNat | Self::MobileCarrier => 5,
+            Self::Unknown => 3, // Assume medium difficulty
+        }
+    }
+
+    /// Returns whether this NAT type typically requires relay for connectivity.
+    #[must_use]
+    pub fn typically_requires_relay(&self) -> bool {
+        matches!(
+            self,
+            Self::Symmetric | Self::DoubleNat | Self::MobileCarrier
+        )
+    }
+
+    /// Returns whether port mapping (UPnP/NAT-PMP) is likely available.
+    #[must_use]
+    pub fn has_port_mapping(&self) -> bool {
+        matches!(self, Self::Upnp | Self::NatPmp)
+    }
+
+    /// Returns the RFC 4787 mapping behavior for this NAT type.
+    #[must_use]
+    pub fn mapping_behavior(&self) -> MappingBehavior {
+        match self {
+            Self::None => MappingBehavior::EndpointIndependent,
+            Self::FullCone
+            | Self::AddressRestricted
+            | Self::PortRestricted
+            | Self::HairpinNat
+            | Self::Upnp
+            | Self::NatPmp => MappingBehavior::EndpointIndependent,
+            Self::Symmetric | Self::Cgnat | Self::MobileCarrier => {
+                MappingBehavior::AddressPortDependent
+            }
+            Self::DoubleNat => MappingBehavior::AddressPortDependent, // Outer NAT dominates
+            Self::Unknown => MappingBehavior::AddressPortDependent, // Assume worst case
+        }
+    }
+
+    /// Returns the RFC 4787 filtering behavior for this NAT type.
+    #[must_use]
+    pub fn filtering_behavior(&self) -> FilteringBehavior {
+        match self {
+            Self::None => FilteringBehavior::EndpointIndependent,
+            Self::FullCone => FilteringBehavior::EndpointIndependent,
+            Self::AddressRestricted | Self::HairpinNat => FilteringBehavior::AddressDependent,
+            Self::PortRestricted
+            | Self::Symmetric
+            | Self::Cgnat
+            | Self::DoubleNat
+            | Self::MobileCarrier
+            | Self::Upnp
+            | Self::NatPmp => FilteringBehavior::AddressPortDependent,
+            Self::Unknown => FilteringBehavior::AddressPortDependent, // Assume worst case
+        }
+    }
+
+    /// Returns all standard NAT types (excluding extended types).
+    #[must_use]
+    pub fn standard_types() -> Vec<Self> {
+        vec![
+            Self::None,
+            Self::FullCone,
+            Self::AddressRestricted,
+            Self::PortRestricted,
+            Self::Symmetric,
+        ]
+    }
+
+    /// Returns all extended NAT types (home/ISP-specific).
+    #[must_use]
+    pub fn extended_types() -> Vec<Self> {
+        vec![
+            Self::Cgnat,
+            Self::DoubleNat,
+            Self::HairpinNat,
+            Self::MobileCarrier,
+            Self::Upnp,
+            Self::NatPmp,
+        ]
+    }
+
+    /// Returns all NAT types for comprehensive testing.
+    #[must_use]
+    pub fn all_types() -> Vec<Self> {
+        vec![
+            Self::None,
+            Self::FullCone,
+            Self::AddressRestricted,
+            Self::PortRestricted,
+            Self::Symmetric,
+            Self::Cgnat,
+            Self::DoubleNat,
+            Self::HairpinNat,
+            Self::MobileCarrier,
+            Self::Upnp,
+            Self::NatPmp,
+        ]
+    }
+}
+
+/// RFC 4787 NAT mapping behavior classification.
+///
+/// Describes how the NAT maps internal addresses to external addresses.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MappingBehavior {
+    /// Endpoint Independent Mapping (EIM)
+    /// Same external port for all destinations (cone NATs)
+    EndpointIndependent,
+    /// Address Dependent Mapping (ADM)
+    /// Different external port per destination IP
+    AddressDependent,
+    /// Address and Port Dependent Mapping (APDM)
+    /// Different external port per destination IP:port (symmetric)
+    AddressPortDependent,
+}
+
+impl std::fmt::Display for MappingBehavior {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::EndpointIndependent => write!(f, "Endpoint Independent"),
+            Self::AddressDependent => write!(f, "Address Dependent"),
+            Self::AddressPortDependent => write!(f, "Address+Port Dependent"),
+        }
+    }
+}
+
+/// RFC 4787 NAT filtering behavior classification.
+///
+/// Describes what external traffic the NAT allows through.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FilteringBehavior {
+    /// Endpoint Independent Filtering (EIF)
+    /// Accept from any external host on mapped port (full cone)
+    EndpointIndependent,
+    /// Address Dependent Filtering (ADF)
+    /// Only accept from IPs we've sent to (address-restricted)
+    AddressDependent,
+    /// Address and Port Dependent Filtering (APDF)
+    /// Only accept from exact IP:port we've sent to (port-restricted, symmetric)
+    AddressPortDependent,
+}
+
+impl std::fmt::Display for FilteringBehavior {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::EndpointIndependent => write!(f, "Endpoint Independent"),
+            Self::AddressDependent => write!(f, "Address Dependent"),
+            Self::AddressPortDependent => write!(f, "Address+Port Dependent"),
+        }
+    }
+}
+
+/// Comprehensive NAT behavior description based on RFC 4787.
+///
+/// Provides detailed information about NAT characteristics beyond simple type.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NatBehavior {
+    /// How internal addresses are mapped to external
+    pub mapping: MappingBehavior,
+    /// What external traffic is allowed through
+    pub filtering: FilteringBehavior,
+    /// Whether hairpin NAT (NAT loopback) is supported
+    pub hairpin: bool,
+    /// Whether UPnP port mapping is available
+    pub upnp_available: bool,
+    /// Whether NAT-PMP port mapping is available
+    pub nat_pmp_available: bool,
+    /// CGNAT port range limits (None if unlimited)
+    pub port_range: Option<(u16, u16)>,
+    /// Whether this is behind multiple NAT layers
+    pub is_double_nat: bool,
+    /// Estimated hole-punch success rate (0.0 - 1.0)
+    pub estimated_success_rate: f64,
+}
+
+impl Default for NatBehavior {
+    fn default() -> Self {
+        Self {
+            mapping: MappingBehavior::EndpointIndependent,
+            filtering: FilteringBehavior::AddressPortDependent,
+            hairpin: false,
+            upnp_available: false,
+            nat_pmp_available: false,
+            port_range: None,
+            is_double_nat: false,
+            estimated_success_rate: 0.5,
+        }
+    }
+}
+
+impl NatBehavior {
+    /// Create behavior from a NAT type.
+    #[must_use]
+    pub fn from_nat_type(nat_type: NatType) -> Self {
+        match nat_type {
+            NatType::None => Self {
+                mapping: MappingBehavior::EndpointIndependent,
+                filtering: FilteringBehavior::EndpointIndependent,
+                hairpin: true,
+                estimated_success_rate: 1.0,
+                ..Default::default()
+            },
+            NatType::FullCone => Self {
+                mapping: MappingBehavior::EndpointIndependent,
+                filtering: FilteringBehavior::EndpointIndependent,
+                hairpin: false,
+                estimated_success_rate: 0.95,
+                ..Default::default()
+            },
+            NatType::AddressRestricted => Self {
+                mapping: MappingBehavior::EndpointIndependent,
+                filtering: FilteringBehavior::AddressDependent,
+                estimated_success_rate: 0.85,
+                ..Default::default()
+            },
+            NatType::PortRestricted => Self {
+                mapping: MappingBehavior::EndpointIndependent,
+                filtering: FilteringBehavior::AddressPortDependent,
+                estimated_success_rate: 0.80,
+                ..Default::default()
+            },
+            NatType::Symmetric => Self {
+                mapping: MappingBehavior::AddressPortDependent,
+                filtering: FilteringBehavior::AddressPortDependent,
+                estimated_success_rate: 0.40,
+                ..Default::default()
+            },
+            NatType::Cgnat => Self {
+                mapping: MappingBehavior::AddressPortDependent,
+                filtering: FilteringBehavior::AddressPortDependent,
+                port_range: Some((32768, 33023)), // 256 ports typical
+                estimated_success_rate: 0.35,
+                ..Default::default()
+            },
+            NatType::DoubleNat => Self {
+                mapping: MappingBehavior::AddressPortDependent,
+                filtering: FilteringBehavior::AddressPortDependent,
+                is_double_nat: true,
+                estimated_success_rate: 0.25,
+                ..Default::default()
+            },
+            NatType::HairpinNat => Self {
+                mapping: MappingBehavior::EndpointIndependent,
+                filtering: FilteringBehavior::AddressDependent,
+                hairpin: true,
+                estimated_success_rate: 0.85,
+                ..Default::default()
+            },
+            NatType::MobileCarrier => Self {
+                mapping: MappingBehavior::AddressPortDependent,
+                filtering: FilteringBehavior::AddressPortDependent,
+                port_range: Some((32768, 40959)), // Larger CGNAT range
+                estimated_success_rate: 0.30,
+                ..Default::default()
+            },
+            NatType::Upnp => Self {
+                mapping: MappingBehavior::EndpointIndependent,
+                filtering: FilteringBehavior::AddressPortDependent,
+                upnp_available: true,
+                estimated_success_rate: 0.90,
+                ..Default::default()
+            },
+            NatType::NatPmp => Self {
+                mapping: MappingBehavior::EndpointIndependent,
+                filtering: FilteringBehavior::AddressPortDependent,
+                nat_pmp_available: true,
+                estimated_success_rate: 0.90,
+                ..Default::default()
+            },
+            NatType::Unknown => Self::default(),
+        }
+    }
+
+    /// Estimate success rate for connection between two NAT behaviors.
+    #[must_use]
+    pub fn estimate_pair_success_rate(source: &Self, dest: &Self) -> f64 {
+        // If either has port mapping, success is likely
+        if source.upnp_available || source.nat_pmp_available {
+            return 0.95;
+        }
+        if dest.upnp_available || dest.nat_pmp_available {
+            return 0.95;
+        }
+
+        // Double NAT is very hard
+        if source.is_double_nat || dest.is_double_nat {
+            return 0.30;
+        }
+
+        // Both symmetric/CGNAT = relay required
+        if source.mapping == MappingBehavior::AddressPortDependent
+            && dest.mapping == MappingBehavior::AddressPortDependent
+        {
+            return 0.40; // Relay success rate
+        }
+
+        // One endpoint independent = easier
+        if source.filtering == FilteringBehavior::EndpointIndependent
+            || dest.filtering == FilteringBehavior::EndpointIndependent
+        {
+            return 0.95;
+        }
+
+        // Default: average of individual rates
+        (source.estimated_success_rate + dest.estimated_success_rate) / 2.0
     }
 }
 
@@ -989,5 +1346,58 @@ mod tests {
         let json = serde_json::to_string(&attempt).expect("serialization should work");
         assert!(json.contains("hole_punch_coordinated"));
         assert!(json.contains("123"));
+    }
+
+    #[test]
+    fn test_nat_behavior_from_nat_type() {
+        // Test Full Cone NAT behavior
+        let full_cone = NatBehavior::from_nat_type(NatType::FullCone);
+        assert_eq!(full_cone.mapping, MappingBehavior::EndpointIndependent);
+        assert_eq!(full_cone.filtering, FilteringBehavior::EndpointIndependent);
+        assert!(full_cone.estimated_success_rate > 0.9);
+
+        // Test Symmetric NAT behavior
+        let symmetric = NatBehavior::from_nat_type(NatType::Symmetric);
+        assert_eq!(symmetric.mapping, MappingBehavior::AddressPortDependent);
+        assert_eq!(symmetric.filtering, FilteringBehavior::AddressPortDependent);
+        assert!(symmetric.estimated_success_rate < full_cone.estimated_success_rate);
+
+        // Test CGNAT behavior
+        let cgnat = NatBehavior::from_nat_type(NatType::Cgnat);
+        assert!(cgnat.port_range.is_some());
+        assert!(cgnat.estimated_success_rate < symmetric.estimated_success_rate);
+
+        // Test Double NAT behavior
+        let double_nat = NatBehavior::from_nat_type(NatType::DoubleNat);
+        assert!(double_nat.estimated_success_rate < cgnat.estimated_success_rate);
+    }
+
+    #[test]
+    fn test_nat_behavior_pair_success_rate() {
+        // Easy pair: Full Cone to Full Cone
+        let full_cone = NatBehavior::from_nat_type(NatType::FullCone);
+        let easy_rate = NatBehavior::estimate_pair_success_rate(&full_cone, &full_cone);
+        assert!(easy_rate > 0.9);
+
+        // Hard pair: Symmetric to Symmetric
+        let symmetric = NatBehavior::from_nat_type(NatType::Symmetric);
+        let hard_rate = NatBehavior::estimate_pair_success_rate(&symmetric, &symmetric);
+        assert!(hard_rate < easy_rate);
+
+        // Very hard pair: Double NAT to Double NAT
+        let double_nat = NatBehavior::from_nat_type(NatType::DoubleNat);
+        let very_hard_rate = NatBehavior::estimate_pair_success_rate(&double_nat, &double_nat);
+        assert!(very_hard_rate < hard_rate);
+    }
+
+    #[test]
+    fn test_nat_type_extended_variants() {
+        // Test new NAT type display names
+        assert_eq!(NatType::Cgnat.to_string(), "CGNAT");
+        assert_eq!(NatType::DoubleNat.to_string(), "Double NAT");
+        assert_eq!(NatType::HairpinNat.to_string(), "Hairpin NAT");
+        assert_eq!(NatType::MobileCarrier.to_string(), "Mobile Carrier");
+        assert_eq!(NatType::Upnp.to_string(), "UPnP");
+        assert_eq!(NatType::NatPmp.to_string(), "NAT-PMP");
     }
 }

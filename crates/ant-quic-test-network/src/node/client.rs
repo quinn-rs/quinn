@@ -15,6 +15,7 @@ use crate::registry::{
 use crate::tui::{ConnectedPeer, LocalNodeInfo, TuiEvent, country_flag};
 use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
@@ -23,6 +24,10 @@ use tracing::{debug, error, info, warn};
 
 // Real QUIC P2P endpoint imports
 use ant_quic::{NatConfig, P2pConfig, P2pEndpoint, P2pEvent, PeerId as QuicPeerId};
+// Import key types for persistence
+use ant_quic::crypto::raw_public_keys::key_utils::{
+    MlDsaPublicKey, MlDsaSecretKey, generate_ml_dsa_keypair,
+};
 
 use super::test_protocol::{
     CanYouReachRequest, RELAY_MAGIC, ReachResponse, RelayAckResponse, RelayMessage,
@@ -424,6 +429,106 @@ pub struct TestNode {
     gossip_event_rx: Arc<RwLock<mpsc::Receiver<GossipEvent>>>,
 }
 
+/// Get the data directory for persistent storage.
+fn get_data_dir() -> PathBuf {
+    dirs::data_local_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("ant-quic-test")
+}
+
+/// Get the path to the keypair file.
+fn keypair_path() -> PathBuf {
+    get_data_dir().join("identity_keypair.bin")
+}
+
+/// Load or generate a persistent ML-DSA-65 keypair.
+/// The keypair is stored in the data directory to maintain stable peer ID across restarts.
+fn load_or_generate_keypair() -> Result<(MlDsaPublicKey, MlDsaSecretKey), anyhow::Error> {
+    let path = keypair_path();
+
+    // Try to load existing keypair
+    if path.exists() {
+        match std::fs::read(&path) {
+            Ok(data) => {
+                // Format: public_key_len (2 bytes) + public_key + secret_key
+                if data.len() < 2 {
+                    warn!("Keypair file corrupted (too short), generating new keypair");
+                } else {
+                    let pub_len = u16::from_le_bytes([data[0], data[1]]) as usize;
+                    if data.len() >= 2 + pub_len {
+                        let pub_bytes = &data[2..2 + pub_len];
+                        let sec_bytes = &data[2 + pub_len..];
+
+                        // Try to reconstruct the keys
+                        match (
+                            MlDsaPublicKey::from_bytes(pub_bytes),
+                            MlDsaSecretKey::from_bytes(sec_bytes),
+                        ) {
+                            (Ok(public_key), Ok(secret_key)) => {
+                                info!("Loaded existing keypair from {:?}", path);
+                                return Ok((public_key, secret_key));
+                            }
+                            _ => {
+                                warn!("Failed to parse keypair from file, generating new keypair");
+                            }
+                        }
+                    } else {
+                        warn!("Keypair file corrupted (invalid length), generating new keypair");
+                    }
+                }
+            }
+            Err(e) => {
+                warn!("Failed to read keypair file: {}, generating new keypair", e);
+            }
+        }
+    }
+
+    // Generate new keypair
+    info!("Generating new ML-DSA-65 keypair for persistent identity...");
+    let (public_key, secret_key) = generate_ml_dsa_keypair()
+        .map_err(|e| anyhow::anyhow!("Failed to generate keypair: {:?}", e))?;
+
+    // Save the keypair
+    if let Err(e) = save_keypair(&public_key, &secret_key) {
+        warn!("Failed to save keypair: {} (peer ID will change on restart)", e);
+    } else {
+        info!("Saved new keypair to {:?}", keypair_path());
+    }
+
+    Ok((public_key, secret_key))
+}
+
+/// Save a keypair to persistent storage.
+fn save_keypair(public_key: &MlDsaPublicKey, secret_key: &MlDsaSecretKey) -> Result<(), anyhow::Error> {
+    let path = keypair_path();
+
+    // Create parent directory if needed
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+
+    // Format: public_key_len (2 bytes) + public_key + secret_key
+    let pub_bytes = public_key.as_bytes();
+    let sec_bytes = secret_key.as_bytes();
+    let pub_len = pub_bytes.len() as u16;
+
+    let mut data = Vec::with_capacity(2 + pub_bytes.len() + sec_bytes.len());
+    data.extend_from_slice(&pub_len.to_le_bytes());
+    data.extend_from_slice(pub_bytes);
+    data.extend_from_slice(sec_bytes);
+
+    std::fs::write(&path, &data)?;
+
+    // Set restrictive permissions on Unix
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
+    }
+
+    Ok(())
+}
+
 impl TestNode {
     /// Create a new test node with a REAL P2pEndpoint for actual QUIC connections.
     ///
@@ -483,10 +588,14 @@ impl TestNode {
             known_peers.len()
         );
 
+        // Load or generate persistent keypair to maintain stable peer ID across restarts
+        let (public_key, secret_key) = load_or_generate_keypair()?;
+
         let p2p_config = P2pConfig::builder()
             .bind_addr(config.bind_addr)
             .known_peers(known_peers)
             .nat(nat_config)
+            .keypair(public_key, secret_key)
             .build()
             .map_err(|e| anyhow::anyhow!("Failed to build P2P config: {}", e))?;
 

@@ -926,10 +926,14 @@ impl PeerStore {
         for entry in self.peers.iter() {
             // NAT type distribution
             match entry.registration.nat_type {
-                NatType::None => nat_type_public += 1,
+                NatType::None | NatType::Upnp | NatType::NatPmp => nat_type_public += 1,
                 NatType::FullCone => nat_type_full_cone += 1,
-                NatType::Symmetric => nat_type_symmetric += 1,
-                NatType::AddressRestricted | NatType::PortRestricted => nat_type_restricted += 1,
+                NatType::Symmetric | NatType::Cgnat | NatType::DoubleNat | NatType::MobileCarrier => {
+                    nat_type_symmetric += 1
+                }
+                NatType::AddressRestricted
+                | NatType::PortRestricted
+                | NatType::HairpinNat => nat_type_restricted += 1,
                 NatType::Unknown => {}
             }
 
