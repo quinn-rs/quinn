@@ -2036,8 +2036,8 @@ impl NatTraversalEndpoint {
                     // Feed the observed address to discovery manager for OUR local peer
                     // (OBSERVED_ADDRESS tells us our external address as seen by the remote peer)
                     if let Ok(mut discovery) = discovery_manager.lock() {
-                        let _ = discovery
-                            .accept_quic_discovered_address(local_peer_id, observed_addr);
+                        let _ =
+                            discovery.accept_quic_discovered_address(local_peer_id, observed_addr);
                     }
                 }
             }
@@ -2057,10 +2057,7 @@ impl NatTraversalEndpoint {
                                 );
                             }
                             Err(e) => {
-                                debug!(
-                                    "Failed to send ADD_ADDRESS to peer {:?}: {:?}",
-                                    peer_id, e
-                                );
+                                debug!("Failed to send ADD_ADDRESS to peer {:?}: {:?}", peer_id, e);
                             }
                         }
                     }
@@ -2773,7 +2770,10 @@ impl NatTraversalEndpoint {
         peer_id: &PeerId,
     ) -> Result<Option<InnerConnection>, NatTraversalError> {
         // DashMap provides lock-free .get()
-        Ok(self.connections.get(peer_id).map(|entry| entry.value().clone()))
+        Ok(self
+            .connections
+            .get(peer_id)
+            .map(|entry| entry.value().clone()))
     }
 
     /// Add or update a connection for a peer
@@ -2790,7 +2790,10 @@ impl NatTraversalEndpoint {
         );
         // DashMap provides lock-free .insert()
         self.connections.insert(peer_id, connection);
-        info!("add_connection: now have {} connections", self.connections.len());
+        info!(
+            "add_connection: now have {} connections",
+            self.connections.len()
+        );
         Ok(())
     }
 
