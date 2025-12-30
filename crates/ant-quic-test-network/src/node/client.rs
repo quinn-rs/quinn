@@ -1137,6 +1137,10 @@ impl TestNode {
         let gossip_event_rx = Arc::clone(&self.gossip_event_rx);
         let event_tx = self.event_tx.clone();
         let peer_id = self.peer_id.clone();
+        // Add endpoint and connected_peers for triggering connections
+        let endpoint = Arc::clone(&self.endpoint);
+        let connected_peers = Arc::clone(&self.connected_peers);
+        let max_peers = self.config.max_peers;
 
         tokio::spawn(async move {
             // Periodic cleanup and announcement ticker
@@ -1152,11 +1156,65 @@ impl TestNode {
                         if let Some(event) = event {
                             match event {
                                 GossipEvent::PeerDiscovered(announcement) => {
+                                    let peer_id_short = &announcement.peer_id[..8.min(announcement.peer_id.len())];
                                     info!(
                                         "Gossip: discovered peer {} with {} addresses",
-                                        &announcement.peer_id[..8.min(announcement.peer_id.len())],
+                                        peer_id_short,
                                         announcement.addresses.len()
                                     );
+
+                                    // Check if we should try to connect to this peer
+                                    let connected = connected_peers.read().await;
+                                    let already_connected = connected.contains_key(&announcement.peer_id);
+                                    let at_capacity = connected.len() >= max_peers;
+                                    drop(connected);
+
+                                    if already_connected {
+                                        debug!("Gossip: already connected to {}, skipping", peer_id_short);
+                                    } else if at_capacity {
+                                        debug!("Gossip: at max peers ({}), skipping {}", max_peers, peer_id_short);
+                                    } else if !announcement.addresses.is_empty() {
+                                        // Try to connect to the first available address
+                                        let addr = announcement.addresses[0];
+                                        info!(
+                                            "Gossip: attempting connection to {} at {}",
+                                            peer_id_short, addr
+                                        );
+
+                                        // Spawn connection attempt (don't block the gossip loop)
+                                        let endpoint_clone = Arc::clone(&endpoint);
+                                        let gossip_clone = Arc::clone(&gossip_integration);
+                                        let peer_id_for_task = announcement.peer_id.clone();
+                                        tokio::spawn(async move {
+                                            match tokio::time::timeout(
+                                                Duration::from_secs(10),
+                                                endpoint_clone.connect(addr)
+                                            ).await {
+                                                Ok(Ok(_conn)) => {
+                                                    info!(
+                                                        "Gossip: connected to {} via gossip discovery",
+                                                        &peer_id_for_task[..8.min(peer_id_for_task.len())]
+                                                    );
+                                                    // Record success in gossip cache
+                                                    gossip_clone.record_success(&peer_id_for_task);
+                                                }
+                                                Ok(Err(e)) => {
+                                                    debug!(
+                                                        "Gossip: connection to {} failed: {}",
+                                                        &peer_id_for_task[..8.min(peer_id_for_task.len())],
+                                                        e
+                                                    );
+                                                }
+                                                Err(_) => {
+                                                    debug!(
+                                                        "Gossip: connection to {} timed out",
+                                                        &peer_id_for_task[..8.min(peer_id_for_task.len())]
+                                                    );
+                                                }
+                                            }
+                                        });
+                                    }
+
                                     // Send to TUI for visualization
                                     let _ = event_tx.send(TuiEvent::GossipPeerDiscovered {
                                         peer_id: announcement.peer_id.clone(),
