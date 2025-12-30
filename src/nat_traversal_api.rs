@@ -1817,15 +1817,50 @@ impl NatTraversalEndpoint {
                                     });
 
                                 // Store the connection
-                                if let Ok(mut conns) = connections.write() {
-                                    conns.insert(peer_id, connection.clone());
+                                // Use try_write() with async retry to avoid blocking Tokio workers
+                                // This is critical for VPS nodes that receive many inbound connections
+                                let mut retry_count = 0;
+                                loop {
+                                    // Scope the lock so it's released before await
+                                    let got_lock = {
+                                        match connections.try_write() {
+                                            Ok(mut conns) => {
+                                                conns.insert(peer_id, connection.clone());
+                                                true
+                                            }
+                                            Err(std::sync::TryLockError::WouldBlock) => false,
+                                            Err(std::sync::TryLockError::Poisoned(e)) => {
+                                                warn!("Connections lock poisoned: {}", e);
+                                                true // Exit loop on poison
+                                            }
+                                        }
+                                    }; // Lock released here before await
+                                    if got_lock {
+                                        break;
+                                    }
+                                    retry_count += 1;
+                                    if retry_count > 100 {
+                                        warn!("Failed to acquire connections lock after 100 retries");
+                                        break;
+                                    }
+                                    // Yield to other tasks instead of blocking
+                                    tokio::time::sleep(std::time::Duration::from_millis(1)).await;
                                 }
 
                                 // Only emit ConnectionEstablished if we haven't already for this peer
-                                let should_emit = if let Ok(mut emitted) = emitted_events.write() {
-                                    emitted.insert(peer_id) // Returns true if this is a new peer
-                                } else {
-                                    true // If lock fails, emit anyway
+                                // Use try_write() with async retry - scope the lock before await
+                                let should_emit = loop {
+                                    let result = {
+                                        match emitted_events.try_write() {
+                                            Ok(mut emitted) => Some(emitted.insert(peer_id)),
+                                            Err(std::sync::TryLockError::WouldBlock) => None,
+                                            Err(std::sync::TryLockError::Poisoned(_)) => Some(true),
+                                        }
+                                    }; // Lock released here before await
+                                    if let Some(should_emit) = result {
+                                        break should_emit;
+                                    }
+                                    tokio::time::sleep(std::time::Duration::from_millis(1)).await;
                                 };
 
                                 if should_emit {
