@@ -30,8 +30,9 @@ use ant_quic::crypto::raw_public_keys::key_utils::{
 };
 
 use super::test_protocol::{
-    CanYouReachRequest, RELAY_MAGIC, ReachResponse, RelayAckResponse, RelayMessage,
-    RelayPunchMeNowRequest, RelayState, RelayedDataResponse, TestPacket,
+    CanYouReachRequest, GossipMessage, GossipPeerAnnouncement, GossipPeerInfo, PeerListMessage,
+    RELAY_MAGIC, ReachResponse, RelayAckResponse, RelayMessage, RelayPunchMeNowRequest, RelayState,
+    RelayedDataResponse, TestPacket,
 };
 
 /// Configuration for the test node.
@@ -703,6 +704,35 @@ impl TestNode {
         // Geo provider for looking up country codes from IP addresses
         let geo_provider = Arc::new(BgpGeoProvider::new());
 
+        // Create connected_peers early so it can be shared with event handler
+        let connected_peers: Arc<RwLock<HashMap<String, TrackedPeer>>> =
+            Arc::new(RwLock::new(HashMap::new()));
+
+        // Initialize gossip integration layer with bootstrap cache (created early for event handler)
+        let (gossip_event_tx, gossip_event_rx) = mpsc::channel(100);
+        let gossip_config = GossipConfig {
+            cache_path: Some(
+                dirs::data_dir()
+                    .unwrap_or_else(|| std::path::PathBuf::from("."))
+                    .join("ant-quic-test")
+                    .join("peer_cache.cbor"),
+            ),
+            ..GossipConfig::default()
+        };
+        let gossip_integration = Arc::new(GossipIntegration::new(
+            peer_id.clone(),
+            listen_addresses.clone(),
+            false, // Assume not public initially, will update when external address discovered
+            false, // is_public_ipv4 - will update when external IPv4 discovered
+            false, // is_public_ipv6 - will update when external IPv6 discovered
+            gossip_config,
+            gossip_event_tx,
+        ));
+        info!(
+            "Initialized gossip integration with bootstrap cache ({} cached peers)",
+            gossip_integration.cache_size()
+        );
+
         // Spawn event handler for P2P events to update TUI
         let endpoint_for_events = endpoint.clone();
         let event_tx_for_events = event_tx.clone();
@@ -714,6 +744,8 @@ impl TestNode {
         let geo_provider_for_events = Arc::clone(&geo_provider);
         let relay_state_for_events = Arc::clone(&relay_state);
         let listen_addresses_for_events = listen_addresses.clone();
+        let connected_peers_for_events = Arc::clone(&connected_peers);
+        let peer_id_for_events = peer_id.clone();
         tokio::spawn(async move {
             let mut events = endpoint_for_events.subscribe();
             while let Ok(event) = events.recv().await {
@@ -848,6 +880,50 @@ impl TestNode {
                                 &peer_hex[..8.min(peer_hex.len())]
                             );
                         }
+
+                        // === GOSSIP: Exchange peer lists with newly connected peer ===
+                        // This is the core of gossip-first peer discovery:
+                        // When we connect to a peer, we send them our list of known peers,
+                        // and they send us theirs.
+                        let endpoint_for_gossip = endpoint_for_events.clone();
+                        let connected_peers_for_gossip = Arc::clone(&connected_peers_for_events);
+                        let our_peer_id_for_gossip = peer_id_for_events.clone();
+                        let new_peer_hex = peer_hex.clone();
+                        tokio::spawn(async move {
+                            // Small delay to ensure connection is fully established
+                            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+                            // Build peer list from currently connected peers
+                            let peer_list = {
+                                let connected = connected_peers_for_gossip.read().await;
+                                build_peer_list_from_connected(&connected, &our_peer_id_for_gossip)
+                            };
+
+                            // Send our peer list to the newly connected peer
+                            if let Err(e) = send_gossip_peer_list(
+                                &endpoint_for_gossip,
+                                &new_peer_hex,
+                                &our_peer_id_for_gossip,
+                                peer_list.clone(),
+                            )
+                            .await
+                            {
+                                debug!(
+                                    "Failed to send peer list to {}: {}",
+                                    &new_peer_hex[..8.min(new_peer_hex.len())],
+                                    e
+                                );
+                            } else {
+                                info!(
+                                    "Sent peer list ({} peers) to newly connected {}",
+                                    peer_list.len(),
+                                    &new_peer_hex[..8.min(new_peer_hex.len())]
+                                );
+                            }
+                        });
+
+                        // Note: Gossip messages are now received via the central
+                        // endpoint.recv() loop in start_gossip_listener, not per-peer
                     }
                     P2pEvent::PeerDisconnected { peer_id, reason } => {
                         let peer_hex = hex::encode(peer_id.0);
@@ -892,31 +968,6 @@ impl TestNode {
             }
         });
 
-        // Initialize gossip integration layer with bootstrap cache
-        let (gossip_event_tx, gossip_event_rx) = mpsc::channel(100);
-        let gossip_config = GossipConfig {
-            cache_path: Some(
-                dirs::data_dir()
-                    .unwrap_or_else(|| std::path::PathBuf::from("."))
-                    .join("ant-quic-test")
-                    .join("peer_cache.cbor"),
-            ),
-            ..GossipConfig::default()
-        };
-        let gossip_integration = GossipIntegration::new(
-            peer_id.clone(),
-            listen_addresses.clone(),
-            false, // Assume not public initially, will update when external address discovered
-            false, // is_public_ipv4 - will update when external IPv4 discovered
-            false, // is_public_ipv6 - will update when external IPv6 discovered
-            gossip_config,
-            gossip_event_tx,
-        );
-        info!(
-            "Initialized gossip integration with bootstrap cache ({} cached peers)",
-            gossip_integration.cache_size()
-        );
-
         Ok(Self {
             listen_addresses,
             config,
@@ -925,7 +976,7 @@ impl TestNode {
             peer_id,
             public_key,
             external_addresses, // Use the shared Arc created before event handler
-            connected_peers: Arc::new(RwLock::new(HashMap::new())),
+            connected_peers,    // Use the shared Arc created before event handler
             total_bytes_sent: Arc::new(AtomicU64::new(0)),
             total_bytes_received: Arc::new(AtomicU64::new(0)),
             total_connections_success: Arc::new(AtomicU64::new(0)),
@@ -943,7 +994,7 @@ impl TestNode {
             pending_outbound,
             inbound_connections,
             relay_state,
-            gossip_integration: Arc::new(gossip_integration),
+            gossip_integration, // Already Arc-wrapped
             gossip_event_rx: Arc::new(RwLock::new(gossip_event_rx)),
         })
     }
@@ -1395,6 +1446,136 @@ impl TestNode {
                     _ = cleanup_ticker.tick() => {
                         gossip_integration.discovery().cleanup_stale().await;
                         debug!("Gossip: cleaned up stale entries for {}", &peer_id[..8.min(peer_id.len())]);
+                    }
+
+                    // Receive incoming data from all connected peers
+                    result = endpoint.recv(Duration::from_millis(100)) => {
+                        if let Ok((sender_peer_id, data)) = result {
+                            let sender_hex = hex::encode(sender_peer_id.0);
+
+                            // Check if it's a gossip message
+                            if GossipMessage::is_gossip_message(&data) {
+                                // Try to parse as PeerListMessage
+                                if let Ok(peer_list) = PeerListMessage::from_bytes(&data) {
+                                    info!(
+                                        "Received peer list from {} with {} peers",
+                                        &sender_hex[..8.min(sender_hex.len())],
+                                        peer_list.peers.len()
+                                    );
+
+                                    // Process each peer in the list
+                                    for peer_info in peer_list.peers {
+                                        // Skip if it's us
+                                        if peer_info.peer_id == peer_id {
+                                            continue;
+                                        }
+
+                                        // Check if already connected
+                                        let connected = connected_peers.read().await;
+                                        let already_connected = connected.contains_key(&peer_info.peer_id);
+                                        let at_capacity = connected.len() >= max_peers;
+                                        drop(connected);
+
+                                        if already_connected || at_capacity {
+                                            continue;
+                                        }
+
+                                        // Store in gossip integration
+                                        gossip_integration.add_peer(
+                                            &peer_info.peer_id,
+                                            &peer_info.addresses,
+                                            peer_info.is_public,
+                                        );
+
+                                        // Broadcast to other connected peers
+                                        let announcement = GossipPeerAnnouncement::new(
+                                            peer_info.clone(),
+                                            peer_id.clone(),
+                                            3,
+                                        );
+                                        let endpoint_for_broadcast = Arc::clone(&endpoint);
+                                        let connected_for_broadcast = Arc::clone(&connected_peers);
+                                        let sender_id = sender_hex.clone();
+                                        tokio::spawn(async move {
+                                            let _ = broadcast_peer_announcement(
+                                                &endpoint_for_broadcast,
+                                                &connected_for_broadcast,
+                                                &announcement,
+                                                Some(&sender_id),
+                                            ).await;
+                                        });
+
+                                        // Attempt connection to new peer
+                                        if !peer_info.addresses.is_empty() {
+                                            let addr = peer_info.addresses[0];
+                                            let endpoint_clone = Arc::clone(&endpoint);
+                                            let gossip_clone = Arc::clone(&gossip_integration);
+                                            let peer_id_for_connect = peer_info.peer_id.clone();
+                                            tokio::spawn(async move {
+                                                if let Ok(Ok(_)) = tokio::time::timeout(
+                                                    Duration::from_secs(10),
+                                                    endpoint_clone.connect(addr),
+                                                ).await {
+                                                    info!(
+                                                        "Gossip: connected to {} via peer list",
+                                                        &peer_id_for_connect[..8.min(peer_id_for_connect.len())]
+                                                    );
+                                                    gossip_clone.record_success(&peer_id_for_connect);
+                                                }
+                                            });
+                                        }
+                                    }
+                                } else if let Ok(announcement) = GossipPeerAnnouncement::from_bytes(&data) {
+                                    info!(
+                                        "Received peer announcement for {} from {}",
+                                        &announcement.peer.peer_id[..8.min(announcement.peer.peer_id.len())],
+                                        &sender_hex[..8.min(sender_hex.len())]
+                                    );
+
+                                    // Process announced peer
+                                    let peer_info = &announcement.peer;
+                                    if peer_info.peer_id != peer_id {
+                                        let connected = connected_peers.read().await;
+                                        let already_connected = connected.contains_key(&peer_info.peer_id);
+                                        let at_capacity = connected.len() >= max_peers;
+                                        drop(connected);
+
+                                        if !already_connected && !at_capacity && !peer_info.addresses.is_empty() {
+                                            gossip_integration.add_peer(
+                                                &peer_info.peer_id,
+                                                &peer_info.addresses,
+                                                peer_info.is_public,
+                                            );
+
+                                            let addr = peer_info.addresses[0];
+                                            let endpoint_clone = Arc::clone(&endpoint);
+                                            let gossip_clone = Arc::clone(&gossip_integration);
+                                            let peer_id_for_connect = peer_info.peer_id.clone();
+                                            tokio::spawn(async move {
+                                                if let Ok(Ok(_)) = tokio::time::timeout(
+                                                    Duration::from_secs(10),
+                                                    endpoint_clone.connect(addr),
+                                                ).await {
+                                                    info!(
+                                                        "Gossip: connected to {} via announcement",
+                                                        &peer_id_for_connect[..8.min(peer_id_for_connect.len())]
+                                                    );
+                                                    gossip_clone.record_success(&peer_id_for_connect);
+                                                }
+                                            });
+                                        }
+                                    }
+                                }
+                            } else if RelayMessage::is_relay_message(&data) {
+                                // Handle relay messages
+                                debug!(
+                                    "Received relay message ({} bytes) from {}",
+                                    data.len(),
+                                    &sender_hex[..8.min(sender_hex.len())]
+                                );
+                                // TODO: Process relay message
+                            }
+                        }
                     }
                 }
             }
@@ -3016,3 +3197,168 @@ async fn real_test_exchange(
 
     Ok(rtt)
 }
+
+// ============================================================================
+// Gossip Peer List Exchange Functions
+// ============================================================================
+
+/// Send our peer list to a specific peer.
+///
+/// Called when a new connection is established to exchange peer knowledge.
+async fn send_gossip_peer_list(
+    endpoint: &P2pEndpoint,
+    peer_id_hex: &str,
+    our_peer_id: &str,
+    peers: Vec<GossipPeerInfo>,
+) -> Result<(), String> {
+    // Convert hex peer ID to QuicPeerId
+    let peer_id_bytes =
+        hex::decode(peer_id_hex).map_err(|e| format!("Invalid peer ID hex: {}", e))?;
+
+    if peer_id_bytes.len() < 32 {
+        return Err("Peer ID too short".to_string());
+    }
+
+    let mut peer_id_array = [0u8; 32];
+    peer_id_array.copy_from_slice(&peer_id_bytes[..32]);
+    let quic_peer_id = QuicPeerId(peer_id_array);
+
+    // Get the QUIC connection for this peer
+    let connection = endpoint
+        .get_quic_connection(&quic_peer_id)
+        .map_err(|e| format!("Failed to get connection: {}", e))?
+        .ok_or_else(|| "No connection to peer".to_string())?;
+
+    // Create peer list message
+    let message = PeerListMessage::new(our_peer_id.to_string(), peers);
+
+    // Serialize the message
+    let message_data = message
+        .to_bytes()
+        .map_err(|e| format!("Failed to serialize peer list: {}", e))?;
+
+    // Open a unidirectional stream and send the message
+    let mut send_stream = connection
+        .open_uni()
+        .await
+        .map_err(|e| format!("Failed to open stream: {}", e))?;
+
+    send_stream
+        .write_all(&message_data)
+        .await
+        .map_err(|e| format!("Failed to write data: {}", e))?;
+
+    send_stream
+        .finish()
+        .map_err(|e| format!("Failed to finish stream: {}", e))?;
+
+    info!(
+        "Sent peer list ({} peers) to {}",
+        message.peers.len(),
+        &peer_id_hex[..8.min(peer_id_hex.len())]
+    );
+
+    Ok(())
+}
+
+/// Broadcast a peer announcement to all connected peers.
+///
+/// Called when a new peer is discovered to propagate the information.
+async fn broadcast_peer_announcement(
+    endpoint: &P2pEndpoint,
+    connected_peers: &RwLock<HashMap<String, TrackedPeer>>,
+    announcement: &GossipPeerAnnouncement,
+    exclude_peer: Option<&str>,
+) -> usize {
+    // Collect peer IDs first to avoid holding lock during network operations
+    let peer_ids: Vec<String> = {
+        let peers = connected_peers.read().await;
+        peers
+            .keys()
+            .filter(|id| {
+                if let Some(exclude) = exclude_peer {
+                    id.as_str() != exclude
+                } else {
+                    true
+                }
+            })
+            .cloned()
+            .collect()
+    };
+
+    let mut success_count = 0;
+
+    for peer_id_hex in peer_ids {
+        // Convert hex peer ID to QuicPeerId
+        let peer_id_bytes = match hex::decode(&peer_id_hex) {
+            Ok(bytes) => bytes,
+            Err(_) => continue,
+        };
+
+        if peer_id_bytes.len() < 32 {
+            continue;
+        }
+
+        let mut peer_id_array = [0u8; 32];
+        peer_id_array.copy_from_slice(&peer_id_bytes[..32]);
+        let quic_peer_id = QuicPeerId(peer_id_array);
+
+        // Get the QUIC connection for this peer
+        let connection = match endpoint.get_quic_connection(&quic_peer_id) {
+            Ok(Some(conn)) => conn,
+            _ => continue,
+        };
+
+        // Serialize the announcement
+        let message_data = match announcement.to_bytes() {
+            Ok(data) => data,
+            Err(_) => continue,
+        };
+
+        // Open a unidirectional stream and send the announcement
+        let result = async {
+            let mut send_stream = connection.open_uni().await?;
+            send_stream.write_all(&message_data).await?;
+            send_stream.finish()?;
+            Ok::<_, Box<dyn std::error::Error + Send + Sync>>(())
+        }
+        .await;
+
+        if result.is_ok() {
+            success_count += 1;
+            debug!(
+                "Broadcast peer announcement for {} to {}",
+                &announcement.peer.peer_id[..8.min(announcement.peer.peer_id.len())],
+                &peer_id_hex[..8.min(peer_id_hex.len())]
+            );
+        }
+    }
+
+    success_count
+}
+
+/// Build a list of known peers for gossip exchange.
+fn build_peer_list_from_connected(
+    connected: &HashMap<String, TrackedPeer>,
+    our_peer_id: &str,
+) -> Vec<GossipPeerInfo> {
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+
+    connected
+        .iter()
+        .filter(|(id, _)| id.as_str() != our_peer_id)
+        .map(|(peer_id, tracked)| GossipPeerInfo {
+            peer_id: peer_id.clone(),
+            addresses: tracked.info.addresses.clone(),
+            is_public: matches!(tracked.method, ConnectionMethod::Direct),
+            is_connected: true,
+            last_seen_ms: now_ms,
+        })
+        .collect()
+}
+
+// Note: Gossip message receiving is now done via the central endpoint.recv()
+// loop in start_gossip_listener, not via per-peer receivers.

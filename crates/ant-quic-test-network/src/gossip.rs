@@ -716,6 +716,40 @@ impl GossipIntegration {
         self.peer_cache.insert(entry);
     }
 
+    /// Add a peer by ID and addresses (simple interface for gossip).
+    pub fn add_peer(&self, peer_id_hex: &str, addresses: &[std::net::SocketAddr], is_public: bool) {
+        let peer_id = match parse_peer_id(peer_id_hex) {
+            Some(id) => id,
+            None => {
+                debug!(
+                    "Could not parse peer ID for cache: {}",
+                    &peer_id_hex[..16.min(peer_id_hex.len())]
+                );
+                return;
+            }
+        };
+
+        let nat_class = if is_public {
+            NatClass::Eim // Endpoint-independent mapping (public)
+        } else {
+            NatClass::Unknown
+        };
+
+        let roles = PeerRoles {
+            coordinator: false,
+            relay: false,
+            reflector: false,
+            rendezvous: false,
+        };
+        let entry = PeerCacheEntry::new(peer_id, addresses.to_vec(), nat_class, roles);
+        self.add_to_cache(entry);
+        debug!(
+            "Added peer {} with {} addresses to gossip cache",
+            &peer_id_hex[..8.min(peer_id_hex.len())],
+            addresses.len()
+        );
+    }
+
     /// Add a peer announcement to the bootstrap cache.
     pub fn cache_peer_announcement(&self, announcement: &PeerAnnouncement) {
         // Convert announcement to PeerCacheEntry

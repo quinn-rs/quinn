@@ -855,6 +855,165 @@ impl RelayState {
     }
 }
 
+// ============================================================================
+// Gossip Protocol for Peer List Exchange
+// ============================================================================
+//
+// This protocol enables decentralized peer discovery by exchanging peer lists
+// between connected peers. When two nodes connect, they exchange their known
+// peer lists, enabling new nodes to discover the network without relying
+// solely on the registry.
+//
+// Flow:
+// 1. A connects to B
+// 2. Both A and B send their peer list to each other
+// 3. Each node tries to connect to new peers discovered
+// 4. When a new peer is discovered, broadcast to all connected peers
+
+/// Magic bytes to identify gossip protocol messages.
+pub const GOSSIP_MAGIC: [u8; 4] = *b"GOSP";
+
+/// Gossip protocol message types.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum GossipMessage {
+    /// Peer list exchange - share known peers.
+    PeerList(PeerListMessage),
+    /// Single peer announcement - notify about a new peer.
+    PeerAnnouncement(GossipPeerAnnouncement),
+}
+
+/// A list of known peers to share via gossip.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PeerListMessage {
+    /// Magic bytes for protocol identification.
+    pub magic: [u8; 4],
+    /// Sender's peer ID (32 bytes hex).
+    pub sender_id: String,
+    /// List of known peers.
+    pub peers: Vec<GossipPeerInfo>,
+    /// Timestamp when this message was created.
+    pub timestamp_ms: u64,
+}
+
+/// Information about a peer shared via gossip.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GossipPeerInfo {
+    /// Hex-encoded peer ID.
+    pub peer_id: String,
+    /// Known addresses for this peer.
+    pub addresses: Vec<SocketAddr>,
+    /// Whether this peer is publicly reachable.
+    pub is_public: bool,
+    /// Whether we're currently connected to this peer.
+    pub is_connected: bool,
+    /// Last time we successfully communicated with this peer.
+    pub last_seen_ms: u64,
+}
+
+/// Single peer announcement broadcast to all connected peers.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GossipPeerAnnouncement {
+    /// Magic bytes for protocol identification.
+    pub magic: [u8; 4],
+    /// The peer being announced.
+    pub peer: GossipPeerInfo,
+    /// Announcer's peer ID.
+    pub announcer_id: String,
+    /// Timestamp when this announcement was created.
+    pub timestamp_ms: u64,
+    /// TTL - how many more hops this announcement should propagate (prevents infinite loops).
+    pub ttl: u8,
+}
+
+impl PeerListMessage {
+    /// Create a new peer list message.
+    pub fn new(sender_id: String, peers: Vec<GossipPeerInfo>) -> Self {
+        Self {
+            magic: GOSSIP_MAGIC,
+            sender_id,
+            peers,
+            timestamp_ms: current_timestamp_ns() / 1_000_000,
+        }
+    }
+
+    /// Serialize to bytes.
+    pub fn to_bytes(&self) -> Result<Vec<u8>, serde_json::Error> {
+        serde_json::to_vec(&GossipMessage::PeerList(self.clone()))
+    }
+
+    /// Deserialize from bytes.
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, serde_json::Error> {
+        let msg: GossipMessage = serde_json::from_slice(bytes)?;
+        match msg {
+            GossipMessage::PeerList(list) => Ok(list),
+            GossipMessage::PeerAnnouncement(_) => Err(serde::de::Error::custom(
+                "Expected PeerList, got PeerAnnouncement",
+            )),
+        }
+    }
+}
+
+#[allow(dead_code)] // Will be used for gossip broadcast on discovery
+impl GossipPeerAnnouncement {
+    /// Create a new peer announcement.
+    pub fn new(peer: GossipPeerInfo, announcer_id: String, ttl: u8) -> Self {
+        Self {
+            magic: GOSSIP_MAGIC,
+            peer,
+            announcer_id,
+            timestamp_ms: current_timestamp_ns() / 1_000_000,
+            ttl,
+        }
+    }
+
+    /// Serialize to bytes.
+    pub fn to_bytes(&self) -> Result<Vec<u8>, serde_json::Error> {
+        serde_json::to_vec(&GossipMessage::PeerAnnouncement(self.clone()))
+    }
+
+    /// Deserialize from bytes.
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, serde_json::Error> {
+        let msg: GossipMessage = serde_json::from_slice(bytes)?;
+        match msg {
+            GossipMessage::PeerAnnouncement(announcement) => Ok(announcement),
+            GossipMessage::PeerList(_) => Err(serde::de::Error::custom(
+                "Expected PeerAnnouncement, got PeerList",
+            )),
+        }
+    }
+
+    /// Create a copy with decremented TTL for forwarding.
+    pub fn forward(&self) -> Option<Self> {
+        if self.ttl == 0 {
+            return None;
+        }
+        Some(Self {
+            magic: self.magic,
+            peer: self.peer.clone(),
+            announcer_id: self.announcer_id.clone(),
+            timestamp_ms: self.timestamp_ms,
+            ttl: self.ttl - 1,
+        })
+    }
+}
+
+#[allow(dead_code)] // Used for gossip message parsing
+impl GossipMessage {
+    /// Deserialize from bytes.
+    pub fn from_bytes(data: &[u8]) -> Result<Self, serde_json::Error> {
+        serde_json::from_slice(data)
+    }
+
+    /// Check if bytes look like a gossip message (check magic).
+    pub fn is_gossip_message(data: &[u8]) -> bool {
+        if data.len() < 10 {
+            return false;
+        }
+        // JSON-encoded, so we look for the magic in the content
+        data.windows(4).any(|w| w == GOSSIP_MAGIC)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
