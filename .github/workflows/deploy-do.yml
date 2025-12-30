@@ -37,24 +37,30 @@ jobs:
       fail-fast: false
       matrix:
         node:
-          - name: node-1
-            host: 162.243.167.201
-            description: "Primary coordinator node (nyc1)"
-          - name: node-2
-            host: 159.65.221.230
-            description: "Secondary node (nyc1)"
-          - name: nat-fullcone
-            host: 67.205.158.158
-            description: "Full Cone NAT simulation (nyc1)"
-          - name: nat-restricted
-            host: 161.35.231.80
-            description: "Address Restricted NAT simulation (sfo3)"
-          - name: nat-portrestricted
-            host: 178.62.192.11
-            description: "Port Restricted NAT simulation (ams3)"
-          - name: nat-symmetric
-            host: 159.65.90.128
-            description: "Symmetric NAT simulation (lon1)"
+          - name: saorsa-2
+            host: 142.93.199.50
+            description: "Bootstrap Node (NYC1)"
+          - name: saorsa-3
+            host: 147.182.234.192
+            description: "Bootstrap Node (SFO3)"
+          - name: saorsa-4
+            host: 206.189.7.117
+            description: "Test Node (AMS3)"
+          - name: saorsa-5
+            host: 144.126.230.161
+            description: "Test Node (LON1)"
+          - name: saorsa-6
+            host: 65.21.157.229
+            description: "Test Node - Hetzner (Helsinki)"
+          - name: saorsa-7
+            host: 116.203.101.172
+            description: "Test Node - Hetzner (Nuremberg)"
+          - name: saorsa-8
+            host: 149.28.156.231
+            description: "Test Node - Vultr (Singapore)"
+          - name: saorsa-9
+            host: 45.77.176.184
+            description: "Test Node - Vultr (Tokyo)"
 
     steps:
       - name: Determine version and binary
@@ -217,11 +223,13 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### Node Status" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Node | IP | Region | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "| Node | IP | Provider/Region | Status |" >> $GITHUB_STEP_SUMMARY
           echo "|------|-----|--------|--------|" >> $GITHUB_STEP_SUMMARY
-          echo "| node-1 | 162.243.167.201 | nyc1 | ${{ needs.deploy.result }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| node-2 | 159.65.221.230 | nyc1 | ${{ needs.deploy.result }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| nat-fullcone | 67.205.158.158 | nyc1 | ${{ needs.deploy.result }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| nat-restricted | 161.35.231.80 | sfo3 | ${{ needs.deploy.result }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| nat-portrestricted | 178.62.192.11 | ams3 | ${{ needs.deploy.result }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| nat-symmetric | 159.65.90.128 | lon1 | ${{ needs.deploy.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| saorsa-2 | 142.93.199.50 | DO NYC1 | ${{ needs.deploy.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| saorsa-3 | 147.182.234.192 | DO SFO3 | ${{ needs.deploy.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| saorsa-4 | 206.189.7.117 | DO AMS3 | ${{ needs.deploy.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| saorsa-5 | 144.126.230.161 | DO LON1 | ${{ needs.deploy.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| saorsa-6 | 65.21.157.229 | Hetzner Helsinki | ${{ needs.deploy.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| saorsa-7 | 116.203.101.172 | Hetzner Nuremberg | ${{ needs.deploy.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| saorsa-8 | 149.28.156.231 | Vultr Singapore | ${{ needs.deploy.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| saorsa-9 | 45.77.176.184 | Vultr Tokyo | ${{ needs.deploy.result }} |" >> $GITHUB_STEP_SUMMARY
