@@ -68,6 +68,6 @@ pub use types::{
     ConnectionBreakdown, ConnectionDirection, ConnectionMethod, ConnectionReport,
     ConnectionTechnique, ConnectivityMatrix, ExperimentResults, FilteringBehavior, MappingBehavior,
     NatBehavior, NatStats, NatType, NetworkEvent, NetworkStats, NodeCapabilities, NodeGossipStats,
-    NodeHeartbeat, NodeRegistration, PeerInfo, RegistrationResponse, TechniqueAttempt,
+    NodeHeartbeat, NodeRegistration, PeerInfo, PeerStatus, RegistrationResponse, TechniqueAttempt,
     unix_timestamp_ms,
 };

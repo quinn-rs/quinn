@@ -10,7 +10,7 @@ use crate::gossip::{
 use crate::registry::{
     BgpGeoProvider, ConnectionDirection, ConnectionMethod, ConnectionReport, ConnectivityMatrix,
     NatStats, NatType, NodeCapabilities, NodeGossipStats, NodeHeartbeat, NodeRegistration,
-    PeerInfo, RegistryClient,
+    PeerInfo, PeerStatus, RegistryClient,
 };
 use crate::tui::{ConnectedPeer, LocalNodeInfo, TuiEvent, country_flag};
 use std::collections::{HashMap, HashSet};
@@ -863,6 +863,68 @@ impl TestNode {
                             pending.remove(&peer_hex);
                             // Track outbound connection
                             let _ = event_tx_for_events.send(TuiEvent::OutboundConnection).await;
+                        }
+
+                        // === ADD PEER TO CONNECTED_PEERS IMMEDIATELY ===
+                        // This ensures the peer list gossip includes this peer.
+                        // For outbound connections, this may be replaced later by the
+                        // comprehensive test which has more detailed info.
+                        {
+                            let mut peers = connected_peers_for_events.write().await;
+                            if !peers.contains_key(&peer_hex) {
+                                let now = Instant::now();
+                                let direction = if is_inbound {
+                                    ConnectionDirection::Inbound
+                                } else {
+                                    ConnectionDirection::Outbound
+                                };
+                                let method = if is_inbound {
+                                    ConnectionMethod::HolePunched // They traversed to us
+                                } else {
+                                    ConnectionMethod::Direct // Placeholder, comprehensive test updates
+                                };
+
+                                // Create minimal PeerInfo for tracking
+                                let peer_info = PeerInfo {
+                                    peer_id: peer_hex.clone(),
+                                    addresses: vec![addr],
+                                    nat_type: NatType::Unknown,
+                                    country_code: None,
+                                    latitude: 0.0,
+                                    longitude: 0.0,
+                                    last_seen: std::time::SystemTime::now()
+                                        .duration_since(std::time::UNIX_EPOCH)
+                                        .map(|d| d.as_secs())
+                                        .unwrap_or(0),
+                                    connection_success_rate: 1.0,
+                                    capabilities: NodeCapabilities::default(),
+                                    version: String::new(),
+                                    is_active: true,
+                                    status: PeerStatus::Active,
+                                    bytes_sent: 0,
+                                    bytes_received: 0,
+                                    connected_peers: 0,
+                                };
+
+                                let tracked = TrackedPeer {
+                                    info: peer_info,
+                                    method,
+                                    direction,
+                                    connected_at: now,
+                                    last_activity: now,
+                                    stats: PeerStats::default(),
+                                    sequence: AtomicU64::new(0),
+                                    consecutive_failures: 0,
+                                    connectivity: ConnectivityMatrix::default(),
+                                };
+
+                                peers.insert(peer_hex.clone(), tracked);
+                                debug!(
+                                    "Added peer {} to connected_peers immediately (direction: {:?})",
+                                    &peer_hex[..8.min(peer_hex.len())],
+                                    direction
+                                );
+                            }
                         }
 
                         // Update relay state to track this connected peer
