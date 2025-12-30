@@ -1857,6 +1857,8 @@ impl TestNode {
         let inbound_connections = Arc::clone(&self.inbound_connections);
         // Clone gossip integration for gossip stats reporting
         let gossip_integration = Arc::clone(&self.gossip_integration);
+        // Clone event_tx to send HeartbeatSent events to TUI
+        let event_tx = self.event_tx.clone();
 
         tokio::spawn(async move {
             let mut ticker = tokio::time::interval(interval);
@@ -1984,6 +1986,8 @@ impl TestNode {
                     }
                     consecutive_failures = 0;
                     debug!("Heartbeat sent successfully");
+                    // Notify TUI that heartbeat was successful
+                    let _ = event_tx.send(TuiEvent::HeartbeatSent).await;
                 }
             }
         })
