@@ -2,7 +2,7 @@
 use std::cmp::Ordering;
 
 use std::{
-    cmp::max,
+    cmp,
     collections::{BTreeMap, btree_map},
     ops::{
         Bound::{Excluded, Included},
@@ -82,7 +82,7 @@ impl RangeSet {
             .map(|(_start, end)| end);
 
         if let Some(existing_end) = existing_end {
-            x.end = max(x.end, existing_end);
+            x.end = cmp::max(x.end, existing_end);
         }
 
         self.0.insert(x.start, x.end);
