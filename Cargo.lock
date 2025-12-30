@@ -175,7 +175,7 @@ dependencies = [
 
 [[package]]
 name = "ant-quic"
-version = "0.14.86"
+version = "0.14.87"
 dependencies = [
  "anyhow",
  "arbitrary",
@@ -199,6 +199,7 @@ dependencies = [
  "lru-slab",
  "nix",
  "once_cell",
+ "parking_lot",
  "pin-project-lite",
  "prometheus",
  "proptest",
@@ -248,9 +249,9 @@ dependencies = [
 
 [[package]]
 name = "ant-quic-test-network"
-version = "0.14.86"
+version = "0.14.87"
 dependencies = [
- "ant-quic 0.14.86",
+ "ant-quic 0.14.87",
  "anyhow",
  "crossterm",
  "dashmap",
@@ -258,7 +259,6 @@ dependencies = [
  "futures-util",
  "hex",
  "mime_guess",
- "parking_lot",
  "rand 0.8.5",
  "ratatui",
  "reqwest",

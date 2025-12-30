@@ -71,6 +71,8 @@ fn normalize_socket_addr(addr: SocketAddr) -> SocketAddr {
 use tracing::{debug, error, info, trace, warn};
 
 use std::sync::atomic::{AtomicBool, Ordering};
+// Use parking_lot for faster, non-poisoning locks that work better with async code
+use parking_lot::{Mutex as ParkingMutex, RwLock as ParkingRwLock};
 
 use tokio::{
     net::UdpSocket,
@@ -142,12 +144,14 @@ pub struct NatTraversalEndpoint {
     /// NAT traversal configuration
     config: NatTraversalConfig,
     /// Known bootstrap/coordinator nodes
-    bootstrap_nodes: Arc<std::sync::RwLock<Vec<BootstrapNode>>>,
+    /// Uses parking_lot::RwLock for faster, non-poisoning reads
+    bootstrap_nodes: Arc<ParkingRwLock<Vec<BootstrapNode>>>,
     /// Active NAT traversal sessions
     /// Uses DashMap for fine-grained concurrent access without blocking workers
     active_sessions: Arc<dashmap::DashMap<PeerId, NatTraversalSession>>,
     /// Candidate discovery manager
-    discovery_manager: Arc<std::sync::Mutex<CandidateDiscoveryManager>>,
+    /// Uses parking_lot::Mutex for faster, non-poisoning access
+    discovery_manager: Arc<ParkingMutex<CandidateDiscoveryManager>>,
     /// Event callback for coordination (simplified without async channels)
     /// Wrapped in Arc so it can be shared with background tasks
     event_callback: Option<Arc<dyn Fn(NatTraversalEvent) + Send + Sync>>,
@@ -156,7 +160,8 @@ pub struct NatTraversalEndpoint {
     /// Channel for internal communication
     event_tx: Option<mpsc::UnboundedSender<NatTraversalEvent>>,
     /// Receiver for internal event notifications
-    event_rx: std::sync::Mutex<mpsc::UnboundedReceiver<NatTraversalEvent>>,
+    /// Uses parking_lot::Mutex for faster, non-poisoning access
+    event_rx: ParkingMutex<mpsc::UnboundedReceiver<NatTraversalEvent>>,
     /// Active connections by peer ID
     /// Uses DashMap for fine-grained concurrent access without blocking workers
     connections: Arc<dashmap::DashMap<PeerId, InnerConnection>>,
@@ -941,7 +946,8 @@ impl NatTraversalEndpoint {
             .map_err(|e| NatTraversalError::ConfigError(e.to_string()))?;
 
         // Initialize known peers for discovery and coordination
-        let bootstrap_nodes = Arc::new(std::sync::RwLock::new(
+        // Uses parking_lot::RwLock for faster, non-poisoning access
+        let bootstrap_nodes = Arc::new(ParkingRwLock::new(
             config
                 .known_peers
                 .iter()
@@ -966,7 +972,8 @@ impl NatTraversalEndpoint {
 
         // v0.13.0+: All nodes are symmetric P2P nodes - no role parameter needed
 
-        let discovery_manager = Arc::new(std::sync::Mutex::new(CandidateDiscoveryManager::new(
+        // Uses parking_lot::Mutex for faster, non-poisoning access
+        let discovery_manager = Arc::new(ParkingMutex::new(CandidateDiscoveryManager::new(
             discovery_config,
         )));
 
@@ -976,9 +983,8 @@ impl NatTraversalEndpoint {
 
         // Update discovery manager with the actual bound address
         {
-            let mut discovery = discovery_manager.lock().map_err(|_| {
-                NatTraversalError::ProtocolError("Discovery manager lock poisoned".to_string())
-            })?;
+            // parking_lot::Mutex doesn't poison - no need for map_err
+            let mut discovery = discovery_manager.lock();
             discovery.set_bound_address(local_addr);
             info!(
                 "Updated discovery manager with bound address: {}",
@@ -1036,7 +1042,7 @@ impl NatTraversalEndpoint {
             event_callback,
             shutdown: Arc::new(AtomicBool::new(false)),
             event_tx: Some(event_tx.clone()),
-            event_rx: std::sync::Mutex::new(event_rx),
+            event_rx: ParkingMutex::new(event_rx),
             connections: Arc::new(dashmap::DashMap::new()),
             local_peer_id: Self::generate_local_peer_id(),
             timeout_config: config.timeouts.clone(),
@@ -1094,18 +1100,12 @@ impl NatTraversalEndpoint {
 
         // Start local candidate discovery for our own address
         {
-            let mut discovery = endpoint.discovery_manager.lock().map_err(|_| {
-                NatTraversalError::ProtocolError("Discovery manager lock poisoned".to_string())
-            })?;
+            // parking_lot locks don't poison - no need for map_err
+            let mut discovery = endpoint.discovery_manager.lock();
 
             // Start discovery for our own peer ID to discover local candidates
             let local_peer_id = endpoint.local_peer_id;
-            let bootstrap_nodes = {
-                let nodes = endpoint.bootstrap_nodes.read().map_err(|_| {
-                    NatTraversalError::ProtocolError("Bootstrap nodes lock poisoned".to_string())
-                })?;
-                nodes.clone()
-            };
+            let bootstrap_nodes = endpoint.bootstrap_nodes.read().clone();
 
             discovery
                 .start_discovery(local_peer_id, bootstrap_nodes)
@@ -1163,19 +1163,12 @@ impl NatTraversalEndpoint {
         // DashMap provides lock-free .insert()
         self.active_sessions.insert(peer_id, session);
 
-        // Start candidate discovery
-        let bootstrap_nodes_vec = {
-            let bootstrap_nodes = self
-                .bootstrap_nodes
-                .read()
-                .map_err(|_| NatTraversalError::ProtocolError("Lock poisoned".to_string()))?;
-            bootstrap_nodes.clone()
-        };
+        // Start candidate discovery - parking_lot::RwLock doesn't poison
+        let bootstrap_nodes_vec = self.bootstrap_nodes.read().clone();
 
         {
-            let mut discovery = self.discovery_manager.lock().map_err(|_| {
-                NatTraversalError::ProtocolError("Discovery manager lock poisoned".to_string())
-            })?;
+            // parking_lot::Mutex doesn't poison
+            let mut discovery = self.discovery_manager.lock();
 
             discovery
                 .start_discovery(peer_id, bootstrap_nodes_vec)
@@ -1460,10 +1453,8 @@ impl NatTraversalEndpoint {
     pub fn get_statistics(&self) -> Result<NatTraversalStatistics, NatTraversalError> {
         // DashMap provides lock-free .len() for session count
         let session_count = self.active_sessions.len();
-        let bootstrap_nodes = self
-            .bootstrap_nodes
-            .read()
-            .map_err(|_| NatTraversalError::ProtocolError("Lock poisoned".to_string()))?;
+        // parking_lot::RwLock doesn't poison
+        let bootstrap_nodes = self.bootstrap_nodes.read();
 
         // Calculate average coordination time based on bootstrap node RTTs
         let avg_coordination_time = {
@@ -1491,10 +1482,8 @@ impl NatTraversalEndpoint {
 
     /// Add a new bootstrap node
     pub fn add_bootstrap_node(&self, address: SocketAddr) -> Result<(), NatTraversalError> {
-        let mut bootstrap_nodes = self
-            .bootstrap_nodes
-            .write()
-            .map_err(|_| NatTraversalError::ProtocolError("Lock poisoned".to_string()))?;
+        // parking_lot::RwLock doesn't poison
+        let mut bootstrap_nodes = self.bootstrap_nodes.write();
 
         // Check if already exists
         if !bootstrap_nodes.iter().any(|b| b.address == address) {
@@ -1512,10 +1501,8 @@ impl NatTraversalEndpoint {
 
     /// Remove a bootstrap node
     pub fn remove_bootstrap_node(&self, address: SocketAddr) -> Result<(), NatTraversalError> {
-        let mut bootstrap_nodes = self
-            .bootstrap_nodes
-            .write()
-            .map_err(|_| NatTraversalError::ProtocolError("Lock poisoned".to_string()))?;
+        // parking_lot::RwLock doesn't poison
+        let mut bootstrap_nodes = self.bootstrap_nodes.write();
         bootstrap_nodes.retain(|b| b.address != address);
         info!("Removed bootstrap node: {}", address);
         Ok(())
@@ -1925,7 +1912,7 @@ impl NatTraversalEndpoint {
 
     /// Poll discovery manager in background
     async fn poll_discovery(
-        discovery_manager: Arc<std::sync::Mutex<CandidateDiscoveryManager>>,
+        discovery_manager: Arc<ParkingMutex<CandidateDiscoveryManager>>,
         shutdown: Arc<AtomicBool>,
         event_tx: mpsc::UnboundedSender<NatTraversalEvent>,
         connections: Arc<dashmap::DashMap<PeerId, InnerConnection>>,
@@ -1990,10 +1977,9 @@ impl NatTraversalEndpoint {
 
                     // Feed the observed address to discovery manager for OUR local peer
                     // (OBSERVED_ADDRESS tells us our external address as seen by the remote peer)
-                    if let Ok(mut discovery) = discovery_manager.lock() {
-                        let _ =
-                            discovery.accept_quic_discovered_address(local_peer_id, observed_addr);
-                    }
+                    // parking_lot::Mutex doesn't poison - always succeeds
+                    let mut discovery = discovery_manager.lock();
+                    let _ = discovery.accept_quic_discovered_address(local_peer_id, observed_addr);
                 }
             }
 
@@ -2020,13 +2006,8 @@ impl NatTraversalEndpoint {
             }
 
             // 3. Poll the discovery manager
-            let events = match discovery_manager.lock() {
-                Ok(mut discovery) => discovery.poll(std::time::Instant::now()),
-                Err(e) => {
-                    error!("Failed to lock discovery manager: {}", e);
-                    continue;
-                }
-            };
+            // parking_lot::Mutex doesn't poison - always succeeds
+            let events = discovery_manager.lock().poll(std::time::Instant::now());
 
             // Process discovery events
             for event in events {
@@ -2648,9 +2629,8 @@ impl NatTraversalEndpoint {
 
             // Check for ConnectionEstablished events from background accept task
             {
-                let mut event_rx = self.event_rx.lock().map_err(|_| {
-                    NatTraversalError::ProtocolError("Event channel lock poisoned".to_string())
-                })?;
+                // parking_lot::Mutex doesn't poison
+                let mut event_rx = self.event_rx.lock();
 
                 match event_rx.try_recv() {
                     Ok(NatTraversalEvent::ConnectionEstablished {
@@ -3051,20 +3031,12 @@ impl NatTraversalEndpoint {
 
         let mut candidates = Vec::new();
 
-        // Get bootstrap nodes
-        let bootstrap_nodes = {
-            let nodes = self
-                .bootstrap_nodes
-                .read()
-                .map_err(|_| NatTraversalError::ProtocolError("Lock poisoned".to_string()))?;
-            nodes.clone()
-        };
+        // Get bootstrap nodes - parking_lot::RwLock doesn't poison
+        let bootstrap_nodes = self.bootstrap_nodes.read().clone();
 
-        // Start discovery process
+        // Start discovery process - parking_lot::Mutex doesn't poison
         {
-            let mut discovery = self.discovery_manager.lock().map_err(|_| {
-                NatTraversalError::ProtocolError("Discovery manager lock poisoned".to_string())
-            })?;
+            let mut discovery = self.discovery_manager.lock();
 
             discovery
                 .start_discovery(peer_id, bootstrap_nodes)
@@ -3077,9 +3049,7 @@ impl NatTraversalEndpoint {
 
         while start_time.elapsed() < timeout_duration {
             let discovery_events = {
-                let mut discovery = self.discovery_manager.lock().map_err(|_| {
-                    NatTraversalError::ProtocolError("Discovery manager lock poisoned".to_string())
-                })?;
+                let mut discovery = self.discovery_manager.lock();
                 discovery.poll(std::time::Instant::now())
             };
 
@@ -3202,11 +3172,9 @@ impl NatTraversalEndpoint {
         peer_id: PeerId,
     ) -> Result<Vec<CandidatePair>, NatTraversalError> {
         // Get discovered candidates from the discovery manager
+        // parking_lot::Mutex doesn't poison
         let discovery_candidates = {
-            let discovery = self.discovery_manager.lock().map_err(|_| {
-                NatTraversalError::ProtocolError("Discovery manager lock poisoned".to_string())
-            })?;
-
+            let discovery = self.discovery_manager.lock();
             discovery.get_candidates_for_peer(peer_id)
         };
 
@@ -3547,10 +3515,9 @@ impl NatTraversalEndpoint {
         let mut events = Vec::new();
 
         // Drain any pending events emitted from async tasks
+        // parking_lot::Mutex doesn't poison
         {
-            let mut event_rx = self.event_rx.lock().map_err(|_| {
-                NatTraversalError::ProtocolError("Event channel lock poisoned".to_string())
-            })?;
+            let mut event_rx = self.event_rx.lock();
 
             loop {
                 match event_rx.try_recv() {
@@ -3595,11 +3562,9 @@ impl NatTraversalEndpoint {
         self.check_connections_for_observed_addresses(&mut events)?;
 
         // Poll candidate discovery manager
+        // parking_lot::Mutex doesn't poison
         {
-            let mut discovery = self.discovery_manager.lock().map_err(|_| {
-                NatTraversalError::ProtocolError("Discovery manager lock poisoned".to_string())
-            })?;
-
+            let mut discovery = self.discovery_manager.lock();
             let discovery_events = discovery.poll(now);
 
             // Convert discovery events to NAT traversal events
@@ -3640,17 +3605,9 @@ impl NatTraversalEndpoint {
                 match session.phase {
                     TraversalPhase::Discovery => {
                         // Get candidates from discovery manager
-                        let discovered_candidates = {
-                            let discovery = self.discovery_manager.lock().map_err(|_| {
-                                NatTraversalError::ProtocolError(
-                                    "Discovery manager lock poisoned".to_string(),
-                                )
-                            });
-                            match discovery {
-                                Ok(disc) => disc.get_candidates_for_peer(session.peer_id),
-                                Err(_) => Vec::new(),
-                            }
-                        };
+                        // parking_lot::Mutex doesn't poison
+                        let discovered_candidates =
+                            self.discovery_manager.lock().get_candidates_for_peer(session.peer_id);
 
                         // Update session candidates
                         session.candidates = discovered_candidates.clone();
@@ -3882,16 +3839,12 @@ impl NatTraversalEndpoint {
                 let remote_addr = entry.value().remote_address();
 
                 // Check if this is a bootstrap node connection
-                let is_bootstrap = {
-                    let bootstrap_nodes = self.bootstrap_nodes.read().map_err(|_| {
-                        NatTraversalError::ProtocolError(
-                            "Bootstrap nodes lock poisoned".to_string(),
-                        )
-                    })?;
-                    bootstrap_nodes
-                        .iter()
-                        .any(|node| node.address == remote_addr)
-                };
+                // parking_lot::RwLock doesn't poison
+                let is_bootstrap = self
+                    .bootstrap_nodes
+                    .read()
+                    .iter()
+                    .any(|node| node.address == remote_addr);
 
                 if is_bootstrap {
                     // In a real implementation, we would check the connection for observed addresses
@@ -3948,12 +3901,12 @@ impl NatTraversalEndpoint {
 
     /// Select a coordinator from available bootstrap nodes
     fn select_coordinator(&self) -> Option<SocketAddr> {
-        if let Ok(nodes) = self.bootstrap_nodes.read() {
-            // Simple round-robin or random selection
-            if !nodes.is_empty() {
-                let idx = rand::random::<usize>() % nodes.len();
-                return Some(nodes[idx].address);
-            }
+        // parking_lot::RwLock doesn't poison - always succeeds
+        let nodes = self.bootstrap_nodes.read();
+        // Simple round-robin or random selection
+        if !nodes.is_empty() {
+            let idx = rand::random::<usize>() % nodes.len();
+            return Some(nodes[idx].address);
         }
         None
     }
@@ -4711,11 +4664,8 @@ impl NatTraversalEndpoint {
         // In a real implementation, this would collect actual stats from the endpoint
         Ok(NatTraversalStatistics {
             active_sessions: self.active_sessions.len(),
-            total_bootstrap_nodes: self
-                .bootstrap_nodes
-                .read()
-                .unwrap_or_else(|_| panic!("bootstrap nodes lock should be valid"))
-                .len(),
+            // parking_lot::RwLock doesn't poison - always succeeds
+            total_bootstrap_nodes: self.bootstrap_nodes.read().len(),
             successful_coordinations: 7,
             average_coordination_time: self.timeout_config.nat_traversal.retry_interval,
             total_attempts: 10,

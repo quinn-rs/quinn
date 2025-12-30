@@ -8,7 +8,6 @@
 //! - Country centroid coordinates for globe visualization
 //! - IP prefix-to-ASN mappings for major networks
 
-use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr};
 
@@ -58,21 +57,27 @@ impl Ipv4Prefix {
 }
 
 /// BGP-based geographic IP provider
+///
+/// Data is loaded once at construction and never modified, making lookups lock-free.
 pub struct BgpGeoProvider {
     /// IPv4 prefix-to-ASN mappings (sorted by prefix length, longest first)
-    ipv4_prefixes: RwLock<Vec<Ipv4Prefix>>,
+    /// Lock-free: data is immutable after construction
+    ipv4_prefixes: Vec<Ipv4Prefix>,
     /// ASN-to-country code mappings
-    asn_countries: RwLock<HashMap<u32, &'static str>>,
+    /// Lock-free: data is immutable after construction
+    asn_countries: HashMap<u32, &'static str>,
     /// Country code-to-info mappings
     country_info: HashMap<&'static str, CountryInfo>,
 }
 
 impl BgpGeoProvider {
     /// Create a new BgpGeoProvider with embedded data
+    ///
+    /// All data is loaded at construction time, making subsequent lookups lock-free.
     pub fn new() -> Self {
         let mut provider = Self {
-            ipv4_prefixes: RwLock::new(Vec::new()),
-            asn_countries: RwLock::new(HashMap::new()),
+            ipv4_prefixes: Vec::new(),
+            asn_countries: HashMap::new(),
             country_info: Self::build_country_info(),
         };
         provider.load_asn_data();
@@ -97,9 +102,9 @@ impl BgpGeoProvider {
             }
         };
 
-        // Try ASN-based lookup
+        // Try ASN-based lookup (lock-free since data is immutable)
         if let Some(asn) = self.lookup_asn(ipv4) {
-            if let Some(&country) = self.asn_countries.read().get(&asn) {
+            if let Some(&country) = self.asn_countries.get(&asn) {
                 if let Some(info) = self.country_info.get(country) {
                     let (lat, lon) = self.add_jitter(info.lat, info.lon, ipv4);
                     return (lat, lon, Some(country.to_string()));
@@ -111,11 +116,10 @@ impl BgpGeoProvider {
         self.fallback_geo(ipv4)
     }
 
-    /// Lookup ASN for an IPv4 address
+    /// Lookup ASN for an IPv4 address (lock-free)
     fn lookup_asn(&self, ip: Ipv4Addr) -> Option<u32> {
         let ip_u32 = u32::from(ip);
-        let prefixes = self.ipv4_prefixes.read();
-        for prefix in prefixes.iter() {
+        for prefix in self.ipv4_prefixes.iter() {
             if prefix.matches(ip_u32) {
                 return Some(prefix.asn);
             }
@@ -231,9 +235,8 @@ impl BgpGeoProvider {
             .collect()
     }
 
-    /// Load ASN-to-country mappings
+    /// Load ASN-to-country mappings (called once during construction)
     fn load_asn_data(&mut self) {
-        let mut asn_countries = self.asn_countries.write();
 
         // Major cloud and hosting providers
         let asns: &[(u32, &str)] = &[
@@ -312,13 +315,12 @@ impl BgpGeoProvider {
         ];
 
         for &(asn, country) in asns {
-            asn_countries.insert(asn, country);
+            self.asn_countries.insert(asn, country);
         }
     }
 
-    /// Load IP prefix-to-ASN mappings
+    /// Load IP prefix-to-ASN mappings (called once during construction)
     fn load_prefix_data(&mut self) {
-        let mut prefixes = self.ipv4_prefixes.write();
 
         // Major cloud provider ranges
         let prefix_data: &[([u8; 4], u8, u32)] = &[
@@ -369,11 +371,11 @@ impl BgpGeoProvider {
         ];
 
         for &(octets, len, asn) in prefix_data {
-            prefixes.push(Ipv4Prefix::new(octets, len, asn));
+            self.ipv4_prefixes.push(Ipv4Prefix::new(octets, len, asn));
         }
 
         // Sort by prefix length (longest first for most-specific match)
-        prefixes.sort_by(|a, b| {
+        self.ipv4_prefixes.sort_by(|a, b| {
             // Count leading ones in mask (longer prefix = higher priority)
             b.mask.count_ones().cmp(&a.mask.count_ones())
         });
