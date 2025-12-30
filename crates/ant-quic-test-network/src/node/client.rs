@@ -57,7 +57,8 @@ impl Default for TestNodeConfig {
         Self {
             registry_url: "https://saorsa-1.saorsalabs.com".to_string(),
             max_peers: 10,
-            bind_addr: "[::]:9000".parse().expect("valid default address"),
+            // Use port 0 for dynamic OS-allocated port (prevents collisions)
+            bind_addr: "[::]:0".parse().expect("valid default address"),
             connect_interval: Duration::from_secs(10),
             test_interval: Duration::from_secs(5),
             // 5-second heartbeat keeps NAT holes open for hole-punched connections
@@ -74,37 +75,21 @@ const MAX_CONSECUTIVE_FAILURES: u32 = 5;
 /// Hole-punched connections are inherently more fragile due to NAT behavior.
 const MAX_CONSECUTIVE_FAILURES_HOLEPUNCHED: u32 = 10;
 
-/// Detect if the system has global IPv6 connectivity.
+/// Detect if the system has global IPv6 connectivity using UDP socket connect.
+///
+/// This is cross-platform and doesn't require running external commands.
 fn has_global_ipv6() -> bool {
-    // Try to get network interfaces and check for global IPv6 addresses
-    #[cfg(unix)]
-    {
-        use std::process::Command;
-        // Use ip command to check for global IPv6 addresses
-        if let Ok(output) = Command::new("ip")
-            .args(["-6", "addr", "show", "scope", "global"])
-            .output()
-        {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            return stdout.contains("inet6") && !stdout.trim().is_empty();
-        }
-    }
+    use std::net::UdpSocket;
 
-    #[cfg(windows)]
-    {
-        use std::process::Command;
-        if let Ok(output) = Command::new("ipconfig").output() {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            // Look for IPv6 addresses that aren't link-local (fe80::)
-            for line in stdout.lines() {
-                if line.contains("IPv6") && !line.contains("fe80::") && !line.contains("::1") {
-                    return true;
-                }
-            }
-        }
-    }
-
-    false
+    // Try to connect to Google's public IPv6 DNS
+    // This doesn't send any data, just checks if we can route to IPv6
+    UdpSocket::bind("[::]:0")
+        .and_then(|socket| {
+            socket.connect("[2001:4860:4860::8888]:53")?;
+            socket.local_addr()
+        })
+        .map(|addr| !addr.ip().is_loopback() && !addr.ip().is_unspecified())
+        .unwrap_or(false)
 }
 
 /// Check if we can potentially reach a peer based on IP version compatibility.
@@ -127,161 +112,47 @@ fn can_reach_peer(peer: &PeerInfo, our_has_ipv6: bool) -> bool {
     has_ipv4_addr || (has_ipv6_addr && our_has_ipv6)
 }
 
-/// Detect local IPv4 and IPv6 addresses.
+/// Detect local IPv4 and IPv6 addresses using UDP socket connect.
+///
+/// This approach is cross-platform and doesn't require running external commands.
+/// It works by creating a UDP socket and "connecting" it to a public address -
+/// this doesn't send any data but reveals the local IP that would be used.
 fn detect_local_addresses(bind_port: u16) -> (Option<SocketAddr>, Option<SocketAddr>) {
-    let mut local_ipv4: Option<SocketAddr> = None;
-    let mut local_ipv6: Option<SocketAddr> = None;
+    use std::net::UdpSocket;
 
     debug!("Detecting local addresses with bind_port: {}", bind_port);
 
-    #[cfg(target_os = "macos")]
-    {
-        use std::process::Command;
-
-        // macOS doesn't have the 'ip' command, use ifconfig instead
-        match Command::new("ifconfig").output() {
-            Ok(output) => {
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                for line in stdout.lines() {
-                    let line = line.trim();
-
-                    // Look for IPv4: "inet 192.168.1.100 netmask ..."
-                    if line.starts_with("inet ")
-                        && !line.contains("127.0.0.1")
-                        && local_ipv4.is_none()
-                    {
-                        if let Some(ip_str) = line.split_whitespace().nth(1) {
-                            if let Ok(ip) = ip_str.parse::<std::net::Ipv4Addr>() {
-                                if !ip.is_loopback() && !ip.is_link_local() {
-                                    local_ipv4 = Some(SocketAddr::new(ip.into(), bind_port));
-                                    debug!("Found local IPv4: {}", ip);
-                                }
-                            }
-                        }
-                    }
-
-                    // Look for IPv6: "inet6 2001:db8::1 prefixlen ..."
-                    if line.starts_with("inet6 ")
-                        && !line.contains("::1")
-                        && !line.contains("fe80::")
-                        && local_ipv6.is_none()
-                    {
-                        if let Some(ip_str) = line.split_whitespace().nth(1) {
-                            // Remove scope ID if present (e.g., "fe80::1%en0" -> "fe80::1")
-                            let ip_str = ip_str.split('%').next().unwrap_or(ip_str);
-                            if let Ok(ip) = ip_str.parse::<std::net::Ipv6Addr>() {
-                                if !ip.is_loopback()
-                                    && !ip.is_unspecified()
-                                    && ((ip.segments()[0] & 0xffc0) != 0xfe80)
-                                {
-                                    local_ipv6 = Some(SocketAddr::new(ip.into(), bind_port));
-                                    debug!("Found local IPv6: {}", ip);
-                                }
-                            }
-                        }
-                    }
-                }
+    // Detect IPv4 by connecting to a public address (Google DNS)
+    let local_ipv4 = UdpSocket::bind("0.0.0.0:0")
+        .and_then(|socket| {
+            socket.connect("8.8.8.8:53")?;
+            socket.local_addr()
+        })
+        .ok()
+        .and_then(|addr| {
+            let ip = addr.ip();
+            if !ip.is_loopback() && !ip.is_unspecified() {
+                Some(SocketAddr::new(ip, bind_port))
+            } else {
+                None
             }
-            Err(e) => {
-                warn!("Failed to run ifconfig: {}", e);
+        });
+
+    // Detect IPv6 by connecting to a public IPv6 address (Google DNS)
+    let local_ipv6 = UdpSocket::bind("[::]:0")
+        .and_then(|socket| {
+            socket.connect("[2001:4860:4860::8888]:53")?;
+            socket.local_addr()
+        })
+        .ok()
+        .and_then(|addr| {
+            let ip = addr.ip();
+            if !ip.is_loopback() && !ip.is_unspecified() {
+                Some(SocketAddr::new(ip, bind_port))
+            } else {
+                None
             }
-        }
-    }
-
-    #[cfg(all(unix, not(target_os = "macos")))]
-    {
-        use std::process::Command;
-
-        // Try to get IPv4 address
-        if let Ok(output) = Command::new("ip")
-            .args(["-4", "addr", "show", "scope", "global"])
-            .output()
-        {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            for line in stdout.lines() {
-                if let Some(addr_str) = line.trim().strip_prefix("inet ") {
-                    // Extract IP from "inet 192.168.1.100/24 brd ..." format
-                    if let Some(ip_str) = addr_str.split('/').next() {
-                        if let Ok(ip) = ip_str.parse::<std::net::Ipv4Addr>() {
-                            if !ip.is_loopback() && !ip.is_link_local() {
-                                local_ipv4 = Some(SocketAddr::new(ip.into(), bind_port));
-                                break;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // Try to get IPv6 address
-        if let Ok(output) = Command::new("ip")
-            .args(["-6", "addr", "show", "scope", "global"])
-            .output()
-        {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            for line in stdout.lines() {
-                if let Some(addr_str) = line.trim().strip_prefix("inet6 ") {
-                    // Extract IP from "inet6 2001:db8::1/64 scope global" format
-                    if let Some(ip_str) = addr_str.split('/').next() {
-                        if let Ok(ip) = ip_str.parse::<std::net::Ipv6Addr>() {
-                            if !ip.is_loopback()
-                                && !ip.is_unspecified()
-                                && ((ip.segments()[0] & 0xffc0) != 0xfe80)
-                            {
-                                // Not link-local
-                                local_ipv6 = Some(SocketAddr::new(ip.into(), bind_port));
-                                break;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    #[cfg(windows)]
-    {
-        use std::process::Command;
-
-        if let Ok(output) = Command::new("ipconfig").output() {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            for line in stdout.lines() {
-                let line = line.trim();
-
-                // Look for "IPv4 Address. . . . . . . . . . . : 192.168.1.100"
-                if line.contains("IPv4") && line.contains(":") && local_ipv4.is_none() {
-                    if let Some(ip_str) = line.split(':').last() {
-                        let ip_str = ip_str.trim();
-                        if let Ok(ip) = ip_str.parse::<std::net::Ipv4Addr>() {
-                            if !ip.is_loopback() && !ip.is_link_local() {
-                                local_ipv4 = Some(SocketAddr::new(ip.into(), bind_port));
-                            }
-                        }
-                    }
-                }
-
-                // Look for "IPv6 Address. . . . . . . . . . . : 2001:db8::1"
-                if line.contains("IPv6")
-                    && line.contains(":")
-                    && !line.contains("fe80")
-                    && local_ipv6.is_none()
-                {
-                    // IPv6 addresses contain multiple colons, so we need to find the label-value separator
-                    if let Some(pos) = line.rfind(": ") {
-                        let ip_str = &line[pos + 2..];
-                        if let Ok(ip) = ip_str.parse::<std::net::Ipv6Addr>() {
-                            if !ip.is_loopback()
-                                && !ip.is_unspecified()
-                                && ((ip.segments()[0] & 0xffc0) != 0xfe80)
-                            {
-                                local_ipv6 = Some(SocketAddr::new(ip.into(), bind_port));
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
+        });
 
     // Log summary of detected addresses
     if local_ipv4.is_none() && local_ipv6.is_none() {

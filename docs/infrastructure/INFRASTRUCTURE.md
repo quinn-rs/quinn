@@ -18,15 +18,15 @@ This document describes the VPS infrastructure used for running bootstrap nodes,
 
 ## Port Allocation
 
-Each network uses a dedicated port RANGE to allow running multiple instances on the same nodes:
+All P2P services use **dynamic port allocation** (port 0) - the OS assigns an available port automatically.
 
-| Service | UDP Port Range | Default | Description |
-|---------|----------------|---------|-------------|
-| ant-quic | 9000-9999 | 9000 | QUIC transport layer testing |
-| saorsa-node | 10000-10999 | 10000 | Core P2P network nodes |
-| communitas | 11000-11999 | 11000 | Collaboration platform nodes |
+This approach:
+- Prevents port collisions between services
+- Allows multiple instances on the same node
+- Eliminates port management complexity
+- Works reliably across all platforms
 
-**Important**: Each network MUST stay within its assigned port range. Never use ports from another network's range.
+Services register their actual bound address with the registry after startup.
 
 Additional ports:
 - SSH: 22 (TCP)
@@ -49,25 +49,13 @@ saorsa-8.saorsalabs.com  →  149.28.156.231
 saorsa-9.saorsalabs.com  →  45.77.176.184
 ```
 
-## Bootstrap Endpoints
+## Bootstrap Discovery
 
-### ant-quic Bootstrap
-```
-saorsa-2.saorsalabs.com:9000
-saorsa-3.saorsalabs.com:9000
-```
+Bootstrap nodes use dynamic ports. New nodes discover bootstrap addresses via:
 
-### saorsa-node Bootstrap
-```
-saorsa-2.saorsalabs.com:10000
-saorsa-3.saorsalabs.com:10000
-```
-
-### communitas Bootstrap
-```
-saorsa-2.saorsalabs.com:11000
-saorsa-3.saorsalabs.com:11000
-```
+1. **Registry API**: `https://saorsa-1.saorsalabs.com/api/peers` returns active bootstrap nodes with their current addresses
+2. **DNS hostnames**: Use hostnames (saorsa-2.saorsalabs.com, saorsa-3.saorsalabs.com) - ports are discovered via registry
+3. **Gossip**: Once connected to any peer, discover others via gossip protocol
 
 ## Node Roles
 
