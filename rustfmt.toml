@@ -1,1 +1,2 @@
-style_edition = "2024"
+# Rust formatting configuration
+# Uses default style edition based on Cargo.toml edition = "2024"
