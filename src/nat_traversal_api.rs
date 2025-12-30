@@ -157,7 +157,8 @@ pub struct NatTraversalEndpoint {
     /// Receiver for internal event notifications
     event_rx: std::sync::Mutex<mpsc::UnboundedReceiver<NatTraversalEvent>>,
     /// Active connections by peer ID
-    connections: Arc<std::sync::RwLock<HashMap<PeerId, InnerConnection>>>,
+    /// Uses DashMap for fine-grained concurrent access without blocking workers
+    connections: Arc<dashmap::DashMap<PeerId, InnerConnection>>,
     /// Local peer ID
     local_peer_id: PeerId,
     /// Timeout configuration
@@ -1033,7 +1034,7 @@ impl NatTraversalEndpoint {
             shutdown: Arc::new(AtomicBool::new(false)),
             event_tx: Some(event_tx.clone()),
             event_rx: std::sync::Mutex::new(event_rx),
-            connections: Arc::new(std::sync::RwLock::new(HashMap::new())),
+            connections: Arc::new(dashmap::DashMap::new()),
             local_peer_id: Self::generate_local_peer_id(),
             timeout_config: config.timeouts.clone(),
             emitted_established_events: emitted_established_events.clone(),
@@ -1231,20 +1232,14 @@ impl NatTraversalEndpoint {
                     }
 
                     // Check if any connection attempts succeeded
-                    // First, check the connections HashMap to see if a connection was established
-                    let has_connection = if let Ok(conns) = self.connections.read() {
-                        conns.contains_key(peer_id)
-                    } else {
-                        false
-                    };
+                    // First, check the connections DashMap to see if a connection was established
+                    let has_connection = self.connections.contains_key(peer_id);
 
                     if has_connection || session.session_state.connection.is_some() {
-                        // Update session_state.connection from the connections HashMap
+                        // Update session_state.connection from the connections DashMap
                         if session.session_state.connection.is_none() {
-                            if let Ok(conns) = self.connections.read() {
-                                if let Some(conn) = conns.get(peer_id) {
-                                    session.session_state.connection = Some(conn.clone());
-                                }
+                            if let Some(conn_ref) = self.connections.get(peer_id) {
+                                session.session_state.connection = Some(conn_ref.clone());
                             }
                         }
 
@@ -1792,7 +1787,7 @@ impl NatTraversalEndpoint {
         endpoint: InnerEndpoint,
         shutdown: Arc<AtomicBool>,
         event_tx: mpsc::UnboundedSender<NatTraversalEvent>,
-        connections: Arc<std::sync::RwLock<HashMap<PeerId, InnerConnection>>>,
+        connections: Arc<dashmap::DashMap<PeerId, InnerConnection>>,
         emitted_events: Arc<std::sync::RwLock<std::collections::HashSet<PeerId>>>,
         relay_server: Option<Arc<MasqueRelayServer>>,
     ) {
@@ -1817,37 +1812,8 @@ impl NatTraversalEndpoint {
                                     });
 
                                 // Store the connection
-                                // Use try_write() with async retry to avoid blocking Tokio workers
-                                // This is critical for VPS nodes that receive many inbound connections
-                                let mut retry_count = 0;
-                                loop {
-                                    // Scope the lock so it's released before await
-                                    let got_lock = {
-                                        match connections.try_write() {
-                                            Ok(mut conns) => {
-                                                conns.insert(peer_id, connection.clone());
-                                                true
-                                            }
-                                            Err(std::sync::TryLockError::WouldBlock) => false,
-                                            Err(std::sync::TryLockError::Poisoned(e)) => {
-                                                warn!("Connections lock poisoned: {}", e);
-                                                true // Exit loop on poison
-                                            }
-                                        }
-                                    }; // Lock released here before await
-                                    if got_lock {
-                                        break;
-                                    }
-                                    retry_count += 1;
-                                    if retry_count > 100 {
-                                        warn!(
-                                            "Failed to acquire connections lock after 100 retries"
-                                        );
-                                        break;
-                                    }
-                                    // Yield to other tasks instead of blocking
-                                    tokio::time::sleep(std::time::Duration::from_millis(1)).await;
-                                }
+                                // DashMap provides fine-grained locking internally - no blocking
+                                connections.insert(peer_id, connection.clone());
 
                                 // Only emit ConnectionEstablished if we haven't already for this peer
                                 // Use try_write() with async retry - scope the lock before await
@@ -2007,7 +1973,7 @@ impl NatTraversalEndpoint {
         discovery_manager: Arc<std::sync::Mutex<CandidateDiscoveryManager>>,
         shutdown: Arc<AtomicBool>,
         event_tx: mpsc::UnboundedSender<NatTraversalEvent>,
-        connections: Arc<std::sync::RwLock<HashMap<PeerId, InnerConnection>>>,
+        connections: Arc<dashmap::DashMap<PeerId, InnerConnection>>,
         event_callback: Option<Arc<dyn Fn(NatTraversalEvent) + Send + Sync>>,
         local_peer_id: PeerId,
     ) {
@@ -2025,52 +1991,53 @@ impl NatTraversalEndpoint {
             let mut new_addresses = Vec::new();
 
             // 1. Check active connections for observed addresses and feed them to discovery
-            if let Ok(conns) = connections.read() {
+            // DashMap allows concurrent iteration without blocking
+            tracing::trace!(
+                "poll_discovery_task: checking {} connections for observed addresses",
+                connections.len()
+            );
+            for entry in connections.iter() {
+                let peer_id = entry.key();
+                let conn = entry.value();
+                let observed = conn.observed_address();
                 tracing::trace!(
-                    "poll_discovery_task: checking {} connections for observed addresses",
-                    conns.len()
+                    "poll_discovery_task: peer {:?} at {} observed_address={:?}",
+                    peer_id,
+                    conn.remote_address(),
+                    observed
                 );
-                for (peer_id, conn) in conns.iter() {
-                    let observed = conn.observed_address();
-                    tracing::trace!(
-                        "poll_discovery_task: peer {:?} at {} observed_address={:?}",
-                        peer_id,
-                        conn.remote_address(),
-                        observed
-                    );
-                    if let Some(observed_addr) = observed {
-                        // Emit event if this is the first time this peer reported this address
-                        if emitted_discovery.insert((*peer_id, observed_addr)) {
+                if let Some(observed_addr) = observed {
+                    // Emit event if this is the first time this peer reported this address
+                    if emitted_discovery.insert((*peer_id, observed_addr)) {
+                        info!(
+                            "poll_discovery_task: FOUND external address {} from peer {:?}",
+                            observed_addr, peer_id
+                        );
+                        let event = NatTraversalEvent::ExternalAddressDiscovered {
+                            reported_by: conn.remote_address(),
+                            address: observed_addr,
+                        };
+                        // Send via channel (for poll() to drain)
+                        let _ = event_tx.send(event.clone());
+                        // Also invoke callback directly (critical for P2pEndpoint bridge)
+                        if let Some(ref callback) = event_callback {
                             info!(
-                                "poll_discovery_task: FOUND external address {} from peer {:?}",
-                                observed_addr, peer_id
+                                "poll_discovery_task: invoking event_callback for ExternalAddressDiscovered"
                             );
-                            let event = NatTraversalEvent::ExternalAddressDiscovered {
-                                reported_by: conn.remote_address(),
-                                address: observed_addr,
-                            };
-                            // Send via channel (for poll() to drain)
-                            let _ = event_tx.send(event.clone());
-                            // Also invoke callback directly (critical for P2pEndpoint bridge)
-                            if let Some(ref callback) = event_callback {
-                                info!(
-                                    "poll_discovery_task: invoking event_callback for ExternalAddressDiscovered"
-                                );
-                                callback(event);
-                            }
-
-                            // Track this address for ADD_ADDRESS advertisement
-                            if advertised_addresses.insert(observed_addr) {
-                                new_addresses.push(observed_addr);
-                            }
+                            callback(event);
                         }
 
-                        // Feed the observed address to discovery manager for OUR local peer
-                        // (OBSERVED_ADDRESS tells us our external address as seen by the remote peer)
-                        if let Ok(mut discovery) = discovery_manager.lock() {
-                            let _ = discovery
-                                .accept_quic_discovered_address(local_peer_id, observed_addr);
+                        // Track this address for ADD_ADDRESS advertisement
+                        if advertised_addresses.insert(observed_addr) {
+                            new_addresses.push(observed_addr);
                         }
+                    }
+
+                    // Feed the observed address to discovery manager for OUR local peer
+                    // (OBSERVED_ADDRESS tells us our external address as seen by the remote peer)
+                    if let Ok(mut discovery) = discovery_manager.lock() {
+                        let _ = discovery
+                            .accept_quic_discovered_address(local_peer_id, observed_addr);
                     }
                 }
             }
@@ -2078,22 +2045,22 @@ impl NatTraversalEndpoint {
             // 2. Send ADD_ADDRESS to all peers for newly discovered addresses
             // (Critical for CGNAT - peers need to know our external address to hole-punch back)
             if !new_addresses.is_empty() {
-                if let Ok(mut conns) = connections.write() {
-                    for addr in &new_addresses {
-                        for (peer_id, conn) in conns.iter_mut() {
-                            match conn.send_nat_address_advertisement(*addr, 100) {
-                                Ok(seq) => {
-                                    info!(
-                                        "Sent ADD_ADDRESS to peer {:?}: addr={}, seq={}",
-                                        peer_id, addr, seq
-                                    );
-                                }
-                                Err(e) => {
-                                    debug!(
-                                        "Failed to send ADD_ADDRESS to peer {:?}: {:?}",
-                                        peer_id, e
-                                    );
-                                }
+                for addr in &new_addresses {
+                    for mut entry in connections.iter_mut() {
+                        let peer_id = *entry.key();
+                        let conn = entry.value_mut();
+                        match conn.send_nat_address_advertisement(*addr, 100) {
+                            Ok(seq) => {
+                                info!(
+                                    "Sent ADD_ADDRESS to peer {:?}: addr={}, seq={}",
+                                    peer_id, addr, seq
+                                );
+                            }
+                            Err(e) => {
+                                debug!(
+                                    "Failed to send ADD_ADDRESS to peer {:?}: {:?}",
+                                    peer_id, e
+                                );
                             }
                         }
                     }
@@ -2161,24 +2128,25 @@ impl NatTraversalEndpoint {
 
                         // Send ADD_ADDRESS frame to all connected peers so they know
                         // how to reach us (critical for CGNAT hole punching)
-                        if let Ok(mut conns) = connections.write() {
-                            for (peer_id, conn) in conns.iter_mut() {
-                                match conn.send_nat_address_advertisement(
-                                    candidate.address,
-                                    candidate.priority,
-                                ) {
-                                    Ok(seq) => {
-                                        info!(
-                                            "Sent ADD_ADDRESS to peer {:?}: addr={}, seq={}",
-                                            peer_id, candidate.address, seq
-                                        );
-                                    }
-                                    Err(e) => {
-                                        debug!(
-                                            "Failed to send ADD_ADDRESS to peer {:?}: {:?}",
-                                            peer_id, e
-                                        );
-                                    }
+                        // DashMap allows concurrent iteration without blocking
+                        for mut entry in connections.iter_mut() {
+                            let peer_id = *entry.key();
+                            let conn = entry.value_mut();
+                            match conn.send_nat_address_advertisement(
+                                candidate.address,
+                                candidate.priority,
+                            ) {
+                                Ok(seq) => {
+                                    info!(
+                                        "Sent ADD_ADDRESS to peer {:?}: addr={}, seq={}",
+                                        peer_id, candidate.address, seq
+                                    );
+                                }
+                                Err(e) => {
+                                    debug!(
+                                        "Failed to send ADD_ADDRESS to peer {:?}: {:?}",
+                                        peer_id, e
+                                    );
                                 }
                             }
                         }
@@ -2480,17 +2448,14 @@ impl NatTraversalEndpoint {
 
         // Symmetric P2P: Collect connected peers to use as potential relays
         // Any connected peer can provide relay services
-        let connected_peers: Vec<SocketAddr> = {
-            let connections = self.connections.read().map_err(|_| {
-                NatTraversalError::ProtocolError("Connections lock poisoned".to_string())
-            })?;
-            connections
-                .values()
-                .filter(|conn| conn.close_reason().is_none()) // Only active connections
-                .map(|conn| conn.remote_address())
-                .filter(|addr| *addr != remote_addr) // Don't try to relay through the target
-                .collect()
-        };
+        // DashMap provides lock-free concurrent access
+        let connected_peers: Vec<SocketAddr> = self
+            .connections
+            .iter()
+            .filter(|entry| entry.value().close_reason().is_none()) // Only active connections
+            .map(|entry| entry.value().remote_address())
+            .filter(|addr| *addr != remote_addr) // Don't try to relay through the target
+            .collect();
 
         info!(
             "Found {} connected peers to try as relays",
@@ -2756,19 +2721,17 @@ impl NatTraversalEndpoint {
 
                         // Retrieve the already-accepted connection from storage
                         // The background accept task already stored it in self.connections
-                        let connection = {
-                            let connections = self.connections.read().map_err(|_| {
-                                NatTraversalError::ProtocolError(
-                                    "Connections lock poisoned".to_string(),
-                                )
-                            })?;
-                            connections.get(&peer_id).cloned().ok_or_else(|| {
+                        // DashMap provides lock-free .get()
+                        let connection = self
+                            .connections
+                            .get(&peer_id)
+                            .map(|entry| entry.value().clone())
+                            .ok_or_else(|| {
                                 NatTraversalError::ConnectionFailed(format!(
                                     "Connection for peer {:?} not found in storage",
                                     peer_id
                                 ))
-                            })?
-                        };
+                            })?;
 
                         info!(
                             "Retrieved accepted connection from peer {:?} at {}",
@@ -2809,10 +2772,8 @@ impl NatTraversalEndpoint {
         &self,
         peer_id: &PeerId,
     ) -> Result<Option<InnerConnection>, NatTraversalError> {
-        let connections = self.connections.read().map_err(|_| {
-            NatTraversalError::ProtocolError("Connections lock poisoned".to_string())
-        })?;
-        Ok(connections.get(peer_id).cloned())
+        // DashMap provides lock-free .get()
+        Ok(self.connections.get(peer_id).map(|entry| entry.value().clone()))
     }
 
     /// Add or update a connection for a peer
@@ -2827,11 +2788,9 @@ impl NatTraversalEndpoint {
             "add_connection: peer {:?} at {} observed_address={:?}",
             peer_id, remote_addr, observed
         );
-        let mut connections = self.connections.write().map_err(|_| {
-            NatTraversalError::ProtocolError("Connections lock poisoned".to_string())
-        })?;
-        connections.insert(peer_id, connection);
-        info!("add_connection: now have {} connections", connections.len());
+        // DashMap provides lock-free .insert()
+        self.connections.insert(peer_id, connection);
+        info!("add_connection: now have {} connections", self.connections.len());
         Ok(())
     }
 
@@ -2886,21 +2845,18 @@ impl NatTraversalEndpoint {
             emitted.remove(peer_id);
         }
 
-        let mut connections = self.connections.write().map_err(|_| {
-            NatTraversalError::ProtocolError("Connections lock poisoned".to_string())
-        })?;
-        Ok(connections.remove(peer_id))
+        // DashMap provides lock-free .remove() that returns Option<(K, V)>
+        Ok(self.connections.remove(peer_id).map(|(_, v)| v))
     }
 
     /// List all active connections
     pub fn list_connections(&self) -> Result<Vec<(PeerId, SocketAddr)>, NatTraversalError> {
-        let connections = self.connections.read().map_err(|_| {
-            NatTraversalError::ProtocolError("Connections lock poisoned".to_string())
-        })?;
-        let mut result = Vec::new();
-        for (peer_id, connection) in connections.iter() {
-            result.push((*peer_id, connection.remote_address()));
-        }
+        // DashMap provides lock-free iteration
+        let result: Vec<_> = self
+            .connections
+            .iter()
+            .map(|entry| (*entry.key(), entry.value().remote_address()))
+            .collect();
         Ok(result)
     }
 
@@ -2916,17 +2872,14 @@ impl NatTraversalEndpoint {
     /// - No connections are active
     /// - No OBSERVED_ADDRESS frame has been received from any peer
     pub fn get_observed_external_address(&self) -> Result<Option<SocketAddr>, NatTraversalError> {
-        let connections = self.connections.read().map_err(|_| {
-            NatTraversalError::ProtocolError("Connections lock poisoned".to_string())
-        })?;
-
         // Check all connections for an observed address
         // First try to find one from a known peer (more reliable)
         let known_peer_addrs: std::collections::HashSet<_> =
             self.config.known_peers.iter().copied().collect();
 
-        // Check known peer connections first
-        for (_peer_id, connection) in connections.iter() {
+        // Check known peer connections first (DashMap lock-free iteration)
+        for entry in self.connections.iter() {
+            let connection = entry.value();
             if known_peer_addrs.contains(&connection.remote_address()) {
                 if let Some(addr) = connection.observed_address() {
                     debug!(
@@ -2939,8 +2892,8 @@ impl NatTraversalEndpoint {
         }
 
         // Fall back to any connection with an observed address
-        for (_peer_id, connection) in connections.iter() {
-            if let Some(addr) = connection.observed_address() {
+        for entry in self.connections.iter() {
+            if let Some(addr) = entry.value().observed_address() {
                 debug!(
                     "Found observed external address {} from peer connection",
                     addr
@@ -3125,11 +3078,10 @@ impl NatTraversalEndpoint {
         self.shutdown.store(true, Ordering::Relaxed);
 
         // Close all active connections
-        {
-            let mut connections = self.connections.write().map_err(|_| {
-                NatTraversalError::ProtocolError("Connections lock poisoned".to_string())
-            })?;
-            for (peer_id, connection) in connections.drain() {
+        // DashMap: collect peer_ids then remove them one by one
+        let peer_ids: Vec<PeerId> = self.connections.iter().map(|e| *e.key()).collect();
+        for peer_id in peer_ids {
+            if let Some((_, connection)) = self.connections.remove(&peer_id) {
                 info!("Closing connection to peer {:?}", peer_id);
                 connection.close(crate::VarInt::from_u32(0), b"Shutdown");
             }
@@ -3606,9 +3558,8 @@ impl NatTraversalEndpoint {
                                     );
 
                                     // Store the connection
-                                    if let Ok(mut conns) = connections.write() {
-                                        conns.insert(peer_id_clone, connection.clone());
-                                    }
+                                    // DashMap provides lock-free .insert()
+                                    connections.insert(peer_id_clone, connection.clone());
 
                                     // Send connection established event (we initiated hole punch = Client side)
                                     let _ =
@@ -3673,35 +3624,28 @@ impl NatTraversalEndpoint {
         }
 
         // Detect closed connections and emit ConnectionLost events synchronously
-        let mut closed_connections = Vec::new();
-        {
-            let connections = self.connections.read().map_err(|_| {
-                NatTraversalError::ProtocolError("Connections lock poisoned".to_string())
-            })?;
+        // DashMap provides lock-free concurrent access
+        let closed_connections: Vec<_> = self
+            .connections
+            .iter()
+            .filter_map(|entry| {
+                entry
+                    .value()
+                    .close_reason()
+                    .map(|reason| (*entry.key(), reason.clone()))
+            })
+            .collect();
 
-            for (peer_id, connection) in connections.iter() {
-                if let Some(reason) = connection.close_reason() {
-                    closed_connections.push((*peer_id, reason.clone()));
-                }
+        for (peer_id, reason) in closed_connections {
+            self.connections.remove(&peer_id);
+            let event = NatTraversalEvent::ConnectionLost {
+                peer_id,
+                reason: reason.to_string(),
+            };
+            if let Some(ref callback) = self.event_callback {
+                callback(event.clone());
             }
-        }
-
-        if !closed_connections.is_empty() {
-            let mut connections = self.connections.write().map_err(|_| {
-                NatTraversalError::ProtocolError("Connections lock poisoned".to_string())
-            })?;
-
-            for (peer_id, reason) in closed_connections {
-                connections.remove(&peer_id);
-                let event = NatTraversalEvent::ConnectionLost {
-                    peer_id,
-                    reason: reason.to_string(),
-                };
-                if let Some(ref callback) = self.event_callback {
-                    callback(event.clone());
-                }
-                events.push(event);
-            }
+            events.push(event);
         }
 
         // Check connections for observed addresses
@@ -3983,11 +3927,6 @@ impl NatTraversalEndpoint {
         &self,
         _events: &mut Vec<NatTraversalEvent>,
     ) -> Result<(), NatTraversalError> {
-        // Check if we're connected to any bootstrap nodes
-        let connections = self.connections.read().map_err(|_| {
-            NatTraversalError::ProtocolError("Connections lock poisoned".to_string())
-        })?;
-
         // Look for bootstrap connections - they should send us OBSERVED_ADDRESS frames
         // In the current implementation, we need to wait for the low-level connection
         // to receive OBSERVED_ADDRESS frames and propagate them up
@@ -3995,10 +3934,11 @@ impl NatTraversalEndpoint {
         // For now, simulate the discovery for testing
         // In production, this would be triggered by actual OBSERVED_ADDRESS frames
         // v0.13.0+: All nodes can discover their external address from any connected peer
-        if !connections.is_empty() {
+        // DashMap provides lock-free iteration
+        if !self.connections.is_empty() {
             // Check if we have any bootstrap connections
-            for (_peer_id, connection) in connections.iter() {
-                let remote_addr = connection.remote_address();
+            for entry in self.connections.iter() {
+                let remote_addr = entry.value().remote_address();
 
                 // Check if this is a bootstrap node connection
                 let is_bootstrap = {
@@ -4118,41 +4058,36 @@ impl NatTraversalEndpoint {
         );
 
         // Find the connection to the coordinator
-        {
-            let mut connections = self.connections.write().map_err(|_| {
-                NatTraversalError::ProtocolError("Connections lock poisoned".to_string())
-            })?;
+        // DashMap provides lock-free mutable iteration
+        // Normalize addresses to handle IPv4-mapped IPv6 (e.g., [::ffff:1.2.3.4]:9000 == 1.2.3.4:9000)
+        let normalized_coordinator = normalize_socket_addr(coordinator);
+        for mut entry in self.connections.iter_mut() {
+            let conn = entry.value_mut();
+            let normalized_remote = normalize_socket_addr(conn.remote_address());
+            if normalized_remote == normalized_coordinator {
+                // Found connection to coordinator - send PUNCH_ME_NOW with target_peer_id
+                info!(
+                    "Sending PUNCH_ME_NOW via coordinator {} (normalized: {}) to target peer {}",
+                    coordinator,
+                    normalized_coordinator,
+                    hex::encode(&peer_id.0[..8])
+                );
 
-            // Look for coordinator connection
-            // Normalize addresses to handle IPv4-mapped IPv6 (e.g., [::ffff:1.2.3.4]:9000 == 1.2.3.4:9000)
-            let normalized_coordinator = normalize_socket_addr(coordinator);
-            for (_coord_peer, conn) in connections.iter_mut() {
-                let normalized_remote = normalize_socket_addr(conn.remote_address());
-                if normalized_remote == normalized_coordinator {
-                    // Found connection to coordinator - send PUNCH_ME_NOW with target_peer_id
-                    info!(
-                        "Sending PUNCH_ME_NOW via coordinator {} (normalized: {}) to target peer {}",
-                        coordinator,
-                        normalized_coordinator,
-                        hex::encode(&peer_id.0[..8])
-                    );
-
-                    // Use round 1 for initial coordination
-                    match conn.send_nat_punch_via_relay(peer_id.0, our_external_address, 1) {
-                        Ok(()) => {
-                            info!(
-                                "Successfully queued PUNCH_ME_NOW for relay to peer {}",
-                                hex::encode(&peer_id.0[..8])
-                            );
-                            return Ok(());
-                        }
-                        Err(e) => {
-                            warn!("Failed to queue PUNCH_ME_NOW frame: {:?}", e);
-                            return Err(NatTraversalError::CoordinationFailed(format!(
-                                "Failed to send PUNCH_ME_NOW: {:?}",
-                                e
-                            )));
-                        }
+                // Use round 1 for initial coordination
+                match conn.send_nat_punch_via_relay(peer_id.0, our_external_address, 1) {
+                    Ok(()) => {
+                        info!(
+                            "Successfully queued PUNCH_ME_NOW for relay to peer {}",
+                            hex::encode(&peer_id.0[..8])
+                        );
+                        return Ok(());
+                    }
+                    Err(e) => {
+                        warn!("Failed to queue PUNCH_ME_NOW frame: {:?}", e);
+                        return Err(NatTraversalError::CoordinationFailed(format!(
+                            "Failed to send PUNCH_ME_NOW: {:?}",
+                            e
+                        )));
                     }
                 }
             }
@@ -4186,28 +4121,27 @@ impl NatTraversalEndpoint {
                                     Self::generate_peer_id_from_address(coordinator);
 
                                 // Store the connection
-                                if let Ok(mut conns) = connections.write() {
-                                    conns.insert(bootstrap_peer_id, connection.clone());
+                                // DashMap provides lock-free .insert()
+                                connections.insert(bootstrap_peer_id, connection.clone());
 
-                                    // Now send the PUNCH_ME_NOW via this new connection
-                                    match connection.send_nat_punch_via_relay(
-                                        target_peer_id.0,
-                                        external_addr,
-                                        1,
-                                    ) {
-                                        Ok(()) => {
-                                            info!(
-                                                "Sent PUNCH_ME_NOW to coordinator {} for peer {}",
-                                                coordinator,
-                                                hex::encode(&target_peer_id.0[..8])
-                                            );
-                                        }
-                                        Err(e) => {
-                                            warn!(
-                                                "Failed to send PUNCH_ME_NOW after connecting: {:?}",
-                                                e
-                                            );
-                                        }
+                                // Now send the PUNCH_ME_NOW via this new connection
+                                match connection.send_nat_punch_via_relay(
+                                    target_peer_id.0,
+                                    external_addr,
+                                    1,
+                                ) {
+                                    Ok(()) => {
+                                        info!(
+                                            "Sent PUNCH_ME_NOW to coordinator {} for peer {}",
+                                            coordinator,
+                                            hex::encode(&target_peer_id.0[..8])
+                                        );
+                                    }
+                                    Err(e) => {
+                                        warn!(
+                                            "Failed to send PUNCH_ME_NOW after connecting: {:?}",
+                                            e
+                                        );
                                     }
                                 }
                             }
@@ -4333,19 +4267,16 @@ impl NatTraversalEndpoint {
 
     /// Check if any hole punch succeeded
     fn check_punch_results(&self, peer_id: &PeerId) -> Option<SocketAddr> {
-        {
-            // Check if we have an established connection to this peer
-            if let Ok(connections) = self.connections.read() {
-                if let Some(conn) = connections.get(peer_id) {
-                    // We have a connection! Return its address
-                    let addr = conn.remote_address();
-                    info!(
-                        "Found successful connection to peer {:?} at {}",
-                        peer_id, addr
-                    );
-                    return Some(addr);
-                }
-            }
+        // Check if we have an established connection to this peer
+        // DashMap provides lock-free .get()
+        if let Some(entry) = self.connections.get(peer_id) {
+            // We have a connection! Return its address
+            let addr = entry.value().remote_address();
+            info!(
+                "Found successful connection to peer {:?} at {}",
+                peer_id, addr
+            );
+            return Some(addr);
         }
 
         // No connection found, check if we have any validated candidates
@@ -4391,59 +4322,54 @@ impl NatTraversalEndpoint {
     fn validate_path(&self, peer_id: PeerId, address: SocketAddr) -> Result<(), NatTraversalError> {
         debug!("Validating path to peer {:?} at {}", peer_id, address);
 
-        {
-            // Check if we have a connection to validate
-            if let Ok(connections) = self.connections.read() {
-                if let Some(conn) = connections.get(&peer_id) {
-                    // Connection exists, check if it's to the expected address
-                    if conn.remote_address() == address {
-                        info!(
-                            "Path validation successful for peer {:?} at {}",
-                            peer_id, address
-                        );
+        // Check if we have a connection to validate
+        // DashMap provides lock-free .get()
+        if let Some(entry) = self.connections.get(&peer_id) {
+            let conn = entry.value();
+            // Connection exists, check if it's to the expected address
+            if conn.remote_address() == address {
+                info!(
+                    "Path validation successful for peer {:?} at {}",
+                    peer_id, address
+                );
 
-                        // Update candidate state to valid
-                        if let Ok(mut sessions) = self.active_sessions.write() {
-                            if let Some(session) = sessions.get_mut(&peer_id) {
-                                for candidate in &mut session.candidates {
-                                    if candidate.address == address {
-                                        candidate.state = CandidateState::Valid;
-                                        break;
-                                    }
-                                }
+                // Update candidate state to valid
+                if let Ok(mut sessions) = self.active_sessions.write() {
+                    if let Some(session) = sessions.get_mut(&peer_id) {
+                        for candidate in &mut session.candidates {
+                            if candidate.address == address {
+                                candidate.state = CandidateState::Valid;
+                                break;
                             }
                         }
-
-                        return Ok(());
-                    } else {
-                        warn!(
-                            "Connection address mismatch: expected {}, got {}",
-                            address,
-                            conn.remote_address()
-                        );
                     }
                 }
-            }
 
-            // No connection found, validation failed
-            Err(NatTraversalError::ValidationFailed(format!(
-                "No connection found for peer {peer_id:?} at {address}"
-            )))
+                return Ok(());
+            } else {
+                warn!(
+                    "Connection address mismatch: expected {}, got {}",
+                    address,
+                    conn.remote_address()
+                );
+            }
         }
+
+        // No connection found, validation failed
+        Err(NatTraversalError::ValidationFailed(format!(
+            "No connection found for peer {peer_id:?} at {address}"
+        )))
     }
 
     /// Check if path validation succeeded
     fn is_path_validated(&self, peer_id: &PeerId) -> bool {
         debug!("Checking path validation for peer {:?}", peer_id);
 
-        {
-            // Check if we have an active connection
-            if let Ok(connections) = self.connections.read() {
-                if connections.contains_key(peer_id) {
-                    info!("Path validated: connection exists for peer {:?}", peer_id);
-                    return true;
-                }
-            }
+        // Check if we have an active connection
+        // DashMap provides lock-free .contains_key()
+        if self.connections.contains_key(peer_id) {
+            info!("Path validated: connection exists for peer {:?}", peer_id);
+            return true;
         }
 
         // Check if we have any validated candidates
@@ -4471,16 +4397,12 @@ impl NatTraversalEndpoint {
     /// Check if connection is healthy
     fn is_connection_healthy(&self, peer_id: &PeerId) -> bool {
         // In real implementation, check QUIC connection status
-
-        {
-            if let Ok(connections) = self.connections.read() {
-                if let Some(_conn) = connections.get(peer_id) {
-                    // Check if connection is still active
-                    // Note: Connection doesn't have is_closed/is_drained methods
-                    // We use the closed() future to check if still active
-                    return true; // Assume healthy if connection exists in map
-                }
-            }
+        // DashMap provides lock-free .get()
+        if self.connections.get(peer_id).is_some() {
+            // Check if connection is still active
+            // Note: Connection doesn't have is_closed/is_drained methods
+            // We use the closed() future to check if still active
+            return true; // Assume healthy if connection exists in map
         }
         true
     }
@@ -4607,18 +4529,17 @@ impl NatTraversalEndpoint {
                     hex::encode(&target_peer_id[..8])
                 );
 
-                let connections = self.connections.read().map_err(|_| {
-                    NatTraversalError::ProtocolError("Connections lock poisoned".to_string())
-                })?;
-
+                // DashMap provides lock-free access
                 // First try peer ID lookup (if we have actual peer ID)
                 let target_peer = PeerId(target_peer_id);
-                let connection_found = if let Some(conn) = connections.get(&target_peer) {
-                    Some((target_peer, conn.clone()))
+                let connection_found = if let Some(entry) = self.connections.get(&target_peer) {
+                    Some((target_peer, entry.value().clone()))
                 } else {
                     // RFC approach: find connection by address match
                     // Check both remote_address and observed_address for the target
-                    connections.iter().find_map(|(peer_id, conn)| {
+                    self.connections.iter().find_map(|entry| {
+                        let peer_id = *entry.key();
+                        let conn = entry.value();
                         let remote_normalized = normalize_socket_addr(conn.remote_address());
                         let observed_normalized = conn.observed_address().map(normalize_socket_addr);
 
@@ -4636,14 +4557,12 @@ impl NatTraversalEndpoint {
                                 observed_normalized,
                                 normalized_target
                             );
-                            Some((*peer_id, conn.clone()))
+                            Some((peer_id, conn.clone()))
                         } else {
                             None
                         }
                     })
                 };
-
-                drop(connections); // Release lock before async operations
 
                 if let Some((_peer_id, connection)) = connection_found {
                     // Send the PUNCH_ME_NOW frame via a unidirectional stream
@@ -4670,7 +4589,7 @@ impl NatTraversalEndpoint {
                     warn!(
                         "No connection found for target address {} (checked {} connections)",
                         normalized_target,
-                        self.connections.read().map(|c| c.len()).unwrap_or(0)
+                        self.connections.len()
                     );
                     Err(NatTraversalError::PeerNotConnected)
                 }
@@ -4683,11 +4602,14 @@ impl NatTraversalEndpoint {
                 );
 
                 // Find all active connections and send the AddAddress frame
-                let connections = self.connections.read().map_err(|_| {
-                    NatTraversalError::ProtocolError("Connections lock poisoned".to_string())
-                })?;
+                // DashMap: collect connections to avoid holding ref during async operations
+                let connections_snapshot: Vec<_> = self
+                    .connections
+                    .iter()
+                    .map(|entry| (*entry.key(), entry.value().clone()))
+                    .collect();
 
-                for (peer_id, connection) in connections.iter() {
+                for (peer_id, connection) in connections_snapshot {
                     // Send AddAddress frame via unidirectional stream
                     let mut send_stream = connection.open_uni().await.map_err(|e| {
                         NatTraversalError::NetworkError(format!("Failed to open stream: {e}"))
@@ -4751,12 +4673,7 @@ impl NatTraversalEndpoint {
         .map_err(|e| NatTraversalError::ConnectionFailed(format!("Connection failed: {e}")))?;
 
         // Store the established connection
-        {
-            let mut connections = self.connections.write().map_err(|_| {
-                NatTraversalError::ProtocolError("Connections lock poisoned".to_string())
-            })?;
-            connections.insert(peer_id, connection.clone());
-        }
+        self.connections.insert(peer_id, connection.clone());
 
         // Update session state to completed
         {
@@ -4799,12 +4716,9 @@ impl NatTraversalEndpoint {
             peer_id, candidate.address
         );
 
-        // Forward to the connection's NAT traversal API
-        let mut guard = self.connections.write().map_err(|_| {
-            NatTraversalError::ProtocolError("Connections lock poisoned".to_string())
-        })?;
-
-        if let Some(conn) = guard.get_mut(&peer_id) {
+        // DashMap provides lock-free .get_mut()
+        if let Some(mut entry) = self.connections.get_mut(&peer_id) {
+            let conn = entry.value_mut();
             // Use the connection's API to enqueue a proper NAT traversal frame
             match conn.send_nat_address_advertisement(candidate.address, candidate.priority) {
                 Ok(seq) => {
@@ -4841,12 +4755,11 @@ impl NatTraversalEndpoint {
             peer_id, paired_with_sequence_number, address, round
         );
 
-        let mut guard = self.connections.write().map_err(|_| {
-            NatTraversalError::ProtocolError("Connections lock poisoned".to_string())
-        })?;
-
-        if let Some(conn) = guard.get_mut(&peer_id) {
-            conn.send_nat_punch_coordination(paired_with_sequence_number, address, round)
+        // DashMap provides lock-free .get_mut()
+        if let Some(mut entry) = self.connections.get_mut(&peer_id) {
+            entry
+                .value_mut()
+                .send_nat_punch_coordination(paired_with_sequence_number, address, round)
                 .map_err(|e| {
                     NatTraversalError::ProtocolError(format!("Failed to queue PUNCH_ME_NOW: {e:?}"))
                 })
