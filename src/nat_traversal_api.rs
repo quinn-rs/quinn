@@ -144,7 +144,8 @@ pub struct NatTraversalEndpoint {
     /// Known bootstrap/coordinator nodes
     bootstrap_nodes: Arc<std::sync::RwLock<Vec<BootstrapNode>>>,
     /// Active NAT traversal sessions
-    active_sessions: Arc<std::sync::RwLock<HashMap<PeerId, NatTraversalSession>>>,
+    /// Uses DashMap for fine-grained concurrent access without blocking workers
+    active_sessions: Arc<dashmap::DashMap<PeerId, NatTraversalSession>>,
     /// Candidate discovery manager
     discovery_manager: Arc<std::sync::Mutex<CandidateDiscoveryManager>>,
     /// Event callback for coordination (simplified without async channels)
@@ -165,17 +166,20 @@ pub struct NatTraversalEndpoint {
     timeout_config: crate::config::nat_timeouts::TimeoutConfig,
     /// Track peers for which ConnectionEstablished has already been emitted
     /// This prevents duplicate events from being sent multiple times for the same connection
-    emitted_established_events: Arc<std::sync::RwLock<std::collections::HashSet<PeerId>>>,
+    /// Uses DashSet for fine-grained concurrent access without blocking workers
+    emitted_established_events: Arc<dashmap::DashSet<PeerId>>,
     /// MASQUE relay manager for fallback connections
     relay_manager: Option<Arc<RelayManager>>,
     /// Active relay sessions by relay server address
-    relay_sessions: Arc<std::sync::RwLock<HashMap<SocketAddr, RelaySession>>>,
+    /// Uses DashMap for fine-grained concurrent access without blocking workers
+    relay_sessions: Arc<dashmap::DashMap<SocketAddr, RelaySession>>,
     /// MASQUE relay server - every node provides relay services (symmetric P2P)
     /// Per ADR-004: All nodes are equal and participate in relaying with resource budgets
     relay_server: Option<Arc<MasqueRelayServer>>,
     /// Successful candidate pairs discovered via hole punching
     /// Maps peer ID to the remote address that successfully responded
-    successful_candidates: Arc<std::sync::RwLock<HashMap<PeerId, SocketAddr>>>,
+    /// Uses DashMap for fine-grained concurrent access without blocking workers
+    successful_candidates: Arc<dashmap::DashMap<PeerId, SocketAddr>>,
 }
 
 /// Configuration for NAT traversal behavior
@@ -982,8 +986,7 @@ impl NatTraversalEndpoint {
             );
         }
 
-        let emitted_established_events =
-            Arc::new(std::sync::RwLock::new(std::collections::HashSet::new()));
+        let emitted_established_events = Arc::new(dashmap::DashSet::new());
 
         // Create MASQUE relay manager if relay fallback is enabled
         let relay_manager = if config.enable_relay_fallback && !config.relay_nodes.is_empty() {
@@ -1028,7 +1031,7 @@ impl NatTraversalEndpoint {
             inner_endpoint: Some(inner_endpoint.clone()),
             config: config.clone(),
             bootstrap_nodes,
-            active_sessions: Arc::new(std::sync::RwLock::new(HashMap::new())),
+            active_sessions: Arc::new(dashmap::DashMap::new()),
             discovery_manager,
             event_callback,
             shutdown: Arc::new(AtomicBool::new(false)),
@@ -1039,9 +1042,9 @@ impl NatTraversalEndpoint {
             timeout_config: config.timeouts.clone(),
             emitted_established_events: emitted_established_events.clone(),
             relay_manager,
-            relay_sessions: Arc::new(std::sync::RwLock::new(HashMap::new())),
+            relay_sessions: Arc::new(dashmap::DashMap::new()),
             relay_server,
-            successful_candidates: Arc::new(std::sync::RwLock::new(HashMap::new())),
+            successful_candidates: Arc::new(dashmap::DashMap::new()),
         };
 
         // v0.13.0+: All nodes are symmetric P2P nodes - always start accepting connections
@@ -1157,13 +1160,8 @@ impl NatTraversalEndpoint {
         };
 
         // Store session
-        {
-            let mut sessions = self
-                .active_sessions
-                .write()
-                .map_err(|_| NatTraversalError::ProtocolError("Lock poisoned".to_string()))?;
-            sessions.insert(peer_id, session);
-        }
+        // DashMap provides lock-free .insert()
+        self.active_sessions.insert(peer_id, session);
 
         // Start candidate discovery
         let bootstrap_nodes_vec = {
@@ -1201,12 +1199,10 @@ impl NatTraversalEndpoint {
         let mut updates = Vec::new();
         let now = std::time::Instant::now();
 
-        let mut sessions = self
-            .active_sessions
-            .write()
-            .map_err(|_| NatTraversalError::ProtocolError("Sessions lock poisoned".to_string()))?;
-
-        for (peer_id, session) in sessions.iter_mut() {
+        // DashMap provides lock-free .iter_mut() that yields RefMulti entries
+        for mut entry in self.active_sessions.iter_mut() {
+            let peer_id = *entry.key(); // Copy before mutable borrow
+            let session = entry.value_mut();
             let mut state_changed = false;
 
             match session.session_state.state {
@@ -1224,7 +1220,7 @@ impl NatTraversalEndpoint {
                         state_changed = true;
 
                         updates.push(SessionStateUpdate {
-                            peer_id: *peer_id,
+                            peer_id,
                             old_state: ConnectionState::Connecting,
                             new_state: ConnectionState::Closed,
                             reason: StateChangeReason::Timeout,
@@ -1233,12 +1229,12 @@ impl NatTraversalEndpoint {
 
                     // Check if any connection attempts succeeded
                     // First, check the connections DashMap to see if a connection was established
-                    let has_connection = self.connections.contains_key(peer_id);
+                    let has_connection = self.connections.contains_key(&peer_id);
 
                     if has_connection || session.session_state.connection.is_some() {
                         // Update session_state.connection from the connections DashMap
                         if session.session_state.connection.is_none() {
-                            if let Some(conn_ref) = self.connections.get(peer_id) {
+                            if let Some(conn_ref) = self.connections.get(&peer_id) {
                                 session.session_state.connection = Some(conn_ref.clone());
                             }
                         }
@@ -1248,7 +1244,7 @@ impl NatTraversalEndpoint {
                         state_changed = true;
 
                         updates.push(SessionStateUpdate {
-                            peer_id: *peer_id,
+                            peer_id,
                             old_state: ConnectionState::Connecting,
                             new_state: ConnectionState::Connected,
                             reason: StateChangeReason::ConnectionEstablished,
@@ -1277,7 +1273,7 @@ impl NatTraversalEndpoint {
                             state_changed = true;
 
                             updates.push(SessionStateUpdate {
-                                peer_id: *peer_id,
+                                peer_id,
                                 old_state: ConnectionState::Migrating,
                                 new_state: ConnectionState::Connected,
                                 reason: StateChangeReason::MigrationComplete,
@@ -1287,7 +1283,7 @@ impl NatTraversalEndpoint {
                             state_changed = true;
 
                             updates.push(SessionStateUpdate {
-                                peer_id: *peer_id,
+                                peer_id,
                                 old_state: ConnectionState::Migrating,
                                 new_state: ConnectionState::Closed,
                                 reason: StateChangeReason::MigrationFailed,
@@ -1304,7 +1300,7 @@ impl NatTraversalEndpoint {
             if state_changed {
                 if let Some(ref callback) = self.event_callback {
                     callback(NatTraversalEvent::SessionStateChanged {
-                        peer_id: *peer_id,
+                        peer_id,
                         new_state: session.session_state.state,
                     });
                 }
@@ -1331,153 +1327,126 @@ impl NatTraversalEndpoint {
                 }
 
                 // Poll sessions and handle updates
-                let sessions_to_update = {
-                    match sessions.read() {
-                        Ok(sessions_guard) => {
-                            sessions_guard
-                                .iter()
-                                .filter_map(|(peer_id, session)| {
-                                    let now = std::time::Instant::now();
-                                    let elapsed =
-                                        now.duration_since(session.session_state.last_transition);
+                // DashMap provides lock-free .iter() that yields Ref entries
+                let sessions_to_update: Vec<_> = sessions
+                    .iter()
+                    .filter_map(|entry| {
+                        let peer_id = *entry.key();
+                        let session = entry.value();
+                        let now = std::time::Instant::now();
+                        let elapsed = now.duration_since(session.session_state.last_transition);
 
-                                    match session.session_state.state {
-                                        ConnectionState::Connecting => {
-                                            // Check for connection timeout
-                                            if elapsed
-                                                > timeout_config
-                                                    .nat_traversal
-                                                    .connection_establishment_timeout
-                                            {
-                                                Some((*peer_id, SessionUpdate::Timeout))
-                                            } else {
-                                                None
-                                            }
-                                        }
-                                        ConnectionState::Connected => {
-                                            // Check if connection is still alive
-                                            if let Some(ref conn) = session.session_state.connection
-                                            {
-                                                if conn.close_reason().is_some() {
-                                                    Some((*peer_id, SessionUpdate::Disconnected))
-                                                } else {
-                                                    // Update metrics
-                                                    Some((*peer_id, SessionUpdate::UpdateMetrics))
-                                                }
-                                            } else {
-                                                Some((*peer_id, SessionUpdate::InvalidState))
-                                            }
-                                        }
-                                        ConnectionState::Idle => {
-                                            // Check if we should retry
-                                            if elapsed
-                                                > timeout_config
-                                                    .discovery
-                                                    .server_reflexive_cache_ttl
-                                            {
-                                                Some((*peer_id, SessionUpdate::Retry))
-                                            } else {
-                                                None
-                                            }
-                                        }
-                                        ConnectionState::Migrating => {
-                                            // Check migration timeout
-                                            if elapsed > timeout_config.nat_traversal.probe_timeout
-                                            {
-                                                Some((*peer_id, SessionUpdate::MigrationTimeout))
-                                            } else {
-                                                None
-                                            }
-                                        }
-                                        ConnectionState::Closed => {
-                                            // Clean up old closed sessions
-                                            if elapsed
-                                                > timeout_config.discovery.interface_cache_ttl
-                                            {
-                                                Some((*peer_id, SessionUpdate::Remove))
-                                            } else {
-                                                None
-                                            }
-                                        }
-                                    }
-                                })
-                                .collect::<Vec<_>>()
-                        }
-                        _ => {
-                            vec![]
-                        }
-                    }
-                };
-
-                // Apply updates
-                if !sessions_to_update.is_empty() {
-                    if let Ok(mut sessions_guard) = sessions.write() {
-                        for (peer_id, update) in sessions_to_update {
-                            match update {
-                                SessionUpdate::Timeout => {
-                                    if let Some(session) = sessions_guard.get_mut(&peer_id) {
-                                        session.session_state.state = ConnectionState::Closed;
-                                        session.session_state.last_transition =
-                                            std::time::Instant::now();
-                                        tracing::warn!("Connection to {:?} timed out", peer_id);
-                                    }
-                                }
-                                SessionUpdate::Disconnected => {
-                                    if let Some(session) = sessions_guard.get_mut(&peer_id) {
-                                        session.session_state.state = ConnectionState::Closed;
-                                        session.session_state.last_transition =
-                                            std::time::Instant::now();
-                                        session.session_state.connection = None;
-                                        tracing::info!("Connection to {:?} closed", peer_id);
-                                    }
-                                }
-                                SessionUpdate::UpdateMetrics => {
-                                    if let Some(session) = sessions_guard.get_mut(&peer_id) {
-                                        if let Some(ref conn) = session.session_state.connection {
-                                            // Update RTT and other metrics
-                                            let stats = conn.stats();
-                                            session.session_state.metrics.rtt =
-                                                Some(stats.path.rtt);
-                                            session.session_state.metrics.loss_rate =
-                                                stats.path.lost_packets as f64
-                                                    / stats.path.sent_packets.max(1) as f64;
-                                        }
-                                    }
-                                }
-                                SessionUpdate::InvalidState => {
-                                    if let Some(session) = sessions_guard.get_mut(&peer_id) {
-                                        session.session_state.state = ConnectionState::Closed;
-                                        session.session_state.last_transition =
-                                            std::time::Instant::now();
-                                        tracing::error!("Session {:?} in invalid state", peer_id);
-                                    }
-                                }
-                                SessionUpdate::Retry => {
-                                    if let Some(session) = sessions_guard.get_mut(&peer_id) {
-                                        session.session_state.state = ConnectionState::Connecting;
-                                        session.session_state.last_transition =
-                                            std::time::Instant::now();
-                                        session.attempt += 1;
-                                        tracing::info!(
-                                            "Retrying connection to {:?} (attempt {})",
-                                            peer_id,
-                                            session.attempt
-                                        );
-                                    }
-                                }
-                                SessionUpdate::MigrationTimeout => {
-                                    if let Some(session) = sessions_guard.get_mut(&peer_id) {
-                                        session.session_state.state = ConnectionState::Closed;
-                                        session.session_state.last_transition =
-                                            std::time::Instant::now();
-                                        tracing::warn!("Migration timeout for {:?}", peer_id);
-                                    }
-                                }
-                                SessionUpdate::Remove => {
-                                    sessions_guard.remove(&peer_id);
-                                    tracing::debug!("Removed old session for {:?}", peer_id);
+                        match session.session_state.state {
+                            ConnectionState::Connecting => {
+                                // Check for connection timeout
+                                if elapsed
+                                    > timeout_config.nat_traversal.connection_establishment_timeout
+                                {
+                                    Some((peer_id, SessionUpdate::Timeout))
+                                } else {
+                                    None
                                 }
                             }
+                            ConnectionState::Connected => {
+                                // Check if connection is still alive
+                                if let Some(ref conn) = session.session_state.connection {
+                                    if conn.close_reason().is_some() {
+                                        Some((peer_id, SessionUpdate::Disconnected))
+                                    } else {
+                                        // Update metrics
+                                        Some((peer_id, SessionUpdate::UpdateMetrics))
+                                    }
+                                } else {
+                                    Some((peer_id, SessionUpdate::InvalidState))
+                                }
+                            }
+                            ConnectionState::Idle => {
+                                // Check if we should retry
+                                if elapsed > timeout_config.discovery.server_reflexive_cache_ttl {
+                                    Some((peer_id, SessionUpdate::Retry))
+                                } else {
+                                    None
+                                }
+                            }
+                            ConnectionState::Migrating => {
+                                // Check migration timeout
+                                if elapsed > timeout_config.nat_traversal.probe_timeout {
+                                    Some((peer_id, SessionUpdate::MigrationTimeout))
+                                } else {
+                                    None
+                                }
+                            }
+                            ConnectionState::Closed => {
+                                // Clean up old closed sessions
+                                if elapsed > timeout_config.discovery.interface_cache_ttl {
+                                    Some((peer_id, SessionUpdate::Remove))
+                                } else {
+                                    None
+                                }
+                            }
+                        }
+                    })
+                    .collect();
+
+                // Apply updates using DashMap's lock-free .get_mut() and .remove()
+                for (peer_id, update) in sessions_to_update {
+                    match update {
+                        SessionUpdate::Timeout => {
+                            if let Some(mut session) = sessions.get_mut(&peer_id) {
+                                session.session_state.state = ConnectionState::Closed;
+                                session.session_state.last_transition = std::time::Instant::now();
+                                tracing::warn!("Connection to {:?} timed out", peer_id);
+                            }
+                        }
+                        SessionUpdate::Disconnected => {
+                            if let Some(mut session) = sessions.get_mut(&peer_id) {
+                                session.session_state.state = ConnectionState::Closed;
+                                session.session_state.last_transition = std::time::Instant::now();
+                                session.session_state.connection = None;
+                                tracing::info!("Connection to {:?} closed", peer_id);
+                            }
+                        }
+                        SessionUpdate::UpdateMetrics => {
+                            if let Some(mut session) = sessions.get_mut(&peer_id) {
+                                if let Some(ref conn) = session.session_state.connection {
+                                    // Update RTT and other metrics
+                                    let stats = conn.stats();
+                                    session.session_state.metrics.rtt = Some(stats.path.rtt);
+                                    session.session_state.metrics.loss_rate =
+                                        stats.path.lost_packets as f64
+                                            / stats.path.sent_packets.max(1) as f64;
+                                }
+                            }
+                        }
+                        SessionUpdate::InvalidState => {
+                            if let Some(mut session) = sessions.get_mut(&peer_id) {
+                                session.session_state.state = ConnectionState::Closed;
+                                session.session_state.last_transition = std::time::Instant::now();
+                                tracing::error!("Session {:?} in invalid state", peer_id);
+                            }
+                        }
+                        SessionUpdate::Retry => {
+                            if let Some(mut session) = sessions.get_mut(&peer_id) {
+                                session.session_state.state = ConnectionState::Connecting;
+                                session.session_state.last_transition = std::time::Instant::now();
+                                session.attempt += 1;
+                                tracing::info!(
+                                    "Retrying connection to {:?} (attempt {})",
+                                    peer_id,
+                                    session.attempt
+                                );
+                            }
+                        }
+                        SessionUpdate::MigrationTimeout => {
+                            if let Some(mut session) = sessions.get_mut(&peer_id) {
+                                session.session_state.state = ConnectionState::Closed;
+                                session.session_state.last_transition = std::time::Instant::now();
+                                tracing::warn!("Migration timeout for {:?}", peer_id);
+                            }
+                        }
+                        SessionUpdate::Remove => {
+                            sessions.remove(&peer_id);
+                            tracing::debug!("Removed old session for {:?}", peer_id);
                         }
                     }
                 }
@@ -1489,10 +1458,8 @@ impl NatTraversalEndpoint {
 
     /// Get current NAT traversal statistics
     pub fn get_statistics(&self) -> Result<NatTraversalStatistics, NatTraversalError> {
-        let sessions = self
-            .active_sessions
-            .read()
-            .map_err(|_| NatTraversalError::ProtocolError("Lock poisoned".to_string()))?;
+        // DashMap provides lock-free .len() for session count
+        let session_count = self.active_sessions.len();
         let bootstrap_nodes = self
             .bootstrap_nodes
             .read()
@@ -1511,7 +1478,7 @@ impl NatTraversalEndpoint {
         };
 
         Ok(NatTraversalStatistics {
-            active_sessions: sessions.len(),
+            active_sessions: session_count,
             total_bootstrap_nodes: bootstrap_nodes.len(),
             successful_coordinations: bootstrap_nodes.iter().map(|b| b.coordination_count).sum(),
             average_coordination_time: avg_coordination_time,
@@ -1788,7 +1755,7 @@ impl NatTraversalEndpoint {
         shutdown: Arc<AtomicBool>,
         event_tx: mpsc::UnboundedSender<NatTraversalEvent>,
         connections: Arc<dashmap::DashMap<PeerId, InnerConnection>>,
-        emitted_events: Arc<std::sync::RwLock<std::collections::HashSet<PeerId>>>,
+        emitted_events: Arc<dashmap::DashSet<PeerId>>,
         relay_server: Option<Arc<MasqueRelayServer>>,
     ) {
         while !shutdown.load(Ordering::Relaxed) {
@@ -1816,20 +1783,8 @@ impl NatTraversalEndpoint {
                                 connections.insert(peer_id, connection.clone());
 
                                 // Only emit ConnectionEstablished if we haven't already for this peer
-                                // Use try_write() with async retry - scope the lock before await
-                                let should_emit = loop {
-                                    let result = {
-                                        match emitted_events.try_write() {
-                                            Ok(mut emitted) => Some(emitted.insert(peer_id)),
-                                            Err(std::sync::TryLockError::WouldBlock) => None,
-                                            Err(std::sync::TryLockError::Poisoned(_)) => Some(true),
-                                        }
-                                    }; // Lock released here before await
-                                    if let Some(should_emit) = result {
-                                        break should_emit;
-                                    }
-                                    tokio::time::sleep(std::time::Duration::from_millis(1)).await;
-                                };
+                                // DashSet::insert returns true if the value was newly inserted
+                                let should_emit = emitted_events.insert(peer_id);
 
                                 if should_emit {
                                     // Background accept = they connected to us = Server side
@@ -2560,15 +2515,11 @@ impl NatTraversalEndpoint {
         relay_addr: SocketAddr,
     ) -> Result<Option<SocketAddr>, NatTraversalError> {
         // Check if we already have an active session to this relay
-        {
-            let sessions = self.relay_sessions.read().map_err(|_| {
-                NatTraversalError::ProtocolError("Relay sessions lock poisoned".to_string())
-            })?;
-            if let Some(session) = sessions.get(&relay_addr) {
-                if session.is_active() {
-                    debug!("Reusing existing relay session to {}", relay_addr);
-                    return Ok(session.public_address);
-                }
+        // DashMap provides lock-free .get() that returns Option<Ref<K, V>>
+        if let Some(session) = self.relay_sessions.get(&relay_addr) {
+            if session.is_active() {
+                debug!("Reusing existing relay session to {}", relay_addr);
+                return Ok(session.public_address);
             }
         }
 
@@ -2651,12 +2602,8 @@ impl NatTraversalEndpoint {
             relay_addr,
         };
 
-        {
-            let mut sessions = self.relay_sessions.write().map_err(|_| {
-                NatTraversalError::ProtocolError("Relay sessions lock poisoned".to_string())
-            })?;
-            sessions.insert(relay_addr, session);
-        }
+        // DashMap provides lock-free .insert()
+        self.relay_sessions.insert(relay_addr, session);
 
         // Notify the relay manager
         if let Some(ref manager) = self.relay_manager {
@@ -2671,7 +2618,7 @@ impl NatTraversalEndpoint {
     }
 
     /// Get active relay sessions
-    pub fn relay_sessions(&self) -> Arc<std::sync::RwLock<HashMap<SocketAddr, RelaySession>>> {
+    pub fn relay_sessions(&self) -> Arc<dashmap::DashMap<SocketAddr, RelaySession>> {
         self.relay_sessions.clone()
     }
 
@@ -2816,11 +2763,8 @@ impl NatTraversalEndpoint {
         let remote_address = connection.remote_address();
 
         // Only emit ConnectionEstablished if we haven't already for this peer
-        let should_emit = if let Ok(mut emitted) = self.emitted_established_events.write() {
-            emitted.insert(peer_id) // Returns true if this is a new peer
-        } else {
-            true // If lock fails, emit anyway
-        };
+        // DashSet::insert returns true if this is a new peer (not already present)
+        let should_emit = self.emitted_established_events.insert(peer_id);
 
         if should_emit {
             let _ = event_tx.send(NatTraversalEvent::ConnectionEstablished {
@@ -2844,9 +2788,8 @@ impl NatTraversalEndpoint {
         peer_id: &PeerId,
     ) -> Result<Option<InnerConnection>, NatTraversalError> {
         // Clear emitted event tracking so reconnections can generate new events
-        if let Ok(mut emitted) = self.emitted_established_events.write() {
-            emitted.remove(peer_id);
-        }
+        // DashSet provides lock-free .remove()
+        self.emitted_established_events.remove(peer_id);
 
         // DashMap provides lock-free .remove() that returns Option<(K, V)>
         Ok(self.connections.remove(peer_id).map(|(_, v)| v))
@@ -3480,16 +3423,13 @@ impl NatTraversalEndpoint {
         );
 
         // Store the successful remote address for use in connection establishment
-        {
-            let mut candidates = self.successful_candidates.write().map_err(|_| {
-                NatTraversalError::ProtocolError("Failed to lock successful candidates".to_string())
-            })?;
-            candidates.insert(peer_id, pair.remote_candidate.address);
-            info!(
-                "Stored successful candidate for peer {:?}: {}",
-                peer_id, pair.remote_candidate.address
-            );
-        }
+        // DashMap provides lock-free .insert()
+        self.successful_candidates
+            .insert(peer_id, pair.remote_candidate.address);
+        info!(
+            "Stored successful candidate for peer {:?}: {}",
+            peer_id, pair.remote_candidate.address
+        );
 
         // Emit events to notify the application
         if let Some(ref callback) = self.event_callback {
@@ -3514,8 +3454,8 @@ impl NatTraversalEndpoint {
     /// Returns the remote address that successfully responded during hole punching.
     /// This address should be used for establishing the actual QUIC connection.
     fn get_successful_candidate_address(&self, peer_id: PeerId) -> Option<SocketAddr> {
-        let candidates = self.successful_candidates.read().ok()?;
-        candidates.get(&peer_id).copied()
+        // DashMap provides lock-free .get() that returns Option<Ref<K, V>>
+        self.successful_candidates.get(&peer_id).map(|r| *r.value())
     }
 
     /// Attempt connection to a specific candidate address
@@ -3686,12 +3626,10 @@ impl NatTraversalEndpoint {
         }
 
         // Check active sessions for timeouts and state updates
-        let mut sessions = self
-            .active_sessions
-            .write()
-            .map_err(|_| NatTraversalError::ProtocolError("Lock poisoned".to_string()))?;
-
-        for (_peer_id, session) in sessions.iter_mut() {
+        // Use DashMap iteration for fine-grained concurrent access
+        for mut entry in self.active_sessions.iter_mut() {
+            let _peer_id = *entry.key();
+            let session = entry.value_mut();
             let elapsed = now.duration_since(session.started_at);
 
             // Get timeout for current phase
@@ -4174,48 +4112,47 @@ impl NatTraversalEndpoint {
         debug!("Checking synchronization status for peer {:?}", peer_id);
 
         // Check if we have received candidates from the peer
-        if let Ok(sessions) = self.active_sessions.read() {
-            if let Some(session) = sessions.get(peer_id) {
-                // In coordination phase, we should have exchanged candidates
-                // For now, check if we have candidates and we're past discovery
-                let has_candidates = !session.candidates.is_empty();
-                let past_discovery = session.phase as u8 > TraversalPhase::Discovery as u8;
+        // DashMap provides lock-free .get() that returns Option<Ref<K, V>>
+        if let Some(session) = self.active_sessions.get(peer_id) {
+            // In coordination phase, we should have exchanged candidates
+            // For now, check if we have candidates and we're past discovery
+            let has_candidates = !session.candidates.is_empty();
+            let past_discovery = session.phase as u8 > TraversalPhase::Discovery as u8;
 
-                debug!(
-                    "Checking sync for peer {:?}: phase={:?}, candidates={}, past_discovery={}",
+            debug!(
+                "Checking sync for peer {:?}: phase={:?}, candidates={}, past_discovery={}",
+                peer_id,
+                session.phase,
+                session.candidates.len(),
+                past_discovery
+            );
+
+            if has_candidates && past_discovery {
+                info!(
+                    "Peer {:?} is synchronized with {} candidates",
                     peer_id,
-                    session.phase,
-                    session.candidates.len(),
-                    past_discovery
+                    session.candidates.len()
                 );
+                return true;
+            }
 
-                if has_candidates && past_discovery {
-                    info!(
-                        "Peer {:?} is synchronized with {} candidates",
-                        peer_id,
-                        session.candidates.len()
-                    );
-                    return true;
-                }
+            // For testing: if we're in synchronization phase and have candidates, consider synchronized
+            if session.phase == TraversalPhase::Synchronization && has_candidates {
+                info!(
+                    "Peer {:?} in synchronization phase with {} candidates, considering synchronized",
+                    peer_id,
+                    session.candidates.len()
+                );
+                return true;
+            }
 
-                // For testing: if we're in synchronization phase and have candidates, consider synchronized
-                if session.phase == TraversalPhase::Synchronization && has_candidates {
-                    info!(
-                        "Peer {:?} in synchronization phase with {} candidates, considering synchronized",
-                        peer_id,
-                        session.candidates.len()
-                    );
-                    return true;
-                }
-
-                // For testing without real discovery: consider synchronized if we're at least past discovery phase
-                if session.phase as u8 >= TraversalPhase::Synchronization as u8 {
-                    info!(
-                        "Test mode: Considering peer {:?} synchronized in phase {:?}",
-                        peer_id, session.phase
-                    );
-                    return true;
-                }
+            // For testing without real discovery: consider synchronized if we're at least past discovery phase
+            if session.phase as u8 >= TraversalPhase::Synchronization as u8 {
+                info!(
+                    "Test mode: Considering peer {:?} synchronized in phase {:?}",
+                    peer_id, session.phase
+                );
+                return true;
             }
         }
 
@@ -4283,37 +4220,36 @@ impl NatTraversalEndpoint {
         }
 
         // No connection found, check if we have any validated candidates
-        if let Ok(sessions) = self.active_sessions.read() {
-            if let Some(session) = sessions.get(peer_id) {
-                // Look for validated candidates
-                for candidate in &session.candidates {
-                    if matches!(candidate.state, CandidateState::Valid) {
-                        info!(
-                            "Found validated candidate for peer {:?} at {}",
-                            peer_id, candidate.address
-                        );
-                        return Some(candidate.address);
-                    }
-                }
-
-                // For testing: if we're in punching phase and have candidates, simulate success with the first one
-                if session.phase == TraversalPhase::Punching && !session.candidates.is_empty() {
-                    let addr = session.candidates[0].address;
+        // DashMap provides lock-free .get() that returns Option<Ref<K, V>>
+        if let Some(session) = self.active_sessions.get(peer_id) {
+            // Look for validated candidates
+            for candidate in &session.candidates {
+                if matches!(candidate.state, CandidateState::Valid) {
                     info!(
-                        "Simulating successful punch for testing: peer {:?} at {}",
-                        peer_id, addr
+                        "Found validated candidate for peer {:?} at {}",
+                        peer_id, candidate.address
                     );
-                    return Some(addr);
+                    return Some(candidate.address);
                 }
+            }
 
-                // No validated candidates, return first candidate as fallback
-                if let Some(first) = session.candidates.first() {
-                    debug!(
-                        "No validated candidates, using first candidate {} for peer {:?}",
-                        first.address, peer_id
-                    );
-                    return Some(first.address);
-                }
+            // For testing: if we're in punching phase and have candidates, simulate success with the first one
+            if session.phase == TraversalPhase::Punching && !session.candidates.is_empty() {
+                let addr = session.candidates[0].address;
+                info!(
+                    "Simulating successful punch for testing: peer {:?} at {}",
+                    peer_id, addr
+                );
+                return Some(addr);
+            }
+
+            // No validated candidates, return first candidate as fallback
+            if let Some(first) = session.candidates.first() {
+                debug!(
+                    "No validated candidates, using first candidate {} for peer {:?}",
+                    first.address, peer_id
+                );
+                return Some(first.address);
             }
         }
 
@@ -4337,13 +4273,12 @@ impl NatTraversalEndpoint {
                 );
 
                 // Update candidate state to valid
-                if let Ok(mut sessions) = self.active_sessions.write() {
-                    if let Some(session) = sessions.get_mut(&peer_id) {
-                        for candidate in &mut session.candidates {
-                            if candidate.address == address {
-                                candidate.state = CandidateState::Valid;
-                                break;
-                            }
+                // DashMap provides lock-free .get_mut() that returns Option<RefMut<K, V>>
+                if let Some(mut session) = self.active_sessions.get_mut(&peer_id) {
+                    for candidate in &mut session.candidates {
+                        if candidate.address == address {
+                            candidate.state = CandidateState::Valid;
+                            break;
                         }
                     }
                 }
@@ -4376,20 +4311,19 @@ impl NatTraversalEndpoint {
         }
 
         // Check if we have any validated candidates
-        if let Ok(sessions) = self.active_sessions.read() {
-            if let Some(session) = sessions.get(peer_id) {
-                let validated = session
-                    .candidates
-                    .iter()
-                    .any(|c| matches!(c.state, CandidateState::Valid));
+        // DashMap provides lock-free .get() that returns Option<Ref<K, V>>
+        if let Some(session) = self.active_sessions.get(peer_id) {
+            let validated = session
+                .candidates
+                .iter()
+                .any(|c| matches!(c.state, CandidateState::Valid));
 
-                if validated {
-                    info!(
-                        "Path validated: found validated candidate for peer {:?}",
-                        peer_id
-                    );
-                    return true;
-                }
+            if validated {
+                info!(
+                    "Path validated: found validated candidate for peer {:?}",
+                    peer_id
+                );
+                return true;
             }
         }
 
@@ -4456,18 +4390,18 @@ impl NatTraversalEndpoint {
     /// Get the peer ID for the current discovery session
     fn get_current_discovery_peer_id(&self) -> PeerId {
         // Try to get the peer ID from the most recent active session
-        if let Ok(sessions) = self.active_sessions.read() {
-            if let Some((peer_id, _session)) = sessions
-                .iter()
-                .find(|(_, s)| matches!(s.phase, TraversalPhase::Discovery))
-            {
-                return *peer_id;
-            }
+        // DashMap provides lock-free iteration with .iter()
+        if let Some(entry) = self
+            .active_sessions
+            .iter()
+            .find(|entry| matches!(entry.value().phase, TraversalPhase::Discovery))
+        {
+            return *entry.key();
+        }
 
-            // If no discovery phase session, get any active session
-            if let Some((peer_id, _)) = sessions.iter().next() {
-                return *peer_id;
-            }
+        // If no discovery phase session, get any active session
+        if let Some(entry) = self.active_sessions.iter().next() {
+            return *entry.key();
         }
 
         // Fallback: generate a deterministic peer ID based on local endpoint
@@ -4487,30 +4421,31 @@ impl NatTraversalEndpoint {
                     address, challenge
                 );
 
-                // Update the active session with validated candidate
-                let mut sessions = self.active_sessions.write().map_err(|_| {
-                    NatTraversalError::ProtocolError("Sessions lock poisoned".to_string())
-                })?;
-
-                // Find the session that had this candidate
-                for (peer_id, session) in sessions.iter_mut() {
-                    if session.candidates.iter().any(|c| c.address == address) {
+                // Find and update the active session with validated candidate
+                // DashMap provides lock-free .iter_mut() that returns RefMulti entries
+                let mut matching_peer_id = None;
+                for mut entry in self.active_sessions.iter_mut() {
+                    if entry.value().candidates.iter().any(|c| c.address == address) {
                         // Update session phase to indicate successful validation
-                        session.phase = TraversalPhase::Connected;
+                        entry.value_mut().phase = TraversalPhase::Connected;
+                        matching_peer_id = Some(*entry.key());
 
                         // Trigger event callback
                         if let Some(ref callback) = self.event_callback {
                             callback(NatTraversalEvent::CandidateValidated {
-                                peer_id: *peer_id,
+                                peer_id: *entry.key(),
                                 candidate_address: address,
                             });
                         }
-
-                        // Attempt to establish connection using this validated candidate
-                        return self
-                            .establish_connection_to_validated_candidate(*peer_id, address)
-                            .await;
+                        break;
                     }
+                }
+
+                // Attempt to establish connection using this validated candidate (after releasing DashMap ref)
+                if let Some(peer_id) = matching_peer_id {
+                    return self
+                        .establish_connection_to_validated_candidate(peer_id, address)
+                        .await;
                 }
 
                 debug!(
@@ -4679,13 +4614,9 @@ impl NatTraversalEndpoint {
         self.connections.insert(peer_id, connection.clone());
 
         // Update session state to completed
-        {
-            let mut sessions = self.active_sessions.write().map_err(|_| {
-                NatTraversalError::ProtocolError("Sessions lock poisoned".to_string())
-            })?;
-            if let Some(session) = sessions.get_mut(&peer_id) {
-                session.phase = TraversalPhase::Connected;
-            }
+        // DashMap provides lock-free .get_mut() that returns Option<RefMut<K, V>>
+        if let Some(mut session) = self.active_sessions.get_mut(&peer_id) {
+            session.phase = TraversalPhase::Connected;
         }
 
         // Trigger success callback (we initiated connection attempt = Client side)
@@ -4779,11 +4710,7 @@ impl NatTraversalEndpoint {
         // Return default statistics for now
         // In a real implementation, this would collect actual stats from the endpoint
         Ok(NatTraversalStatistics {
-            active_sessions: self
-                .active_sessions
-                .read()
-                .unwrap_or_else(|_| panic!("active sessions lock should be valid"))
-                .len(),
+            active_sessions: self.active_sessions.len(),
             total_bootstrap_nodes: self
                 .bootstrap_nodes
                 .read()
@@ -4804,7 +4731,7 @@ impl fmt::Debug for NatTraversalEndpoint {
         f.debug_struct("NatTraversalEndpoint")
             .field("config", &self.config)
             .field("bootstrap_nodes", &"<RwLock>")
-            .field("active_sessions", &"<RwLock>")
+            .field("active_sessions", &"<DashMap>")
             .field("event_callback", &self.event_callback.is_some())
             .finish()
     }
