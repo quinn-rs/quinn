@@ -143,7 +143,9 @@ EXAMPLES:
     );
 }
 
-#[tokio::main]
+// Use 8 worker threads to prevent thread starvation from blocking locks
+// This is a mitigation until std::sync::RwLock is replaced with tokio::sync::RwLock
+#[tokio::main(flavor = "multi_thread", worker_threads = 8)]
 async fn main() -> anyhow::Result<()> {
     let args = parse_args();
 
