@@ -290,8 +290,8 @@ fn detect_local_addresses(bind_port: u16) -> (Option<SocketAddr>, Option<SocketA
     (local_ipv4, local_ipv6)
 }
 
-/// Maximum time without activity before considering a peer stale (seconds).
-const STALE_PEER_TIMEOUT_SECS: u64 = 60;
+/// Maximum time without activity before considering a peer stale (1 hour keepalive).
+const STALE_PEER_TIMEOUT_SECS: u64 = 3600;
 
 /// Interval for health checks (seconds).
 const HEALTH_CHECK_INTERVAL_SECS: u64 = 15;
@@ -2195,6 +2195,7 @@ impl TestNode {
                     let event_tx = event_tx.clone();
                     let registry = RegistryClient::new(registry.base_url());
                     let our_peer_id = our_peer_id.clone();
+                    let gossip_integration = Arc::clone(&gossip_integration);
 
                     let fut = async move {
                         let peer_id_short = &candidate.peer_id[..8.min(candidate.peer_id.len())];
@@ -2297,6 +2298,13 @@ impl TestNode {
                             if let Err(e) = registry.report_connection(&report).await {
                                 warn!("Failed to report connection: {}", e);
                             }
+
+                            // Cache this peer for gossip/bootstrap
+                            gossip_integration.record_success(&candidate.peer_id);
+                            debug!(
+                                "Cached successful connection to {} in gossip bootstrap cache",
+                                peer_id_short
+                            );
                         } else {
                             // Connection failed - clean up and report
                             {
