@@ -1263,6 +1263,15 @@ impl TestNode {
                                         announcement.addresses.len()
                                     );
 
+                                    // ALWAYS add to bootstrap cache - this is crucial for peer discovery!
+                                    if !announcement.addresses.is_empty() {
+                                        gossip_integration.add_peer(
+                                            &announcement.peer_id,
+                                            &announcement.addresses,
+                                            announcement.is_public,
+                                        );
+                                    }
+
                                     // Check if we should try to connect to this peer
                                     let connected = connected_peers.read().await;
                                     let already_connected = connected.contains_key(&announcement.peer_id);
@@ -1395,7 +1404,15 @@ impl TestNode {
                                             continue;
                                         }
 
-                                        // Check if already connected
+                                        // ALWAYS add to bootstrap cache - this is crucial for peer discovery!
+                                        // The cache should know about all peers, regardless of connection status.
+                                        gossip_integration.add_peer(
+                                            &peer_info.peer_id,
+                                            &peer_info.addresses,
+                                            peer_info.is_public,
+                                        );
+
+                                        // Check if already connected or at capacity for connection attempt
                                         let connected = connected_peers.read().await;
                                         let already_connected = connected.contains_key(&peer_info.peer_id);
                                         let at_capacity = connected.len() >= max_peers;
@@ -1404,13 +1421,6 @@ impl TestNode {
                                         if already_connected || at_capacity {
                                             continue;
                                         }
-
-                                        // Store in gossip integration
-                                        gossip_integration.add_peer(
-                                            &peer_info.peer_id,
-                                            &peer_info.addresses,
-                                            peer_info.is_public,
-                                        );
 
                                         // Broadcast to other connected peers
                                         let announcement = GossipPeerAnnouncement::new(
@@ -1459,19 +1469,21 @@ impl TestNode {
 
                                     // Process announced peer
                                     let peer_info = &announcement.peer;
-                                    if peer_info.peer_id != peer_id {
+                                    if peer_info.peer_id != peer_id && !peer_info.addresses.is_empty() {
+                                        // ALWAYS add to bootstrap cache - this is crucial for peer discovery!
+                                        gossip_integration.add_peer(
+                                            &peer_info.peer_id,
+                                            &peer_info.addresses,
+                                            peer_info.is_public,
+                                        );
+
+                                        // Check if we should attempt a connection
                                         let connected = connected_peers.read().await;
                                         let already_connected = connected.contains_key(&peer_info.peer_id);
                                         let at_capacity = connected.len() >= max_peers;
                                         drop(connected);
 
-                                        if !already_connected && !at_capacity && !peer_info.addresses.is_empty() {
-                                            gossip_integration.add_peer(
-                                                &peer_info.peer_id,
-                                                &peer_info.addresses,
-                                                peer_info.is_public,
-                                            );
-
+                                        if !already_connected && !at_capacity {
                                             let addr = peer_info.addresses[0];
                                             let endpoint_clone = Arc::clone(&endpoint);
                                             let gossip_clone = Arc::clone(&gossip_integration);
