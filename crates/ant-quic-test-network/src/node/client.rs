@@ -2221,6 +2221,39 @@ impl TestNode {
 
                 // Collect gossip protocol statistics
                 let gossip_metrics = gossip_integration.metrics();
+
+                // Compute connection type breakdown from connected peers
+                let (conn_direct_ipv4, conn_direct_ipv6, conn_hole_punched, conn_relayed) = {
+                    let mut ipv4 = 0usize;
+                    let mut ipv6 = 0usize;
+                    let mut hole_punched = 0usize;
+                    let mut relayed = 0usize;
+
+                    for tracked in peers.values() {
+                        match tracked.method {
+                            ConnectionMethod::Direct => {
+                                // Check if active connection is IPv6
+                                if tracked.connectivity.active_is_ipv6 {
+                                    ipv6 += 1;
+                                } else {
+                                    ipv4 += 1;
+                                }
+                            }
+                            ConnectionMethod::HolePunched => {
+                                hole_punched += 1;
+                            }
+                            ConnectionMethod::Relayed => {
+                                relayed += 1;
+                            }
+                        }
+                    }
+
+                    (ipv4, ipv6, hole_punched, relayed)
+                };
+
+                // Use connected peers count as "alive" peers for SWIM-like stats
+                let swim_alive = peers.len();
+
                 let gossip_stats = NodeGossipStats {
                     announcements_sent: gossip_metrics.announcements_sent.load(Ordering::Relaxed),
                     announcements_received: gossip_metrics
@@ -2238,20 +2271,25 @@ impl TestNode {
                     cache_hits: gossip_metrics.cache_hits.load(Ordering::Relaxed),
                     cache_misses: gossip_metrics.cache_misses.load(Ordering::Relaxed),
                     cache_size: gossip_integration.cache_size() as u64,
-                    // Epidemic gossip stats (populated when saorsa-gossip is active)
-                    hyparview_active: 0,
-                    hyparview_passive: 0,
-                    swim_alive: 0,
-                    swim_suspect: 0,
-                    swim_dead: 0,
-                    plumtree_sent: 0,
-                    plumtree_received: 0,
-                    plumtree_eager: 0,
-                    plumtree_lazy: 0,
-                    conn_direct_ipv4: 0,
-                    conn_direct_ipv6: 0,
-                    conn_hole_punched: 0,
-                    conn_relayed: 0,
+                    // HyParView stats - using connected peers as active view proxy
+                    hyparview_active: swim_alive,
+                    hyparview_passive: gossip_integration.cache_size(),
+                    // SWIM stats - connected peers are "alive"
+                    swim_alive,
+                    swim_suspect: 0, // No suspect tracking yet
+                    swim_dead: 0,    // No dead tracking yet
+                    // Plumtree stats - using gossip metrics as proxy
+                    plumtree_sent: gossip_metrics.announcements_sent.load(Ordering::Relaxed),
+                    plumtree_received: gossip_metrics
+                        .announcements_received
+                        .load(Ordering::Relaxed),
+                    plumtree_eager: swim_alive, // Active peers get eager push
+                    plumtree_lazy: 0,           // No lazy push tracking yet
+                    // Connection type breakdown (computed from connected peers)
+                    conn_direct_ipv4,
+                    conn_direct_ipv6,
+                    conn_hole_punched,
+                    conn_relayed,
                 };
 
                 // Total connections = outbound (in connected_peers HashMap) + inbound
