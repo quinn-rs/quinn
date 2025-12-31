@@ -156,32 +156,33 @@ jobs:
           sleep 1
 
           echo "Replacing binary..."
-          mkdir -p $(dirname $REMOTE_PATH)
+          mkdir -p /opt/ant-quic-test
           mv /tmp/binary-new $REMOTE_PATH
           chmod +x $REMOTE_PATH
 
-          # Create systemd service file if it doesn't exist
-          if [ ! -f /etc/systemd/system/$SERVICE.service ]; then
-            echo "Creating systemd service file for $SERVICE..."
-            echo "[Unit]" > /etc/systemd/system/$SERVICE.service
-            echo "Description=$SERVICE Test Network Node" >> /etc/systemd/system/$SERVICE.service
-            echo "After=network-online.target" >> /etc/systemd/system/$SERVICE.service
-            echo "Wants=network-online.target" >> /etc/systemd/system/$SERVICE.service
-            echo "" >> /etc/systemd/system/$SERVICE.service
-            echo "[Service]" >> /etc/systemd/system/$SERVICE.service
-            echo "Type=simple" >> /etc/systemd/system/$SERVICE.service
-            echo "User=root" >> /etc/systemd/system/$SERVICE.service
-            echo "ExecStart=$REMOTE_PATH --registry-url https://saorsa-1.saorsalabs.com --quiet" >> /etc/systemd/system/$SERVICE.service
-            echo "Restart=always" >> /etc/systemd/system/$SERVICE.service
-            echo "RestartSec=5" >> /etc/systemd/system/$SERVICE.service
-            echo "StandardOutput=append:/var/log/$SERVICE.log" >> /etc/systemd/system/$SERVICE.service
-            echo "StandardError=append:/var/log/$SERVICE.log" >> /etc/systemd/system/$SERVICE.service
-            echo "Environment=RUST_LOG=info" >> /etc/systemd/system/$SERVICE.service
-            echo "" >> /etc/systemd/system/$SERVICE.service
-            echo "[Install]" >> /etc/systemd/system/$SERVICE.service
-            echo "WantedBy=multi-user.target" >> /etc/systemd/system/$SERVICE.service
-            systemctl daemon-reload
-          fi
+          echo "Verifying binary can execute..."
+          $REMOTE_PATH --version || echo "WARNING: Binary failed version check"
+
+          # Always recreate systemd service file to ensure correct paths
+          echo "Creating/updating systemd service file for $SERVICE..."
+          echo "[Unit]" > /etc/systemd/system/$SERVICE.service
+          echo "Description=$SERVICE Test Network Node" >> /etc/systemd/system/$SERVICE.service
+          echo "After=network-online.target" >> /etc/systemd/system/$SERVICE.service
+          echo "Wants=network-online.target" >> /etc/systemd/system/$SERVICE.service
+          echo "" >> /etc/systemd/system/$SERVICE.service
+          echo "[Service]" >> /etc/systemd/system/$SERVICE.service
+          echo "Type=simple" >> /etc/systemd/system/$SERVICE.service
+          echo "User=root" >> /etc/systemd/system/$SERVICE.service
+          echo "ExecStart=$REMOTE_PATH --registry-url https://saorsa-1.saorsalabs.com --quiet" >> /etc/systemd/system/$SERVICE.service
+          echo "Restart=always" >> /etc/systemd/system/$SERVICE.service
+          echo "RestartSec=5" >> /etc/systemd/system/$SERVICE.service
+          echo "StandardOutput=append:/var/log/$SERVICE.log" >> /etc/systemd/system/$SERVICE.service
+          echo "StandardError=append:/var/log/$SERVICE.log" >> /etc/systemd/system/$SERVICE.service
+          echo "Environment=RUST_LOG=info" >> /etc/systemd/system/$SERVICE.service
+          echo "" >> /etc/systemd/system/$SERVICE.service
+          echo "[Install]" >> /etc/systemd/system/$SERVICE.service
+          echo "WantedBy=multi-user.target" >> /etc/systemd/system/$SERVICE.service
+          systemctl daemon-reload
 
           echo "Starting service..."
           systemctl start $SERVICE || echo "Service $SERVICE failed to start"
