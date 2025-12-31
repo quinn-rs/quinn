@@ -156,6 +156,11 @@ jobs:
           sleep 1
 
           echo "Replacing binary..."
+          # Clean up any existing file at the directory path (legacy deployments)
+          if [ -f /opt/ant-quic-test ]; then
+            echo "Removing legacy binary at /opt/ant-quic-test..."
+            rm -f /opt/ant-quic-test
+          fi
           mkdir -p /opt/ant-quic-test
           mv /tmp/binary-new $REMOTE_PATH
           chmod +x $REMOTE_PATH
