@@ -421,16 +421,24 @@ fn create_test_peer(addr: SocketAddr, dual_stack: bool) -> CachedPeer {
     use ant_quic::nat_traversal_api::PeerId;
     use std::time::SystemTime;
 
-    let mut caps = PeerCapabilities::default();
-    caps.supports_relay = true;
-    caps.supports_coordination = true;
-    caps.external_addresses.push(addr);
-    if dual_stack {
-        caps.external_addresses.push(match addr {
-            SocketAddr::V4(_) => ipv6_addr(addr.port()),
-            SocketAddr::V6(_) => ipv4_addr(addr.port()),
-        });
-    }
+    let external_addresses = if dual_stack {
+        vec![
+            addr,
+            match addr {
+                SocketAddr::V4(_) => ipv6_addr(addr.port()),
+                SocketAddr::V6(_) => ipv4_addr(addr.port()),
+            },
+        ]
+    } else {
+        vec![addr]
+    };
+
+    let caps = PeerCapabilities {
+        supports_relay: true,
+        supports_coordination: true,
+        external_addresses,
+        ..PeerCapabilities::default()
+    };
 
     // Generate a simple test peer ID
     let mut peer_id_bytes = [0u8; 32];
@@ -456,11 +464,12 @@ fn create_test_peer_dual_stack(v4: SocketAddr, v6: SocketAddr) -> CachedPeer {
     use ant_quic::nat_traversal_api::PeerId;
     use std::time::SystemTime;
 
-    let mut caps = PeerCapabilities::default();
-    caps.supports_relay = true;
-    caps.supports_coordination = true;
-    caps.external_addresses.push(v4);
-    caps.external_addresses.push(v6);
+    let caps = PeerCapabilities {
+        supports_relay: true,
+        supports_coordination: true,
+        external_addresses: vec![v4, v6],
+        ..PeerCapabilities::default()
+    };
 
     // Generate a simple test peer ID
     let mut peer_id_bytes = [0u8; 32];
