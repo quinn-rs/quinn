@@ -2148,13 +2148,62 @@ impl TestNode {
         tokio::spawn(async move {
             let mut ticker = tokio::time::interval(interval);
             let mut consecutive_failures = 0u32;
+            let mut heartbeat_count = 0u64;
 
             while !shutdown.load(Ordering::SeqCst) {
                 ticker.tick().await;
+                heartbeat_count += 1;
 
-                let peers = connected_peers.read().await;
-                let ext_addrs = external_addresses.read().await.clone();
-                let mut stats = nat_stats.read().await.clone();
+                // Use timeouts on lock acquisitions to detect deadlocks
+                let peers = match tokio::time::timeout(
+                    Duration::from_secs(5),
+                    connected_peers.read(),
+                )
+                .await
+                {
+                    Ok(guard) => guard,
+                    Err(_) => {
+                        warn!(
+                            "Heartbeat #{}: TIMEOUT waiting for connected_peers lock!",
+                            heartbeat_count
+                        );
+                        continue;
+                    }
+                };
+
+                let ext_addrs = match tokio::time::timeout(
+                    Duration::from_secs(5),
+                    external_addresses.read(),
+                )
+                .await
+                {
+                    Ok(guard) => guard.clone(),
+                    Err(_) => {
+                        warn!(
+                            "Heartbeat #{}: TIMEOUT waiting for external_addresses lock!",
+                            heartbeat_count
+                        );
+                        drop(peers);
+                        continue;
+                    }
+                };
+
+                let mut stats = match tokio::time::timeout(
+                    Duration::from_secs(5),
+                    nat_stats.read(),
+                )
+                .await
+                {
+                    Ok(guard) => guard.clone(),
+                    Err(_) => {
+                        warn!(
+                            "Heartbeat #{}: TIMEOUT waiting for nat_stats lock!",
+                            heartbeat_count
+                        );
+                        drop(peers);
+                        continue;
+                    }
+                };
 
                 // Detect NAT status by comparing local vs external addresses
                 // If external IPs differ from local IPs, we're behind NAT
