@@ -1380,7 +1380,7 @@ mod tests {
         let decoded = deserialize_relay_announcement(&bytes).expect("decode failed");
 
         assert_eq!(decoded.peer_id, relay.peer_id);
-        assert_eq!(decoded.supports_dual_stack, true);
+        assert!(decoded.supports_dual_stack);
     }
 
     #[test]

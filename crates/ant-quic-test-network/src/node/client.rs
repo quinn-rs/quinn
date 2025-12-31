@@ -2484,6 +2484,43 @@ impl TestNode {
                     let _ = self
                         .event_tx
                         .try_send(TuiEvent::UpdateRegisteredCount(response.peers.len() + 1));
+
+                    // Add registry peers to epidemic gossip for HyParView overlay
+                    // This is critical for forming the gossip network
+                    if !response.peers.is_empty() {
+                        let bootstrap_addrs: Vec<std::net::SocketAddr> = response
+                            .peers
+                            .iter()
+                            .flat_map(|p| p.addresses.iter().cloned())
+                            .collect();
+
+                        if !bootstrap_addrs.is_empty() {
+                            info!(
+                                "Adding {} bootstrap addresses to epidemic gossip from {} peers",
+                                bootstrap_addrs.len(),
+                                response.peers.len()
+                            );
+
+                            match self
+                                .epidemic_gossip
+                                .add_bootstrap_peers(bootstrap_addrs.clone())
+                                .await
+                            {
+                                Ok(count) => {
+                                    info!(
+                                        "Epidemic gossip joined HyParView overlay with {} peers",
+                                        count
+                                    );
+                                }
+                                Err(e) => {
+                                    warn!(
+                                        "Failed to add bootstrap peers to epidemic gossip: {}",
+                                        e
+                                    );
+                                }
+                            }
+                        }
+                    }
                 } else {
                     let err = response
                         .error

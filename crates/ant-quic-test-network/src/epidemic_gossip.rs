@@ -481,6 +481,50 @@ impl EpidemicGossip {
         Ok(seeds.len())
     }
 
+    /// Add bootstrap peers dynamically (e.g., from registry) and trigger join.
+    ///
+    /// This is called after registration when we have peer addresses from the registry.
+    /// The peers are joined to the HyParView overlay network.
+    pub async fn add_bootstrap_peers(&self, peers: Vec<SocketAddr>) -> Result<usize, GossipError> {
+        if !self.is_running() {
+            return Err(GossipError::NotRunning);
+        }
+
+        if peers.is_empty() {
+            debug!("No peers to add");
+            return Ok(0);
+        }
+
+        let stack_guard = self.stack.read().await;
+        let stack = stack_guard.as_ref().ok_or(GossipError::NotRunning)?;
+
+        // Convert addresses to seed strings for HyParView join
+        let seeds: Vec<String> = peers.iter().map(|addr| addr.to_string()).collect();
+        info!(
+            "Adding {} bootstrap peers from registry: {:?}",
+            seeds.len(),
+            seeds
+        );
+
+        stack
+            .membership
+            .join(seeds.clone())
+            .await
+            .map_err(|e| GossipError::Membership(e.to_string()))?;
+
+        // Update stats
+        {
+            let mut stats = self.stats.write().await;
+            stats.hyparview.joins += 1;
+        }
+
+        info!(
+            "Successfully joined HyParView overlay with {} peers",
+            peers.len()
+        );
+        Ok(peers.len())
+    }
+
     /// Add a peer to the active view.
     pub async fn add_peer(&self, peer_id: PeerId) -> Result<(), GossipError> {
         let stack_guard = self.stack.read().await;

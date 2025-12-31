@@ -1119,11 +1119,9 @@ mod tests {
         // Should receive CacheUpdated event
         tokio::select! {
             event = rx.recv() => {
-                match event {
-                    Some(DiscoveryEvent::CacheUpdated { peer_count }) => {
-                        assert!(peer_count > 0, "Should have added the peer");
-                    }
-                    _ => {} // May not get event if peer wasn't actually added (dedup)
+                // May not get event if peer wasn't actually added (dedup)
+                if let Some(DiscoveryEvent::CacheUpdated { peer_count }) = event {
+                    assert!(peer_count > 0, "Should have added the peer");
                 }
             }
             _ = tokio::time::sleep(Duration::from_millis(100)) => {
