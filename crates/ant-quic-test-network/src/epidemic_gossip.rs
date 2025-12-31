@@ -34,10 +34,13 @@
 //! - `peer_left`: Peer marked dead by SWIM
 //! - `message_received`: Gossip message via Plumtree
 
+pub use ::bytes::Bytes; // Re-export for use by client.rs
 use saorsa_gossip_identity::MlDsaKeyPair;
 use saorsa_gossip_membership::{HyParViewMembership, Membership, PeerState};
 use saorsa_gossip_pubsub::{PlumtreePubSub, PubSub};
-use saorsa_gossip_transport::{AntQuicTransport, AntQuicTransportConfig, GossipTransport};
+use saorsa_gossip_transport::{
+    AntQuicTransport, AntQuicTransportConfig, GossipTransport, StreamType,
+};
 use saorsa_gossip_types::{PeerId, TopicId};
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -634,6 +637,29 @@ impl EpidemicGossip {
             .await;
 
         Ok(())
+    }
+
+    /// Send data to a peer using the gossip transport (port 9000).
+    /// This bypasses the P2pEndpoint and uses the gossip connections directly,
+    /// which is necessary because the firewall only allows port 9000.
+    pub async fn send_to_peer(&self, peer_id: PeerId, data: Vec<u8>) -> Result<(), GossipError> {
+        let stack_guard = self.stack.read().await;
+        let stack = stack_guard.as_ref().ok_or(GossipError::NotRunning)?;
+
+        stack
+            .transport
+            .send_to_peer(peer_id, StreamType::Bulk, Bytes::from(data))
+            .await
+            .map_err(|e| GossipError::Transport(e.to_string()))?;
+
+        Ok(())
+    }
+
+    /// Get the transport for direct access to QUIC connections.
+    pub async fn transport(&self) -> Result<Arc<AntQuicTransport>, GossipError> {
+        let stack_guard = self.stack.read().await;
+        let stack = stack_guard.as_ref().ok_or(GossipError::NotRunning)?;
+        Ok(stack.transport.clone())
     }
 
     /// Spawn background task to update statistics periodically.

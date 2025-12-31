@@ -3170,8 +3170,8 @@ impl TestNode {
         let our_peer_id_bytes = peer_id_to_bytes(&self.peer_id);
         let total_sent = Arc::clone(&self.total_bytes_sent);
         let total_received = Arc::clone(&self.total_bytes_received);
-        // Clone the endpoint for real QUIC test exchanges
-        let endpoint = Arc::clone(&self.endpoint);
+        // Use gossip transport for test packets (port 9000, allowed by firewall)
+        let gossip = Arc::clone(&self.epidemic_gossip);
 
         tokio::spawn(async move {
             let mut ticker = tokio::time::interval(interval);
@@ -3197,9 +3197,9 @@ impl TestNode {
                     let packet = TestPacket::new_ping(our_peer_id_bytes, seq);
                     let packet_size = packet.size() as u64;
 
-                    // Perform REAL test packet exchange over QUIC streams
-                    // WITHOUT holding any lock - prevents heartbeat starvation
-                    let result = real_test_exchange(&endpoint, &peer_id, &packet).await;
+                    // Perform test packet exchange via gossip transport (port 9000)
+                    // This bypasses P2pEndpoint's random ports blocked by firewall
+                    let result = gossip_test_exchange(&gossip, &peer_id, &packet).await;
 
                     // Now briefly acquire lock to update stats
                     let success = result.is_ok();
@@ -3587,31 +3587,28 @@ async fn real_connect_comprehensive(
     }
 }
 
-/// Perform REAL test packet exchange over QUIC streams.
+/// Perform test packet exchange via gossip transport (port 9000).
 ///
-/// This sends actual data over a QUIC stream and measures real RTT.
-async fn real_test_exchange(
-    endpoint: &P2pEndpoint,
+/// This uses the saorsa-gossip transport which operates on port 9000,
+/// bypassing the P2pEndpoint that uses random ports blocked by firewall.
+async fn gossip_test_exchange(
+    gossip: &EpidemicGossip,
     peer_id_hex: &str,
     packet: &TestPacket,
 ) -> Result<Duration, String> {
-    // Convert hex peer ID to QuicPeerId
+    use saorsa_gossip_types::PeerId as GossipPeerId;
+
+    // Convert hex peer ID to gossip PeerId
     let peer_id_bytes =
         hex::decode(peer_id_hex).map_err(|e| format!("Invalid peer ID hex: {}", e))?;
 
-    if peer_id_bytes.len() < 32 {
-        return Err("Peer ID too short".to_string());
+    if peer_id_bytes.len() != 32 {
+        return Err(format!("Peer ID wrong length: {}", peer_id_bytes.len()));
     }
 
     let mut peer_id_array = [0u8; 32];
-    peer_id_array.copy_from_slice(&peer_id_bytes[..32]);
-    let quic_peer_id = QuicPeerId(peer_id_array);
-
-    // Get the QUIC connection for this peer
-    let connection = endpoint
-        .get_quic_connection(&quic_peer_id)
-        .map_err(|e| format!("Failed to get connection: {}", e))?
-        .ok_or_else(|| "No connection to peer".to_string())?;
+    peer_id_array.copy_from_slice(&peer_id_bytes);
+    let gossip_peer_id = GossipPeerId::new(peer_id_array);
 
     // Serialize the test packet
     let packet_data =
@@ -3619,27 +3616,17 @@ async fn real_test_exchange(
 
     let start = Instant::now();
 
-    // Open a unidirectional stream and send the packet
-    let mut send_stream = connection
-        .open_uni()
+    // Send via gossip transport (uses port 9000)
+    gossip
+        .send_to_peer(gossip_peer_id, packet_data)
         .await
-        .map_err(|e| format!("Failed to open stream: {}", e))?;
-
-    send_stream
-        .write_all(&packet_data)
-        .await
-        .map_err(|e| format!("Failed to write data: {}", e))?;
-
-    send_stream
-        .finish()
-        .map_err(|e| format!("Failed to finish stream: {}", e))?;
+        .map_err(|e| format!("Gossip send failed: {}", e))?;
 
     let rtt = start.elapsed();
 
     debug!(
-        "REAL test packet sent to {} ({} bytes, RTT: {:?})",
+        "GOSSIP test packet sent to {} (RTT: {:?})",
         &peer_id_hex[..8.min(peer_id_hex.len())],
-        packet_data.len(),
         rtt
     );
 
