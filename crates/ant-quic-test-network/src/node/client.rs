@@ -618,12 +618,20 @@ impl TestNode {
             id_array[..len].copy_from_slice(&peer_id_bytes[..len]);
             GossipPeerId::new(id_array)
         };
+        // Use fixed gossip port 9001 for all nodes so they can find each other
+        // The main ant-quic port is dynamic, but gossip needs a well-known port
+        let gossip_port = 9001u16;
+        let gossip_listen_addr = std::net::SocketAddr::new(config.bind_addr.ip(), gossip_port);
         let epidemic_config = EpidemicConfig {
-            listen_addr: config.bind_addr,
+            listen_addr: gossip_listen_addr,
             bootstrap_peers: Vec::new(), // Bootstrap peers added dynamically from registry
             registry_url: Some(config.registry_url.clone()),
             ..EpidemicConfig::default()
         };
+        info!(
+            "Epidemic gossip will listen on port {} (fixed for network-wide discovery)",
+            gossip_port
+        );
         let epidemic_gossip = Arc::new(EpidemicGossip::new(
             gossip_peer_id,
             epidemic_config,
@@ -2487,18 +2495,22 @@ impl TestNode {
 
                     // Add registry peers to epidemic gossip for HyParView overlay
                     // This is critical for forming the gossip network
+                    // NOTE: We use the fixed gossip port (9001) instead of the dynamic ant-quic port
                     if !response.peers.is_empty() {
+                        const GOSSIP_PORT: u16 = 9001;
                         let bootstrap_addrs: Vec<std::net::SocketAddr> = response
                             .peers
                             .iter()
-                            .flat_map(|p| p.addresses.iter().cloned())
+                            .flat_map(|p| p.addresses.iter())
+                            .map(|addr| std::net::SocketAddr::new(addr.ip(), GOSSIP_PORT))
                             .collect();
 
                         if !bootstrap_addrs.is_empty() {
                             info!(
-                                "Adding {} bootstrap addresses to epidemic gossip from {} peers",
+                                "Adding {} bootstrap addresses to epidemic gossip from {} peers (using gossip port {})",
                                 bootstrap_addrs.len(),
-                                response.peers.len()
+                                response.peers.len(),
+                                GOSSIP_PORT
                             );
 
                             match self
