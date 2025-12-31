@@ -454,6 +454,9 @@ impl EpidemicGossip {
     }
 
     /// Bootstrap from known peers.
+    ///
+    /// NOTE: We use `transport.dial_bootstrap()` directly instead of `membership.join()`
+    /// because saorsa-gossip-membership v0.1.12's join() is incomplete (has TODO: transport).
     pub async fn bootstrap(&self) -> Result<usize, GossipError> {
         if !self.is_running() {
             return Err(GossipError::NotRunning);
@@ -462,26 +465,40 @@ impl EpidemicGossip {
         let stack_guard = self.stack.read().await;
         let stack = stack_guard.as_ref().ok_or(GossipError::NotRunning)?;
 
-        // Convert bootstrap addresses to seed strings
-        let seeds: Vec<String> = self
-            .config
-            .bootstrap_peers
-            .iter()
-            .map(|addr| addr.to_string())
-            .collect();
-
-        if seeds.is_empty() {
+        if self.config.bootstrap_peers.is_empty() {
             debug!("No bootstrap peers configured");
             return Ok(0);
         }
 
-        info!("Bootstrapping from {} peers", seeds.len());
+        info!(
+            "Bootstrapping from {} peers: {:?}",
+            self.config.bootstrap_peers.len(),
+            self.config.bootstrap_peers
+        );
 
-        stack
-            .membership
-            .join(seeds.clone())
-            .await
-            .map_err(|e| GossipError::Membership(e.to_string()))?;
+        // WORKAROUND: saorsa-gossip-membership v0.1.12's join() method is incomplete.
+        // It logs "(TODO: transport)" and doesn't actually dial the seeds.
+        // Instead, we use transport.dial_bootstrap() directly to connect to each peer,
+        // then add them to the active view.
+        let mut connected = 0;
+        for addr in &self.config.bootstrap_peers {
+            info!("Dialing bootstrap peer at {}", addr);
+            match stack.transport.dial_bootstrap(*addr).await {
+                Ok(peer_id) => {
+                    info!("Connected to bootstrap peer {} ({})", peer_id, addr);
+                    // Add to active view
+                    if let Err(e) = stack.membership.add_active(peer_id).await {
+                        warn!("Failed to add peer {} to active view: {}", peer_id, e);
+                    } else {
+                        info!("Added peer {} to HyParView active view", peer_id);
+                        connected += 1;
+                    }
+                }
+                Err(e) => {
+                    warn!("Failed to dial bootstrap peer {}: {}", addr, e);
+                }
+            }
+        }
 
         // Update stats
         {
@@ -489,13 +506,29 @@ impl EpidemicGossip {
             stats.hyparview.joins += 1;
         }
 
-        Ok(seeds.len())
+        if connected > 0 {
+            info!(
+                "Bootstrap complete: connected to {}/{} peers",
+                connected,
+                self.config.bootstrap_peers.len()
+            );
+        } else {
+            warn!(
+                "Bootstrap failed: could not connect to any of {} peers",
+                self.config.bootstrap_peers.len()
+            );
+        }
+
+        Ok(connected)
     }
 
     /// Add bootstrap peers dynamically (e.g., from registry) and trigger join.
     ///
     /// This is called after registration when we have peer addresses from the registry.
     /// The peers are joined to the HyParView overlay network.
+    ///
+    /// NOTE: We use `transport.dial_bootstrap()` directly instead of `membership.join()`
+    /// because saorsa-gossip-membership v0.1.12's join() is incomplete (has TODO: transport).
     pub async fn add_bootstrap_peers(&self, peers: Vec<SocketAddr>) -> Result<usize, GossipError> {
         if !self.is_running() {
             return Err(GossipError::NotRunning);
@@ -509,19 +542,35 @@ impl EpidemicGossip {
         let stack_guard = self.stack.read().await;
         let stack = stack_guard.as_ref().ok_or(GossipError::NotRunning)?;
 
-        // Convert addresses to seed strings for HyParView join
-        let seeds: Vec<String> = peers.iter().map(|addr| addr.to_string()).collect();
         info!(
             "Adding {} bootstrap peers from registry: {:?}",
-            seeds.len(),
-            seeds
+            peers.len(),
+            peers
         );
 
-        stack
-            .membership
-            .join(seeds.clone())
-            .await
-            .map_err(|e| GossipError::Membership(e.to_string()))?;
+        // WORKAROUND: saorsa-gossip-membership v0.1.12's join() method is incomplete.
+        // It logs "(TODO: transport)" and doesn't actually dial the seeds.
+        // Instead, we use transport.dial_bootstrap() directly to connect to each peer,
+        // then add them to the active view.
+        let mut connected = 0;
+        for addr in &peers {
+            info!("Dialing bootstrap peer at {}", addr);
+            match stack.transport.dial_bootstrap(*addr).await {
+                Ok(peer_id) => {
+                    info!("Connected to bootstrap peer {} ({})", peer_id, addr);
+                    // Add to active view
+                    if let Err(e) = stack.membership.add_active(peer_id).await {
+                        warn!("Failed to add peer {} to active view: {}", peer_id, e);
+                    } else {
+                        info!("Added peer {} to HyParView active view", peer_id);
+                        connected += 1;
+                    }
+                }
+                Err(e) => {
+                    warn!("Failed to dial bootstrap peer {}: {}", addr, e);
+                }
+            }
+        }
 
         // Update stats
         {
@@ -529,11 +578,19 @@ impl EpidemicGossip {
             stats.hyparview.joins += 1;
         }
 
-        info!(
-            "Successfully joined HyParView overlay with {} peers",
-            peers.len()
-        );
-        Ok(peers.len())
+        if connected > 0 {
+            info!(
+                "Successfully connected to {}/{} bootstrap peers, added to HyParView active view",
+                connected,
+                peers.len()
+            );
+        } else {
+            warn!(
+                "Failed to connect to any of {} bootstrap peers",
+                peers.len()
+            );
+        }
+        Ok(connected)
     }
 
     /// Add a peer to the active view.
