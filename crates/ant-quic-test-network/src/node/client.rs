@@ -2251,8 +2251,10 @@ impl TestNode {
                     (ipv4, ipv6, hole_punched, relayed)
                 };
 
-                // Use connected peers count as "alive" peers for SWIM-like stats
-                let swim_alive = peers.len();
+                // Use TOTAL connected peers (outbound + inbound) for "alive" stats
+                // peers.len() = outbound connections we initiated
+                // stats.inbound_connections = connections initiated by others
+                let total_connections = peers.len() + stats.inbound_connections as usize;
 
                 let gossip_stats = NodeGossipStats {
                     announcements_sent: gossip_metrics.announcements_sent.load(Ordering::Relaxed),
@@ -2271,11 +2273,11 @@ impl TestNode {
                     cache_hits: gossip_metrics.cache_hits.load(Ordering::Relaxed),
                     cache_misses: gossip_metrics.cache_misses.load(Ordering::Relaxed),
                     cache_size: gossip_integration.cache_size() as u64,
-                    // HyParView stats - using connected peers as active view proxy
-                    hyparview_active: swim_alive,
+                    // HyParView stats - using total connected peers as active view proxy
+                    hyparview_active: total_connections,
                     hyparview_passive: gossip_integration.cache_size(),
-                    // SWIM stats - connected peers are "alive"
-                    swim_alive,
+                    // SWIM stats - total connected peers are "alive"
+                    swim_alive: total_connections,
                     swim_suspect: 0, // No suspect tracking yet
                     swim_dead: 0,    // No dead tracking yet
                     // Plumtree stats - using gossip metrics as proxy
@@ -2283,7 +2285,7 @@ impl TestNode {
                     plumtree_received: gossip_metrics
                         .announcements_received
                         .load(Ordering::Relaxed),
-                    plumtree_eager: swim_alive, // Active peers get eager push
+                    plumtree_eager: total_connections, // Active peers get eager push
                     plumtree_lazy: 0,           // No lazy push tracking yet
                     // Connection type breakdown (computed from connected peers)
                     conn_direct_ipv4,
@@ -2292,14 +2294,9 @@ impl TestNode {
                     conn_relayed,
                 };
 
-                // Total connections = outbound (in connected_peers HashMap) + inbound
-                // The connected_peers HashMap only tracks connections WE initiated,
-                // so we must add inbound_connections to get the true total.
-                let total_connected = peers.len() + stats.inbound_connections as usize;
-
                 let heartbeat = NodeHeartbeat {
                     peer_id: peer_id.clone(),
-                    connected_peers: total_connected,
+                    connected_peers: total_connections,
                     bytes_sent: bytes_sent.load(Ordering::Relaxed),
                     bytes_received: bytes_received.load(Ordering::Relaxed),
                     external_addresses: if ext_addrs.is_empty() {
