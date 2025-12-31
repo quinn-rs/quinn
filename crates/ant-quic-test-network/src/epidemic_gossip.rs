@@ -37,7 +37,7 @@
 use saorsa_gossip_identity::MlDsaKeyPair;
 use saorsa_gossip_membership::{HyParViewMembership, Membership, PeerState};
 use saorsa_gossip_pubsub::{PlumtreePubSub, PubSub};
-use saorsa_gossip_transport::{AntQuicTransport, AntQuicTransportConfig};
+use saorsa_gossip_transport::{AntQuicTransport, AntQuicTransportConfig, GossipTransport};
 use saorsa_gossip_types::{PeerId, TopicId};
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -277,6 +277,17 @@ impl EpidemicGossip {
         let transport = AntQuicTransport::with_config(transport_config, None)
             .await
             .map_err(|e| GossipError::Transport(e.to_string()))?;
+
+        // CRITICAL: Start listening for incoming connections
+        // Without this, other nodes cannot connect to us!
+        transport
+            .listen(self.config.listen_addr)
+            .await
+            .map_err(|e| GossipError::Transport(format!("Failed to listen: {e}")))?;
+        info!(
+            "Transport listening on {} for incoming gossip connections",
+            self.config.listen_addr
+        );
 
         let transport = Arc::new(transport);
         info!("Transport initialized, peer ID: {:?}", self.peer_id);
