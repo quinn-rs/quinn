@@ -284,8 +284,8 @@ impl MigrationCoordinator {
     ///
     /// # Arguments
     /// * `peer` - The peer to get candidates for
-    /// * `ipv4_only` - If Some(true), return only IPv4 candidates; if Some(false), only IPv6
-    ///                 If None, return all candidates
+    /// * `ipv4_only` - If Some(true), return only IPv4 candidates; if Some(false), only IPv6.
+    ///   If None, return all candidates
     pub async fn get_candidates_filtered(
         &self,
         peer: SocketAddr,

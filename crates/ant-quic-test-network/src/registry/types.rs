@@ -710,6 +710,50 @@ pub struct NodeGossipStats {
     pub cache_misses: u64,
     /// Current cache size
     pub cache_size: u64,
+
+    // === Epidemic Gossip Stats (saorsa-gossip integration) ===
+    /// HyParView active view size (directly connected peers)
+    #[serde(default)]
+    pub hyparview_active: usize,
+    /// HyParView passive view size (known but not connected)
+    #[serde(default)]
+    pub hyparview_passive: usize,
+
+    /// SWIM peers in Alive state
+    #[serde(default)]
+    pub swim_alive: usize,
+    /// SWIM peers in Suspect state
+    #[serde(default)]
+    pub swim_suspect: usize,
+    /// SWIM peers in Dead state
+    #[serde(default)]
+    pub swim_dead: usize,
+
+    /// Plumtree messages sent
+    #[serde(default)]
+    pub plumtree_sent: u64,
+    /// Plumtree messages received
+    #[serde(default)]
+    pub plumtree_received: u64,
+    /// Plumtree eager peers count
+    #[serde(default)]
+    pub plumtree_eager: usize,
+    /// Plumtree lazy peers count
+    #[serde(default)]
+    pub plumtree_lazy: usize,
+
+    /// Connection type breakdown - Direct IPv4
+    #[serde(default)]
+    pub conn_direct_ipv4: usize,
+    /// Connection type breakdown - Direct IPv6
+    #[serde(default)]
+    pub conn_direct_ipv6: usize,
+    /// Connection type breakdown - Hole punched
+    #[serde(default)]
+    pub conn_hole_punched: usize,
+    /// Connection type breakdown - Relayed
+    #[serde(default)]
+    pub conn_relayed: usize,
 }
 
 /// Gossip network statistics (aggregated from all nodes).

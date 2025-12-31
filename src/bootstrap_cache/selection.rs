@@ -510,9 +510,12 @@ mod tests {
 
     #[test]
     fn test_select_relays_excludes_non_relays() {
-        let mut peers = vec![
-            create_relay_peer_with_addresses(1, 0.9, vec!["1.2.3.4:9000"], vec![]),
-        ];
+        let mut peers = vec![create_relay_peer_with_addresses(
+            1,
+            0.9,
+            vec!["1.2.3.4:9000"],
+            vec![],
+        )];
 
         // Add a non-relay peer with high quality
         let mut non_relay = CachedPeer::new(PeerId([2; 32]), vec![], PeerSource::Seed);

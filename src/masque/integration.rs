@@ -171,10 +171,7 @@ impl RelayNodeInfo {
     }
 
     /// Create a new relay node with dual-stack support
-    fn new_dual_stack(
-        primary: SocketAddr,
-        secondary: SocketAddr,
-    ) -> Self {
+    fn new_dual_stack(primary: SocketAddr, secondary: SocketAddr) -> Self {
         Self {
             address: primary,
             secondary_address: Some(secondary),
@@ -633,12 +630,18 @@ mod tests {
 
     fn ipv6_relay_addr(id: u16) -> SocketAddr {
         use std::net::Ipv6Addr;
-        SocketAddr::new(IpAddr::V6(Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, id)), 9000)
+        SocketAddr::new(
+            IpAddr::V6(Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, id)),
+            9000,
+        )
     }
 
     fn ipv6_target(id: u16) -> SocketAddr {
         use std::net::Ipv6Addr;
-        SocketAddr::new(IpAddr::V6(Ipv6Addr::new(0x2001, 0xdb8, 0, 1, 0, 0, 0, id)), 8080)
+        SocketAddr::new(
+            IpAddr::V6(Ipv6Addr::new(0x2001, 0xdb8, 0, 1, 0, 0, 0, id)),
+            8080,
+        )
     }
 
     fn ipv4_target(id: u8) -> SocketAddr {
@@ -669,7 +672,9 @@ mod tests {
         manager.add_relay_node(relay_addr(1)).await;
 
         // Add dual-stack relay
-        manager.add_dual_stack_relay(relay_addr(2), ipv6_relay_addr(2)).await;
+        manager
+            .add_dual_stack_relay(relay_addr(2), ipv6_relay_addr(2))
+            .await;
 
         let dual_stack = manager.dual_stack_relays().await;
         assert_eq!(dual_stack.len(), 1);
@@ -686,7 +691,9 @@ mod tests {
         // IPv6 relay (cannot reach IPv4 targets)
         manager.add_relay_node(ipv6_relay_addr(2)).await;
         // Dual-stack relay (can reach any target)
-        manager.add_dual_stack_relay(relay_addr(3), ipv6_relay_addr(3)).await;
+        manager
+            .add_dual_stack_relay(relay_addr(3), ipv6_relay_addr(3))
+            .await;
 
         let relays = manager.relays_for_target(ipv4_target(1)).await;
         // Should include IPv4 relay and dual-stack, but not IPv6-only relay
@@ -706,7 +713,9 @@ mod tests {
         // IPv6 relay (can reach IPv6 targets)
         manager.add_relay_node(ipv6_relay_addr(2)).await;
         // Dual-stack relay (can reach any target)
-        manager.add_dual_stack_relay(relay_addr(3), ipv6_relay_addr(3)).await;
+        manager
+            .add_dual_stack_relay(relay_addr(3), ipv6_relay_addr(3))
+            .await;
 
         let relays = manager.relays_for_target(ipv6_target(1)).await;
         // Should include IPv6 relay and dual-stack, but not IPv4-only relay

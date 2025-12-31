@@ -58,6 +58,7 @@
 //! 5. Display real-time statistics in TUI
 
 pub mod dashboard;
+pub mod epidemic_gossip;
 pub mod gossip;
 pub mod node;
 pub mod orchestrator;

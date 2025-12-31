@@ -2237,6 +2237,20 @@ impl TestNode {
                     cache_hits: gossip_metrics.cache_hits.load(Ordering::Relaxed),
                     cache_misses: gossip_metrics.cache_misses.load(Ordering::Relaxed),
                     cache_size: gossip_integration.cache_size() as u64,
+                    // Epidemic gossip stats (populated when saorsa-gossip is active)
+                    hyparview_active: 0,
+                    hyparview_passive: 0,
+                    swim_alive: 0,
+                    swim_suspect: 0,
+                    swim_dead: 0,
+                    plumtree_sent: 0,
+                    plumtree_received: 0,
+                    plumtree_eager: 0,
+                    plumtree_lazy: 0,
+                    conn_direct_ipv4: 0,
+                    conn_direct_ipv6: 0,
+                    conn_hole_punched: 0,
+                    conn_relayed: 0,
                 };
 
                 // Total connections = outbound (in connected_peers HashMap) + inbound

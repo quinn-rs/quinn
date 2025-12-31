@@ -128,17 +128,27 @@ impl RelayAnnouncement {
             return true;
         }
         // Check if any address matches the target's IP version
-        self.addresses.iter().any(|a| a.is_ipv4() == target.is_ipv4())
+        self.addresses
+            .iter()
+            .any(|a| a.is_ipv4() == target.is_ipv4())
     }
 
     /// Get IPv4 addresses from this relay.
     pub fn ipv4_addresses(&self) -> Vec<SocketAddr> {
-        self.addresses.iter().filter(|a| a.is_ipv4()).copied().collect()
+        self.addresses
+            .iter()
+            .filter(|a| a.is_ipv4())
+            .copied()
+            .collect()
     }
 
     /// Get IPv6 addresses from this relay.
     pub fn ipv6_addresses(&self) -> Vec<SocketAddr> {
-        self.addresses.iter().filter(|a| a.is_ipv6()).copied().collect()
+        self.addresses
+            .iter()
+            .filter(|a| a.is_ipv6())
+            .copied()
+            .collect()
     }
 
     /// Check if this relay has addresses in both IP versions.
