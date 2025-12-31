@@ -148,11 +148,11 @@ jobs:
           set -e
 
           echo "Stopping service..."
-          systemctl stop $SERVICE || true
+          systemctl stop $SERVICE 2>/dev/null || true
           sleep 2
 
           # Kill any remaining processes
-          pkill -9 $BINARY || true
+          pkill -9 $BINARY 2>/dev/null || true
           sleep 1
 
           echo "Replacing binary..."
@@ -160,13 +160,36 @@ jobs:
           mv /tmp/binary-new $REMOTE_PATH
           chmod +x $REMOTE_PATH
 
+          # Create systemd service file if it doesn't exist
+          if [ ! -f /etc/systemd/system/$SERVICE.service ]; then
+            echo "Creating systemd service file for $SERVICE..."
+            echo "[Unit]" > /etc/systemd/system/$SERVICE.service
+            echo "Description=$SERVICE Test Network Node" >> /etc/systemd/system/$SERVICE.service
+            echo "After=network-online.target" >> /etc/systemd/system/$SERVICE.service
+            echo "Wants=network-online.target" >> /etc/systemd/system/$SERVICE.service
+            echo "" >> /etc/systemd/system/$SERVICE.service
+            echo "[Service]" >> /etc/systemd/system/$SERVICE.service
+            echo "Type=simple" >> /etc/systemd/system/$SERVICE.service
+            echo "User=root" >> /etc/systemd/system/$SERVICE.service
+            echo "ExecStart=$REMOTE_PATH --registry-url https://saorsa-1.saorsalabs.com --quiet" >> /etc/systemd/system/$SERVICE.service
+            echo "Restart=always" >> /etc/systemd/system/$SERVICE.service
+            echo "RestartSec=5" >> /etc/systemd/system/$SERVICE.service
+            echo "StandardOutput=append:/var/log/$SERVICE.log" >> /etc/systemd/system/$SERVICE.service
+            echo "StandardError=append:/var/log/$SERVICE.log" >> /etc/systemd/system/$SERVICE.service
+            echo "Environment=RUST_LOG=info" >> /etc/systemd/system/$SERVICE.service
+            echo "" >> /etc/systemd/system/$SERVICE.service
+            echo "[Install]" >> /etc/systemd/system/$SERVICE.service
+            echo "WantedBy=multi-user.target" >> /etc/systemd/system/$SERVICE.service
+            systemctl daemon-reload
+          fi
+
           echo "Starting service..."
-          systemctl start $SERVICE || echo "Service $SERVICE not configured, skipping start"
+          systemctl start $SERVICE || echo "Service $SERVICE failed to start"
           sleep 3
 
           echo "Verifying..."
           systemctl status $SERVICE --no-pager || echo "Service not running"
-          $REMOTE_PATH --version
+          $REMOTE_PATH --version || echo "Binary version check failed"
           EOF
 
       - name: Post-deployment verification
