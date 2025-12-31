@@ -453,9 +453,9 @@ impl TestNode {
         // These are publicly reachable nodes that can coordinate hole-punching.
         // When NAT traversal is needed, we use these as coordinators (not the unreachable target peer).
         let known_peers: Vec<SocketAddr> = vec![
-            "77.42.75.115:9000".parse().ok(),    // saorsa-1
-            "162.243.167.201:9000".parse().ok(), // saorsa-2 (DO node 1)
-            "159.65.221.230:9000".parse().ok(),  // saorsa-3 (DO node 2)
+            "77.42.75.115:9000".parse().ok(),    // saorsa-1 (Helsinki)
+            "142.93.199.50:9000".parse().ok(),   // saorsa-2 (NYC)
+            "147.182.234.192:9000".parse().ok(), // saorsa-3 (SFO)
         ]
         .into_iter()
         .flatten()
@@ -1900,9 +1900,9 @@ impl TestNode {
     async fn discover_external_address(&self) {
         // Known QUIC peers (saorsa registry nodes running QUIC on port 9000)
         let known_quic_peers: Vec<SocketAddr> = vec![
-            "77.42.75.115:9000".parse().ok(),    // saorsa-1
-            "162.243.167.201:9000".parse().ok(), // saorsa-2
-            "159.65.221.230:9000".parse().ok(),  // saorsa-3
+            "77.42.75.115:9000".parse().ok(),    // saorsa-1 (Helsinki)
+            "142.93.199.50:9000".parse().ok(),   // saorsa-2 (NYC)
+            "147.182.234.192:9000".parse().ok(), // saorsa-3 (SFO)
         ]
         .into_iter()
         .flatten()

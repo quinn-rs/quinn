@@ -45,8 +45,8 @@ get_node_hostname() {
 get_node_ip() {
     case "$1" in
         saorsa-1) echo "77.42.75.115" ;;
-        saorsa-2) echo "162.243.167.201" ;;
-        saorsa-3) echo "159.65.221.230" ;;
+        saorsa-2) echo "142.93.199.50" ;;
+        saorsa-3) echo "147.182.234.192" ;;
     esac
 }
 
