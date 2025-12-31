@@ -1316,19 +1316,22 @@ impl TestNode {
                             .duration_since(std::time::UNIX_EPOCH)
                             .map(|d| d.as_millis() as u64)
                             .unwrap_or(0);
-                        peers.values().filter_map(|p| {
-                            if p.info.peer_id != new_peer_hex {
-                                Some(GossipPeerInfo {
-                                    peer_id: p.info.peer_id.clone(),
-                                    addresses: p.info.addresses.clone(),
-                                    is_public: true,
-                                    is_connected: true,
-                                    last_seen_ms: timestamp_ms,
-                                })
-                            } else {
-                                None
-                            }
-                        }).collect()
+                        peers
+                            .values()
+                            .filter_map(|p| {
+                                if p.info.peer_id != new_peer_hex {
+                                    Some(GossipPeerInfo {
+                                        peer_id: p.info.peer_id.clone(),
+                                        addresses: p.info.addresses.clone(),
+                                        is_public: true,
+                                        is_connected: true,
+                                        last_seen_ms: timestamp_ms,
+                                    })
+                                } else {
+                                    None
+                                }
+                            })
+                            .collect()
                     };
 
                     // Send peer list to newly connected peer if we have peers and space
@@ -1348,7 +1351,9 @@ impl TestNode {
                                 &new_peer_hex_clone,
                                 &peer_id_clone,
                                 peer_list_clone,
-                            ).await {
+                            )
+                            .await
+                            {
                                 debug!(
                                     "Failed to send peer list to inbound {}: {}",
                                     &new_peer_hex_clone[..8.min(new_peer_hex_clone.len())],
@@ -1364,11 +1369,7 @@ impl TestNode {
                     }
 
                     // Add to bootstrap cache
-                    gossip_integration.add_peer(
-                        &new_peer_hex,
-                        &[addr],
-                        true,
-                    );
+                    gossip_integration.add_peer(&new_peer_hex, &[addr], true);
 
                     // Send TUI event - create a ConnectedPeer for display
                     let mut tui_peer = ConnectedPeer::with_direction(
