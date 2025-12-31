@@ -80,7 +80,7 @@ jobs:
           # Set binary-specific paths
           if [[ "$BINARY" == "ant-quic-test" ]]; then
             echo "archive=ant-quic-test-x86_64-linux.tar.gz" >> $GITHUB_OUTPUT
-            echo "remote_path=/usr/local/bin/ant-quic-test" >> $GITHUB_OUTPUT
+            echo "remote_path=/opt/ant-quic-test/ant-quic-test" >> $GITHUB_OUTPUT
             echo "service=ant-quic-test" >> $GITHUB_OUTPUT
           else
             echo "archive=ant-quic-x86_64-linux.tar.gz" >> $GITHUB_OUTPUT
@@ -156,6 +156,7 @@ jobs:
           sleep 1
 
           echo "Replacing binary..."
+          mkdir -p $(dirname $REMOTE_PATH)
           mv /tmp/binary-new $REMOTE_PATH
           chmod +x $REMOTE_PATH
 
