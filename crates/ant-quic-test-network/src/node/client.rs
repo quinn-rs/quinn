@@ -4,9 +4,11 @@
 //! automatic connections using REAL P2pEndpoint QUIC connections,
 //! and test traffic generation over actual QUIC streams.
 
+use crate::epidemic_gossip::{EpidemicConfig, EpidemicEvent, EpidemicGossip};
 use crate::gossip::{
     GossipConfig, GossipEvent, GossipIntegration, PeerCapabilities as GossipCapabilities,
 };
+use saorsa_gossip_types::PeerId as GossipPeerId;
 use crate::registry::{
     BgpGeoProvider, ConnectionDirection, ConnectionMethod, ConnectionReport, ConnectivityMatrix,
     NatStats, NatType, NodeCapabilities, NodeGossipStats, NodeHeartbeat, NodeRegistration,
@@ -299,6 +301,10 @@ pub struct TestNode {
     gossip_integration: Arc<GossipIntegration>,
     /// Receiver for gossip events.
     gossip_event_rx: Arc<RwLock<mpsc::Receiver<GossipEvent>>>,
+    /// True epidemic gossip using saorsa-gossip (HyParView + SWIM + PlumTree).
+    epidemic_gossip: Arc<EpidemicGossip>,
+    /// Receiver for epidemic gossip events.
+    epidemic_event_rx: Arc<RwLock<mpsc::Receiver<EpidemicEvent>>>,
 }
 
 /// Get the data directory for persistent storage.
@@ -600,6 +606,31 @@ impl TestNode {
         info!(
             "Initialized gossip integration with bootstrap cache ({} cached peers)",
             gossip_integration.cache_size()
+        );
+
+        // Initialize true epidemic gossip using saorsa-gossip (HyParView + SWIM + PlumTree)
+        let (epidemic_event_tx, epidemic_event_rx) = mpsc::channel(100);
+        // Convert peer_id (hex string) to GossipPeerId (32 bytes)
+        let gossip_peer_id = {
+            let peer_id_bytes = hex::decode(&peer_id).unwrap_or_else(|_| vec![0u8; 32]);
+            let mut id_array = [0u8; 32];
+            let len = peer_id_bytes.len().min(32);
+            id_array[..len].copy_from_slice(&peer_id_bytes[..len]);
+            GossipPeerId::new(id_array)
+        };
+        let epidemic_config = EpidemicConfig {
+            listen_addr: config.bind_addr,
+            bootstrap_peers: Vec::new(), // Bootstrap peers added dynamically from registry
+            registry_url: Some(config.registry_url.clone()),
+            ..EpidemicConfig::default()
+        };
+        let epidemic_gossip = Arc::new(EpidemicGossip::new(
+            gossip_peer_id,
+            epidemic_config,
+            epidemic_event_tx,
+        ));
+        info!(
+            "Initialized saorsa-gossip epidemic layer (HyParView + SWIM + PlumTree)"
         );
 
         // Spawn event handler for P2P events to update TUI
@@ -921,6 +952,8 @@ impl TestNode {
             relay_state,
             gossip_integration, // Already Arc-wrapped
             gossip_event_rx: Arc::new(RwLock::new(gossip_event_rx)),
+            epidemic_gossip,
+            epidemic_event_rx: Arc::new(RwLock::new(epidemic_event_rx)),
         })
     }
 
@@ -1716,6 +1749,167 @@ impl TestNode {
         &self.gossip_integration
     }
 
+    /// Announce ourselves via saorsa-gossip epidemic broadcast (PlumTree).
+    pub async fn announce_via_epidemic(&self) {
+        if !self.epidemic_gossip.is_running() {
+            debug!("Skipping epidemic announcement - gossip layer not running");
+            return;
+        }
+
+        let external_addrs = self.external_addresses.read().await.clone();
+        let rs = self.relay_state.read().await;
+        let (is_public, _is_public_ipv4, _is_public_ipv6) = rs.get_public_status();
+        drop(rs); // Release lock early
+
+        // Create peer info
+        let peer_info = GossipPeerInfo {
+            peer_id: self.peer_id.clone(),
+            addresses: external_addrs.clone(),
+            is_public,
+            is_connected: true,
+            last_seen_ms: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis() as u64)
+                .unwrap_or(0),
+        };
+
+        // Create announcement using the constructor
+        let announcement = GossipPeerAnnouncement::new(
+            peer_info,
+            self.peer_id.clone(),
+            8, // TTL - 8 hops should cover a large network
+        );
+
+        // Serialize and publish via saorsa-gossip PlumTree
+        match announcement.to_bytes() {
+            Ok(payload) => {
+                if let Err(e) = self.epidemic_gossip.publish(payload).await {
+                    warn!("Failed to publish via saorsa-gossip: {}", e);
+                } else {
+                    info!(
+                        "Published announcement via saorsa-gossip epidemic broadcast: {}",
+                        &self.peer_id[..8.min(self.peer_id.len())]
+                    );
+                }
+            }
+            Err(e) => {
+                warn!("Failed to serialize announcement for epidemic broadcast: {}", e);
+            }
+        }
+    }
+
+    /// Spawn the saorsa-gossip epidemic event processing loop.
+    fn spawn_epidemic_gossip_loop(&self) -> tokio::task::JoinHandle<()> {
+        let shutdown = Arc::clone(&self.shutdown);
+        let gossip_integration = Arc::clone(&self.gossip_integration);
+        let epidemic_event_rx = Arc::clone(&self.epidemic_event_rx);
+        let endpoint = Arc::clone(&self.endpoint);
+        let connected_peers = Arc::clone(&self.connected_peers);
+        let event_tx = self.event_tx.clone();
+
+        tokio::spawn(async move {
+            let mut last_periodic = Instant::now();
+            let periodic_interval = Duration::from_secs(30);
+
+            loop {
+                if shutdown.load(Ordering::SeqCst) {
+                    break;
+                }
+
+                // Process incoming epidemic events
+                tokio::select! {
+                    _ = tokio::time::sleep(Duration::from_millis(100)) => {
+                        let mut rx = epidemic_event_rx.write().await;
+                        while let Ok(event) = rx.try_recv() {
+                            match event {
+                                EpidemicEvent::PeerJoined { peer_id, addresses } => {
+                                    let peer_id_hex = hex::encode(peer_id.as_bytes());
+                                    info!(
+                                        "Epidemic: peer joined via HyParView: {} (addrs: {:?})",
+                                        &peer_id_hex[..8.min(peer_id_hex.len())],
+                                        addresses
+                                    );
+
+                                    // Add to gossip integration cache (addresses are already SocketAddr)
+                                    gossip_integration.add_peer(&peer_id_hex, &addresses, true);
+
+                                    // Try to connect via QUIC if not already connected
+                                    {
+                                        let peers = connected_peers.read().await;
+                                        if !peers.contains_key(&peer_id_hex) && !addresses.is_empty() {
+                                            drop(peers);
+                                            // Spawn connection attempt
+                                            let endpoint_clone = Arc::clone(&endpoint);
+                                            let gossip_clone = Arc::clone(&gossip_integration);
+                                            let event_tx_clone = event_tx.clone();
+                                            tokio::spawn(async move {
+                                                if let Err(e) = endpoint_clone.connect(addresses[0]).await {
+                                                    debug!("Failed to connect to epidemic peer {}: {}", &peer_id_hex[..8], e);
+                                                } else {
+                                                    gossip_clone.record_success(&peer_id_hex);
+                                                    let _ = event_tx_clone.try_send(TuiEvent::Info(format!(
+                                                        "Connected to epidemic peer {}",
+                                                        &peer_id_hex[..8]
+                                                    )));
+                                                }
+                                            });
+                                        }
+                                    }
+                                }
+                                EpidemicEvent::PeerLeft { peer_id } => {
+                                    let peer_id_hex = hex::encode(peer_id.as_bytes());
+                                    info!(
+                                        "Epidemic: peer left (SWIM dead): {}",
+                                        &peer_id_hex[..8.min(peer_id_hex.len())]
+                                    );
+                                    // No record_failure method - just log the event
+                                }
+                                EpidemicEvent::PeerSuspect { peer_id } => {
+                                    let peer_id_hex = hex::encode(peer_id.as_bytes());
+                                    debug!(
+                                        "Epidemic: peer suspected (SWIM probe timeout): {}",
+                                        &peer_id_hex[..8.min(peer_id_hex.len())]
+                                    );
+                                }
+                                EpidemicEvent::MessageReceived { from, topic: _, payload } => {
+                                    // Process epidemic gossip message (peer announcement)
+                                    if let Ok(announcement) = GossipPeerAnnouncement::from_bytes(&payload) {
+                                        let peer_id_hex = &announcement.peer.peer_id;
+                                        debug!(
+                                            "Epidemic: received announcement from {} for peer {}",
+                                            hex::encode(from.as_bytes())[..8].to_string(),
+                                            &peer_id_hex[..8.min(peer_id_hex.len())]
+                                        );
+
+                                        // Add peer to gossip integration
+                                        gossip_integration.add_peer(
+                                            peer_id_hex,
+                                            &announcement.peer.addresses,
+                                            announcement.peer.is_public,
+                                        );
+                                    }
+                                }
+                                EpidemicEvent::ConnectionType { peer_id, connection_type } => {
+                                    debug!(
+                                        "Epidemic: connection type for {}: {:?}",
+                                        hex::encode(peer_id.as_bytes())[..8].to_string(),
+                                        connection_type
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Periodic tasks (announce via epidemic every 30s)
+                if last_periodic.elapsed() >= periodic_interval {
+                    last_periodic = Instant::now();
+                    debug!("Epidemic gossip loop: periodic check");
+                }
+            }
+        })
+    }
+
     // ========================================================================
     // Relay Message Handling
     // ========================================================================
@@ -2167,6 +2361,13 @@ impl TestNode {
         // Start background tasks
         let shutdown = Arc::clone(&self.shutdown);
 
+        // Start saorsa-gossip epidemic layer
+        if let Err(e) = self.epidemic_gossip.start().await {
+            warn!("Failed to start saorsa-gossip epidemic layer: {} (continuing with passive gossip)", e);
+        } else {
+            info!("Started saorsa-gossip epidemic layer (HyParView + SWIM + PlumTree)");
+        }
+
         // Spawn all background tasks
         let heartbeat_handle = self.spawn_heartbeat_loop();
         let connect_handle = self.spawn_connect_loop();
@@ -2175,9 +2376,12 @@ impl TestNode {
         let relay_stats_handle = self.spawn_relay_stats_loop();
         let gossip_handle = self.spawn_gossip_loop();
         let accept_handle = self.spawn_accept_loop();
+        let epidemic_handle = self.spawn_epidemic_gossip_loop();
 
         // Announce ourselves to gossip network
         self.announce_to_gossip().await;
+        // Also announce via saorsa-gossip epidemic broadcast
+        self.announce_via_epidemic().await;
 
         // Wait for shutdown
         while !shutdown.load(Ordering::SeqCst) {
@@ -2192,12 +2396,16 @@ impl TestNode {
         relay_stats_handle.abort();
         gossip_handle.abort();
         accept_handle.abort();
+        epidemic_handle.abort();
 
         // Save peer cache and shutdown gossip integration
         if let Err(e) = self.gossip_integration.save_cache() {
             warn!("Failed to save peer cache on shutdown: {}", e);
         }
         self.gossip_integration.discovery().shutdown();
+
+        // Stop saorsa-gossip epidemic layer
+        self.epidemic_gossip.stop().await;
 
         info!("Test node shutting down");
         Ok(())
