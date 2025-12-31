@@ -1,6 +1,6 @@
 [package]
 name = "ant-quic-test-network"
-version = "0.14.109"
+version = "0.14.110"
 edition = "2024"
 rust-version = "1.85.0"
 license = "MIT OR Apache-2.0"
@@ -51,12 +51,12 @@ tracing-subscriber = "0.3"
 
 # Gossip protocol for decentralized peer/relay discovery
 # Full saorsa-gossip stack for true epidemic broadcast
-saorsa-gossip-transport = "0.1.11"
-saorsa-gossip-pubsub = "0.1.11"
-saorsa-gossip-membership = "0.1.11"
-saorsa-gossip-types = "0.1.11"
-saorsa-gossip-coordinator = "0.1.11"
-saorsa-gossip-identity = "0.1.11"
+saorsa-gossip-transport = "0.1.12"
+saorsa-gossip-pubsub = "0.1.12"
+saorsa-gossip-membership = "0.1.12"
+saorsa-gossip-types = "0.1.12"
+saorsa-gossip-coordinator = "0.1.12"
+saorsa-gossip-identity = "0.1.12"
 
 # Embedded static files for web dashboard
 rust-embed = "8"
