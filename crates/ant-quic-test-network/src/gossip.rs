@@ -563,7 +563,8 @@ impl GossipDiscovery {
 
             for peer_id in stale {
                 peers.remove(&peer_id);
-                let _ = self.event_tx.send(GossipEvent::PeerOffline(peer_id)).await;
+                // Non-blocking send to avoid deadlock if receiver is slow
+                let _ = self.event_tx.try_send(GossipEvent::PeerOffline(peer_id));
             }
         }
 
