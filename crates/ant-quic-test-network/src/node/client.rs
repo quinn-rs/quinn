@@ -2365,13 +2365,11 @@ impl TestNode {
             info!("=== RELAY: This node appears to be behind NAT ===");
         }
 
-        // Register with the registry (now with external address from QUIC discovery)
-        self.register().await?;
-
         // Start background tasks
         let shutdown = Arc::clone(&self.shutdown);
 
-        // Start saorsa-gossip epidemic layer
+        // Start saorsa-gossip epidemic layer BEFORE registration
+        // This ensures the gossip layer is running when register() tries to add bootstrap peers
         if let Err(e) = self.epidemic_gossip.start().await {
             warn!(
                 "Failed to start saorsa-gossip epidemic layer: {} (continuing with passive gossip)",
@@ -2380,6 +2378,10 @@ impl TestNode {
         } else {
             info!("Started saorsa-gossip epidemic layer (HyParView + SWIM + PlumTree)");
         }
+
+        // Register with the registry (now with external address from QUIC discovery)
+        // This must happen AFTER gossip starts so add_bootstrap_peers works
+        self.register().await?;
 
         // Spawn all background tasks
         let heartbeat_handle = self.spawn_heartbeat_loop();
