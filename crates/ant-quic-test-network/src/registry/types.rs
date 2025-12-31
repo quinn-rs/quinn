@@ -647,6 +647,9 @@ pub struct PeerInfo {
     /// Number of connected peers
     #[serde(default)]
     pub connected_peers: usize,
+    /// Gossip protocol statistics (if available)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gossip_stats: Option<NodeGossipStats>,
 }
 
 /// Network-wide statistics (returned by /api/stats).

@@ -720,6 +720,7 @@ mod tests {
             bytes_sent: 1000,
             bytes_received: 2000,
             connected_peers: 5,
+            gossip_stats: None,
         }];
 
         storage.update_nodes(nodes).await;

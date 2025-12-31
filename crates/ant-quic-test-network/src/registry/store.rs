@@ -353,6 +353,7 @@ impl PeerStore {
             bytes_sent: entry.bytes_sent,
             bytes_received: entry.bytes_received,
             connected_peers: entry.connected_peers,
+            gossip_stats: Some(entry.gossip_stats.clone()),
         }
     }
 
