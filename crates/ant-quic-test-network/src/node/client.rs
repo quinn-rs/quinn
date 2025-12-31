@@ -529,10 +529,8 @@ impl TestNode {
         local_node.nat_type = NatType::Unknown;
         local_node.registered = false;
 
-        // Send initial node info to TUI
-        let _ = event_tx
-            .send(TuiEvent::UpdateLocalNode(local_node.clone()))
-            .await;
+        // Send initial node info to TUI (non-blocking to avoid deadlock)
+        let _ = event_tx.try_send(TuiEvent::UpdateLocalNode(local_node.clone()));
 
         // Send an info message with peer ID and addresses so user sees confirmation
         let ipv4_str = local_ipv4
@@ -543,7 +541,7 @@ impl TestNode {
             &peer_id[..8.min(peer_id.len())],
             ipv4_str
         );
-        let _ = event_tx.send(TuiEvent::Info(info_msg)).await;
+        let _ = event_tx.try_send(TuiEvent::Info(info_msg));
 
         // Create external addresses storage before spawning event handler
         // so we can share it with the handler
@@ -649,12 +647,10 @@ impl TestNode {
                                 debug!("We appear to be behind NAT on all IP families");
                             }
                         }
-                        let _ = event_tx_for_events
-                            .send(TuiEvent::Info(format!(
-                                "Discovered external address: {}",
-                                addr
-                            )))
-                            .await;
+                        let _ = event_tx_for_events.try_send(TuiEvent::Info(format!(
+                            "Discovered external address: {}",
+                            addr
+                        )));
                     }
                     P2pEvent::NatTraversalProgress { peer_id, phase } => {
                         // Track if this peer went through the Punching phase
@@ -697,13 +693,11 @@ impl TestNode {
 
                             // This is the key metric for nodes behind NAT!
                             // If we receive inbound connections, NAT traversal is working
-                            let _ = event_tx_for_events.send(TuiEvent::InboundConnection).await;
-                            let _ = event_tx_for_events
-                                .send(TuiEvent::Info(format!(
-                                    "← INBOUND from {} (NAT traversal works!)",
-                                    &peer_hex[..8.min(peer_hex.len())]
-                                )))
-                                .await;
+                            let _ = event_tx_for_events.try_send(TuiEvent::InboundConnection);
+                            let _ = event_tx_for_events.try_send(TuiEvent::Info(format!(
+                                "← INBOUND from {} (NAT traversal works!)",
+                                &peer_hex[..8.min(peer_hex.len())]
+                            )));
 
                             // Create a ConnectedPeer for TUI display with Inbound direction
                             // This ensures inbound connections appear in the peer list
@@ -724,16 +718,14 @@ impl TestNode {
                                 inbound_peer.location = format!("{} {}", country_flag(&cc), cc);
                             }
 
-                            let _ = event_tx_for_events
-                                .send(TuiEvent::PeerConnected(inbound_peer))
-                                .await;
+                            let _ = event_tx_for_events.try_send(TuiEvent::PeerConnected(inbound_peer));
                         } else {
                             // Outbound connection - we initiated
                             // Remove from pending since connection completed
                             let mut pending = pending_outbound_for_events.write().await;
                             pending.remove(&peer_hex);
                             // Track outbound connection
-                            let _ = event_tx_for_events.send(TuiEvent::OutboundConnection).await;
+                            let _ = event_tx_for_events.try_send(TuiEvent::OutboundConnection);
                         }
 
                         // === ADD PEER TO CONNECTED_PEERS IMMEDIATELY ===
@@ -891,10 +883,8 @@ impl TestNode {
                             );
                         }
 
-                        // Notify TUI of peer disconnect
-                        let _ = event_tx_for_events
-                            .send(TuiEvent::RemovePeer(peer_hex))
-                            .await;
+                        // Notify TUI of peer disconnect (non-blocking)
+                        let _ = event_tx_for_events.try_send(TuiEvent::RemovePeer(peer_hex));
                     }
                     _ => {}
                 }
@@ -1324,11 +1314,11 @@ impl TestNode {
                                     }
 
                                     // Send to TUI for visualization
-                                    let _ = event_tx.send(TuiEvent::GossipPeerDiscovered {
+                                    let _ = event_tx.try_send(TuiEvent::GossipPeerDiscovered {
                                         peer_id: announcement.peer_id.clone(),
                                         addresses: announcement.addresses.iter().map(|a| a.to_string()).collect(),
                                         is_public: announcement.is_public,
-                                    }).await;
+                                    });
                                 }
                                 GossipEvent::RelayDiscovered(relay) => {
                                     info!(
@@ -1336,11 +1326,11 @@ impl TestNode {
                                         &relay.peer_id[..8.min(relay.peer_id.len())],
                                         relay.active_connections
                                     );
-                                    let _ = event_tx.send(TuiEvent::GossipRelayDiscovered {
+                                    let _ = event_tx.try_send(TuiEvent::GossipRelayDiscovered {
                                         peer_id: relay.peer_id.clone(),
                                         addresses: relay.addresses.iter().map(|a| a.to_string()).collect(),
                                         load: relay.active_connections,
-                                    }).await;
+                                    });
                                 }
                                 GossipEvent::CoordinatorDiscovered(coord) => {
                                     info!(
@@ -1976,7 +1966,7 @@ impl TestNode {
                  other nodes may not be able to connect to us."
             );
             // Send warning to TUI so user sees it
-            let _ = self.event_tx.send(TuiEvent::Info(msg.to_string())).await;
+            let _ = self.event_tx.try_send(TuiEvent::Info(msg.to_string()));
         }
     }
 
@@ -2098,41 +2088,29 @@ impl TestNode {
                         }
                     }
 
-                    // Send updated node info to TUI
-                    let _ = self
-                        .event_tx
-                        .send(TuiEvent::UpdateLocalNode(local_node))
-                        .await;
-                    let _ = self.event_tx.send(TuiEvent::RegistrationComplete).await;
+                    // Send updated node info to TUI (non-blocking)
+                    let _ = self.event_tx.try_send(TuiEvent::UpdateLocalNode(local_node));
+                    let _ = self.event_tx.try_send(TuiEvent::RegistrationComplete);
 
-                    // Also send the registered count
-                    let _ = self
-                        .event_tx
-                        .send(TuiEvent::UpdateRegisteredCount(response.peers.len() + 1))
-                        .await;
+                    // Also send the registered count (non-blocking)
+                    let _ = self.event_tx.try_send(TuiEvent::UpdateRegisteredCount(response.peers.len() + 1));
                 } else {
                     let err = response
                         .error
                         .unwrap_or_else(|| "Unknown error".to_string());
                     error!("Registration failed: {}", err);
-                    // Send error to TUI
-                    let _ = self
-                        .event_tx
-                        .send(TuiEvent::Error(format!("Registration failed: {}", err)))
-                        .await;
+                    // Send error to TUI (non-blocking)
+                    let _ = self.event_tx.try_send(TuiEvent::Error(format!("Registration failed: {}", err)));
                     return Err(anyhow::anyhow!("Registration failed: {}", err));
                 }
             }
             Err(e) => {
                 error!("Failed to connect to registry: {}", e);
-                // Send error to TUI
-                let _ = self
-                    .event_tx
-                    .send(TuiEvent::Error(format!(
-                        "Registry connection failed: {}",
-                        e
-                    )))
-                    .await;
+                // Send error to TUI (non-blocking)
+                let _ = self.event_tx.try_send(TuiEvent::Error(format!(
+                    "Registry connection failed: {}",
+                    e
+                )));
                 return Err(e);
             }
         }
@@ -2286,8 +2264,8 @@ impl TestNode {
                     }
                     consecutive_failures = 0;
                     debug!("Heartbeat sent successfully");
-                    // Notify TUI that heartbeat was successful
-                    let _ = event_tx.send(TuiEvent::HeartbeatSent).await;
+                    // Notify TUI that heartbeat was successful (non-blocking to avoid deadlock)
+                    let _ = event_tx.try_send(TuiEvent::HeartbeatSent);
                 }
             }
         })
@@ -2407,10 +2385,8 @@ impl TestNode {
                 }
 
                 // Update TUI with total registered count (+1 to include ourselves)
-                // The registry.get_peers() returns all peers EXCEPT us
-                let _ = event_tx
-                    .send(TuiEvent::UpdateRegisteredCount(peers.len() + 1))
-                    .await;
+                // The registry.get_peers() returns all peers EXCEPT us (non-blocking)
+                let _ = event_tx.try_send(TuiEvent::UpdateRegisteredCount(peers.len() + 1));
 
                 // Get current connection state and disconnection times
                 let connected = connected_peers.read().await;
@@ -2584,7 +2560,7 @@ impl TestNode {
                                 peer_for_tui.connectivity_summary()
                             );
 
-                            let _ = event_tx.send(TuiEvent::PeerConnected(peer_for_tui)).await;
+                            let _ = event_tx.try_send(TuiEvent::PeerConnected(peer_for_tui));
 
                             // Report successful connection to registry
                             let report = ConnectionReport {
@@ -2625,7 +2601,7 @@ impl TestNode {
                                     peer_id_short,
                                     result.matrix.summary()
                                 );
-                                let _ = event_tx.send(TuiEvent::ConnectionFailed).await;
+                                let _ = event_tx.try_send(TuiEvent::ConnectionFailed);
                             } else {
                                 debug!(
                                     "Connection to {} failed but peer went offline",
@@ -2720,14 +2696,12 @@ impl TestNode {
                         }
                     } // Lock released here before TUI update
 
-                    // Update TUI outside the lock
-                    let _ = event_tx
-                        .send(TuiEvent::TestPacketResult {
-                            peer_id: peer_id.clone(),
-                            success,
-                            rtt: rtt_for_tui,
-                        })
-                        .await;
+                    // Update TUI outside the lock (non-blocking)
+                    let _ = event_tx.try_send(TuiEvent::TestPacketResult {
+                        peer_id: peer_id.clone(),
+                        success,
+                        rtt: rtt_for_tui,
+                    });
                 }
             }
         })
@@ -2819,7 +2793,7 @@ impl TestNode {
                         peers.remove(peer_id);
 
                         // Notify TUI
-                        let _ = event_tx.send(TuiEvent::RemovePeer(peer_id.clone())).await;
+                        let _ = event_tx.try_send(TuiEvent::RemovePeer(peer_id.clone()));
                     }
 
                     let removed_count = peers_to_remove.len();

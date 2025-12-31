@@ -209,6 +209,16 @@ async fn main() -> anyhow::Result<()> {
             println!("Running in quiet mode (no TUI)...");
             println!("Press Ctrl+C to quit");
 
+            // CRITICAL: Spawn a task to drain the event channel
+            // Without this, the channel fills up (capacity 100) and send().await blocks,
+            // causing heartbeat and other background tasks to hang!
+            tokio::spawn(async move {
+                let mut rx = event_rx;
+                while rx.recv().await.is_some() {
+                    // Just drain the events, don't process them
+                }
+            });
+
             // Run test node directly
             test_node.run().await?;
         } else {
