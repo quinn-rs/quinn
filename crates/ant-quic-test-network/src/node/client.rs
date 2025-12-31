@@ -618,9 +618,10 @@ impl TestNode {
             id_array[..len].copy_from_slice(&peer_id_bytes[..len]);
             GossipPeerId::new(id_array)
         };
-        // Use fixed gossip port 9001 for all nodes so they can find each other
-        // The main ant-quic port is dynamic, but gossip needs a well-known port
-        let gossip_port = 9001u16;
+        // Use fixed gossip port 9000 for all nodes so they can find each other
+        // The main ant-quic port is dynamic, and the firewall allows UDP 9000
+        // (9001 is not open in the firewall rules)
+        let gossip_port = 9000u16;
         let gossip_listen_addr = std::net::SocketAddr::new(config.bind_addr.ip(), gossip_port);
         let epidemic_config = EpidemicConfig {
             listen_addr: gossip_listen_addr,
@@ -2495,9 +2496,10 @@ impl TestNode {
 
                     // Add registry peers to epidemic gossip for HyParView overlay
                     // This is critical for forming the gossip network
-                    // NOTE: We use the fixed gossip port (9001) instead of the dynamic ant-quic port
+                    // NOTE: We use the fixed gossip port (9000) instead of the dynamic ant-quic port
+                    // Port 9000 is allowed through the firewall (9001 is not)
                     if !response.peers.is_empty() {
-                        const GOSSIP_PORT: u16 = 9001;
+                        const GOSSIP_PORT: u16 = 9000;
                         let bootstrap_addrs: Vec<std::net::SocketAddr> = response
                             .peers
                             .iter()
