@@ -2286,7 +2286,7 @@ impl TestNode {
                         .announcements_received
                         .load(Ordering::Relaxed),
                     plumtree_eager: total_connections, // Active peers get eager push
-                    plumtree_lazy: 0,           // No lazy push tracking yet
+                    plumtree_lazy: 0,                  // No lazy push tracking yet
                     // Connection type breakdown (computed from connected peers)
                     conn_direct_ipv4,
                     conn_direct_ipv6,
