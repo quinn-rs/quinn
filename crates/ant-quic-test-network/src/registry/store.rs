@@ -923,6 +923,19 @@ impl PeerStore {
         let mut total_cache_hits = 0u64;
         let mut total_cache_size = 0u64;
 
+        // Epidemic gossip stats
+        let mut total_swim_alive = 0u64;
+        let mut total_swim_suspect = 0u64;
+        let mut total_swim_dead = 0u64;
+        let mut total_hyparview_active = 0u64;
+        let mut total_hyparview_passive = 0u64;
+
+        // Connection type breakdown
+        let mut total_conn_direct_ipv4 = 0u64;
+        let mut total_conn_direct_ipv6 = 0u64;
+        let mut total_conn_hole_punched = 0u64;
+        let mut total_conn_relayed = 0u64;
+
         // Aggregate gossip stats and NAT types from registered nodes
         for entry in self.peers.iter() {
             // NAT type distribution
@@ -939,13 +952,26 @@ impl PeerStore {
                 NatType::Unknown => {}
             }
 
-            // Aggregate gossip stats from nodes
+            // Aggregate passive gossip stats from nodes
             total_announcements += entry.gossip_stats.announcements_received;
             total_peer_queries += entry.gossip_stats.peer_queries_sent;
             total_peer_responses += entry.gossip_stats.peer_responses_received;
             total_cache_updates += entry.gossip_stats.cache_updates;
             total_cache_hits += entry.gossip_stats.cache_hits;
             total_cache_size += entry.gossip_stats.cache_size;
+
+            // Aggregate epidemic gossip stats (SWIM/HyParView)
+            total_swim_alive += entry.gossip_stats.swim_alive as u64;
+            total_swim_suspect += entry.gossip_stats.swim_suspect as u64;
+            total_swim_dead += entry.gossip_stats.swim_dead as u64;
+            total_hyparview_active += entry.gossip_stats.hyparview_active as u64;
+            total_hyparview_passive += entry.gossip_stats.hyparview_passive as u64;
+
+            // Aggregate connection type breakdown
+            total_conn_direct_ipv4 += entry.gossip_stats.conn_direct_ipv4 as u64;
+            total_conn_direct_ipv6 += entry.gossip_stats.conn_direct_ipv6 as u64;
+            total_conn_hole_punched += entry.gossip_stats.conn_hole_punched as u64;
+            total_conn_relayed += entry.gossip_stats.conn_relayed as u64;
         }
 
         GossipStats {
@@ -959,6 +985,15 @@ impl PeerStore {
             nat_type_full_cone,
             nat_type_symmetric,
             nat_type_restricted,
+            total_swim_alive,
+            total_swim_suspect,
+            total_swim_dead,
+            total_hyparview_active,
+            total_hyparview_passive,
+            total_conn_direct_ipv4,
+            total_conn_direct_ipv6,
+            total_conn_hole_punched,
+            total_conn_relayed,
         }
     }
 }

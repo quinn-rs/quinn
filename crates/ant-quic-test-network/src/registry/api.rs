@@ -657,6 +657,24 @@ ant_quic_nodes_by_nat_type{{nat="public"}} {}
 ant_quic_nodes_by_nat_type{{nat="full_cone"}} {}
 ant_quic_nodes_by_nat_type{{nat="symmetric"}} {}
 ant_quic_nodes_by_nat_type{{nat="restricted"}} {}
+
+# HELP ant_quic_swim_peers SWIM protocol peer states
+# TYPE ant_quic_swim_peers gauge
+ant_quic_swim_peers{{state="alive"}} {}
+ant_quic_swim_peers{{state="suspect"}} {}
+ant_quic_swim_peers{{state="dead"}} {}
+
+# HELP ant_quic_hyparview_peers HyParView protocol peer views
+# TYPE ant_quic_hyparview_peers gauge
+ant_quic_hyparview_peers{{view="active"}} {}
+ant_quic_hyparview_peers{{view="passive"}} {}
+
+# HELP ant_quic_connections_by_type Connection type breakdown
+# TYPE ant_quic_connections_by_type gauge
+ant_quic_connections_by_type{{type="direct_ipv4"}} {}
+ant_quic_connections_by_type{{type="direct_ipv6"}} {}
+ant_quic_connections_by_type{{type="hole_punched"}} {}
+ant_quic_connections_by_type{{type="relayed"}} {}
 "#,
         stats.active_nodes,
         stats.total_nodes,
@@ -676,7 +694,19 @@ ant_quic_nodes_by_nat_type{{nat="restricted"}} {}
         gossip_stats.nat_type_public,
         gossip_stats.nat_type_full_cone,
         gossip_stats.nat_type_symmetric,
-        gossip_stats.nat_type_restricted
+        gossip_stats.nat_type_restricted,
+        // SWIM protocol stats
+        gossip_stats.total_swim_alive,
+        gossip_stats.total_swim_suspect,
+        gossip_stats.total_swim_dead,
+        // HyParView stats
+        gossip_stats.total_hyparview_active,
+        gossip_stats.total_hyparview_passive,
+        // Connection type breakdown
+        gossip_stats.total_conn_direct_ipv4,
+        gossip_stats.total_conn_direct_ipv6,
+        gossip_stats.total_conn_hole_punched,
+        gossip_stats.total_conn_relayed,
     );
 
     Ok(warp::reply::with_header(

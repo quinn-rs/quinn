@@ -782,6 +782,28 @@ pub struct GossipStats {
     pub nat_type_symmetric: u64,
     /// Number of nodes with restricted NAT
     pub nat_type_restricted: u64,
+
+    // === Aggregated Epidemic Gossip Stats ===
+    /// Total SWIM alive peers across all nodes
+    pub total_swim_alive: u64,
+    /// Total SWIM suspect peers across all nodes
+    pub total_swim_suspect: u64,
+    /// Total SWIM dead peers across all nodes
+    pub total_swim_dead: u64,
+    /// Total HyParView active peers across all nodes
+    pub total_hyparview_active: u64,
+    /// Total HyParView passive peers across all nodes
+    pub total_hyparview_passive: u64,
+
+    // === Connection Type Breakdown ===
+    /// Total direct IPv4 connections across all nodes
+    pub total_conn_direct_ipv4: u64,
+    /// Total direct IPv6 connections across all nodes
+    pub total_conn_direct_ipv6: u64,
+    /// Total hole-punched connections across all nodes
+    pub total_conn_hole_punched: u64,
+    /// Total relayed connections across all nodes
+    pub total_conn_relayed: u64,
 }
 
 /// Real-time event for WebSocket streaming.
