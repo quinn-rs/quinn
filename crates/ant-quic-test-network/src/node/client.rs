@@ -718,7 +718,8 @@ impl TestNode {
                                 inbound_peer.location = format!("{} {}", country_flag(&cc), cc);
                             }
 
-                            let _ = event_tx_for_events.try_send(TuiEvent::PeerConnected(inbound_peer));
+                            let _ =
+                                event_tx_for_events.try_send(TuiEvent::PeerConnected(inbound_peer));
                         } else {
                             // Outbound connection - we initiated
                             // Remove from pending since connection completed
@@ -2089,18 +2090,24 @@ impl TestNode {
                     }
 
                     // Send updated node info to TUI (non-blocking)
-                    let _ = self.event_tx.try_send(TuiEvent::UpdateLocalNode(local_node));
+                    let _ = self
+                        .event_tx
+                        .try_send(TuiEvent::UpdateLocalNode(local_node));
                     let _ = self.event_tx.try_send(TuiEvent::RegistrationComplete);
 
                     // Also send the registered count (non-blocking)
-                    let _ = self.event_tx.try_send(TuiEvent::UpdateRegisteredCount(response.peers.len() + 1));
+                    let _ = self
+                        .event_tx
+                        .try_send(TuiEvent::UpdateRegisteredCount(response.peers.len() + 1));
                 } else {
                     let err = response
                         .error
                         .unwrap_or_else(|| "Unknown error".to_string());
                     error!("Registration failed: {}", err);
                     // Send error to TUI (non-blocking)
-                    let _ = self.event_tx.try_send(TuiEvent::Error(format!("Registration failed: {}", err)));
+                    let _ = self
+                        .event_tx
+                        .try_send(TuiEvent::Error(format!("Registration failed: {}", err)));
                     return Err(anyhow::anyhow!("Registration failed: {}", err));
                 }
             }
