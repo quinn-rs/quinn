@@ -2527,6 +2527,8 @@ impl TestNode {
         let inbound_connections = Arc::clone(&self.inbound_connections);
         // Clone gossip integration for gossip stats reporting
         let gossip_integration = Arc::clone(&self.gossip_integration);
+        // Clone epidemic gossip for real saorsa-gossip stats
+        let epidemic_gossip = Arc::clone(&self.epidemic_gossip);
         // Clone event_tx to send HeartbeatSent events to TUI
         let event_tx = self.event_tx.clone();
 
@@ -2638,6 +2640,9 @@ impl TestNode {
                 // stats.inbound_connections = connections initiated by others
                 let total_connections = peers.len() + stats.inbound_connections as usize;
 
+                // Get real saorsa-gossip stats (HyParView + SWIM + PlumTree)
+                let epidemic_stats = epidemic_gossip.stats().await;
+
                 let gossip_stats = NodeGossipStats {
                     announcements_sent: gossip_metrics.announcements_sent.load(Ordering::Relaxed),
                     announcements_received: gossip_metrics
@@ -2655,20 +2660,18 @@ impl TestNode {
                     cache_hits: gossip_metrics.cache_hits.load(Ordering::Relaxed),
                     cache_misses: gossip_metrics.cache_misses.load(Ordering::Relaxed),
                     cache_size: gossip_integration.cache_size() as u64,
-                    // HyParView stats - using total connected peers as active view proxy
-                    hyparview_active: total_connections,
-                    hyparview_passive: gossip_integration.cache_size(),
-                    // SWIM stats - total connected peers are "alive"
-                    swim_alive: total_connections,
-                    swim_suspect: 0, // No suspect tracking yet
-                    swim_dead: 0,    // No dead tracking yet
-                    // Plumtree stats - using gossip metrics as proxy
-                    plumtree_sent: gossip_metrics.announcements_sent.load(Ordering::Relaxed),
-                    plumtree_received: gossip_metrics
-                        .announcements_received
-                        .load(Ordering::Relaxed),
-                    plumtree_eager: total_connections, // Active peers get eager push
-                    plumtree_lazy: 0,                  // No lazy push tracking yet
+                    // Real HyParView stats from saorsa-gossip
+                    hyparview_active: epidemic_stats.hyparview.active_view_size,
+                    hyparview_passive: epidemic_stats.hyparview.passive_view_size,
+                    // Real SWIM stats from saorsa-gossip
+                    swim_alive: epidemic_stats.swim.alive_count,
+                    swim_suspect: epidemic_stats.swim.suspect_count,
+                    swim_dead: epidemic_stats.swim.dead_count,
+                    // Real Plumtree stats from saorsa-gossip
+                    plumtree_sent: epidemic_stats.plumtree.messages_sent,
+                    plumtree_received: epidemic_stats.plumtree.messages_received,
+                    plumtree_eager: epidemic_stats.plumtree.eager_peers,
+                    plumtree_lazy: epidemic_stats.plumtree.lazy_peers,
                     // Connection type breakdown (computed from connected peers)
                     conn_direct_ipv4,
                     conn_direct_ipv6,
