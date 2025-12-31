@@ -1230,6 +1230,161 @@ impl TestNode {
         })
     }
 
+    /// Spawn the accept loop to handle incoming connections.
+    ///
+    /// This is CRITICAL for receiving data from peers who connect to us.
+    /// Without this, we can only receive data from peers WE connected to.
+    fn spawn_accept_loop(&self) -> tokio::task::JoinHandle<()> {
+        let shutdown = Arc::clone(&self.shutdown);
+        let endpoint = Arc::clone(&self.endpoint);
+        let connected_peers = Arc::clone(&self.connected_peers);
+        let gossip_integration = Arc::clone(&self.gossip_integration);
+        let peer_id = self.peer_id.clone();
+        let event_tx = self.event_tx.clone();
+        let inbound_connections = Arc::clone(&self.inbound_connections);
+        let max_peers = self.config.max_peers;
+
+        tokio::spawn(async move {
+            info!("Accept loop started - listening for incoming connections");
+
+            while !shutdown.load(Ordering::SeqCst) {
+                // Accept incoming connection
+                if let Some(peer_conn) = endpoint.accept().await {
+                    let new_peer_hex = hex::encode(peer_conn.peer_id.0);
+                    let addr = peer_conn.remote_addr;
+                    info!(
+                        "Accepted incoming connection from {} at {}",
+                        &new_peer_hex[..8.min(new_peer_hex.len())],
+                        addr
+                    );
+
+                    // Increment inbound connections counter
+                    inbound_connections.fetch_add(1, Ordering::SeqCst);
+
+                    // Add to connected_peers if not already there
+                    {
+                        let mut peers = connected_peers.write().await;
+                        if !peers.contains_key(&new_peer_hex) {
+                            let now = Instant::now();
+                            // Create minimal PeerInfo for tracking
+                            let peer_info = PeerInfo {
+                                peer_id: new_peer_hex.clone(),
+                                addresses: vec![addr],
+                                nat_type: NatType::Unknown,
+                                country_code: None,
+                                latitude: 0.0,
+                                longitude: 0.0,
+                                last_seen: std::time::SystemTime::now()
+                                    .duration_since(std::time::UNIX_EPOCH)
+                                    .map(|d| d.as_secs())
+                                    .unwrap_or(0),
+                                connection_success_rate: 1.0,
+                                capabilities: NodeCapabilities::default(),
+                                version: String::new(),
+                                is_active: true,
+                                status: PeerStatus::Active,
+                                bytes_sent: 0,
+                                bytes_received: 0,
+                                connected_peers: 0,
+                                gossip_stats: None,
+                            };
+
+                            let tracked = TrackedPeer {
+                                info: peer_info,
+                                method: ConnectionMethod::HolePunched, // They traversed to us
+                                direction: ConnectionDirection::Inbound,
+                                connected_at: now,
+                                last_activity: now,
+                                stats: PeerStats::default(),
+                                sequence: AtomicU64::new(0),
+                                consecutive_failures: 0,
+                                connectivity: ConnectivityMatrix::default(),
+                            };
+
+                            peers.insert(new_peer_hex.clone(), tracked);
+                            debug!(
+                                "Added inbound peer {} to connected_peers",
+                                &new_peer_hex[..8.min(new_peer_hex.len())]
+                            );
+                        }
+                    }
+
+                    // Build peer list from our connected peers
+                    let peer_list: Vec<GossipPeerInfo> = {
+                        let peers = connected_peers.read().await;
+                        let timestamp_ms = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map(|d| d.as_millis() as u64)
+                            .unwrap_or(0);
+                        peers.values().filter_map(|p| {
+                            if p.info.peer_id != new_peer_hex {
+                                Some(GossipPeerInfo {
+                                    peer_id: p.info.peer_id.clone(),
+                                    addresses: p.info.addresses.clone(),
+                                    is_public: true,
+                                    is_connected: true,
+                                    last_seen_ms: timestamp_ms,
+                                })
+                            } else {
+                                None
+                            }
+                        }).collect()
+                    };
+
+                    // Send peer list to newly connected peer if we have peers and space
+                    let connected = connected_peers.read().await;
+                    let at_capacity = connected.len() >= max_peers;
+                    drop(connected);
+
+                    if !peer_list.is_empty() && !at_capacity {
+                        let endpoint_clone = Arc::clone(&endpoint);
+                        let peer_id_clone = peer_id.clone();
+                        let new_peer_hex_clone = new_peer_hex.clone();
+                        let peer_list_clone = peer_list.clone();
+
+                        tokio::spawn(async move {
+                            if let Err(e) = send_gossip_peer_list(
+                                &endpoint_clone,
+                                &new_peer_hex_clone,
+                                &peer_id_clone,
+                                peer_list_clone,
+                            ).await {
+                                debug!(
+                                    "Failed to send peer list to inbound {}: {}",
+                                    &new_peer_hex_clone[..8.min(new_peer_hex_clone.len())],
+                                    e
+                                );
+                            } else {
+                                info!(
+                                    "Sent peer list to inbound connection {}",
+                                    &new_peer_hex_clone[..8.min(new_peer_hex_clone.len())]
+                                );
+                            }
+                        });
+                    }
+
+                    // Add to bootstrap cache
+                    gossip_integration.add_peer(
+                        &new_peer_hex,
+                        &[addr],
+                        true,
+                    );
+
+                    // Send TUI event - create a ConnectedPeer for display
+                    let mut tui_peer = ConnectedPeer::with_direction(
+                        &new_peer_hex,
+                        ConnectionMethod::HolePunched,
+                        ConnectionDirection::Inbound,
+                    );
+                    tui_peer.addresses = vec![addr];
+                    let _ = event_tx.try_send(TuiEvent::PeerConnected(tui_peer));
+                }
+            }
+
+            info!("Accept loop shutting down");
+        })
+    }
+
     /// Spawn the gossip event processing loop.
     fn spawn_gossip_loop(&self) -> tokio::task::JoinHandle<()> {
         let shutdown = Arc::clone(&self.shutdown);
@@ -2018,6 +2173,7 @@ impl TestNode {
         let health_handle = self.spawn_health_check_loop();
         let relay_stats_handle = self.spawn_relay_stats_loop();
         let gossip_handle = self.spawn_gossip_loop();
+        let accept_handle = self.spawn_accept_loop();
 
         // Announce ourselves to gossip network
         self.announce_to_gossip().await;
@@ -2034,6 +2190,7 @@ impl TestNode {
         health_handle.abort();
         relay_stats_handle.abort();
         gossip_handle.abort();
+        accept_handle.abort();
 
         // Save peer cache and shutdown gossip integration
         if let Err(e) = self.gossip_integration.save_cache() {
