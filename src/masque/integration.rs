@@ -141,8 +141,12 @@ impl RelayManagerStats {
 /// Information about a relay node
 #[derive(Debug)]
 struct RelayNodeInfo {
-    /// Relay server address
+    /// Relay server address (primary)
     address: SocketAddr,
+    /// Secondary address (for dual-stack relays - the other IP version)
+    secondary_address: Option<SocketAddr>,
+    /// Whether this relay supports dual-stack bridging (IPv4 ↔ IPv6)
+    supports_dual_stack: bool,
     /// Connected client (if any)
     client: Option<MasqueRelayClient>,
     /// Last connection attempt
@@ -157,11 +161,39 @@ impl RelayNodeInfo {
     fn new(address: SocketAddr) -> Self {
         Self {
             address,
+            secondary_address: None,
+            supports_dual_stack: false,
             client: None,
             last_attempt: None,
             failure_count: 0,
             available: true,
         }
+    }
+
+    /// Create a new relay node with dual-stack support
+    fn new_dual_stack(
+        primary: SocketAddr,
+        secondary: SocketAddr,
+    ) -> Self {
+        Self {
+            address: primary,
+            secondary_address: Some(secondary),
+            supports_dual_stack: true,
+            client: None,
+            last_attempt: None,
+            failure_count: 0,
+            available: true,
+        }
+    }
+
+    /// Check if this relay can bridge to the target IP version
+    fn can_bridge_to(&self, target: &SocketAddr) -> bool {
+        if !self.supports_dual_stack {
+            // Non-dual-stack relays can only reach same IP version
+            return self.address.is_ipv4() == target.is_ipv4();
+        }
+        // Dual-stack relays can reach any IP version
+        true
     }
 
     fn mark_failed(&mut self) {
@@ -241,6 +273,69 @@ impl RelayManager {
             relays.insert(address, RelayNodeInfo::new(address));
             tracing::debug!(relay = %address, "Added relay node");
         }
+    }
+
+    /// Add a dual-stack relay node that can bridge IPv4 ↔ IPv6
+    ///
+    /// # Arguments
+    /// * `primary` - Primary address to connect to the relay
+    /// * `secondary` - Secondary address (the other IP version)
+    pub async fn add_dual_stack_relay(&self, primary: SocketAddr, secondary: SocketAddr) {
+        let mut relays = self.relays.write().await;
+        if !relays.contains_key(&primary) && relays.len() < self.config.max_relays {
+            relays.insert(primary, RelayNodeInfo::new_dual_stack(primary, secondary));
+            tracing::debug!(
+                primary = %primary,
+                secondary = %secondary,
+                "Added dual-stack relay node"
+            );
+        }
+    }
+
+    /// Get relays that can bridge to the specified target address
+    ///
+    /// Returns relays that either:
+    /// - Are the same IP version as target
+    /// - Support dual-stack bridging (can translate between IPv4/IPv6)
+    pub async fn relays_for_target(&self, target: SocketAddr) -> Vec<SocketAddr> {
+        let relays = self.relays.read().await;
+        relays
+            .iter()
+            .filter(|(_, info)| {
+                info.available
+                    && info.can_retry(self.config.retry_delay, self.config.max_retries)
+                    && info.can_bridge_to(&target)
+            })
+            .map(|(addr, _)| *addr)
+            .collect()
+    }
+
+    /// Get relays that support dual-stack bridging
+    pub async fn dual_stack_relays(&self) -> Vec<SocketAddr> {
+        let relays = self.relays.read().await;
+        relays
+            .iter()
+            .filter(|(_, info)| {
+                info.available
+                    && info.supports_dual_stack
+                    && info.can_retry(self.config.retry_delay, self.config.max_retries)
+            })
+            .map(|(addr, _)| *addr)
+            .collect()
+    }
+
+    /// Check if a specific relay supports dual-stack bridging
+    pub async fn is_dual_stack(&self, relay: SocketAddr) -> bool {
+        let relays = self.relays.read().await;
+        relays
+            .get(&relay)
+            .is_some_and(|info| info.supports_dual_stack)
+    }
+
+    /// Get the secondary address for a dual-stack relay
+    pub async fn secondary_address(&self, relay: SocketAddr) -> Option<SocketAddr> {
+        let relays = self.relays.read().await;
+        relays.get(&relay).and_then(|info| info.secondary_address)
     }
 
     /// Remove a relay node
@@ -532,5 +627,122 @@ mod tests {
 
         manager.close_all().await;
         // Should not panic
+    }
+
+    // ========== Dual-Stack Tests ==========
+
+    fn ipv6_relay_addr(id: u16) -> SocketAddr {
+        use std::net::Ipv6Addr;
+        SocketAddr::new(IpAddr::V6(Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, id)), 9000)
+    }
+
+    fn ipv6_target(id: u16) -> SocketAddr {
+        use std::net::Ipv6Addr;
+        SocketAddr::new(IpAddr::V6(Ipv6Addr::new(0x2001, 0xdb8, 0, 1, 0, 0, 0, id)), 8080)
+    }
+
+    fn ipv4_target(id: u8) -> SocketAddr {
+        SocketAddr::new(IpAddr::V4(Ipv4Addr::new(10, 0, 0, id)), 8080)
+    }
+
+    #[tokio::test]
+    async fn test_add_dual_stack_relay() {
+        let config = RelayManagerConfig::default();
+        let manager = RelayManager::new(config);
+
+        let ipv4 = relay_addr(1);
+        let ipv6 = ipv6_relay_addr(1);
+
+        manager.add_dual_stack_relay(ipv4, ipv6).await;
+
+        assert!(manager.has_available_relay().await);
+        assert!(manager.is_dual_stack(ipv4).await);
+        assert_eq!(manager.secondary_address(ipv4).await, Some(ipv6));
+    }
+
+    #[tokio::test]
+    async fn test_dual_stack_relays() {
+        let config = RelayManagerConfig::default();
+        let manager = RelayManager::new(config);
+
+        // Add regular relay
+        manager.add_relay_node(relay_addr(1)).await;
+
+        // Add dual-stack relay
+        manager.add_dual_stack_relay(relay_addr(2), ipv6_relay_addr(2)).await;
+
+        let dual_stack = manager.dual_stack_relays().await;
+        assert_eq!(dual_stack.len(), 1);
+        assert_eq!(dual_stack[0], relay_addr(2));
+    }
+
+    #[tokio::test]
+    async fn test_relays_for_ipv4_target() {
+        let config = RelayManagerConfig::default();
+        let manager = RelayManager::new(config);
+
+        // IPv4 relay (can reach IPv4 targets)
+        manager.add_relay_node(relay_addr(1)).await;
+        // IPv6 relay (cannot reach IPv4 targets)
+        manager.add_relay_node(ipv6_relay_addr(2)).await;
+        // Dual-stack relay (can reach any target)
+        manager.add_dual_stack_relay(relay_addr(3), ipv6_relay_addr(3)).await;
+
+        let relays = manager.relays_for_target(ipv4_target(1)).await;
+        // Should include IPv4 relay and dual-stack, but not IPv6-only relay
+        assert_eq!(relays.len(), 2);
+        assert!(relays.contains(&relay_addr(1)));
+        assert!(relays.contains(&relay_addr(3)));
+        assert!(!relays.contains(&ipv6_relay_addr(2)));
+    }
+
+    #[tokio::test]
+    async fn test_relays_for_ipv6_target() {
+        let config = RelayManagerConfig::default();
+        let manager = RelayManager::new(config);
+
+        // IPv4 relay (cannot reach IPv6 targets)
+        manager.add_relay_node(relay_addr(1)).await;
+        // IPv6 relay (can reach IPv6 targets)
+        manager.add_relay_node(ipv6_relay_addr(2)).await;
+        // Dual-stack relay (can reach any target)
+        manager.add_dual_stack_relay(relay_addr(3), ipv6_relay_addr(3)).await;
+
+        let relays = manager.relays_for_target(ipv6_target(1)).await;
+        // Should include IPv6 relay and dual-stack, but not IPv4-only relay
+        assert_eq!(relays.len(), 2);
+        assert!(!relays.contains(&relay_addr(1)));
+        assert!(relays.contains(&ipv6_relay_addr(2)));
+        assert!(relays.contains(&relay_addr(3)));
+    }
+
+    #[tokio::test]
+    async fn test_regular_relay_not_dual_stack() {
+        let config = RelayManagerConfig::default();
+        let manager = RelayManager::new(config);
+
+        manager.add_relay_node(relay_addr(1)).await;
+
+        assert!(!manager.is_dual_stack(relay_addr(1)).await);
+        assert!(manager.secondary_address(relay_addr(1)).await.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_can_bridge_to_same_version() {
+        // Test that non-dual-stack relays can still reach targets of same IP version
+        let info = RelayNodeInfo::new(relay_addr(1));
+        assert!(info.can_bridge_to(&ipv4_target(1))); // IPv4 relay -> IPv4 target
+        assert!(!info.can_bridge_to(&ipv6_target(1))); // IPv4 relay -> IPv6 target
+
+        let info_v6 = RelayNodeInfo::new(ipv6_relay_addr(1));
+        assert!(!info_v6.can_bridge_to(&ipv4_target(1))); // IPv6 relay -> IPv4 target
+        assert!(info_v6.can_bridge_to(&ipv6_target(1))); // IPv6 relay -> IPv6 target
+    }
+
+    #[tokio::test]
+    async fn test_dual_stack_can_bridge_to_any() {
+        let info = RelayNodeInfo::new_dual_stack(relay_addr(1), ipv6_relay_addr(1));
+        assert!(info.can_bridge_to(&ipv4_target(1))); // Dual-stack -> IPv4
+        assert!(info.can_bridge_to(&ipv6_target(1))); // Dual-stack -> IPv6
     }
 }

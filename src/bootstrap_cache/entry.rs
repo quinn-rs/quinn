@@ -75,6 +75,49 @@ pub struct PeerCapabilities {
     pub external_addresses: Vec<SocketAddr>,
 }
 
+impl PeerCapabilities {
+    /// Check if this peer has any IPv4 addresses
+    pub fn has_ipv4(&self) -> bool {
+        self.external_addresses.iter().any(|addr| addr.is_ipv4())
+    }
+
+    /// Check if this peer has any IPv6 addresses
+    pub fn has_ipv6(&self) -> bool {
+        self.external_addresses.iter().any(|addr| addr.is_ipv6())
+    }
+
+    /// Check if this peer supports dual-stack (both IPv4 and IPv6)
+    ///
+    /// A dual-stack peer can bridge traffic between IPv4 and IPv6 networks
+    /// when acting as a relay.
+    pub fn supports_dual_stack(&self) -> bool {
+        self.has_ipv4() && self.has_ipv6()
+    }
+
+    /// Get addresses filtered by IP version
+    pub fn addresses_by_version(&self, ipv4: bool) -> Vec<SocketAddr> {
+        self.external_addresses
+            .iter()
+            .filter(|addr| addr.is_ipv4() == ipv4)
+            .copied()
+            .collect()
+    }
+
+    /// Check if this peer can bridge between source and target IP versions
+    pub fn can_bridge(&self, source: &SocketAddr, target: &SocketAddr) -> bool {
+        let source_v4 = source.is_ipv4();
+        let target_v4 = target.is_ipv4();
+
+        // Same version - any peer can handle
+        if source_v4 == target_v4 {
+            return true;
+        }
+
+        // Different versions - need dual-stack
+        self.supports_dual_stack()
+    }
+}
+
 /// NAT type classification
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum NatType {
@@ -254,16 +297,19 @@ impl CachedPeer {
         // Capability bonuses
         let mut cap_bonus: f64 = 0.0;
         if self.capabilities.supports_relay {
-            cap_bonus += 0.3;
+            cap_bonus += 0.25;
         }
         if self.capabilities.supports_coordination {
-            cap_bonus += 0.3;
+            cap_bonus += 0.25;
+        }
+        if self.capabilities.supports_dual_stack() {
+            cap_bonus += 0.2; // Dual-stack relays are valuable for bridging
         }
         if matches!(
             self.capabilities.nat_type,
             Some(NatType::None) | Some(NatType::FullCone)
         ) {
-            cap_bonus += 0.4; // Easy to connect
+            cap_bonus += 0.3; // Easy to connect
         }
         let cap_score = cap_bonus.min(1.0);
 
@@ -441,5 +487,93 @@ mod tests {
         assert_eq!(deserialized.peer_id, peer.peer_id);
         assert_eq!(deserialized.addresses, peer.addresses);
         assert_eq!(deserialized.source, peer.source);
+    }
+
+    #[test]
+    fn test_peer_capabilities_dual_stack() {
+        let mut caps = PeerCapabilities::default();
+
+        // Default - no addresses
+        assert!(!caps.supports_dual_stack());
+        assert!(!caps.has_ipv4());
+        assert!(!caps.has_ipv6());
+
+        // Add IPv4 only
+        caps.external_addresses
+            .push("127.0.0.1:9000".parse().unwrap());
+        assert!(!caps.supports_dual_stack());
+        assert!(caps.has_ipv4());
+        assert!(!caps.has_ipv6());
+
+        // Add IPv6 - now dual-stack
+        caps.external_addresses.push("[::1]:9001".parse().unwrap());
+        assert!(caps.supports_dual_stack());
+        assert!(caps.has_ipv4());
+        assert!(caps.has_ipv6());
+    }
+
+    #[test]
+    fn test_peer_capabilities_ipv6_only() {
+        let mut caps = PeerCapabilities::default();
+        caps.external_addresses.push("[::1]:9000".parse().unwrap());
+        caps.external_addresses.push("[::1]:9001".parse().unwrap());
+
+        assert!(!caps.supports_dual_stack());
+        assert!(!caps.has_ipv4());
+        assert!(caps.has_ipv6());
+    }
+
+    #[test]
+    fn test_peer_capabilities_can_bridge() {
+        let mut caps = PeerCapabilities::default();
+        caps.external_addresses
+            .push("127.0.0.1:9000".parse().unwrap());
+        caps.external_addresses.push("[::1]:9001".parse().unwrap());
+
+        let v4_src: SocketAddr = "192.168.1.1:1000".parse().unwrap();
+        let v4_dst: SocketAddr = "192.168.1.2:2000".parse().unwrap();
+        let v6_src: SocketAddr = "[2001:db8::1]:1000".parse().unwrap();
+        let v6_dst: SocketAddr = "[2001:db8::2]:2000".parse().unwrap();
+
+        // Same version - always OK
+        assert!(caps.can_bridge(&v4_src, &v4_dst));
+        assert!(caps.can_bridge(&v6_src, &v6_dst));
+
+        // Cross version - OK for dual-stack
+        assert!(caps.can_bridge(&v4_src, &v6_dst));
+        assert!(caps.can_bridge(&v6_src, &v4_dst));
+    }
+
+    #[test]
+    fn test_peer_capabilities_cannot_bridge_ipv4_only() {
+        let mut caps = PeerCapabilities::default();
+        caps.external_addresses
+            .push("127.0.0.1:9000".parse().unwrap());
+
+        let v4_addr: SocketAddr = "192.168.1.1:1000".parse().unwrap();
+        let v6_addr: SocketAddr = "[2001:db8::1]:1000".parse().unwrap();
+
+        // Same version - OK
+        assert!(caps.can_bridge(&v4_addr, &v4_addr));
+
+        // Cross version - NOT OK for IPv4-only
+        assert!(!caps.can_bridge(&v4_addr, &v6_addr));
+        assert!(!caps.can_bridge(&v6_addr, &v4_addr));
+    }
+
+    #[test]
+    fn test_addresses_by_version() {
+        let mut caps = PeerCapabilities::default();
+        caps.external_addresses
+            .push("127.0.0.1:9000".parse().unwrap());
+        caps.external_addresses
+            .push("10.0.0.1:9001".parse().unwrap());
+        caps.external_addresses.push("[::1]:9002".parse().unwrap());
+
+        let v4_addrs = caps.addresses_by_version(true);
+        assert_eq!(v4_addrs.len(), 2);
+
+        let v6_addrs = caps.addresses_by_version(false);
+        assert_eq!(v6_addrs.len(), 1);
     }
 }

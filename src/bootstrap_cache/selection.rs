@@ -155,6 +155,91 @@ pub fn select_with_capabilities(
     filtered.into_iter().take(count).collect()
 }
 
+/// Select relay peers that can reach a target IP version.
+///
+/// Returns relays sorted by quality that can bridge traffic to the target.
+/// Dual-stack relays are preferred as they can reach any target.
+///
+/// # Arguments
+/// * `peers` - Slice of cached peers to select from
+/// * `count` - Maximum number of relays to return
+/// * `target_is_ipv4` - Whether the target uses IPv4 (false = IPv6)
+/// * `prefer_dual_stack` - If true, prioritize dual-stack relays
+pub fn select_relays_for_target(
+    peers: &[CachedPeer],
+    count: usize,
+    target_is_ipv4: bool,
+    prefer_dual_stack: bool,
+) -> Vec<&CachedPeer> {
+    // Filter to relay peers that can reach the target IP version
+    let mut filtered: Vec<&CachedPeer> = peers
+        .iter()
+        .filter(|p| {
+            // Must be a relay
+            if !p.capabilities.supports_relay {
+                return false;
+            }
+
+            // Check if can reach target IP version
+            if p.capabilities.supports_dual_stack() {
+                return true; // Dual-stack can reach any target
+            }
+
+            // Non-dual-stack must have matching IP version
+            if target_is_ipv4 {
+                p.capabilities.has_ipv4()
+            } else {
+                p.capabilities.has_ipv6()
+            }
+        })
+        .collect();
+
+    if filtered.is_empty() {
+        return Vec::new();
+    }
+
+    // Sort: dual-stack first (if preferred), then by quality
+    filtered.sort_by(|a, b| {
+        if prefer_dual_stack {
+            // Dual-stack relays first
+            let a_ds = a.capabilities.supports_dual_stack();
+            let b_ds = b.capabilities.supports_dual_stack();
+            if a_ds != b_ds {
+                return b_ds.cmp(&a_ds);
+            }
+        }
+        // Then by quality
+        b.quality_score
+            .partial_cmp(&a.quality_score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+
+    filtered.into_iter().take(count).collect()
+}
+
+/// Select peers that support dual-stack (IPv4 + IPv6) bridging.
+///
+/// These peers are valuable for bridging between IPv4-only and IPv6-only networks.
+pub fn select_dual_stack_relays(peers: &[CachedPeer], count: usize) -> Vec<&CachedPeer> {
+    let mut filtered: Vec<&CachedPeer> = peers
+        .iter()
+        .filter(|p| p.capabilities.supports_relay && p.capabilities.supports_dual_stack())
+        .collect();
+
+    if filtered.is_empty() {
+        return Vec::new();
+    }
+
+    // Sort by quality
+    filtered.sort_by(|a, b| {
+        b.quality_score
+            .partial_cmp(&a.quality_score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+
+    filtered.into_iter().take(count).collect()
+}
+
 /// Select peers by strategy
 #[allow(dead_code)]
 pub fn select_by_strategy(
@@ -312,5 +397,147 @@ mod tests {
             }
         }
         assert!(has_variation, "Random selection should vary");
+    }
+
+    fn create_relay_peer_with_addresses(
+        id: u8,
+        quality: f64,
+        ipv4_addrs: Vec<&str>,
+        ipv6_addrs: Vec<&str>,
+    ) -> CachedPeer {
+        let mut peer = CachedPeer::new(PeerId([id; 32]), vec![], PeerSource::Seed);
+        peer.quality_score = quality;
+        peer.capabilities.supports_relay = true;
+
+        for addr in ipv4_addrs {
+            peer.capabilities
+                .external_addresses
+                .push(addr.parse().unwrap());
+        }
+        for addr in ipv6_addrs {
+            peer.capabilities
+                .external_addresses
+                .push(addr.parse().unwrap());
+        }
+
+        peer
+    }
+
+    #[test]
+    fn test_select_relays_for_ipv4_target() {
+        let peers = vec![
+            // Dual-stack relay (high quality)
+            create_relay_peer_with_addresses(1, 0.9, vec!["1.2.3.4:9000"], vec!["[::1]:9000"]),
+            // IPv4-only relay (medium quality)
+            create_relay_peer_with_addresses(2, 0.7, vec!["5.6.7.8:9001"], vec![]),
+            // IPv6-only relay (high quality - should NOT be selected for IPv4 target)
+            create_relay_peer_with_addresses(3, 0.95, vec![], vec!["[2001:db8::1]:9002"]),
+        ];
+
+        let selected = select_relays_for_target(&peers, 10, true, false);
+        assert_eq!(selected.len(), 2);
+
+        // Should include dual-stack and IPv4-only, NOT IPv6-only
+        let ids: Vec<u8> = selected.iter().map(|p| p.peer_id.0[0]).collect();
+        assert!(ids.contains(&1)); // dual-stack
+        assert!(ids.contains(&2)); // IPv4-only
+        assert!(!ids.contains(&3)); // IPv6-only excluded
+    }
+
+    #[test]
+    fn test_select_relays_for_ipv6_target() {
+        let peers = vec![
+            // Dual-stack relay
+            create_relay_peer_with_addresses(1, 0.9, vec!["1.2.3.4:9000"], vec!["[::1]:9000"]),
+            // IPv4-only relay (should NOT be selected for IPv6 target)
+            create_relay_peer_with_addresses(2, 0.95, vec!["5.6.7.8:9001"], vec![]),
+            // IPv6-only relay
+            create_relay_peer_with_addresses(3, 0.7, vec![], vec!["[2001:db8::1]:9002"]),
+        ];
+
+        let selected = select_relays_for_target(&peers, 10, false, false);
+        assert_eq!(selected.len(), 2);
+
+        // Should include dual-stack and IPv6-only, NOT IPv4-only
+        let ids: Vec<u8> = selected.iter().map(|p| p.peer_id.0[0]).collect();
+        assert!(ids.contains(&1)); // dual-stack
+        assert!(!ids.contains(&2)); // IPv4-only excluded
+        assert!(ids.contains(&3)); // IPv6-only
+    }
+
+    #[test]
+    fn test_select_relays_prefer_dual_stack() {
+        let peers = vec![
+            // Dual-stack relay (lower quality)
+            create_relay_peer_with_addresses(1, 0.5, vec!["1.2.3.4:9000"], vec!["[::1]:9000"]),
+            // IPv4-only relay (higher quality)
+            create_relay_peer_with_addresses(2, 0.9, vec!["5.6.7.8:9001"], vec![]),
+        ];
+
+        // Without preference, higher quality first
+        let selected = select_relays_for_target(&peers, 10, true, false);
+        assert_eq!(selected[0].peer_id.0[0], 2); // IPv4-only first (higher quality)
+
+        // With dual-stack preference, dual-stack first despite lower quality
+        let selected = select_relays_for_target(&peers, 10, true, true);
+        assert_eq!(selected[0].peer_id.0[0], 1); // Dual-stack first
+    }
+
+    #[test]
+    fn test_select_dual_stack_relays() {
+        let peers = vec![
+            // Dual-stack relay
+            create_relay_peer_with_addresses(1, 0.9, vec!["1.2.3.4:9000"], vec!["[::1]:9000"]),
+            // IPv4-only relay
+            create_relay_peer_with_addresses(2, 0.8, vec!["5.6.7.8:9001"], vec![]),
+            // IPv6-only relay
+            create_relay_peer_with_addresses(3, 0.7, vec![], vec!["[2001:db8::1]:9002"]),
+            // Another dual-stack relay
+            create_relay_peer_with_addresses(4, 0.6, vec!["10.0.0.1:9003"], vec!["[::2]:9003"]),
+        ];
+
+        let selected = select_dual_stack_relays(&peers, 10);
+        assert_eq!(selected.len(), 2);
+
+        // All selected should be dual-stack
+        for peer in &selected {
+            assert!(peer.capabilities.supports_dual_stack());
+        }
+
+        // Should be sorted by quality
+        assert!(selected[0].quality_score >= selected[1].quality_score);
+    }
+
+    #[test]
+    fn test_select_relays_excludes_non_relays() {
+        let mut peers = vec![
+            create_relay_peer_with_addresses(1, 0.9, vec!["1.2.3.4:9000"], vec![]),
+        ];
+
+        // Add a non-relay peer with high quality
+        let mut non_relay = CachedPeer::new(PeerId([2; 32]), vec![], PeerSource::Seed);
+        non_relay.quality_score = 0.99;
+        non_relay.capabilities.supports_relay = false;
+        non_relay
+            .capabilities
+            .external_addresses
+            .push("5.6.7.8:9001".parse().unwrap());
+        peers.push(non_relay);
+
+        let selected = select_relays_for_target(&peers, 10, true, false);
+        assert_eq!(selected.len(), 1);
+        assert_eq!(selected[0].peer_id.0[0], 1);
+    }
+
+    #[test]
+    fn test_select_relays_empty_when_no_match() {
+        let peers = vec![
+            // IPv6-only relay
+            create_relay_peer_with_addresses(1, 0.9, vec![], vec!["[::1]:9000"]),
+        ];
+
+        // Looking for IPv4 target - should return empty
+        let selected = select_relays_for_target(&peers, 10, true, false);
+        assert!(selected.is_empty());
     }
 }

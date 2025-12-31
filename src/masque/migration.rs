@@ -280,6 +280,60 @@ impl MigrationCoordinator {
         }
     }
 
+    /// Get candidates for a peer, filtered by IP version
+    ///
+    /// # Arguments
+    /// * `peer` - The peer to get candidates for
+    /// * `ipv4_only` - If Some(true), return only IPv4 candidates; if Some(false), only IPv6
+    ///                 If None, return all candidates
+    pub async fn get_candidates_filtered(
+        &self,
+        peer: SocketAddr,
+        ipv4_only: Option<bool>,
+    ) -> Vec<SocketAddr> {
+        let candidates = self.candidates.read().await;
+        candidates
+            .get(&peer)
+            .map(|c| {
+                c.iter()
+                    .filter(|p| match ipv4_only {
+                        Some(true) => p.address.is_ipv4(),
+                        Some(false) => p.address.is_ipv6(),
+                        None => true,
+                    })
+                    .map(|p| p.address)
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// Get all candidate addresses for a peer
+    pub async fn get_all_candidates(&self, peer: SocketAddr) -> Vec<SocketAddr> {
+        self.get_candidates_filtered(peer, None).await
+    }
+
+    /// Get IPv4 candidates for a peer
+    pub async fn get_ipv4_candidates(&self, peer: SocketAddr) -> Vec<SocketAddr> {
+        self.get_candidates_filtered(peer, Some(true)).await
+    }
+
+    /// Get IPv6 candidates for a peer
+    pub async fn get_ipv6_candidates(&self, peer: SocketAddr) -> Vec<SocketAddr> {
+        self.get_candidates_filtered(peer, Some(false)).await
+    }
+
+    /// Check if peer has candidates in both IP versions (dual-stack)
+    pub async fn has_dual_stack_candidates(&self, peer: SocketAddr) -> bool {
+        let candidates = self.candidates.read().await;
+        if let Some(c) = candidates.get(&peer) {
+            let has_ipv4 = c.iter().any(|p| p.address.is_ipv4());
+            let has_ipv6 = c.iter().any(|p| p.address.is_ipv6());
+            has_ipv4 && has_ipv6
+        } else {
+            false
+        }
+    }
+
     /// Start migration attempt for a peer
     pub async fn start_migration(&self, peer: SocketAddr) {
         if !self.config.auto_migrate {
@@ -752,5 +806,119 @@ mod tests {
         assert!(!migrating.contains(&peer2));
         assert!(direct.contains(&peer2));
         assert!(!direct.contains(&peer1));
+    }
+
+    // ========== IP Version Filtering Tests ==========
+
+    fn ipv6_addr(id: u16) -> SocketAddr {
+        use std::net::Ipv6Addr;
+        SocketAddr::new(
+            IpAddr::V6(Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, id)),
+            9000,
+        )
+    }
+
+    #[tokio::test]
+    async fn test_get_candidates_filtered_all() {
+        let config = MigrationConfig::default();
+        let coordinator = MigrationCoordinator::new(config);
+
+        let peer = peer_addr(1);
+        let ipv4_candidate = candidate_addr(1);
+        let ipv6_candidate = ipv6_addr(1);
+
+        coordinator
+            .add_candidates(peer, vec![ipv4_candidate, ipv6_candidate])
+            .await;
+
+        let all = coordinator.get_all_candidates(peer).await;
+        assert_eq!(all.len(), 2);
+        assert!(all.contains(&ipv4_candidate));
+        assert!(all.contains(&ipv6_candidate));
+    }
+
+    #[tokio::test]
+    async fn test_get_ipv4_candidates() {
+        let config = MigrationConfig::default();
+        let coordinator = MigrationCoordinator::new(config);
+
+        let peer = peer_addr(1);
+        let ipv4_candidate1 = candidate_addr(1);
+        let ipv4_candidate2 = candidate_addr(2);
+        let ipv6_candidate = ipv6_addr(1);
+
+        coordinator
+            .add_candidates(peer, vec![ipv4_candidate1, ipv4_candidate2, ipv6_candidate])
+            .await;
+
+        let ipv4_only = coordinator.get_ipv4_candidates(peer).await;
+        assert_eq!(ipv4_only.len(), 2);
+        assert!(ipv4_only.contains(&ipv4_candidate1));
+        assert!(ipv4_only.contains(&ipv4_candidate2));
+        assert!(!ipv4_only.contains(&ipv6_candidate));
+    }
+
+    #[tokio::test]
+    async fn test_get_ipv6_candidates() {
+        let config = MigrationConfig::default();
+        let coordinator = MigrationCoordinator::new(config);
+
+        let peer = peer_addr(1);
+        let ipv4_candidate = candidate_addr(1);
+        let ipv6_candidate1 = ipv6_addr(1);
+        let ipv6_candidate2 = ipv6_addr(2);
+
+        coordinator
+            .add_candidates(peer, vec![ipv4_candidate, ipv6_candidate1, ipv6_candidate2])
+            .await;
+
+        let ipv6_only = coordinator.get_ipv6_candidates(peer).await;
+        assert_eq!(ipv6_only.len(), 2);
+        assert!(!ipv6_only.contains(&ipv4_candidate));
+        assert!(ipv6_only.contains(&ipv6_candidate1));
+        assert!(ipv6_only.contains(&ipv6_candidate2));
+    }
+
+    #[tokio::test]
+    async fn test_has_dual_stack_candidates() {
+        let config = MigrationConfig::default();
+        let coordinator = MigrationCoordinator::new(config);
+
+        let peer1 = peer_addr(1);
+        let peer2 = peer_addr(2);
+        let peer3 = peer_addr(3);
+
+        // peer1: only IPv4 candidates
+        coordinator
+            .add_candidates(peer1, vec![candidate_addr(1), candidate_addr(2)])
+            .await;
+
+        // peer2: only IPv6 candidates
+        coordinator
+            .add_candidates(peer2, vec![ipv6_addr(1), ipv6_addr(2)])
+            .await;
+
+        // peer3: both IPv4 and IPv6 candidates (dual-stack)
+        coordinator
+            .add_candidates(peer3, vec![candidate_addr(3), ipv6_addr(3)])
+            .await;
+
+        assert!(!coordinator.has_dual_stack_candidates(peer1).await);
+        assert!(!coordinator.has_dual_stack_candidates(peer2).await);
+        assert!(coordinator.has_dual_stack_candidates(peer3).await);
+    }
+
+    #[tokio::test]
+    async fn test_no_candidates_returns_empty() {
+        let config = MigrationConfig::default();
+        let coordinator = MigrationCoordinator::new(config);
+
+        let peer = peer_addr(1);
+        // Don't add any candidates
+
+        assert!(coordinator.get_all_candidates(peer).await.is_empty());
+        assert!(coordinator.get_ipv4_candidates(peer).await.is_empty());
+        assert!(coordinator.get_ipv6_candidates(peer).await.is_empty());
+        assert!(!coordinator.has_dual_stack_candidates(peer).await);
     }
 }

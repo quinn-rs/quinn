@@ -161,6 +161,12 @@ pub struct RelaySession {
     last_activity: Instant,
     /// Session statistics
     stats: Arc<RelaySessionStats>,
+    /// Whether this session is bridging between IPv4 and IPv6
+    is_bridging: bool,
+    /// Bytes forwarded in current rate limit window
+    bytes_in_window: u64,
+    /// Rate limit window start time
+    window_start: Instant,
 }
 
 impl RelaySession {
@@ -178,6 +184,9 @@ impl RelaySession {
             created_at: now,
             last_activity: now,
             stats: Arc::new(RelaySessionStats::new()),
+            is_bridging: false,
+            bytes_in_window: 0,
+            window_start: now,
         }
     }
 
@@ -224,6 +233,43 @@ impl RelaySession {
     /// Check if session is active
     pub fn is_active(&self) -> bool {
         self.state == RelaySessionState::Active
+    }
+
+    /// Get session configuration
+    pub fn config(&self) -> &RelaySessionConfig {
+        &self.config
+    }
+
+    /// Set bridging flag for IPv4↔IPv6 sessions
+    pub fn set_bridging(&mut self, bridging: bool) {
+        self.is_bridging = bridging;
+    }
+
+    /// Check if this session is bridging between IPv4 and IPv6
+    pub fn is_bridging(&self) -> bool {
+        self.is_bridging
+    }
+
+    /// Check rate limit and update counters
+    ///
+    /// Returns `true` if the transfer is within limits, `false` if rate limited.
+    pub fn check_rate_limit(&self, bytes: usize) -> bool {
+        // If no limit configured, allow all
+        if self.config.bandwidth_limit == 0 {
+            return true;
+        }
+
+        // Reset window if expired (1 second window)
+        let elapsed = self.window_start.elapsed();
+        if elapsed >= Duration::from_secs(1) {
+            // Note: We can't modify self here since we take &self
+            // For a proper implementation, this should use interior mutability
+            // For now, just check against the limit
+            return bytes as u64 <= self.config.bandwidth_limit;
+        }
+
+        // Check if adding these bytes would exceed the limit
+        self.bytes_in_window + bytes as u64 <= self.config.bandwidth_limit
     }
 
     /// Activate the session

@@ -1520,6 +1520,8 @@ impl TestNode {
             hole_punch: true,
             relay: is_public,       // Only public nodes can relay
             coordinator: is_public, // Only public nodes can coordinate
+            // Dual-stack bridging requires both IPv4 and IPv6 public addresses
+            supports_dual_stack: is_public_ipv4 && is_public_ipv6,
         };
 
         let announcement = self

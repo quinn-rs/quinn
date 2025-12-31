@@ -70,6 +70,31 @@ pub struct PeerCapabilities {
     pub relay: bool,
     /// Can act as a coordinator for NAT traversal.
     pub coordinator: bool,
+    /// Supports dual-stack bridging (can relay between IPv4 and IPv6).
+    /// This is true when a relay has both IPv4 and IPv6 addresses and
+    /// can translate traffic between the two IP versions.
+    #[serde(default)]
+    pub supports_dual_stack: bool,
+}
+
+impl PeerCapabilities {
+    /// Check if this peer can bridge to a specific IP version target.
+    ///
+    /// Returns true if either:
+    /// - The peer has direct connectivity to that IP version
+    /// - The peer supports dual-stack bridging (can relay between versions)
+    pub fn can_reach_ip_version(&self, is_ipv4: bool) -> bool {
+        if is_ipv4 {
+            self.direct_ipv4 || self.supports_dual_stack
+        } else {
+            self.direct_ipv6 || self.supports_dual_stack
+        }
+    }
+
+    /// Check if this peer can act as a bridging relay between IP versions.
+    pub fn can_bridge(&self) -> bool {
+        self.relay && self.supports_dual_stack
+    }
 }
 
 /// A relay announcement for NAT traversal fallback.
@@ -87,6 +112,41 @@ pub struct RelayAnnouncement {
     pub timestamp_ms: u64,
     /// Geographic region for proximity-based selection.
     pub region: Option<String>,
+    /// Whether this relay supports dual-stack bridging (IPv4 ↔ IPv6).
+    #[serde(default)]
+    pub supports_dual_stack: bool,
+}
+
+impl RelayAnnouncement {
+    /// Check if this relay can reach the target address.
+    ///
+    /// Returns true if:
+    /// - Relay has an address in the same IP version as target
+    /// - Relay supports dual-stack bridging
+    pub fn can_reach(&self, target: &SocketAddr) -> bool {
+        if self.supports_dual_stack {
+            return true;
+        }
+        // Check if any address matches the target's IP version
+        self.addresses.iter().any(|a| a.is_ipv4() == target.is_ipv4())
+    }
+
+    /// Get IPv4 addresses from this relay.
+    pub fn ipv4_addresses(&self) -> Vec<SocketAddr> {
+        self.addresses.iter().filter(|a| a.is_ipv4()).copied().collect()
+    }
+
+    /// Get IPv6 addresses from this relay.
+    pub fn ipv6_addresses(&self) -> Vec<SocketAddr> {
+        self.addresses.iter().filter(|a| a.is_ipv6()).copied().collect()
+    }
+
+    /// Check if this relay has addresses in both IP versions.
+    pub fn has_both_ip_versions(&self) -> bool {
+        let has_v4 = self.addresses.iter().any(|a| a.is_ipv4());
+        let has_v6 = self.addresses.iter().any(|a| a.is_ipv6());
+        has_v4 && has_v6
+    }
 }
 
 /// A coordinator announcement for NAT traversal.
@@ -534,6 +594,81 @@ impl GossipDiscovery {
             .map(|(r, _)| r.clone())
     }
 
+    /// Get best relay that can reach a specific target address.
+    ///
+    /// Prioritizes:
+    /// 1. Relays with matching IP version and low load
+    /// 2. Dual-stack relays that can bridge between IP versions
+    ///
+    /// # Arguments
+    /// * `target` - The target address to reach through relay
+    /// * `prefer_dual_stack` - If true, prefer dual-stack relays for bridging scenarios
+    pub async fn get_best_relay_for_target(
+        &self,
+        target: &SocketAddr,
+        prefer_dual_stack: bool,
+    ) -> Option<RelayAnnouncement> {
+        let relays = self.known_relays.read().await;
+
+        // Filter to relays that can reach the target
+        let mut candidates: Vec<_> = relays
+            .values()
+            .filter(|(r, _)| r.active_connections < r.max_connections && r.can_reach(target))
+            .collect();
+
+        if candidates.is_empty() {
+            return None;
+        }
+
+        // Sort by preference:
+        // 1. If prefer_dual_stack: dual-stack relays first
+        // 2. Lower load (active_connections) is better
+        candidates.sort_by(|(a, _), (b, _)| {
+            if prefer_dual_stack {
+                // Dual-stack relays first
+                match (a.supports_dual_stack, b.supports_dual_stack) {
+                    (true, false) => return std::cmp::Ordering::Less,
+                    (false, true) => return std::cmp::Ordering::Greater,
+                    _ => {}
+                }
+            }
+            // Then by load
+            a.active_connections.cmp(&b.active_connections)
+        });
+
+        candidates.first().map(|(r, _)| (*r).clone())
+    }
+
+    /// Get all dual-stack relays (can bridge IPv4 ↔ IPv6).
+    pub async fn get_dual_stack_relays(&self) -> Vec<RelayAnnouncement> {
+        let relays = self.known_relays.read().await;
+        relays
+            .values()
+            .filter(|(r, _)| r.supports_dual_stack)
+            .map(|(r, _)| r.clone())
+            .collect()
+    }
+
+    /// Get relays that can reach IPv4 targets.
+    pub async fn get_ipv4_relays(&self) -> Vec<RelayAnnouncement> {
+        let relays = self.known_relays.read().await;
+        relays
+            .values()
+            .filter(|(r, _)| r.supports_dual_stack || r.addresses.iter().any(|a| a.is_ipv4()))
+            .map(|(r, _)| r.clone())
+            .collect()
+    }
+
+    /// Get relays that can reach IPv6 targets.
+    pub async fn get_ipv6_relays(&self) -> Vec<RelayAnnouncement> {
+        let relays = self.known_relays.read().await;
+        relays
+            .values()
+            .filter(|(r, _)| r.supports_dual_stack || r.addresses.iter().any(|a| a.is_ipv6()))
+            .map(|(r, _)| r.clone())
+            .collect()
+    }
+
     /// Get best coordinator for NAT traversal.
     pub async fn get_best_coordinator(&self) -> Option<CoordinatorAnnouncement> {
         let coordinators = self.known_coordinators.read().await;
@@ -964,6 +1099,7 @@ mod tests {
                 hole_punch: true,
                 relay: false,
                 coordinator: true,
+                supports_dual_stack: false,
             },
         };
 
@@ -982,6 +1118,10 @@ mod tests {
         assert_eq!(
             decoded.capabilities.direct_ipv6,
             announcement.capabilities.direct_ipv6
+        );
+        assert_eq!(
+            decoded.capabilities.supports_dual_stack,
+            announcement.capabilities.supports_dual_stack
         );
     }
 
@@ -1067,5 +1207,201 @@ mod tests {
         let status = integration.cache_status();
         assert_eq!(status.total_entries, 0);
         assert!(status.cache_path.is_none());
+    }
+
+    // ========== Dual-Stack Capability Tests ==========
+
+    #[test]
+    fn test_peer_capabilities_can_reach_ipv4() {
+        // IPv4-only peer
+        let caps = PeerCapabilities {
+            direct_ipv4: true,
+            direct_ipv6: false,
+            supports_dual_stack: false,
+            ..Default::default()
+        };
+        assert!(caps.can_reach_ip_version(true)); // Can reach IPv4
+        assert!(!caps.can_reach_ip_version(false)); // Cannot reach IPv6
+    }
+
+    #[test]
+    fn test_peer_capabilities_can_reach_ipv6() {
+        // IPv6-only peer
+        let caps = PeerCapabilities {
+            direct_ipv4: false,
+            direct_ipv6: true,
+            supports_dual_stack: false,
+            ..Default::default()
+        };
+        assert!(!caps.can_reach_ip_version(true)); // Cannot reach IPv4
+        assert!(caps.can_reach_ip_version(false)); // Can reach IPv6
+    }
+
+    #[test]
+    fn test_peer_capabilities_dual_stack_can_reach_both() {
+        // Dual-stack peer
+        let caps = PeerCapabilities {
+            direct_ipv4: false, // Even without direct, dual-stack can bridge
+            direct_ipv6: false,
+            supports_dual_stack: true,
+            ..Default::default()
+        };
+        assert!(caps.can_reach_ip_version(true)); // Can reach IPv4 via bridging
+        assert!(caps.can_reach_ip_version(false)); // Can reach IPv6 via bridging
+    }
+
+    #[test]
+    fn test_peer_capabilities_can_bridge() {
+        // Relay with dual-stack
+        let caps = PeerCapabilities {
+            relay: true,
+            supports_dual_stack: true,
+            ..Default::default()
+        };
+        assert!(caps.can_bridge());
+
+        // Relay without dual-stack cannot bridge
+        let caps_no_ds = PeerCapabilities {
+            relay: true,
+            supports_dual_stack: false,
+            ..Default::default()
+        };
+        assert!(!caps_no_ds.can_bridge());
+
+        // Dual-stack without relay cannot bridge
+        let caps_no_relay = PeerCapabilities {
+            relay: false,
+            supports_dual_stack: true,
+            ..Default::default()
+        };
+        assert!(!caps_no_relay.can_bridge());
+    }
+
+    #[test]
+    fn test_relay_announcement_can_reach() {
+        let ipv4_addr: SocketAddr = "192.168.1.1:9000".parse().unwrap();
+        let ipv6_addr: SocketAddr = "[2001:db8::1]:9000".parse().unwrap();
+
+        // IPv4-only relay
+        let ipv4_relay = RelayAnnouncement {
+            peer_id: "relay1".to_string(),
+            addresses: vec![ipv4_addr],
+            active_connections: 0,
+            max_connections: 100,
+            timestamp_ms: 0,
+            region: None,
+            supports_dual_stack: false,
+        };
+        assert!(ipv4_relay.can_reach(&"10.0.0.1:8080".parse().unwrap())); // IPv4 target
+        assert!(!ipv4_relay.can_reach(&"[2001:db8::2]:8080".parse().unwrap())); // IPv6 target
+
+        // IPv6-only relay
+        let ipv6_relay = RelayAnnouncement {
+            peer_id: "relay2".to_string(),
+            addresses: vec![ipv6_addr],
+            active_connections: 0,
+            max_connections: 100,
+            timestamp_ms: 0,
+            region: None,
+            supports_dual_stack: false,
+        };
+        assert!(!ipv6_relay.can_reach(&"10.0.0.1:8080".parse().unwrap())); // IPv4 target
+        assert!(ipv6_relay.can_reach(&"[2001:db8::2]:8080".parse().unwrap())); // IPv6 target
+
+        // Dual-stack relay
+        let dual_relay = RelayAnnouncement {
+            peer_id: "relay3".to_string(),
+            addresses: vec![ipv4_addr, ipv6_addr],
+            active_connections: 0,
+            max_connections: 100,
+            timestamp_ms: 0,
+            region: None,
+            supports_dual_stack: true,
+        };
+        assert!(dual_relay.can_reach(&"10.0.0.1:8080".parse().unwrap())); // IPv4 target
+        assert!(dual_relay.can_reach(&"[2001:db8::2]:8080".parse().unwrap())); // IPv6 target
+    }
+
+    #[test]
+    fn test_relay_announcement_ip_version_helpers() {
+        let ipv4_addr: SocketAddr = "192.168.1.1:9000".parse().unwrap();
+        let ipv6_addr: SocketAddr = "[2001:db8::1]:9000".parse().unwrap();
+
+        let relay = RelayAnnouncement {
+            peer_id: "relay1".to_string(),
+            addresses: vec![ipv4_addr, ipv6_addr],
+            active_connections: 0,
+            max_connections: 100,
+            timestamp_ms: 0,
+            region: None,
+            supports_dual_stack: true,
+        };
+
+        assert_eq!(relay.ipv4_addresses(), vec![ipv4_addr]);
+        assert_eq!(relay.ipv6_addresses(), vec![ipv6_addr]);
+        assert!(relay.has_both_ip_versions());
+
+        // Single IP version relay
+        let ipv4_only = RelayAnnouncement {
+            peer_id: "relay2".to_string(),
+            addresses: vec![ipv4_addr],
+            active_connections: 0,
+            max_connections: 100,
+            timestamp_ms: 0,
+            region: None,
+            supports_dual_stack: false,
+        };
+        assert!(!ipv4_only.has_both_ip_versions());
+    }
+
+    #[test]
+    fn test_relay_announcement_serialization_with_dual_stack() {
+        let relay = RelayAnnouncement {
+            peer_id: "relay1".to_string(),
+            addresses: vec!["192.168.1.1:9000".parse().unwrap()],
+            active_connections: 5,
+            max_connections: 100,
+            timestamp_ms: 1234567890,
+            region: Some("us-east".to_string()),
+            supports_dual_stack: true,
+        };
+
+        let bytes = serialize_relay_announcement(&relay);
+        let decoded = deserialize_relay_announcement(&bytes).expect("decode failed");
+
+        assert_eq!(decoded.peer_id, relay.peer_id);
+        assert_eq!(decoded.supports_dual_stack, true);
+    }
+
+    #[test]
+    fn test_relay_announcement_backward_compat_no_dual_stack() {
+        // Test that old announcements without supports_dual_stack field default to false
+        let json = r#"{
+            "peer_id": "relay1",
+            "addresses": ["192.168.1.1:9000"],
+            "active_connections": 5,
+            "max_connections": 100,
+            "timestamp_ms": 1234567890,
+            "region": null
+        }"#;
+
+        let decoded: RelayAnnouncement = serde_json::from_str(json).expect("decode failed");
+        assert!(!decoded.supports_dual_stack); // Should default to false
+    }
+
+    #[test]
+    fn test_peer_capabilities_backward_compat() {
+        // Test that old announcements without supports_dual_stack field default to false
+        let json = r#"{
+            "direct": true,
+            "hole_punch": true,
+            "relay": false,
+            "coordinator": false
+        }"#;
+
+        let decoded: PeerCapabilities = serde_json::from_str(json).expect("decode failed");
+        assert!(!decoded.supports_dual_stack); // Should default to false
+        assert!(!decoded.direct_ipv4); // Should default to false
+        assert!(!decoded.direct_ipv6); // Should default to false
     }
 }

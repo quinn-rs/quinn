@@ -178,6 +178,11 @@ impl ConnectUdpRequest {
         Some(SocketAddr::new(ip, self.target_port))
     }
 
+    /// Alias for target_addr for consistency
+    pub fn target_address(&self) -> Option<SocketAddr> {
+        self.target_addr()
+    }
+
     /// Get the protocol string for HTTP headers
     pub fn protocol(&self) -> &'static str {
         if self.connect_udp_bind {

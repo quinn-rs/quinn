@@ -49,6 +49,8 @@ pub struct CacheStats {
     pub relay_peers: usize,
     /// Peers that support NAT coordination
     pub coordinator_peers: usize,
+    /// Peers that support dual-stack (IPv4 + IPv6) bridging
+    pub dual_stack_relay_peers: usize,
     /// Average quality score across all peers
     pub average_quality: f64,
     /// Number of untested peers
@@ -155,6 +157,47 @@ impl BootstrapCache {
         });
 
         coordinators.into_iter().take(count).collect()
+    }
+
+    /// Select relay peers that can reach a target IP version.
+    ///
+    /// Returns relays sorted by quality that can bridge traffic to the target.
+    /// Dual-stack relays are preferred as they can reach any target.
+    ///
+    /// # Arguments
+    /// * `count` - Maximum number of relays to return
+    /// * `target` - The target address to reach
+    /// * `prefer_dual_stack` - If true, prioritize dual-stack relays
+    pub async fn select_relays_for_target(
+        &self,
+        count: usize,
+        target: &std::net::SocketAddr,
+        prefer_dual_stack: bool,
+    ) -> Vec<CachedPeer> {
+        use super::selection::select_relays_for_target;
+
+        let data = self.data.read().await;
+        let peers: Vec<CachedPeer> = data.peers.values().cloned().collect();
+
+        select_relays_for_target(&peers, count, target.is_ipv4(), prefer_dual_stack)
+            .into_iter()
+            .cloned()
+            .collect()
+    }
+
+    /// Select relay peers that support dual-stack (IPv4 + IPv6) bridging.
+    ///
+    /// These peers are valuable for bridging between IPv4-only and IPv6-only networks.
+    pub async fn select_dual_stack_relays(&self, count: usize) -> Vec<CachedPeer> {
+        use super::selection::select_dual_stack_relays;
+
+        let data = self.data.read().await;
+        let peers: Vec<CachedPeer> = data.peers.values().cloned().collect();
+
+        select_dual_stack_relays(&peers, count)
+            .into_iter()
+            .cloned()
+            .collect()
     }
 
     /// Add or update a peer in the cache.
@@ -342,6 +385,11 @@ impl BootstrapCache {
             .values()
             .filter(|p| p.capabilities.supports_coordination)
             .count();
+        let dual_stack_count = data
+            .peers
+            .values()
+            .filter(|p| p.capabilities.supports_relay && p.capabilities.supports_dual_stack())
+            .count();
         let untested = data
             .peers
             .values()
@@ -357,6 +405,7 @@ impl BootstrapCache {
             total_peers: data.peers.len(),
             relay_peers: relay_count,
             coordinator_peers: coord_count,
+            dual_stack_relay_peers: dual_stack_count,
             average_quality: avg_quality,
             untested_peers: untested,
         }
