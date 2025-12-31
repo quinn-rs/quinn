@@ -8,13 +8,13 @@ use crate::epidemic_gossip::{EpidemicConfig, EpidemicEvent, EpidemicGossip};
 use crate::gossip::{
     GossipConfig, GossipEvent, GossipIntegration, PeerCapabilities as GossipCapabilities,
 };
-use saorsa_gossip_types::PeerId as GossipPeerId;
 use crate::registry::{
     BgpGeoProvider, ConnectionDirection, ConnectionMethod, ConnectionReport, ConnectivityMatrix,
     NatStats, NatType, NodeCapabilities, NodeGossipStats, NodeHeartbeat, NodeRegistration,
     PeerInfo, PeerStatus, RegistryClient,
 };
 use crate::tui::{ConnectedPeer, LocalNodeInfo, TuiEvent, country_flag};
+use saorsa_gossip_types::PeerId as GossipPeerId;
 use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -629,9 +629,7 @@ impl TestNode {
             epidemic_config,
             epidemic_event_tx,
         ));
-        info!(
-            "Initialized saorsa-gossip epidemic layer (HyParView + SWIM + PlumTree)"
-        );
+        info!("Initialized saorsa-gossip epidemic layer (HyParView + SWIM + PlumTree)");
 
         // Spawn event handler for P2P events to update TUI
         let endpoint_for_events = endpoint.clone();
@@ -1793,7 +1791,10 @@ impl TestNode {
                 }
             }
             Err(e) => {
-                warn!("Failed to serialize announcement for epidemic broadcast: {}", e);
+                warn!(
+                    "Failed to serialize announcement for epidemic broadcast: {}",
+                    e
+                );
             }
         }
     }
@@ -2363,7 +2364,10 @@ impl TestNode {
 
         // Start saorsa-gossip epidemic layer
         if let Err(e) = self.epidemic_gossip.start().await {
-            warn!("Failed to start saorsa-gossip epidemic layer: {} (continuing with passive gossip)", e);
+            warn!(
+                "Failed to start saorsa-gossip epidemic layer: {} (continuing with passive gossip)",
+                e
+            );
         } else {
             info!("Started saorsa-gossip epidemic layer (HyParView + SWIM + PlumTree)");
         }
