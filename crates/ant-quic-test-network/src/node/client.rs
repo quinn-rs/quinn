@@ -281,6 +281,9 @@ pub struct TestNode {
     has_ipv6: bool,
     /// Actual bound port (may differ from config if port 0 was used).
     actual_port: u16,
+    /// Gossip port (calculated via port offset approach).
+    /// Used when connecting to other nodes via gossip overlay.
+    gossip_port: u16,
     /// Track peers that used hole-punching (saw Punching phase before Connected).
     /// Key is hex-encoded peer ID, value is true if hole-punching was used.
     hole_punched_peers: Arc<RwLock<HashMap<String, bool>>>,
@@ -475,8 +478,37 @@ impl TestNode {
         // Load or generate persistent keypair to maintain stable peer ID across restarts
         let (public_key, secret_key) = load_or_generate_keypair()?;
 
+        // Port offset approach:
+        // - If bind_addr port is 0: both P2pEndpoint and gossip use random ports
+        // - If bind_addr port is N (e.g., 9000): gossip uses N, P2pEndpoint uses N+1
+        // This allows firewall rules for ports 9000-9001 while maintaining security with random ports by default
+        let base_port = config.bind_addr.port();
+        let (p2p_port, gossip_port) = if base_port == 0 {
+            // Random ports for both (secure default)
+            (0u16, 0u16)
+        } else {
+            // Fixed ports: gossip on base_port, P2pEndpoint on base_port + 1
+            (base_port.saturating_add(1), base_port)
+        };
+
+        let p2p_bind_addr = std::net::SocketAddr::new(config.bind_addr.ip(), p2p_port);
+        info!(
+            "Port allocation: gossip={}, p2p={} (base={})",
+            if gossip_port == 0 {
+                "random".to_string()
+            } else {
+                gossip_port.to_string()
+            },
+            if p2p_port == 0 {
+                "random".to_string()
+            } else {
+                p2p_port.to_string()
+            },
+            base_port
+        );
+
         let p2p_config = P2pConfig::builder()
-            .bind_addr(config.bind_addr)
+            .bind_addr(p2p_bind_addr)
             .known_peers(known_peers)
             .nat(nat_config)
             .keypair(public_key, secret_key)
@@ -618,10 +650,9 @@ impl TestNode {
             id_array[..len].copy_from_slice(&peer_id_bytes[..len]);
             GossipPeerId::new(id_array)
         };
-        // Use fixed gossip port 9000 for all nodes so they can find each other
-        // The main ant-quic port is dynamic, and the firewall allows UDP 9000
-        // (9001 is not open in the firewall rules)
-        let gossip_port = 9000u16;
+        // Use gossip_port calculated earlier via port offset approach
+        // - If --bind-port 0: random port (secure default)
+        // - If --bind-port 9000: gossip on 9000, P2pEndpoint on 9001
         let gossip_listen_addr = std::net::SocketAddr::new(config.bind_addr.ip(), gossip_port);
         let epidemic_config = EpidemicConfig {
             listen_addr: gossip_listen_addr,
@@ -630,8 +661,9 @@ impl TestNode {
             ..EpidemicConfig::default()
         };
         info!(
-            "Epidemic gossip will listen on port {} (fixed for network-wide discovery)",
-            gossip_port
+            "Epidemic gossip will listen on port {} ({})",
+            gossip_port,
+            if gossip_port == 0 { "random" } else { "fixed" }
         );
         let epidemic_gossip = Arc::new(EpidemicGossip::new(
             gossip_peer_id,
@@ -952,6 +984,7 @@ impl TestNode {
             nat_stats: Arc::new(RwLock::new(NatStats::default())),
             has_ipv6: has_global_ipv6(),
             actual_port,
+            gossip_port,
             hole_punched_peers,
             disconnection_times,
             pending_outbound,
@@ -2498,15 +2531,15 @@ impl TestNode {
 
                     // Add registry peers to epidemic gossip for HyParView overlay
                     // This is critical for forming the gossip network
-                    // NOTE: We use the fixed gossip port (9000) instead of the dynamic ant-quic port
-                    // Port 9000 is allowed through the firewall (9001 is not)
+                    // NOTE: We assume all VPS nodes use the same gossip port as us
+                    // (e.g., all nodes use --bind-port 9000, so gossip_port = 9000)
                     if !response.peers.is_empty() {
-                        const GOSSIP_PORT: u16 = 9000;
+                        let our_gossip_port = self.gossip_port;
                         let bootstrap_addrs: Vec<std::net::SocketAddr> = response
                             .peers
                             .iter()
                             .flat_map(|p| p.addresses.iter())
-                            .map(|addr| std::net::SocketAddr::new(addr.ip(), GOSSIP_PORT))
+                            .map(|addr| std::net::SocketAddr::new(addr.ip(), our_gossip_port))
                             .collect();
 
                         if !bootstrap_addrs.is_empty() {
@@ -2514,7 +2547,7 @@ impl TestNode {
                                 "Adding {} bootstrap addresses to epidemic gossip from {} peers (using gossip port {})",
                                 bootstrap_addrs.len(),
                                 response.peers.len(),
-                                GOSSIP_PORT
+                                our_gossip_port
                             );
 
                             match self
@@ -3170,7 +3203,7 @@ impl TestNode {
         let our_peer_id_bytes = peer_id_to_bytes(&self.peer_id);
         let total_sent = Arc::clone(&self.total_bytes_sent);
         let total_received = Arc::clone(&self.total_bytes_received);
-        // Use gossip transport for test packets (port 9000, allowed by firewall)
+        // Use gossip transport for test packets (uses configured gossip_port)
         let gossip = Arc::clone(&self.epidemic_gossip);
 
         tokio::spawn(async move {
@@ -3197,7 +3230,7 @@ impl TestNode {
                     let packet = TestPacket::new_ping(our_peer_id_bytes, seq);
                     let packet_size = packet.size() as u64;
 
-                    // Perform test packet exchange via gossip transport (port 9000)
+                    // Perform test packet exchange via gossip transport
                     // This bypasses P2pEndpoint's random ports blocked by firewall
                     let result = gossip_test_exchange(&gossip, &peer_id, &packet).await;
 
@@ -3587,10 +3620,10 @@ async fn real_connect_comprehensive(
     }
 }
 
-/// Perform test packet exchange via gossip transport (port 9000).
+/// Perform test packet exchange via gossip transport.
 ///
-/// This uses the saorsa-gossip transport which operates on port 9000,
-/// bypassing the P2pEndpoint that uses random ports blocked by firewall.
+/// This uses the saorsa-gossip transport (configured via --bind-port flag),
+/// bypassing the P2pEndpoint that uses a different port.
 async fn gossip_test_exchange(
     gossip: &EpidemicGossip,
     peer_id_hex: &str,
@@ -3616,7 +3649,7 @@ async fn gossip_test_exchange(
 
     let start = Instant::now();
 
-    // Send via gossip transport (uses port 9000)
+    // Send via gossip transport (uses configured gossip_port)
     gossip
         .send_to_peer(gossip_peer_id, packet_data)
         .await

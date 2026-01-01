@@ -639,9 +639,9 @@ impl EpidemicGossip {
         Ok(())
     }
 
-    /// Send data to a peer using the gossip transport (port 9000).
+    /// Send data to a peer using the gossip transport.
     /// This bypasses the P2pEndpoint and uses the gossip connections directly,
-    /// which is necessary because the firewall only allows port 9000.
+    /// which uses the port configured via --bind-port (or random if 0).
     pub async fn send_to_peer(&self, peer_id: PeerId, data: Vec<u8>) -> Result<(), GossipError> {
         let stack_guard = self.stack.read().await;
         let stack = stack_guard.as_ref().ok_or(GossipError::NotRunning)?;

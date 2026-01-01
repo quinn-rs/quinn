@@ -178,7 +178,7 @@ jobs:
           echo "[Service]" >> /etc/systemd/system/$SERVICE.service
           echo "Type=simple" >> /etc/systemd/system/$SERVICE.service
           echo "User=root" >> /etc/systemd/system/$SERVICE.service
-          echo "ExecStart=$REMOTE_PATH --registry-url https://saorsa-1.saorsalabs.com --quiet" >> /etc/systemd/system/$SERVICE.service
+          echo "ExecStart=$REMOTE_PATH --registry-url https://saorsa-1.saorsalabs.com --bind-port 9000 --quiet" >> /etc/systemd/system/$SERVICE.service
           echo "Restart=always" >> /etc/systemd/system/$SERVICE.service
           echo "RestartSec=5" >> /etc/systemd/system/$SERVICE.service
           echo "StandardOutput=append:/var/log/$SERVICE.log" >> /etc/systemd/system/$SERVICE.service
