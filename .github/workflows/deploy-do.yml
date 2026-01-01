@@ -37,6 +37,9 @@ jobs:
       fail-fast: false
       matrix:
         node:
+          - name: saorsa-1
+            host: 77.42.75.115
+            description: "Registry Server (Home)"
           - name: saorsa-2
             host: 142.93.199.50
             description: "Bootstrap Node (NYC1)"
@@ -255,6 +258,7 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "| Node | IP | Provider/Region | Status |" >> $GITHUB_STEP_SUMMARY
           echo "|------|-----|--------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| saorsa-1 | 77.42.75.115 | Home Registry | ${{ needs.deploy.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| saorsa-2 | 142.93.199.50 | DO NYC1 | ${{ needs.deploy.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| saorsa-3 | 147.182.234.192 | DO SFO3 | ${{ needs.deploy.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| saorsa-4 | 206.189.7.117 | DO AMS3 | ${{ needs.deploy.result }} |" >> $GITHUB_STEP_SUMMARY
