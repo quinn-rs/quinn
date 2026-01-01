@@ -7,8 +7,8 @@
 use crate::registry::geo::BgpGeoProvider;
 use crate::registry::types::{
     ConnectionBreakdown, ConnectionMethod, ConnectionRecord, ConnectivityMatrix, ExperimentResults,
-    GossipStats, NatStats, NatType, NetworkEvent, NetworkStats, NodeGossipStats, NodeHeartbeat,
-    NodeRegistration, PeerInfo, PeerStatus,
+    FullMeshProbeResult, GossipStats, NatStats, NatType, NetworkEvent, NetworkStats,
+    NodeGossipStats, NodeHeartbeat, NodeRegistration, PeerInfo, PeerStatus,
 };
 use dashmap::DashMap;
 use std::collections::HashMap;
@@ -57,6 +57,8 @@ struct NodeEntry {
     bytes_sent: u64,
     /// Total bytes received
     bytes_received: u64,
+    /// Full-mesh connectivity probe results
+    full_mesh_probes: Option<HashMap<String, FullMeshProbeResult>>,
 }
 
 /// Thread-safe peer registry store with historical tracking.
@@ -179,6 +181,7 @@ impl PeerStore {
             connected_peers: 0,
             bytes_sent: 0,
             bytes_received: 0,
+            full_mesh_probes: None,
         };
 
         let is_new = !self.peers.contains_key(&peer_id);
@@ -245,6 +248,11 @@ impl PeerStore {
         // Update gossip stats if provided
         if let Some(stats) = heartbeat.gossip_stats {
             entry.gossip_stats = stats;
+        }
+
+        // Update full-mesh probe results if provided
+        if heartbeat.full_mesh_probes.is_some() {
+            entry.full_mesh_probes = heartbeat.full_mesh_probes;
         }
 
         // Update global counters
@@ -354,6 +362,7 @@ impl PeerStore {
             bytes_received: entry.bytes_received,
             connected_peers: entry.connected_peers,
             gossip_stats: Some(entry.gossip_stats.clone()),
+            full_mesh_probes: entry.full_mesh_probes.clone(),
         }
     }
 

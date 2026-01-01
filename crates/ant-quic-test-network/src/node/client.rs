@@ -843,6 +843,7 @@ impl TestNode {
                                     bytes_received: 0,
                                     connected_peers: 0,
                                     gossip_stats: None,
+                                    full_mesh_probes: None,
                                 };
 
                                 let tracked = TrackedPeer {
@@ -1365,6 +1366,7 @@ impl TestNode {
                                 bytes_received: 0,
                                 connected_peers: 0,
                                 gossip_stats: None,
+                                full_mesh_probes: None,
                             };
 
                             let tracked = TrackedPeer {
@@ -3127,6 +3129,7 @@ impl TestNode {
                             bytes_received: 0,
                             connected_peers: 0,
                             gossip_stats: None,
+                            full_mesh_probes: None,
                         }
                     })
                     .collect();

@@ -678,6 +678,9 @@ pub struct PeerInfo {
     /// Gossip protocol statistics (if available)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gossip_stats: Option<NodeGossipStats>,
+    /// Full-mesh connectivity probe results (peer_id -> result)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub full_mesh_probes: Option<HashMap<String, FullMeshProbeResult>>,
 }
 
 /// Network-wide statistics (returned by /api/stats).
