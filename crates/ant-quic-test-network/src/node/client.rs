@@ -2774,10 +2774,23 @@ impl TestNode {
                             // We're using fixed port, assume VPS nodes use same
                             self.gossip_port
                         };
+                        // Filter out our own addresses to avoid trying to connect to ourselves
+                        // We filter by:
+                        // 1. peer_id matching our registration (handles current session)
+                        // 2. IP addresses matching our external IPs (handles stale registry entries)
+                        // 3. IP addresses matching our local/listen IPs (IPv6 is globally routable)
+                        let mut our_ips: std::collections::HashSet<std::net::IpAddr> =
+                            external_addrs.iter().map(|a| a.ip()).collect();
+                        // Also add listen addresses (especially important for globally-routable IPv6)
+                        for addr in &self.listen_addresses {
+                            our_ips.insert(addr.ip());
+                        }
                         let bootstrap_addrs: Vec<std::net::SocketAddr> = response
                             .peers
                             .iter()
+                            .filter(|p| p.peer_id != registration_peer_id)
                             .flat_map(|p| p.addresses.iter())
+                            .filter(|addr| !our_ips.contains(&addr.ip()))
                             .map(|addr| std::net::SocketAddr::new(addr.ip(), vps_gossip_port))
                             .collect();
 
