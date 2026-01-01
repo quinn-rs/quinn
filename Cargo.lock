@@ -176,7 +176,7 @@ dependencies = [
 
 [[package]]
 name = "ant-quic"
-version = "0.14.125"
+version = "0.14.126"
 dependencies = [
  "anyhow",
  "arbitrary",
@@ -250,9 +250,9 @@ dependencies = [
 
 [[package]]
 name = "ant-quic-test-network"
-version = "0.14.125"
+version = "0.14.126"
 dependencies = [
- "ant-quic 0.14.125",
+ "ant-quic 0.14.126",
  "anyhow",
  "bytes",
  "crossterm",
@@ -1332,7 +1332,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -2108,7 +2108,7 @@ checksum = "3640c1c38b8e4e43584d8df18be5fc6b0aa314ce6ebf51b53313d4306cca8e46"
 dependencies = [
  "hermit-abi",
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -2377,7 +2377,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -2870,7 +2870,7 @@ dependencies = [
  "once_cell",
  "socket2 0.6.1",
  "tracing",
- "windows-sys 0.60.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -3202,7 +3202,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.11.0",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -3270,7 +3270,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -3346,9 +3346,9 @@ dependencies = [
 
 [[package]]
 name = "saorsa-gossip-coordinator"
-version = "0.1.12"
+version = "0.1.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7a180a8f25aa55e97eeecb877bd4a089e77b667eaaa4344867d9af39148ab6ee"
+checksum = "e5af4dff63d1abd55917dfb1e0a8977e7c6cd26291938fc6b43e610cfaf4f58a"
 dependencies = [
  "anyhow",
  "bincode 1.3.3",
@@ -3365,9 +3365,9 @@ dependencies = [
 
 [[package]]
 name = "saorsa-gossip-identity"
-version = "0.1.12"
+version = "0.1.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f869c9a58b992859f307a7d383652f8b3f2287f4f1dae7ed51b478b80c58cc18"
+checksum = "d8eafc808df584b32f3513729d2ccfaa9f934eb69d64e3c94982d63e35cb14da"
 dependencies = [
  "anyhow",
  "bincode 1.3.3",
@@ -3380,9 +3380,9 @@ dependencies = [
 
 [[package]]
 name = "saorsa-gossip-membership"
-version = "0.1.12"
+version = "0.1.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7c9ce2bcaf87d72727243c3fcf2254efc734d326f127deeefccdcaf598c568a9"
+checksum = "aeed937e0b84c98270b602cf9cbcac4d6eea421d0553218ab36bc5f5108fa40e"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3397,9 +3397,9 @@ dependencies = [
 
 [[package]]
 name = "saorsa-gossip-pubsub"
-version = "0.1.12"
+version = "0.1.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "68220678480c3b4e9363344ca5113bb8e57b836fd73dc1c6cce3bb57cb492698"
+checksum = "f3781fd5f28ac2206bf18476311ef82d960e7d91529c195d46e129a93655fe85"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3419,9 +3419,9 @@ dependencies = [
 
 [[package]]
 name = "saorsa-gossip-transport"
-version = "0.1.12"
+version = "0.1.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "84dffd067c4c29350645b0b798c8b96a9e53feb0d6d8cb11a792653d2307fe1d"
+checksum = "42b6c9fbc4f4bf78053664ef576c6372622f6f0882ce9d1eb931c49f4dbd54fa"
 dependencies = [
  "ant-quic 0.14.108",
  "anyhow",
@@ -3440,9 +3440,9 @@ dependencies = [
 
 [[package]]
 name = "saorsa-gossip-types"
-version = "0.1.12"
+version = "0.1.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1317e31a30253cfce83e412c0fc158d672186b3d64fcee1d8ac3c72f9945df84"
+checksum = "67003ac83ed16b6fc12681f2c735f5ed5bd1d7e467e0ae9fae3caecb754fa1d4"
 dependencies = [
  "anyhow",
  "blake3",
@@ -3910,7 +3910,7 @@ dependencies = [
  "getrandom 0.3.4",
  "once_cell",
  "rustix 1.1.3",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -4610,7 +4610,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
