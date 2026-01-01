@@ -912,19 +912,31 @@ impl EpidemicGossip {
                         }
                     }
 
-                    // Count connection types
-                    let conn_types = connection_types.read().await;
+                    // Infer connection types from connected peer addresses
+                    // This is the source of truth for IPv4/IPv6 breakdown
+                    let connected_peers = s.transport.connected_peers().await;
                     let mut breakdown = ConnectionBreakdown::default();
-                    for conn_type in conn_types.values() {
-                        match conn_type {
-                            ConnectionType::DirectIpv4 => breakdown.direct_ipv4 += 1,
-                            ConnectionType::DirectIpv6 => breakdown.direct_ipv6 += 1,
-                            ConnectionType::HolePunched => breakdown.hole_punched += 1,
-                            ConnectionType::Relayed => breakdown.relayed += 1,
-                            ConnectionType::Unknown => {}
+
+                    // Update connection_types map and compute breakdown simultaneously
+                    {
+                        let mut conn_types = connection_types.write().await;
+                        for (peer_id, addr) in &connected_peers {
+                            let inferred_type = if addr.is_ipv4() {
+                                ConnectionType::DirectIpv4
+                            } else {
+                                ConnectionType::DirectIpv6
+                            };
+                            conn_types.insert(*peer_id, inferred_type);
+
+                            match inferred_type {
+                                ConnectionType::DirectIpv4 => breakdown.direct_ipv4 += 1,
+                                ConnectionType::DirectIpv6 => breakdown.direct_ipv6 += 1,
+                                ConnectionType::HolePunched => breakdown.hole_punched += 1,
+                                ConnectionType::Relayed => breakdown.relayed += 1,
+                                ConnectionType::Unknown => {}
+                            }
                         }
                     }
-                    drop(conn_types);
 
                     // Update stats
                     let mut stats_guard = stats.write().await;

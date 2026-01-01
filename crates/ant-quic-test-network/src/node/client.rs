@@ -3003,31 +3003,13 @@ impl TestNode {
                 // Collect gossip protocol statistics
                 let gossip_metrics = gossip_integration.metrics();
 
-                // Compute connection type breakdown from connected peers
-                let (conn_direct_ipv4, conn_direct_ipv6, conn_hole_punched, conn_relayed) = {
-                    let mut ipv4 = 0usize;
-                    let mut ipv6 = 0usize;
-                    let mut hole_punched = 0usize;
-                    let mut relayed = 0usize;
+                // Get real saorsa-gossip stats (HyParView + SWIM + PlumTree + Connection Types)
+                // Connection type breakdown comes from gossip transport which is the source of truth
+                let epidemic_stats = epidemic_gossip.stats().await;
 
-                    for tracked in peers.values() {
-                        match tracked.method {
-                            ConnectionMethod::Direct => {
-                                // Check if active connection is IPv6
-                                if tracked.connectivity.active_is_ipv6 {
-                                    ipv6 += 1;
-                                } else {
-                                    ipv4 += 1;
-                                }
-                            }
-                            ConnectionMethod::HolePunched => {
-                                hole_punched += 1;
-                            }
-                            ConnectionMethod::Relayed => {
-                                relayed += 1;
-                            }
-                        }
-                    }
+                // Connection type breakdown from gossip layer (inferred from socket addresses)
+                let (conn_direct_ipv4, conn_direct_ipv6, conn_hole_punched, conn_relayed) = {
+                    let breakdown = &epidemic_stats.connection_types;
 
                     // Debug: always log the breakdown (every 10th heartbeat to reduce noise)
                     static HEARTBEAT_COUNT: std::sync::atomic::AtomicUsize =
@@ -3036,26 +3018,27 @@ impl TestNode {
                         HEARTBEAT_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     if hb_count % 10 == 0 {
                         info!(
-                            "Heartbeat #{}: conn breakdown IPv4={}, IPv6={}, HolePunched={}, Relayed={} (peers.len={})",
+                            "Heartbeat #{}: conn breakdown IPv4={}, IPv6={}, HolePunched={}, Relayed={} (gossip peers)",
                             hb_count,
-                            ipv4,
-                            ipv6,
-                            hole_punched,
-                            relayed,
-                            peers.len()
+                            breakdown.direct_ipv4,
+                            breakdown.direct_ipv6,
+                            breakdown.hole_punched,
+                            breakdown.relayed,
                         );
                     }
 
-                    (ipv4, ipv6, hole_punched, relayed)
+                    (
+                        breakdown.direct_ipv4,
+                        breakdown.direct_ipv6,
+                        breakdown.hole_punched,
+                        breakdown.relayed,
+                    )
                 };
 
                 // Use TOTAL connected peers (outbound + inbound) for "alive" stats
                 // peers.len() = outbound connections we initiated
                 // stats.inbound_connections = connections initiated by others
                 let total_connections = peers.len() + stats.inbound_connections as usize;
-
-                // Get real saorsa-gossip stats (HyParView + SWIM + PlumTree)
-                let epidemic_stats = epidemic_gossip.stats().await;
 
                 let gossip_stats = NodeGossipStats {
                     announcements_sent: gossip_metrics.announcements_sent.load(Ordering::Relaxed),
