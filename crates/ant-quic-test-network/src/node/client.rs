@@ -1975,13 +1975,36 @@ impl TestNode {
         let registry = RegistryClient::new(&self.config.registry_url);
         let epidemic_gossip = Arc::clone(&self.epidemic_gossip);
         let full_mesh_probes = Arc::clone(&self.full_mesh_probes);
-        let our_peer_id = self.peer_id.clone();
+        let quic_peer_id = self.peer_id.clone(); // Fallback if transport not ready
 
         tokio::spawn(async move {
             let probe_interval = Duration::from_secs(60);
 
             // Wait a bit for the network to stabilize before first probe
             tokio::time::sleep(Duration::from_secs(30)).await;
+
+            // Get the gossip transport's peer ID - this MUST match what we registered with
+            // and what's in HyParView's active/passive views
+            let our_peer_id = match epidemic_gossip.transport_peer_id().await {
+                Ok(gossip_pid) => {
+                    let gossip_hex = hex::encode(gossip_pid.as_bytes());
+                    if gossip_hex != quic_peer_id {
+                        info!(
+                            "Probe loop using gossip transport ID: {} (QUIC: {})",
+                            &gossip_hex[..8],
+                            &quic_peer_id[..8]
+                        );
+                    }
+                    gossip_hex
+                }
+                Err(e) => {
+                    warn!(
+                        "Failed to get gossip transport peer ID ({}), using QUIC endpoint ID",
+                        e
+                    );
+                    quic_peer_id.clone()
+                }
+            };
 
             // Set last_probe AFTER the initial delay so first probe runs immediately
             let mut last_probe = Instant::now() - probe_interval;
@@ -2023,6 +2046,23 @@ impl TestNode {
                         registry_peers.len(),
                         active_set.len(),
                         passive_set.len()
+                    );
+
+                    // Debug: show which peer IDs are in active view vs registry
+                    let active_preview: Vec<_> = active_set
+                        .iter()
+                        .take(5)
+                        .map(|p| p[..8.min(p.len())].to_string())
+                        .collect();
+                    let registry_preview: Vec<_> = registry_peers
+                        .iter()
+                        .take(5)
+                        .filter(|p| p.peer_id != our_peer_id)
+                        .map(|p| p.peer_id[..8.min(p.peer_id.len())].to_string())
+                        .collect();
+                    info!(
+                        "Full-mesh probe: Active view IDs: {:?} | Registry IDs: {:?}",
+                        active_preview, registry_preview
                     );
 
                     // Probe each peer
@@ -2635,6 +2675,31 @@ impl TestNode {
     async fn register(&self) -> anyhow::Result<()> {
         let external_addrs = self.external_addresses.read().await.clone();
 
+        // Get the GOSSIP TRANSPORT's peer ID for registration.
+        // This is CRITICAL: The gossip transport generates its own identity which
+        // is DIFFERENT from the P2pEndpoint's identity. For HyParView active_view
+        // comparisons to work correctly, we must use the transport's peer ID.
+        let registration_peer_id = match self.epidemic_gossip.transport_peer_id().await {
+            Ok(gossip_pid) => {
+                let gossip_peer_id_hex = hex::encode(gossip_pid.as_bytes());
+                if gossip_peer_id_hex != self.peer_id {
+                    info!(
+                        "Using gossip transport peer ID for registration: {} (QUIC endpoint: {})",
+                        &gossip_peer_id_hex[..8],
+                        &self.peer_id[..8]
+                    );
+                }
+                gossip_peer_id_hex
+            }
+            Err(e) => {
+                warn!(
+                    "Failed to get gossip transport peer ID ({}), using QUIC endpoint ID",
+                    e
+                );
+                self.peer_id.clone()
+            }
+        };
+
         // Detect actual network capabilities
         let ipv6_available = has_global_ipv6();
         let capabilities = NodeCapabilities {
@@ -2650,7 +2715,7 @@ impl TestNode {
         }
 
         let registration = NodeRegistration {
-            peer_id: self.peer_id.clone(),
+            peer_id: registration_peer_id.clone(),
             public_key: self.public_key.clone(),
             listen_addresses: self.listen_addresses.clone(),
             external_addresses: external_addrs.clone(),
@@ -2672,7 +2737,7 @@ impl TestNode {
                     let (local_ipv4, local_ipv6) = detect_local_addresses(self.actual_port);
 
                     let mut local_node = LocalNodeInfo::default();
-                    local_node.set_peer_id(&self.peer_id);
+                    local_node.set_peer_id(&registration_peer_id);
                     local_node.local_ipv4 = local_ipv4;
                     local_node.local_ipv6 = local_ipv6;
                     local_node.nat_type = NatType::Unknown;
@@ -2771,7 +2836,7 @@ impl TestNode {
     /// Spawn the heartbeat background task.
     fn spawn_heartbeat_loop(&self) -> tokio::task::JoinHandle<()> {
         let registry = RegistryClient::new(&self.config.registry_url);
-        let peer_id = self.peer_id.clone();
+        let quic_peer_id = self.peer_id.clone(); // Fallback if transport not ready
         let public_key = self.public_key.clone();
         let listen_addresses = self.listen_addresses.clone();
         let shutdown = Arc::clone(&self.shutdown);
@@ -2796,10 +2861,31 @@ impl TestNode {
             let mut ticker = tokio::time::interval(interval);
             let mut consecutive_failures = 0u32;
             let mut heartbeat_count = 0u64;
+            // Cache the transport peer ID to avoid repeated async calls
+            let mut cached_peer_id: Option<String> = None;
 
             while !shutdown.load(Ordering::SeqCst) {
                 ticker.tick().await;
                 heartbeat_count += 1;
+
+                // Get the gossip transport's peer ID (cache it once we have it)
+                // This is CRITICAL: must match the peer ID used in registration
+                if cached_peer_id.is_none() {
+                    if let Ok(gossip_pid) = epidemic_gossip.transport_peer_id().await {
+                        let gossip_hex = hex::encode(gossip_pid.as_bytes());
+                        if gossip_hex != quic_peer_id {
+                            info!(
+                                "Heartbeat using gossip transport ID: {} (QUIC: {})",
+                                &gossip_hex[..8],
+                                &quic_peer_id[..8]
+                            );
+                        }
+                        cached_peer_id = Some(gossip_hex);
+                    }
+                }
+                let peer_id = cached_peer_id
+                    .clone()
+                    .unwrap_or_else(|| quic_peer_id.clone());
 
                 // Use timeouts on lock acquisitions to detect deadlocks
                 let peers = match tokio::time::timeout(

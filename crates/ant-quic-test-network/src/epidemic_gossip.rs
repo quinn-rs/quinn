@@ -662,6 +662,17 @@ impl EpidemicGossip {
         Ok(stack.transport.clone())
     }
 
+    /// Get the transport's peer ID (the actual identity used for gossip connections).
+    ///
+    /// IMPORTANT: This returns the gossip transport's peer ID which is DIFFERENT from
+    /// the peer ID passed to EpidemicGossip::new(). The transport generates its own
+    /// identity. Use this peer ID for registry registration to ensure consistency
+    /// with HyParView's active/passive views.
+    pub async fn transport_peer_id(&self) -> Result<PeerId, GossipError> {
+        let transport = self.transport().await?;
+        Ok(transport.peer_id())
+    }
+
     /// Spawn background task to update statistics periodically.
     fn spawn_stats_updater(&self) {
         let stats = self.stats.clone();
