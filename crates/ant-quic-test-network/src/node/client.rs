@@ -2758,15 +2758,27 @@ impl TestNode {
 
                     // Add registry peers to epidemic gossip for HyParView overlay
                     // This is critical for forming the gossip network
-                    // NOTE: We assume all VPS nodes use the same gossip port as us
-                    // (e.g., all nodes use --bind-port 9000, so gossip_port = 9000)
+                    //
+                    // Port selection logic:
+                    // - If we're using a fixed port (--bind-port N), assume VPS nodes use same port
+                    // - If we're using dynamic port (--bind-port 0), assume VPS nodes use 9000
+                    //   (the standard VPS deployment port)
+                    //
+                    // TODO: Proper fix is to have nodes register their actual gossip port
+                    // with the registry and include it in PeerInfo
                     if !response.peers.is_empty() {
-                        let our_gossip_port = self.gossip_port;
+                        let vps_gossip_port = if self.gossip_port == 0 {
+                            // We're using dynamic port, but VPS nodes use 9000
+                            9000
+                        } else {
+                            // We're using fixed port, assume VPS nodes use same
+                            self.gossip_port
+                        };
                         let bootstrap_addrs: Vec<std::net::SocketAddr> = response
                             .peers
                             .iter()
                             .flat_map(|p| p.addresses.iter())
-                            .map(|addr| std::net::SocketAddr::new(addr.ip(), our_gossip_port))
+                            .map(|addr| std::net::SocketAddr::new(addr.ip(), vps_gossip_port))
                             .collect();
 
                         if !bootstrap_addrs.is_empty() {
@@ -2774,7 +2786,7 @@ impl TestNode {
                                 "Adding {} bootstrap addresses to epidemic gossip from {} peers (using gossip port {})",
                                 bootstrap_addrs.len(),
                                 response.peers.len(),
-                                our_gossip_port
+                                vps_gossip_port
                             );
 
                             match self
