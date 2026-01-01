@@ -881,27 +881,28 @@ impl EpidemicGossip {
                 let stack_guard = stack.read().await;
                 if let Some(ref s) = *stack_guard {
                     // Check for dead peers and emit events
+                    // Use try_send() to avoid blocking if channel is full (prevents deadlock)
                     let dead_peers = s
                         .membership
                         .swim()
                         .get_peers_in_state(PeerState::Dead)
                         .await;
                     for peer_id in dead_peers {
-                        if let Err(e) = event_tx.send(EpidemicEvent::PeerLeft { peer_id }).await {
-                            warn!("Failed to send PeerLeft event: {}", e);
+                        if let Err(e) = event_tx.try_send(EpidemicEvent::PeerLeft { peer_id }) {
+                            debug!("Channel full, dropping PeerLeft event: {}", e);
                         }
                     }
 
                     // Check for suspected peers
+                    // Use try_send() to avoid blocking if channel is full (prevents deadlock)
                     let suspect_peers = s
                         .membership
                         .swim()
                         .get_peers_in_state(PeerState::Suspect)
                         .await;
                     for peer_id in suspect_peers {
-                        if let Err(e) = event_tx.send(EpidemicEvent::PeerSuspect { peer_id }).await
-                        {
-                            warn!("Failed to send PeerSuspect event: {}", e);
+                        if let Err(e) = event_tx.try_send(EpidemicEvent::PeerSuspect { peer_id }) {
+                            debug!("Channel full, dropping PeerSuspect event: {}", e);
                         }
                     }
                 }

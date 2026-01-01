@@ -250,7 +250,7 @@ dependencies = [
 
 [[package]]
 name = "ant-quic-test-network"
-version = "0.14.123"
+version = "0.14.124"
 dependencies = [
  "ant-quic 0.14.122",
  "anyhow",
