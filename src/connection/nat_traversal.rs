@@ -14,8 +14,8 @@ use std::{
 use crate::shared::ConnectionId;
 use tracing::{debug, info, trace, warn};
 
-use crate::{Instant, VarInt};
 use super::{PortPredictor, PortPredictorConfig};
+use crate::{Instant, VarInt};
 
 /// NAT traversal state for a QUIC connection
 ///
@@ -1353,7 +1353,8 @@ impl ResourceCleanupCoordinator {
         }
         match self.last_cleanup {
             Some(last) => {
-                let interval = if self.stats.memory_pressure > self.config.memory_pressure_threshold {
+                let interval = if self.stats.memory_pressure > self.config.memory_pressure_threshold
+                {
                     self.config.cleanup_interval / 2
                 } else {
                     self.config.cleanup_interval
@@ -1910,7 +1911,7 @@ impl NatTraversalState {
         if !address.ip().is_loopback() && !address.ip().is_unspecified() {
             // Record the observation
             self.port_predictor.record_observation(address, now);
-            
+
             // Try to generate predictions immediately
             self.generate_predicted_candidates(address.ip(), now);
         }
@@ -1925,20 +1926,24 @@ impl NatTraversalState {
     /// Generate predicted candidates based on observation history
     fn generate_predicted_candidates(&mut self, ip: IpAddr, now: Instant) {
         if !self.resource_manager.is_prediction_allowed(now) {
-             return;
+            return;
         }
 
         let predictions = self.port_predictor.predict_ports(ip);
         for port in predictions {
             let predicted_addr = SocketAddr::new(ip, port);
-            
+
             // Don't add if we already have this candidate
-            if self.remote_candidates.values().any(|c| c.address == predicted_addr) {
+            if self
+                .remote_candidates
+                .values()
+                .any(|c| c.address == predicted_addr)
+            {
                 continue;
             }
-            
+
             // Don't exceed limits
-             if self.remote_candidates.len() >= self.max_candidates as usize {
+            if self.remote_candidates.len() >= self.max_candidates as usize {
                 break;
             }
 
@@ -1961,7 +1966,7 @@ impl NatTraversalState {
             debug!("Added predicted candidate: {}", predicted_addr);
             self.remote_candidates.insert(sequence, candidate);
             self.stats.predicted_candidates_generated += 1;
-            
+
             // Trigger pair generation for this new candidate
             self.generate_candidate_pairs(now);
         }

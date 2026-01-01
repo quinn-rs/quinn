@@ -19,7 +19,10 @@ use std::{fmt::Debug, sync::Arc};
 use rustls::{
     CertificateError, ClientConfig, DigitallySignedStruct, DistinguishedName, Error as TlsError,
     ServerConfig, SignatureScheme,
-    client::{ResolvesClientCert, danger::{HandshakeSignatureValid, ServerCertVerifier}},
+    client::{
+        ResolvesClientCert,
+        danger::{HandshakeSignatureValid, ServerCertVerifier},
+    },
     pki_types::{CertificateDer, ServerName, UnixTime},
     server::{ResolvesServerCert, danger::ClientCertVerifier},
     sign::{CertifiedKey, SigningKey},

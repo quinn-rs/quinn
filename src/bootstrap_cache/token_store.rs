@@ -43,7 +43,10 @@ impl BootstrapTokenStore {
             local.insert(key, token);
         }
 
-        debug!("Initialized BootstrapTokenStore with {} tokens", local.len());
+        debug!(
+            "Initialized BootstrapTokenStore with {} tokens",
+            local.len()
+        );
 
         Self {
             cache,
@@ -55,7 +58,7 @@ impl BootstrapTokenStore {
 impl TokenStore for BootstrapTokenStore {
     fn insert(&self, server_name: &str, token: Bytes) {
         let token_vec = token.to_vec();
-        
+
         // 1. Update local cache immediately
         if let Ok(mut local) = self.local_cache.write() {
             local.insert(server_name.to_string(), token_vec.clone());
@@ -78,11 +81,14 @@ impl TokenStore for BootstrapTokenStore {
                 return;
             }
         }
-        
-        // If server_name is not a PeerId (e.g. it's an IP), we can't persist it 
+
+        // If server_name is not a PeerId (e.g. it's an IP), we can't persist it
         // to a specific Peer entry easily unless we do a reverse lookup.
         // For now, we only persist tokens if the SNI was the PeerId.
-        debug!("Received token for non-PeerId server name: {}, not persisting to disk", server_name);
+        debug!(
+            "Received token for non-PeerId server name: {}, not persisting to disk",
+            server_name
+        );
     }
 
     fn take(&self, server_name: &str) -> Option<Bytes> {

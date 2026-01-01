@@ -116,46 +116,46 @@ impl PortPredictor {
         // Strategy 1: Linear Delta Prediction
         // If we see ports p1, p2, p3... check if the delta is constant.
         // Even with just 2 samples (p1, p2), we can guess p3 = p2 + (p2 - p1).
-        
-        // We look at the most recent samples. 
-        // Note: the samples are not necessarily in temporal order of allocation, 
-        // but they are in order of *our observation*. We assume observation order 
+
+        // We look at the most recent samples.
+        // Note: the samples are not necessarily in temporal order of allocation,
+        // but they are in order of *our observation*. We assume observation order
         // roughly correlates to allocation order.
         let mut sorted_observations: Vec<_> = samples.iter().collect();
         // Sort by time to ensure we are calculating deltas correctly
         sorted_observations.sort_by_key(|o| o.observed_at);
-        
+
         // Take the last few samples
         let count = sorted_observations.len();
         if count >= 2 {
             let last = sorted_observations[count - 1];
             let prev = sorted_observations[count - 2];
-            
+
             // Calculate delta with wrapping arithmetic
             let delta = last.port.wrapping_sub(prev.port);
-            
+
             // If delta is small (e.g. +1, +2, +10), it's a strong signal.
             // Some NATs jump purely randomly, others increment.
             // We'll predict the next few steps.
-            
+
             // Predict: next = last + delta
             let next_1 = last.port.wrapping_add(delta);
             predictions.push(next_1);
-            
+
             // Predict: next = last + 2*delta (in case we raced)
             let next_2 = next_1.wrapping_add(delta);
             predictions.push(next_2);
         }
 
         // Strategy 2: "Birthday Paradox" / Dense Search
-        // If the NAT allocates ports randomly but within a range, or if the 
-        // linear prediction is noisy, we might want to just guess ports "near" 
+        // If the NAT allocates ports randomly but within a range, or if the
+        // linear prediction is noisy, we might want to just guess ports "near"
         // the last observed one.
         // For now, let's stick to linear prediction as it's the most high-value "smart trick".
 
         predictions
     }
-    
+
     /// Clear history for an IP (e.g. if we confirm they moved networks)
     pub fn clear(&mut self, ip: IpAddr) {
         self.history.remove(&ip);
@@ -183,7 +183,7 @@ mod tests {
         predictor.record_observation(SocketAddr::new(ip, 1002), now + Duration::from_secs(1));
 
         let predicted = predictor.predict_ports(ip);
-        
+
         // Expect 1004 (1002 + 2) and 1006 (1004 + 2)
         assert!(predicted.contains(&1004));
         assert!(predicted.contains(&1006));
@@ -201,7 +201,7 @@ mod tests {
         predictor.record_observation(SocketAddr::new(ip, 1990), now + Duration::from_secs(1));
 
         let predicted = predictor.predict_ports(ip);
-        
+
         // Expect 1980 and 1970
         assert!(predicted.contains(&1980));
         assert!(predicted.contains(&1970));
@@ -227,17 +227,20 @@ mod tests {
         let now = Instant::now();
 
         predictor.record_observation(SocketAddr::new(ip, 1000), now);
-        
+
         // Fast forward past TTL
         let future = now + Duration::from_millis(200);
         predictor.record_observation(SocketAddr::new(ip, 1002), future);
-        
+
         // The first sample (1000) should be expired when we check or add new ones
-        // Actually record_observation prunes *before* adding. 
+        // Actually record_observation prunes *before* adding.
         // So at this point '1000' is pruned. '1002' is added.
         // We only have 1 sample (1002).
-        
+
         let predicted = predictor.predict_ports(ip);
-        assert!(predicted.is_empty(), "Should not predict with only 1 valid sample");
+        assert!(
+            predicted.is_empty(),
+            "Should not predict with only 1 valid sample"
+        );
     }
 }

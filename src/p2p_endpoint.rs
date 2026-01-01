@@ -72,9 +72,9 @@ use crate::nat_traversal_api::{
 
 // Re-export TraversalPhase from nat_traversal_api for convenience
 use crate::Side;
+use crate::bootstrap_cache::{BootstrapCache, BootstrapTokenStore};
 pub use crate::nat_traversal_api::TraversalPhase;
 use crate::unified_config::P2pConfig;
-use crate::bootstrap_cache::{BootstrapCache, BootstrapTokenStore};
 
 /// Event channel capacity
 const EVENT_CHANNEL_CAPACITY: usize = 256;
@@ -437,13 +437,10 @@ impl P2pEndpoint {
         // Create token store
         let token_store = Arc::new(BootstrapTokenStore::new(bootstrap_cache.clone()).await);
 
-        let inner = NatTraversalEndpoint::new(
-            nat_config,
-            Some(event_callback),
-            Some(token_store.clone()),
-        )
-        .await
-        .map_err(|e| EndpointError::Config(e.to_string()))?;
+        let inner =
+            NatTraversalEndpoint::new(nat_config, Some(event_callback), Some(token_store.clone()))
+                .await
+                .map_err(|e| EndpointError::Config(e.to_string()))?;
 
         Ok(Self {
             inner: Arc::new(inner),
@@ -781,7 +778,8 @@ impl P2pEndpoint {
         );
 
         // Try dual-stack connection with PeerId (triggers token usage)
-        self.connect_dual_stack(&cached_peer.addresses, Some(peer_id)).await
+        self.connect_dual_stack(&cached_peer.addresses, Some(peer_id))
+            .await
     }
 
     /// Connect to a peer by ID using NAT traversal
@@ -928,7 +926,7 @@ impl P2pEndpoint {
             config.coordinator = self.config.known_peers.first().copied();
         }
         if config.relay_addr.is_none() {
-             // Optimization: Try to find a high-quality relay from our cache first
+            // Optimization: Try to find a high-quality relay from our cache first
             let target_addr = target_ipv4.or(target_ipv6);
             if let Some(addr) = target_addr {
                 // Select best relay for this target (preferring dual-stack)
@@ -1038,7 +1036,8 @@ impl P2pEndpoint {
 
                     // Use our existing NAT traversal infrastructure
                     // If peer_id provided, use it. Otherwise derive from address.
-                    let target_peer_id = peer_id.unwrap_or_else(|| self.derive_peer_id_from_address(target));
+                    let target_peer_id =
+                        peer_id.unwrap_or_else(|| self.derive_peer_id_from_address(target));
 
                     match timeout(
                         strategy.holepunch_timeout(),

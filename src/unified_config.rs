@@ -27,8 +27,8 @@ use std::net::SocketAddr;
 use std::time::Duration;
 
 // v0.2: AuthConfig removed - TLS handles peer authentication via ML-DSA-65
-use crate::config::nat_timeouts::TimeoutConfig;
 use crate::bootstrap_cache::BootstrapCacheConfig;
+use crate::config::nat_timeouts::TimeoutConfig;
 use crate::crypto::pqc::PqcConfig;
 use crate::crypto::pqc::types::{MlDsaPublicKey, MlDsaSecretKey};
 use crate::host_identity::HostIdentity;
