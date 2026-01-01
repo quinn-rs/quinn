@@ -268,6 +268,16 @@ pub struct NetworkStatistics {
     pub gossip_peers_discovered: u64,
     /// Relays discovered via gossip network
     pub gossip_relays_discovered: u64,
+    /// SWIM liveness: peers marked alive
+    pub swim_alive: usize,
+    /// SWIM liveness: peers marked suspect
+    pub swim_suspect: usize,
+    /// SWIM liveness: peers marked dead
+    pub swim_dead: usize,
+    /// HyParView: active view size
+    pub hyparview_active: usize,
+    /// HyParView: passive view size
+    pub hyparview_passive: usize,
 }
 
 impl NetworkStatistics {

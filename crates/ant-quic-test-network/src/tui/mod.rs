@@ -125,6 +125,19 @@ pub enum TuiEvent {
     },
     /// A peer was seen/communicated with (for tracking "nodes known alive")
     PeerSeen(String),
+    /// SWIM liveness update from saorsa-gossip
+    SwimLivenessUpdate {
+        /// Peers marked alive by SWIM
+        alive: usize,
+        /// Peers marked suspect by SWIM
+        suspect: usize,
+        /// Peers marked dead by SWIM
+        dead: usize,
+        /// HyParView active view size
+        active: usize,
+        /// HyParView passive view size
+        passive: usize,
+    },
 }
 
 /// Configuration for the TUI.
@@ -358,6 +371,19 @@ fn handle_tui_event(app: &mut App, event: TuiEvent) {
         TuiEvent::PeerSeen(peer_id) => {
             app.peer_seen(&peer_id);
         }
+        TuiEvent::SwimLivenessUpdate {
+            alive,
+            suspect,
+            dead,
+            active,
+            passive,
+        } => {
+            app.stats.swim_alive = alive;
+            app.stats.swim_suspect = suspect;
+            app.stats.swim_dead = dead;
+            app.stats.hyparview_active = active;
+            app.stats.hyparview_passive = passive;
+        }
     }
 }
 
@@ -399,6 +425,13 @@ mod tests {
         let _ = TuiEvent::Info("info".to_string());
         let _ = TuiEvent::ClearMessages;
         let _ = TuiEvent::Quit;
+        let _ = TuiEvent::SwimLivenessUpdate {
+            alive: 5,
+            suspect: 1,
+            dead: 0,
+            active: 4,
+            passive: 20,
+        };
     }
 
     #[test]
@@ -418,5 +451,28 @@ mod tests {
         // Test quit
         handle_tui_event(&mut app, TuiEvent::Quit);
         assert!(app.should_quit());
+    }
+
+    #[test]
+    fn test_swim_liveness_update() {
+        let mut app = App::new();
+
+        // Test SWIM liveness stats update
+        handle_tui_event(
+            &mut app,
+            TuiEvent::SwimLivenessUpdate {
+                alive: 7,
+                suspect: 2,
+                dead: 1,
+                active: 5,
+                passive: 30,
+            },
+        );
+
+        assert_eq!(app.stats.swim_alive, 7);
+        assert_eq!(app.stats.swim_suspect, 2);
+        assert_eq!(app.stats.swim_dead, 1);
+        assert_eq!(app.stats.hyparview_active, 5);
+        assert_eq!(app.stats.hyparview_passive, 30);
     }
 }

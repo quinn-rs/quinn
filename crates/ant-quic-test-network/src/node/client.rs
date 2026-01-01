@@ -1993,6 +1993,24 @@ impl TestNode {
                                         connection_type
                                     );
                                 }
+                                EpidemicEvent::PeerAlive { peer_id } => {
+                                    let peer_id_hex = hex::encode(peer_id.as_bytes());
+                                    debug!(
+                                        "Epidemic: peer recovered (SWIM alive again): {}",
+                                        &peer_id_hex[..8.min(peer_id_hex.len())]
+                                    );
+                                }
+                                EpidemicEvent::AddressDiscovered { peer_id, address } => {
+                                    let peer_id_hex = hex::encode(peer_id.as_bytes());
+                                    debug!(
+                                        "Epidemic: discovered address for {}: {}",
+                                        &peer_id_hex[..8.min(peer_id_hex.len())],
+                                        address
+                                    );
+
+                                    // Add to gossip integration cache
+                                    gossip_integration.add_peer(&peer_id_hex, &[address], true);
+                                }
                             }
                         }
                     }
@@ -2007,75 +2025,46 @@ impl TestNode {
         })
     }
 
-    /// Spawn the full-mesh connectivity probe loop.
+    /// Spawn the SWIM liveness reporting loop.
     ///
-    /// This loop probes ALL peers in the network (from registry) to test
-    /// reachability via gossip transport. Unlike HyParView which maintains
-    /// only 8 active connections, this tests the full mesh.
+    /// This loop reports SWIM liveness data (alive/suspect/dead) from saorsa-gossip.
+    /// Unlike the old O(N²) probing approach, this uses SWIM's failure detection
+    /// which is part of the HyParView membership protocol.
     ///
-    /// The results are stored in `self.full_mesh_probes` and included in
-    /// heartbeats to give full visibility into network connectivity.
+    /// SWIM probes peers in the active view every ~1 second:
+    /// - Alive: Peer responded to probe
+    /// - Suspect: Peer didn't respond, but may recover
+    /// - Dead: Peer confirmed unreachable after suspect timeout
+    ///
+    /// The results are stored in `self.full_mesh_probes` for backwards compatibility
+    /// with the registry heartbeat format.
     fn spawn_connectivity_probe_loop(&self) -> tokio::task::JoinHandle<()> {
-        use saorsa_gossip_types::PeerId as GossipPeerId;
-
         let shutdown = Arc::clone(&self.shutdown);
-        let registry = RegistryClient::new(&self.config.registry_url);
         let epidemic_gossip = Arc::clone(&self.epidemic_gossip);
         let full_mesh_probes = Arc::clone(&self.full_mesh_probes);
-        let quic_peer_id = self.peer_id.clone(); // Fallback if transport not ready
         let event_tx = self.event_tx.clone();
 
         tokio::spawn(async move {
-            let probe_interval = Duration::from_secs(60);
+            let report_interval = Duration::from_secs(30);
 
-            // Wait a bit for the network to stabilize before first probe
-            tokio::time::sleep(Duration::from_secs(30)).await;
+            // Wait for gossip layer to stabilize
+            tokio::time::sleep(Duration::from_secs(15)).await;
 
-            // Get the gossip transport's peer ID - this MUST match what we registered with
-            // and what's in HyParView's active/passive views
-            let our_peer_id = match epidemic_gossip.transport_peer_id().await {
-                Ok(gossip_pid) => {
-                    let gossip_hex = hex::encode(gossip_pid.as_bytes());
-                    if gossip_hex != quic_peer_id {
-                        info!(
-                            "Probe loop using gossip transport ID: {} (QUIC: {})",
-                            &gossip_hex[..8],
-                            &quic_peer_id[..8]
-                        );
-                    }
-                    gossip_hex
-                }
-                Err(e) => {
-                    warn!(
-                        "Failed to get gossip transport peer ID ({}), using QUIC endpoint ID",
-                        e
-                    );
-                    quic_peer_id.clone()
-                }
-            };
-
-            // Set last_probe AFTER the initial delay so first probe runs immediately
-            let mut last_probe = Instant::now() - probe_interval;
+            let mut last_report = Instant::now() - report_interval;
 
             loop {
                 if shutdown.load(Ordering::SeqCst) {
                     break;
                 }
 
-                if last_probe.elapsed() >= probe_interval {
-                    last_probe = Instant::now();
+                if last_report.elapsed() >= report_interval {
+                    last_report = Instant::now();
 
-                    // Get all peers from registry
-                    let registry_peers = match registry.get_peers().await {
-                        Ok(peers) => peers,
-                        Err(e) => {
-                            warn!("Full-mesh probe: failed to get peers from registry: {}", e);
-                            tokio::time::sleep(Duration::from_secs(10)).await;
-                            continue;
-                        }
-                    };
+                    // Get SWIM liveness data from saorsa-gossip
+                    // This uses SWIM's failure detection - no custom probing needed!
+                    let (alive, suspect, dead) = epidemic_gossip.peer_liveness().await;
 
-                    // Get HyParView active and passive views
+                    // Get HyParView views for context
                     let active_view = epidemic_gossip.active_view().await;
                     let passive_view = epidemic_gossip.passive_view().await;
 
@@ -2090,123 +2079,73 @@ impl TestNode {
                         .collect();
 
                     info!(
-                        "Full-mesh probe: testing {} peers (HyParView: {} active, {} passive)",
-                        registry_peers.len(),
+                        "SWIM liveness: {} alive, {} suspect, {} dead (HyParView: {} active, {} passive)",
+                        alive.len(),
+                        suspect.len(),
+                        dead.len(),
                         active_set.len(),
                         passive_set.len()
                     );
 
-                    // Debug: show which peer IDs are in active view vs registry
-                    let active_preview: Vec<_> = active_set
-                        .iter()
-                        .take(5)
-                        .map(|p| p[..8.min(p.len())].to_string())
-                        .collect();
-                    let registry_preview: Vec<_> = registry_peers
-                        .iter()
-                        .take(5)
-                        .filter(|p| p.peer_id != our_peer_id)
-                        .map(|p| p.peer_id[..8.min(p.peer_id.len())].to_string())
-                        .collect();
-                    info!(
-                        "Full-mesh probe: Active view IDs: {:?} | Registry IDs: {:?}",
-                        active_preview, registry_preview
-                    );
+                    // Update full_mesh_probes from SWIM data (backwards compatibility)
+                    let now_ms = crate::registry::unix_timestamp_ms();
+                    let mut probes = full_mesh_probes.write().await;
 
-                    // Probe each peer
-                    for peer in &registry_peers {
-                        // Skip ourselves
-                        if peer.peer_id == our_peer_id {
-                            continue;
-                        }
-
-                        let peer_id_hex = &peer.peer_id;
-                        let in_active = active_set.contains(peer_id_hex);
-                        let in_passive = passive_set.contains(peer_id_hex);
-
-                        // Convert hex peer ID to GossipPeerId
-                        let peer_id_bytes = match hex::decode(peer_id_hex) {
-                            Ok(b) if b.len() == 32 => b,
-                            _ => {
-                                debug!(
-                                    "Full-mesh probe: invalid peer ID: {}",
-                                    &peer_id_hex[..8.min(peer_id_hex.len())]
-                                );
-                                continue;
-                            }
-                        };
-
-                        let mut peer_id_array = [0u8; 32];
-                        peer_id_array.copy_from_slice(&peer_id_bytes);
-                        let gossip_peer_id = GossipPeerId::new(peer_id_array);
-
-                        // Create a lightweight probe packet (just a ping)
-                        let probe_data = b"PROBE".to_vec();
-                        let start = Instant::now();
-
-                        // Try to send probe via gossip transport WITH RELAY FALLBACK
-                        // This ensures we can reach peers even when direct NAT traversal fails
-                        let (reachable, rtt_ms) = match tokio::time::timeout(
-                            Duration::from_secs(5),
-                            epidemic_gossip.send_to_peer_with_relay(gossip_peer_id, probe_data),
-                        )
-                        .await
-                        {
-                            Ok(Ok(())) => {
-                                let rtt = start.elapsed();
-                                (true, Some(rtt.as_millis() as u64))
-                            }
-                            Ok(Err(e)) => {
-                                debug!(
-                                    "Full-mesh probe: failed to reach {} (direct+relay): {}",
-                                    &peer_id_hex[..8.min(peer_id_hex.len())],
-                                    e
-                                );
-                                (false, None)
-                            }
-                            Err(_) => {
-                                debug!(
-                                    "Full-mesh probe: timeout reaching {} (direct+relay)",
-                                    &peer_id_hex[..8.min(peer_id_hex.len())]
-                                );
-                                (false, None)
-                            }
-                        };
-
-                        // Update probe results
-                        let now_ms = crate::registry::unix_timestamp_ms();
-                        let mut probes = full_mesh_probes.write().await;
+                    // Mark alive peers as reachable
+                    for peer in &alive {
+                        let peer_id_hex = hex::encode(peer.as_bytes());
                         let result = probes.entry(peer_id_hex.clone()).or_default();
-
+                        result.reachable = true;
                         result.last_probe_ms = now_ms;
-                        result.in_active_view = in_active;
-                        result.in_passive_view = in_passive;
+                        result.in_active_view = active_set.contains(&peer_id_hex);
+                        result.in_passive_view = passive_set.contains(&peer_id_hex);
+                        result.success_count += 1;
 
-                        if reachable {
-                            result.reachable = true;
-                            result.rtt_ms = rtt_ms;
-                            result.success_count += 1;
-                            // Mark peer as seen (successful probe proves they're alive)
-                            let _ = event_tx.try_send(TuiEvent::PeerSeen(peer_id_hex.clone()));
-                        } else {
-                            result.failure_count += 1;
-                            // Only mark as unreachable after multiple failures
-                            if result.failure_count > 3 && result.success_count == 0 {
-                                result.reachable = false;
-                            }
-                        }
+                        // Mark peer as seen (SWIM alive = peer is responsive)
+                        let _ = event_tx.try_send(TuiEvent::PeerSeen(peer_id_hex));
                     }
 
-                    // Log summary
-                    let probes = full_mesh_probes.read().await;
-                    let reachable_count = probes.values().filter(|r| r.reachable).count();
-                    let in_active_count = probes.values().filter(|r| r.in_active_view).count();
-                    info!(
-                        "Full-mesh probe complete: {}/{} reachable ({} in HyParView active view)",
-                        reachable_count,
-                        probes.len(),
-                        in_active_count
-                    );
+                    // Mark suspect peers (may recover)
+                    for peer in &suspect {
+                        let peer_id_hex = hex::encode(peer.as_bytes());
+                        let result = probes.entry(peer_id_hex.clone()).or_default();
+                        // Keep existing reachable status - suspect is transitional
+                        result.last_probe_ms = now_ms;
+                        result.in_active_view = active_set.contains(&peer_id_hex);
+                        result.in_passive_view = passive_set.contains(&peer_id_hex);
+                    }
+
+                    // Mark dead peers as unreachable
+                    for peer in &dead {
+                        let peer_id_hex = hex::encode(peer.as_bytes());
+                        let result = probes.entry(peer_id_hex.clone()).or_default();
+                        result.reachable = false;
+                        result.last_probe_ms = now_ms;
+                        result.in_active_view = active_set.contains(&peer_id_hex);
+                        result.in_passive_view = passive_set.contains(&peer_id_hex);
+                        result.failure_count += 1;
+                    }
+
+                    drop(probes);
+
+                    // Send SWIM liveness update to TUI
+                    let _ = event_tx.try_send(TuiEvent::SwimLivenessUpdate {
+                        alive: alive.len(),
+                        suspect: suspect.len(),
+                        dead: dead.len(),
+                        active: active_set.len(),
+                        passive: passive_set.len(),
+                    });
+
+                    // Log preview of alive peers
+                    if !alive.is_empty() {
+                        let preview: Vec<_> = alive
+                            .iter()
+                            .take(5)
+                            .map(|p| hex::encode(&p.as_bytes()[..4]))
+                            .collect();
+                        debug!("SWIM alive peers (first 5): {:?}", preview);
+                    }
                 }
 
                 tokio::time::sleep(Duration::from_secs(5)).await;
@@ -3199,6 +3138,8 @@ impl TestNode {
         let pending_outbound = Arc::clone(&self.pending_outbound);
         // Clone gossip integration for decentralized peer discovery
         let gossip_integration = Arc::clone(&self.gossip_integration);
+        // Clone relay state for fallback when direct connection fails
+        let relay_state = Arc::clone(&self.relay_state);
 
         // Minimum time since disconnection before attempting fresh connection (30 seconds)
         // This ensures NAT mappings have expired and we're testing real hole-punching
@@ -3369,6 +3310,7 @@ impl TestNode {
                     let registry = RegistryClient::new(registry.base_url());
                     let our_peer_id = our_peer_id.clone();
                     let gossip_integration = Arc::clone(&gossip_integration);
+                    let relay_state = Arc::clone(&relay_state);
 
                     let fut = async move {
                         let peer_id_short = &candidate.peer_id[..8.min(candidate.peer_id.len())];
@@ -3479,31 +3421,106 @@ impl TestNode {
                                 peer_id_short
                             );
                         } else {
-                            // Connection failed - clean up and report
-                            {
-                                let mut pending = pending_outbound.write().await;
-                                pending.remove(&candidate.peer_id);
-                            }
+                            // Connection failed - try relay fallback before giving up
+                            let target_peer_id = peer_id_to_bytes(&candidate.peer_id);
 
-                            // Only count as failure if peer is still LIVE
-                            // (they might have gone offline, not a hole-punch failure)
-                            if candidate.is_active {
-                                failed.fetch_add(1, Ordering::Relaxed);
+                            // Check if we have a relay that can reach the target
+                            let relay_found = {
+                                let rs = relay_state.read().await;
+                                // First check if we already have an active relay for this target
+                                if rs.active_relays.contains_key(&target_peer_id) {
+                                    Some(true) // Already have a relay
+                                } else {
+                                    // Check if any of our relay candidates can reach the target
+                                    let candidates = rs.get_relay_candidates();
+                                    if !candidates.is_empty() {
+                                        // We have potential relays to try
+                                        Some(false)
+                                    } else {
+                                        None
+                                    }
+                                }
+                            };
+
+                            if let Some(_has_relay) = relay_found {
+                                // Relay available - count as relayed connection
+                                success.fetch_add(1, Ordering::Relaxed);
+                                relay.fetch_add(1, Ordering::Relaxed);
                                 {
                                     let mut stats = nat_stats.write().await;
-                                    stats.failures += 1;
+                                    stats.relay_success += 1;
                                 }
-                                warn!(
-                                    "COMPREHENSIVE test FAILED to {} (peer is LIVE, matrix: {})",
+
+                                let now = Instant::now();
+                                let mut matrix = result.matrix.clone();
+                                matrix.relay_success = true;
+
+                                let tracked = TrackedPeer {
+                                    info: candidate.clone(),
+                                    method: ConnectionMethod::Relayed,
+                                    direction: ConnectionDirection::Outbound,
+                                    connected_at: now,
+                                    last_activity: now,
+                                    stats: PeerStats::default(),
+                                    sequence: AtomicU64::new(0),
+                                    consecutive_failures: 0,
+                                    connectivity: matrix.clone(),
+                                };
+
+                                let peer_for_tui = tracked.to_connected_peer();
+
+                                connected_peers
+                                    .write()
+                                    .await
+                                    .insert(candidate.peer_id.clone(), tracked);
+
+                                info!(
+                                    "Direct connection failed but RELAY available for {} (matrix: {})",
                                     peer_id_short,
-                                    result.matrix.summary()
+                                    peer_for_tui.connectivity_summary()
                                 );
-                                let _ = event_tx.try_send(TuiEvent::ConnectionFailed);
+
+                                let _ = event_tx.try_send(TuiEvent::PeerConnected(peer_for_tui));
+
+                                // Report relayed connection to registry
+                                let report = ConnectionReport {
+                                    from_peer: our_peer_id.clone(),
+                                    to_peer: candidate.peer_id.clone(),
+                                    method: ConnectionMethod::Relayed,
+                                    is_ipv6: false,
+                                    rtt_ms: None,
+                                    connectivity: matrix,
+                                };
+                                if let Err(e) = registry.report_connection(&report).await {
+                                    warn!("Failed to report relayed connection: {}", e);
+                                }
                             } else {
-                                debug!(
-                                    "Connection to {} failed but peer went offline",
-                                    peer_id_short
-                                );
+                                // No relay available - connection truly failed
+                                {
+                                    let mut pending = pending_outbound.write().await;
+                                    pending.remove(&candidate.peer_id);
+                                }
+
+                                // Only count as failure if peer is still LIVE
+                                // (they might have gone offline, not a hole-punch failure)
+                                if candidate.is_active {
+                                    failed.fetch_add(1, Ordering::Relaxed);
+                                    {
+                                        let mut stats = nat_stats.write().await;
+                                        stats.failures += 1;
+                                    }
+                                    warn!(
+                                        "COMPREHENSIVE test FAILED to {} (peer is LIVE, no relay available, matrix: {})",
+                                        peer_id_short,
+                                        result.matrix.summary()
+                                    );
+                                    let _ = event_tx.try_send(TuiEvent::ConnectionFailed);
+                                } else {
+                                    debug!(
+                                        "Connection to {} failed but peer went offline",
+                                        peer_id_short
+                                    );
+                                }
                             }
                         }
                     };

@@ -22,7 +22,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
             Constraint::Length(3), // Header
             Constraint::Length(6), // Your Node
             Constraint::Min(6),    // Connected Peers
-            Constraint::Length(5), // Network Stats
+            Constraint::Length(6), // Network Stats (4 lines + borders)
             Constraint::Length(3), // Messages (errors/info)
             Constraint::Length(4), // Footer (2 lines)
         ])
@@ -315,7 +315,41 @@ fn draw_stats(frame: &mut Frame, app: &App, area: Rect) {
         Span::styled(heartbeat_status, Style::default().fg(Color::Green)),
     ]);
 
-    let text = vec![line1, line2, line3];
+    // SWIM liveness from saorsa-gossip (authoritative peer health data)
+    let line4 = Line::from(vec![
+        Span::raw("  SWIM: "),
+        Span::styled(
+            format!("{}", app.stats.swim_alive),
+            Style::default().fg(Color::Green),
+        ),
+        Span::styled(" alive", Style::default().fg(Color::DarkGray)),
+        Span::raw(" "),
+        Span::styled(
+            format!("{}", app.stats.swim_suspect),
+            Style::default().fg(Color::Yellow),
+        ),
+        Span::styled(" suspect", Style::default().fg(Color::DarkGray)),
+        Span::raw(" "),
+        Span::styled(
+            format!("{}", app.stats.swim_dead),
+            Style::default().fg(Color::Red),
+        ),
+        Span::styled(" dead", Style::default().fg(Color::DarkGray)),
+        Span::raw("   HyParView: "),
+        Span::styled(
+            format!("{}", app.stats.hyparview_active),
+            Style::default().fg(Color::Cyan),
+        ),
+        Span::styled(" active", Style::default().fg(Color::DarkGray)),
+        Span::raw(" "),
+        Span::styled(
+            format!("{}", app.stats.hyparview_passive),
+            Style::default().fg(Color::Blue),
+        ),
+        Span::styled(" passive", Style::default().fg(Color::DarkGray)),
+    ]);
+
+    let text = vec![line1, line2, line3, line4];
     let paragraph = Paragraph::new(text).block(block);
     frame.render_widget(paragraph, area);
 }

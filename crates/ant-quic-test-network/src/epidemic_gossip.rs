@@ -64,6 +64,8 @@ pub enum EpidemicEvent {
     PeerLeft { peer_id: PeerId },
     /// A peer is suspected (SWIM marked as suspect).
     PeerSuspect { peer_id: PeerId },
+    /// A peer's SWIM status changed back to alive.
+    PeerAlive { peer_id: PeerId },
     /// A gossip message was received.
     MessageReceived {
         from: PeerId,
@@ -74,6 +76,15 @@ pub enum EpidemicEvent {
     ConnectionType {
         peer_id: PeerId,
         connection_type: ConnectionType,
+    },
+    /// A peer's address was discovered or updated.
+    ///
+    /// This event is emitted when we learn a peer's address, either from
+    /// a new connection or from gossip messages. Applications can subscribe
+    /// to this event to get addresses for direct P2P connections.
+    AddressDiscovered {
+        peer_id: PeerId,
+        address: SocketAddr,
     },
 }
 
@@ -454,6 +465,81 @@ impl EpidemicGossip {
                 connection_type: conn_type,
             })
             .await;
+    }
+
+    /// Get the address for a specific connected peer.
+    ///
+    /// This queries the gossip transport for the peer's current address.
+    /// Returns `None` if the peer is not currently connected.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// if let Some(addr) = gossip.get_peer_address(&peer_id).await {
+    ///     // Connect directly via P2pEndpoint or MASQUE
+    ///     p2p_endpoint.connect(addr).await?;
+    /// }
+    /// ```
+    pub async fn get_peer_address(&self, peer_id: &PeerId) -> Option<SocketAddr> {
+        let stack_guard = self.stack.read().await;
+        if let Some(stack) = stack_guard.as_ref() {
+            let peers = stack.transport.connected_peers().await;
+            peers
+                .into_iter()
+                .find(|(id, _)| id == peer_id)
+                .map(|(_, addr)| addr)
+        } else {
+            None
+        }
+    }
+
+    /// Get all connected peers with their addresses.
+    ///
+    /// This returns the current gossip transport connections, which can be used
+    /// to establish direct P2P connections for applications like video conferencing.
+    ///
+    /// # Returns
+    ///
+    /// A vector of `(PeerId, SocketAddr)` pairs for all peers currently connected
+    /// via the gossip transport (HyParView active view).
+    pub async fn connected_peers_with_addresses(&self) -> Vec<(PeerId, SocketAddr)> {
+        let stack_guard = self.stack.read().await;
+        if let Some(stack) = stack_guard.as_ref() {
+            stack.transport.connected_peers().await
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// Get SWIM liveness status for all known peers.
+    ///
+    /// Returns a snapshot of which peers are alive, suspect, or dead
+    /// according to SWIM failure detection.
+    pub async fn peer_liveness(&self) -> (Vec<PeerId>, Vec<PeerId>, Vec<PeerId>) {
+        let stack_guard = self.stack.read().await;
+        if let Some(stack) = stack_guard.as_ref() {
+            let active = stack.membership.active_view();
+            let passive = stack.membership.passive_view();
+            let all_peers: Vec<_> = active.iter().chain(passive.iter()).cloned().collect();
+
+            let mut alive = Vec::new();
+            let mut suspect = Vec::new();
+            let mut dead = Vec::new();
+
+            for peer in all_peers {
+                if let Some(state) = stack.membership.swim().get_state(&peer).await {
+                    match state {
+                        PeerState::Alive => alive.push(peer),
+                        PeerState::Suspect => suspect.push(peer),
+                        PeerState::Dead => dead.push(peer),
+                    }
+                }
+            }
+
+            (alive, suspect, dead)
+        } else {
+            (Vec::new(), Vec::new(), Vec::new())
+        }
     }
 
     /// Bootstrap from known peers.
