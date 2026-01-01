@@ -1977,10 +1977,12 @@ impl TestNode {
 
         tokio::spawn(async move {
             let probe_interval = Duration::from_secs(60);
-            let mut last_probe = Instant::now();
 
             // Wait a bit for the network to stabilize before first probe
             tokio::time::sleep(Duration::from_secs(30)).await;
+
+            // Set last_probe AFTER the initial delay so first probe runs immediately
+            let mut last_probe = Instant::now() - probe_interval;
 
             loop {
                 if shutdown.load(Ordering::SeqCst) {
