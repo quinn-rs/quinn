@@ -46,7 +46,7 @@ async fn create_endpoint(
         let _ = tx.send(event);
     });
 
-    let endpoint = Arc::new(NatTraversalEndpoint::new(config, Some(event_callback)).await?);
+    let endpoint = Arc::new(NatTraversalEndpoint::new(config, Some(event_callback), None).await?);
     Ok((endpoint, rx))
 }
 
@@ -63,7 +63,7 @@ async fn test_create_endpoint_without_known_peers() {
         ..NatTraversalConfig::default()
     };
 
-    let result = NatTraversalEndpoint::new(config, None).await;
+    let result = NatTraversalEndpoint::new(config, None, None).await;
     // May succeed or fail based on implementation - just ensure no panic
     let _ = result;
 }
@@ -78,7 +78,7 @@ async fn test_create_endpoint_with_known_peers() {
         ..NatTraversalConfig::default()
     };
 
-    let result = NatTraversalEndpoint::new(config, None).await;
+    let result = NatTraversalEndpoint::new(config, None, None).await;
     assert!(result.is_ok(), "Endpoint should succeed with known peers");
 }
 
@@ -93,7 +93,7 @@ async fn test_create_endpoint_with_bind_addr() {
         ..NatTraversalConfig::default()
     };
 
-    let result = NatTraversalEndpoint::new(config, None).await;
+    let result = NatTraversalEndpoint::new(config, None, None).await;
     // Just ensure it doesn't panic
     let _ = result;
 }
@@ -193,7 +193,7 @@ async fn test_event_callback() {
         event_count_clone.fetch_add(1, Ordering::SeqCst);
     });
 
-    let endpoint = NatTraversalEndpoint::new(config, Some(event_callback))
+    let endpoint = NatTraversalEndpoint::new(config, Some(event_callback), None)
         .await
         .expect("Failed to create endpoint");
 
@@ -257,7 +257,7 @@ async fn test_config_with_multiple_known_peers() {
         ..NatTraversalConfig::default()
     };
 
-    let result = NatTraversalEndpoint::new(config, None).await;
+    let result = NatTraversalEndpoint::new(config, None, None).await;
     assert!(
         result.is_ok(),
         "Should create endpoint with multiple known peers"

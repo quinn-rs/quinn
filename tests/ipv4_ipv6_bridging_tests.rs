@@ -456,6 +456,7 @@ fn create_test_peer(addr: SocketAddr, dual_stack: bool) -> CachedPeer {
         quality_score: 0.8,
         source: Default::default(),
         relay_paths: vec![],
+        token: None,
     }
 }
 
@@ -488,5 +489,6 @@ fn create_test_peer_dual_stack(v4: SocketAddr, v6: SocketAddr) -> CachedPeer {
         quality_score: 0.9, // Higher score for dual-stack
         source: Default::default(),
         relay_paths: vec![],
+        token: None,
     }
 }

@@ -167,6 +167,11 @@ impl BootstrapCacheConfigBuilder {
 }
 
 fn default_cache_dir() -> PathBuf {
+    // Prefer TMPDIR for sandbox compatibility (Claude Code sets this to /tmp/claude)
+    if let Ok(tmpdir) = std::env::var("TMPDIR") {
+        return PathBuf::from(tmpdir).join("ant-quic-cache");
+    }
+
     // Try platform-specific cache directory, fallback to current directory
     if let Some(cache_dir) = dirs::cache_dir() {
         cache_dir.join("ant-quic")

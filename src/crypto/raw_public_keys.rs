@@ -17,11 +17,11 @@ pub mod pqc;
 use std::{fmt::Debug, sync::Arc};
 
 use rustls::{
-    CertificateError, ClientConfig, DigitallySignedStruct, Error as TlsError, ServerConfig,
-    SignatureScheme,
-    client::danger::{HandshakeSignatureValid, ServerCertVerifier},
+    CertificateError, ClientConfig, DigitallySignedStruct, DistinguishedName, Error as TlsError,
+    ServerConfig, SignatureScheme,
+    client::{ResolvesClientCert, danger::{HandshakeSignatureValid, ServerCertVerifier}},
     pki_types::{CertificateDer, ServerName, UnixTime},
-    server::ResolvesServerCert,
+    server::{ResolvesServerCert, danger::ClientCertVerifier},
     sign::{CertifiedKey, SigningKey},
 };
 
@@ -166,6 +166,199 @@ impl ServerCertVerifier for RawPublicKeyVerifier {
 
     fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
         vec![ML_DSA_65_SCHEME]
+    }
+}
+
+/// Raw Public Key verifier for server-side client authentication
+///
+/// This verifier is used by the server to verify the client's ML-DSA-65
+/// raw public key during TLS handshake (mutual authentication).
+#[derive(Debug)]
+pub struct RawPublicKeyClientCertVerifier {
+    /// Trusted public keys (empty means accept any valid key)
+    trusted_keys: Vec<MlDsa65PublicKey>,
+    /// Whether to allow any key (for P2P networks)
+    allow_any_key: bool,
+}
+
+impl RawPublicKeyClientCertVerifier {
+    /// Create a new client cert verifier with trusted public keys
+    pub fn new(trusted_keys: Vec<MlDsa65PublicKey>) -> Self {
+        Self {
+            trusted_keys,
+            allow_any_key: false,
+        }
+    }
+
+    /// Create a verifier that accepts any valid ML-DSA-65 public key
+    /// Use for P2P networks where we accept any peer
+    pub fn allow_any() -> Self {
+        Self {
+            trusted_keys: Vec::new(),
+            allow_any_key: true,
+        }
+    }
+
+    /// Extract ML-DSA-65 public key from SubjectPublicKeyInfo
+    fn extract_ml_dsa_key(&self, spki_der: &[u8]) -> Result<MlDsa65PublicKey, TlsError> {
+        extract_public_key_from_spki(spki_der)
+            .map_err(|_| TlsError::InvalidCertificate(CertificateError::BadEncoding))
+    }
+}
+
+impl ClientCertVerifier for RawPublicKeyClientCertVerifier {
+    fn root_hint_subjects(&self) -> &[DistinguishedName] {
+        // No distinguished names for raw public keys
+        &[]
+    }
+
+    fn verify_client_cert(
+        &self,
+        end_entity: &CertificateDer<'_>,
+        _intermediates: &[CertificateDer<'_>],
+        _now: UnixTime,
+    ) -> Result<rustls::server::danger::ClientCertVerified, TlsError> {
+        debug!("Verifying client certificate with ML-DSA-65 Raw Public Key verifier");
+
+        let public_key = self.extract_ml_dsa_key(end_entity.as_ref())?;
+
+        if self.allow_any_key {
+            info!("Accepting any ML-DSA-65 client public key (P2P mode)");
+            return Ok(rustls::server::danger::ClientCertVerified::assertion());
+        }
+
+        for trusted in &self.trusted_keys {
+            if public_key.as_bytes() == trusted.as_bytes() {
+                info!(
+                    "Client public key is trusted: {}",
+                    hex::encode(&public_key.as_bytes()[..16])
+                );
+                return Ok(rustls::server::danger::ClientCertVerified::assertion());
+            }
+        }
+
+        warn!(
+            "Unknown client public key: {}",
+            hex::encode(&public_key.as_bytes()[..16])
+        );
+        Err(TlsError::InvalidCertificate(
+            CertificateError::UnknownIssuer,
+        ))
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        _message: &[u8],
+        _cert: &CertificateDer<'_>,
+        _dss: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, TlsError> {
+        // TLS 1.2 not supported for Raw Public Keys
+        Err(TlsError::UnsupportedNameType)
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, TlsError> {
+        debug!("Verifying TLS 1.3 ML-DSA-65 client signature");
+
+        let public_key = self.extract_ml_dsa_key(cert.as_ref())?;
+
+        let sig = MlDsa65Signature::from_bytes(dss.signature())
+            .map_err(|_| TlsError::General("Invalid ML-DSA-65 signature format".to_string()))?;
+
+        let verifier = MlDsa65::new();
+        match verifier.verify(&public_key, message, &sig) {
+            Ok(true) => {
+                debug!("TLS 1.3 ML-DSA-65 client signature verification successful");
+                Ok(HandshakeSignatureValid::assertion())
+            }
+            Ok(false) => Err(TlsError::General(
+                "Client signature verification failed".to_string(),
+            )),
+            Err(_) => Err(TlsError::General(
+                "Client signature verification error".to_string(),
+            )),
+        }
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
+        vec![ML_DSA_65_SCHEME]
+    }
+
+    fn offer_client_auth(&self) -> bool {
+        true
+    }
+
+    fn client_auth_mandatory(&self) -> bool {
+        // For P2P mutual authentication, client auth is required
+        true
+    }
+
+    fn requires_raw_public_keys(&self) -> bool {
+        // We use RFC 7250 raw public keys
+        true
+    }
+}
+
+/// Raw Public Key resolver for client-side authentication
+///
+/// This resolver presents the client's ML-DSA-65 raw public key to the server
+/// during TLS handshake (mutual authentication).
+#[derive(Debug)]
+pub struct RawPublicKeyClientResolver {
+    certified_key: Arc<CertifiedKey>,
+}
+
+impl RawPublicKeyClientResolver {
+    /// Create a new client resolver with an ML-DSA-65 key pair
+    pub fn new(
+        public_key: MlDsa65PublicKey,
+        secret_key: MlDsa65SecretKey,
+    ) -> Result<Self, TlsError> {
+        let public_key_der = create_subject_public_key_info(&public_key)
+            .map_err(|_| TlsError::General("Failed to create SPKI".into()))?;
+
+        let signing_key = MlDsaSigningKey::new(public_key.clone(), secret_key);
+
+        let certified_key = Arc::new(CertifiedKey {
+            cert: vec![CertificateDer::from(public_key_der)],
+            key: Arc::new(signing_key),
+            ocsp: None,
+        });
+
+        Ok(Self { certified_key })
+    }
+}
+
+impl ResolvesClientCert for RawPublicKeyClientResolver {
+    fn resolve(
+        &self,
+        _root_hint_subjects: &[&[u8]],
+        sigschemes: &[SignatureScheme],
+    ) -> Option<Arc<CertifiedKey>> {
+        debug!(
+            "Resolving client certificate with ML-DSA-65 Raw Public Key, sigschemes: {:?}",
+            sigschemes
+        );
+
+        // Check if ML-DSA-65 is in the supported schemes
+        if sigschemes.contains(&ML_DSA_65_SCHEME) {
+            Some(self.certified_key.clone())
+        } else {
+            warn!("Server doesn't support ML-DSA-65 signature scheme");
+            None
+        }
+    }
+
+    fn has_certs(&self) -> bool {
+        true
+    }
+
+    fn only_raw_public_keys(&self) -> bool {
+        true
     }
 }
 
@@ -360,6 +553,9 @@ impl RawPublicKeyConfigBuilder {
     }
 
     /// Build a client configuration with Raw Public Keys
+    ///
+    /// If a client key is set via `with_client_key()`, this enables mutual authentication
+    /// where the client presents its ML-DSA-65 public key to the server.
     pub fn build_client_config(self) -> Result<ClientConfig, TlsError> {
         let verifier = if self.allow_any {
             RawPublicKeyVerifier::allow_any()
@@ -369,16 +565,33 @@ impl RawPublicKeyConfigBuilder {
 
         let provider = super::rustls::configured_provider_with_pqc(self.pqc.as_ref());
 
-        let config = ClientConfig::builder_with_provider(provider)
-            .with_safe_default_protocol_versions()?
-            .dangerous()
-            .with_custom_certificate_verifier(Arc::new(verifier))
-            .with_no_client_auth();
+        let config = if let Some((public_key, secret_key)) = self.client_key {
+            // Mutual authentication - present client certificate
+            debug!("Building client config with mutual authentication (client key present)");
+            let client_resolver = RawPublicKeyClientResolver::new(public_key, secret_key)?;
+
+            ClientConfig::builder_with_provider(provider)
+                .with_safe_default_protocol_versions()?
+                .dangerous()
+                .with_custom_certificate_verifier(Arc::new(verifier))
+                .with_client_cert_resolver(Arc::new(client_resolver))
+        } else {
+            // No client authentication
+            debug!("Building client config without client authentication");
+            ClientConfig::builder_with_provider(provider)
+                .with_safe_default_protocol_versions()?
+                .dangerous()
+                .with_custom_certificate_verifier(Arc::new(verifier))
+                .with_no_client_auth()
+        };
 
         Ok(config)
     }
 
     /// Build a server configuration with Raw Public Keys
+    ///
+    /// This configuration requires client authentication (mutual TLS) for P2P networks.
+    /// Clients must present their ML-DSA-65 public key during the TLS handshake.
     pub fn build_server_config(self) -> Result<ServerConfig, TlsError> {
         let (public_key, secret_key) = self
             .server_key
@@ -388,9 +601,16 @@ impl RawPublicKeyConfigBuilder {
 
         let provider = super::rustls::configured_provider_with_pqc(self.pqc.as_ref());
 
+        // Create client cert verifier for mutual authentication
+        let client_verifier = if self.allow_any {
+            RawPublicKeyClientCertVerifier::allow_any()
+        } else {
+            RawPublicKeyClientCertVerifier::new(self.trusted_keys)
+        };
+
         let config = ServerConfig::builder_with_provider(provider)
             .with_safe_default_protocol_versions()?
-            .with_no_client_auth()
+            .with_client_cert_verifier(Arc::new(client_verifier))
             .with_cert_resolver(Arc::new(resolver));
 
         Ok(config)

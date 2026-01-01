@@ -48,6 +48,10 @@ pub struct CachedPeer {
     /// Known relay paths for reaching this peer when direct connection fails
     #[serde(default)]
     pub relay_paths: Vec<RelayPathHint>,
+
+    /// Persistent QUIC address validation token
+    #[serde(default)]
+    pub token: Option<Vec<u8>>,
 }
 
 fn default_quality_score() -> f64 {
@@ -224,6 +228,7 @@ impl CachedPeer {
             quality_score: 0.5, // Neutral starting score
             source,
             relay_paths: Vec::new(),
+            token: None,
         }
     }
 

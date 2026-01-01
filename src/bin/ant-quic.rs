@@ -682,7 +682,7 @@ async fn main() -> anyhow::Result<()> {
                 peer_addr, args.connect_ipv6
             );
             match endpoint
-                .connect_with_fallback(Some(peer_addr), args.connect_ipv6, None)
+                .connect_with_fallback(Some(peer_addr), args.connect_ipv6, None, None)
                 .await
             {
                 Ok((peer, method)) => {

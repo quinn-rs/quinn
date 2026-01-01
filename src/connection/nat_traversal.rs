@@ -15,6 +15,7 @@ use crate::shared::ConnectionId;
 use tracing::{debug, info, trace, warn};
 
 use crate::{Instant, VarInt};
+use super::{PortPredictor, PortPredictorConfig};
 
 /// NAT traversal state for a QUIC connection
 ///
@@ -54,6 +55,8 @@ pub(super) struct NatTraversalState {
     pub(super) resource_manager: ResourceCleanupCoordinator,
     /// Coordination support - all nodes can coordinate (v0.13.0: always enabled)
     pub(super) bootstrap_coordinator: Option<BootstrapCoordinator>,
+    /// Port predictor for symmetric NAT traversal
+    pub(super) port_predictor: PortPredictor,
 }
 // v0.13.0: NatTraversalRole enum removed - all nodes are symmetric P2P nodes
 // Every node can initiate, accept, and coordinate NAT traversal without role distinction.
@@ -356,6 +359,8 @@ pub(crate) struct NatTraversalStats {
     pub(super) callback_probes_successful: u32,
     /// Callback probes that failed
     pub(super) callback_probes_failed: u32,
+    /// Predicted candidates generated
+    pub(super) predicted_candidates_generated: u32,
 }
 /// Security validation state for rate limiting and attack detection
 #[derive(Debug)]
@@ -1346,21 +1351,25 @@ impl ResourceCleanupCoordinator {
         if self.shutdown_requested {
             return true;
         }
-        // Check if it's time for regular cleanup
-        if let Some(last_cleanup) = self.last_cleanup {
-            if now.duration_since(last_cleanup) >= self.config.cleanup_interval {
-                return true;
+        match self.last_cleanup {
+            Some(last) => {
+                let interval = if self.stats.memory_pressure > self.config.memory_pressure_threshold {
+                    self.config.cleanup_interval / 2
+                } else {
+                    self.config.cleanup_interval
+                };
+                now.duration_since(last) > interval
             }
-        } else {
-            return true; // First cleanup
+            None => true,
         }
+    }
 
-        // Check memory pressure
-        if self.stats.memory_pressure > self.config.memory_pressure_threshold {
-            return true;
-        }
-
-        false
+    /// Check if resource levels allow for generating predicted candidates
+    fn is_prediction_allowed(&self, _now: Instant) -> bool {
+        // Only allow prediction if memory pressure is below aggressive threshold
+        // and we aren't already shutting down
+        self.stats.memory_pressure < self.config.aggressive_cleanup_threshold
+            && !self.shutdown_requested
     }
 
     /// Perform cleanup of expired resources
@@ -1824,6 +1833,7 @@ impl NatTraversalState {
             network_monitor: NetworkConditionMonitor::new(),
             resource_manager: ResourceCleanupCoordinator::new(),
             bootstrap_coordinator,
+            port_predictor: PortPredictor::new(PortPredictorConfig::default()),
         }
     }
 
@@ -1895,11 +1905,66 @@ impl NatTraversalState {
         self.remote_candidates.insert(sequence, candidate);
         self.stats.remote_candidates_received += 1;
 
+        // Feed the predictor and potentially generate new candidates
+        // Only consider global unicast addresses (public IPs) for prediction
+        if !address.ip().is_loopback() && !address.ip().is_unspecified() {
+            // Record the observation
+            self.port_predictor.record_observation(address, now);
+            
+            // Try to generate predictions immediately
+            self.generate_predicted_candidates(address.ip(), now);
+        }
+
         trace!(
             "Added remote candidate: {} with priority {}",
             address, priority
         );
         Ok(())
+    }
+
+    /// Generate predicted candidates based on observation history
+    fn generate_predicted_candidates(&mut self, ip: IpAddr, now: Instant) {
+        if !self.resource_manager.is_prediction_allowed(now) {
+             return;
+        }
+
+        let predictions = self.port_predictor.predict_ports(ip);
+        for port in predictions {
+            let predicted_addr = SocketAddr::new(ip, port);
+            
+            // Don't add if we already have this candidate
+            if self.remote_candidates.values().any(|c| c.address == predicted_addr) {
+                continue;
+            }
+            
+            // Don't exceed limits
+             if self.remote_candidates.len() >= self.max_candidates as usize {
+                break;
+            }
+
+            // Create a pseudo-sequence number for predicted candidates
+            // We use a high range to avoid compact collision with real frames
+            // Base offset: 1B + (port * 1000) to keep them reasonably unique but deterministic
+            let seq_num = 1_000_000_000 + (port as u64);
+            let sequence = VarInt::from_u64(seq_num).unwrap_or(self.next_sequence);
+
+            let candidate = AddressCandidate {
+                address: predicted_addr,
+                priority: 1, // Low priority for predicted
+                source: CandidateSource::Predicted,
+                discovered_at: now,
+                state: CandidateState::New,
+                attempt_count: 0,
+                last_attempt: None,
+            };
+
+            debug!("Added predicted candidate: {}", predicted_addr);
+            self.remote_candidates.insert(sequence, candidate);
+            self.stats.predicted_candidates_generated += 1;
+            
+            // Trigger pair generation for this new candidate
+            self.generate_candidate_pairs(now);
+        }
     }
 
     /// Remove a candidate by sequence number

@@ -62,6 +62,7 @@ pub struct CacheStats {
 /// This cache stores peer information with quality metrics and provides
 /// epsilon-greedy selection to balance exploitation (using known-good peers)
 /// with exploration (trying new peers to discover potentially better ones).
+#[derive(Debug)]
 pub struct BootstrapCache {
     config: BootstrapCacheConfig,
     data: Arc<RwLock<CacheData>>,
@@ -72,6 +73,7 @@ pub struct BootstrapCache {
 }
 
 impl BootstrapCache {
+    // ... (existing open/subscribe methods)
     /// Open or create a bootstrap cache.
     ///
     /// Loads existing cache data from disk if available, otherwise starts fresh.
@@ -101,6 +103,11 @@ impl BootstrapCache {
     /// Get the number of cached peers
     pub async fn peer_count(&self) -> usize {
         self.data.read().await.peers.len()
+    }
+
+    /// Get a specific peer from the cache
+    pub async fn get_peer(&self, peer_id: &PeerId) -> Option<CachedPeer> {
+        self.data.read().await.peers.get(&peer_id.0).cloned()
     }
 
     /// Select peers for bootstrap using epsilon-greedy strategy.
@@ -299,6 +306,25 @@ impl BootstrapCache {
     /// Get a specific peer.
     pub async fn get(&self, peer_id: &PeerId) -> Option<CachedPeer> {
         self.data.read().await.peers.get(&peer_id.0).cloned()
+    }
+
+    /// Update the address validation token for a peer
+    pub async fn update_token(&self, peer_id: PeerId, token: Vec<u8>) {
+        let mut data = self.data.write().await;
+        if let Some(peer) = data.peers.get_mut(&peer_id.0) {
+            peer.token = Some(token);
+        }
+    }
+
+    /// Get all tokens from cached peers (for initializing TokenStore)
+    pub async fn get_all_tokens(&self) -> std::collections::HashMap<PeerId, Vec<u8>> {
+        self.data
+            .read()
+            .await
+            .peers
+            .values()
+            .filter_map(|p| p.token.clone().map(|t| (p.peer_id, t)))
+            .collect()
     }
 
     /// Check if peer exists in cache.

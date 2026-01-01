@@ -107,6 +107,7 @@ impl CacheData {
 }
 
 /// File-based persistence with optional locking
+#[derive(Debug)]
 pub struct CachePersistence {
     cache_file: PathBuf,
     lock_file: PathBuf,

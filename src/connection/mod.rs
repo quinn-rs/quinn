@@ -51,6 +51,9 @@ use crate::{
 mod ack_frequency;
 use ack_frequency::AckFrequencyState;
 
+pub mod port_prediction;
+pub use self::port_prediction::{PortPredictor, PortPredictorConfig};
+
 pub(crate) mod nat_traversal;
 use nat_traversal::NatTraversalState;
 // v0.13.0: NatTraversalRole removed - all nodes are symmetric P2P nodes

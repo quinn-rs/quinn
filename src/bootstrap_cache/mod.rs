@@ -57,6 +57,7 @@ mod config;
 mod entry;
 mod persistence;
 mod selection;
+mod token_store;
 
 pub use cache::{BootstrapCache, CacheEvent, CacheStats};
 pub use config::{BootstrapCacheConfig, BootstrapCacheConfigBuilder, QualityWeights};
@@ -66,3 +67,4 @@ pub use entry::{
 };
 pub use persistence::EncryptedCachePersistence;
 pub use selection::SelectionStrategy;
+pub use token_store::BootstrapTokenStore;

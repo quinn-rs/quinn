@@ -28,6 +28,7 @@ use std::time::Duration;
 
 // v0.2: AuthConfig removed - TLS handles peer authentication via ML-DSA-65
 use crate::config::nat_timeouts::TimeoutConfig;
+use crate::bootstrap_cache::BootstrapCacheConfig;
 use crate::crypto::pqc::PqcConfig;
 use crate::crypto::pqc::types::{MlDsaPublicKey, MlDsaSecretKey};
 use crate::host_identity::HostIdentity;
@@ -76,6 +77,9 @@ pub struct P2pConfig {
     /// If `None`, a fresh keypair is generated on startup.
     /// Provide this for persistent identity across restarts.
     pub keypair: Option<(MlDsaPublicKey, MlDsaSecretKey)>,
+
+    /// Bootstrap cache configuration
+    pub bootstrap_cache: BootstrapCacheConfig,
 }
 // v0.13.0: enable_coordinator removed - all nodes are coordinators
 
@@ -225,6 +229,7 @@ impl Default for P2pConfig {
             mtu: MtuConfig::default(),
             stats_interval: Duration::from_secs(30),
             keypair: None,
+            bootstrap_cache: BootstrapCacheConfig::default(),
         }
     }
 }
@@ -283,6 +288,7 @@ pub struct P2pConfigBuilder {
     mtu: Option<MtuConfig>,
     stats_interval: Option<Duration>,
     keypair: Option<(MlDsaPublicKey, MlDsaSecretKey)>,
+    bootstrap_cache: Option<BootstrapCacheConfig>,
 }
 
 /// Error type for configuration validation
@@ -452,6 +458,12 @@ impl P2pConfigBuilder {
         Ok(self)
     }
 
+    /// Set bootstrap cache configuration
+    pub fn bootstrap_cache(mut self, config: BootstrapCacheConfig) -> Self {
+        self.bootstrap_cache = Some(config);
+        self
+    }
+
     /// Build the configuration with validation
     pub fn build(self) -> Result<P2pConfig, ConfigError> {
         // Validate max_connections
@@ -474,6 +486,7 @@ impl P2pConfigBuilder {
             mtu: self.mtu.unwrap_or_default(),
             stats_interval: self.stats_interval.unwrap_or(Duration::from_secs(30)),
             keypair: self.keypair,
+            bootstrap_cache: self.bootstrap_cache.unwrap_or_default(),
         })
     }
 }

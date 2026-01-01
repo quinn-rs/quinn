@@ -61,7 +61,7 @@ async fn test_random_port_binding_no_panic() {
     let config = test_peer_config(); // bind_addr is None
 
     // This should not panic, even if random port selection fails
-    let result = NatTraversalEndpoint::new(config, None).await;
+    let result = NatTraversalEndpoint::new(config, None, None).await;
 
     // Either success or failure is fine - the key is no panic
     match result {
@@ -94,7 +94,7 @@ async fn test_error_handling_no_panic() {
         allow_ipv4_mapped: true,
     };
 
-    let result1 = NatTraversalEndpoint::new(config1, None).await;
+    let result1 = NatTraversalEndpoint::new(config1, None, None).await;
     // Should either succeed or fail gracefully
     match result1 {
         Ok(_) => println!("✓ Zero timeout handled successfully"),
@@ -119,7 +119,7 @@ async fn test_error_handling_no_panic() {
         allow_ipv4_mapped: true,
     };
 
-    let result2 = NatTraversalEndpoint::new(config2, None).await;
+    let result2 = NatTraversalEndpoint::new(config2, None, None).await;
     match result2 {
         Ok(_) => println!("✓ Zero candidates handled successfully"),
         Err(e) => println!("✓ Zero candidates rejected safely: {e}"),
@@ -140,7 +140,7 @@ async fn test_concurrent_creation_safety() {
                 // Use different bind ports to avoid conflicts
                 config.bind_addr = Some(format!("127.0.0.1:{}", 10000 + i).parse().unwrap());
 
-                let result = NatTraversalEndpoint::new(config, None).await;
+                let result = NatTraversalEndpoint::new(config, None, None).await;
                 (i, result.is_ok())
             })
         })
@@ -166,7 +166,7 @@ async fn test_concurrent_creation_safety() {
 async fn test_statistics_concurrent_access() {
     let config = test_server_config();
 
-    let endpoint_result = NatTraversalEndpoint::new(config, None).await;
+    let endpoint_result = NatTraversalEndpoint::new(config, None, None).await;
 
     if let Ok(endpoint) = endpoint_result {
         // Concurrent statistics access
@@ -207,7 +207,7 @@ async fn test_malformed_config_handling() {
         allow_ipv4_mapped: true,
     };
 
-    let result = NatTraversalEndpoint::new(no_peers_config, None).await;
+    let result = NatTraversalEndpoint::new(no_peers_config, None, None).await;
 
     // Should handle gracefully
     match result {
@@ -233,7 +233,7 @@ async fn test_malformed_config_handling() {
         allow_ipv4_mapped: true,
     };
 
-    let result2 = NatTraversalEndpoint::new(extreme_config, None).await;
+    let result2 = NatTraversalEndpoint::new(extreme_config, None, None).await;
 
     match result2 {
         Ok(_) => println!("✓ Extreme values handled successfully"),
@@ -268,7 +268,7 @@ async fn test_input_sanitization() {
 
     // This should either work or fail gracefully, not exhaust memory or panic
     let start_time = std::time::Instant::now();
-    let result = NatTraversalEndpoint::new(large_peer_config, None).await;
+    let result = NatTraversalEndpoint::new(large_peer_config, None, None).await;
     let duration = start_time.elapsed();
 
     // Should complete within reasonable time
@@ -291,7 +291,7 @@ async fn test_resource_cleanup() {
         let mut config = test_peer_config();
         config.bind_addr = Some(format!("127.0.0.1:{}", 11000 + i).parse().unwrap());
 
-        let endpoint_result = NatTraversalEndpoint::new(config, None).await;
+        let endpoint_result = NatTraversalEndpoint::new(config, None, None).await;
 
         if let Ok(endpoint) = endpoint_result {
             // Use the endpoint briefly
@@ -335,7 +335,7 @@ mod specific_regression_tests {
         };
 
         // Should not panic and should handle random port selection
-        let result = NatTraversalEndpoint::new(config_with_none, None).await;
+        let result = NatTraversalEndpoint::new(config_with_none, None, None).await;
 
         match result {
             Ok(endpoint) => {
@@ -383,7 +383,7 @@ mod specific_regression_tests {
         };
 
         // Should not panic, even if configuration is inconsistent
-        let result = NatTraversalEndpoint::new(problematic_config, None).await;
+        let result = NatTraversalEndpoint::new(problematic_config, None, None).await;
 
         match result {
             Ok(_) => println!("✓ Problematic config handled successfully"),

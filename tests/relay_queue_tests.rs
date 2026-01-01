@@ -124,7 +124,7 @@ mod nat_traversal_api_tests {
             ..NatTraversalConfig::default()
         };
 
-        let result = NatTraversalEndpoint::new(config, None).await;
+        let result = NatTraversalEndpoint::new(config, None, None).await;
         // May succeed or fail - key is no panic
         let _ = result;
     }
@@ -139,7 +139,7 @@ mod nat_traversal_api_tests {
         };
 
         // This will likely fail due to TLS configuration, but should pass basic validation
-        let result = NatTraversalEndpoint::new(config, None).await;
+        let result = NatTraversalEndpoint::new(config, None, None).await;
         if let Err(e) = result {
             // Should not fail due to "bootstrap node" validation (removed in v0.13.0+)
             assert!(!e.to_string().contains("bootstrap node"));
@@ -158,7 +158,7 @@ mod nat_traversal_api_tests {
         };
 
         // Try to create endpoint - may fail due to TLS but we can test the concept
-        if let Ok(endpoint) = NatTraversalEndpoint::new(config, None).await {
+        if let Ok(endpoint) = NatTraversalEndpoint::new(config, None, None).await {
             // Test adding known peer
             let result = endpoint.add_bootstrap_node(known_peer_addr2);
             assert!(result.is_ok());
@@ -240,7 +240,7 @@ mod functional_tests {
         };
 
         // May fail due to zero values or other validation
-        let result = NatTraversalEndpoint::new(zero_values_config, None).await;
+        let result = NatTraversalEndpoint::new(zero_values_config, None, None).await;
         // Just ensure no panic
         let _ = result;
 
@@ -262,7 +262,7 @@ mod functional_tests {
             allow_ipv4_mapped: true,
         };
 
-        let result = NatTraversalEndpoint::new(valid_config, None).await;
+        let result = NatTraversalEndpoint::new(valid_config, None, None).await;
         // May succeed or fail - key is no panic
         let _ = result;
     }
@@ -330,7 +330,7 @@ mod nat_traversal_integration_tests {
             ..NatTraversalConfig::default()
         };
 
-        if let Ok(endpoint) = NatTraversalEndpoint::new(config, None).await {
+        if let Ok(endpoint) = NatTraversalEndpoint::new(config, None, None).await {
             let target_peer = create_test_peer_id(42);
 
             // Test NAT traversal initiation
@@ -349,7 +349,7 @@ mod nat_traversal_integration_tests {
             ..NatTraversalConfig::default()
         };
 
-        if let Ok(endpoint) = NatTraversalEndpoint::new(config, None).await {
+        if let Ok(endpoint) = NatTraversalEndpoint::new(config, None, None).await {
             let now = std::time::Instant::now();
 
             // Polling with no active sessions should not panic
@@ -371,7 +371,7 @@ mod nat_traversal_integration_tests {
             ..NatTraversalConfig::default()
         };
 
-        if let Ok(endpoint) = NatTraversalEndpoint::new(config, None).await {
+        if let Ok(endpoint) = NatTraversalEndpoint::new(config, None, None).await {
             let stats = endpoint.get_statistics();
             assert!(stats.is_ok());
 
@@ -487,7 +487,7 @@ mod relay_functionality_tests {
             ..NatTraversalConfig::default()
         };
 
-        let result = NatTraversalEndpoint::new(no_peers_config, None).await;
+        let result = NatTraversalEndpoint::new(no_peers_config, None, None).await;
         // May succeed or fail - key is no panic
         let _ = result;
 
@@ -510,6 +510,6 @@ mod relay_functionality_tests {
         };
 
         // This might be accepted or rejected depending on implementation
-        let _result = NatTraversalEndpoint::new(zero_values_config, None).await;
+        let _result = NatTraversalEndpoint::new(zero_values_config, None, None).await;
     }
 }

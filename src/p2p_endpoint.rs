@@ -74,6 +74,7 @@ use crate::nat_traversal_api::{
 use crate::Side;
 pub use crate::nat_traversal_api::TraversalPhase;
 use crate::unified_config::P2pConfig;
+use crate::bootstrap_cache::{BootstrapCache, BootstrapTokenStore};
 
 /// Event channel capacity
 const EVENT_CHANNEL_CAPACITY: usize = 256;
@@ -110,6 +111,9 @@ pub struct P2pEndpoint {
 
     /// Bounded pending data buffer for message ordering
     pending_data: Arc<RwLock<BoundedPendingBuffer>>,
+
+    /// Bootstrap cache for peer persistence
+    pub bootstrap_cache: Arc<BootstrapCache>,
 }
 
 impl std::fmt::Debug for P2pEndpoint {
@@ -422,9 +426,24 @@ impl P2pEndpoint {
         // Create NAT traversal endpoint with the same identity key used for auth
         // This ensures P2pEndpoint and NatTraversalEndpoint use the same keypair
         let nat_config = config.to_nat_config_with_key(public_key.clone(), secret_key);
-        let inner = NatTraversalEndpoint::new(nat_config, Some(event_callback))
-            .await
-            .map_err(|e| EndpointError::Config(e.to_string()))?;
+        let bootstrap_cache = Arc::new(
+            BootstrapCache::open(config.bootstrap_cache.clone())
+                .await
+                .map_err(|e| {
+                    EndpointError::Config(format!("Failed to open bootstrap cache: {}", e))
+                })?,
+        );
+
+        // Create token store
+        let token_store = Arc::new(BootstrapTokenStore::new(bootstrap_cache.clone()).await);
+
+        let inner = NatTraversalEndpoint::new(
+            nat_config,
+            Some(event_callback),
+            Some(token_store.clone()),
+        )
+        .await
+        .map_err(|e| EndpointError::Config(e.to_string()))?;
 
         Ok(Self {
             inner: Arc::new(inner),
@@ -437,6 +456,7 @@ impl P2pEndpoint {
             public_key: public_key_bytes,
             shutdown: Arc::new(AtomicBool::new(false)),
             pending_data: Arc::new(RwLock::new(BoundedPendingBuffer::default())),
+            bootstrap_cache,
         })
     }
 
@@ -478,11 +498,20 @@ impl P2pEndpoint {
 
     /// Connect to a peer by address (direct connection)
     pub async fn connect(&self, addr: SocketAddr) -> Result<PeerConnection, EndpointError> {
+        self.connect_with_server_name(addr, "peer").await
+    }
+
+    /// Connect to a peer by address with specific server name (for token persistence)
+    pub async fn connect_with_server_name(
+        &self,
+        addr: SocketAddr,
+        server_name: &str,
+    ) -> Result<PeerConnection, EndpointError> {
         if self.shutdown.load(Ordering::SeqCst) {
             return Err(EndpointError::ShuttingDown);
         }
 
-        info!("Connecting directly to {}", addr);
+        info!("Connecting directly to {} (SNI: {})", addr, server_name);
 
         let endpoint = self
             .inner
@@ -490,7 +519,7 @@ impl P2pEndpoint {
             .ok_or_else(|| EndpointError::Config("QUIC endpoint not available".to_string()))?;
 
         let connecting = endpoint
-            .connect(addr, "peer")
+            .connect(addr, server_name)
             .map_err(|e| EndpointError::Connection(e.to_string()))?;
 
         let connection = connecting
@@ -558,11 +587,21 @@ impl P2pEndpoint {
     /// 3. Handles all scenarios:
     ///    - **Both work**: Keeps dual connections for redundancy (BEST CASE)
     ///    - **IPv4-only**: Uses IPv4 connection, graceful degradation
+    ///
+    /// This method implements the user requirement: **"connect on ip4 and 6 we do both"**
+    ///
+    /// **Strategy**:
+    /// 1. Separates addresses by family (IPv4 vs IPv6)
+    /// 2. Tries both families in parallel using `tokio::join!`
+    /// 3. Handles all scenarios:
+    ///    - **Both work**: Keeps dual connections for redundancy (BEST CASE)
+    ///    - **IPv4-only**: Uses IPv4 connection, graceful degradation
     ///    - **IPv6-only**: Uses IPv6 connection, graceful degradation  
     ///    - **Neither**: Returns error (try NAT traversal next)
     ///
     /// # Arguments
     /// * `addresses` - List of candidate addresses (mix of IPv4 and IPv6)
+    /// * `peer_id` - Optional peer ID (for token persistence and 0-RTT/Fast Reconnect)
     ///
     /// # Returns
     /// Primary connection (IPv6 preferred if both succeed)
@@ -573,6 +612,7 @@ impl P2pEndpoint {
     pub async fn connect_dual_stack(
         &self,
         addresses: &[SocketAddr],
+        peer_id: Option<PeerId>,
     ) -> Result<PeerConnection, EndpointError> {
         use std::net::IpAddr;
         use tokio::time::{Duration, timeout};
@@ -595,15 +635,22 @@ impl P2pEndpoint {
             .collect();
 
         info!(
-            "Dual-stack connect: {} IPv4, {} IPv6 addresses",
+            "Dual-stack connect: {} IPv4, {} IPv6 addresses (PeerId: {:?})",
             ipv4_addrs.len(),
-            ipv6_addrs.len()
+            ipv6_addrs.len(),
+            peer_id
         );
+
+        // Determine server_name for token persistence
+        // If we know the peer_id, use its hex representation as SNI
+        // This allows retrieving persisted tokens for 0-RTT
+        let server_name_string = peer_id.map(|id| id.to_hex());
+        let server_name = server_name_string.as_deref().unwrap_or("peer");
 
         // Try both families in PARALLEL
         let (ipv4_result, ipv6_result) = tokio::join!(
-            self.try_connect_family(&ipv4_addrs, "IPv4"),
-            self.try_connect_family(&ipv6_addrs, "IPv6"),
+            self.try_connect_family(&ipv4_addrs, "IPv4", server_name),
+            self.try_connect_family(&ipv6_addrs, "IPv6", server_name),
         );
 
         // Handle all possible outcomes
@@ -659,6 +706,7 @@ impl P2pEndpoint {
         &self,
         addresses: &[SocketAddr],
         family_name: &str,
+        server_name: &str,
     ) -> Option<PeerConnection> {
         use tokio::time::{Duration, timeout};
 
@@ -679,7 +727,12 @@ impl P2pEndpoint {
             );
 
             // Try connection with 5s timeout
-            match timeout(Duration::from_secs(5), self.connect(*addr)).await {
+            match timeout(
+                Duration::from_secs(5),
+                self.connect_with_server_name(*addr, server_name),
+            )
+            .await
+            {
                 Ok(Ok(peer_conn)) => {
                     info!("✓ {} connection successful to {}", family_name, addr);
                     return Some(peer_conn);
@@ -697,6 +750,38 @@ impl P2pEndpoint {
 
         debug!("{}: All {} addresses failed", family_name, addresses.len());
         None
+    }
+
+    /// Connect to a peer using cached information (addresses, tokens)
+    ///
+    /// This method retrieves the peer from `BootstrapCache` and attempts to connect
+    /// using its known addresses. It leverages `connect_dual_stack` with the `PeerId`
+    /// to enable token-based 0-RTT/Fast Reconnect.
+    pub async fn connect_cached(&self, peer_id: PeerId) -> Result<PeerConnection, EndpointError> {
+        if self.shutdown.load(Ordering::SeqCst) {
+            return Err(EndpointError::ShuttingDown);
+        }
+
+        // Check if already connected
+        if let Some(conn) = self.connected_peers.read().await.get(&peer_id) {
+            return Ok(conn.clone());
+        }
+
+        // Retrieve from cache
+        let cached_peer = self
+            .bootstrap_cache
+            .get_peer(&peer_id)
+            .await
+            .ok_or(EndpointError::PeerNotFound(peer_id))?;
+
+        debug!(
+            "Connecting to cached peer {:?} ({} addresses)",
+            peer_id,
+            cached_peer.addresses.len()
+        );
+
+        // Try dual-stack connection with PeerId (triggers token usage)
+        self.connect_dual_stack(&cached_peer.addresses, Some(peer_id)).await
     }
 
     /// Connect to a peer by ID using NAT traversal
@@ -829,6 +914,7 @@ impl P2pEndpoint {
         target_ipv4: Option<SocketAddr>,
         target_ipv6: Option<SocketAddr>,
         strategy_config: Option<StrategyConfig>,
+        peer_id: Option<PeerId>,
     ) -> Result<(PeerConnection, ConnectionMethod), EndpointError> {
         use tokio::time::timeout;
 
@@ -842,22 +928,55 @@ impl P2pEndpoint {
             config.coordinator = self.config.known_peers.first().copied();
         }
         if config.relay_addr.is_none() {
-            config.relay_addr = self.config.nat.relay_nodes.first().copied();
+             // Optimization: Try to find a high-quality relay from our cache first
+            let target_addr = target_ipv4.or(target_ipv6);
+            if let Some(addr) = target_addr {
+                // Select best relay for this target (preferring dual-stack)
+                let relays = self
+                    .bootstrap_cache
+                    .select_relays_for_target(1, &addr, true)
+                    .await;
+
+                if let Some(best_relay) = relays.first() {
+                    // Use the first address of the best relay
+                    // In a perfect world we'd check reachability of this address too,
+                    // but for now we assume cached addresses are valid candidates.
+                    config.relay_addr = best_relay.addresses.first().copied();
+                    debug!(
+                        "Selected optimized relay from cache: {:?} for target {}",
+                        config.relay_addr, addr
+                    );
+                }
+            }
+
+            // Fallback to static config if cache gave nothing
+            if config.relay_addr.is_none() {
+                config.relay_addr = self.config.nat.relay_nodes.first().copied();
+            }
         }
 
         let mut strategy = ConnectionStrategy::new(config);
 
         info!(
-            "Starting fallback connection: IPv4={:?}, IPv6={:?}",
-            target_ipv4, target_ipv6
+            "Starting fallback connection: IPv4={:?}, IPv6={:?} (PeerId: {:?})",
+            target_ipv4, target_ipv6, peer_id
         );
+
+        // Determine server_name for token persistence
+        let server_name_string = peer_id.map(|id| id.to_hex());
+        let server_name = server_name_string.as_deref().unwrap_or("peer");
 
         loop {
             match strategy.current_stage().clone() {
                 ConnectionStage::DirectIPv4 { .. } => {
                     if let Some(addr) = target_ipv4 {
                         info!("Trying direct IPv4 connection to {}", addr);
-                        match timeout(strategy.ipv4_timeout(), self.connect(addr)).await {
+                        match timeout(
+                            strategy.ipv4_timeout(),
+                            self.connect_with_server_name(addr, server_name),
+                        )
+                        .await
+                        {
                             Ok(Ok(conn)) => {
                                 info!("✓ Direct IPv4 connection succeeded to {}", addr);
                                 return Ok((conn, ConnectionMethod::DirectIPv4));
@@ -880,7 +999,12 @@ impl P2pEndpoint {
                 ConnectionStage::DirectIPv6 { .. } => {
                     if let Some(addr) = target_ipv6 {
                         info!("Trying direct IPv6 connection to {}", addr);
-                        match timeout(strategy.ipv6_timeout(), self.connect(addr)).await {
+                        match timeout(
+                            strategy.ipv6_timeout(),
+                            self.connect_with_server_name(addr, server_name),
+                        )
+                        .await
+                        {
                             Ok(Ok(conn)) => {
                                 info!("✓ Direct IPv6 connection succeeded to {}", addr);
                                 return Ok((conn, ConnectionMethod::DirectIPv6));
@@ -913,10 +1037,12 @@ impl P2pEndpoint {
                     );
 
                     // Use our existing NAT traversal infrastructure
-                    let peer_id = self.derive_peer_id_from_address(target);
+                    // If peer_id provided, use it. Otherwise derive from address.
+                    let target_peer_id = peer_id.unwrap_or_else(|| self.derive_peer_id_from_address(target));
+
                     match timeout(
                         strategy.holepunch_timeout(),
-                        self.try_hole_punch(target, coordinator, peer_id),
+                        self.try_hole_punch(target, coordinator, target_peer_id),
                     )
                     .await
                     {
@@ -1477,6 +1603,7 @@ impl Clone for P2pEndpoint {
             public_key: self.public_key.clone(),
             shutdown: Arc::clone(&self.shutdown),
             pending_data: Arc::clone(&self.pending_data),
+            bootstrap_cache: Arc::clone(&self.bootstrap_cache),
         }
     }
 }

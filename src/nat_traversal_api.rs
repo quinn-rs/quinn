@@ -906,35 +906,39 @@ impl ConfigValidator for NatTraversalConfig {
 }
 
 impl NatTraversalEndpoint {
-    /// Create a new NAT traversal endpoint with optional event callback
+    /// Create a new NAT traversal endpoint with optional event callback and token store
     pub async fn new(
         config: NatTraversalConfig,
         event_callback: Option<Box<dyn Fn(NatTraversalEvent) + Send + Sync>>,
+        token_store: Option<Arc<dyn crate::TokenStore>>,
     ) -> Result<Self, NatTraversalError> {
-        Self::new_impl(config, event_callback).await
+        Self::new_impl(config, event_callback, token_store).await
     }
 
     /// Internal async implementation for production builds
     async fn new_impl(
         config: NatTraversalConfig,
         event_callback: Option<Box<dyn Fn(NatTraversalEvent) + Send + Sync>>,
+        token_store: Option<Arc<dyn crate::TokenStore>>,
     ) -> Result<Self, NatTraversalError> {
-        Self::new_common(config, event_callback).await
+        Self::new_common(config, event_callback, token_store).await
     }
 
     /// Common implementation for both async and sync versions
     async fn new_common(
         config: NatTraversalConfig,
         event_callback: Option<Box<dyn Fn(NatTraversalEvent) + Send + Sync>>,
+        token_store: Option<Arc<dyn crate::TokenStore>>,
     ) -> Result<Self, NatTraversalError> {
         // Existing implementation with async support
-        Self::new_shared_logic(config, event_callback).await
+        Self::new_shared_logic(config, event_callback, token_store).await
     }
 
     /// Shared logic for endpoint creation (async version)
     async fn new_shared_logic(
         config: NatTraversalConfig,
         event_callback: Option<Box<dyn Fn(NatTraversalEvent) + Send + Sync>>,
+        token_store: Option<Arc<dyn crate::TokenStore>>,
     ) -> Result<Self, NatTraversalError> {
         // Wrap the callback in Arc so it can be shared with background tasks
         let event_callback: Option<Arc<dyn Fn(NatTraversalEvent) + Send + Sync>> =
@@ -979,7 +983,7 @@ impl NatTraversalEndpoint {
 
         // Create QUIC endpoint with NAT traversal enabled
         let (inner_endpoint, event_tx, event_rx, local_addr) =
-            Self::create_inner_endpoint(&config).await?;
+            Self::create_inner_endpoint(&config, token_store).await?;
 
         // Update discovery manager with the actual bound address
         {
@@ -1517,6 +1521,7 @@ impl NatTraversalEndpoint {
     /// v0.13.0: role parameter removed - all nodes are symmetric P2P nodes.
     async fn create_inner_endpoint(
         config: &NatTraversalConfig,
+        token_store: Option<Arc<dyn crate::TokenStore>>,
     ) -> Result<
         (
             InnerEndpoint,
@@ -1632,6 +1637,11 @@ impl NatTraversalEndpoint {
                 .map_err(|e| NatTraversalError::ConfigError(e.to_string()))?;
 
             let mut client_config = ClientConfig::new(Arc::new(client_crypto));
+
+            // Set token store if provided
+            if let Some(store) = token_store {
+                client_config.token_store(store);
+            }
 
             // Configure transport parameters for NAT traversal
             let mut transport_config = TransportConfig::default();
@@ -4754,6 +4764,13 @@ impl fmt::Display for PeerId {
 impl From<[u8; 32]> for PeerId {
     fn from(bytes: [u8; 32]) -> Self {
         Self(bytes)
+    }
+}
+
+impl PeerId {
+    /// Convert the peer ID to a hexadecimal string
+    pub fn to_hex(&self) -> String {
+        hex::encode(self.0)
     }
 }
 
