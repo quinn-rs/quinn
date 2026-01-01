@@ -816,11 +816,10 @@ impl TestNode {
                                 } else {
                                     ConnectionDirection::Outbound
                                 };
-                                let method = if is_inbound {
-                                    ConnectionMethod::HolePunched // They traversed to us
-                                } else {
-                                    ConnectionMethod::Direct // Placeholder, comprehensive test updates
-                                };
+                                // Determine connection method based on address type
+                                // For VPS nodes on public IPs, all connections are "Direct"
+                                // HolePunched only applies when NAT traversal was needed
+                                let method = ConnectionMethod::Direct;
 
                                 // Create minimal PeerInfo for tracking
                                 let peer_info = PeerInfo {
@@ -846,6 +845,17 @@ impl TestNode {
                                     full_mesh_probes: None,
                                 };
 
+                                // Set connectivity based on actual address
+                                let is_ipv6 = addr.is_ipv6();
+                                let connectivity = ConnectivityMatrix {
+                                    active_is_ipv6: is_ipv6,
+                                    ipv4_direct_tested: !is_ipv6,
+                                    ipv4_direct_success: !is_ipv6,
+                                    ipv6_direct_tested: is_ipv6,
+                                    ipv6_direct_success: is_ipv6,
+                                    ..Default::default()
+                                };
+
                                 let tracked = TrackedPeer {
                                     info: peer_info,
                                     method,
@@ -855,7 +865,7 @@ impl TestNode {
                                     stats: PeerStats::default(),
                                     sequence: AtomicU64::new(0),
                                     consecutive_failures: 0,
-                                    connectivity: ConnectivityMatrix::default(),
+                                    connectivity,
                                 };
 
                                 peers.insert(peer_hex.clone(), tracked);
@@ -1369,22 +1379,34 @@ impl TestNode {
                                 full_mesh_probes: None,
                             };
 
+                            // Set connectivity based on actual address
+                            let is_ipv6 = addr.is_ipv6();
+                            let connectivity = ConnectivityMatrix {
+                                active_is_ipv6: is_ipv6,
+                                ipv4_direct_tested: !is_ipv6,
+                                ipv4_direct_success: !is_ipv6,
+                                ipv6_direct_tested: is_ipv6,
+                                ipv6_direct_success: is_ipv6,
+                                ..Default::default()
+                            };
+
                             let tracked = TrackedPeer {
                                 info: peer_info,
-                                method: ConnectionMethod::HolePunched, // They traversed to us
+                                method: ConnectionMethod::Direct, // Direct connection over IPv4 or IPv6
                                 direction: ConnectionDirection::Inbound,
                                 connected_at: now,
                                 last_activity: now,
                                 stats: PeerStats::default(),
                                 sequence: AtomicU64::new(0),
                                 consecutive_failures: 0,
-                                connectivity: ConnectivityMatrix::default(),
+                                connectivity,
                             };
 
                             peers.insert(new_peer_hex.clone(), tracked);
                             debug!(
-                                "Added inbound peer {} to connected_peers",
-                                &new_peer_hex[..8.min(new_peer_hex.len())]
+                                "Added inbound peer {} to connected_peers ({})",
+                                &new_peer_hex[..8.min(new_peer_hex.len())],
+                                if is_ipv6 { "IPv6" } else { "IPv4" }
                             );
                         }
                     }
