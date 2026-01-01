@@ -3029,6 +3029,23 @@ impl TestNode {
                         }
                     }
 
+                    // Debug: always log the breakdown (every 10th heartbeat to reduce noise)
+                    static HEARTBEAT_COUNT: std::sync::atomic::AtomicUsize =
+                        std::sync::atomic::AtomicUsize::new(0);
+                    let hb_count =
+                        HEARTBEAT_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    if hb_count % 10 == 0 {
+                        info!(
+                            "Heartbeat #{}: conn breakdown IPv4={}, IPv6={}, HolePunched={}, Relayed={} (peers.len={})",
+                            hb_count,
+                            ipv4,
+                            ipv6,
+                            hole_punched,
+                            relayed,
+                            peers.len()
+                        );
+                    }
+
                     (ipv4, ipv6, hole_punched, relayed)
                 };
 
