@@ -10,8 +10,8 @@ use crate::gossip::{
 };
 use crate::registry::{
     BgpGeoProvider, ConnectionDirection, ConnectionMethod, ConnectionReport, ConnectivityMatrix,
-    NatStats, NatType, NodeCapabilities, NodeGossipStats, NodeHeartbeat, NodeRegistration,
-    PeerInfo, PeerStatus, RegistryClient,
+    FullMeshProbeResult, NatStats, NatType, NodeCapabilities, NodeGossipStats, NodeHeartbeat,
+    NodeRegistration, PeerInfo, PeerStatus, RegistryClient,
 };
 use crate::tui::{ConnectedPeer, LocalNodeInfo, TuiEvent, country_flag};
 use saorsa_gossip_types::PeerId as GossipPeerId;
@@ -308,6 +308,10 @@ pub struct TestNode {
     epidemic_gossip: Arc<EpidemicGossip>,
     /// Receiver for epidemic gossip events.
     epidemic_event_rx: Arc<RwLock<mpsc::Receiver<EpidemicEvent>>>,
+    /// Full-mesh connectivity probe results.
+    /// Maps peer_id -> probe result for all peers this node attempted to probe.
+    /// This tests reachability to ALL peers, not just the HyParView active view.
+    full_mesh_probes: Arc<RwLock<HashMap<String, FullMeshProbeResult>>>,
 }
 
 /// Get the data directory for persistent storage.
@@ -994,6 +998,7 @@ impl TestNode {
             gossip_event_rx: Arc::new(RwLock::new(gossip_event_rx)),
             epidemic_gossip,
             epidemic_event_rx: Arc::new(RwLock::new(epidemic_event_rx)),
+            full_mesh_probes: Arc::new(RwLock::new(HashMap::new())),
         })
     }
 
@@ -1953,6 +1958,167 @@ impl TestNode {
         })
     }
 
+    /// Spawn the full-mesh connectivity probe loop.
+    ///
+    /// This loop probes ALL peers in the network (from registry) to test
+    /// reachability via gossip transport. Unlike HyParView which maintains
+    /// only 8 active connections, this tests the full mesh.
+    ///
+    /// The results are stored in `self.full_mesh_probes` and included in
+    /// heartbeats to give full visibility into network connectivity.
+    fn spawn_connectivity_probe_loop(&self) -> tokio::task::JoinHandle<()> {
+        use saorsa_gossip_types::PeerId as GossipPeerId;
+
+        let shutdown = Arc::clone(&self.shutdown);
+        let registry = RegistryClient::new(&self.config.registry_url);
+        let epidemic_gossip = Arc::clone(&self.epidemic_gossip);
+        let full_mesh_probes = Arc::clone(&self.full_mesh_probes);
+        let our_peer_id = self.peer_id.clone();
+
+        tokio::spawn(async move {
+            let probe_interval = Duration::from_secs(60);
+            let mut last_probe = Instant::now();
+
+            // Wait a bit for the network to stabilize before first probe
+            tokio::time::sleep(Duration::from_secs(30)).await;
+
+            loop {
+                if shutdown.load(Ordering::SeqCst) {
+                    break;
+                }
+
+                if last_probe.elapsed() >= probe_interval {
+                    last_probe = Instant::now();
+
+                    // Get all peers from registry
+                    let registry_peers = match registry.get_peers().await {
+                        Ok(peers) => peers,
+                        Err(e) => {
+                            warn!("Full-mesh probe: failed to get peers from registry: {}", e);
+                            tokio::time::sleep(Duration::from_secs(10)).await;
+                            continue;
+                        }
+                    };
+
+                    // Get HyParView active and passive views
+                    let active_view = epidemic_gossip.active_view().await;
+                    let passive_view = epidemic_gossip.passive_view().await;
+
+                    // Convert to hex sets for quick lookup
+                    let active_set: std::collections::HashSet<String> = active_view
+                        .iter()
+                        .map(|p| hex::encode(p.as_bytes()))
+                        .collect();
+                    let passive_set: std::collections::HashSet<String> = passive_view
+                        .iter()
+                        .map(|p| hex::encode(p.as_bytes()))
+                        .collect();
+
+                    info!(
+                        "Full-mesh probe: testing {} peers (HyParView: {} active, {} passive)",
+                        registry_peers.len(),
+                        active_set.len(),
+                        passive_set.len()
+                    );
+
+                    // Probe each peer
+                    for peer in &registry_peers {
+                        // Skip ourselves
+                        if peer.peer_id == our_peer_id {
+                            continue;
+                        }
+
+                        let peer_id_hex = &peer.peer_id;
+                        let in_active = active_set.contains(peer_id_hex);
+                        let in_passive = passive_set.contains(peer_id_hex);
+
+                        // Convert hex peer ID to GossipPeerId
+                        let peer_id_bytes = match hex::decode(peer_id_hex) {
+                            Ok(b) if b.len() == 32 => b,
+                            _ => {
+                                debug!(
+                                    "Full-mesh probe: invalid peer ID: {}",
+                                    &peer_id_hex[..8.min(peer_id_hex.len())]
+                                );
+                                continue;
+                            }
+                        };
+
+                        let mut peer_id_array = [0u8; 32];
+                        peer_id_array.copy_from_slice(&peer_id_bytes);
+                        let gossip_peer_id = GossipPeerId::new(peer_id_array);
+
+                        // Create a lightweight probe packet (just a ping)
+                        let probe_data = b"PROBE".to_vec();
+                        let start = Instant::now();
+
+                        // Try to send probe via gossip transport
+                        let (reachable, rtt_ms) = match tokio::time::timeout(
+                            Duration::from_secs(5),
+                            epidemic_gossip.send_to_peer(gossip_peer_id, probe_data),
+                        )
+                        .await
+                        {
+                            Ok(Ok(())) => {
+                                let rtt = start.elapsed();
+                                (true, Some(rtt.as_millis() as u64))
+                            }
+                            Ok(Err(e)) => {
+                                debug!(
+                                    "Full-mesh probe: failed to reach {}: {}",
+                                    &peer_id_hex[..8.min(peer_id_hex.len())],
+                                    e
+                                );
+                                (false, None)
+                            }
+                            Err(_) => {
+                                debug!(
+                                    "Full-mesh probe: timeout reaching {}",
+                                    &peer_id_hex[..8.min(peer_id_hex.len())]
+                                );
+                                (false, None)
+                            }
+                        };
+
+                        // Update probe results
+                        let now_ms = crate::registry::unix_timestamp_ms();
+                        let mut probes = full_mesh_probes.write().await;
+                        let result = probes.entry(peer_id_hex.clone()).or_default();
+
+                        result.last_probe_ms = now_ms;
+                        result.in_active_view = in_active;
+                        result.in_passive_view = in_passive;
+
+                        if reachable {
+                            result.reachable = true;
+                            result.rtt_ms = rtt_ms;
+                            result.success_count += 1;
+                        } else {
+                            result.failure_count += 1;
+                            // Only mark as unreachable after multiple failures
+                            if result.failure_count > 3 && result.success_count == 0 {
+                                result.reachable = false;
+                            }
+                        }
+                    }
+
+                    // Log summary
+                    let probes = full_mesh_probes.read().await;
+                    let reachable_count = probes.values().filter(|r| r.reachable).count();
+                    let in_active_count = probes.values().filter(|r| r.in_active_view).count();
+                    info!(
+                        "Full-mesh probe complete: {}/{} reachable ({} in HyParView active view)",
+                        reachable_count,
+                        probes.len(),
+                        in_active_count
+                    );
+                }
+
+                tokio::time::sleep(Duration::from_secs(5)).await;
+            }
+        })
+    }
+
     // ========================================================================
     // Relay Message Handling
     // ========================================================================
@@ -2425,6 +2591,7 @@ impl TestNode {
         let gossip_handle = self.spawn_gossip_loop();
         let accept_handle = self.spawn_accept_loop();
         let epidemic_handle = self.spawn_epidemic_gossip_loop();
+        let probe_handle = self.spawn_connectivity_probe_loop();
 
         // Announce ourselves to gossip network
         self.announce_to_gossip().await;
@@ -2445,6 +2612,7 @@ impl TestNode {
         gossip_handle.abort();
         accept_handle.abort();
         epidemic_handle.abort();
+        probe_handle.abort();
 
         // Save peer cache and shutdown gossip integration
         if let Err(e) = self.gossip_integration.save_cache() {
@@ -2615,6 +2783,8 @@ impl TestNode {
         let gossip_integration = Arc::clone(&self.gossip_integration);
         // Clone epidemic gossip for real saorsa-gossip stats
         let epidemic_gossip = Arc::clone(&self.epidemic_gossip);
+        // Clone full-mesh probe results for reporting
+        let full_mesh_probes = Arc::clone(&self.full_mesh_probes);
         // Clone event_tx to send HeartbeatSent events to TUI
         let event_tx = self.event_tx.clone();
 
@@ -2765,6 +2935,16 @@ impl TestNode {
                     conn_relayed,
                 };
 
+                // Get full-mesh probe results (clone to avoid holding lock during HTTP call)
+                let probes = {
+                    let probes_guard = full_mesh_probes.read().await;
+                    if probes_guard.is_empty() {
+                        None
+                    } else {
+                        Some(probes_guard.clone())
+                    }
+                };
+
                 let heartbeat = NodeHeartbeat {
                     peer_id: peer_id.clone(),
                     connected_peers: total_connections,
@@ -2777,6 +2957,7 @@ impl TestNode {
                     },
                     nat_stats: Some(stats),
                     gossip_stats: Some(gossip_stats),
+                    full_mesh_probes: probes,
                 };
                 drop(peers);
 

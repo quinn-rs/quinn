@@ -1078,6 +1078,7 @@ mod tests {
                 is_behind_nat: false,
             }),
             gossip_stats: None,
+            full_mesh_probes: None,
         };
 
         assert!(store.heartbeat(heartbeat).is_ok());
@@ -1100,6 +1101,7 @@ mod tests {
             external_addresses: None,
             nat_stats: None,
             gossip_stats: None,
+            full_mesh_probes: None,
         };
 
         assert!(store.heartbeat(heartbeat).is_err());

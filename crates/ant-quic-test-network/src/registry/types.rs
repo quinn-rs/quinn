@@ -4,6 +4,7 @@
 //! to track nodes in the network and facilitate peer discovery.
 
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -564,6 +565,33 @@ pub struct NodeHeartbeat {
     /// Gossip protocol statistics
     #[serde(default)]
     pub gossip_stats: Option<NodeGossipStats>,
+    /// Full-mesh connectivity probe results.
+    /// Maps peer_id -> probe result for all peers this node attempted to probe.
+    #[serde(default)]
+    pub full_mesh_probes: Option<HashMap<String, FullMeshProbeResult>>,
+}
+
+/// Result of a full-mesh connectivity probe to a single peer.
+///
+/// Unlike HyParView (which maintains only 8 active peers), the full-mesh probe
+/// tests reachability to ALL peers in the network via the gossip transport.
+/// This enables comprehensive network health monitoring.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct FullMeshProbeResult {
+    /// Peer was successfully probed (we could send/receive via gossip transport).
+    pub reachable: bool,
+    /// Round-trip time in milliseconds (if successful).
+    pub rtt_ms: Option<u64>,
+    /// Unix timestamp (millis) of the last probe attempt.
+    pub last_probe_ms: u64,
+    /// Number of successful probes in this interval.
+    pub success_count: u32,
+    /// Number of failed probes in this interval.
+    pub failure_count: u32,
+    /// Whether the peer is in our HyParView active view.
+    pub in_active_view: bool,
+    /// Whether the peer is in our HyParView passive view.
+    pub in_passive_view: bool,
 }
 
 /// Connection report sent by nodes to record individual connections.
