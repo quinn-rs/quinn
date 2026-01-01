@@ -4,7 +4,7 @@
 //! and coordinates updates from the network layer.
 
 use crate::tui::types::{ConnectedPeer, LocalNodeInfo, NetworkStatistics};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 
 /// Application running state.
@@ -29,8 +29,10 @@ pub struct App {
     pub stats: NetworkStatistics,
     /// Auto-connect enabled
     pub auto_connecting: bool,
-    /// Total registered nodes in network
+    /// Total registered nodes in network (from registry)
     pub total_registered_nodes: usize,
+    /// Peers we've actually communicated with (seen alive)
+    pub peers_seen: HashSet<String>,
     /// Registry URL
     pub registry_url: String,
     /// Dashboard URL (for display)
@@ -62,12 +64,23 @@ impl App {
             },
             auto_connecting: true,
             total_registered_nodes: 0,
+            peers_seen: HashSet::new(),
             registry_url: "https://saorsa-1.saorsalabs.com".to_string(),
             dashboard_url: "https://saorsa-1.saorsalabs.com".to_string(),
             last_refresh: Instant::now(),
             error_message: None,
             info_message: None,
         }
+    }
+
+    /// Mark a peer as seen (we've communicated with them).
+    pub fn peer_seen(&mut self, peer_id: &str) {
+        self.peers_seen.insert(peer_id.to_string());
+    }
+
+    /// Get count of peers we've actually seen.
+    pub fn peers_seen_count(&self) -> usize {
+        self.peers_seen.len()
     }
 
     /// Check if the application should quit.

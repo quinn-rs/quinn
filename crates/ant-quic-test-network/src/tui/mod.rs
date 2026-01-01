@@ -123,6 +123,8 @@ pub enum TuiEvent {
         /// Current load (active connections)
         load: u32,
     },
+    /// A peer was seen/communicated with (for tracking "nodes known alive")
+    PeerSeen(String),
 }
 
 /// Configuration for the TUI.
@@ -275,6 +277,8 @@ fn handle_tui_event(app: &mut App, event: TuiEvent) {
             app.set_info("Registered with network registry");
         }
         TuiEvent::PeerConnected(peer) => {
+            // Mark peer as seen (successful connection proves they're alive)
+            app.peer_seen(&peer.full_id);
             // Track the connection method breakdown
             match peer.method {
                 crate::registry::ConnectionMethod::Direct => {
@@ -304,6 +308,8 @@ fn handle_tui_event(app: &mut App, event: TuiEvent) {
             rtt,
         } => {
             if success {
+                // Mark peer as seen (successful communication)
+                app.peer_seen(&peer_id);
                 app.packet_sent(&peer_id);
                 app.packet_received(&peer_id);
                 if let Some(rtt) = rtt {
@@ -330,6 +336,8 @@ fn handle_tui_event(app: &mut App, event: TuiEvent) {
                 is_public
             );
             app.stats.gossip_peers_discovered += 1;
+            // Mark peer as seen (we received gossip from them)
+            app.peer_seen(&peer_id);
         }
         TuiEvent::GossipRelayDiscovered {
             peer_id,
@@ -344,6 +352,11 @@ fn handle_tui_event(app: &mut App, event: TuiEvent) {
                 load
             );
             app.stats.gossip_relays_discovered += 1;
+            // Also mark relay as seen
+            app.peer_seen(&peer_id);
+        }
+        TuiEvent::PeerSeen(peer_id) => {
+            app.peer_seen(&peer_id);
         }
     }
 }

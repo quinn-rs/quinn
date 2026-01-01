@@ -154,9 +154,9 @@ fn draw_peers(frame: &mut Frame, app: &App, area: Rect) {
 
     let title = Line::from(vec![
         Span::raw(format!(
-            " CONNECTED PEERS ({} of {} registered) ",
+            " CONNECTED PEERS ({} of {} seen) ",
             app.connected_count(),
-            app.total_registered_nodes
+            app.peers_seen_count()
         )),
         auto_status,
     ]);
@@ -236,12 +236,12 @@ fn draw_stats(frame: &mut Frame, app: &App, area: Rect) {
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::Magenta));
 
-    // Current reachability: connected peers / (total registered - 1)
-    // This is more meaningful than lifetime success rate which accumulates retries
+    // Current reachability: connected peers / (peers seen)
+    // This is more meaningful than registry count since it shows nodes we've actually communicated with
     let connected_peers = app.connected_peers.len();
-    let total_nodes = app.total_registered_nodes.max(1);
-    let reachability = if total_nodes > 1 {
-        (connected_peers as f64 / (total_nodes - 1) as f64) * 100.0
+    let peers_seen = app.peers_seen_count().max(1);
+    let reachability = if peers_seen > 0 {
+        (connected_peers as f64 / peers_seen as f64) * 100.0
     } else {
         0.0
     };
@@ -262,10 +262,10 @@ fn draw_stats(frame: &mut Frame, app: &App, area: Rect) {
         ),
         Span::raw(" / "),
         Span::styled(
-            format!("{}", total_nodes.saturating_sub(1)),
+            format!("{} seen", peers_seen),
             Style::default().fg(Color::Cyan),
         ),
-        Span::raw(" peers ("),
+        Span::raw(" ("),
         Span::styled(
             format!("{:.0}%", reachability),
             Style::default().fg(success_color),

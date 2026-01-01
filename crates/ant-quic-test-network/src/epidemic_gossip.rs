@@ -655,6 +655,122 @@ impl EpidemicGossip {
         Ok(())
     }
 
+    /// Send data to a peer with relay fallback.
+    ///
+    /// Tries direct send first. If that fails (peer not in active view),
+    /// attempts to relay through peers in our active view.
+    ///
+    /// The relay message includes the target peer ID so intermediate nodes
+    /// can forward it to the final destination.
+    pub async fn send_to_peer_with_relay(
+        &self,
+        target_peer_id: PeerId,
+        data: Vec<u8>,
+    ) -> Result<(), GossipError> {
+        // Try direct send first
+        match self.send_to_peer(target_peer_id, data.clone()).await {
+            Ok(()) => return Ok(()),
+            Err(e) => {
+                debug!(
+                    "Direct send failed to {}: {}, trying relay",
+                    hex::encode(&target_peer_id.as_bytes()[..4]),
+                    e
+                );
+            }
+        }
+
+        // Get active view for potential relay peers
+        let active_peers = self.active_view().await;
+        if active_peers.is_empty() {
+            return Err(GossipError::Transport(
+                "No peers in active view for relay".to_string(),
+            ));
+        }
+
+        // Create a relay message with target peer ID prefix
+        // Format: [RELAY_MAGIC:4][TARGET_PEER_ID:32][DATA:...]
+        const RELAY_MAGIC: &[u8] = b"RELY";
+        let mut relay_message = Vec::with_capacity(4 + 32 + data.len());
+        relay_message.extend_from_slice(RELAY_MAGIC);
+        relay_message.extend_from_slice(target_peer_id.as_bytes());
+        relay_message.extend_from_slice(&data);
+
+        // Try each active peer as a potential relay
+        for relay_peer in &active_peers {
+            // Skip if relay peer is the target
+            if relay_peer == &target_peer_id {
+                continue;
+            }
+
+            match self.send_to_peer(*relay_peer, relay_message.clone()).await {
+                Ok(()) => {
+                    info!(
+                        "Relayed message to {} through {}",
+                        hex::encode(&target_peer_id.as_bytes()[..4]),
+                        hex::encode(&relay_peer.as_bytes()[..4])
+                    );
+                    return Ok(());
+                }
+                Err(e) => {
+                    debug!(
+                        "Relay through {} failed: {}",
+                        hex::encode(&relay_peer.as_bytes()[..4]),
+                        e
+                    );
+                }
+            }
+        }
+
+        Err(GossipError::Transport(format!(
+            "Failed to reach {} via direct or relay (tried {} peers)",
+            hex::encode(&target_peer_id.as_bytes()[..4]),
+            active_peers.len()
+        )))
+    }
+
+    /// Check if a message is a relay message and extract the target peer ID.
+    ///
+    /// Returns Some((target_peer_id, payload)) if this is a relay message,
+    /// or None if it's a direct message.
+    pub fn parse_relay_message(data: &[u8]) -> Option<(PeerId, &[u8])> {
+        const RELAY_MAGIC: &[u8] = b"RELY";
+
+        if data.len() < 4 + 32 {
+            return None;
+        }
+
+        if &data[..4] != RELAY_MAGIC {
+            return None;
+        }
+
+        let mut peer_id_bytes = [0u8; 32];
+        peer_id_bytes.copy_from_slice(&data[4..36]);
+
+        Some((PeerId::new(peer_id_bytes), &data[36..]))
+    }
+
+    /// Handle a received relay message by forwarding to the target peer.
+    ///
+    /// Call this when receiving data that might be a relay message.
+    /// Returns Ok(true) if it was a relay message and was forwarded,
+    /// Ok(false) if it wasn't a relay message.
+    pub async fn handle_relay_message(&self, data: &[u8]) -> Result<bool, GossipError> {
+        let (target_peer_id, payload) = match Self::parse_relay_message(data) {
+            Some(parsed) => parsed,
+            None => return Ok(false), // Not a relay message
+        };
+
+        info!(
+            "Forwarding relay message to {}",
+            hex::encode(&target_peer_id.as_bytes()[..4])
+        );
+
+        // Try to forward to the target
+        self.send_to_peer(target_peer_id, payload.to_vec()).await?;
+
+        Ok(true)
+    }
+
     /// Get the transport for direct access to QUIC connections.
     pub async fn transport(&self) -> Result<Arc<AntQuicTransport>, GossipError> {
         let stack_guard = self.stack.read().await;

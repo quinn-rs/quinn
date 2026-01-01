@@ -1856,6 +1856,8 @@ impl TestNode {
         let endpoint = Arc::clone(&self.endpoint);
         let connected_peers = Arc::clone(&self.connected_peers);
         let event_tx = self.event_tx.clone();
+        let epidemic_gossip = Arc::clone(&self.epidemic_gossip);
+        let our_peer_id_hex = self.peer_id.clone();
 
         tokio::spawn(async move {
             let mut last_periodic = Instant::now();
@@ -1922,8 +1924,53 @@ impl TestNode {
                                     );
                                 }
                                 EpidemicEvent::MessageReceived { from, topic: _, payload } => {
-                                    // Process epidemic gossip message (peer announcement)
-                                    if let Ok(announcement) = GossipPeerAnnouncement::from_bytes(&payload) {
+                                    // FIRST: Check if this is a relay message that needs forwarding
+                                    // Relay format: [RELY:4][TARGET_PEER_ID:32][DATA:...]
+                                    if payload.starts_with(b"RELY") && payload.len() >= 36 {
+                                        let target_bytes = &payload[4..36];
+                                        let actual_data = &payload[36..];
+
+                                        // Check if we are the target (decode our hex peer ID to bytes)
+                                        let our_id_bytes = hex::decode(&our_peer_id_hex).unwrap_or_default();
+                                        if target_bytes == our_id_bytes.as_slice() {
+                                            // We are the target - process the actual data
+                                            debug!(
+                                                "Relay: received relayed message from {} ({} bytes)",
+                                                hex::encode(from.as_bytes())[..8].to_string(),
+                                                actual_data.len()
+                                            );
+                                            // Process the actual payload (could be probe, announcement, etc.)
+                                            if let Ok(announcement) = GossipPeerAnnouncement::from_bytes(actual_data) {
+                                                gossip_integration.add_peer(
+                                                    &announcement.peer.peer_id,
+                                                    &announcement.peer.addresses,
+                                                    announcement.peer.is_public,
+                                                );
+                                            }
+                                        } else {
+                                            // Forward to the actual target
+                                            let mut target_array = [0u8; 32];
+                                            target_array.copy_from_slice(target_bytes);
+                                            let target_peer_id = saorsa_gossip_types::PeerId::new(target_array);
+
+                                            debug!(
+                                                "Relay: forwarding message to {} (from {})",
+                                                hex::encode(&target_bytes[..4]),
+                                                hex::encode(from.as_bytes())[..8].to_string()
+                                            );
+
+                                            // Forward the UNWRAPPED payload (not the relay header again)
+                                            // Clone data before moving into async block
+                                            let forward_data = actual_data.to_vec();
+                                            let epidemic_gossip_clone = Arc::clone(&epidemic_gossip);
+                                            tokio::spawn(async move {
+                                                if let Err(e) = epidemic_gossip_clone.send_to_peer(target_peer_id, forward_data).await {
+                                                    debug!("Relay forward failed: {}", e);
+                                                }
+                                            });
+                                        }
+                                    } else if let Ok(announcement) = GossipPeerAnnouncement::from_bytes(&payload) {
+                                        // Process epidemic gossip message (peer announcement)
                                         let peer_id_hex = &announcement.peer.peer_id;
                                         debug!(
                                             "Epidemic: received announcement from {} for peer {}",
@@ -1976,6 +2023,7 @@ impl TestNode {
         let epidemic_gossip = Arc::clone(&self.epidemic_gossip);
         let full_mesh_probes = Arc::clone(&self.full_mesh_probes);
         let quic_peer_id = self.peer_id.clone(); // Fallback if transport not ready
+        let event_tx = self.event_tx.clone();
 
         tokio::spawn(async move {
             let probe_interval = Duration::from_secs(60);
@@ -2096,10 +2144,11 @@ impl TestNode {
                         let probe_data = b"PROBE".to_vec();
                         let start = Instant::now();
 
-                        // Try to send probe via gossip transport
+                        // Try to send probe via gossip transport WITH RELAY FALLBACK
+                        // This ensures we can reach peers even when direct NAT traversal fails
                         let (reachable, rtt_ms) = match tokio::time::timeout(
                             Duration::from_secs(5),
-                            epidemic_gossip.send_to_peer(gossip_peer_id, probe_data),
+                            epidemic_gossip.send_to_peer_with_relay(gossip_peer_id, probe_data),
                         )
                         .await
                         {
@@ -2109,7 +2158,7 @@ impl TestNode {
                             }
                             Ok(Err(e)) => {
                                 debug!(
-                                    "Full-mesh probe: failed to reach {}: {}",
+                                    "Full-mesh probe: failed to reach {} (direct+relay): {}",
                                     &peer_id_hex[..8.min(peer_id_hex.len())],
                                     e
                                 );
@@ -2117,7 +2166,7 @@ impl TestNode {
                             }
                             Err(_) => {
                                 debug!(
-                                    "Full-mesh probe: timeout reaching {}",
+                                    "Full-mesh probe: timeout reaching {} (direct+relay)",
                                     &peer_id_hex[..8.min(peer_id_hex.len())]
                                 );
                                 (false, None)
@@ -2137,6 +2186,8 @@ impl TestNode {
                             result.reachable = true;
                             result.rtt_ms = rtt_ms;
                             result.success_count += 1;
+                            // Mark peer as seen (successful probe proves they're alive)
+                            let _ = event_tx.try_send(TuiEvent::PeerSeen(peer_id_hex.clone()));
                         } else {
                             result.failure_count += 1;
                             // Only mark as unreachable after multiple failures
