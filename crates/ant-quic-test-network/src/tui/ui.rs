@@ -236,12 +236,12 @@ fn draw_stats(frame: &mut Frame, app: &App, area: Rect) {
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::Magenta));
 
-    // Current reachability: connected peers / (peers seen)
-    // This is more meaningful than registry count since it shows nodes we've actually communicated with
-    let connected_peers = app.connected_peers.len();
-    let peers_seen = app.peers_seen_count().max(1);
-    let reachability = if peers_seen > 0 {
-        (connected_peers as f64 / peers_seen as f64) * 100.0
+    // Use SWIM liveness for reachability - this is the most accurate measure
+    // SWIM probes peers continuously and provides reliable alive/suspect/dead status
+    let alive = app.stats.swim_alive;
+    let total_known = alive + app.stats.swim_suspect + app.stats.swim_dead;
+    let reachability = if total_known > 0 {
+        (alive as f64 / total_known as f64) * 100.0
     } else {
         0.0
     };
@@ -250,19 +250,24 @@ fn draw_stats(frame: &mut Frame, app: &App, area: Rect) {
         Color::Green
     } else if reachability >= 50.0 {
         Color::Yellow
+    } else if total_known == 0 {
+        Color::DarkGray // No peers known yet
     } else {
         Color::Red
     };
 
+    // Connected peers (from gossip transport)
+    let connected_peers = app.connected_peers.len();
+
     let line1 = Line::from(vec![
-        Span::raw("  Connected: "),
+        Span::raw("  SWIM: "),
         Span::styled(
-            format!("{}", connected_peers),
+            format!("{} alive", alive),
             Style::default().fg(Color::Green),
         ),
         Span::raw(" / "),
         Span::styled(
-            format!("{} seen", peers_seen),
+            format!("{} known", total_known),
             Style::default().fg(Color::Cyan),
         ),
         Span::raw(" ("),
@@ -270,16 +275,19 @@ fn draw_stats(frame: &mut Frame, app: &App, area: Rect) {
             format!("{:.0}%", reachability),
             Style::default().fg(success_color),
         ),
-        Span::raw(" reach)  Inbound: "),
+        Span::raw(")  Active: "),
         Span::styled(
-            format!("{}", app.stats.inbound_connections),
+            format!("{}", connected_peers),
             Style::default()
                 .fg(Color::Green)
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::raw("  Outbound: "),
+        Span::raw("  HyParView: "),
         Span::styled(
-            format!("{}", app.stats.outbound_connections),
+            format!(
+                "{}/{}",
+                app.stats.hyparview_active, app.stats.hyparview_passive
+            ),
             Style::default().fg(Color::Cyan),
         ),
     ]);

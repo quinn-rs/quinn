@@ -1858,6 +1858,7 @@ impl TestNode {
         let event_tx = self.event_tx.clone();
         let epidemic_gossip = Arc::clone(&self.epidemic_gossip);
         let our_peer_id_hex = self.peer_id.clone();
+        let bytes_received = Arc::clone(&self.total_bytes_received);
 
         tokio::spawn(async move {
             let mut last_periodic = Instant::now();
@@ -1924,6 +1925,9 @@ impl TestNode {
                                     );
                                 }
                                 EpidemicEvent::MessageReceived { from, topic: _, payload } => {
+                                    // Track bytes received for metrics
+                                    bytes_received.fetch_add(payload.len() as u64, Ordering::Relaxed);
+
                                     // FIRST: Check if this is a relay message that needs forwarding
                                     // Relay format: [RELY:4][TARGET_PEER_ID:32][DATA:...]
                                     if payload.starts_with(b"RELY") && payload.len() >= 36 {
@@ -2145,6 +2149,16 @@ impl TestNode {
                             .map(|p| hex::encode(&p.as_bytes()[..4]))
                             .collect();
                         debug!("SWIM alive peers (first 5): {:?}", preview);
+                    }
+
+                    // Send PeerConnected events for gossip transport connections
+                    // This populates the TUI "CONNECTED PEERS" panel
+                    let connected = epidemic_gossip.connected_peers_with_addresses().await;
+                    for (peer_id, addr) in connected {
+                        let peer_id_hex = hex::encode(peer_id.as_bytes());
+                        let mut peer = ConnectedPeer::new(&peer_id_hex, ConnectionMethod::Direct);
+                        peer.addresses = vec![addr];
+                        let _ = event_tx.try_send(TuiEvent::PeerConnected(peer));
                     }
                 }
 
