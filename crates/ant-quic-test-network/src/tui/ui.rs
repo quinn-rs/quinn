@@ -245,11 +245,17 @@ fn draw_node_info(frame: &mut Frame, app: &App, area: Rect) {
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::Green));
 
-    // Build node info lines
+    // Build node info lines - use peer_id directly for robustness
     let peer_id_display = if app.local_node.peer_id.is_empty() {
         "Generating...".to_string()
     } else {
-        format!("{}...", app.local_node.short_id)
+        // Extract first 8 chars from peer_id directly (short_id should match but this is safer)
+        let short = if app.local_node.peer_id.len() > 8 {
+            &app.local_node.peer_id[..8]
+        } else {
+            &app.local_node.peer_id
+        };
+        format!("{}...", short)
     };
 
     let registration_icon = if app.local_node.registered {
