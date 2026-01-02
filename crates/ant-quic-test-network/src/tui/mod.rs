@@ -66,10 +66,16 @@ pub fn send_tui_event(tx: &mpsc::Sender<TuiEvent>, event: TuiEvent) {
     if let Err(e) = tx.try_send(event) {
         match e {
             mpsc::error::TrySendError::Full(ev) => {
-                warn!("TUI event channel full, dropping event: {:?}", event_name(&ev));
+                warn!(
+                    "TUI event channel full, dropping event: {:?}",
+                    event_name(&ev)
+                );
             }
             mpsc::error::TrySendError::Closed(ev) => {
-                warn!("TUI event channel closed, dropping event: {:?}", event_name(&ev));
+                warn!(
+                    "TUI event channel closed, dropping event: {:?}",
+                    event_name(&ev)
+                );
             }
         }
     }

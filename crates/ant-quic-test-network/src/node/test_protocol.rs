@@ -1071,7 +1071,11 @@ pub struct ConnectBackResponse {
 
 impl ConnectBackResponse {
     /// Create a successful connect-back response.
-    pub fn success(request_id: u64, responder_peer_id: String, connected_address: SocketAddr) -> Self {
+    pub fn success(
+        request_id: u64,
+        responder_peer_id: String,
+        connected_address: SocketAddr,
+    ) -> Self {
         Self {
             magic: GOSSIP_MAGIC,
             request_id,

@@ -8,12 +8,12 @@ mod test_protocol;
 
 pub use client::{GlobalStats, TestNode, TestNodeConfig};
 pub use test_protocol::{
+    // Relay discovery protocol
+    CanYouReachRequest,
     // Connect-back protocol for NAT traversal verification
     ConnectBackRequest,
     ConnectBackResponse,
     GossipMessage,
-    // Relay discovery protocol
-    CanYouReachRequest,
     PeerNetworkInfo,
     RELAY_MAGIC,
     ReachResponse,

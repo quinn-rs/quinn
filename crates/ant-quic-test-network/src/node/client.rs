@@ -808,7 +808,10 @@ impl TestNode {
                                 inbound_peer.location = format!("{} {}", country_flag(&cc), cc);
                             }
 
-                            send_tui_event(&event_tx_for_events, TuiEvent::PeerConnected(inbound_peer));
+                            send_tui_event(
+                                &event_tx_for_events,
+                                TuiEvent::PeerConnected(inbound_peer),
+                            );
                         } else {
                             // Outbound connection - we initiated
                             // Remove from pending since connection completed
@@ -4007,7 +4010,8 @@ impl TestNode {
         let event_tx = self.event_tx.clone();
 
         tokio::spawn(async move {
-            let mut ticker = tokio::time::interval(Duration::from_secs(Self::NAT_CALLBACK_INTERVAL_SECS));
+            let mut ticker =
+                tokio::time::interval(Duration::from_secs(Self::NAT_CALLBACK_INTERVAL_SECS));
 
             while !shutdown.load(Ordering::SeqCst) {
                 ticker.tick().await;
@@ -4047,10 +4051,7 @@ impl TestNode {
                         // Mark that we're testing now
                         tracked.last_nat_test_time = Some(now);
 
-                        test_list.push((
-                            peer_hex.clone(),
-                            tracked.info.addresses.clone(),
-                        ));
+                        test_list.push((peer_hex.clone(), tracked.info.addresses.clone()));
                     }
 
                     test_list
@@ -4068,10 +4069,7 @@ impl TestNode {
 
                 // Send ConnectBackRequest to each eligible peer
                 for (peer_hex, _peer_addrs) in peers_to_test {
-                    let request = ConnectBackRequest::new(
-                        peer_id.clone(),
-                        our_addresses.clone(),
-                    );
+                    let request = ConnectBackRequest::new(peer_id.clone(), our_addresses.clone());
 
                     if let Ok(bytes) = request.to_bytes() {
                         // Decode peer ID
