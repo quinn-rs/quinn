@@ -3030,16 +3030,24 @@ impl TestNode {
                                     );
 
                                     // Send immediate TUI updates for connected peers
-                                    let connected = self.epidemic_gossip.connected_peers_with_addresses().await;
+                                    let connected =
+                                        self.epidemic_gossip.connected_peers_with_addresses().await;
                                     for (peer_id, addr) in connected {
                                         let peer_id_hex = hex::encode(peer_id.as_bytes());
-                                        let mut peer = ConnectedPeer::new(&peer_id_hex, ConnectionMethod::Direct);
+                                        let mut peer = ConnectedPeer::new(
+                                            &peer_id_hex,
+                                            ConnectionMethod::Direct,
+                                        );
                                         peer.addresses = vec![addr];
-                                        send_tui_event(&self.event_tx, TuiEvent::PeerConnected(peer));
+                                        send_tui_event(
+                                            &self.event_tx,
+                                            TuiEvent::PeerConnected(peer),
+                                        );
                                     }
 
                                     // Send immediate SWIM update
-                                    let (alive, suspect, dead) = self.epidemic_gossip.peer_liveness().await;
+                                    let (alive, suspect, dead) =
+                                        self.epidemic_gossip.peer_liveness().await;
                                     let active_view = self.epidemic_gossip.active_view().await;
                                     let passive_view = self.epidemic_gossip.passive_view().await;
                                     let _ = self.event_tx.try_send(TuiEvent::SwimLivenessUpdate {
@@ -3049,7 +3057,11 @@ impl TestNode {
                                         active: active_view.len(),
                                         passive: passive_view.len(),
                                     });
-                                    info!("Sent immediate TUI updates: {} peers connected, SWIM: {} alive", count, alive.len());
+                                    info!(
+                                        "Sent immediate TUI updates: {} peers connected, SWIM: {} alive",
+                                        count,
+                                        alive.len()
+                                    );
                                 }
                                 Err(e) => {
                                     warn!(
