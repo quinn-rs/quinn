@@ -13,7 +13,7 @@ use crate::registry::{
     FullMeshProbeResult, NatStats, NatType, NodeCapabilities, NodeGossipStats, NodeHeartbeat,
     NodeRegistration, PeerInfo, PeerStatus, RegistryClient,
 };
-use crate::tui::{ConnectedPeer, LocalNodeInfo, TuiEvent, country_flag};
+use crate::tui::{ConnectedPeer, LocalNodeInfo, TuiEvent, country_flag, send_tui_event};
 use saorsa_gossip_types::PeerId as GossipPeerId;
 use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
@@ -32,9 +32,9 @@ use ant_quic::crypto::raw_public_keys::key_utils::{
 };
 
 use super::test_protocol::{
-    CanYouReachRequest, GossipMessage, GossipPeerAnnouncement, GossipPeerInfo, PeerListMessage,
-    RELAY_MAGIC, ReachResponse, RelayAckResponse, RelayMessage, RelayPunchMeNowRequest, RelayState,
-    RelayedDataResponse, TestPacket,
+    CanYouReachRequest, ConnectBackResponse, GossipMessage, GossipPeerAnnouncement, GossipPeerInfo,
+    PeerListMessage, RELAY_MAGIC, ReachResponse, RelayAckResponse, RelayMessage,
+    RelayPunchMeNowRequest, RelayState, RelayedDataResponse, TestPacket,
 };
 
 /// Configuration for the test node.
@@ -215,6 +215,16 @@ struct TrackedPeer {
     consecutive_failures: u32,
     /// Connectivity matrix showing all tested paths.
     connectivity: ConnectivityMatrix,
+    /// Whether outbound connection has been verified (we connected to them).
+    outbound_verified: bool,
+    /// Whether inbound connection has been verified (they connected to us - proves NAT traversal!).
+    inbound_verified: bool,
+    /// When we last sent a ConnectBackRequest to this peer.
+    last_nat_test_time: Option<Instant>,
+    /// Whether QUIC transport test succeeded (for dual transport testing).
+    quic_test_success: bool,
+    /// Whether gossip transport test succeeded (for dual transport testing).
+    gossip_test_success: bool,
 }
 
 impl TrackedPeer {
@@ -238,6 +248,12 @@ impl TrackedPeer {
         peer.connected_at = self.connected_at;
         peer.addresses = self.info.addresses.clone();
         peer.connectivity = self.connectivity.clone();
+
+        // NAT traversal verification state
+        peer.outbound_verified = self.outbound_verified;
+        peer.inbound_verified = self.inbound_verified;
+        peer.last_nat_test_time = self.last_nat_test_time;
+        peer.last_connection_time = self.last_activity;
 
         peer
     }
@@ -792,8 +808,7 @@ impl TestNode {
                                 inbound_peer.location = format!("{} {}", country_flag(&cc), cc);
                             }
 
-                            let _ =
-                                event_tx_for_events.try_send(TuiEvent::PeerConnected(inbound_peer));
+                            send_tui_event(&event_tx_for_events, TuiEvent::PeerConnected(inbound_peer));
                         } else {
                             // Outbound connection - we initiated
                             // Remove from pending since connection completed
@@ -856,6 +871,10 @@ impl TestNode {
                                     ..Default::default()
                                 };
 
+                                let (outbound_verified, inbound_verified) = match direction {
+                                    ConnectionDirection::Outbound => (true, false),
+                                    ConnectionDirection::Inbound => (false, true),
+                                };
                                 let tracked = TrackedPeer {
                                     info: peer_info,
                                     method,
@@ -866,6 +885,11 @@ impl TestNode {
                                     sequence: AtomicU64::new(0),
                                     consecutive_failures: 0,
                                     connectivity,
+                                    outbound_verified,
+                                    inbound_verified,
+                                    last_nat_test_time: None,
+                                    quic_test_success: false,
+                                    gossip_test_success: false,
                                 };
 
                                 peers.insert(peer_hex.clone(), tracked);
@@ -972,6 +996,22 @@ impl TestNode {
 
                         // Notify TUI of peer disconnect (non-blocking)
                         let _ = event_tx_for_events.try_send(TuiEvent::RemovePeer(peer_hex));
+                    }
+                    P2pEvent::DataReceived { peer_id, bytes } => {
+                        // P2pEvent::DataReceived is a notification that data was received
+                        // (bytes is the count, not the actual data which must be obtained via recv())
+                        let peer_hex = hex::encode(peer_id.0);
+                        debug!(
+                            "QUIC data notification: {} bytes from {}",
+                            bytes,
+                            &peer_hex[..8.min(peer_hex.len())]
+                        );
+                        // Mark QUIC test as successful for this peer since we received data
+                        let mut peers = connected_peers_for_events.write().await;
+                        if let Some(tracked) = peers.get_mut(&peer_hex) {
+                            tracked.quic_test_success = true;
+                            tracked.last_activity = Instant::now();
+                        }
                     }
                     _ => {}
                 }
@@ -1400,6 +1440,11 @@ impl TestNode {
                                 sequence: AtomicU64::new(0),
                                 consecutive_failures: 0,
                                 connectivity,
+                                outbound_verified: false, // We haven't connected to them yet
+                                inbound_verified: true,   // They connected to us!
+                                last_nat_test_time: None,
+                                quic_test_success: false,
+                                gossip_test_success: false,
                             };
 
                             peers.insert(new_peer_hex.clone(), tracked);
@@ -1480,7 +1525,7 @@ impl TestNode {
                         ConnectionDirection::Inbound,
                     );
                     tui_peer.addresses = vec![addr];
-                    let _ = event_tx.try_send(TuiEvent::PeerConnected(tui_peer));
+                    send_tui_event(&event_tx, TuiEvent::PeerConnected(tui_peer));
                 }
             }
 
@@ -1758,6 +1803,134 @@ impl TestNode {
                                                     gossip_clone.record_success(&peer_id_for_connect);
                                                 }
                                             });
+                                        }
+                                    }
+                                } else if let Ok(msg) = GossipMessage::from_bytes(&data) {
+                                    // Handle ConnectBackRequest and ConnectBackResponse
+                                    match msg {
+                                        GossipMessage::ConnectBackRequest(request) => {
+                                            info!(
+                                                "Received ConnectBackRequest from {} with {} addresses",
+                                                &request.requester_peer_id[..8.min(request.requester_peer_id.len())],
+                                                request.requester_addresses.len()
+                                            );
+
+                                            // Don't connect back to ourselves
+                                            if request.requester_peer_id != peer_id {
+                                                let endpoint_clone = Arc::clone(&endpoint);
+                                                let our_peer_id = peer_id.clone();
+                                                let request_id = request.request_id;
+                                                let requester_id = request.requester_peer_id.clone();
+                                                let addresses = request.requester_addresses.clone();
+
+                                                // Spawn task to attempt connect-back
+                                                tokio::spawn(async move {
+                                                    let mut connected_addr = None;
+                                                    let mut last_error = String::new();
+
+                                                    // Try each address with a short timeout
+                                                    for addr in &addresses {
+                                                        match tokio::time::timeout(
+                                                            Duration::from_secs(5),
+                                                            endpoint_clone.connect(*addr),
+                                                        ).await {
+                                                            Ok(Ok(_)) => {
+                                                                info!(
+                                                                    "ConnectBack: successfully connected to {} at {}",
+                                                                    &requester_id[..8.min(requester_id.len())],
+                                                                    addr
+                                                                );
+                                                                connected_addr = Some(*addr);
+                                                                break;
+                                                            }
+                                                            Ok(Err(e)) => {
+                                                                debug!(
+                                                                    "ConnectBack: failed to connect to {} at {}: {}",
+                                                                    &requester_id[..8.min(requester_id.len())],
+                                                                    addr,
+                                                                    e
+                                                                );
+                                                                last_error = e.to_string();
+                                                            }
+                                                            Err(_) => {
+                                                                debug!(
+                                                                    "ConnectBack: timeout connecting to {} at {}",
+                                                                    &requester_id[..8.min(requester_id.len())],
+                                                                    addr
+                                                                );
+                                                                last_error = "connection timeout".to_string();
+                                                            }
+                                                        }
+                                                    }
+
+                                                    // Send response back via the existing connection
+                                                    let response = if let Some(addr) = connected_addr {
+                                                        ConnectBackResponse::success(
+                                                            request_id,
+                                                            our_peer_id.clone(),
+                                                            addr,
+                                                        )
+                                                    } else {
+                                                        ConnectBackResponse::failure(
+                                                            request_id,
+                                                            our_peer_id.clone(),
+                                                            last_error,
+                                                        )
+                                                    };
+
+                                                    // Try to send response to requester
+                                                    if let Ok(bytes) = response.to_bytes() {
+                                                        if let Ok(requester_bytes) = hex::decode(&requester_id) {
+                                                            if requester_bytes.len() == 32 {
+                                                                let mut arr = [0u8; 32];
+                                                                arr.copy_from_slice(&requester_bytes);
+                                                                let peer = ant_quic::PeerId(arr);
+                                                                if let Err(e) = endpoint_clone.send(&peer, &bytes).await {
+                                                                    debug!("Failed to send ConnectBackResponse: {}", e);
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                });
+                                            }
+                                        }
+                                        GossipMessage::ConnectBackResponse(response) => {
+                                            if response.success {
+                                                info!(
+                                                    "Received ConnectBackResponse: {} successfully connected to us at {:?}",
+                                                    &response.responder_peer_id[..8.min(response.responder_peer_id.len())],
+                                                    response.connected_address
+                                                );
+
+                                                // Mark inbound verified for this peer in TUI
+                                                let _ = event_tx.try_send(TuiEvent::Info(format!(
+                                                    "NAT verified: {} connected back to us",
+                                                    &response.responder_peer_id[..8.min(response.responder_peer_id.len())]
+                                                )));
+
+                                                // Update the peer's inbound_verified status
+                                                let responder_id = response.responder_peer_id.clone();
+                                                let connected_peers_clone = Arc::clone(&connected_peers);
+                                                tokio::spawn(async move {
+                                                    let mut peers = connected_peers_clone.write().await;
+                                                    if let Some(tracked) = peers.get_mut(&responder_id) {
+                                                        tracked.inbound_verified = true;
+                                                        debug!(
+                                                            "Marked {} as inbound verified",
+                                                            &responder_id[..8.min(responder_id.len())]
+                                                        );
+                                                    }
+                                                });
+                                            } else {
+                                                debug!(
+                                                    "ConnectBackResponse failed from {}: {:?}",
+                                                    &response.responder_peer_id[..8.min(response.responder_peer_id.len())],
+                                                    response.error
+                                                );
+                                            }
+                                        }
+                                        _ => {
+                                            // Already handled above (PeerList, PeerAnnouncement)
                                         }
                                     }
                                 }
@@ -2180,7 +2353,7 @@ impl TestNode {
                         let peer_id_hex = hex::encode(peer_id.as_bytes());
                         let mut peer = ConnectedPeer::new(&peer_id_hex, ConnectionMethod::Direct);
                         peer.addresses = vec![addr];
-                        let _ = event_tx.try_send(TuiEvent::PeerConnected(peer));
+                        send_tui_event(&event_tx, TuiEvent::PeerConnected(peer));
                     }
                 }
 
@@ -2662,6 +2835,7 @@ impl TestNode {
         let accept_handle = self.spawn_accept_loop();
         let epidemic_handle = self.spawn_epidemic_gossip_loop();
         let probe_handle = self.spawn_connectivity_probe_loop();
+        let nat_callback_handle = self.spawn_nat_callback_loop();
 
         // Announce ourselves to gossip network
         self.announce_to_gossip().await;
@@ -2683,6 +2857,7 @@ impl TestNode {
         accept_handle.abort();
         epidemic_handle.abort();
         probe_handle.abort();
+        nat_callback_handle.abort();
 
         // Save peer cache and shutdown gossip integration
         if let Err(e) = self.gossip_integration.save_cache() {
@@ -3444,6 +3619,11 @@ impl TestNode {
                                 sequence: AtomicU64::new(0),
                                 consecutive_failures: 0,
                                 connectivity: result.matrix,
+                                outbound_verified: true, // We connected to them
+                                inbound_verified: false, // They haven't connected to us yet
+                                last_nat_test_time: None,
+                                quic_test_success: false,
+                                gossip_test_success: false,
                             };
 
                             let peer_for_tui = tracked.to_connected_peer();
@@ -3460,7 +3640,7 @@ impl TestNode {
                                 peer_for_tui.connectivity_summary()
                             );
 
-                            let _ = event_tx.try_send(TuiEvent::PeerConnected(peer_for_tui));
+                            send_tui_event(&event_tx, TuiEvent::PeerConnected(peer_for_tui));
 
                             // Report successful connection to registry
                             let report = ConnectionReport {
@@ -3526,6 +3706,11 @@ impl TestNode {
                                     sequence: AtomicU64::new(0),
                                     consecutive_failures: 0,
                                     connectivity: matrix.clone(),
+                                    outbound_verified: true, // We connected via relay
+                                    inbound_verified: false, // They haven't connected to us yet
+                                    last_nat_test_time: None,
+                                    quic_test_success: false,
+                                    gossip_test_success: false,
                                 };
 
                                 let peer_for_tui = tracked.to_connected_peer();
@@ -3541,7 +3726,7 @@ impl TestNode {
                                     peer_for_tui.connectivity_summary()
                                 );
 
-                                let _ = event_tx.try_send(TuiEvent::PeerConnected(peer_for_tui));
+                                send_tui_event(&event_tx, TuiEvent::PeerConnected(peer_for_tui));
 
                                 // Report relayed connection to registry
                                 let report = ConnectionReport {
@@ -3596,6 +3781,8 @@ impl TestNode {
     }
 
     /// Spawn the test traffic background task.
+    ///
+    /// Uses DUAL TRANSPORT testing: sends test packets via BOTH gossip and QUIC transports.
     fn spawn_test_loop(&self) -> tokio::task::JoinHandle<()> {
         let shutdown = Arc::clone(&self.shutdown);
         let connected_peers = Arc::clone(&self.connected_peers);
@@ -3606,6 +3793,8 @@ impl TestNode {
         let total_received = Arc::clone(&self.total_bytes_received);
         // Use gossip transport for test packets (uses configured gossip_port)
         let gossip = Arc::clone(&self.epidemic_gossip);
+        // Use QUIC transport for dual transport testing
+        let endpoint = Arc::clone(&self.endpoint);
 
         tokio::spawn(async move {
             let mut ticker = tokio::time::interval(interval);
@@ -3631,42 +3820,57 @@ impl TestNode {
                     let packet = TestPacket::new_ping(our_peer_id_bytes, seq);
                     let packet_size = packet.size() as u64;
 
-                    // Perform test packet exchange via gossip transport
-                    // This bypasses P2pEndpoint's random ports blocked by firewall
-                    let result = gossip_test_exchange(&gossip, &peer_id, &packet).await;
+                    // === DUAL TRANSPORT TESTING ===
+                    // Test 1: Gossip transport (saorsa-gossip)
+                    let gossip_result = gossip_test_exchange(&gossip, &peer_id, &packet).await;
+
+                    // Test 2: QUIC transport (P2pEndpoint)
+                    // The response is handled asynchronously via P2pEvent::DataReceived
+                    let quic_result = quic_test_exchange(&endpoint, &peer_id, &packet).await;
 
                     // Now briefly acquire lock to update stats
-                    let success = result.is_ok();
-                    let rtt_for_tui = result.as_ref().ok().copied();
+                    let gossip_success = gossip_result.is_ok();
+                    let rtt_for_tui = gossip_result.as_ref().ok().copied();
 
                     {
                         let mut peers = connected_peers.write().await;
                         if let Some(tracked) = peers.get_mut(&peer_id) {
-                            match &result {
-                                Ok(rtt) => {
-                                    tracked.stats.tests_success += 1;
+                            // Track gossip transport success
+                            if gossip_success {
+                                tracked.gossip_test_success = true;
+                                tracked.stats.tests_success += 1;
+                                if let Ok(rtt) = &gossip_result {
                                     tracked.stats.total_rtt_ms += rtt.as_millis() as u64;
                                     tracked.stats.last_rtt = Some(*rtt);
-                                    tracked.stats.packets_sent += 1;
-                                    tracked.stats.packets_received += 1;
-                                    tracked.last_activity = Instant::now();
-                                    tracked.consecutive_failures = 0; // Reset on success
-
-                                    total_sent.fetch_add(packet_size, Ordering::Relaxed);
-                                    total_received.fetch_add(packet_size, Ordering::Relaxed);
-
-                                    debug!(
-                                        "REAL test packet sent to {} ({} bytes, RTT: {:?})",
-                                        &peer_id[..8],
-                                        packet_size,
-                                        rtt
-                                    );
                                 }
-                                Err(e) => {
-                                    tracked.stats.tests_failed += 1;
-                                    tracked.consecutive_failures += 1;
-                                    warn!("Test packet to {} failed: {}", &peer_id[..8], e);
-                                }
+                                tracked.stats.packets_sent += 1;
+                                tracked.stats.packets_received += 1;
+                                tracked.last_activity = Instant::now();
+                                tracked.consecutive_failures = 0; // Reset on success
+
+                                total_sent.fetch_add(packet_size, Ordering::Relaxed);
+                                total_received.fetch_add(packet_size, Ordering::Relaxed);
+
+                                debug!(
+                                    "GOSSIP test packet sent to {} ({} bytes, RTT: {:?})",
+                                    &peer_id[..8],
+                                    packet_size,
+                                    gossip_result.as_ref().ok()
+                                );
+                            } else if let Err(e) = &gossip_result {
+                                tracked.stats.tests_failed += 1;
+                                tracked.consecutive_failures += 1;
+                                warn!("Gossip test packet to {} failed: {}", &peer_id[..8], e);
+                            }
+
+                            // Track QUIC transport success (send only - response via DataReceived)
+                            if quic_result.is_ok() {
+                                debug!(
+                                    "QUIC test packet sent to {} (awaiting pong)",
+                                    &peer_id[..8]
+                                );
+                            } else if let Err(e) = &quic_result {
+                                debug!("QUIC test packet to {} failed: {}", &peer_id[..8], e);
                             }
                         }
                     } // Lock released here before TUI update
@@ -3674,7 +3878,7 @@ impl TestNode {
                     // Update TUI outside the lock (non-blocking)
                     let _ = event_tx.try_send(TuiEvent::TestPacketResult {
                         peer_id: peer_id.clone(),
-                        success,
+                        success: gossip_success,
                         rtt: rtt_for_tui,
                     });
                 }
@@ -3779,6 +3983,123 @@ impl TestNode {
                         reason,
                         peers.len()
                     );
+                }
+            }
+        })
+    }
+
+    /// Interval for NAT callback testing (45 seconds - longer than 30-second rule).
+    const NAT_CALLBACK_INTERVAL_SECS: u64 = 45;
+
+    /// Spawn a loop that periodically sends ConnectBackRequests to verify NAT traversal.
+    ///
+    /// This implements the 30-second rule: only request connect-back from peers
+    /// that haven't had any connection activity for 30+ seconds, ensuring we're
+    /// testing fresh NAT traversal rather than reusing existing holes.
+    fn spawn_nat_callback_loop(&self) -> tokio::task::JoinHandle<()> {
+        use super::test_protocol::ConnectBackRequest;
+
+        let shutdown = Arc::clone(&self.shutdown);
+        let connected_peers = Arc::clone(&self.connected_peers);
+        let endpoint = Arc::clone(&self.endpoint);
+        let external_addresses = Arc::clone(&self.external_addresses);
+        let peer_id = self.peer_id.clone();
+        let event_tx = self.event_tx.clone();
+
+        tokio::spawn(async move {
+            let mut ticker = tokio::time::interval(Duration::from_secs(Self::NAT_CALLBACK_INTERVAL_SECS));
+
+            while !shutdown.load(Ordering::SeqCst) {
+                ticker.tick().await;
+
+                // Get our current external addresses
+                let our_addresses = external_addresses.read().await.clone();
+                if our_addresses.is_empty() {
+                    debug!("NAT callback: No external addresses known, skipping");
+                    continue;
+                }
+
+                // Find peers that need NAT callback testing (30-second rule)
+                let peers_to_test: Vec<(String, Vec<std::net::SocketAddr>)> = {
+                    let mut peers = connected_peers.write().await;
+                    let now = Instant::now();
+                    let mut test_list = Vec::new();
+
+                    for (peer_hex, tracked) in peers.iter_mut() {
+                        // Skip if already inbound verified
+                        if tracked.inbound_verified {
+                            continue;
+                        }
+
+                        // Check 30-second rule: no activity for 30+ seconds
+                        let time_since_activity = now.duration_since(tracked.last_activity);
+                        if time_since_activity.as_secs() < 30 {
+                            continue;
+                        }
+
+                        // Check if we already tested recently (avoid spamming)
+                        if let Some(last_test) = tracked.last_nat_test_time {
+                            if now.duration_since(last_test).as_secs() < 60 {
+                                continue;
+                            }
+                        }
+
+                        // Mark that we're testing now
+                        tracked.last_nat_test_time = Some(now);
+
+                        test_list.push((
+                            peer_hex.clone(),
+                            tracked.info.addresses.clone(),
+                        ));
+                    }
+
+                    test_list
+                };
+
+                if peers_to_test.is_empty() {
+                    debug!("NAT callback: No peers eligible for testing");
+                    continue;
+                }
+
+                info!(
+                    "NAT callback: Testing {} peer(s) for inbound connectivity",
+                    peers_to_test.len()
+                );
+
+                // Send ConnectBackRequest to each eligible peer
+                for (peer_hex, _peer_addrs) in peers_to_test {
+                    let request = ConnectBackRequest::new(
+                        peer_id.clone(),
+                        our_addresses.clone(),
+                    );
+
+                    if let Ok(bytes) = request.to_bytes() {
+                        // Decode peer ID
+                        if let Ok(peer_bytes) = hex::decode(&peer_hex) {
+                            if peer_bytes.len() == 32 {
+                                let mut arr = [0u8; 32];
+                                arr.copy_from_slice(&peer_bytes);
+                                let target_peer = ant_quic::PeerId(arr);
+
+                                if let Err(e) = endpoint.send(&target_peer, &bytes).await {
+                                    debug!(
+                                        "NAT callback: Failed to send ConnectBackRequest to {}: {}",
+                                        &peer_hex[..8.min(peer_hex.len())],
+                                        e
+                                    );
+                                } else {
+                                    debug!(
+                                        "NAT callback: Sent ConnectBackRequest to {}",
+                                        &peer_hex[..8.min(peer_hex.len())]
+                                    );
+                                    let _ = event_tx.try_send(TuiEvent::Info(format!(
+                                        "NAT test: asking {} to connect back",
+                                        &peer_hex[..8.min(peer_hex.len())]
+                                    )));
+                                }
+                            }
+                        }
+                    }
                 }
             }
         })
@@ -4065,6 +4386,45 @@ async fn gossip_test_exchange(
     );
 
     Ok(rtt)
+}
+
+/// Perform test packet exchange via QUIC transport.
+///
+/// This uses the P2pEndpoint QUIC transport, sending directly to the peer.
+/// The response is handled asynchronously via P2pEvent::DataReceived.
+async fn quic_test_exchange(
+    endpoint: &P2pEndpoint,
+    peer_id_hex: &str,
+    packet: &TestPacket,
+) -> Result<(), String> {
+    // Convert hex peer ID to QuicPeerId
+    let peer_id_bytes =
+        hex::decode(peer_id_hex).map_err(|e| format!("Invalid peer ID hex: {}", e))?;
+
+    if peer_id_bytes.len() != 32 {
+        return Err(format!("Peer ID wrong length: {}", peer_id_bytes.len()));
+    }
+
+    let mut peer_id_array = [0u8; 32];
+    peer_id_array.copy_from_slice(&peer_id_bytes);
+    let quic_peer_id = ant_quic::PeerId(peer_id_array);
+
+    // Serialize the test packet
+    let packet_data =
+        serde_json::to_vec(packet).map_err(|e| format!("Failed to serialize packet: {}", e))?;
+
+    // Send via QUIC transport
+    endpoint
+        .send(&quic_peer_id, &packet_data)
+        .await
+        .map_err(|e| format!("QUIC send failed: {}", e))?;
+
+    debug!(
+        "QUIC test packet sent to {}",
+        &peer_id_hex[..8.min(peer_id_hex.len())]
+    );
+
+    Ok(())
 }
 
 // ============================================================================

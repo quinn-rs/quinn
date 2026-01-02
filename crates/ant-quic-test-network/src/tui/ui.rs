@@ -328,6 +328,7 @@ fn draw_peers(frame: &mut Frame, app: &App, area: Rect) {
         Cell::from("Peer").style(Style::default().add_modifier(Modifier::BOLD)),
         Cell::from("Location").style(Style::default().add_modifier(Modifier::BOLD)),
         Cell::from("Dir").style(Style::default().add_modifier(Modifier::BOLD)),
+        Cell::from("NAT").style(Style::default().add_modifier(Modifier::BOLD)), // NAT verification status
         Cell::from("Traffic").style(Style::default().add_modifier(Modifier::BOLD)),
         Cell::from("RTT").style(Style::default().add_modifier(Modifier::BOLD)),
         Cell::from("Quality").style(Style::default().add_modifier(Modifier::BOLD)),
@@ -382,11 +383,29 @@ fn draw_peers(frame: &mut Frame, app: &App, area: Rect) {
             // Quality bar based on RTT
             let quality = peer.quality.as_bar();
 
+            // NAT verification status: shows bidirectional connectivity
+            // ✓✓ = full bidirectional (both outbound and inbound verified)
+            // ✓• = outbound only (we connected to them)
+            // •✓ = inbound only (they connected to us)
+            // •• = neither verified yet
+            let (nat_status, nat_style) = match (peer.outbound_verified, peer.inbound_verified) {
+                (true, true) => (
+                    "✓✓",
+                    Style::default()
+                        .fg(Color::Green)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                (true, false) => ("✓•", Style::default().fg(Color::Cyan)),
+                (false, true) => ("•✓", Style::default().fg(Color::Yellow)),
+                (false, false) => ("••", Style::default().fg(Color::DarkGray)),
+            };
+
             Row::new(vec![
                 Cell::from(method_indicator).style(Style::default().fg(row_color)),
                 Cell::from(peer.short_id.clone()).style(Style::default().fg(row_color)),
                 Cell::from(location),
                 Cell::from(direction_str).style(direction_style),
+                Cell::from(nat_status).style(nat_style),
                 Cell::from(traffic).style(traffic_style),
                 Cell::from(peer.rtt_string()),
                 Cell::from(quality).style(Style::default().fg(row_color)),
@@ -401,6 +420,7 @@ fn draw_peers(frame: &mut Frame, app: &App, area: Rect) {
             Constraint::Length(10), // Peer ID
             Constraint::Length(8),  // Location
             Constraint::Length(5),  // Direction (Out/In)
+            Constraint::Length(3),  // NAT verification status
             Constraint::Length(4),  // Traffic indicator
             Constraint::Length(7),  // RTT
             Constraint::Min(6),     // Quality bar (●●●●●)
@@ -485,7 +505,51 @@ fn draw_stats(frame: &mut Frame, app: &App, area: Rect) {
         ),
     ]);
 
-    let text = vec![line1, line2];
+    // Line 3: Connection attempts and success rate
+    let success_rate = app.stats.success_rate();
+    let rate_color = if success_rate >= 90.0 {
+        Color::Green
+    } else if success_rate >= 70.0 {
+        Color::Yellow
+    } else {
+        Color::Red
+    };
+
+    let line3 = Line::from(vec![
+        Span::raw("  Connections: "),
+        Span::styled(
+            format!("{}", app.stats.connection_attempts),
+            Style::default().fg(Color::White),
+        ),
+        Span::styled(" total ", Style::default().fg(Color::DarkGray)),
+        Span::styled(
+            format!("{}", app.stats.connection_successes),
+            Style::default().fg(Color::Green),
+        ),
+        Span::styled("✓ ", Style::default().fg(Color::DarkGray)),
+        Span::styled(
+            format!("{}", app.stats.connection_failures),
+            Style::default().fg(Color::Red),
+        ),
+        Span::styled("✗", Style::default().fg(Color::DarkGray)),
+        Span::raw("    Success: "),
+        Span::styled(
+            format!("{:.1}%", success_rate),
+            Style::default().fg(rate_color).add_modifier(Modifier::BOLD),
+        ),
+        Span::raw("    Inbound: "),
+        Span::styled(
+            format!("{}", app.stats.inbound_connections),
+            Style::default().fg(Color::Cyan),
+        ),
+        Span::raw(" Outbound: "),
+        Span::styled(
+            format!("{}", app.stats.outbound_connections),
+            Style::default().fg(Color::Blue),
+        ),
+    ]);
+
+    let text = vec![line1, line2, line3];
     let paragraph = Paragraph::new(text).block(block);
     frame.render_widget(paragraph, area);
 }

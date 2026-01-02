@@ -880,6 +880,10 @@ pub enum GossipMessage {
     PeerList(PeerListMessage),
     /// Single peer announcement - notify about a new peer.
     PeerAnnouncement(GossipPeerAnnouncement),
+    /// Request a peer to connect back to us (for NAT traversal verification).
+    ConnectBackRequest(ConnectBackRequest),
+    /// Response to a connect-back request.
+    ConnectBackResponse(ConnectBackResponse),
 }
 
 /// A list of known peers to share via gossip.
@@ -946,9 +950,7 @@ impl PeerListMessage {
         let msg: GossipMessage = serde_json::from_slice(bytes)?;
         match msg {
             GossipMessage::PeerList(list) => Ok(list),
-            GossipMessage::PeerAnnouncement(_) => Err(serde::de::Error::custom(
-                "Expected PeerList, got PeerAnnouncement",
-            )),
+            _ => Err(serde::de::Error::custom("Expected PeerList")),
         }
     }
 }
@@ -976,9 +978,7 @@ impl GossipPeerAnnouncement {
         let msg: GossipMessage = serde_json::from_slice(bytes)?;
         match msg {
             GossipMessage::PeerAnnouncement(announcement) => Ok(announcement),
-            GossipMessage::PeerList(_) => Err(serde::de::Error::custom(
-                "Expected PeerAnnouncement, got PeerList",
-            )),
+            _ => Err(serde::de::Error::custom("Expected PeerAnnouncement")),
         }
     }
 
@@ -994,6 +994,111 @@ impl GossipPeerAnnouncement {
             timestamp_ms: self.timestamp_ms,
             ttl: self.ttl - 1,
         })
+    }
+}
+
+// ============================================================================
+// Connect-Back Protocol for NAT Traversal Verification
+// ============================================================================
+//
+// This protocol enables bidirectional NAT traversal testing. When node A wants
+// to verify that other nodes can connect BACK to it (proving NAT hole is open),
+// it sends a ConnectBackRequest via gossip. The receiving node attempts to
+// establish a QUIC connection to the requester's addresses.
+//
+// The 30-second rule: Only send connect-back requests to peers that haven't
+// had a connection (in either direction) for at least 30 seconds. This ensures
+// we're testing a fresh NAT traversal rather than reusing an existing hole.
+//
+// Flow:
+// 1. A hasn't had any connection with B for 30+ seconds
+// 2. A sends ConnectBackRequest to B via gossip (includes A's external addresses)
+// 3. B attempts to connect to A's addresses
+// 4. B sends ConnectBackResponse with the result
+// 5. If successful, A's inbound NAT traversal is verified!
+
+/// Request a peer to connect back to us for NAT traversal verification.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConnectBackRequest {
+    /// Magic bytes for protocol identification.
+    pub magic: [u8; 4],
+    /// Unique request ID for correlation.
+    pub request_id: u64,
+    /// Requester's peer ID (hex-encoded).
+    pub requester_peer_id: String,
+    /// Requester's external addresses to connect to.
+    pub requester_addresses: Vec<SocketAddr>,
+    /// Timestamp when this request was created.
+    pub timestamp_ms: u64,
+}
+
+impl ConnectBackRequest {
+    /// Create a new connect-back request.
+    pub fn new(requester_peer_id: String, requester_addresses: Vec<SocketAddr>) -> Self {
+        Self {
+            magic: GOSSIP_MAGIC,
+            request_id: current_timestamp_ns(),
+            requester_peer_id,
+            requester_addresses,
+            timestamp_ms: current_timestamp_ns() / 1_000_000,
+        }
+    }
+
+    /// Serialize to bytes.
+    pub fn to_bytes(&self) -> Result<Vec<u8>, serde_json::Error> {
+        serde_json::to_vec(&GossipMessage::ConnectBackRequest(self.clone()))
+    }
+}
+
+/// Response to a connect-back request.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConnectBackResponse {
+    /// Magic bytes for protocol identification.
+    pub magic: [u8; 4],
+    /// Request ID this responds to.
+    pub request_id: u64,
+    /// Responder's peer ID (hex-encoded).
+    pub responder_peer_id: String,
+    /// Whether the connect-back attempt succeeded.
+    pub success: bool,
+    /// The address we successfully connected to (if success).
+    pub connected_address: Option<SocketAddr>,
+    /// Error message if connect-back failed.
+    pub error: Option<String>,
+    /// Timestamp when this response was created.
+    pub timestamp_ms: u64,
+}
+
+impl ConnectBackResponse {
+    /// Create a successful connect-back response.
+    pub fn success(request_id: u64, responder_peer_id: String, connected_address: SocketAddr) -> Self {
+        Self {
+            magic: GOSSIP_MAGIC,
+            request_id,
+            responder_peer_id,
+            success: true,
+            connected_address: Some(connected_address),
+            error: None,
+            timestamp_ms: current_timestamp_ns() / 1_000_000,
+        }
+    }
+
+    /// Create a failed connect-back response.
+    pub fn failure(request_id: u64, responder_peer_id: String, error: String) -> Self {
+        Self {
+            magic: GOSSIP_MAGIC,
+            request_id,
+            responder_peer_id,
+            success: false,
+            connected_address: None,
+            error: Some(error),
+            timestamp_ms: current_timestamp_ns() / 1_000_000,
+        }
+    }
+
+    /// Serialize to bytes.
+    pub fn to_bytes(&self) -> Result<Vec<u8>, serde_json::Error> {
+        serde_json::to_vec(&GossipMessage::ConnectBackResponse(self.clone()))
     }
 }
 

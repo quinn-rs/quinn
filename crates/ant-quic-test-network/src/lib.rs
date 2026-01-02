@@ -75,7 +75,7 @@ pub use registry::{
 
 pub use tui::{
     App, AppState, ConnectedPeer, ConnectionQuality, InputEvent, LocalNodeInfo, NetworkStatistics,
-    TuiConfig, TuiEvent, run_tui,
+    TuiConfig, TuiEvent, run_tui, send_tui_event,
 };
 
 pub use node::{GlobalStats, TestNode, TestNodeConfig, TestPacket, TestResult};

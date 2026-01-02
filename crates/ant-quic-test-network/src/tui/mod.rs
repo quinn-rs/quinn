@@ -56,6 +56,53 @@ use ratatui::{Terminal, backend::CrosstermBackend};
 use std::io;
 use std::time::Duration;
 use tokio::sync::mpsc;
+use tracing::warn;
+
+/// Send a TUI event, logging if the channel is full.
+///
+/// This is a helper to replace bare `try_send()` calls that silently drop events.
+/// Critical events like `PeerConnected` should use this function.
+pub fn send_tui_event(tx: &mpsc::Sender<TuiEvent>, event: TuiEvent) {
+    if let Err(e) = tx.try_send(event) {
+        match e {
+            mpsc::error::TrySendError::Full(ev) => {
+                warn!("TUI event channel full, dropping event: {:?}", event_name(&ev));
+            }
+            mpsc::error::TrySendError::Closed(ev) => {
+                warn!("TUI event channel closed, dropping event: {:?}", event_name(&ev));
+            }
+        }
+    }
+}
+
+/// Get a short name for the event type (for logging).
+fn event_name(event: &TuiEvent) -> &'static str {
+    match event {
+        TuiEvent::UpdateLocalNode(_) => "UpdateLocalNode",
+        TuiEvent::UpdatePeer(_) => "UpdatePeer",
+        TuiEvent::RemovePeer(_) => "RemovePeer",
+        TuiEvent::UpdateRegisteredCount(_) => "UpdateRegisteredCount",
+        TuiEvent::PacketSent(_) => "PacketSent",
+        TuiEvent::PacketReceived(_) => "PacketReceived",
+        TuiEvent::RegistrationUpdated(_) => "RegistrationUpdated",
+        TuiEvent::HeartbeatSent => "HeartbeatSent",
+        TuiEvent::Error(_) => "Error",
+        TuiEvent::Info(_) => "Info",
+        TuiEvent::ClearMessages => "ClearMessages",
+        TuiEvent::Quit => "Quit",
+        TuiEvent::RegistrationComplete => "RegistrationComplete",
+        TuiEvent::PeerConnected(_) => "PeerConnected",
+        TuiEvent::TestPacketResult { .. } => "TestPacketResult",
+        TuiEvent::ConnectionFailed => "ConnectionFailed",
+        TuiEvent::ConnectionAttempted => "ConnectionAttempted",
+        TuiEvent::InboundConnection => "InboundConnection",
+        TuiEvent::OutboundConnection => "OutboundConnection",
+        TuiEvent::GossipPeerDiscovered { .. } => "GossipPeerDiscovered",
+        TuiEvent::GossipRelayDiscovered { .. } => "GossipRelayDiscovered",
+        TuiEvent::PeerSeen(_) => "PeerSeen",
+        TuiEvent::SwimLivenessUpdate { .. } => "SwimLivenessUpdate",
+    }
+}
 
 /// Events that can be sent to the TUI from other parts of the application.
 #[derive(Debug, Clone)]

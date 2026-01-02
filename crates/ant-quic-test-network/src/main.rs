@@ -185,7 +185,8 @@ async fn main() -> anyhow::Result<()> {
         println!("\"We will be legion!!\"");
 
         // Create event channel for TUI updates
-        let (event_tx, event_rx) = mpsc::channel::<TuiEvent>(100);
+        // Use large capacity (1000) to prevent event drops during high activity periods
+        let (event_tx, event_rx) = mpsc::channel::<TuiEvent>(1000);
 
         // Create TUI application
         let app = App::new();

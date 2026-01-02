@@ -67,13 +67,15 @@ pub enum TrafficDirection {
 pub struct ConnectedPeer {
     /// Short peer ID (first 8 chars)
     pub short_id: String,
-    /// Full peer ID
+    /// Full peer ID (QUIC PeerId hex - canonical identifier)
     pub full_id: String,
+    /// Gossip peer ID (BLAKE3 hash) - for gossip transport correlation
+    pub gossip_peer_id: Option<String>,
     /// Country code with flag emoji
     pub location: String,
     /// Connection method used
     pub method: ConnectionMethod,
-    /// Connection direction (who initiated)
+    /// Connection direction (who initiated the current/most recent connection)
     pub direction: ConnectionDirection,
     /// Current RTT measurement
     pub rtt: Option<Duration>,
@@ -93,6 +95,14 @@ pub struct ConnectedPeer {
     pub addresses: Vec<SocketAddr>,
     /// Connectivity matrix showing all tested paths
     pub connectivity: ConnectivityMatrix,
+    /// Outbound connection verified (we successfully connected to them)
+    pub outbound_verified: bool,
+    /// Inbound connection verified (they successfully connected to us - proves NAT traversal!)
+    pub inbound_verified: bool,
+    /// When we last tested NAT traversal with this peer
+    pub last_nat_test_time: Option<Instant>,
+    /// Last time we had a connection to/from this peer (for 30-second rule)
+    pub last_connection_time: Instant,
 }
 
 impl ConnectedPeer {
@@ -113,9 +123,16 @@ impl ConnectedPeer {
             peer_id.to_string()
         };
 
+        let now = Instant::now();
+        let (outbound_verified, inbound_verified) = match direction {
+            ConnectionDirection::Outbound => (true, false),
+            ConnectionDirection::Inbound => (false, true),
+        };
+
         Self {
             short_id,
             full_id: peer_id.to_string(),
+            gossip_peer_id: None,
             location: "??".to_string(),
             method,
             direction,
@@ -125,10 +142,42 @@ impl ConnectedPeer {
             rx_active: false,
             packets_sent: 0,
             packets_received: 0,
-            connected_at: Instant::now(),
+            connected_at: now,
             addresses: Vec::new(),
             connectivity: ConnectivityMatrix::default(),
+            outbound_verified,
+            inbound_verified,
+            last_nat_test_time: None,
+            last_connection_time: now,
         }
+    }
+
+    /// Set the gossip peer ID for correlation.
+    pub fn set_gossip_peer_id(&mut self, gossip_id: &str) {
+        self.gossip_peer_id = Some(gossip_id.to_string());
+    }
+
+    /// Mark that outbound connection was verified (we connected to them).
+    pub fn mark_outbound_verified(&mut self) {
+        self.outbound_verified = true;
+        self.last_connection_time = Instant::now();
+    }
+
+    /// Mark that inbound connection was verified (they connected to us).
+    pub fn mark_inbound_verified(&mut self) {
+        self.inbound_verified = true;
+        self.last_connection_time = Instant::now();
+    }
+
+    /// Check if NAT traversal is fully verified (both directions tested).
+    pub fn is_nat_verified(&self) -> bool {
+        self.outbound_verified && self.inbound_verified
+    }
+
+    /// Check if this peer is eligible for a NAT callback test (30-second rule).
+    /// Returns true if we haven't had a connection for 30+ seconds.
+    pub fn needs_nat_callback_test(&self) -> bool {
+        self.last_connection_time.elapsed() > Duration::from_secs(30)
     }
 
     /// Update RTT measurement.
