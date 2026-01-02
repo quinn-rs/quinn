@@ -2247,11 +2247,13 @@ impl TestNode {
         let event_tx = self.event_tx.clone();
 
         tokio::spawn(async move {
-            let report_interval = Duration::from_secs(30);
+            // Report every 5 seconds for real-time TUI updates
+            let report_interval = Duration::from_secs(5);
 
-            // Wait for gossip layer to stabilize
-            tokio::time::sleep(Duration::from_secs(15)).await;
+            // Wait only 3 seconds for initial gossip connections
+            tokio::time::sleep(Duration::from_secs(3)).await;
 
+            // Force immediate first report
             let mut last_report = Instant::now() - report_interval;
 
             loop {
@@ -3026,6 +3028,28 @@ impl TestNode {
                                         "Epidemic gossip joined HyParView overlay with {} peers",
                                         count
                                     );
+
+                                    // Send immediate TUI updates for connected peers
+                                    let connected = self.epidemic_gossip.connected_peers_with_addresses().await;
+                                    for (peer_id, addr) in connected {
+                                        let peer_id_hex = hex::encode(peer_id.as_bytes());
+                                        let mut peer = ConnectedPeer::new(&peer_id_hex, ConnectionMethod::Direct);
+                                        peer.addresses = vec![addr];
+                                        send_tui_event(&self.event_tx, TuiEvent::PeerConnected(peer));
+                                    }
+
+                                    // Send immediate SWIM update
+                                    let (alive, suspect, dead) = self.epidemic_gossip.peer_liveness().await;
+                                    let active_view = self.epidemic_gossip.active_view().await;
+                                    let passive_view = self.epidemic_gossip.passive_view().await;
+                                    let _ = self.event_tx.try_send(TuiEvent::SwimLivenessUpdate {
+                                        alive: alive.len(),
+                                        suspect: suspect.len(),
+                                        dead: dead.len(),
+                                        active: active_view.len(),
+                                        passive: passive_view.len(),
+                                    });
+                                    info!("Sent immediate TUI updates: {} peers connected, SWIM: {} alive", count, alive.len());
                                 }
                                 Err(e) => {
                                     warn!(
