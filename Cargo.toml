@@ -6,7 +6,7 @@ members = [
 
 [package]
 name = "ant-quic"
-version = "0.14.137"
+version = "0.14.138"
 edition = "2024"
 rust-version = "1.85.0"
 license = "MIT OR Apache-2.0"
@@ -360,3 +360,7 @@ strip = "symbols"
 split-debuginfo = "off"
 # Use LTO to reduce binary size and avoid PDB size issues
 lto = "thin"
+
+# Patch crates.io dependencies to use local version
+[patch.crates-io]
+ant-quic = { path = "." }
