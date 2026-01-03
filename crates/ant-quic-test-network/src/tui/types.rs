@@ -285,11 +285,7 @@ impl LocalNodeInfo {
 
     /// Get registration status string.
     pub fn registration_status(&self) -> &'static str {
-        if self.registered {
-            "✓"
-        } else {
-            "✗"
-        }
+        if self.registered { "✓" } else { "✗" }
     }
 
     /// Get last heartbeat string.
@@ -909,10 +905,7 @@ impl NatTypeAnalytics {
 
     pub fn record_connection_method(&mut self, nat_type: NatType, method: ConnectionMethod) {
         let key = format!("{:?}", nat_type);
-        let stats = self
-            .connection_methods_by_nat_type
-            .entry(key)
-            .or_default();
+        let stats = self.connection_methods_by_nat_type.entry(key).or_default();
 
         match method {
             ConnectionMethod::Direct => stats.direct += 1,

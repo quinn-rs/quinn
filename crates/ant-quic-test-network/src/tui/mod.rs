@@ -43,8 +43,9 @@ mod ui;
 
 pub use app::{App, AppState, InputEvent};
 pub use types::{
-    CacheHealth, ConnectedPeer, ConnectionQuality, FrameDirection, GeographicDistribution, LocalNodeInfo, NatTypeAnalytics, NatTraversalPhase, 
-    NetworkStatistics, ProtocolFrame, TrafficDirection, TrafficType, country_flag,
+    CacheHealth, ConnectedPeer, ConnectionQuality, FrameDirection, GeographicDistribution,
+    LocalNodeInfo, NatTraversalPhase, NatTypeAnalytics, NetworkStatistics, ProtocolFrame,
+    TrafficDirection, TrafficType, country_flag,
 };
 
 use crossterm::{
