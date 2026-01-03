@@ -40,8 +40,18 @@ echo "Bumping version: $CURRENT -> $NEW"
 # Update Cargo.toml (macOS compatible)
 if [[ "$OSTYPE" == "darwin"* ]]; then
     sed -i '' "s/^version = \"${CURRENT}\"/version = \"${NEW}\"/" Cargo.toml
+    for SUBCRATE in crates/*/Cargo.toml; do
+        if [ -f "$SUBCRATE" ]; then
+            sed -i '' "s/^version = \"${CURRENT}\"/version = \"${NEW}\"/" "$SUBCRATE"
+        fi
+    done
 else
     sed -i "s/^version = \"${CURRENT}\"/version = \"${NEW}\"/" Cargo.toml
+    for SUBCRATE in crates/*/Cargo.toml; do
+        if [ -f "$SUBCRATE" ]; then
+            sed -i "s/^version = \"${CURRENT}\"/version = \"${NEW}\"/" "$SUBCRATE"
+        fi
+    done
 fi
 
 # Update Cargo.lock
