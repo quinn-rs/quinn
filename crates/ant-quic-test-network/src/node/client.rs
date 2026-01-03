@@ -3620,14 +3620,25 @@ impl TestNode {
 
                 // Filter candidates:
                 // 1. Not ourselves
-                // 2. Not currently connected
+                // 2. Not already tested outbound (allow inbound-only peers for reverse test)
                 // 3. Is active (recent heartbeat = peer is online)
                 // 4. IP version compatible
                 // 5. Either never connected OR disconnected for >30 seconds (fresh hole-punch test)
                 let candidates: Vec<PeerInfo> = peers
                     .iter()
                     .filter(|p| p.peer_id != our_peer_id)
-                    .filter(|p| !connected.contains_key(&p.peer_id))
+                    .filter(|p| {
+                        match connected.get(&p.peer_id) {
+                            None => true,
+                            Some(tracked) => {
+                                // For inbound-only peers, wait 30s for NAT hole to close
+                                // before testing reverse connectivity
+                                !tracked.outbound_verified
+                                    && now.duration_since(tracked.connected_at).as_secs()
+                                        >= RECONNECT_COOLDOWN_SECS
+                            }
+                        }
+                    })
                     .filter(|p| p.is_active || peer_is_vps(p)) // VPS nodes always probed
                     .filter(|p| can_reach_peer(p, our_has_ipv6))
                     .filter(|p| {
@@ -3758,9 +3769,16 @@ impl TestNode {
                             }
 
                             let now = Instant::now();
-                            // Extract values and clone matrix before moving
                             let is_ipv6 = result.matrix.active_is_ipv6;
                             let connectivity_for_report = result.matrix.clone();
+
+                            // Preserve inbound_verified if peer already had inbound connection
+                            let mut peers = connected_peers.write().await;
+                            let existing_inbound_verified = peers
+                                .get(&candidate.peer_id)
+                                .map(|t| t.inbound_verified)
+                                .unwrap_or(false);
+
                             let tracked = TrackedPeer {
                                 info: candidate.clone(),
                                 method: final_method,
@@ -3771,19 +3789,16 @@ impl TestNode {
                                 sequence: AtomicU64::new(0),
                                 consecutive_failures: 0,
                                 connectivity: result.matrix,
-                                outbound_verified: true, // We connected to them
-                                inbound_verified: false, // They haven't connected to us yet
+                                outbound_verified: true,
+                                inbound_verified: existing_inbound_verified,
                                 last_nat_test_time: None,
                                 quic_test_success: false,
                                 gossip_test_success: false,
                             };
 
                             let peer_for_tui = tracked.to_connected_peer();
-
-                            connected_peers
-                                .write()
-                                .await
-                                .insert(candidate.peer_id.clone(), tracked);
+                            peers.insert(candidate.peer_id.clone(), tracked);
+                            drop(peers);
 
                             info!(
                                 "COMPREHENSIVE test SUCCESS to {} via {:?} (matrix: {})",
@@ -3836,7 +3851,6 @@ impl TestNode {
                             };
 
                             if let Some(_has_relay) = relay_found {
-                                // Relay available - count as relayed connection
                                 success.fetch_add(1, Ordering::Relaxed);
                                 relay.fetch_add(1, Ordering::Relaxed);
                                 {
@@ -3848,6 +3862,12 @@ impl TestNode {
                                 let mut matrix = result.matrix.clone();
                                 matrix.relay_success = true;
 
+                                let mut peers = connected_peers.write().await;
+                                let existing_inbound_verified = peers
+                                    .get(&candidate.peer_id)
+                                    .map(|t| t.inbound_verified)
+                                    .unwrap_or(false);
+
                                 let tracked = TrackedPeer {
                                     info: candidate.clone(),
                                     method: ConnectionMethod::Relayed,
@@ -3858,19 +3878,16 @@ impl TestNode {
                                     sequence: AtomicU64::new(0),
                                     consecutive_failures: 0,
                                     connectivity: matrix.clone(),
-                                    outbound_verified: true, // We connected via relay
-                                    inbound_verified: false, // They haven't connected to us yet
+                                    outbound_verified: true,
+                                    inbound_verified: existing_inbound_verified,
                                     last_nat_test_time: None,
                                     quic_test_success: false,
                                     gossip_test_success: false,
                                 };
 
                                 let peer_for_tui = tracked.to_connected_peer();
-
-                                connected_peers
-                                    .write()
-                                    .await
-                                    .insert(candidate.peer_id.clone(), tracked);
+                                peers.insert(candidate.peer_id.clone(), tracked);
+                                drop(peers);
 
                                 info!(
                                     "Direct connection failed but RELAY available for {} (matrix: {})",
