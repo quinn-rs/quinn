@@ -15,7 +15,10 @@ use crate::registry::{
     FullMeshProbeResult, NatStats, NatType, NodeCapabilities, NodeGossipStats, NodeHeartbeat,
     NodeRegistration, PeerInfo, PeerStatus, RegistryClient,
 };
-use crate::tui::{ConnectedPeer, LocalNodeInfo, TuiEvent, country_flag, send_tui_event};
+use crate::tui::{
+    CacheHealth, ConnectedPeer, FrameDirection, LocalNodeInfo, NatTraversalPhase, ProtocolFrame,
+    TrafficType, TuiEvent, country_flag, send_tui_event,
+};
 use saorsa_gossip_types::PeerId as GossipPeerId;
 use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
@@ -743,12 +746,59 @@ impl TestNode {
                             "Discovered external address: {}",
                             addr
                         )));
+                        let _ =
+                            event_tx_for_events.try_send(TuiEvent::ProtocolFrame(ProtocolFrame {
+                                peer_id: "bootstrap".to_string(),
+                                frame_type: "OBSERVED_ADDRESS".to_string(),
+                                direction: FrameDirection::Received,
+                                timestamp: Instant::now(),
+                                context: Some(format!("External: {}", addr)),
+                            }));
+                        let _ = event_tx_for_events.try_send(TuiEvent::NatPhaseUpdate {
+                            peer_id: peer_id_for_events.clone(),
+                            phase: NatTraversalPhase::Discovering,
+                            coordinator_id: None,
+                        });
                     }
                     P2pEvent::NatTraversalProgress { peer_id, phase } => {
-                        // Track if this peer went through the Punching phase
                         use ant_quic::TraversalPhase;
+                        let peer_hex = hex::encode(peer_id.0);
+
+                        let tui_phase = match &phase {
+                            TraversalPhase::Discovery => NatTraversalPhase::Discovering,
+                            TraversalPhase::Coordination => NatTraversalPhase::Coordinating,
+                            TraversalPhase::Synchronization => NatTraversalPhase::Coordinating,
+                            TraversalPhase::Punching => NatTraversalPhase::Punching,
+                            TraversalPhase::Validation => NatTraversalPhase::Punching,
+                            TraversalPhase::Connected => NatTraversalPhase::Connected,
+                            TraversalPhase::Failed => NatTraversalPhase::Relayed,
+                        };
+
+                        let _ = event_tx_for_events.try_send(TuiEvent::NatPhaseUpdate {
+                            peer_id: peer_hex.clone(),
+                            phase: tui_phase,
+                            coordinator_id: None,
+                        });
+
+                        let frame_type = match &phase {
+                            TraversalPhase::Discovery => "OBSERVED_ADDRESS",
+                            TraversalPhase::Coordination => "ADD_ADDRESS",
+                            TraversalPhase::Synchronization => "ADD_ADDRESS",
+                            TraversalPhase::Punching => "PUNCH_ME_NOW",
+                            TraversalPhase::Validation => "PUNCH_ME_NOW",
+                            TraversalPhase::Connected => "CONNECTED",
+                            TraversalPhase::Failed => "FAILED",
+                        };
+                        let _ =
+                            event_tx_for_events.try_send(TuiEvent::ProtocolFrame(ProtocolFrame {
+                                peer_id: peer_hex.clone(),
+                                frame_type: frame_type.to_string(),
+                                direction: FrameDirection::Received,
+                                timestamp: Instant::now(),
+                                context: Some(format!("{:?}", phase)),
+                            }));
+
                         if matches!(phase, TraversalPhase::Punching) {
-                            let peer_hex = hex::encode(peer_id.0);
                             debug!(
                                 "Peer {} entered Punching phase - marking as hole-punched",
                                 &peer_hex[..8.min(peer_hex.len())]
@@ -3375,8 +3425,24 @@ impl TestNode {
                     }
                     consecutive_failures = 0;
                     debug!("Heartbeat sent successfully");
-                    // Notify TUI that heartbeat was successful (non-blocking to avoid deadlock)
                     let _ = event_tx.try_send(TuiEvent::HeartbeatSent);
+
+                    let cache_health = CacheHealth {
+                        total_peers: gossip_integration.cache_size(),
+                        valid_peers: gossip_integration.cache_size(),
+                        public_peers: total_connections,
+                        average_quality: 0.8,
+                        cache_age: Duration::from_secs(0),
+                        last_updated: Some(Instant::now()),
+                        cache_hits: gossip_metrics.cache_hits.load(Ordering::Relaxed),
+                        cache_misses: gossip_metrics.cache_misses.load(Ordering::Relaxed),
+                        fresh_peers: epidemic_stats.swim.alive_count,
+                        stale_peers: epidemic_stats.swim.dead_count,
+                        private_peers: 0,
+                        public_quality: 0.9,
+                        private_quality: 0.5,
+                    };
+                    let _ = event_tx.try_send(TuiEvent::CacheHealthUpdate(cache_health));
                 }
             }
         })
@@ -3916,11 +3982,15 @@ impl TestNode {
                         }
                     } // Lock released here before TUI update
 
-                    // Update TUI outside the lock (non-blocking)
                     let _ = event_tx.try_send(TuiEvent::TestPacketResult {
                         peer_id: peer_id.clone(),
                         success: gossip_success,
                         rtt: rtt_for_tui,
+                    });
+                    let _ = event_tx.try_send(TuiEvent::TrafficTypeUpdate {
+                        peer_id: peer_id.clone(),
+                        traffic_type: TrafficType::TestData,
+                        direction: FrameDirection::Sent,
                     });
                 }
             }
