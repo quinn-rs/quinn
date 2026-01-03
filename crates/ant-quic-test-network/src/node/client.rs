@@ -82,6 +82,40 @@ const MAX_CONSECUTIVE_FAILURES: u32 = 5;
 /// Hole-punched connections are inherently more fragile due to NAT behavior.
 const MAX_CONSECUTIVE_FAILURES_HOLEPUNCHED: u32 = 10;
 
+/// VPS node IPs that should ALWAYS be probed regardless of is_active status.
+/// These are infrastructure nodes that are always reachable.
+const VPS_NODE_IPS: &[&str] = &[
+    "77.42.75.115",
+    "142.93.199.50",
+    "147.182.234.192",
+    "206.189.7.117",
+    "144.126.230.161",
+    "65.21.157.229",
+    "116.203.101.172",
+    "149.28.156.231",
+    "45.77.176.184",
+];
+
+fn is_vps_node(addr: &SocketAddr) -> bool {
+    let ip_str = addr.ip().to_string();
+    VPS_NODE_IPS.iter().any(|vps_ip| ip_str == *vps_ip)
+}
+
+fn peer_is_vps(peer: &PeerInfo) -> bool {
+    peer.addresses.iter().any(is_vps_node)
+}
+
+fn vps_gossip_bootstrap_addrs() -> Vec<SocketAddr> {
+    VPS_NODE_IPS
+        .iter()
+        .filter_map(|ip| {
+            ip.parse::<std::net::IpAddr>()
+                .ok()
+                .map(|addr| SocketAddr::new(addr, 9000))
+        })
+        .collect()
+}
+
 /// Detect if the system has global IPv6 connectivity using UDP socket connect.
 ///
 /// This is cross-platform and doesn't require running external commands.
@@ -683,16 +717,18 @@ impl TestNode {
         // - If --bind-port 0: random port (secure default)
         // - If --bind-port 9000: gossip on 9000, P2pEndpoint on 9001
         let gossip_listen_addr = std::net::SocketAddr::new(config.bind_addr.ip(), gossip_port);
+        let vps_bootstrap = vps_gossip_bootstrap_addrs();
         let epidemic_config = EpidemicConfig {
             listen_addr: gossip_listen_addr,
-            bootstrap_peers: Vec::new(), // Bootstrap peers added dynamically from registry
+            bootstrap_peers: vps_bootstrap.clone(),
             registry_url: Some(config.registry_url.clone()),
             ..EpidemicConfig::default()
         };
         info!(
-            "Epidemic gossip will listen on port {} ({})",
+            "Epidemic gossip will listen on port {} ({}) with {} VPS bootstrap peers",
             gossip_port,
-            if gossip_port == 0 { "random" } else { "fixed" }
+            if gossip_port == 0 { "random" } else { "fixed" },
+            vps_bootstrap.len()
         );
         let epidemic_gossip = Arc::new(EpidemicGossip::new(
             gossip_peer_id,
@@ -3592,7 +3628,7 @@ impl TestNode {
                     .iter()
                     .filter(|p| p.peer_id != our_peer_id)
                     .filter(|p| !connected.contains_key(&p.peer_id))
-                    .filter(|p| p.is_active) // Only test against LIVE peers
+                    .filter(|p| p.is_active || peer_is_vps(p)) // VPS nodes always probed
                     .filter(|p| can_reach_peer(p, our_has_ipv6))
                     .filter(|p| {
                         // Check if we've been disconnected long enough for NAT to forget
