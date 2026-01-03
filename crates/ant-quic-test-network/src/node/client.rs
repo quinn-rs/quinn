@@ -485,15 +485,15 @@ impl TestNode {
         // When NAT traversal is needed, we use these as coordinators (not the unreachable target peer).
         // saorsa-1 uses port 9001 (registry QUIC), all others use port 9000.
         let known_peers: Vec<SocketAddr> = vec![
-            "77.42.75.115:9001".parse().ok(),     // saorsa-1 (Helsinki) - registry
-            "142.93.199.50:9000".parse().ok(),    // saorsa-2 (NYC)
-            "147.182.234.192:9000".parse().ok(),  // saorsa-3 (SFO)
-            "206.189.7.117:9000".parse().ok(),    // saorsa-4 (AMS)
-            "144.126.230.161:9000".parse().ok(),  // saorsa-5 (LON)
-            "65.21.157.229:9000".parse().ok(),    // saorsa-6 (Helsinki)
-            "116.203.101.172:9000".parse().ok(),  // saorsa-7 (Nuremberg)
-            "149.28.156.231:9000".parse().ok(),   // saorsa-8 (Singapore)
-            "45.77.176.184:9000".parse().ok(),    // saorsa-9 (Tokyo)
+            "77.42.75.115:9001".parse().ok(),  // saorsa-1 (Helsinki) - registry
+            "142.93.199.50:9000".parse().ok(), // saorsa-2 (NYC)
+            "147.182.234.192:9000".parse().ok(), // saorsa-3 (SFO)
+            "206.189.7.117:9000".parse().ok(), // saorsa-4 (AMS)
+            "144.126.230.161:9000".parse().ok(), // saorsa-5 (LON)
+            "65.21.157.229:9000".parse().ok(), // saorsa-6 (Helsinki)
+            "116.203.101.172:9000".parse().ok(), // saorsa-7 (Nuremberg)
+            "149.28.156.231:9000".parse().ok(), // saorsa-8 (Singapore)
+            "45.77.176.184:9000".parse().ok(), // saorsa-9 (Tokyo)
         ]
         .into_iter()
         .flatten()
