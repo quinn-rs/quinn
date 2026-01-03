@@ -458,13 +458,10 @@ impl TestNode {
         info!("Creating REAL P2pEndpoint for QUIC connections...");
 
         // Configure relay nodes for fallback when direct connection fails
-        // Note: MASQUE relay is not yet fully implemented in ant-quic,
-        // but we configure it here for future readiness.
-        // These are the saorsa registry nodes which could also serve as relays.
         let relay_nodes: Vec<SocketAddr> = vec![
-            // saorsa-1.saorsalabs.com QUIC port
-            "77.42.75.115:9000".parse().ok(),
-            // TODO: Add more relay nodes as they become available
+            "77.42.75.115:9001".parse().ok(),
+            "142.93.199.50:9000".parse().ok(),
+            "147.182.234.192:9000".parse().ok(),
         ]
         .into_iter()
         .flatten()
@@ -486,10 +483,17 @@ impl TestNode {
         // Known peers for NAT traversal coordination.
         // These are publicly reachable nodes that can coordinate hole-punching.
         // When NAT traversal is needed, we use these as coordinators (not the unreachable target peer).
+        // saorsa-1 uses port 9001 (registry QUIC), all others use port 9000.
         let known_peers: Vec<SocketAddr> = vec![
-            "77.42.75.115:9000".parse().ok(),    // saorsa-1 (Helsinki)
-            "142.93.199.50:9000".parse().ok(),   // saorsa-2 (NYC)
-            "147.182.234.192:9000".parse().ok(), // saorsa-3 (SFO)
+            "77.42.75.115:9001".parse().ok(),     // saorsa-1 (Helsinki) - registry
+            "142.93.199.50:9000".parse().ok(),    // saorsa-2 (NYC)
+            "147.182.234.192:9000".parse().ok(),  // saorsa-3 (SFO)
+            "206.189.7.117:9000".parse().ok(),    // saorsa-4 (AMS)
+            "144.126.230.161:9000".parse().ok(),  // saorsa-5 (LON)
+            "65.21.157.229:9000".parse().ok(),    // saorsa-6 (Helsinki)
+            "116.203.101.172:9000".parse().ok(),  // saorsa-7 (Nuremberg)
+            "149.28.156.231:9000".parse().ok(),   // saorsa-8 (Singapore)
+            "45.77.176.184:9000".parse().ok(),    // saorsa-9 (Tokyo)
         ]
         .into_iter()
         .flatten()
@@ -2759,15 +2763,20 @@ impl TestNode {
 
     /// Discover our external address by connecting to known QUIC peers.
     ///
-    /// This connects to the saorsa registry nodes via QUIC (port 9000) to receive
+    /// This connects to the saorsa network nodes via QUIC to receive
     /// OBSERVED_ADDRESS frames that tell us our external IP:port as seen by them.
     /// This is part of the native QUIC NAT traversal per draft-ietf-quic-address-discovery.
     async fn discover_external_address(&self) {
-        // Known QUIC peers (saorsa registry nodes running QUIC on port 9000)
         let known_quic_peers: Vec<SocketAddr> = vec![
-            "77.42.75.115:9000".parse().ok(),    // saorsa-1 (Helsinki)
-            "142.93.199.50:9000".parse().ok(),   // saorsa-2 (NYC)
-            "147.182.234.192:9000".parse().ok(), // saorsa-3 (SFO)
+            "77.42.75.115:9001".parse().ok(),
+            "142.93.199.50:9000".parse().ok(),
+            "147.182.234.192:9000".parse().ok(),
+            "206.189.7.117:9000".parse().ok(),
+            "144.126.230.161:9000".parse().ok(),
+            "65.21.157.229:9000".parse().ok(),
+            "116.203.101.172:9000".parse().ok(),
+            "149.28.156.231:9000".parse().ok(),
+            "45.77.176.184:9000".parse().ok(),
         ]
         .into_iter()
         .flatten()

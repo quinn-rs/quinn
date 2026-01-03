@@ -32,29 +32,40 @@ SERVICE_NAME="ant-quic-test"
 REGISTRY_PORT="8080"
 
 # Node definitions (bash 3.x compatible)
-NODE_NAMES="saorsa-1 saorsa-2 saorsa-3"
+NODE_NAMES="saorsa-1 saorsa-2 saorsa-3 saorsa-4 saorsa-5 saorsa-6 saorsa-7 saorsa-8 saorsa-9"
 
 get_node_hostname() {
     case "$1" in
         saorsa-1) echo "saorsa-1.saorsalabs.com" ;;
         saorsa-2) echo "saorsa-2.saorsalabs.com" ;;
         saorsa-3) echo "saorsa-3.saorsalabs.com" ;;
+        saorsa-4) echo "saorsa-4.saorsalabs.com" ;;
+        saorsa-5) echo "saorsa-5.saorsalabs.com" ;;
+        saorsa-6) echo "saorsa-6.saorsalabs.com" ;;
+        saorsa-7) echo "saorsa-7.saorsalabs.com" ;;
+        saorsa-8) echo "saorsa-8.saorsalabs.com" ;;
+        saorsa-9) echo "saorsa-9.saorsalabs.com" ;;
     esac
 }
 
 get_node_ip() {
     case "$1" in
-        saorsa-1) echo "77.42.75.115" ;;
-        saorsa-2) echo "142.93.199.50" ;;
-        saorsa-3) echo "147.182.234.192" ;;
+        saorsa-1) echo "77.42.75.115" ;;      # Hetzner Helsinki - Dashboard
+        saorsa-2) echo "142.93.199.50" ;;     # DO NYC - Bootstrap
+        saorsa-3) echo "147.182.234.192" ;;   # DO SFO - Bootstrap
+        saorsa-4) echo "206.189.7.117" ;;     # DO AMS - Test
+        saorsa-5) echo "144.126.230.161" ;;   # DO LON - Test
+        saorsa-6) echo "65.21.157.229" ;;     # Hetzner Helsinki - Test
+        saorsa-7) echo "116.203.101.172" ;;   # Hetzner Nuremberg - Test
+        saorsa-8) echo "149.28.156.231" ;;    # Vultr Singapore - Test
+        saorsa-9) echo "45.77.176.184" ;;     # Vultr Tokyo - Test
     esac
 }
 
 get_node_role() {
     case "$1" in
         saorsa-1) echo "registry" ;;   # Registry server with dashboard
-        saorsa-2) echo "node" ;;       # Test node
-        saorsa-3) echo "node" ;;       # Test node
+        *) echo "node" ;;              # All others are test nodes
     esac
 }
 
@@ -155,7 +166,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 User=root
-ExecStart=${INSTALL_DIR}/ant-quic-test --registry-url ${REGISTRY_URL} --quiet
+ExecStart=${INSTALL_DIR}/ant-quic-test --registry-url ${REGISTRY_URL} --bind-port 9000 --quiet
 Restart=always
 RestartSec=5
 StandardOutput=append:/var/log/ant-quic-test.log
@@ -450,25 +461,35 @@ Examples:
   $0 status                          # Check status
   $0 logs --node saorsa-2            # View logs from specific node
 
-Nodes:
-  saorsa-1  Registry server with web dashboard (${REGISTRY_URL})
-  saorsa-2  Test node (auto-registers with registry)
-  saorsa-3  Test node (auto-registers with registry)
+Nodes (9 total):
+  saorsa-1  Registry + Dashboard (Helsinki, Hetzner)  ${REGISTRY_URL}
+  saorsa-2  Test node (NYC, DigitalOcean)
+  saorsa-3  Test node (SFO, DigitalOcean)
+  saorsa-4  Test node (AMS, DigitalOcean)
+  saorsa-5  Test node (LON, DigitalOcean)
+  saorsa-6  Test node (Helsinki, Hetzner)
+  saorsa-7  Test node (Nuremberg, Hetzner)
+  saorsa-8  Test node (Singapore, Vultr)
+  saorsa-9  Test node (Tokyo, Vultr)
 
 Dashboard: ${DASHBOARD_URL}
 
 Network Architecture:
-  ┌─────────────────┐
-  │   saorsa-1      │  Registry + Dashboard
-  │  ${REGISTRY_URL}│  POST /api/register
-  └────────┬────────┘  GET  /api/peers
-           │           WS   /ws/live
-     ┌─────┴─────┐
-     │           │
-┌────▼────┐ ┌────▼────┐
-│ saorsa-2│ │ saorsa-3│  Test Nodes
-│  (TUI)  │ │  (TUI)  │  Auto-connect
-└─────────┘ └─────────┘  5KB test packets
+                    ┌─────────────────┐
+                    │   saorsa-1      │  Registry + Dashboard
+                    │  ${REGISTRY_URL}│  
+                    └────────┬────────┘  
+        ┌────────────────────┼────────────────────┐
+        │         ┌──────────┼──────────┐         │
+   ┌────▼───┐┌────▼───┐┌────▼───┐┌────▼───┐┌────▼───┐
+   │saorsa-2││saorsa-3││saorsa-4││saorsa-5││saorsa-6│
+   │  NYC   ││  SFO   ││  AMS   ││  LON   ││  HEL   │
+   └────────┘└────────┘└────────┘└────────┘└────────┘
+                  ┌──────────┼──────────┐
+             ┌────▼───┐┌────▼───┐┌────▼───┐
+             │saorsa-7││saorsa-8││saorsa-9│
+             │  NUE   ││  SIN   ││  TYO   │
+             └────────┘└────────┘└────────┘
 EOF
 }
 
