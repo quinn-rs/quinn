@@ -1,3 +1,5 @@
+//! This module has some deeply nested async code that is difficult to refactor.
+#![allow(clippy::excessive_nesting)]
 //! Test node client implementation.
 //!
 //! Handles automatic registration with the registry, peer discovery,

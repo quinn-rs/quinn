@@ -3,7 +3,10 @@
 //! This module manages the terminal UI state, handles user input,
 //! and coordinates updates from the network layer.
 
-use crate::tui::types::{ConnectedPeer, LocalNodeInfo, NetworkStatistics};
+use crate::tui::types::{
+    CacheHealth, ConnectedPeer, FrameDirection, GeographicDistribution, LocalNodeInfo,
+    NatTraversalPhase, NatTypeAnalytics, NetworkStatistics, ProtocolFrame, TrafficType,
+};
 use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 
@@ -43,6 +46,14 @@ pub struct App {
     pub error_message: Option<String>,
     /// Info message to display (if any)
     pub info_message: Option<String>,
+    /// Protocol frame log (last 20 frames)
+    pub protocol_frames: Vec<ProtocolFrame>,
+    /// Bootstrap cache health information
+    pub cache_health: Option<CacheHealth>,
+    /// NAT type analytics for connection success rates
+    pub nat_analytics: Option<NatTypeAnalytics>,
+    /// Geographic distribution of peers for network diversity
+    pub geographic_distribution: Option<GeographicDistribution>,
 }
 
 impl Default for App {
@@ -70,6 +81,10 @@ impl App {
             last_refresh: Instant::now(),
             error_message: None,
             info_message: None,
+            protocol_frames: Vec::new(),
+            cache_health: None,
+            nat_analytics: None,
+            geographic_distribution: None,
         }
     }
 
@@ -214,14 +229,82 @@ impl App {
             (None, Some(_)) => std::cmp::Ordering::Greater,
             (None, None) => a.connected_at.cmp(&b.connected_at),
         });
+
         peers
+    }
+
+    /// Add a protocol frame to the log (keep last 20)
+    pub fn add_protocol_frame(&mut self, frame: ProtocolFrame) {
+        self.protocol_frames.push(frame);
+        // Keep only last 20 frames
+        if self.protocol_frames.len() > 20 {
+            self.protocol_frames
+                .drain(0..self.protocol_frames.len() - 20);
+        }
+    }
+
+    /// Update NAT traversal phase for a peer
+    pub fn update_nat_phase(
+        &mut self,
+        peer_id: &str,
+        phase: NatTraversalPhase,
+        coordinator_id: Option<String>,
+    ) {
+        if let Some(peer) = self.connected_peers.get_mut(peer_id) {
+            peer.nat_phase = phase;
+            peer.coordinator_id = coordinator_id;
+        }
+    }
+
+    /// Update traffic type for a peer
+    pub fn update_traffic_type(
+        &mut self,
+        peer_id: &str,
+        traffic_type: TrafficType,
+        direction: FrameDirection,
+    ) {
+        if let Some(peer) = self.connected_peers.get_mut(peer_id) {
+            match traffic_type {
+                TrafficType::Protocol => {
+                    peer.protocol_tx = direction == FrameDirection::Sent;
+                    peer.protocol_rx = direction == FrameDirection::Received;
+                }
+                TrafficType::TestData => {
+                    peer.data_tx = direction == FrameDirection::Sent;
+                    peer.data_rx = direction == FrameDirection::Received;
+                }
+                TrafficType::Relay => {
+                    // Relay traffic counts as both TX and RX for visibility
+                    if direction == FrameDirection::Sent {
+                        peer.protocol_tx = true;
+                    } else {
+                        peer.protocol_rx = true;
+                    }
+                }
+            }
+        }
+    }
+
+    /// Update cache health information
+    pub fn update_cache_health(&mut self, health: CacheHealth) {
+        self.cache_health = Some(health);
+    }
+
+    /// Update NAT type analytics
+    pub fn update_nat_analytics(&mut self, analytics: NatTypeAnalytics) {
+        self.nat_analytics = Some(analytics);
+    }
+
+    /// Update geographic distribution
+    pub fn update_geographic_distribution(&mut self, distribution: GeographicDistribution) {
+        self.geographic_distribution = Some(distribution);
     }
 }
 
-/// Input event from the terminal.
+/// Input event from terminal.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InputEvent {
-    /// Quit the application
+    /// Quit application
     Quit,
     /// Toggle auto-connect
     ToggleAutoConnect,

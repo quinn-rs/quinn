@@ -43,8 +43,8 @@ mod ui;
 
 pub use app::{App, AppState, InputEvent};
 pub use types::{
-    ConnectedPeer, ConnectionQuality, LocalNodeInfo, NetworkStatistics, TrafficDirection,
-    country_flag,
+    CacheHealth, ConnectedPeer, ConnectionQuality, FrameDirection, GeographicDistribution, LocalNodeInfo, NatTypeAnalytics, NatTraversalPhase, 
+    NetworkStatistics, ProtocolFrame, TrafficDirection, TrafficType, country_flag,
 };
 
 use crossterm::{
@@ -107,6 +107,12 @@ fn event_name(event: &TuiEvent) -> &'static str {
         TuiEvent::GossipRelayDiscovered { .. } => "GossipRelayDiscovered",
         TuiEvent::PeerSeen(_) => "PeerSeen",
         TuiEvent::SwimLivenessUpdate { .. } => "SwimLivenessUpdate",
+        TuiEvent::ProtocolFrame(_) => "ProtocolFrame",
+        TuiEvent::NatPhaseUpdate { .. } => "NatPhaseUpdate",
+        TuiEvent::TrafficTypeUpdate { .. } => "TrafficTypeUpdate",
+        TuiEvent::CacheHealthUpdate(_) => "CacheHealthUpdate",
+        TuiEvent::NatAnalyticsUpdate(_) => "NatAnalyticsUpdate",
+        TuiEvent::GeographicDistributionUpdate(_) => "GeographicDistributionUpdate",
     }
 }
 
@@ -191,6 +197,32 @@ pub enum TuiEvent {
         /// HyParView passive view size
         passive: usize,
     },
+    /// Protocol frame logged
+    ProtocolFrame(ProtocolFrame),
+    /// NAT traversal phase updated for a peer
+    NatPhaseUpdate {
+        /// Peer ID
+        peer_id: String,
+        /// New phase
+        phase: NatTraversalPhase,
+        /// Optional coordinator ID
+        coordinator_id: Option<String>,
+    },
+    /// Traffic type updated for a peer
+    TrafficTypeUpdate {
+        /// Peer ID
+        peer_id: String,
+        /// Traffic type
+        traffic_type: TrafficType,
+        /// Direction
+        direction: FrameDirection,
+    },
+    /// Bootstrap cache health updated
+    CacheHealthUpdate(CacheHealth),
+    /// NAT type analytics updated
+    NatAnalyticsUpdate(NatTypeAnalytics),
+    /// Geographic distribution updated
+    GeographicDistributionUpdate(GeographicDistribution),
 }
 
 /// Configuration for the TUI.
@@ -437,6 +469,32 @@ fn handle_tui_event(app: &mut App, event: TuiEvent) {
             app.stats.hyparview_active = active;
             app.stats.hyparview_passive = passive;
         }
+        TuiEvent::ProtocolFrame(frame) => {
+            app.add_protocol_frame(frame);
+        }
+        TuiEvent::NatPhaseUpdate {
+            peer_id,
+            phase,
+            coordinator_id,
+        } => {
+            app.update_nat_phase(&peer_id, phase, coordinator_id);
+        }
+        TuiEvent::TrafficTypeUpdate {
+            peer_id,
+            traffic_type,
+            direction,
+        } => {
+            app.update_traffic_type(&peer_id, traffic_type, direction);
+        }
+        TuiEvent::CacheHealthUpdate(health) => {
+            app.update_cache_health(health);
+        }
+        TuiEvent::NatAnalyticsUpdate(analytics) => {
+            app.update_nat_analytics(analytics);
+        }
+        TuiEvent::GeographicDistributionUpdate(distribution) => {
+            app.update_geographic_distribution(distribution);
+        }
     }
 }
 
@@ -485,6 +543,39 @@ mod tests {
             active: 4,
             passive: 20,
         };
+        // Test new Phase 1 events
+        let _ = TuiEvent::ProtocolFrame(ProtocolFrame {
+            peer_id: "test_peer".to_string(),
+            frame_type: "ADD_ADDRESS".to_string(),
+            direction: FrameDirection::Sent,
+            timestamp: std::time::Instant::now(),
+            context: Some("test context".to_string()),
+        });
+        let _ = TuiEvent::NatPhaseUpdate {
+            peer_id: "test_peer".to_string(),
+            phase: crate::tui::types::NatTraversalPhase::Punching,
+            coordinator_id: Some("coordinator".to_string()),
+        };
+        let _ = TuiEvent::TrafficTypeUpdate {
+            peer_id: "test_peer".to_string(),
+            traffic_type: crate::tui::types::TrafficType::TestData,
+            direction: FrameDirection::Sent,
+        };
+        let _ = TuiEvent::CacheHealthUpdate(CacheHealth {
+            total_peers: 100,
+            valid_peers: 80,
+            public_peers: 20,
+            average_quality: 0.75,
+            cache_age: std::time::Duration::from_secs(3600),
+            last_updated: Some(std::time::Instant::now()),
+            cache_hits: 800,
+            cache_misses: 200,
+            fresh_peers: 70,
+            stale_peers: 30,
+            private_peers: 80,
+            public_quality: 0.85,
+            private_quality: 0.65,
+        });
     }
 
     #[test]
