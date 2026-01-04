@@ -119,7 +119,7 @@ dependencies = [
 
 [[package]]
 name = "ant-quic"
-version = "0.14.147"
+version = "0.14.149"
 dependencies = [
  "anyhow",
  "arbitrary",
@@ -193,7 +193,7 @@ dependencies = [
 
 [[package]]
 name = "ant-quic-test-network"
-version = "0.14.147"
+version = "0.14.149"
 dependencies = [
  "ant-quic",
  "anyhow",

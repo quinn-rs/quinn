@@ -104,6 +104,8 @@ fn event_name(event: &TuiEvent) -> &'static str {
         TuiEvent::ConnectionAttempted => "ConnectionAttempted",
         TuiEvent::InboundConnection => "InboundConnection",
         TuiEvent::OutboundConnection => "OutboundConnection",
+        TuiEvent::Ipv4Connection => "Ipv4Connection",
+        TuiEvent::Ipv6Connection => "Ipv6Connection",
         TuiEvent::GossipPeerDiscovered { .. } => "GossipPeerDiscovered",
         TuiEvent::GossipRelayDiscovered { .. } => "GossipRelayDiscovered",
         TuiEvent::PeerSeen(_) => "PeerSeen",
@@ -165,6 +167,10 @@ pub enum TuiEvent {
     InboundConnection,
     /// Outbound connection established (we connected to them)
     OutboundConnection,
+    /// IPv4 connection established
+    Ipv4Connection,
+    /// IPv6 connection established
+    Ipv6Connection,
     /// Gossip: peer discovered via gossip network
     GossipPeerDiscovered {
         /// Peer ID of discovered peer
@@ -421,6 +427,12 @@ fn handle_tui_event(app: &mut App, event: TuiEvent) {
         }
         TuiEvent::OutboundConnection => {
             app.stats.outbound_connections += 1;
+        }
+        TuiEvent::Ipv4Connection => {
+            app.stats.ipv4_connections += 1;
+        }
+        TuiEvent::Ipv6Connection => {
+            app.stats.ipv6_connections += 1;
         }
         TuiEvent::GossipPeerDiscovered {
             peer_id,

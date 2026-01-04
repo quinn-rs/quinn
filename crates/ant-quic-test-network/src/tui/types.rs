@@ -285,7 +285,11 @@ impl LocalNodeInfo {
 
     /// Get registration status string.
     pub fn registration_status(&self) -> &'static str {
-        if self.registered { "✓" } else { "✗" }
+        if self.registered {
+            "✓"
+        } else {
+            "✗"
+        }
     }
 
     /// Get last heartbeat string.
@@ -319,6 +323,10 @@ pub struct NetworkStatistics {
     pub inbound_connections: u64,
     /// Outbound connections (we connected to them)
     pub outbound_connections: u64,
+    /// IPv4 connections
+    pub ipv4_connections: u64,
+    /// IPv6 connections
+    pub ipv6_connections: u64,
     /// Test packets sent
     pub packets_sent: u64,
     /// Test packets received

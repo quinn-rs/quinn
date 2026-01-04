@@ -16,8 +16,9 @@ use crate::registry::{
     NodeRegistration, PeerInfo, PeerStatus, RegistryClient,
 };
 use crate::tui::{
-    CacheHealth, ConnectedPeer, FrameDirection, LocalNodeInfo, NatTraversalPhase, ProtocolFrame,
-    TrafficType, TuiEvent, country_flag, send_tui_event,
+    CacheHealth, ConnectedPeer, FrameDirection, GeographicDistribution, LocalNodeInfo,
+    NatTraversalPhase, NatTypeAnalytics, ProtocolFrame, TrafficType, TuiEvent, country_flag,
+    send_tui_event,
 };
 use saorsa_gossip_types::PeerId as GossipPeerId;
 use std::collections::{HashMap, HashSet};
@@ -363,10 +364,8 @@ pub struct TestNode {
     epidemic_gossip: Arc<EpidemicGossip>,
     /// Receiver for epidemic gossip events.
     epidemic_event_rx: Arc<RwLock<mpsc::Receiver<EpidemicEvent>>>,
-    /// Full-mesh connectivity probe results.
-    /// Maps peer_id -> probe result for all peers this node attempted to probe.
-    /// This tests reachability to ALL peers, not just the HyParView active view.
     full_mesh_probes: Arc<RwLock<HashMap<String, FullMeshProbeResult>>>,
+    geo_provider: Arc<BgpGeoProvider>,
 }
 
 /// Get the data directory for persistent storage.
@@ -750,6 +749,7 @@ impl TestNode {
         let listen_addresses_for_events = listen_addresses.clone();
         let connected_peers_for_events = Arc::clone(&connected_peers);
         let peer_id_for_events = peer_id.clone();
+        let registry_url_for_events = config.registry_url.clone();
         tokio::spawn(async move {
             let mut events = endpoint_for_events.subscribe();
             while let Ok(event) = events.recv().await {
@@ -864,6 +864,12 @@ impl TestNode {
                         // Side::Client means WE connected to THEM (outbound)
                         let is_inbound = side.is_server();
 
+                        if addr.is_ipv4() {
+                            let _ = event_tx_for_events.try_send(TuiEvent::Ipv4Connection);
+                        } else {
+                            let _ = event_tx_for_events.try_send(TuiEvent::Ipv6Connection);
+                        }
+
                         if is_inbound {
                             let count =
                                 inbound_connections_for_events.fetch_add(1, Ordering::Relaxed) + 1;
@@ -970,6 +976,7 @@ impl TestNode {
                                     ConnectionDirection::Outbound => (true, false),
                                     ConnectionDirection::Inbound => (false, true),
                                 };
+                                let connectivity_for_report = connectivity.clone();
                                 let tracked = TrackedPeer {
                                     info: peer_info,
                                     method,
@@ -993,6 +1000,22 @@ impl TestNode {
                                     &peer_hex[..8.min(peer_hex.len())],
                                     direction
                                 );
+
+                                let report = ConnectionReport {
+                                    from_peer: peer_id_for_events.clone(),
+                                    to_peer: peer_hex.clone(),
+                                    method,
+                                    is_ipv6,
+                                    rtt_ms: None,
+                                    connectivity: connectivity_for_report,
+                                };
+                                let registry_url = registry_url_for_events.clone();
+                                tokio::spawn(async move {
+                                    let registry = RegistryClient::new(&registry_url);
+                                    if let Err(e) = registry.report_connection(&report).await {
+                                        debug!("Failed to report connection to registry: {}", e);
+                                    }
+                                });
                             }
                         }
 
@@ -1145,6 +1168,7 @@ impl TestNode {
             epidemic_gossip,
             epidemic_event_rx: Arc::new(RwLock::new(epidemic_event_rx)),
             full_mesh_probes: Arc::new(RwLock::new(HashMap::new())),
+            geo_provider,
         })
     }
 
@@ -3214,10 +3238,9 @@ impl TestNode {
         let gossip_integration = Arc::clone(&self.gossip_integration);
         // Clone epidemic gossip for real saorsa-gossip stats
         let epidemic_gossip = Arc::clone(&self.epidemic_gossip);
-        // Clone full-mesh probe results for reporting
         let full_mesh_probes = Arc::clone(&self.full_mesh_probes);
-        // Clone event_tx to send HeartbeatSent events to TUI
         let event_tx = self.event_tx.clone();
+        let geo_provider = Arc::clone(&self.geo_provider);
 
         tokio::spawn(async move {
             let mut ticker = tokio::time::interval(interval);
@@ -3407,7 +3430,7 @@ impl TestNode {
                     } else {
                         Some(ext_addrs.clone())
                     },
-                    nat_stats: Some(stats),
+                    nat_stats: Some(stats.clone()),
                     gossip_stats: Some(gossip_stats),
                     full_mesh_probes: probes,
                 };
@@ -3488,6 +3511,32 @@ impl TestNode {
                         private_quality: 0.5,
                     };
                     let _ = event_tx.try_send(TuiEvent::CacheHealthUpdate(cache_health));
+
+                    let mut nat_analytics = NatTypeAnalytics::default();
+                    nat_analytics.full_cone.attempts = stats.direct_success + stats.hole_punch_success;
+                    nat_analytics.full_cone.direct_connections = stats.direct_success;
+                    nat_analytics.full_cone.hole_punched_connections = stats.hole_punch_success;
+                    nat_analytics.full_cone.relayed_connections = stats.relay_success;
+                    nat_analytics.full_cone.successes =
+                        stats.direct_success + stats.hole_punch_success + stats.relay_success;
+                    nat_analytics.full_cone.failures = stats.failures;
+                    let _ = event_tx.try_send(TuiEvent::NatAnalyticsUpdate(nat_analytics));
+
+                    let peers_for_geo = connected_peers.read().await;
+                    let mut geo_dist = GeographicDistribution::new();
+                    for tracked in peers_for_geo.values() {
+                        for addr in &tracked.info.addresses {
+                            let (_lat, _lon, country) = geo_provider.lookup(addr.ip());
+                            if let Some(cc) = country {
+                                geo_dist.add_peer(cc);
+                                break;
+                            }
+                        }
+                    }
+                    drop(peers_for_geo);
+                    if geo_dist.total_peers > 0 {
+                        let _ = event_tx.try_send(TuiEvent::GeographicDistributionUpdate(geo_dist));
+                    }
                 }
             }
         })
