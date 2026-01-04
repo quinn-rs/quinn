@@ -50,12 +50,12 @@ pub fn draw(frame: &mut Frame, app: &App) {
         .constraints([
             Constraint::Length(3),  // Header
             Constraint::Length(4),  // Connection Overview (traffic lights)
-            Constraint::Length(5),  // Your Node (reduced)
+            Constraint::Length(5),  // Your Node
             Constraint::Min(6),     // Connected Peers
             Constraint::Length(12), // Enhanced: Cache Health + NAT Analytics + ACTIVITY LOG
             Constraint::Length(6),  // Network Stats + Geographic Distribution
-            Constraint::Length(2),  // Messages (errors/info)
-            Constraint::Length(2),  // Footer
+            Constraint::Length(3),  // Messages
+            Constraint::Length(3),  // Footer
         ])
         .split(frame.area());
 

@@ -753,38 +753,48 @@ impl TestNode {
         let peer_id_for_events = peer_id.clone();
         let registry_url_for_events = config.registry_url.clone();
         let nat_stats_for_events = Arc::clone(&nat_stats);
+        let local_ipv4_for_events = local_ipv4;
+        let local_ipv6_for_events = local_ipv6;
         tokio::spawn(async move {
             let mut events = endpoint_for_events.subscribe();
             while let Ok(event) = events.recv().await {
                 match event {
                     P2pEvent::ExternalAddressDiscovered { addr } => {
                         info!("External address discovered: {}", addr);
-                        // Store the discovered external address
-                        {
-                            let mut addrs = external_addresses_for_events.write().await;
-                            if !addrs.contains(&addr) {
-                                addrs.push(addr);
-                                info!("Stored external address: {} (total: {})", addr, addrs.len());
-                            }
+                        let mut addrs = external_addresses_for_events.write().await;
+                        if !addrs.contains(&addr) {
+                            addrs.push(addr);
+                            info!("Stored external address: {} (total: {})", addr, addrs.len());
+                        }
 
-                            // Update relay state with our external addresses
-                            let mut rs = relay_state_for_events.write().await;
-                            rs.our_external_addresses = addrs.clone();
-                            rs.our_local_addresses = listen_addresses_for_events.clone();
+                        let mut rs = relay_state_for_events.write().await;
+                        rs.our_external_addresses = addrs.clone();
+                        rs.our_local_addresses = listen_addresses_for_events.clone();
 
-                            // Check if we're a public node per IP family
-                            let (is_public, is_public_ipv4, is_public_ipv6) =
-                                rs.get_public_status();
-                            if is_public {
-                                info!(
-                                    "We appear to be a PUBLIC node (IPv4: {}, IPv6: {})",
-                                    if is_public_ipv4 { "public" } else { "NAT" },
-                                    if is_public_ipv6 { "public" } else { "NAT/none" }
-                                );
-                            } else {
-                                debug!("We appear to be behind NAT on all IP families");
+                        let (is_public, is_public_ipv4, is_public_ipv6) = rs.get_public_status();
+                        if is_public {
+                            info!(
+                                "We appear to be a PUBLIC node (IPv4: {}, IPv6: {})",
+                                if is_public_ipv4 { "public" } else { "NAT" },
+                                if is_public_ipv6 { "public" } else { "NAT/none" }
+                            );
+                        }
+                        drop(rs);
+
+                        let mut local_node = LocalNodeInfo::default();
+                        local_node.set_peer_id(&peer_id_for_events);
+                        local_node.local_ipv4 = local_ipv4_for_events;
+                        local_node.local_ipv6 = local_ipv6_for_events;
+                        for a in addrs.iter() {
+                            if a.is_ipv4() && local_node.external_ipv4.is_none() {
+                                local_node.external_ipv4 = Some(*a);
+                            } else if a.is_ipv6() && local_node.external_ipv6.is_none() {
+                                local_node.external_ipv6 = Some(*a);
                             }
                         }
+                        drop(addrs);
+
+                        let _ = event_tx_for_events.try_send(TuiEvent::UpdateLocalNode(local_node));
                         let _ = event_tx_for_events.try_send(TuiEvent::Info(format!(
                             "Discovered external address: {}",
                             addr
