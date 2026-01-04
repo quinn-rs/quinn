@@ -2207,18 +2207,13 @@ impl TestNode {
     }
 
     /// Announce ourselves via saorsa-gossip epidemic broadcast (PlumTree).
+    /// Falls back to P2pEndpoint broadcast when epidemic gossip has no peers (NATted clients).
     pub async fn announce_via_epidemic(&self) {
-        if !self.epidemic_gossip.is_running() {
-            debug!("Skipping epidemic announcement - gossip layer not running");
-            return;
-        }
-
         let external_addrs = self.external_addresses.read().await.clone();
         let rs = self.relay_state.read().await;
         let (is_public, _is_public_ipv4, _is_public_ipv6) = rs.get_public_status();
-        drop(rs); // Release lock early
+        drop(rs);
 
-        // Create peer info
         let peer_info = GossipPeerInfo {
             peer_id: self.peer_id.clone(),
             addresses: external_addrs.clone(),
@@ -2230,31 +2225,65 @@ impl TestNode {
                 .unwrap_or(0),
         };
 
-        // Create announcement using the constructor
-        let announcement = GossipPeerAnnouncement::new(
-            peer_info,
-            self.peer_id.clone(),
-            8, // TTL - 8 hops should cover a large network
-        );
+        let announcement = GossipPeerAnnouncement::new(peer_info, self.peer_id.clone(), 8);
 
-        // Serialize and publish via saorsa-gossip PlumTree
-        match announcement.to_bytes() {
-            Ok(payload) => {
-                if let Err(e) = self.epidemic_gossip.publish(payload).await {
-                    warn!("Failed to publish via saorsa-gossip: {}", e);
-                } else {
-                    info!(
-                        "Published announcement via saorsa-gossip epidemic broadcast: {}",
-                        &self.peer_id[..8.min(self.peer_id.len())]
-                    );
-                }
-            }
+        let payload = match announcement.to_bytes() {
+            Ok(p) => p,
             Err(e) => {
+                warn!("Failed to serialize announcement: {}", e);
+                return;
+            }
+        };
+
+        let epidemic_peers = self.epidemic_gossip.connected_peers_with_addresses().await;
+        let use_epidemic = self.epidemic_gossip.is_running() && !epidemic_peers.is_empty();
+
+        if use_epidemic {
+            if let Err(e) = self.epidemic_gossip.publish(payload.clone()).await {
                 warn!(
-                    "Failed to serialize announcement for epidemic broadcast: {}",
+                    "Epidemic publish failed: {}, falling back to P2pEndpoint",
                     e
                 );
+                self.broadcast_via_p2p_endpoint(&payload).await;
+            } else {
+                info!(
+                    "Published via epidemic gossip ({} peers)",
+                    epidemic_peers.len()
+                );
             }
+        } else {
+            debug!(
+                "Epidemic gossip unavailable (running={}, peers={}), using P2pEndpoint fallback",
+                self.epidemic_gossip.is_running(),
+                epidemic_peers.len()
+            );
+            self.broadcast_via_p2p_endpoint(&payload).await;
+        }
+    }
+
+    /// Broadcast data to all connected peers via P2pEndpoint (fallback for NATted clients).
+    async fn broadcast_via_p2p_endpoint(&self, data: &[u8]) {
+        let peers = self.connected_peers.read().await;
+        if peers.is_empty() {
+            debug!("No P2pEndpoint peers to broadcast to");
+            return;
+        }
+
+        let mut sent = 0;
+        for peer_hex in peers.keys() {
+            if let Ok(peer_bytes) = hex::decode(peer_hex) {
+                if peer_bytes.len() == 32 {
+                    let mut arr = [0u8; 32];
+                    arr.copy_from_slice(&peer_bytes);
+                    let peer_id = ant_quic::PeerId(arr);
+                    if self.endpoint.send(&peer_id, data).await.is_ok() {
+                        sent += 1;
+                    }
+                }
+            }
+        }
+        if sent > 0 {
+            info!("Broadcast via P2pEndpoint to {} peers (fallback)", sent);
         }
     }
 
@@ -2963,20 +2992,19 @@ impl TestNode {
     /// Uses fast parallel connection attempts with short timeouts for quick startup.
     /// Returns as soon as ANY peer provides an external address (max 5 seconds total).
     async fn discover_external_address(&self) {
-        let known_quic_peers: Vec<SocketAddr> = vec![
-            "77.42.75.115:9001".parse().ok(),
-            "142.93.199.50:9000".parse().ok(),
-            "147.182.234.192:9000".parse().ok(),
-            "206.189.7.117:9000".parse().ok(),
-            "144.126.230.161:9000".parse().ok(),
-            "65.21.157.229:9000".parse().ok(),
-            "116.203.101.172:9000".parse().ok(),
-            "149.28.156.231:9000".parse().ok(),
-            "45.77.176.184:9000".parse().ok(),
-        ]
-        .into_iter()
-        .flatten()
-        .collect();
+        // CRITICAL: Use P2pEndpoint port (9001) NOT gossip port (9000)
+        // VPS nodes run with --bind-port 9000, which means:
+        //   - Gossip (AntQuicTransport): port 9000
+        //   - P2pEndpoint: port 9001 (base + 1)
+        // For address discovery via OBSERVED_ADDRESS frames, we need P2pEndpoint.
+        let known_quic_peers: Vec<SocketAddr> = VPS_NODE_IPS
+            .iter()
+            .filter_map(|ip| {
+                ip.parse::<std::net::IpAddr>()
+                    .ok()
+                    .map(|addr| SocketAddr::new(addr, 9001)) // P2pEndpoint port
+            })
+            .collect();
 
         if known_quic_peers.is_empty() {
             warn!("No known QUIC peers configured for address discovery");
@@ -3464,19 +3492,25 @@ impl TestNode {
                 let (conn_direct_ipv4, conn_direct_ipv6, conn_hole_punched, conn_relayed) = {
                     let breakdown = &epidemic_stats.connection_types;
 
-                    // Debug: always log the breakdown (every 10th heartbeat to reduce noise)
                     static HEARTBEAT_COUNT: std::sync::atomic::AtomicUsize =
                         std::sync::atomic::AtomicUsize::new(0);
                     let hb_count =
                         HEARTBEAT_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     if hb_count % 10 == 0 {
+                        let p2p_total = peers.len() + stats.inbound_connections as usize;
+                        let gossip_total = breakdown.direct_ipv4
+                            + breakdown.direct_ipv6
+                            + breakdown.hole_punched
+                            + breakdown.relayed;
                         info!(
-                            "Heartbeat #{}: conn breakdown IPv4={}, IPv6={}, HolePunched={}, Relayed={} (gossip peers)",
+                            "Heartbeat #{}: P2P={} (out={}, in={}), Gossip={} (IPv4={}, IPv6={})",
                             hb_count,
+                            p2p_total,
+                            peers.len(),
+                            stats.inbound_connections,
+                            gossip_total,
                             breakdown.direct_ipv4,
                             breakdown.direct_ipv6,
-                            breakdown.hole_punched,
-                            breakdown.relayed,
                         );
                     }
 
