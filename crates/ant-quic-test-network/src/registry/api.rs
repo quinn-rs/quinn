@@ -78,8 +78,9 @@ pub struct RegistryConfig {
 impl Default for RegistryConfig {
     fn default() -> Self {
         Self {
-            bind_addr: "0.0.0.0:8080".parse().expect("valid default address"),
-            quic_addr: Some("0.0.0.0:9000".parse().expect("valid default QUIC address")),
+            // Use [::] for dual-stack (IPv4 + IPv6) support
+            bind_addr: "[::]:8080".parse().expect("valid default address"),
+            quic_addr: Some("[::]:9001".parse().expect("valid default QUIC address")),
             ttl_secs: 120,
             cleanup_interval_secs: 30,
             data_dir: PathBuf::from("./data"),
