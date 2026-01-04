@@ -560,6 +560,9 @@ pub struct NodeHeartbeat {
     pub bytes_received: u64,
     /// Updated external addresses (if changed)
     pub external_addresses: Option<Vec<SocketAddr>>,
+    /// Detected NAT type (updated after external address discovery)
+    #[serde(default)]
+    pub nat_type: Option<NatType>,
     /// NAT traversal statistics
     pub nat_stats: Option<NatStats>,
     /// Gossip protocol statistics

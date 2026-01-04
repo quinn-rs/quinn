@@ -240,6 +240,10 @@ impl PeerStore {
             entry.registration.external_addresses = addrs;
         }
 
+        if let Some(nat_type) = heartbeat.nat_type {
+            entry.registration.nat_type = nat_type;
+        }
+
         // Update NAT stats if provided
         if let Some(stats) = heartbeat.nat_stats {
             entry.nat_stats = stats;
@@ -1077,6 +1081,7 @@ mod tests {
             bytes_sent: 1000,
             bytes_received: 2000,
             external_addresses: None,
+            nat_type: None,
             nat_stats: Some(NatStats {
                 attempts: 10,
                 direct_success: 8,
@@ -1108,6 +1113,7 @@ mod tests {
             bytes_sent: 0,
             bytes_received: 0,
             external_addresses: None,
+            nat_type: None,
             nat_stats: None,
             gossip_stats: None,
             full_mesh_probes: None,

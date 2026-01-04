@@ -3394,6 +3394,12 @@ impl TestNode {
                 stats.inbound_connections = inbound_connections.load(Ordering::Relaxed);
                 stats.is_behind_nat = is_behind_nat;
 
+                let detected_nat_type = if !is_behind_nat && !ext_addrs.is_empty() {
+                    NatType::None
+                } else {
+                    NatType::Unknown
+                };
+
                 // Collect gossip protocol statistics
                 let gossip_metrics = gossip_integration.metrics();
 
@@ -3490,6 +3496,7 @@ impl TestNode {
                     } else {
                         Some(ext_addrs.clone())
                     },
+                    nat_type: Some(detected_nat_type),
                     nat_stats: Some(stats.clone()),
                     gossip_stats: Some(gossip_stats),
                     full_mesh_probes: probes,
