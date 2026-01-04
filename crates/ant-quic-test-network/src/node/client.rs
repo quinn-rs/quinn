@@ -2300,13 +2300,32 @@ impl TestNode {
                                                 hex::encode(from.as_bytes())[..8].to_string(),
                                                 actual_data.len()
                                             );
-                                            // Process the actual payload (could be probe, announcement, etc.)
                                             if let Ok(announcement) = GossipPeerAnnouncement::from_bytes(actual_data) {
                                                 gossip_integration.add_peer(
                                                     &announcement.peer.peer_id,
                                                     &announcement.peer.addresses,
                                                     announcement.peer.is_public,
                                                 );
+                                                use crate::gossip::{PeerAnnouncement, PeerCapabilities};
+                                                let discovery_announcement = PeerAnnouncement {
+                                                    peer_id: announcement.peer.peer_id.clone(),
+                                                    addresses: announcement.peer.addresses.clone(),
+                                                    is_public: announcement.peer.is_public,
+                                                    is_public_ipv4: announcement.peer.is_public,
+                                                    is_public_ipv6: false,
+                                                    timestamp_ms: announcement.timestamp_ms,
+                                                    country_code: None,
+                                                    capabilities: PeerCapabilities {
+                                                        direct: announcement.peer.is_public,
+                                                        direct_ipv4: announcement.peer.is_public,
+                                                        direct_ipv6: false,
+                                                        hole_punch: true,
+                                                        relay: false,
+                                                        coordinator: false,
+                                                        supports_dual_stack: false,
+                                                    },
+                                                };
+                                                gossip_integration.discovery().handle_peer_announcement(discovery_announcement).await;
                                             }
                                         } else {
                                             // Forward to the actual target
@@ -2339,12 +2358,34 @@ impl TestNode {
                                             &peer_id_hex[..8.min(peer_id_hex.len())]
                                         );
 
-                                        // Add peer to gossip integration
+                                        // Add peer to gossip integration (updates peer_cache)
                                         gossip_integration.add_peer(
                                             peer_id_hex,
                                             &announcement.peer.addresses,
                                             announcement.peer.is_public,
                                         );
+
+                                        // ALSO update discovery layer (updates known_peers for get_peers())
+                                        use crate::gossip::{PeerAnnouncement, PeerCapabilities};
+                                        let discovery_announcement = PeerAnnouncement {
+                                            peer_id: announcement.peer.peer_id.clone(),
+                                            addresses: announcement.peer.addresses.clone(),
+                                            is_public: announcement.peer.is_public,
+                                            is_public_ipv4: announcement.peer.is_public,
+                                            is_public_ipv6: false,
+                                            timestamp_ms: announcement.timestamp_ms,
+                                            country_code: None,
+                                            capabilities: PeerCapabilities {
+                                                direct: announcement.peer.is_public,
+                                                direct_ipv4: announcement.peer.is_public,
+                                                direct_ipv6: false,
+                                                hole_punch: true,
+                                                relay: false,
+                                                coordinator: false,
+                                                supports_dual_stack: false,
+                                            },
+                                        };
+                                        gossip_integration.discovery().handle_peer_announcement(discovery_announcement).await;
                                     }
                                 }
                                 EpidemicEvent::ConnectionType { peer_id, connection_type } => {
