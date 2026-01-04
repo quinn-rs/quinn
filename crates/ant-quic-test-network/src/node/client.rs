@@ -664,6 +664,8 @@ impl TestNode {
         // If we're behind NAT and receive inbound connections, hole-punching works!
         let inbound_connections: Arc<AtomicU64> = Arc::new(AtomicU64::new(0));
 
+        let nat_stats: Arc<RwLock<NatStats>> = Arc::new(RwLock::new(NatStats::default()));
+
         // Create relay state for NAT traversal fallback (before event handler spawn)
         let our_peer_id_bytes = peer_id_to_bytes(&peer_id);
         let mut relay_state_inner = RelayState::new(our_peer_id_bytes);
@@ -750,6 +752,7 @@ impl TestNode {
         let connected_peers_for_events = Arc::clone(&connected_peers);
         let peer_id_for_events = peer_id.clone();
         let registry_url_for_events = config.registry_url.clone();
+        let nat_stats_for_events = Arc::clone(&nat_stats);
         tokio::spawn(async move {
             let mut events = endpoint_for_events.subscribe();
             while let Ok(event) = events.recv().await {
@@ -879,8 +882,11 @@ impl TestNode {
                                 count
                             );
 
-                            // This is the key metric for nodes behind NAT!
-                            // If we receive inbound connections, NAT traversal is working
+                            {
+                                let mut stats = nat_stats_for_events.write().await;
+                                stats.hole_punch_success += 1;
+                            }
+
                             let _ = event_tx_for_events.try_send(TuiEvent::InboundConnection);
                             let _ = event_tx_for_events.try_send(TuiEvent::Info(format!(
                                 "← INBOUND from {} (NAT traversal works!)",
@@ -1154,7 +1160,7 @@ impl TestNode {
             relay_connections: Arc::new(AtomicU64::new(0)),
             shutdown: Arc::new(AtomicBool::new(false)),
             event_tx,
-            nat_stats: Arc::new(RwLock::new(NatStats::default())),
+            nat_stats,
             has_ipv6: has_global_ipv6(),
             actual_port,
             gossip_port,
@@ -2821,11 +2827,10 @@ impl TestNode {
         request.to_bytes()
     }
 
-    /// Discover our external address by connecting to known QUIC peers.
+    /// Discover our external address by connecting to known QUIC peers in parallel.
     ///
-    /// This connects to the saorsa network nodes via QUIC to receive
-    /// OBSERVED_ADDRESS frames that tell us our external IP:port as seen by them.
-    /// This is part of the native QUIC NAT traversal per draft-ietf-quic-address-discovery.
+    /// Uses fast parallel connection attempts with short timeouts for quick startup.
+    /// Returns as soon as ANY peer provides an external address (max 5 seconds total).
     async fn discover_external_address(&self) {
         let known_quic_peers: Vec<SocketAddr> = vec![
             "77.42.75.115:9001".parse().ok(),
@@ -2848,68 +2853,44 @@ impl TestNode {
         }
 
         info!(
-            "Discovering external address via QUIC connections to {} known peers...",
+            "Fast parallel address discovery via {} QUIC peers...",
             known_quic_peers.len()
         );
 
-        // Try to connect to each known peer to discover our external address
-        for peer_addr in &known_quic_peers {
-            info!(
-                "Connecting to known peer {} for address discovery...",
-                peer_addr
-            );
+        let (tx, mut rx) = mpsc::channel::<bool>(1);
+        let external_addresses = Arc::clone(&self.external_addresses);
+        let endpoint = Arc::clone(&self.endpoint);
 
-            match tokio::time::timeout(Duration::from_secs(10), self.endpoint.connect(*peer_addr))
-                .await
-            {
-                Ok(Ok(_conn)) => {
-                    info!(
-                        "Connected to {} - waiting for OBSERVED_ADDRESS frame...",
-                        peer_addr
-                    );
+        for peer_addr in known_quic_peers {
+            let ep = Arc::clone(&endpoint);
+            let ext_addrs = Arc::clone(&external_addresses);
+            let tx = tx.clone();
 
-                    // Wait for the OBSERVED_ADDRESS frame to arrive
-                    // The P2pEvent::ExternalAddressDiscovered handler will store it
-                    // Give 5 seconds for the frame to be sent, received, and processed
-                    tokio::time::sleep(Duration::from_secs(5)).await;
-
-                    // Check if we discovered an external address
-                    let addrs = self.external_addresses.read().await;
+            tokio::spawn(async move {
+                if let Ok(Ok(_conn)) =
+                    tokio::time::timeout(Duration::from_secs(3), ep.connect(peer_addr)).await
+                {
+                    tokio::time::sleep(Duration::from_millis(500)).await;
+                    let addrs = ext_addrs.read().await;
                     if !addrs.is_empty() {
-                        info!(
-                            "External address discovered via QUIC NAT traversal: {:?}",
-                            *addrs
-                        );
-                        return;
+                        let _ = tx.send(true).await;
                     }
+                }
+            });
+        }
+        drop(tx);
 
-                    info!(
-                        "No external address received yet from {}, trying next peer...",
-                        peer_addr
-                    );
-                }
-                Ok(Err(e)) => {
-                    warn!(
-                        "Failed to connect to {} for address discovery: {}",
-                        peer_addr, e
-                    );
-                }
-                Err(_) => {
-                    warn!("Connection to {} timed out", peer_addr);
-                }
-            }
+        let result = tokio::time::timeout(Duration::from_secs(5), rx.recv()).await;
+        if let Ok(Some(true)) = result {
+            let addrs = self.external_addresses.read().await;
+            info!("External address discovered: {:?}", *addrs);
+            return;
         }
 
-        // If we couldn't discover from any peer, log a warning and notify TUI
         let addrs = self.external_addresses.read().await;
         if addrs.is_empty() {
             let msg = "No external address discovered - inbound connections may not work";
-            warn!(
-                "Could not discover external address from any known peer. \
-                 Registration will proceed without external address - \
-                 other nodes may not be able to connect to us."
-            );
-            // Send warning to TUI so user sees it
+            warn!("{}", msg);
             let _ = self.event_tx.try_send(TuiEvent::Info(msg.to_string()));
         }
     }

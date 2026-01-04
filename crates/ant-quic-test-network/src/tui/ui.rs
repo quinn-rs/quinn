@@ -48,14 +48,14 @@ pub fn draw(frame: &mut Frame, app: &App) {
         .direction(Direction::Vertical)
         .margin(1)
         .constraints([
-            Constraint::Length(3), // Header
-            Constraint::Length(4), // Connection Overview (traffic lights)
-            Constraint::Length(5), // Your Node (reduced)
-            Constraint::Min(6),    // Connected Peers
-            Constraint::Length(8), // Enhanced: Protocol Frame + Cache Health + NAT Analytics
-            Constraint::Length(6), // Network Stats + Geographic Distribution
-            Constraint::Length(3), // Messages (errors/info)
-            Constraint::Length(3), // Footer
+            Constraint::Length(3),  // Header
+            Constraint::Length(4),  // Connection Overview (traffic lights)
+            Constraint::Length(5),  // Your Node (reduced)
+            Constraint::Min(6),     // Connected Peers
+            Constraint::Length(12), // Enhanced: Cache Health + NAT Analytics + ACTIVITY LOG
+            Constraint::Length(6),  // Network Stats + Geographic Distribution
+            Constraint::Length(2),  // Messages (errors/info)
+            Constraint::Length(2),  // Footer
         ])
         .split(frame.area());
 
@@ -734,7 +734,7 @@ fn draw_activity_log(frame: &mut Frame, app: &App, area: Rect) {
     let mut lines: Vec<Line> = Vec::new();
     let now = std::time::Instant::now();
 
-    for pf in app.protocol_frames.iter().rev().take(6) {
+    for pf in app.protocol_frames.iter().rev().take(9) {
         let age = now.duration_since(pf.timestamp);
         let age_str = if age.as_secs() < 60 {
             format!("{}s", age.as_secs())
