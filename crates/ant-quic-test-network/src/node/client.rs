@@ -3085,6 +3085,18 @@ impl TestNode {
             );
         } else {
             info!("Started saorsa-gossip epidemic layer (HyParView + SWIM + PlumTree)");
+
+            match self.epidemic_gossip.bootstrap().await {
+                Ok(connected) => {
+                    info!(
+                        "HyParView bootstrap complete: connected to {} gossip peers",
+                        connected
+                    );
+                }
+                Err(e) => {
+                    warn!("HyParView bootstrap failed: {} (gossip may be limited)", e);
+                }
+            }
         }
 
         // Register with the registry (now with external address from QUIC discovery)
