@@ -382,20 +382,28 @@ fn handle_tui_event(app: &mut App, event: TuiEvent) {
             app.set_info("Registered with network registry");
         }
         TuiEvent::PeerConnected(peer) => {
-            // Mark peer as seen (successful connection proves they're alive)
             app.peer_seen(&peer.full_id);
-            // Track the connection method breakdown
-            match peer.method {
+            let method_str = match peer.method {
                 crate::registry::ConnectionMethod::Direct => {
                     app.stats.direct_connections += 1;
+                    "DIRECT"
                 }
                 crate::registry::ConnectionMethod::HolePunched => {
                     app.stats.hole_punched_connections += 1;
+                    "PUNCHED"
                 }
                 crate::registry::ConnectionMethod::Relayed => {
                     app.stats.relayed_connections += 1;
+                    "RELAYED"
                 }
-            }
+            };
+            app.add_protocol_frame(ProtocolFrame {
+                peer_id: peer.full_id.clone(),
+                frame_type: "CONNECTED".to_string(),
+                direction: FrameDirection::Received,
+                timestamp: std::time::Instant::now(),
+                context: Some(method_str.to_string()),
+            });
             app.update_peer(peer);
             app.stats.connection_successes += 1;
             app.stats.connection_attempts += 1;

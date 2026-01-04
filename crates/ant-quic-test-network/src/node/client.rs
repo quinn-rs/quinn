@@ -3089,9 +3089,28 @@ impl TestNode {
 
         // Register with the registry (now with external address from QUIC discovery)
         // This must happen AFTER gossip starts so add_bootstrap_peers works
-        self.register().await?;
+        // CRITICAL: Registration is NON-FATAL - we continue even if registry is down
+        // This ensures background tasks (heartbeat, connect) always start
+        // The heartbeat loop will keep retrying registration via its heartbeat calls
+        let _registration_ok = match self.register().await {
+            Ok(()) => {
+                info!("Initial registration successful");
+                true
+            }
+            Err(e) => {
+                warn!(
+                    "Initial registration failed: {} - will retry via heartbeat",
+                    e
+                );
+                let _ = self.event_tx.try_send(TuiEvent::Info(
+                    "Registry offline - continuing in P2P mode".to_string(),
+                ));
+                false
+            }
+        };
 
-        // Spawn all background tasks
+        // Spawn all background tasks REGARDLESS of registration status
+        // This is critical: even without registry, P2P connections can work
         let heartbeat_handle = self.spawn_heartbeat_loop();
         let connect_handle = self.spawn_connect_loop();
         let test_handle = self.spawn_test_loop();
@@ -3228,6 +3247,15 @@ impl TestNode {
                         .event_tx
                         .try_send(TuiEvent::UpdateLocalNode(local_node));
                     let _ = self.event_tx.try_send(TuiEvent::RegistrationComplete);
+                    let _ = self
+                        .event_tx
+                        .try_send(TuiEvent::ProtocolFrame(ProtocolFrame {
+                            peer_id: "registry".to_string(),
+                            frame_type: "REGISTER".to_string(),
+                            direction: FrameDirection::Sent,
+                            timestamp: Instant::now(),
+                            context: Some(format!("{} peers", response.peers.len())),
+                        }));
 
                     // Also send the registered count (non-blocking)
                     let _ = self
@@ -3339,20 +3367,36 @@ impl TestNode {
                         .error
                         .unwrap_or_else(|| "Unknown error".to_string());
                     error!("Registration failed: {}", err);
-                    // Send error to TUI (non-blocking)
                     let _ = self
                         .event_tx
                         .try_send(TuiEvent::Error(format!("Registration failed: {}", err)));
+                    let _ = self
+                        .event_tx
+                        .try_send(TuiEvent::ProtocolFrame(ProtocolFrame {
+                            peer_id: "registry".to_string(),
+                            frame_type: "REGISTER".to_string(),
+                            direction: FrameDirection::Sent,
+                            timestamp: Instant::now(),
+                            context: Some(format!("FAILED: {}", err)),
+                        }));
                     return Err(anyhow::anyhow!("Registration failed: {}", err));
                 }
             }
             Err(e) => {
                 error!("Failed to connect to registry: {}", e);
-                // Send error to TUI (non-blocking)
                 let _ = self.event_tx.try_send(TuiEvent::Error(format!(
                     "Registry connection failed: {}",
                     e
                 )));
+                let _ = self
+                    .event_tx
+                    .try_send(TuiEvent::ProtocolFrame(ProtocolFrame {
+                        peer_id: "registry".to_string(),
+                        frame_type: "REGISTER".to_string(),
+                        direction: FrameDirection::Sent,
+                        timestamp: Instant::now(),
+                        context: Some("OFFLINE".to_string()),
+                    }));
                 return Err(e);
             }
         }
