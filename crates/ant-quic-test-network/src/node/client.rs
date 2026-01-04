@@ -229,8 +229,6 @@ fn detect_nat_type(
 
     if ipv4_match || ipv6_match {
         NatType::None
-    } else if external_ipv4.is_some() || external_ipv6.is_some() {
-        NatType::Unknown
     } else {
         NatType::Unknown
     }
@@ -3124,8 +3122,8 @@ impl TestNode {
 
                     let mut local_node = LocalNodeInfo::default();
                     local_node.set_peer_id(&registration_peer_id);
-                    local_node.local_ipv4 = local_ipv4.clone();
-                    local_node.local_ipv6 = local_ipv6.clone();
+                    local_node.local_ipv4 = local_ipv4;
+                    local_node.local_ipv6 = local_ipv6;
                     local_node.registered = true;
                     local_node.last_heartbeat = Some(std::time::Instant::now());
 

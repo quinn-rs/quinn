@@ -822,7 +822,9 @@ impl PeerStore {
 
     /// Get breakdown of connections by method, IP version, and NAT type.
     pub async fn get_breakdown(&self) -> crate::registry::types::BreakdownResponse {
-        use crate::registry::types::{AggregatedGossipStats, BreakdownResponse, IpVersionBreakdown};
+        use crate::registry::types::{
+            AggregatedGossipStats, BreakdownResponse, IpVersionBreakdown,
+        };
 
         let mut by_method = ConnectionBreakdown::default();
         let mut by_ip_version = IpVersionBreakdown::default();
@@ -846,8 +848,7 @@ impl PeerStore {
         }
 
         if node_count > 0 {
-            gossip.avg_active_view_size =
-                gossip.hyparview_active_total as f64 / node_count as f64;
+            gossip.avg_active_view_size = gossip.hyparview_active_total as f64 / node_count as f64;
         }
 
         by_ip_version.ipv4 = self.ipv4_connections.load(Ordering::Relaxed);
