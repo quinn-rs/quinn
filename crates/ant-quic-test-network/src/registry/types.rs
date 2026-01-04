@@ -1287,6 +1287,24 @@ pub struct BreakdownResponse {
     pub by_ip_version: IpVersionBreakdown,
     /// Breakdown by NAT type
     pub by_nat_type: std::collections::HashMap<String, u64>,
+    /// Aggregated epidemic gossip stats (the working gossip layer)
+    #[serde(default)]
+    pub gossip: Option<AggregatedGossipStats>,
+}
+
+/// Aggregated gossip statistics across all nodes.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct AggregatedGossipStats {
+    /// Total Plumtree messages sent across network
+    pub plumtree_messages_sent: u64,
+    /// Total Plumtree messages received across network
+    pub plumtree_messages_received: u64,
+    /// Total HyParView active view connections
+    pub hyparview_active_total: u64,
+    /// Total SWIM alive peers
+    pub swim_alive_total: u64,
+    /// Average active view size per node
+    pub avg_active_view_size: f64,
 }
 
 /// Breakdown by IP version.

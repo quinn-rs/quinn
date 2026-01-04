@@ -822,24 +822,34 @@ impl PeerStore {
 
     /// Get breakdown of connections by method, IP version, and NAT type.
     pub async fn get_breakdown(&self) -> crate::registry::types::BreakdownResponse {
-        use crate::registry::types::{BreakdownResponse, IpVersionBreakdown};
+        use crate::registry::types::{AggregatedGossipStats, BreakdownResponse, IpVersionBreakdown};
 
         let mut by_method = ConnectionBreakdown::default();
         let mut by_ip_version = IpVersionBreakdown::default();
         let mut by_nat_type: HashMap<String, u64> = HashMap::new();
+        let mut gossip = AggregatedGossipStats::default();
+        let mut node_count = 0u64;
 
-        // Aggregate from peer entries
         for entry in self.peers.iter() {
             by_method.direct += entry.nat_stats.direct_success;
             by_method.hole_punched += entry.nat_stats.hole_punch_success;
             by_method.relayed += entry.nat_stats.relay_success;
 
-            // Count by NAT type
             let nat_key = format!("{:?}", entry.registration.nat_type);
             *by_nat_type.entry(nat_key).or_insert(0) += 1;
+
+            gossip.plumtree_messages_sent += entry.gossip_stats.plumtree_sent;
+            gossip.plumtree_messages_received += entry.gossip_stats.plumtree_received;
+            gossip.hyparview_active_total += entry.gossip_stats.hyparview_active as u64;
+            gossip.swim_alive_total += entry.gossip_stats.swim_alive as u64;
+            node_count += 1;
         }
 
-        // Get IP version counts from atomic counters
+        if node_count > 0 {
+            gossip.avg_active_view_size =
+                gossip.hyparview_active_total as f64 / node_count as f64;
+        }
+
         by_ip_version.ipv4 = self.ipv4_connections.load(Ordering::Relaxed);
         by_ip_version.ipv6 = self.ipv6_connections.load(Ordering::Relaxed);
 
@@ -847,6 +857,7 @@ impl PeerStore {
             by_method,
             by_ip_version,
             by_nat_type,
+            gossip: Some(gossip),
         }
     }
 
