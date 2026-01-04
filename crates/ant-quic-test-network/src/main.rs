@@ -160,15 +160,14 @@ async fn main() -> anyhow::Result<()> {
         println!("Starting registry server on port {}...", args.port);
         println!("\"We will be legion!!\"");
 
-        // QUIC port 0 means disable the QUIC endpoint for address discovery
         let quic_addr = if args.quic_port > 0 {
-            Some(SocketAddr::from(([0, 0, 0, 0], args.quic_port)))
+            Some(format!("[::]:{}", args.quic_port).parse().expect("valid QUIC address"))
         } else {
             None
         };
 
         let config = RegistryConfig {
-            bind_addr: SocketAddr::from(([0, 0, 0, 0], args.port)),
+            bind_addr: format!("[::]:{}", args.port).parse().expect("valid bind address"),
             // QUIC endpoint for native address discovery via OBSERVED_ADDRESS frames
             quic_addr,
             ttl_secs: 120,
