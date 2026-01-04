@@ -47,7 +47,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{RwLock, mpsc};
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 
 /// The network topic for ant-quic-test-network gossip.
 pub const NETWORK_TOPIC: &str = "ant-quic-test-network";
@@ -334,7 +334,7 @@ impl EpidemicGossip {
         // Subscribe to the network topic
         let topic = TopicId::from_entity(NETWORK_TOPIC)
             .map_err(|e| GossipError::Transport(format!("Invalid topic: {e}")))?;
-        let _receiver = pubsub.subscribe(topic);
+        let message_receiver = pubsub.subscribe(topic);
         info!("Subscribed to topic: {}", NETWORK_TOPIC);
 
         // Store the stack
@@ -353,6 +353,7 @@ impl EpidemicGossip {
         // Spawn background tasks
         self.spawn_stats_updater();
         self.spawn_event_monitor();
+        self.spawn_message_receiver(message_receiver);
 
         info!("Epidemic gossip started successfully");
         Ok(())
@@ -1005,6 +1006,58 @@ impl EpidemicGossip {
                     }
                 }
             }
+        });
+    }
+
+    fn spawn_message_receiver(
+        &self,
+        mut receiver: tokio::sync::mpsc::UnboundedReceiver<(PeerId, bytes::Bytes)>,
+    ) {
+        let event_tx = self.event_tx.clone();
+        let running = self.running.clone();
+        let stats = self.stats.clone();
+
+        let topic = match TopicId::from_entity(NETWORK_TOPIC) {
+            Ok(t) => t,
+            Err(e) => {
+                error!("Failed to create topic for message receiver: {}", e);
+                return;
+            }
+        };
+
+        tokio::spawn(async move {
+            info!("Gossip message receiver started");
+            while running.load(std::sync::atomic::Ordering::SeqCst) {
+                tokio::select! {
+                    Some((from_peer, data)) = receiver.recv() => {
+                        debug!(
+                            "Received gossip message from {:?} ({} bytes)",
+                            from_peer,
+                            data.len()
+                        );
+
+                        {
+                            let mut stats_guard = stats.write().await;
+                            stats_guard.plumtree.messages_received += 1;
+                        }
+
+                        if let Err(e) = event_tx
+                            .send(EpidemicEvent::MessageReceived {
+                                from: from_peer,
+                                topic,
+                                payload: data.to_vec(),
+                            })
+                            .await
+                        {
+                            debug!("Failed to forward gossip message to event channel: {}", e);
+                        }
+                    }
+                    _ = tokio::time::sleep(Duration::from_millis(100)) => {
+                        continue;
+                    }
+                }
+            }
+            info!("Message receiver task stopped");
         });
     }
 }
