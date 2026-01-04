@@ -161,13 +161,19 @@ async fn main() -> anyhow::Result<()> {
         println!("\"We will be legion!!\"");
 
         let quic_addr = if args.quic_port > 0 {
-            Some(format!("[::]:{}", args.quic_port).parse().expect("valid QUIC address"))
+            Some(
+                format!("[::]:{}", args.quic_port)
+                    .parse()
+                    .expect("valid QUIC address"),
+            )
         } else {
             None
         };
 
         let config = RegistryConfig {
-            bind_addr: format!("[::]:{}", args.port).parse().expect("valid bind address"),
+            bind_addr: format!("[::]:{}", args.port)
+                .parse()
+                .expect("valid bind address"),
             // QUIC endpoint for native address discovery via OBSERVED_ADDRESS frames
             quic_addr,
             ttl_secs: 120,
