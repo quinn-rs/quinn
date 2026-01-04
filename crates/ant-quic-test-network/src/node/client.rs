@@ -3513,7 +3513,8 @@ impl TestNode {
                     let _ = event_tx.try_send(TuiEvent::CacheHealthUpdate(cache_health));
 
                     let mut nat_analytics = NatTypeAnalytics::default();
-                    nat_analytics.full_cone.attempts = stats.direct_success + stats.hole_punch_success;
+                    nat_analytics.full_cone.attempts =
+                        stats.direct_success + stats.hole_punch_success;
                     nat_analytics.full_cone.direct_connections = stats.direct_success;
                     nat_analytics.full_cone.hole_punched_connections = stats.hole_punch_success;
                     nat_analytics.full_cone.relayed_connections = stats.relay_success;

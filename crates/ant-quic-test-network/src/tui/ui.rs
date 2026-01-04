@@ -12,11 +12,11 @@ use crate::registry::ConnectionMethod;
 use crate::tui::app::App;
 use crate::tui::types::country_flag;
 use ratatui::{
+    Frame,
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Cell, Paragraph, Row, Table},
-    Frame,
 };
 
 /// Traffic light colors for connection methods
@@ -593,11 +593,7 @@ fn draw_stats(frame: &mut Frame, app: &App, area: Rect) {
         Span::raw("  Geo Diversity: "),
         Span::styled(
             if let Some(ref geo) = app.geographic_distribution {
-                if geo.is_diverse() {
-                    "✓"
-                } else {
-                    "✗"
-                }
+                if geo.is_diverse() { "✓" } else { "✗" }
             } else {
                 "?"
             },
