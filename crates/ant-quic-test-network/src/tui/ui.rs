@@ -710,15 +710,80 @@ fn draw_footer(frame: &mut Frame, _app: &App, area: Rect) {
     frame.render_widget(paragraph, area);
 }
 
-/// Draw enhanced analytics panel combining cache health, NAT analytics, and protocol frames
 fn draw_enhanced_analytics(frame: &mut Frame, app: &App, area: Rect) {
     let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage(30),
+            Constraint::Percentage(30),
+            Constraint::Percentage(40),
+        ])
         .split(area);
 
     draw_cache_health_panel(frame, app, chunks[0]);
     draw_nat_analytics_panel(frame, app, chunks[1]);
+    draw_activity_log(frame, app, chunks[2]);
+}
+
+fn draw_activity_log(frame: &mut Frame, app: &App, area: Rect) {
+    let block = Block::default()
+        .title(" ACTIVITY LOG ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Cyan));
+
+    let mut lines: Vec<Line> = Vec::new();
+    let now = std::time::Instant::now();
+
+    for pf in app.protocol_frames.iter().rev().take(6) {
+        let age = now.duration_since(pf.timestamp);
+        let age_str = if age.as_secs() < 60 {
+            format!("{}s", age.as_secs())
+        } else {
+            format!("{}m", age.as_secs() / 60)
+        };
+
+        let dir_color = match pf.direction {
+            crate::tui::types::FrameDirection::Sent => Color::Cyan,
+            crate::tui::types::FrameDirection::Received => Color::Green,
+        };
+
+        let peer_short = if pf.peer_id.len() > 8 {
+            &pf.peer_id[..8]
+        } else {
+            &pf.peer_id
+        };
+
+        let detail = pf.context.as_deref().unwrap_or("");
+        let detail_short = if detail.len() > 20 {
+            &detail[..20]
+        } else {
+            detail
+        };
+
+        lines.push(Line::from(vec![
+            Span::styled(
+                format!("{:>3} ", age_str),
+                Style::default().fg(Color::DarkGray),
+            ),
+            Span::styled(pf.direction.arrow(), Style::default().fg(dir_color)),
+            Span::raw(" "),
+            Span::styled(peer_short, Style::default().fg(Color::White)),
+            Span::raw(" "),
+            Span::styled(&pf.frame_type, Style::default().fg(Color::Yellow)),
+            Span::raw(" "),
+            Span::styled(detail_short, Style::default().fg(Color::DarkGray)),
+        ]));
+    }
+
+    if lines.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "  Waiting for activity...",
+            Style::default().fg(Color::DarkGray),
+        )));
+    }
+
+    let paragraph = Paragraph::new(lines).block(block);
+    frame.render_widget(paragraph, area);
 }
 
 fn draw_cache_health_panel(frame: &mut Frame, app: &App, area: Rect) {

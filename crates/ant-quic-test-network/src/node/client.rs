@@ -67,7 +67,7 @@ impl Default for TestNodeConfig {
             max_peers: 10,
             // Use port 0 for dynamic OS-allocated port (prevents collisions)
             bind_addr: "[::]:0".parse().expect("valid default address"),
-            connect_interval: Duration::from_secs(10),
+            connect_interval: Duration::from_secs(5),
             test_interval: Duration::from_secs(5),
             // 5-second heartbeat keeps NAT holes open for hole-punched connections
             // (NAT devices typically close UDP mappings after 30-60 seconds of inactivity)
@@ -3494,6 +3494,13 @@ impl TestNode {
                     consecutive_failures = 0;
                     debug!("Heartbeat sent successfully");
                     let _ = event_tx.try_send(TuiEvent::HeartbeatSent);
+                    let _ = event_tx.try_send(TuiEvent::ProtocolFrame(ProtocolFrame {
+                        peer_id: "registry".to_string(),
+                        frame_type: "HEARTBEAT".to_string(),
+                        direction: FrameDirection::Sent,
+                        timestamp: Instant::now(),
+                        context: Some(format!("{} peers", total_connections)),
+                    }));
 
                     let cache_health = CacheHealth {
                         total_peers: gossip_integration.cache_size(),
@@ -3579,9 +3586,7 @@ impl TestNode {
         // Clone relay state for fallback when direct connection fails
         let relay_state = Arc::clone(&self.relay_state);
 
-        // Minimum time since disconnection before attempting fresh connection (30 seconds)
-        // This ensures NAT mappings have expired and we're testing real hole-punching
-        const RECONNECT_COOLDOWN_SECS: u64 = 30;
+        const RECONNECT_COOLDOWN_SECS: u64 = 15;
 
         tokio::spawn(async move {
             let mut ticker = tokio::time::interval(interval);
@@ -3775,13 +3780,19 @@ impl TestNode {
                             pending.insert(candidate.peer_id.clone());
                         }
 
-                        // Update NAT stats
                         {
                             let mut stats = nat_stats.write().await;
                             stats.attempts += 1;
                         }
 
-                        // Use comprehensive connection testing to try ALL paths
+                        let _ = event_tx.try_send(TuiEvent::ProtocolFrame(ProtocolFrame {
+                            peer_id: peer_id_short.to_string(),
+                            frame_type: "CONNECT".to_string(),
+                            direction: FrameDirection::Sent,
+                            timestamp: Instant::now(),
+                            context: candidate.country_code.clone(),
+                        }));
+
                         let result = real_connect_comprehensive(&endpoint, &candidate).await;
 
                         if result.success {
@@ -3856,6 +3867,14 @@ impl TestNode {
                                 final_method,
                                 peer_for_tui.connectivity_summary()
                             );
+
+                            let _ = event_tx.try_send(TuiEvent::ProtocolFrame(ProtocolFrame {
+                                peer_id: peer_id_short.to_string(),
+                                frame_type: format!("{:?}", final_method).to_uppercase(),
+                                direction: FrameDirection::Received,
+                                timestamp: Instant::now(),
+                                context: Some((if is_ipv6 { "IPv6" } else { "IPv4" }).to_string()),
+                            }));
 
                             send_tui_event(&event_tx, TuiEvent::PeerConnected(peer_for_tui));
 
@@ -3979,6 +3998,14 @@ impl TestNode {
                                         peer_id_short,
                                         result.matrix.summary()
                                     );
+                                    let _ =
+                                        event_tx.try_send(TuiEvent::ProtocolFrame(ProtocolFrame {
+                                            peer_id: peer_id_short.to_string(),
+                                            frame_type: "FAILED".to_string(),
+                                            direction: FrameDirection::Sent,
+                                            timestamp: Instant::now(),
+                                            context: candidate.country_code.clone(),
+                                        }));
                                     let _ = event_tx.try_send(TuiEvent::ConnectionFailed);
                                 } else {
                                     debug!(

@@ -233,13 +233,11 @@ impl App {
         peers
     }
 
-    /// Add a protocol frame to the log (keep last 20)
     pub fn add_protocol_frame(&mut self, frame: ProtocolFrame) {
         self.protocol_frames.push(frame);
-        // Keep only last 20 frames
-        if self.protocol_frames.len() > 20 {
+        if self.protocol_frames.len() > 50 {
             self.protocol_frames
-                .drain(0..self.protocol_frames.len() - 20);
+                .drain(0..self.protocol_frames.len() - 50);
         }
     }
 
