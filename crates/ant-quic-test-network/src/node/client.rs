@@ -209,6 +209,33 @@ fn detect_local_addresses(bind_port: u16) -> (Option<SocketAddr>, Option<SocketA
     (local_ipv4, local_ipv6)
 }
 
+fn detect_nat_type(
+    local_ipv4: &Option<SocketAddr>,
+    local_ipv6: &Option<SocketAddr>,
+    local_node: &LocalNodeInfo,
+) -> NatType {
+    let external_ipv4 = local_node.external_ipv4;
+    let external_ipv6 = local_node.external_ipv6;
+
+    let ipv4_match = match (local_ipv4, external_ipv4) {
+        (Some(local), Some(external)) => local.ip() == external.ip(),
+        _ => false,
+    };
+
+    let ipv6_match = match (local_ipv6, external_ipv6) {
+        (Some(local), Some(external)) => local.ip() == external.ip(),
+        _ => false,
+    };
+
+    if ipv4_match || ipv6_match {
+        NatType::None
+    } else if external_ipv4.is_some() || external_ipv6.is_some() {
+        NatType::Unknown
+    } else {
+        NatType::Unknown
+    }
+}
+
 /// Maximum time without activity before considering a peer stale (1 hour keepalive).
 const STALE_PEER_TIMEOUT_SECS: u64 = 3600;
 
@@ -3056,9 +3083,8 @@ impl TestNode {
 
                     let mut local_node = LocalNodeInfo::default();
                     local_node.set_peer_id(&registration_peer_id);
-                    local_node.local_ipv4 = local_ipv4;
-                    local_node.local_ipv6 = local_ipv6;
-                    local_node.nat_type = NatType::Unknown;
+                    local_node.local_ipv4 = local_ipv4.clone();
+                    local_node.local_ipv6 = local_ipv6.clone();
                     local_node.registered = true;
                     local_node.last_heartbeat = Some(std::time::Instant::now());
 
@@ -3072,6 +3098,8 @@ impl TestNode {
                             }
                         }
                     }
+
+                    local_node.nat_type = detect_nat_type(&local_ipv4, &local_ipv6, &local_node);
 
                     // Send updated node info to TUI (non-blocking)
                     let _ = self
