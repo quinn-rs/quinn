@@ -1117,6 +1117,72 @@ impl TestNode {
                             }
                         });
 
+                        // === IMMEDIATE ConnectBackRequest for OUTBOUND connections ===
+                        // When we (possibly NATted) connect OUT to a peer, immediately ask them
+                        // to try connecting back while our NAT hole might still be fresh.
+                        // This is critical for CGNAT/Starlink where holes expire in 10-30 seconds.
+                        if !is_inbound {
+                            let endpoint_for_callback = endpoint_for_events.clone();
+                            let external_addrs_for_callback =
+                                Arc::clone(&external_addresses_for_events);
+                            let our_peer_id_for_callback = peer_id_for_events.clone();
+                            let target_peer_hex = peer_hex.clone();
+                            let event_tx_for_callback = event_tx_for_events.clone();
+
+                            tokio::spawn(async move {
+                                use super::test_protocol::ConnectBackRequest;
+
+                                let our_addresses =
+                                    external_addrs_for_callback.read().await.clone();
+                                if our_addresses.is_empty() {
+                                    return;
+                                }
+
+                                tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+
+                                let request = ConnectBackRequest::new(
+                                    our_peer_id_for_callback.clone(),
+                                    our_addresses.clone(),
+                                );
+
+                                if let Ok(bytes) = request.to_bytes() {
+                                    if let Ok(peer_bytes) = hex::decode(&target_peer_hex) {
+                                        if peer_bytes.len() == 32 {
+                                            let mut arr = [0u8; 32];
+                                            arr.copy_from_slice(&peer_bytes);
+                                            let target_peer = ant_quic::PeerId(arr);
+
+                                            if let Err(e) = endpoint_for_callback
+                                                .send(&target_peer, &bytes)
+                                                .await
+                                            {
+                                                debug!(
+                                                    "Immediate ConnectBack: failed to send to {}: {}",
+                                                    &target_peer_hex
+                                                        [..8.min(target_peer_hex.len())],
+                                                    e
+                                                );
+                                            } else {
+                                                info!(
+                                                    "Immediate ConnectBack: sent to {} ({} addresses)",
+                                                    &target_peer_hex
+                                                        [..8.min(target_peer_hex.len())],
+                                                    our_addresses.len()
+                                                );
+                                                let _ = event_tx_for_callback.try_send(
+                                                    TuiEvent::Info(format!(
+                                                        "Asked {} to connect back (NAT test)",
+                                                        &target_peer_hex
+                                                            [..8.min(target_peer_hex.len())]
+                                                    )),
+                                                );
+                                            }
+                                        }
+                                    }
+                                }
+                            });
+                        }
+
                         // Note: Gossip messages are now received via the central
                         // endpoint.recv() loop in start_gossip_listener, not per-peer
                     }
