@@ -38,9 +38,9 @@ use ant_quic::crypto::raw_public_keys::key_utils::{
 };
 
 use super::test_protocol::{
-    CanYouReachRequest, ConnectBackResponse, GossipMessage, GossipPeerAnnouncement, GossipPeerInfo,
-    PeerListMessage, RELAY_MAGIC, ReachResponse, RelayAckResponse, RelayMessage,
-    RelayPunchMeNowRequest, RelayState, RelayedDataResponse, TestPacket,
+    CanYouReachRequest, GossipMessage, GossipPeerAnnouncement, GossipPeerInfo, PeerListMessage,
+    RELAY_MAGIC, ReachResponse, RelayAckResponse, RelayMessage, RelayPunchMeNowRequest, RelayState,
+    RelayedDataResponse, TestPacket,
 };
 
 /// Configuration for the test node.
@@ -1176,6 +1176,18 @@ impl TestNode {
                                                             [..8.min(target_peer_hex.len())]
                                                     )),
                                                 );
+
+                                                // Keep NAT binding alive for 3s while VPS does rapid-fire attempts
+                                                let ep_for_keepalive =
+                                                    endpoint_for_callback.clone();
+                                                let peer_for_keepalive = target_peer;
+                                                for _ in 0..30 {
+                                                    tokio::time::sleep(Duration::from_millis(100))
+                                                        .await;
+                                                    let _ = ep_for_keepalive
+                                                        .send(&peer_for_keepalive, b"ping")
+                                                        .await;
+                                                }
                                             }
                                         }
                                     }
@@ -2044,80 +2056,57 @@ impl TestNode {
                                             // Don't connect back to ourselves
                                             if request.requester_peer_id != peer_id {
                                                 let endpoint_clone = Arc::clone(&endpoint);
-                                                let our_peer_id = peer_id.clone();
-                                                let request_id = request.request_id;
                                                 let requester_id = request.requester_peer_id.clone();
                                                 let addresses = request.requester_addresses.clone();
 
-                                                // Spawn task to attempt connect-back
-                                                tokio::spawn(async move {
-                                                    let mut connected_addr = None;
-                                                    let mut last_error = String::new();
+                                                // RAPID-FIRE hole punch: 10 attempts over 2 seconds
+                                                // This maximizes chance of hitting while NAT binding is fresh
+                                                info!(
+                                                    "Starting rapid-fire connect-back to {} ({} addresses)",
+                                                    &requester_id[..8.min(requester_id.len())],
+                                                    addresses.len()
+                                                );
 
-                                                    // Try each address with a short timeout
-                                                    for addr in &addresses {
+                                                for attempt in 0u64..10 {
+                                                    if addresses.is_empty() { break; }
+                                                    let addr = addresses[attempt as usize % addresses.len()];
+                                                    let ep = Arc::clone(&endpoint_clone);
+                                                    let req_id = requester_id.clone();
+
+                                                    tokio::spawn(async move {
+                                                        tokio::time::sleep(Duration::from_millis(attempt * 200)).await;
                                                         match tokio::time::timeout(
-                                                            Duration::from_secs(5),
-                                                            endpoint_clone.connect(*addr),
+                                                            Duration::from_secs(3),
+                                                            ep.connect(addr),
                                                         ).await {
                                                             Ok(Ok(_)) => {
                                                                 info!(
-                                                                    "ConnectBack: successfully connected to {} at {}",
-                                                                    &requester_id[..8.min(requester_id.len())],
+                                                                    "RapidFire #{}: SUCCESS connecting to {} at {}",
+                                                                    attempt,
+                                                                    &req_id[..8.min(req_id.len())],
                                                                     addr
                                                                 );
-                                                                connected_addr = Some(*addr);
-                                                                break;
                                                             }
                                                             Ok(Err(e)) => {
                                                                 debug!(
-                                                                    "ConnectBack: failed to connect to {} at {}: {}",
-                                                                    &requester_id[..8.min(requester_id.len())],
+                                                                    "RapidFire #{}: failed {} at {}: {}",
+                                                                    attempt,
+                                                                    &req_id[..8.min(req_id.len())],
                                                                     addr,
                                                                     e
                                                                 );
-                                                                last_error = e.to_string();
                                                             }
                                                             Err(_) => {
                                                                 debug!(
-                                                                    "ConnectBack: timeout connecting to {} at {}",
-                                                                    &requester_id[..8.min(requester_id.len())],
+                                                                    "RapidFire #{}: timeout {} at {}",
+                                                                    attempt,
+                                                                    &req_id[..8.min(req_id.len())],
                                                                     addr
                                                                 );
-                                                                last_error = "connection timeout".to_string();
                                                             }
                                                         }
-                                                    }
-
-                                                    // Send response back via the existing connection
-                                                    let response = if let Some(addr) = connected_addr {
-                                                        ConnectBackResponse::success(
-                                                            request_id,
-                                                            our_peer_id.clone(),
-                                                            addr,
-                                                        )
-                                                    } else {
-                                                        ConnectBackResponse::failure(
-                                                            request_id,
-                                                            our_peer_id.clone(),
-                                                            last_error,
-                                                        )
-                                                    };
-
-                                                    // Try to send response to requester
-                                                    if let Ok(bytes) = response.to_bytes() {
-                                                        if let Ok(requester_bytes) = hex::decode(&requester_id) {
-                                                            if requester_bytes.len() == 32 {
-                                                                let mut arr = [0u8; 32];
-                                                                arr.copy_from_slice(&requester_bytes);
-                                                                let peer = ant_quic::PeerId(arr);
-                                                                if let Err(e) = endpoint_clone.send(&peer, &bytes).await {
-                                                                    debug!("Failed to send ConnectBackResponse: {}", e);
-                                                                }
-                                                            }
-                                                        }
-                                                    }
-                                                });
+                                                    });
+                                                }
                                             }
                                         }
                                         GossipMessage::ConnectBackResponse(response) => {
