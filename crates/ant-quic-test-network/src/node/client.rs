@@ -392,6 +392,9 @@ pub struct TestNode {
     epidemic_event_rx: Arc<RwLock<mpsc::Receiver<EpidemicEvent>>>,
     full_mesh_probes: Arc<RwLock<HashMap<String, FullMeshProbeResult>>>,
     geo_provider: Arc<BgpGeoProvider>,
+    /// Peers we've fully tested (outbound + inbound both verified).
+    /// These peers don't need retesting - they stay in the UI as verified.
+    fully_tested_peers: Arc<RwLock<HashSet<String>>>,
 }
 
 /// Get the data directory for persistent storage.
@@ -1014,9 +1017,14 @@ impl TestNode {
                                     ..Default::default()
                                 };
 
+                                let existing = peers.get(&peer_hex);
+                                let prev_outbound =
+                                    existing.map(|t| t.outbound_verified).unwrap_or(false);
+                                let prev_inbound =
+                                    existing.map(|t| t.inbound_verified).unwrap_or(false);
                                 let (outbound_verified, inbound_verified) = match direction {
-                                    ConnectionDirection::Outbound => (true, false),
-                                    ConnectionDirection::Inbound => (false, true),
+                                    ConnectionDirection::Outbound => (true, prev_inbound),
+                                    ConnectionDirection::Inbound => (prev_outbound, true),
                                 };
                                 let connectivity_for_report = connectivity.clone();
                                 let tracked = TrackedPeer {
@@ -1352,6 +1360,7 @@ impl TestNode {
             epidemic_event_rx: Arc::new(RwLock::new(epidemic_event_rx)),
             full_mesh_probes: Arc::new(RwLock::new(HashMap::new())),
             geo_provider,
+            fully_tested_peers: Arc::new(RwLock::new(HashSet::new())),
         })
     }
 
@@ -1855,9 +1864,9 @@ impl TestNode {
         let gossip_event_rx = Arc::clone(&self.gossip_event_rx);
         let event_tx = self.event_tx.clone();
         let peer_id = self.peer_id.clone();
-        // Add endpoint and connected_peers for triggering connections
         let endpoint = Arc::clone(&self.endpoint);
         let connected_peers = Arc::clone(&self.connected_peers);
+        let fully_tested_peers = Arc::clone(&self.fully_tested_peers);
         let max_peers = self.config.max_peers;
 
         tokio::spawn(async move {
@@ -2208,36 +2217,92 @@ impl TestNode {
                                                     response.connected_address
                                                 );
 
-                                                // Mark inbound verified for this peer in TUI
                                                 let _ = event_tx.try_send(TuiEvent::Info(format!(
                                                     "NAT verified: {} connected back to us",
                                                     &response.responder_peer_id[..8.min(response.responder_peer_id.len())]
                                                 )));
 
-                                                // Update the peer's inbound_verified status
                                                 let responder_id = response.responder_peer_id.clone();
                                                 let connected_peers_clone = Arc::clone(&connected_peers);
+                                                let fully_tested_clone = Arc::clone(&fully_tested_peers);
                                                 tokio::spawn(async move {
                                                     let mut peers = connected_peers_clone.write().await;
                                                     if let Some(tracked) = peers.get_mut(&responder_id) {
                                                         tracked.inbound_verified = true;
-                                                        debug!(
-                                                            "Marked {} as inbound verified",
-                                                            &responder_id[..8.min(responder_id.len())]
-                                                        );
+                                                        if tracked.outbound_verified {
+                                                            let mut tested = fully_tested_clone.write().await;
+                                                            tested.insert(responder_id.clone());
+                                                        }
                                                     }
                                                 });
-                                            } else {
-                                                debug!(
-                                                    "ConnectBackResponse failed from {}: {:?}",
-                                                    &response.responder_peer_id[..8.min(response.responder_peer_id.len())],
-                                                    response.error
-                                                );
                                             }
                                         }
-                                        _ => {
-                                            // Already handled above (PeerList, PeerAnnouncement)
+                                        GossipMessage::DisconnectAndConnectBack(request) => {
+                                            let requester_id = request.requester_peer_id.clone();
+                                            let addresses = request.requester_addresses.clone();
+                                            let delay = request.delay_seconds;
+                                            let endpoint_clone = Arc::clone(&endpoint);
+                                            let event_tx_clone = event_tx.clone();
+                                            let peer_id_clone = peer_id.clone();
+
+                                            tokio::spawn(async move {
+                                                let peer_short = &requester_id[..8.min(requester_id.len())];
+                                                info!(
+                                                    "DisconnectAndConnectBack from {}: disconnecting, waiting {}s, then reconnecting",
+                                                    peer_short, delay
+                                                );
+
+                                                let _ = event_tx_clone.try_send(TuiEvent::Info(format!(
+                                                    "Will reconnect to {} in {}s (NAT test)",
+                                                    peer_short, delay
+                                                )));
+
+                                                tokio::time::sleep(Duration::from_secs(delay as u64)).await;
+
+                                                for addr in &addresses {
+                                                    match tokio::time::timeout(
+                                                        Duration::from_secs(15),
+                                                        endpoint_clone.connect(*addr),
+                                                    ).await {
+                                                        Ok(Ok(_)) => {
+                                                            info!(
+                                                                "ConnectBack SUCCESS: fresh connection to {} at {}",
+                                                                peer_short, addr
+                                                            );
+                                                            let _ = event_tx_clone.try_send(TuiEvent::Info(format!(
+                                                                "Connected back to {} (NAT verified)",
+                                                                peer_short
+                                                            )));
+
+                                                            let response = super::test_protocol::ConnectBackResponse::success(
+                                                                request.request_id,
+                                                                peer_id_clone.clone(),
+                                                                *addr,
+                                                            );
+                                                            if let Ok(bytes) = response.to_bytes() {
+                                                                if let Ok(peer_bytes) = hex::decode(&requester_id) {
+                                                                    if peer_bytes.len() == 32 {
+                                                                        let mut arr = [0u8; 32];
+                                                                        arr.copy_from_slice(&peer_bytes);
+                                                                        let target = ant_quic::PeerId(arr);
+                                                                        let _ = endpoint_clone.send(&target, &bytes).await;
+                                                                    }
+                                                                }
+                                                            }
+                                                            return;
+                                                        }
+                                                        Ok(Err(e)) => {
+                                                            debug!("ConnectBack failed to {} at {}: {}", peer_short, addr, e);
+                                                        }
+                                                        Err(_) => {
+                                                            debug!("ConnectBack timeout to {} at {}", peer_short, addr);
+                                                        }
+                                                    }
+                                                }
+                                                info!("ConnectBack FAILED: couldn't reach {} at any address", peer_short);
+                                            });
                                         }
+                                        _ => {}
                                     }
                                 }
                             } else if RelayMessage::is_relay_message(&data) {
@@ -3841,20 +3906,21 @@ impl TestNode {
         })
     }
 
-    /// Spawn the peer connection background task.
+    /// Connect to peers and test bidirectional NAT traversal.
     ///
-    /// Bidirectional connectivity testing strategy:
-    /// 1. Get list of LIVE peers from registry (is_active = recent heartbeat)
-    /// 2. Only attempt connections to peers we've been disconnected from for >30 seconds
-    ///    (this ensures NAT mappings have expired and we're testing FRESH hole-punches)
-    /// 3. Each node independently tests its own outbound connectivity
-    /// 4. When A tests A→B and B tests B→A, registry can correlate for true bidirectional
+    /// Flow:
+    /// 1. Get all peers from registry + gossip
+    /// 2. Connect to any peer we haven't fully tested yet  
+    /// 3. After connecting, send DisconnectAndConnectBack message
+    /// 4. Peer disconnects, waits 30s, reconnects (fresh NAT test)
+    /// 5. When peer connects back → bidirectional verified
     #[allow(clippy::excessive_nesting)]
     fn spawn_connect_loop(&self) -> tokio::task::JoinHandle<()> {
         let registry = RegistryClient::new(&self.config.registry_url);
         let shutdown = Arc::clone(&self.shutdown);
         let connected_peers = Arc::clone(&self.connected_peers);
-        let disconnection_times = Arc::clone(&self.disconnection_times);
+        let fully_tested_peers = Arc::clone(&self.fully_tested_peers);
+        let external_addresses = Arc::clone(&self.external_addresses);
         let interval = self.config.connect_interval;
         let event_tx = self.event_tx.clone();
         let our_peer_id = self.peer_id.clone();
@@ -3864,18 +3930,14 @@ impl TestNode {
         let direct = Arc::clone(&self.direct_connections);
         let holepunch = Arc::clone(&self.holepunch_connections);
         let relay = Arc::clone(&self.relay_connections);
-        // Clone the endpoint for real QUIC connections
         let endpoint = Arc::clone(&self.endpoint);
-        // Capture our IPv6 capability for filtering
         let our_has_ipv6 = self.has_ipv6;
-        // Clone hole-punching tracker for connection method detection
         let hole_punched_peers = Arc::clone(&self.hole_punched_peers);
-        // Clone pending_outbound to track outbound connection attempts
         let pending_outbound = Arc::clone(&self.pending_outbound);
-        // Clone gossip integration for decentralized peer discovery
         let gossip_integration = Arc::clone(&self.gossip_integration);
-        // Clone relay state for fallback when direct connection fails
         let relay_state = Arc::clone(&self.relay_state);
+        #[allow(unused_variables)]
+        let disconnection_times = Arc::clone(&self.disconnection_times);
 
         tokio::spawn(async move {
             let mut ticker = tokio::time::interval(interval);
@@ -3957,55 +4019,35 @@ impl TestNode {
                 // The registry.get_peers() returns all peers EXCEPT us (non-blocking)
                 let _ = event_tx.try_send(TuiEvent::UpdateRegisteredCount(peers.len() + 1));
 
-                // Get current connection state and disconnection times
                 let connected = connected_peers.read().await;
-                let disc_times = disconnection_times.read().await;
+                let tested = fully_tested_peers.read().await;
 
-                // Filter candidates - ONLY connect to peers we've NEVER connected to before
-                // After first connection, we rely on ConnectBackRequest for reverse testing
-                // (the other node waits 30s then connects back to us)
+                // Connect to peers we haven't fully tested (bidirectional) yet
                 let candidates: Vec<PeerInfo> = peers
                     .iter()
                     .filter(|p| p.peer_id != our_peer_id)
-                    .filter(|p| {
-                        // Only connect if we've never had ANY connection to this peer
-                        let dominated_connected = connected.get(&p.peer_id).is_none();
-                        let never_disconnected = disc_times.get(&p.peer_id).is_none();
-                        let dominated_new_peer = dominated_connected && never_disconnected;
-
-                        if !dominated_new_peer {
-                            debug!(
-                                "Peer {} skipped: already seen (connected={}, disconnected={})",
-                                &p.peer_id[..8.min(p.peer_id.len())],
-                                !dominated_connected,
-                                !never_disconnected
-                            );
-                        }
-                        dominated_new_peer
-                    })
+                    .filter(|p| !tested.contains(&p.peer_id))
+                    .filter(|p| !connected.contains_key(&p.peer_id))
                     .filter(|p| p.is_active || peer_is_vps(p))
                     .filter(|p| can_reach_peer(p, our_has_ipv6))
                     .cloned()
                     .collect();
 
                 drop(connected);
-                drop(disc_times);
+                drop(tested);
 
                 if candidates.is_empty() {
-                    debug!("No eligible peers for fresh hole-punch testing");
                     continue;
                 }
 
-                info!(
-                    "Testing connectivity to {} new peers (first contact)",
-                    candidates.len()
-                );
+                info!("Connecting to {} untested peers", candidates.len());
 
                 // Connect to ALL eligible peers concurrently (max 20 at a time)
                 // Higher limit ensures DO nodes quickly reach all community test nodes
                 let mut connect_futures = Vec::new();
                 for candidate in candidates.into_iter().take(20) {
                     let endpoint = Arc::clone(&endpoint);
+                    let external_addresses = Arc::clone(&external_addresses);
                     let nat_stats = Arc::clone(&nat_stats);
                     let success = Arc::clone(&success);
                     let failed = Arc::clone(&failed);
@@ -4155,12 +4197,31 @@ impl TestNode {
                                 warn!("Failed to report connection: {}", e);
                             }
 
-                            // Cache this peer for gossip/bootstrap
                             gossip_integration.record_success(&candidate.peer_id);
-                            debug!(
-                                "Cached successful connection to {} in gossip bootstrap cache",
-                                peer_id_short
-                            );
+
+                            // Send DisconnectAndConnectBack to trigger reverse test
+                            let our_addrs = external_addresses.read().await.clone();
+                            if !our_addrs.is_empty() {
+                                let msg = super::test_protocol::DisconnectAndConnectBack::new(
+                                    our_peer_id.clone(),
+                                    our_addrs,
+                                    30,
+                                );
+                                if let Ok(bytes) = msg.to_bytes() {
+                                    if let Ok(peer_bytes) = hex::decode(&candidate.peer_id) {
+                                        if peer_bytes.len() == 32 {
+                                            let mut arr = [0u8; 32];
+                                            arr.copy_from_slice(&peer_bytes);
+                                            let target = ant_quic::PeerId(arr);
+                                            let _ = endpoint.send(&target, &bytes).await;
+                                            info!(
+                                                "Sent DisconnectAndConnectBack to {}",
+                                                peer_id_short
+                                            );
+                                        }
+                                    }
+                                }
+                            }
                         } else {
                             // Connection failed - try relay fallback before giving up
                             let target_peer_id = peer_id_to_bytes(&candidate.peer_id);

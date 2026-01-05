@@ -884,6 +884,8 @@ pub enum GossipMessage {
     ConnectBackRequest(ConnectBackRequest),
     /// Response to a connect-back request.
     ConnectBackResponse(ConnectBackResponse),
+    /// Request peer to disconnect and connect back after 30s (fresh NAT test).
+    DisconnectAndConnectBack(DisconnectAndConnectBack),
 }
 
 /// A list of known peers to share via gossip.
@@ -1100,13 +1102,59 @@ impl ConnectBackResponse {
         }
     }
 
-    /// Serialize to bytes.
     pub fn to_bytes(&self) -> Result<Vec<u8>, serde_json::Error> {
         serde_json::to_vec(&GossipMessage::ConnectBackResponse(self.clone()))
     }
 }
 
-#[allow(dead_code)] // Used for gossip message parsing
+/// Request peer to disconnect, wait 30s for NAT hole to expire, then connect back.
+/// This tests fresh NAT traversal rather than reusing existing holes.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DisconnectAndConnectBack {
+    pub magic: [u8; 4],
+    pub request_id: u64,
+    pub requester_peer_id: String,
+    pub requester_addresses: Vec<SocketAddr>,
+    pub requester_ipv4_addresses: Vec<SocketAddr>,
+    pub requester_ipv6_addresses: Vec<SocketAddr>,
+    pub delay_seconds: u32,
+    pub timestamp_ms: u64,
+}
+
+impl DisconnectAndConnectBack {
+    pub fn new(
+        requester_peer_id: String,
+        requester_addresses: Vec<SocketAddr>,
+        delay_seconds: u32,
+    ) -> Self {
+        let ipv4: Vec<SocketAddr> = requester_addresses
+            .iter()
+            .filter(|a| a.is_ipv4())
+            .copied()
+            .collect();
+        let ipv6: Vec<SocketAddr> = requester_addresses
+            .iter()
+            .filter(|a| a.is_ipv6())
+            .copied()
+            .collect();
+        Self {
+            magic: GOSSIP_MAGIC,
+            request_id: current_timestamp_ns(),
+            requester_peer_id,
+            requester_addresses,
+            requester_ipv4_addresses: ipv4,
+            requester_ipv6_addresses: ipv6,
+            delay_seconds,
+            timestamp_ms: current_timestamp_ns() / 1_000_000,
+        }
+    }
+
+    pub fn to_bytes(&self) -> Result<Vec<u8>, serde_json::Error> {
+        serde_json::to_vec(&GossipMessage::DisconnectAndConnectBack(self.clone()))
+    }
+}
+
+#[allow(dead_code)]
 impl GossipMessage {
     /// Deserialize from bytes.
     pub fn from_bytes(data: &[u8]) -> Result<Self, serde_json::Error> {
