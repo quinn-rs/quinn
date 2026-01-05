@@ -109,6 +109,7 @@ fn peer_is_vps(peer: &PeerInfo) -> bool {
 fn vps_gossip_bootstrap_addrs() -> Vec<SocketAddr> {
     VPS_NODE_IPS
         .iter()
+        .filter(|ip| **ip != "77.42.75.115") // Skip registry node (no gossip)
         .filter_map(|ip| {
             ip.parse::<std::net::IpAddr>()
                 .ok()
@@ -3079,31 +3080,9 @@ impl TestNode {
 
         let shutdown = Arc::clone(&self.shutdown);
 
-        if let Err(e) = self.epidemic_gossip.start().await {
-            warn!(
-                "Failed to start saorsa-gossip epidemic layer: {} (continuing with passive gossip)",
-                e
-            );
-        } else {
-            info!("Started saorsa-gossip epidemic layer (HyParView + SWIM + PlumTree)");
-
-            match self.epidemic_gossip.bootstrap().await {
-                Ok(connected) => {
-                    info!(
-                        "HyParView bootstrap complete: connected to {} gossip peers",
-                        connected
-                    );
-                }
-                Err(e) => {
-                    warn!("HyParView bootstrap failed: {} (gossip may be limited)", e);
-                }
-            }
-        }
-
-        // Register with the registry (now with external address from QUIC discovery)
-        // This must happen AFTER gossip starts so add_bootstrap_peers works
+        // Register FIRST - only needs HTTP to registry, no gossip dependency
         // CRITICAL: Registration is NON-FATAL - we continue even if registry is down
-        // This ensures background tasks (heartbeat, connect) always start
+        // This ensures TUI shows "registered" immediately while gossip initializes
         // The heartbeat loop will keep retrying registration via its heartbeat calls
         let _registration_ok = match self.register().await {
             Ok(()) => {
@@ -3121,6 +3100,31 @@ impl TestNode {
                 false
             }
         };
+
+        // Start gossip AFTER registration - gossip.start() can be slow due to transport creation
+        if let Err(e) = self.epidemic_gossip.start().await {
+            warn!(
+                "Failed to start saorsa-gossip epidemic layer: {} (continuing with passive gossip)",
+                e
+            );
+        } else {
+            info!("Started saorsa-gossip epidemic layer (HyParView + SWIM + PlumTree)");
+
+            let gossip = Arc::clone(&self.epidemic_gossip);
+            tokio::spawn(async move {
+                match gossip.bootstrap().await {
+                    Ok(connected) => {
+                        info!(
+                            "HyParView bootstrap complete: connected to {} gossip peers",
+                            connected
+                        );
+                    }
+                    Err(e) => {
+                        warn!("HyParView bootstrap failed: {} (gossip may be limited)", e);
+                    }
+                }
+            });
+        }
 
         let heartbeat_handle = self.spawn_heartbeat_loop();
         let connect_handle = self.spawn_connect_loop();
