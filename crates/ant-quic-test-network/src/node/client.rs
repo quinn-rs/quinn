@@ -4617,7 +4617,9 @@ impl TestNode {
                                     }) = serde_json::from_str::<NetworkEvent>(&text)
                                     {
                                         if target_peer_id == peer_id {
-                                            debug!("Ignoring connectivity test request for ourselves");
+                                            debug!(
+                                                "Ignoring connectivity test request for ourselves"
+                                            );
                                             continue;
                                         }
 
@@ -4637,11 +4639,9 @@ impl TestNode {
                                 }
                                 Ok(Message::Ping(data)) => {
                                     debug!("WebSocket ping received");
-                                    let _ = futures::SinkExt::send(
-                                        &mut ws_stream,
-                                        Message::Pong(data),
-                                    )
-                                    .await;
+                                    let _ =
+                                        futures::SinkExt::send(&mut ws_stream, Message::Pong(data))
+                                            .await;
                                 }
                                 Ok(Message::Close(_)) => {
                                     info!("WebSocket connection closed by server");
@@ -4711,8 +4711,7 @@ impl TestNode {
 
                 let _ = event_tx.try_send(TuiEvent::Info(format!(
                     "Connectivity test: {} to {} succeeded",
-                    method_str,
-                    target_peer_id_short
+                    method_str, target_peer_id_short
                 )));
             }
             Err(e) => {

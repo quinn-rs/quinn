@@ -8,21 +8,8 @@ mod test_protocol;
 
 pub use client::{GlobalStats, TestNode, TestNodeConfig};
 pub use test_protocol::{
+    CanYouReachRequest, ConnectBackRequest, ConnectBackResponse, GossipMessage, PeerNetworkInfo,
+    RELAY_MAGIC, ReachResponse, RelayAckResponse, RelayCandidate, RelayDataRequest, RelayMessage,
+    RelayPunchMeNowRequest, RelayState, RelayedDataResponse, TestPacket, TestResult,
     connectivity_test::{ConnectivityMethod, ConnectivityTestPhase, PeerConnectivityResult},
-    CanYouReachRequest,
-    ConnectBackRequest,
-    ConnectBackResponse,
-    GossipMessage,
-    PeerNetworkInfo,
-    ReachResponse,
-    RelayAckResponse,
-    RelayCandidate,
-    RelayDataRequest,
-    RelayMessage,
-    RelayPunchMeNowRequest,
-    RelayState,
-    RelayedDataResponse,
-    TestPacket,
-    TestResult,
-    RELAY_MAGIC,
 };
