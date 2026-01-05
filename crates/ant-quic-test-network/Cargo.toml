@@ -1,6 +1,6 @@
 [package]
 name = "ant-quic-test-network"
-version = "0.14.170"
+version = "0.14.171"
 edition = "2024"
 rust-version = "1.85.0"
 license = "MIT OR Apache-2.0"
@@ -55,6 +55,9 @@ bytes = "1"
 # Logging
 tracing = "0.1"
 tracing-subscriber = "0.3"
+
+# TLS crypto provider (required for rustls initialization)
+rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs", "std", "tls12"] }
 
 # Gossip protocol for decentralized peer/relay discovery
 # Full saorsa-gossip stack for true epidemic broadcast

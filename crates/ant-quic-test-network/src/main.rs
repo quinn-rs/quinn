@@ -147,6 +147,11 @@ EXAMPLES:
 // This is a mitigation until std::sync::RwLock is replaced with tokio::sync::RwLock
 #[tokio::main(flavor = "multi_thread", worker_threads = 8)]
 async fn main() -> anyhow::Result<()> {
+    // CRITICAL: Install rustls crypto provider before any TLS/QUIC operations
+    // This must happen early, before TestNode::new() which uses rustls internally.
+    // Using aws-lc-rs as the default provider for FIPS-compliant cryptography.
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+
     let args = parse_args();
 
     // Only initialize logging for non-TUI modes (registry or quiet)
