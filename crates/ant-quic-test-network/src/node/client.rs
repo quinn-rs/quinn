@@ -3039,14 +3039,15 @@ impl TestNode {
             let tx = tx.clone();
 
             tokio::spawn(async move {
-                if let Ok(Ok(_conn)) =
-                    tokio::time::timeout(Duration::from_secs(3), ep.connect(peer_addr)).await
-                {
-                    tokio::time::sleep(Duration::from_millis(500)).await;
-                    let addrs = ext_addrs.read().await;
-                    if !addrs.is_empty() {
-                        let _ = tx.send(true).await;
+                match tokio::time::timeout(Duration::from_secs(3), ep.connect(peer_addr)).await {
+                    Ok(Ok(_conn)) => {
+                        tokio::time::sleep(Duration::from_millis(500)).await;
+                        let addrs = ext_addrs.read().await;
+                        if !addrs.is_empty() {
+                            let _ = tx.send(true).await;
+                        }
                     }
+                    Ok(Err(_)) | Err(_) => {}
                 }
             });
         }
@@ -3067,30 +3068,17 @@ impl TestNode {
         }
     }
 
-    /// Start the test node (runs all background tasks).
     pub async fn run(&self) -> anyhow::Result<()> {
-        info!(
-            "Starting test node {} connecting to {}",
-            &self.peer_id[..8.min(self.peer_id.len())],
-            self.config.registry_url
-        );
-
-        // CRITICAL: Discover external address via native QUIC NAT traversal BEFORE registering
-        // Connect to known QUIC peers first to receive OBSERVED_ADDRESS frames
         self.discover_external_address().await;
 
-        // Log our public/NAT status for relay testing
         if self.is_public_node().await {
             info!("=== RELAY: This node appears to be PUBLIC (can relay for others) ===");
         } else {
             info!("=== RELAY: This node appears to be behind NAT ===");
         }
 
-        // Start background tasks
         let shutdown = Arc::clone(&self.shutdown);
 
-        // Start saorsa-gossip epidemic layer BEFORE registration
-        // This ensures the gossip layer is running when register() tries to add bootstrap peers
         if let Err(e) = self.epidemic_gossip.start().await {
             warn!(
                 "Failed to start saorsa-gossip epidemic layer: {} (continuing with passive gossip)",

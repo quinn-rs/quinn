@@ -196,10 +196,7 @@ async fn main() -> anyhow::Result<()> {
         // Create TUI application
         let app = App::new();
 
-        // Create test node configuration
-        // Use specified bind port or 0 for random port (allows multiple local instances)
-        // Bind to [::] for dual-stack (IPv4 + IPv6) support
-        let bind_addr: SocketAddr = format!("[::]:{}", args.bind_port).parse()?;
+        let bind_addr: SocketAddr = format!("0.0.0.0:{}", args.bind_port).parse()?;
         let node_config = TestNodeConfig {
             registry_url: args.registry_url.clone(),
             max_peers: args.max_peers,
@@ -207,10 +204,17 @@ async fn main() -> anyhow::Result<()> {
             ..Default::default()
         };
 
-        // Create test node with REAL P2pEndpoint (async initialization)
         let test_node = TestNode::new(node_config, event_tx.clone()).await?;
 
-        if args.quiet {
+        // Auto-detect TTY availability - fall back to quiet mode if not a terminal
+        // This handles running from scripts, IDEs, CI, or piped environments
+        let use_quiet_mode = args.quiet || !std::io::IsTerminal::is_terminal(&std::io::stdout());
+
+        if use_quiet_mode && !args.quiet {
+            eprintln!("INFO: No TTY detected, falling back to quiet mode");
+        }
+
+        if use_quiet_mode {
             // Quiet mode: run without TUI
             println!("Running in quiet mode (no TUI)...");
             println!("Press Ctrl+C to quit");
