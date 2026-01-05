@@ -390,7 +390,11 @@ pub async fn run_tui(mut app: App, mut event_rx: mpsc::Receiver<TuiEvent>) -> an
 fn handle_tui_event(app: &mut App, event: TuiEvent) {
     match event {
         TuiEvent::UpdateLocalNode(node_info) => {
+            let was_registered = app.local_node.registered;
             app.local_node = node_info;
+            if was_registered {
+                app.local_node.registered = true;
+            }
         }
         TuiEvent::UpdatePeer(peer) => {
             app.update_peer(peer);

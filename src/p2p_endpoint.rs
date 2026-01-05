@@ -638,11 +638,11 @@ impl P2pEndpoint {
             peer_id
         );
 
-        // Determine server_name for token persistence
-        // If we know the peer_id, use its hex representation as SNI
-        // This allows retrieving persisted tokens for 0-RTT
-        let server_name_string = peer_id.map(|id| id.to_hex());
-        let server_name = server_name_string.as_deref().unwrap_or("peer");
+        // Use "peer" as SNI for all P2P connections
+        // Raw Public Key authentication validates the peer's public key directly,
+        // so we don't need/use SNI for authentication. A fixed SNI avoids
+        // "invalid server name" errors from hex peer IDs being too long.
+        let server_name = "peer";
 
         // Try both families in PARALLEL
         let (ipv4_result, ipv6_result) = tokio::join!(
@@ -960,9 +960,7 @@ impl P2pEndpoint {
             target_ipv4, target_ipv6, peer_id
         );
 
-        // Determine server_name for token persistence
-        let server_name_string = peer_id.map(|id| id.to_hex());
-        let server_name = server_name_string.as_deref().unwrap_or("peer");
+        let server_name = "peer";
 
         loop {
             match strategy.current_stage().clone() {

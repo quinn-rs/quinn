@@ -47,3 +47,5 @@ docker/
 temp_clones/
 dave
 *_issues_*.json
+issues.txt
+prs.txt
