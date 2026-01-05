@@ -4,8 +4,9 @@
 //! and coordinates updates from the network layer.
 
 use crate::tui::types::{
-    CacheHealth, ConnectedPeer, FrameDirection, GeographicDistribution, LocalNodeInfo,
-    NatTraversalPhase, NatTypeAnalytics, NetworkStatistics, ProtocolFrame, TrafficType,
+    CacheHealth, ConnectedPeer, ConnectivityTestResults, FrameDirection, GeographicDistribution,
+    LocalNodeInfo, NatTraversalPhase, NatTypeAnalytics, NetworkStatistics, ProtocolFrame,
+    TestConnectivityMethod, TrafficType,
 };
 use std::collections::{HashMap, HashSet};
 use std::time::Instant;
@@ -54,6 +55,8 @@ pub struct App {
     pub nat_analytics: Option<NatTypeAnalytics>,
     /// Geographic distribution of peers for network diversity
     pub geographic_distribution: Option<GeographicDistribution>,
+    /// Connectivity test results (inbound/outbound test matrix)
+    pub connectivity_test: ConnectivityTestResults,
 }
 
 impl Default for App {
@@ -85,6 +88,7 @@ impl App {
             cache_health: None,
             nat_analytics: None,
             geographic_distribution: None,
+            connectivity_test: ConnectivityTestResults::new(),
         }
     }
 
@@ -293,27 +297,59 @@ impl App {
         self.nat_analytics = Some(analytics);
     }
 
-    /// Update geographic distribution
     pub fn update_geographic_distribution(&mut self, distribution: GeographicDistribution) {
         self.geographic_distribution = Some(distribution);
     }
+
+    pub fn start_connectivity_test(&mut self) {
+        self.connectivity_test.start();
+    }
+
+    pub fn connectivity_test_inbound_phase(&mut self) {
+        self.connectivity_test.start_inbound_phase();
+    }
+
+    pub fn record_inbound_connection(
+        &mut self,
+        peer_id: &str,
+        method: TestConnectivityMethod,
+        success: bool,
+        rtt_ms: Option<u32>,
+    ) {
+        self.connectivity_test
+            .record_inbound(peer_id, method, success, rtt_ms, None);
+    }
+
+    pub fn record_outbound_connection(
+        &mut self,
+        peer_id: &str,
+        method: TestConnectivityMethod,
+        success: bool,
+        rtt_ms: Option<u32>,
+    ) {
+        self.connectivity_test
+            .record_outbound(peer_id, method, success, rtt_ms, None);
+    }
+
+    pub fn connectivity_countdown(&self) -> u32 {
+        self.connectivity_test.countdown_seconds()
+    }
+
+    pub fn connectivity_countdown_complete(&self) -> bool {
+        self.connectivity_test.countdown_complete()
+    }
 }
 
-/// Input event from terminal.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InputEvent {
-    /// Quit application
     Quit,
-    /// Toggle auto-connect
     ToggleAutoConnect,
-    /// Force refresh display
     Refresh,
-    /// Unknown/ignored key
+    ResetConnectivityTest,
     Unknown,
 }
 
 impl InputEvent {
-    /// Parse a key event into an input event.
     pub fn from_key(key: crossterm::event::KeyCode) -> Self {
         use crossterm::event::KeyCode;
 
@@ -321,6 +357,7 @@ impl InputEvent {
             KeyCode::Char('q') | KeyCode::Char('Q') => Self::Quit,
             KeyCode::Char('a') | KeyCode::Char('A') => Self::ToggleAutoConnect,
             KeyCode::Char('r') | KeyCode::Char('R') => Self::Refresh,
+            KeyCode::Char('t') | KeyCode::Char('T') => Self::ResetConnectivityTest,
             KeyCode::Esc => Self::Quit,
             _ => Self::Unknown,
         }

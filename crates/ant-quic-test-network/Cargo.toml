@@ -30,6 +30,10 @@ serde_json = "1"
 # HTTP client for registry communication (rustls-tls for cross-compilation)
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 
+# WebSocket client for registry event subscription
+tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
+futures = "0.3"
+
 # Error handling
 anyhow = "1"
 

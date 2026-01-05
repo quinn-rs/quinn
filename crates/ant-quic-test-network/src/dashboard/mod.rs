@@ -108,7 +108,6 @@ async fn handle_websocket(ws: warp::ws::WebSocket, store: Arc<PeerStore>) {
         return;
     }
 
-    // Subscribe to store events
     let mut event_rx = store.subscribe();
 
     // Spawn task to forward events to WebSocket
@@ -146,6 +145,18 @@ async fn handle_websocket(ws: warp::ws::WebSocket, store: Arc<PeerStore>) {
                 crate::registry::NetworkEvent::StatsUpdate(stats) => serde_json::json!({
                     "type": "stats_update",
                     "stats": stats,
+                }),
+                crate::registry::NetworkEvent::ConnectivityTestRequest {
+                    peer_id,
+                    addresses,
+                    relay_addr,
+                    timestamp_ms,
+                } => serde_json::json!({
+                    "type": "connectivity_test_request",
+                    "peer_id": peer_id,
+                    "addresses": addresses.iter().map(|a| a.to_string()).collect::<Vec<_>>(),
+                    "relay_addr": relay_addr.map(|a| a.to_string()),
+                    "timestamp_ms": timestamp_ms,
                 }),
             };
 

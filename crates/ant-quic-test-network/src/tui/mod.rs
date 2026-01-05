@@ -43,9 +43,9 @@ mod ui;
 
 pub use app::{App, AppState, InputEvent};
 pub use types::{
-    CacheHealth, ConnectedPeer, ConnectionQuality, FrameDirection, GeographicDistribution,
-    LocalNodeInfo, NatTraversalPhase, NatTypeAnalytics, NetworkStatistics, ProtocolFrame,
-    TrafficDirection, TrafficType, country_flag,
+    CacheHealth, ConnectedPeer, ConnectionQuality, ConnectivityTestResults, FrameDirection,
+    GeographicDistribution, LocalNodeInfo, NatTraversalPhase, NatTypeAnalytics, NetworkStatistics,
+    ProtocolFrame, TestConnectivityMethod, TrafficDirection, TrafficType, country_flag,
 };
 
 use crossterm::{
@@ -116,6 +116,10 @@ fn event_name(event: &TuiEvent) -> &'static str {
         TuiEvent::CacheHealthUpdate(_) => "CacheHealthUpdate",
         TuiEvent::NatAnalyticsUpdate(_) => "NatAnalyticsUpdate",
         TuiEvent::GeographicDistributionUpdate(_) => "GeographicDistributionUpdate",
+        TuiEvent::ConnectivityTestInbound { .. } => "ConnectivityTestInbound",
+        TuiEvent::ConnectivityTestStart => "ConnectivityTestStart",
+        TuiEvent::ConnectivityTestOutbound { .. } => "ConnectivityTestOutbound",
+        TuiEvent::ConnectivityTestComplete => "ConnectivityTestComplete",
     }
 }
 
@@ -230,6 +234,24 @@ pub enum TuiEvent {
     NatAnalyticsUpdate(NatTypeAnalytics),
     /// Geographic distribution updated
     GeographicDistributionUpdate(GeographicDistribution),
+    /// Connectivity test: record inbound connection from VPS node
+    ConnectivityTestInbound {
+        peer_id: String,
+        method: TestConnectivityMethod,
+        success: bool,
+        rtt_ms: Option<u32>,
+    },
+    /// Connectivity test: start test (move to inbound wait phase)
+    ConnectivityTestStart,
+    /// Connectivity test: record outbound connection result
+    ConnectivityTestOutbound {
+        peer_id: String,
+        method: TestConnectivityMethod,
+        success: bool,
+        rtt_ms: Option<u32>,
+    },
+    /// Connectivity test: mark phase as complete
+    ConnectivityTestComplete,
 }
 
 /// Configuration for the TUI.
@@ -298,8 +320,10 @@ pub async fn run_tui(mut app: App, mut event_rx: mpsc::Receiver<TuiEvent>) -> an
                             app.auto_connecting = !app.auto_connecting;
                         }
                         InputEvent::Refresh => {
-                            // Force redraw on next loop
                             terminal.clear()?;
+                        }
+                        InputEvent::ResetConnectivityTest => {
+                            app.connectivity_test.reset();
                         }
                         InputEvent::Unknown => {}
                     }
@@ -515,6 +539,28 @@ fn handle_tui_event(app: &mut App, event: TuiEvent) {
         }
         TuiEvent::GeographicDistributionUpdate(distribution) => {
             app.update_geographic_distribution(distribution);
+        }
+        TuiEvent::ConnectivityTestInbound {
+            peer_id,
+            method,
+            success,
+            rtt_ms,
+        } => {
+            app.record_inbound_connection(&peer_id, method, success, rtt_ms);
+        }
+        TuiEvent::ConnectivityTestStart => {
+            app.connectivity_test_inbound_phase();
+        }
+        TuiEvent::ConnectivityTestOutbound {
+            peer_id,
+            method,
+            success,
+            rtt_ms,
+        } => {
+            app.record_outbound_connection(&peer_id, method, success, rtt_ms);
+        }
+        TuiEvent::ConnectivityTestComplete => {
+            app.connectivity_test.phase = types::ConnectivityTestPhase::Complete;
         }
     }
 }

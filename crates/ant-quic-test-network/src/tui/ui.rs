@@ -10,13 +10,13 @@
 
 use crate::registry::ConnectionMethod;
 use crate::tui::app::App;
-use crate::tui::types::country_flag;
+use crate::tui::types::{country_flag, ConnectivityTestPhase};
 use ratatui::{
-    Frame,
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Cell, Paragraph, Row, Table},
+    Frame,
 };
 
 /// Traffic light colors for connection methods
@@ -230,10 +230,52 @@ fn draw_connection_overview(frame: &mut Frame, app: &App, area: Rect) {
                 .fg(Color::Magenta)
                 .add_modifier(Modifier::BOLD),
         ),
+        connectivity_test_status_span(app),
     ]);
 
     let paragraph = Paragraph::new(vec![line1, line2]).block(block);
     frame.render_widget(paragraph, area);
+}
+
+fn connectivity_test_status_span(app: &App) -> Span<'static> {
+    match app.connectivity_test.phase {
+        ConnectivityTestPhase::Registering => Span::raw(""),
+        ConnectivityTestPhase::WaitingForInbound => {
+            let countdown = app.connectivity_countdown();
+            Span::styled(
+                format!("  🔄 TEST: Waiting {}s", countdown),
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            )
+        }
+        ConnectivityTestPhase::WaitingCountdown { seconds_remaining } => Span::styled(
+            format!("  ⏱️ Countdown: {}s", seconds_remaining),
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ),
+        ConnectivityTestPhase::TestingOutbound { tested, total } => Span::styled(
+            format!("  🔄 Testing: {}/{}", tested, total),
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        ),
+        ConnectivityTestPhase::Complete => {
+            let rate = app.connectivity_test.inbound_success_rate();
+            let color = if rate >= 80.0 {
+                Color::Green
+            } else if rate >= 50.0 {
+                Color::Yellow
+            } else {
+                Color::Red
+            };
+            Span::styled(
+                format!("  ✅ Test: {:.0}% success", rate),
+                Style::default().fg(color).add_modifier(Modifier::BOLD),
+            )
+        }
+    }
 }
 
 /// Draw local node information (compact).
@@ -593,7 +635,11 @@ fn draw_stats(frame: &mut Frame, app: &App, area: Rect) {
         Span::raw("  Geo Diversity: "),
         Span::styled(
             if let Some(ref geo) = app.geographic_distribution {
-                if geo.is_diverse() { "✓" } else { "✗" }
+                if geo.is_diverse() {
+                    "✓"
+                } else {
+                    "✗"
+                }
             } else {
                 "?"
             },
@@ -692,7 +738,9 @@ fn draw_footer(frame: &mut Frame, _app: &App, area: Rect) {
 
     let line = Line::from(vec![
         Span::styled("  [Q]", Style::default().fg(Color::Yellow)),
-        Span::raw(" Quit    "),
+        Span::raw(" Quit  "),
+        Span::styled("[T]", Style::default().fg(Color::Yellow)),
+        Span::raw(" Test    "),
         Span::styled(
             "🔐 ML-KEM-768 + ML-DSA-65",
             Style::default().fg(Color::Green),
@@ -726,6 +774,11 @@ fn draw_enhanced_analytics(frame: &mut Frame, app: &App, area: Rect) {
 }
 
 fn draw_activity_log(frame: &mut Frame, app: &App, area: Rect) {
+    if !app.connectivity_test.peer_results.is_empty() {
+        draw_connectivity_results(frame, app, area);
+        return;
+    }
+
     let block = Block::default()
         .title(" ACTIVITY LOG ")
         .borders(Borders::ALL)
@@ -1115,6 +1168,73 @@ fn draw_geographic_distribution(frame: &mut Frame, app: &App, area: Rect) {
         let paragraph = Paragraph::new("  No geographic data available").block(block);
         frame.render_widget(paragraph, area);
     }
+}
+
+fn draw_connectivity_results(frame: &mut Frame, app: &App, area: Rect) {
+    let inbound_count = app.connectivity_test.peer_results.len();
+    let success_rate = app.connectivity_test.inbound_success_rate();
+    let title = format!(
+        " CONNECTIVITY TEST ({} peers, {:.0}% success) ",
+        inbound_count, success_rate
+    );
+
+    let title_color = if success_rate >= 80.0 {
+        Color::Green
+    } else if success_rate >= 50.0 {
+        Color::Yellow
+    } else {
+        Color::Red
+    };
+
+    let block = Block::default()
+        .title(Span::styled(title, Style::default().fg(title_color)))
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Cyan));
+
+    let mut lines: Vec<Line> = Vec::new();
+
+    for result in app.connectivity_test.sorted_results().iter().take(8) {
+        let inbound_icon = if result.inbound_success() {
+            Span::styled("✓", Style::default().fg(Color::Green))
+        } else {
+            Span::styled("✗", Style::default().fg(Color::Red))
+        };
+
+        let outbound_icon = if result.outbound_success() {
+            Span::styled("✓", Style::default().fg(Color::Green))
+        } else if result.outbound_attempts.is_empty() {
+            Span::styled("-", Style::default().fg(Color::DarkGray))
+        } else {
+            Span::styled("✗", Style::default().fg(Color::Red))
+        };
+
+        let method_str = if let Some(attempt) = result.inbound_attempts.first() {
+            attempt.method.display_name()
+        } else {
+            "N/A"
+        };
+
+        lines.push(Line::from(vec![
+            Span::raw("  "),
+            Span::styled(&result.peer_id, Style::default().fg(Color::White)),
+            Span::raw(" In:"),
+            inbound_icon,
+            Span::raw(" Out:"),
+            outbound_icon,
+            Span::raw(" via "),
+            Span::styled(method_str, Style::default().fg(Color::Cyan)),
+        ]));
+    }
+
+    if lines.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "  Waiting for test connections...",
+            Style::default().fg(Color::DarkGray),
+        )));
+    }
+
+    let paragraph = Paragraph::new(lines).block(block);
+    frame.render_widget(paragraph, area);
 }
 
 #[cfg(test)]

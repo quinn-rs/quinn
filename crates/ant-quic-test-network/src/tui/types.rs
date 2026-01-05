@@ -285,7 +285,11 @@ impl LocalNodeInfo {
 
     /// Get registration status string.
     pub fn registration_status(&self) -> &'static str {
-        if self.registered { "✓" } else { "✗" }
+        if self.registered {
+            "✓"
+        } else {
+            "✗"
+        }
     }
 
     /// Get last heartbeat string.
@@ -981,7 +985,178 @@ impl NatTypeAnalytics {
     }
 }
 
-/// Geographic distribution statistics for network diversity
+pub use crate::node::{
+    ConnectivityMethod as TestConnectivityMethod, ConnectivityTestPhase, PeerConnectivityResult,
+};
+
+#[allow(dead_code)]
+#[derive(Debug, Clone)]
+pub struct ConnectivityTestResults {
+    /// Current phase of the connectivity test
+    pub phase: ConnectivityTestPhase,
+    /// When the test started
+    pub started_at: Option<Instant>,
+    /// Per-peer connectivity results (peer_id -> results)
+    pub peer_results: std::collections::HashMap<String, PeerConnectivityResult>,
+    /// Peers we're expecting to receive inbound connections from
+    pub expected_inbound_peers: Vec<String>,
+    /// When the inbound phase started (for countdown)
+    pub inbound_phase_started: Option<Instant>,
+    /// Total inbound connections received
+    pub total_inbound: u32,
+    /// Total outbound connections tested
+    pub total_outbound: u32,
+    /// Successful inbound connections
+    pub successful_inbound: u32,
+    /// Successful outbound connections
+    pub successful_outbound: u32,
+}
+
+impl Default for ConnectivityTestResults {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[allow(dead_code)]
+impl ConnectivityTestResults {
+    pub fn new() -> Self {
+        Self {
+            phase: ConnectivityTestPhase::Registering,
+            started_at: None,
+            peer_results: std::collections::HashMap::new(),
+            expected_inbound_peers: Vec::new(),
+            inbound_phase_started: None,
+            total_inbound: 0,
+            total_outbound: 0,
+            successful_inbound: 0,
+            successful_outbound: 0,
+        }
+    }
+
+    /// Start the connectivity test.
+    pub fn start(&mut self) {
+        self.started_at = Some(Instant::now());
+        self.phase = ConnectivityTestPhase::Registering;
+    }
+
+    /// Transition to waiting for inbound connections.
+    pub fn start_inbound_phase(&mut self) {
+        self.phase = ConnectivityTestPhase::WaitingForInbound;
+        self.inbound_phase_started = Some(Instant::now());
+    }
+
+    /// Get seconds remaining in the countdown (30 second wait).
+    pub fn countdown_seconds(&self) -> u32 {
+        const WAIT_SECONDS: u64 = 30;
+        match self.inbound_phase_started {
+            Some(started) => {
+                let elapsed = started.elapsed().as_secs();
+                if elapsed >= WAIT_SECONDS {
+                    0
+                } else {
+                    (WAIT_SECONDS - elapsed) as u32
+                }
+            }
+            None => WAIT_SECONDS as u32,
+        }
+    }
+
+    /// Check if countdown is complete.
+    pub fn countdown_complete(&self) -> bool {
+        self.countdown_seconds() == 0
+    }
+
+    /// Record an inbound connection attempt.
+    pub fn record_inbound(
+        &mut self,
+        peer_id: &str,
+        method: TestConnectivityMethod,
+        success: bool,
+        rtt_ms: Option<u32>,
+        error: Option<String>,
+    ) {
+        self.total_inbound += 1;
+        if success {
+            self.successful_inbound += 1;
+        }
+
+        let result = self
+            .peer_results
+            .entry(peer_id.to_string())
+            .or_insert_with(|| {
+                let short_id = if peer_id.len() > 8 {
+                    peer_id[..8].to_string()
+                } else {
+                    peer_id.to_string()
+                };
+                PeerConnectivityResult::new(short_id, peer_id.to_string())
+            });
+
+        result.record_inbound(method, success, rtt_ms, error);
+    }
+
+    /// Record an outbound connection attempt.
+    pub fn record_outbound(
+        &mut self,
+        peer_id: &str,
+        method: TestConnectivityMethod,
+        success: bool,
+        rtt_ms: Option<u32>,
+        error: Option<String>,
+    ) {
+        self.total_outbound += 1;
+        if success {
+            self.successful_outbound += 1;
+        }
+
+        let result = self
+            .peer_results
+            .entry(peer_id.to_string())
+            .or_insert_with(|| {
+                let short_id = if peer_id.len() > 8 {
+                    peer_id[..8].to_string()
+                } else {
+                    peer_id.to_string()
+                };
+                PeerConnectivityResult::new(short_id, peer_id.to_string())
+            });
+
+        result.record_outbound(method, success, rtt_ms, error);
+    }
+
+    /// Get overall inbound success rate.
+    pub fn inbound_success_rate(&self) -> f32 {
+        if self.total_inbound == 0 {
+            0.0
+        } else {
+            (self.successful_inbound as f32 / self.total_inbound as f32) * 100.0
+        }
+    }
+
+    /// Get overall outbound success rate.
+    pub fn outbound_success_rate(&self) -> f32 {
+        if self.total_outbound == 0 {
+            0.0
+        } else {
+            (self.successful_outbound as f32 / self.total_outbound as f32) * 100.0
+        }
+    }
+
+    /// Get sorted peer results for display.
+    pub fn sorted_results(&self) -> Vec<&PeerConnectivityResult> {
+        let mut results: Vec<_> = self.peer_results.values().collect();
+        // Sort by peer_id for consistent display
+        results.sort_by(|a, b| a.peer_id.cmp(&b.peer_id));
+        results
+    }
+
+    /// Reset the test for a re-run.
+    pub fn reset(&mut self) {
+        *self = Self::new();
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct GeographicDistribution {
     /// Peers by region/country code

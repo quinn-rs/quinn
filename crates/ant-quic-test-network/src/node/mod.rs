@@ -8,14 +8,12 @@ mod test_protocol;
 
 pub use client::{GlobalStats, TestNode, TestNodeConfig};
 pub use test_protocol::{
-    // Relay discovery protocol
+    connectivity_test::{ConnectivityMethod, ConnectivityTestPhase, PeerConnectivityResult},
     CanYouReachRequest,
-    // Connect-back protocol for NAT traversal verification
     ConnectBackRequest,
     ConnectBackResponse,
     GossipMessage,
     PeerNetworkInfo,
-    RELAY_MAGIC,
     ReachResponse,
     RelayAckResponse,
     RelayCandidate,
@@ -24,7 +22,7 @@ pub use test_protocol::{
     RelayPunchMeNowRequest,
     RelayState,
     RelayedDataResponse,
-    // Test packet protocol
     TestPacket,
     TestResult,
+    RELAY_MAGIC,
 };

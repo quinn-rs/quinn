@@ -874,6 +874,20 @@ pub enum NetworkEvent {
     },
     /// Network statistics update
     StatsUpdate(NetworkStats),
+    /// Request for all nodes to test connectivity to a new peer.
+    /// This is broadcast when a new peer registers and wants connectivity testing.
+    /// All receiving nodes should attempt to connect to the peer using:
+    /// IPv4 direct → IPv6 direct → NAT traversal → Relay
+    ConnectivityTestRequest {
+        /// Peer ID to test connectivity to
+        peer_id: String,
+        /// Addresses where the peer can be reached
+        addresses: Vec<SocketAddr>,
+        /// Relay address to use if direct connection fails
+        relay_addr: Option<SocketAddr>,
+        /// Request timestamp (unix ms)
+        timestamp_ms: u64,
+    },
 }
 
 /// Response to registration request.

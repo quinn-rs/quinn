@@ -1123,6 +1123,421 @@ impl GossipMessage {
     }
 }
 
+// ============================================================================
+// Connectivity Test Protocol
+// ============================================================================
+//
+// This protocol implements the coordinated connectivity test flow:
+// 1. TUI app registers with dashboard
+// 2. Dashboard gossips NEW_PEER_TEST to all nodes
+// 3. All nodes connect TO the TUI app, trying IPv4/IPv6/NAT/Relay
+// 4. TUI records incoming connections
+// 5. After 30s, TUI connects BACK to everyone
+// 6. Results show bidirectional connectivity matrix
+
+#[allow(dead_code)]
+pub mod connectivity_test {
+    use super::*;
+
+    pub const MAGIC: [u8; 4] = *b"CNTV";
+
+    /// How a connection was established.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+    pub enum ConnectivityMethod {
+        /// Direct IPv4 connection (no NAT traversal needed)
+        DirectIpv4,
+        /// Direct IPv6 connection
+        DirectIpv6,
+        /// NAT traversal via hole punching (IPv4)
+        NatTraversalIpv4,
+        /// NAT traversal via hole punching (IPv6)
+        NatTraversalIpv6,
+        /// Relayed via MASQUE (IPv4)
+        RelayedIpv4,
+        /// Relayed via MASQUE (IPv6)
+        RelayedIpv6,
+    }
+
+    impl ConnectivityMethod {
+        pub fn is_ipv4(&self) -> bool {
+            matches!(
+                self,
+                ConnectivityMethod::DirectIpv4
+                    | ConnectivityMethod::NatTraversalIpv4
+                    | ConnectivityMethod::RelayedIpv4
+            )
+        }
+
+        pub fn is_ipv6(&self) -> bool {
+            matches!(
+                self,
+                ConnectivityMethod::DirectIpv6
+                    | ConnectivityMethod::NatTraversalIpv6
+                    | ConnectivityMethod::RelayedIpv6
+            )
+        }
+
+        pub fn is_direct(&self) -> bool {
+            matches!(
+                self,
+                ConnectivityMethod::DirectIpv4 | ConnectivityMethod::DirectIpv6
+            )
+        }
+
+        pub fn is_nat_traversal(&self) -> bool {
+            matches!(
+                self,
+                ConnectivityMethod::NatTraversalIpv4 | ConnectivityMethod::NatTraversalIpv6
+            )
+        }
+
+        pub fn is_relayed(&self) -> bool {
+            matches!(
+                self,
+                ConnectivityMethod::RelayedIpv4 | ConnectivityMethod::RelayedIpv6
+            )
+        }
+
+        pub fn display_name(&self) -> &'static str {
+            match self {
+                ConnectivityMethod::DirectIpv4 => "Direct IPv4",
+                ConnectivityMethod::DirectIpv6 => "Direct IPv6",
+                ConnectivityMethod::NatTraversalIpv4 => "NAT IPv4",
+                ConnectivityMethod::NatTraversalIpv6 => "NAT IPv6",
+                ConnectivityMethod::RelayedIpv4 => "Relay IPv4",
+                ConnectivityMethod::RelayedIpv6 => "Relay IPv6",
+            }
+        }
+    }
+
+    /// Test phase in the connectivity test flow.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub enum ConnectivityTestPhase {
+        /// Registering with dashboard
+        Registering,
+        /// Waiting for inbound connections from network
+        WaitingForInbound,
+        /// Received inbound connections, waiting before outbound test
+        WaitingCountdown { seconds_remaining: u32 },
+        /// Performing outbound connection tests
+        TestingOutbound { tested: u32, total: u32 },
+        /// Test complete, showing results
+        Complete,
+    }
+
+    /// Result of a single connection attempt.
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct ConnectionAttemptResult {
+        /// Method attempted
+        pub method: ConnectivityMethod,
+        /// Whether this attempt succeeded
+        pub success: bool,
+        /// RTT if successful (milliseconds)
+        pub rtt_ms: Option<u32>,
+        /// Error message if failed
+        pub error: Option<String>,
+        /// Timestamp of attempt (unix millis)
+        pub timestamp_ms: u64,
+    }
+
+    /// Results for a single peer in the connectivity test.
+    #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+    pub struct PeerConnectivityResult {
+        /// Peer ID (hex string, first 8 chars for display)
+        pub peer_id: String,
+        /// Full peer ID
+        pub peer_id_full: String,
+        /// Peer name (e.g., "saorsa-1" or "user-abc")
+        pub peer_name: Option<String>,
+        /// Peer's addresses
+        pub addresses: Vec<SocketAddr>,
+
+        /// Inbound test results (them connecting to us)
+        pub inbound_ipv4_direct: Option<bool>,
+        pub inbound_ipv6_direct: Option<bool>,
+        pub inbound_nat_traversal: Option<bool>,
+        pub inbound_relay: Option<bool>,
+        /// All inbound attempts with details
+        pub inbound_attempts: Vec<ConnectionAttemptResult>,
+
+        /// Outbound test results (us connecting to them)
+        pub outbound_ipv4_direct: Option<bool>,
+        pub outbound_ipv6_direct: Option<bool>,
+        pub outbound_nat_traversal: Option<bool>,
+        pub outbound_relay: Option<bool>,
+        /// All outbound attempts with details
+        pub outbound_attempts: Vec<ConnectionAttemptResult>,
+    }
+
+    impl PeerConnectivityResult {
+        pub fn new(peer_id: String, peer_id_full: String) -> Self {
+            Self {
+                peer_id,
+                peer_id_full,
+                ..Default::default()
+            }
+        }
+
+        /// Record an inbound connection attempt.
+        pub fn record_inbound(
+            &mut self,
+            method: ConnectivityMethod,
+            success: bool,
+            rtt_ms: Option<u32>,
+            error: Option<String>,
+        ) {
+            let attempt = ConnectionAttemptResult {
+                method,
+                success,
+                rtt_ms,
+                error,
+                timestamp_ms: current_timestamp_ns() / 1_000_000,
+            };
+            self.inbound_attempts.push(attempt);
+
+            match method {
+                ConnectivityMethod::DirectIpv4 => self.inbound_ipv4_direct = Some(success),
+                ConnectivityMethod::DirectIpv6 => self.inbound_ipv6_direct = Some(success),
+                ConnectivityMethod::NatTraversalIpv4 | ConnectivityMethod::NatTraversalIpv6 => {
+                    if self.inbound_nat_traversal.is_none() || success {
+                        self.inbound_nat_traversal = Some(success);
+                    }
+                }
+                ConnectivityMethod::RelayedIpv4 | ConnectivityMethod::RelayedIpv6 => {
+                    if self.inbound_relay.is_none() || success {
+                        self.inbound_relay = Some(success);
+                    }
+                }
+            }
+        }
+
+        /// Record an outbound connection attempt.
+        pub fn record_outbound(
+            &mut self,
+            method: ConnectivityMethod,
+            success: bool,
+            rtt_ms: Option<u32>,
+            error: Option<String>,
+        ) {
+            let attempt = ConnectionAttemptResult {
+                method,
+                success,
+                rtt_ms,
+                error,
+                timestamp_ms: current_timestamp_ns() / 1_000_000,
+            };
+            self.outbound_attempts.push(attempt);
+
+            match method {
+                ConnectivityMethod::DirectIpv4 => self.outbound_ipv4_direct = Some(success),
+                ConnectivityMethod::DirectIpv6 => self.outbound_ipv6_direct = Some(success),
+                ConnectivityMethod::NatTraversalIpv4 | ConnectivityMethod::NatTraversalIpv6 => {
+                    if self.outbound_nat_traversal.is_none() || success {
+                        self.outbound_nat_traversal = Some(success);
+                    }
+                }
+                ConnectivityMethod::RelayedIpv4 | ConnectivityMethod::RelayedIpv6 => {
+                    if self.outbound_relay.is_none() || success {
+                        self.outbound_relay = Some(success);
+                    }
+                }
+            }
+        }
+
+        /// Check if inbound IPv4 succeeded (any method).
+        pub fn inbound_ipv4_success(&self) -> bool {
+            self.inbound_ipv4_direct == Some(true)
+                || self.inbound_nat_traversal == Some(true)
+                || self.inbound_relay == Some(true)
+        }
+
+        /// Check if inbound IPv6 succeeded.
+        pub fn inbound_ipv6_success(&self) -> bool {
+            self.inbound_ipv6_direct == Some(true)
+        }
+
+        /// Check if outbound IPv4 succeeded (any method).
+        pub fn outbound_ipv4_success(&self) -> bool {
+            self.outbound_ipv4_direct == Some(true)
+                || self.outbound_nat_traversal == Some(true)
+                || self.outbound_relay == Some(true)
+        }
+
+        /// Check if outbound IPv6 succeeded.
+        pub fn outbound_ipv6_success(&self) -> bool {
+            self.outbound_ipv6_direct == Some(true)
+        }
+
+        /// Overall inbound success (any method worked).
+        pub fn inbound_success(&self) -> bool {
+            self.inbound_ipv4_success() || self.inbound_ipv6_success()
+        }
+
+        /// Overall outbound success (any method worked).
+        pub fn outbound_success(&self) -> bool {
+            self.outbound_ipv4_success() || self.outbound_ipv6_success()
+        }
+    }
+
+    /// Message sent when a new peer registers and wants connectivity testing.
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct NewPeerTestRequest {
+        /// Magic bytes for protocol identification.
+        pub magic: [u8; 4],
+        /// Peer ID of the new peer to test.
+        pub peer_id: [u8; 32],
+        /// Addresses where the peer can be reached.
+        pub addresses: Vec<SocketAddr>,
+        /// Request timestamp.
+        pub timestamp_ms: u64,
+        /// Relay address to use if direct connection fails.
+        pub relay_addr: Option<SocketAddr>,
+    }
+
+    impl NewPeerTestRequest {
+        pub fn new(
+            peer_id: [u8; 32],
+            addresses: Vec<SocketAddr>,
+            relay_addr: Option<SocketAddr>,
+        ) -> Self {
+            Self {
+                magic: MAGIC,
+                peer_id,
+                addresses,
+                timestamp_ms: current_timestamp_ns() / 1_000_000,
+                relay_addr,
+            }
+        }
+
+        pub fn to_bytes(&self) -> Result<Vec<u8>, serde_json::Error> {
+            serde_json::to_vec(self)
+        }
+
+        pub fn from_bytes(data: &[u8]) -> Result<Self, serde_json::Error> {
+            serde_json::from_slice(data)
+        }
+    }
+
+    /// Message sent to test connectivity (includes proof data).
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct ConnectivityTestProbe {
+        /// Magic bytes for protocol identification.
+        pub magic: [u8; 4],
+        /// Sender's peer ID.
+        pub sender_peer_id: [u8; 32],
+        /// Sender's name (e.g., "saorsa-1").
+        pub sender_name: Option<String>,
+        /// How the connection was made.
+        pub method: ConnectivityMethod,
+        /// Test data payload (5KB to verify real connectivity).
+        pub payload: Vec<u8>,
+        /// Checksum of payload.
+        pub checksum: [u8; 32],
+        /// Timestamp when sent.
+        pub timestamp_ms: u64,
+    }
+
+    impl ConnectivityTestProbe {
+        pub fn new(
+            sender_peer_id: [u8; 32],
+            sender_name: Option<String>,
+            method: ConnectivityMethod,
+        ) -> Self {
+            let payload = generate_random_payload();
+            let checksum = {
+                let mut hasher = Sha256::new();
+                hasher.update(&payload);
+                hasher.finalize().into()
+            };
+            Self {
+                magic: MAGIC,
+                sender_peer_id,
+                sender_name,
+                method,
+                payload,
+                checksum,
+                timestamp_ms: current_timestamp_ns() / 1_000_000,
+            }
+        }
+
+        pub fn verify(&self) -> bool {
+            let mut hasher = Sha256::new();
+            hasher.update(&self.payload);
+            let calculated: [u8; 32] = hasher.finalize().into();
+            calculated == self.checksum
+        }
+
+        pub fn to_bytes(&self) -> Result<Vec<u8>, serde_json::Error> {
+            serde_json::to_vec(self)
+        }
+
+        pub fn from_bytes(data: &[u8]) -> Result<Self, serde_json::Error> {
+            serde_json::from_slice(data)
+        }
+    }
+
+    /// Acknowledgment of connectivity test probe.
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct ConnectivityTestAck {
+        /// Magic bytes for protocol identification.
+        pub magic: [u8; 4],
+        /// Responder's peer ID.
+        pub responder_peer_id: [u8; 32],
+        /// Original sender's peer ID.
+        pub sender_peer_id: [u8; 32],
+        /// Method that was used.
+        pub method: ConnectivityMethod,
+        /// Whether the probe was valid.
+        pub valid: bool,
+        /// Response timestamp.
+        pub timestamp_ms: u64,
+    }
+
+    impl ConnectivityTestAck {
+        pub fn new(
+            responder_peer_id: [u8; 32],
+            sender_peer_id: [u8; 32],
+            method: ConnectivityMethod,
+            valid: bool,
+        ) -> Self {
+            Self {
+                magic: MAGIC,
+                responder_peer_id,
+                sender_peer_id,
+                method,
+                valid,
+                timestamp_ms: current_timestamp_ns() / 1_000_000,
+            }
+        }
+
+        pub fn to_bytes(&self) -> Result<Vec<u8>, serde_json::Error> {
+            serde_json::to_vec(self)
+        }
+
+        pub fn from_bytes(data: &[u8]) -> Result<Self, serde_json::Error> {
+            serde_json::from_slice(data)
+        }
+    }
+
+    #[allow(dead_code)]
+    pub mod connectivity_timeouts {
+        use std::time::Duration;
+
+        /// Timeout for direct IPv4 connection attempt.
+        pub const DIRECT_IPV4: Duration = Duration::from_secs(5);
+        /// Timeout for direct IPv6 connection attempt.
+        pub const DIRECT_IPV6: Duration = Duration::from_secs(5);
+        /// Timeout for NAT traversal attempt.
+        pub const NAT_TRAVERSAL: Duration = Duration::from_secs(10);
+        /// Timeout for relay connection attempt.
+        pub const RELAY: Duration = Duration::from_secs(10);
+        /// Total timeout for all attempts to a single peer.
+        pub const TOTAL_PER_PEER: Duration = Duration::from_secs(35);
+        /// Wait time between inbound and outbound phases.
+        pub const WAIT_BEFORE_OUTBOUND: Duration = Duration::from_secs(30);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -12,13 +12,13 @@ use crate::gossip::{
 };
 use crate::registry::{
     BgpGeoProvider, ConnectionDirection, ConnectionMethod, ConnectionReport, ConnectivityMatrix,
-    FullMeshProbeResult, NatStats, NatType, NodeCapabilities, NodeGossipStats, NodeHeartbeat,
-    NodeRegistration, PeerInfo, PeerStatus, RegistryClient,
+    FullMeshProbeResult, NatStats, NatType, NetworkEvent, NodeCapabilities, NodeGossipStats,
+    NodeHeartbeat, NodeRegistration, PeerInfo, PeerStatus, RegistryClient,
 };
 use crate::tui::{
     CacheHealth, ConnectedPeer, FrameDirection, GeographicDistribution, LocalNodeInfo,
-    NatTraversalPhase, NatTypeAnalytics, ProtocolFrame, TrafficType, TuiEvent, country_flag,
-    send_tui_event,
+    NatTraversalPhase, NatTypeAnalytics, ProtocolFrame, TestConnectivityMethod, TrafficType,
+    TuiEvent, country_flag, send_tui_event,
 };
 use saorsa_gossip_types::PeerId as GossipPeerId;
 use std::collections::{HashMap, HashSet};
@@ -1764,6 +1764,19 @@ impl TestNode {
                     );
                     tui_peer.addresses = vec![addr];
                     send_tui_event(&event_tx, TuiEvent::PeerConnected(tui_peer));
+
+                    // Record for connectivity test (inbound connection proves NAT traversal)
+                    let test_method = if addr.is_ipv4() {
+                        TestConnectivityMethod::DirectIpv4
+                    } else {
+                        TestConnectivityMethod::DirectIpv6
+                    };
+                    let _ = event_tx.try_send(TuiEvent::ConnectivityTestInbound {
+                        peer_id: new_peer_hex.clone(),
+                        method: test_method,
+                        success: true,
+                        rtt_ms: None,
+                    });
                 }
             }
 
@@ -3121,8 +3134,6 @@ impl TestNode {
             }
         };
 
-        // Spawn all background tasks REGARDLESS of registration status
-        // This is critical: even without registry, P2P connections can work
         let heartbeat_handle = self.spawn_heartbeat_loop();
         let connect_handle = self.spawn_connect_loop();
         let test_handle = self.spawn_test_loop();
@@ -3133,6 +3144,7 @@ impl TestNode {
         let epidemic_handle = self.spawn_epidemic_gossip_loop();
         let probe_handle = self.spawn_connectivity_probe_loop();
         let nat_callback_handle = self.spawn_nat_callback_loop();
+        let websocket_handle = self.spawn_websocket_event_loop();
 
         // Announce ourselves to gossip network
         self.announce_to_gossip().await;
@@ -3144,7 +3156,6 @@ impl TestNode {
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
 
-        // Abort tasks on shutdown
         heartbeat_handle.abort();
         connect_handle.abort();
         test_handle.abort();
@@ -3155,6 +3166,7 @@ impl TestNode {
         epidemic_handle.abort();
         probe_handle.abort();
         nat_callback_handle.abort();
+        websocket_handle.abort();
 
         // Save peer cache and shutdown gossip integration
         if let Err(e) = self.gossip_integration.save_cache() {
@@ -4560,7 +4572,163 @@ impl TestNode {
         })
     }
 
-    /// Trigger shutdown.
+    fn spawn_websocket_event_loop(&self) -> tokio::task::JoinHandle<()> {
+        use futures::StreamExt;
+        use tokio_tungstenite::tungstenite::Message;
+
+        let shutdown = Arc::clone(&self.shutdown);
+        let endpoint = Arc::clone(&self.endpoint);
+        let peer_id = self.peer_id.clone();
+        let event_tx = self.event_tx.clone();
+
+        let registry_url = self.config.registry_url.clone();
+        let ws_url = registry_url
+            .replace("https://", "wss://")
+            .replace("http://", "ws://")
+            + "/ws/live";
+
+        tokio::spawn(async move {
+            loop {
+                if shutdown.load(Ordering::SeqCst) {
+                    break;
+                }
+
+                info!(
+                    "Connecting to registry WebSocket at {} for connectivity test events...",
+                    ws_url
+                );
+
+                match tokio_tungstenite::connect_async(&ws_url).await {
+                    Ok((mut ws_stream, _response)) => {
+                        info!("Connected to registry WebSocket");
+
+                        while let Some(msg_result) = ws_stream.next().await {
+                            if shutdown.load(Ordering::SeqCst) {
+                                break;
+                            }
+
+                            match msg_result {
+                                Ok(Message::Text(text)) => {
+                                    if let Ok(NetworkEvent::ConnectivityTestRequest {
+                                        peer_id: target_peer_id,
+                                        addresses,
+                                        relay_addr: _,
+                                        timestamp_ms: _,
+                                    }) = serde_json::from_str::<NetworkEvent>(&text)
+                                    {
+                                        if target_peer_id == peer_id {
+                                            debug!("Ignoring connectivity test request for ourselves");
+                                            continue;
+                                        }
+
+                                        info!(
+                                            "Received connectivity test request for peer {}",
+                                            &target_peer_id[..8.min(target_peer_id.len())]
+                                        );
+
+                                        Self::handle_connectivity_test_request(
+                                            &endpoint,
+                                            &target_peer_id,
+                                            &addresses,
+                                            &event_tx,
+                                        )
+                                        .await;
+                                    }
+                                }
+                                Ok(Message::Ping(data)) => {
+                                    debug!("WebSocket ping received");
+                                    let _ = futures::SinkExt::send(
+                                        &mut ws_stream,
+                                        Message::Pong(data),
+                                    )
+                                    .await;
+                                }
+                                Ok(Message::Close(_)) => {
+                                    info!("WebSocket connection closed by server");
+                                    break;
+                                }
+                                Err(e) => {
+                                    warn!("WebSocket error: {}", e);
+                                    break;
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        warn!("Failed to connect to registry WebSocket: {}", e);
+                    }
+                }
+
+                if shutdown.load(Ordering::SeqCst) {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_secs(10)).await;
+            }
+        })
+    }
+
+    async fn handle_connectivity_test_request(
+        endpoint: &Arc<P2pEndpoint>,
+        target_peer_id: &str,
+        addresses: &[SocketAddr],
+        event_tx: &mpsc::Sender<TuiEvent>,
+    ) {
+        use ant_quic::connection_strategy::ConnectionMethod as QuicConnectionMethod;
+
+        let target_peer_id_short = &target_peer_id[..8.min(target_peer_id.len())];
+
+        let ipv4_addr = addresses.iter().find(|a| a.is_ipv4()).copied();
+        let ipv6_addr = addresses.iter().find(|a| a.is_ipv6()).copied();
+
+        let target_peer_bytes = peer_id_to_bytes(target_peer_id);
+        let target_quic_peer_id = ant_quic::PeerId(target_peer_bytes);
+
+        info!(
+            "Starting connectivity test to {} (IPv4: {:?}, IPv6: {:?})",
+            target_peer_id_short, ipv4_addr, ipv6_addr
+        );
+
+        match endpoint
+            .connect_with_fallback(ipv4_addr, ipv6_addr, None, Some(target_quic_peer_id))
+            .await
+        {
+            Ok((connection, method)) => {
+                let method_str = match &method {
+                    QuicConnectionMethod::DirectIPv4 => "Direct IPv4",
+                    QuicConnectionMethod::DirectIPv6 => "Direct IPv6",
+                    QuicConnectionMethod::HolePunched { .. } => "NAT Traversal",
+                    QuicConnectionMethod::Relayed { .. } => "Relay",
+                };
+
+                info!(
+                    "Connectivity test SUCCESS: {} to {} via {} (peer_id: {})",
+                    method_str,
+                    target_peer_id_short,
+                    method,
+                    hex::encode(&connection.peer_id.0[..4])
+                );
+
+                let _ = event_tx.try_send(TuiEvent::Info(format!(
+                    "Connectivity test: {} to {} succeeded",
+                    method_str,
+                    target_peer_id_short
+                )));
+            }
+            Err(e) => {
+                warn!(
+                    "Connectivity test FAILED: all methods to {} failed: {}",
+                    target_peer_id_short, e
+                );
+
+                let _ = event_tx.try_send(TuiEvent::Info(format!(
+                    "Connectivity test: all paths to {} failed",
+                    target_peer_id_short
+                )));
+            }
+        }
+    }
+
     pub fn shutdown(&self) {
         self.shutdown.store(true, Ordering::SeqCst);
     }

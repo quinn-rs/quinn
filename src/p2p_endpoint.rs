@@ -1191,24 +1191,34 @@ impl P2pEndpoint {
         Err(EndpointError::Timeout)
     }
 
-    /// Internal helper for relay connection attempt
     async fn try_relay_connection(
         &self,
         target: SocketAddr,
         relay_addr: SocketAddr,
     ) -> Result<PeerConnection, EndpointError> {
-        // First connect to the relay
-        if !self.is_connected_to_addr(relay_addr).await {
-            debug!("Connecting to relay {} first", relay_addr);
-            self.connect(relay_addr).await?;
-        }
+        info!(
+            "Attempting MASQUE relay connection to {} via {}",
+            target, relay_addr
+        );
 
-        // TODO: Implement MASQUE CONNECT-UDP protocol
-        // For now, fall back to direct connection through relay
-        // This is a placeholder that will be replaced with proper relay logic
+        let public_addr = self
+            .inner
+            .establish_relay_session(relay_addr)
+            .await
+            .map_err(EndpointError::NatTraversal)?;
 
-        // Try to connect to target (relay should forward)
-        let conn = self.connect(target).await?;
+        info!(
+            "MASQUE relay session established via {} (public addr: {:?})",
+            relay_addr, public_addr
+        );
+
+        let server_name = target.ip().to_string();
+        let conn = self.connect_with_server_name(target, &server_name).await?;
+
+        info!(
+            "MASQUE relay connection succeeded to {} via {} (our relay addr: {:?})",
+            target, relay_addr, public_addr
+        );
 
         Ok(conn)
     }

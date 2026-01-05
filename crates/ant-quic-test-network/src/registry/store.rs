@@ -207,13 +207,22 @@ impl PeerStore {
             }
         }
 
-        // Broadcast registration event
         if is_new || was_historical {
             let _ = self.event_tx.send(NetworkEvent::NodeRegistered {
                 peer_id: peer_id.clone(),
                 country_code,
                 latitude,
                 longitude,
+            });
+
+            let _ = self.event_tx.send(NetworkEvent::ConnectivityTestRequest {
+                peer_id: peer_id.clone(),
+                addresses: registration.external_addresses.clone(),
+                relay_addr: None,
+                timestamp_ms: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_millis() as u64)
+                    .unwrap_or(0),
             });
         }
 
