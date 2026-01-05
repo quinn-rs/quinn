@@ -3941,9 +3941,14 @@ impl TestNode {
 
         tokio::spawn(async move {
             let mut ticker = tokio::time::interval(interval);
+            let mut first_run = true;
 
             while !shutdown.load(Ordering::SeqCst) {
-                ticker.tick().await;
+                if first_run {
+                    first_run = false;
+                } else {
+                    ticker.tick().await;
+                }
 
                 // Fetch peer list from registry (only LIVE peers with recent heartbeat)
                 let registry_peers = match registry.get_peers().await {
@@ -4023,6 +4028,7 @@ impl TestNode {
                 let tested = fully_tested_peers.read().await;
 
                 // Connect to peers we haven't fully tested (bidirectional) yet
+                let total_peers = peers.len();
                 let candidates: Vec<PeerInfo> = peers
                     .iter()
                     .filter(|p| p.peer_id != our_peer_id)
@@ -4037,6 +4043,12 @@ impl TestNode {
                 drop(tested);
 
                 if candidates.is_empty() {
+                    if total_peers > 0 {
+                        debug!(
+                            "No candidates from {} peers (has_ipv6={})",
+                            total_peers, our_has_ipv6
+                        );
+                    }
                     continue;
                 }
 

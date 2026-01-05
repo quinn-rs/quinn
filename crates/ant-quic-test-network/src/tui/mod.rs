@@ -429,7 +429,6 @@ fn handle_tui_event(app: &mut App, event: TuiEvent) {
         TuiEvent::RegistrationComplete => {
             app.set_registered(true);
             app.set_info("Registered with network registry");
-            app.connectivity_test_inbound_phase();
         }
         TuiEvent::PeerConnected(peer) => {
             app.peer_seen(&peer.full_id);

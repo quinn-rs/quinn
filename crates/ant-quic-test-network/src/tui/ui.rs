@@ -239,7 +239,18 @@ fn draw_connection_overview(frame: &mut Frame, app: &App, area: Rect) {
 
 fn connectivity_test_status_span(app: &App) -> Span<'static> {
     match app.connectivity_test.phase {
-        ConnectivityTestPhase::Registering => Span::raw(""),
+        ConnectivityTestPhase::Registering => {
+            if app.local_node.registered {
+                Span::styled(
+                    "  🔄 Connecting...",
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
+                )
+            } else {
+                Span::raw("")
+            }
+        }
         ConnectivityTestPhase::WaitingForInbound => {
             let countdown = app.connectivity_countdown();
             Span::styled(

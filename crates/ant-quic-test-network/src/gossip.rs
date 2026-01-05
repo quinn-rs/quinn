@@ -963,10 +963,14 @@ impl GossipIntegration {
         self.peer_cache.prune_old()
     }
 
-    /// Save the peer cache to disk.
+    /// Save the peer cache to disk (prunes stale entries first).
     pub fn save_cache(&self) -> Result<(), String> {
+        let pruned = self.prune_cache();
+        if pruned > 0 {
+            tracing::info!("Pruned {} stale peers before saving cache", pruned);
+        }
+
         if let Some(path) = &self.cache_path {
-            // Ensure parent directory exists
             if let Some(parent) = path.parent() {
                 if !parent.exists() {
                     std::fs::create_dir_all(parent)
@@ -977,7 +981,7 @@ impl GossipIntegration {
                 .save(path)
                 .map_err(|e| format!("Failed to save peer cache: {}", e))
         } else {
-            Ok(()) // No path configured, nothing to save
+            Ok(())
         }
     }
 
