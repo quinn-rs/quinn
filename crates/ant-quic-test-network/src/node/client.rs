@@ -2067,60 +2067,74 @@ impl TestNode {
                                                 request.requester_addresses.len()
                                             );
 
-                                            // Don't connect back to ourselves
                                             if request.requester_peer_id != peer_id {
                                                 let endpoint_clone = Arc::clone(&endpoint);
                                                 let requester_id = request.requester_peer_id.clone();
                                                 let addresses = request.requester_addresses.clone();
+                                                let event_tx_clone = event_tx.clone();
 
-                                                // RAPID-FIRE hole punch: 10 attempts over 2 seconds
-                                                // This maximizes chance of hitting while NAT binding is fresh
-                                                info!(
-                                                    "Starting rapid-fire connect-back to {} ({} addresses)",
-                                                    &requester_id[..8.min(requester_id.len())],
-                                                    addresses.len()
-                                                );
+                                                tokio::spawn(async move {
+                                                    let peer_short = &requester_id[..8.min(requester_id.len())];
 
-                                                for attempt in 0u64..10 {
-                                                    if addresses.is_empty() { break; }
-                                                    let addr = addresses[attempt as usize % addresses.len()];
-                                                    let ep = Arc::clone(&endpoint_clone);
-                                                    let req_id = requester_id.clone();
+                                                    info!(
+                                                        "ConnectBack: waiting 30s for NAT hole to expire before connecting to {}",
+                                                        peer_short
+                                                    );
 
-                                                    tokio::spawn(async move {
-                                                        tokio::time::sleep(Duration::from_millis(attempt * 200)).await;
+                                                    let _ = event_tx_clone.try_send(TuiEvent::Info(format!(
+                                                        "Will connect back to {} in 30s",
+                                                        peer_short
+                                                    )));
+
+                                                    tokio::time::sleep(Duration::from_secs(30)).await;
+
+                                                    info!(
+                                                        "ConnectBack: 30s elapsed, attempting fresh connection to {} ({} addresses)",
+                                                        peer_short,
+                                                        addresses.len()
+                                                    );
+
+                                                    for addr in &addresses {
                                                         match tokio::time::timeout(
-                                                            Duration::from_secs(3),
-                                                            ep.connect(addr),
+                                                            Duration::from_secs(10),
+                                                            endpoint_clone.connect(*addr),
                                                         ).await {
                                                             Ok(Ok(_)) => {
                                                                 info!(
-                                                                    "RapidFire #{}: SUCCESS connecting to {} at {}",
-                                                                    attempt,
-                                                                    &req_id[..8.min(req_id.len())],
+                                                                    "ConnectBack: SUCCESS fresh connection to {} at {}",
+                                                                    peer_short,
                                                                     addr
                                                                 );
+                                                                let _ = event_tx_clone.try_send(TuiEvent::Info(format!(
+                                                                    "Connected back to {} (fresh)",
+                                                                    peer_short
+                                                                )));
+                                                                return;
                                                             }
                                                             Ok(Err(e)) => {
                                                                 debug!(
-                                                                    "RapidFire #{}: failed {} at {}: {}",
-                                                                    attempt,
-                                                                    &req_id[..8.min(req_id.len())],
+                                                                    "ConnectBack: failed {} at {}: {}",
+                                                                    peer_short,
                                                                     addr,
                                                                     e
                                                                 );
                                                             }
                                                             Err(_) => {
                                                                 debug!(
-                                                                    "RapidFire #{}: timeout {} at {}",
-                                                                    attempt,
-                                                                    &req_id[..8.min(req_id.len())],
+                                                                    "ConnectBack: timeout {} at {}",
+                                                                    peer_short,
                                                                     addr
                                                                 );
                                                             }
                                                         }
-                                                    });
-                                                }
+                                                    }
+
+                                                    info!(
+                                                        "ConnectBack: FAILED to connect to {} after trying all {} addresses",
+                                                        peer_short,
+                                                        addresses.len()
+                                                    );
+                                                });
                                             }
                                         }
                                         GossipMessage::ConnectBackResponse(response) => {
@@ -3800,14 +3814,11 @@ impl TestNode {
         // Clone relay state for fallback when direct connection fails
         let relay_state = Arc::clone(&self.relay_state);
 
-        const RECONNECT_COOLDOWN_SECS: u64 = 15;
-
         tokio::spawn(async move {
             let mut ticker = tokio::time::interval(interval);
 
             while !shutdown.load(Ordering::SeqCst) {
                 ticker.tick().await;
-                let now = Instant::now();
 
                 // Fetch peer list from registry (only LIVE peers with recent heartbeat)
                 let registry_peers = match registry.get_peers().await {
@@ -3887,62 +3898,30 @@ impl TestNode {
                 let connected = connected_peers.read().await;
                 let disc_times = disconnection_times.read().await;
 
-                // Filter candidates:
-                // 1. Not ourselves
-                // 2. Not already tested outbound (allow inbound-only peers for reverse test)
-                // 3. Is active (recent heartbeat = peer is online)
-                // 4. IP version compatible
-                // 5. Either never connected OR disconnected for >30 seconds (fresh hole-punch test)
+                // Filter candidates - ONLY connect to peers we've NEVER connected to before
+                // After first connection, we rely on ConnectBackRequest for reverse testing
+                // (the other node waits 30s then connects back to us)
                 let candidates: Vec<PeerInfo> = peers
                     .iter()
                     .filter(|p| p.peer_id != our_peer_id)
                     .filter(|p| {
-                        match connected.get(&p.peer_id) {
-                            None => true,
-                            Some(tracked) => {
-                                // For inbound-only peers, wait 30s for NAT hole to close
-                                // before testing reverse connectivity
-                                !tracked.outbound_verified
-                                    && now.duration_since(tracked.connected_at).as_secs()
-                                        >= RECONNECT_COOLDOWN_SECS
-                            }
+                        // Only connect if we've never had ANY connection to this peer
+                        let dominated_connected = connected.get(&p.peer_id).is_none();
+                        let never_disconnected = disc_times.get(&p.peer_id).is_none();
+                        let dominated_new_peer = dominated_connected && never_disconnected;
+
+                        if !dominated_new_peer {
+                            debug!(
+                                "Peer {} skipped: already seen (connected={}, disconnected={})",
+                                &p.peer_id[..8.min(p.peer_id.len())],
+                                !dominated_connected,
+                                !never_disconnected
+                            );
                         }
+                        dominated_new_peer
                     })
-                    .filter(|p| p.is_active || peer_is_vps(p)) // VPS nodes always probed
+                    .filter(|p| p.is_active || peer_is_vps(p))
                     .filter(|p| can_reach_peer(p, our_has_ipv6))
-                    .filter(|p| {
-                        // Check if we've been disconnected long enough for NAT to forget
-                        match disc_times.get(&p.peer_id) {
-                            Some(disconnected_at) => {
-                                let elapsed = now.duration_since(*disconnected_at);
-                                if elapsed.as_secs() >= RECONNECT_COOLDOWN_SECS {
-                                    debug!(
-                                        "Peer {} eligible: disconnected {}s ago (>{}s cooldown)",
-                                        &p.peer_id[..8.min(p.peer_id.len())],
-                                        elapsed.as_secs(),
-                                        RECONNECT_COOLDOWN_SECS
-                                    );
-                                    true
-                                } else {
-                                    debug!(
-                                        "Peer {} skipped: only {}s since disconnect (<{}s cooldown)",
-                                        &p.peer_id[..8.min(p.peer_id.len())],
-                                        elapsed.as_secs(),
-                                        RECONNECT_COOLDOWN_SECS
-                                    );
-                                    false
-                                }
-                            }
-                            None => {
-                                // Never connected before - eligible for first connection
-                                debug!(
-                                    "Peer {} eligible: never connected before",
-                                    &p.peer_id[..8.min(p.peer_id.len())]
-                                );
-                                true
-                            }
-                        }
-                    })
                     .cloned()
                     .collect();
 
@@ -3955,9 +3934,8 @@ impl TestNode {
                 }
 
                 info!(
-                    "Testing connectivity to {} eligible peers (all disconnected >{}s)",
-                    candidates.len(),
-                    RECONNECT_COOLDOWN_SECS
+                    "Testing connectivity to {} new peers (first contact)",
+                    candidates.len()
                 );
 
                 // Connect to ALL eligible peers concurrently (max 20 at a time)
