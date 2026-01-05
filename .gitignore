@@ -42,3 +42,8 @@ tmp/
 compliance_report/
 results/
 docker/
+
+# Temporary files
+temp_clones/
+dave
+*_issues_*.json
