@@ -493,22 +493,16 @@ impl P2pEndpoint {
 
     // === Connection Management ===
 
-    /// Connect to a peer by address (direct connection)
+    /// Connect to a peer by address (direct connection).
+    ///
+    /// Uses Raw Public Key authentication - the peer's identity is verified via their
+    /// ML-DSA-65 public key, not via SNI/certificates.
     pub async fn connect(&self, addr: SocketAddr) -> Result<PeerConnection, EndpointError> {
-        self.connect_with_server_name(addr, "peer").await
-    }
-
-    /// Connect to a peer by address with specific server name (for token persistence)
-    pub async fn connect_with_server_name(
-        &self,
-        addr: SocketAddr,
-        server_name: &str,
-    ) -> Result<PeerConnection, EndpointError> {
         if self.shutdown.load(Ordering::SeqCst) {
             return Err(EndpointError::ShuttingDown);
         }
 
-        info!("Connecting directly to {} (SNI: {})", addr, server_name);
+        info!("Connecting directly to {}", addr);
 
         let endpoint = self
             .inner
@@ -516,7 +510,7 @@ impl P2pEndpoint {
             .ok_or_else(|| EndpointError::Config("QUIC endpoint not available".to_string()))?;
 
         let connecting = endpoint
-            .connect(addr, server_name)
+            .connect(addr, "peer")
             .map_err(|e| EndpointError::Connection(e.to_string()))?;
 
         let connection = connecting
@@ -642,12 +636,9 @@ impl P2pEndpoint {
         // Raw Public Key authentication validates the peer's public key directly,
         // so we don't need/use SNI for authentication. A fixed SNI avoids
         // "invalid server name" errors from hex peer IDs being too long.
-        let server_name = "peer";
-
-        // Try both families in PARALLEL
         let (ipv4_result, ipv6_result) = tokio::join!(
-            self.try_connect_family(&ipv4_addrs, "IPv4", server_name),
-            self.try_connect_family(&ipv6_addrs, "IPv6", server_name),
+            self.try_connect_family(&ipv4_addrs, "IPv4"),
+            self.try_connect_family(&ipv6_addrs, "IPv6"),
         );
 
         // Handle all possible outcomes
@@ -694,16 +685,10 @@ impl P2pEndpoint {
 
     /// Try to connect using addresses from one family (IPv4 or IPv6)
     ///
-    /// Attempts each address in the list until one succeeds or all fail.
-    /// Uses a 5-second timeout per attempt.
-    ///
-    /// # Returns
-    /// `Some(PeerConnection)` if any address succeeds, `None` if all fail or no addresses
     async fn try_connect_family(
         &self,
         addresses: &[SocketAddr],
         family_name: &str,
-        server_name: &str,
     ) -> Option<PeerConnection> {
         use tokio::time::{Duration, timeout};
 
@@ -723,13 +708,7 @@ impl P2pEndpoint {
                 addr
             );
 
-            // Try connection with 5s timeout
-            match timeout(
-                Duration::from_secs(5),
-                self.connect_with_server_name(*addr, server_name),
-            )
-            .await
-            {
+            match timeout(Duration::from_secs(5), self.connect(*addr)).await {
                 Ok(Ok(peer_conn)) => {
                     info!("✓ {} connection successful to {}", family_name, addr);
                     return Some(peer_conn);
@@ -960,19 +939,12 @@ impl P2pEndpoint {
             target_ipv4, target_ipv6, peer_id
         );
 
-        let server_name = "peer";
-
         loop {
             match strategy.current_stage().clone() {
                 ConnectionStage::DirectIPv4 { .. } => {
                     if let Some(addr) = target_ipv4 {
                         info!("Trying direct IPv4 connection to {}", addr);
-                        match timeout(
-                            strategy.ipv4_timeout(),
-                            self.connect_with_server_name(addr, server_name),
-                        )
-                        .await
-                        {
+                        match timeout(strategy.ipv4_timeout(), self.connect(addr)).await {
                             Ok(Ok(conn)) => {
                                 info!("✓ Direct IPv4 connection succeeded to {}", addr);
                                 return Ok((conn, ConnectionMethod::DirectIPv4));
@@ -995,12 +967,7 @@ impl P2pEndpoint {
                 ConnectionStage::DirectIPv6 { .. } => {
                     if let Some(addr) = target_ipv6 {
                         info!("Trying direct IPv6 connection to {}", addr);
-                        match timeout(
-                            strategy.ipv6_timeout(),
-                            self.connect_with_server_name(addr, server_name),
-                        )
-                        .await
-                        {
+                        match timeout(strategy.ipv6_timeout(), self.connect(addr)).await {
                             Ok(Ok(conn)) => {
                                 info!("✓ Direct IPv6 connection succeeded to {}", addr);
                                 return Ok((conn, ConnectionMethod::DirectIPv6));
@@ -1210,8 +1177,7 @@ impl P2pEndpoint {
             relay_addr, public_addr
         );
 
-        let server_name = target.ip().to_string();
-        let conn = self.connect_with_server_name(target, &server_name).await?;
+        let conn = self.connect(target).await?;
 
         info!(
             "MASQUE relay connection succeeded to {} via {} (our relay addr: {:?})",
