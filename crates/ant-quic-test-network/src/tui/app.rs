@@ -297,6 +297,16 @@ impl App {
         self.nat_analytics = Some(analytics);
     }
 
+    pub fn update_peer_nat_test_state(
+        &mut self,
+        peer_id: &str,
+        state: crate::tui::types::PeerNatTestState,
+    ) {
+        if let Some(peer) = self.connected_peers.get_mut(peer_id) {
+            peer.nat_test_state = state;
+        }
+    }
+
     pub fn update_geographic_distribution(&mut self, distribution: GeographicDistribution) {
         self.geographic_distribution = Some(distribution);
     }

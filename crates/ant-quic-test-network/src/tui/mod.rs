@@ -120,6 +120,13 @@ fn event_name(event: &TuiEvent) -> &'static str {
         TuiEvent::ConnectivityTestStart => "ConnectivityTestStart",
         TuiEvent::ConnectivityTestOutbound { .. } => "ConnectivityTestOutbound",
         TuiEvent::ConnectivityTestComplete => "ConnectivityTestComplete",
+        TuiEvent::NatTestOutbound { .. } => "NatTestOutbound",
+        TuiEvent::NatTestWaitingForConnectBack { .. } => "NatTestWaitingForConnectBack",
+        TuiEvent::NatTestConnectBackSuccess { .. } => "NatTestConnectBackSuccess",
+        TuiEvent::NatTestConnectBackTimeout { .. } => "NatTestConnectBackTimeout",
+        TuiEvent::NatTestRetrying { .. } => "NatTestRetrying",
+        TuiEvent::NatTestPeerUnreachable { .. } => "NatTestPeerUnreachable",
+        TuiEvent::FirewallDetected { .. } => "FirewallDetected",
     }
 }
 
@@ -252,6 +259,24 @@ pub enum TuiEvent {
     },
     /// Connectivity test: mark phase as complete
     ConnectivityTestComplete,
+
+    /// NAT test: attempting outbound connection to peer
+    NatTestOutbound { peer_id: String, address: String },
+    /// NAT test: outbound succeeded, now waiting for connect-back
+    NatTestWaitingForConnectBack {
+        peer_id: String,
+        seconds_remaining: u32,
+    },
+    /// NAT test: peer connected back successfully (full NAT traversal verified)
+    NatTestConnectBackSuccess { peer_id: String },
+    /// NAT test: connect-back timeout, will retry to verify peer is alive
+    NatTestConnectBackTimeout { peer_id: String },
+    /// NAT test: retry attempt to verify peer is still reachable
+    NatTestRetrying { peer_id: String },
+    /// NAT test: peer unreachable after retry (they may have gone offline)
+    NatTestPeerUnreachable { peer_id: String },
+    /// Firewall detected: cannot connect outbound to any peer
+    FirewallDetected { attempted_count: usize },
 }
 
 /// Configuration for the TUI.
@@ -562,6 +587,66 @@ fn handle_tui_event(app: &mut App, event: TuiEvent) {
         }
         TuiEvent::ConnectivityTestComplete => {
             app.connectivity_test.phase = types::ConnectivityTestPhase::Complete;
+        }
+        TuiEvent::NatTestOutbound { peer_id, address } => {
+            app.set_info(&format!(
+                "Connecting to {} at {}",
+                &peer_id[..8.min(peer_id.len())],
+                address
+            ));
+            app.update_peer_nat_test_state(&peer_id, types::PeerNatTestState::ConnectingOutbound);
+        }
+        TuiEvent::NatTestWaitingForConnectBack {
+            peer_id,
+            seconds_remaining,
+        } => {
+            let short_id = &peer_id[..8.min(peer_id.len())];
+            app.set_info(&format!(
+                "Waiting {}s for {} to connect back",
+                seconds_remaining, short_id
+            ));
+            app.update_peer_nat_test_state(
+                &peer_id,
+                types::PeerNatTestState::WaitingForConnectBack { seconds_remaining },
+            );
+        }
+        TuiEvent::NatTestConnectBackSuccess { peer_id } => {
+            let short_id = &peer_id[..8.min(peer_id.len())];
+            app.set_info(&format!(
+                "✓ {} connected back - NAT traversal verified!",
+                short_id
+            ));
+            app.update_peer_nat_test_state(&peer_id, types::PeerNatTestState::Verified);
+        }
+        TuiEvent::NatTestConnectBackTimeout { peer_id } => {
+            let short_id = &peer_id[..8.min(peer_id.len())];
+            app.set_info(&format!(
+                "Timeout waiting for {} - retrying to check if peer is alive",
+                short_id
+            ));
+            app.update_peer_nat_test_state(&peer_id, types::PeerNatTestState::TimedOut);
+        }
+        TuiEvent::NatTestRetrying { peer_id } => {
+            let short_id = &peer_id[..8.min(peer_id.len())];
+            app.set_info(&format!(
+                "Retrying connection to {} to verify peer is still online",
+                short_id
+            ));
+            app.update_peer_nat_test_state(&peer_id, types::PeerNatTestState::Retrying);
+        }
+        TuiEvent::NatTestPeerUnreachable { peer_id } => {
+            let short_id = &peer_id[..8.min(peer_id.len())];
+            app.set_info(&format!(
+                "✗ {} unreachable - peer may have gone offline",
+                short_id
+            ));
+            app.update_peer_nat_test_state(&peer_id, types::PeerNatTestState::Unreachable);
+        }
+        TuiEvent::FirewallDetected { attempted_count } => {
+            app.set_error(&format!(
+                "⚠ Cannot connect to any peers ({} attempted). Your firewall or network may be blocking outbound connections.",
+                attempted_count
+            ));
         }
     }
 }

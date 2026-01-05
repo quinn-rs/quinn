@@ -54,12 +54,62 @@ impl ConnectionQuality {
 /// Traffic direction indicator.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TrafficDirection {
-    /// Sending data
     Sending,
-    /// Receiving data
     Receiving,
-    /// Idle
     Idle,
+}
+
+/// NAT test state for a peer - tracks the connect-back verification flow.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PeerNatTestState {
+    /// Not yet tested
+    Pending,
+    /// Attempting outbound connection
+    ConnectingOutbound,
+    /// Outbound succeeded, waiting for peer to connect back
+    WaitingForConnectBack { seconds_remaining: u32 },
+    /// Peer successfully connected back - NAT traversal verified
+    Verified,
+    /// Timed out waiting for connect-back
+    TimedOut,
+    /// Retrying to verify peer is still online
+    Retrying,
+    /// Peer is unreachable (may have gone offline)
+    Unreachable,
+}
+
+impl Default for PeerNatTestState {
+    fn default() -> Self {
+        Self::Pending
+    }
+}
+
+impl PeerNatTestState {
+    pub fn status_symbol(&self) -> &'static str {
+        match self {
+            Self::Pending => "○",
+            Self::ConnectingOutbound => "→",
+            Self::WaitingForConnectBack { .. } => "⏳",
+            Self::Verified => "✓",
+            Self::TimedOut => "⏱",
+            Self::Retrying => "↻",
+            Self::Unreachable => "✗",
+        }
+    }
+
+    pub fn status_text(&self) -> String {
+        match self {
+            Self::Pending => "pending".to_string(),
+            Self::ConnectingOutbound => "connecting...".to_string(),
+            Self::WaitingForConnectBack { seconds_remaining } => {
+                format!("wait {}s", seconds_remaining)
+            }
+            Self::Verified => "verified".to_string(),
+            Self::TimedOut => "timeout".to_string(),
+            Self::Retrying => "retrying...".to_string(),
+            Self::Unreachable => "offline".to_string(),
+        }
+    }
 }
 
 /// Information about a connected peer for display.
@@ -115,6 +165,8 @@ pub struct ConnectedPeer {
     pub data_tx: bool,
     /// Test data traffic (RX)
     pub data_rx: bool,
+    /// NAT test state for connect-back verification
+    pub nat_test_state: PeerNatTestState,
 }
 
 impl ConnectedPeer {
@@ -167,6 +219,7 @@ impl ConnectedPeer {
             protocol_rx: false,
             data_tx: false,
             data_rx: false,
+            nat_test_state: PeerNatTestState::Pending,
         }
     }
 

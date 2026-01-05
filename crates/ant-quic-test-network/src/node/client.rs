@@ -1118,10 +1118,8 @@ impl TestNode {
                             }
                         });
 
-                        // === IMMEDIATE ConnectBackRequest for OUTBOUND connections ===
-                        // When we (possibly NATted) connect OUT to a peer, immediately ask them
-                        // to try connecting back while our NAT hole might still be fresh.
-                        // This is critical for CGNAT/Starlink where holes expire in 10-30 seconds.
+                        // Send ConnectBackRequest after outbound connection
+                        // The peer will wait 30s for NAT hole to expire, then try to connect back
                         if !is_inbound {
                             let endpoint_for_callback = endpoint_for_events.clone();
                             let external_addrs_for_callback =
@@ -1129,6 +1127,8 @@ impl TestNode {
                             let our_peer_id_for_callback = peer_id_for_events.clone();
                             let target_peer_hex = peer_hex.clone();
                             let event_tx_for_callback = event_tx_for_events.clone();
+                            let connected_peers_for_callback =
+                                Arc::clone(&connected_peers_for_events);
 
                             tokio::spawn(async move {
                                 use super::test_protocol::ConnectBackRequest;
@@ -1139,6 +1139,7 @@ impl TestNode {
                                     return;
                                 }
 
+                                let peer_short = &target_peer_hex[..8.min(target_peer_hex.len())];
                                 tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
 
                                 let request = ConnectBackRequest::new(
@@ -1158,36 +1159,98 @@ impl TestNode {
                                                 .await
                                             {
                                                 debug!(
-                                                    "Immediate ConnectBack: failed to send to {}: {}",
-                                                    &target_peer_hex
-                                                        [..8.min(target_peer_hex.len())],
-                                                    e
+                                                    "ConnectBackRequest: failed to send to {}: {}",
+                                                    peer_short, e
                                                 );
-                                            } else {
-                                                info!(
-                                                    "Immediate ConnectBack: sent to {} ({} addresses)",
-                                                    &target_peer_hex
-                                                        [..8.min(target_peer_hex.len())],
-                                                    our_addresses.len()
-                                                );
-                                                let _ = event_tx_for_callback.try_send(
-                                                    TuiEvent::Info(format!(
-                                                        "Asked {} to connect back (NAT test)",
-                                                        &target_peer_hex
-                                                            [..8.min(target_peer_hex.len())]
-                                                    )),
-                                                );
+                                                return;
+                                            }
 
-                                                // Keep NAT binding alive for 3s while VPS does rapid-fire attempts
-                                                let ep_for_keepalive =
-                                                    endpoint_for_callback.clone();
-                                                let peer_for_keepalive = target_peer;
-                                                for _ in 0..30 {
-                                                    tokio::time::sleep(Duration::from_millis(100))
-                                                        .await;
-                                                    let _ = ep_for_keepalive
-                                                        .send(&peer_for_keepalive, b"ping")
-                                                        .await;
+                                            info!(
+                                                "ConnectBackRequest: sent to {} - waiting for connect-back",
+                                                peer_short
+                                            );
+
+                                            let _ = event_tx_for_callback.try_send(
+                                                TuiEvent::NatTestWaitingForConnectBack {
+                                                    peer_id: target_peer_hex.clone(),
+                                                    seconds_remaining: 60,
+                                                },
+                                            );
+
+                                            // 60s = 30s for peer's NAT to expire + 30s for them to connect
+                                            for countdown in (0..60).rev() {
+                                                tokio::time::sleep(Duration::from_secs(1)).await;
+
+                                                let peers =
+                                                    connected_peers_for_callback.read().await;
+                                                if let Some(tracked) = peers.get(&target_peer_hex) {
+                                                    if tracked.inbound_verified {
+                                                        let _ = event_tx_for_callback.try_send(
+                                                            TuiEvent::NatTestConnectBackSuccess {
+                                                                peer_id: target_peer_hex.clone(),
+                                                            },
+                                                        );
+                                                        return;
+                                                    }
+                                                }
+                                                drop(peers);
+
+                                                if countdown % 10 == 0 && countdown > 0 {
+                                                    let _ = event_tx_for_callback.try_send(
+                                                        TuiEvent::NatTestWaitingForConnectBack {
+                                                            peer_id: target_peer_hex.clone(),
+                                                            seconds_remaining: countdown,
+                                                        },
+                                                    );
+                                                }
+                                            }
+
+                                            info!(
+                                                "ConnectBackRequest: timeout waiting for {} to connect back",
+                                                peer_short
+                                            );
+                                            let _ = event_tx_for_callback.try_send(
+                                                TuiEvent::NatTestConnectBackTimeout {
+                                                    peer_id: target_peer_hex.clone(),
+                                                },
+                                            );
+
+                                            let _ = event_tx_for_callback.try_send(
+                                                TuiEvent::NatTestRetrying {
+                                                    peer_id: target_peer_hex.clone(),
+                                                },
+                                            );
+
+                                            let retry_result = tokio::time::timeout(
+                                                Duration::from_secs(10),
+                                                endpoint_for_callback
+                                                    .connect_to_peer(target_peer, None),
+                                            )
+                                            .await;
+
+                                            match retry_result {
+                                                Ok(Ok(_)) => {
+                                                    info!(
+                                                        "ConnectBackRequest: {} is still reachable but didn't connect back",
+                                                        peer_short
+                                                    );
+                                                    let _ = event_tx_for_callback.try_send(
+                                                        TuiEvent::Info(format!(
+                                                            "{} online but NAT traversal failed - they can't reach us",
+                                                            peer_short
+                                                        ))
+                                                    );
+                                                }
+                                                _ => {
+                                                    info!(
+                                                        "ConnectBackRequest: {} appears to have gone offline",
+                                                        peer_short
+                                                    );
+                                                    let _ = event_tx_for_callback.try_send(
+                                                        TuiEvent::NatTestPeerUnreachable {
+                                                            peer_id: target_peer_hex.clone(),
+                                                        },
+                                                    );
                                                 }
                                             }
                                         }
@@ -3960,13 +4023,22 @@ impl TestNode {
 
                     let fut = async move {
                         let peer_id_short = &candidate.peer_id[..8.min(candidate.peer_id.len())];
+                        let addr_str = candidate
+                            .addresses
+                            .first()
+                            .map(|a| a.to_string())
+                            .unwrap_or_else(|| "unknown".to_string());
+
                         info!(
                             "Testing FRESH hole-punch to peer {} ({:?})",
                             peer_id_short, candidate.country_code
                         );
 
-                        // Mark this as an outbound connection attempt
-                        // When PeerConnected fires, if peer is in pending_outbound, it's outbound
+                        let _ = event_tx.try_send(TuiEvent::NatTestOutbound {
+                            peer_id: candidate.peer_id.clone(),
+                            address: addr_str,
+                        });
+
                         {
                             let mut pending = pending_outbound.write().await;
                             pending.insert(candidate.peer_id.clone());
@@ -4207,13 +4279,21 @@ impl TestNode {
                                 }
                             }
                         }
+                        result.success
                     };
 
                     connect_futures.push(fut);
                 }
 
-                // Execute all connections concurrently
-                futures_util::future::join_all(connect_futures).await;
+                let candidate_count = connect_futures.len();
+                let results = futures_util::future::join_all(connect_futures).await;
+                let success_count = results.iter().filter(|&&s| s).count();
+
+                if candidate_count > 0 && success_count == 0 {
+                    let _ = event_tx.try_send(TuiEvent::FirewallDetected {
+                        attempted_count: candidate_count,
+                    });
+                }
             }
         })
     }

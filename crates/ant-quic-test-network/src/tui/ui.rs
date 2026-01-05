@@ -374,8 +374,8 @@ fn draw_peers(frame: &mut Frame, app: &App, area: Rect) {
         Cell::from("Peer").style(Style::default().add_modifier(Modifier::BOLD)),
         Cell::from("Location").style(Style::default().add_modifier(Modifier::BOLD)),
         Cell::from("Dir").style(Style::default().add_modifier(Modifier::BOLD)),
-        Cell::from("NAT").style(Style::default().add_modifier(Modifier::BOLD)), // NAT verification status
-        Cell::from("Phase").style(Style::default().add_modifier(Modifier::BOLD)), // NAT traversal phase
+        Cell::from("NAT").style(Style::default().add_modifier(Modifier::BOLD)),
+        Cell::from("Test").style(Style::default().add_modifier(Modifier::BOLD)),
         Cell::from("Traffic").style(Style::default().add_modifier(Modifier::BOLD)),
         Cell::from("RTT").style(Style::default().add_modifier(Modifier::BOLD)),
         Cell::from("Quality").style(Style::default().add_modifier(Modifier::BOLD)),
@@ -472,17 +472,37 @@ fn draw_peers(frame: &mut Frame, app: &App, area: Rect) {
                 (false, false) => ("••", Style::default().fg(Color::DarkGray)),
             };
 
-            // NAT traversal phase with emoji
-            let phase_display =
-                format!("{}{}", peer.nat_phase.emoji(), peer.nat_phase.color_name());
-            let phase_style = Style::default().fg(match peer.nat_phase.color_name() {
-                "blue" => Color::Blue,
-                "yellow" => Color::Yellow,
-                "orange" => Color::LightYellow,
-                "green" => Color::Green,
-                "red" => Color::Red,
-                _ => Color::White,
-            });
+            use crate::tui::types::PeerNatTestState;
+            let (test_display, test_style) = match &peer.nat_test_state {
+                PeerNatTestState::Pending => ("○", Style::default().fg(Color::DarkGray)),
+                PeerNatTestState::ConnectingOutbound => ("→", Style::default().fg(Color::Yellow)),
+                PeerNatTestState::WaitingForConnectBack { seconds_remaining } => {
+                    if *seconds_remaining > 30 {
+                        ("⏳", Style::default().fg(Color::Yellow))
+                    } else {
+                        (
+                            "⏳",
+                            Style::default()
+                                .fg(Color::LightYellow)
+                                .add_modifier(Modifier::BOLD),
+                        )
+                    }
+                }
+                PeerNatTestState::Verified => (
+                    "✓",
+                    Style::default()
+                        .fg(Color::Green)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                PeerNatTestState::TimedOut => ("⏱", Style::default().fg(Color::Red)),
+                PeerNatTestState::Retrying => (
+                    "↻",
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                PeerNatTestState::Unreachable => ("✗", Style::default().fg(Color::Red)),
+            };
 
             Row::new(vec![
                 Cell::from(method_indicator).style(Style::default().fg(row_color)),
@@ -490,7 +510,7 @@ fn draw_peers(frame: &mut Frame, app: &App, area: Rect) {
                 Cell::from(location),
                 Cell::from(direction_str).style(direction_style),
                 Cell::from(nat_status).style(nat_style),
-                Cell::from(phase_display).style(phase_style),
+                Cell::from(test_display).style(test_style),
                 Cell::from(
                     traffic_spans
                         .iter()
@@ -507,15 +527,15 @@ fn draw_peers(frame: &mut Frame, app: &App, area: Rect) {
     let table = Table::new(
         rows,
         [
-            Constraint::Length(2),  // Traffic light emoji
-            Constraint::Length(9),  // Peer ID (reduced)
-            Constraint::Length(8),  // Location
-            Constraint::Length(4),  // Direction (Out/In)
-            Constraint::Length(3),  // NAT verification status
-            Constraint::Length(10), // NAT traversal phase
-            Constraint::Length(5),  // Traffic indicator
-            Constraint::Length(7),  // RTT
-            Constraint::Min(6),     // Quality bar (●●●●●●)
+            Constraint::Length(2), // Traffic light emoji
+            Constraint::Length(9), // Peer ID
+            Constraint::Length(8), // Location
+            Constraint::Length(4), // Direction (Out/In)
+            Constraint::Length(3), // NAT verification status
+            Constraint::Length(4), // Test state
+            Constraint::Length(5), // Traffic indicator
+            Constraint::Length(7), // RTT
+            Constraint::Min(6),    // Quality bar
         ],
     )
     .header(header)
