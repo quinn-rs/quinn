@@ -4597,32 +4597,40 @@ impl TestNode {
 
                             match msg_result {
                                 Ok(Message::Text(text)) => {
-                                    if let Ok(NetworkEvent::ConnectivityTestRequest {
-                                        peer_id: target_peer_id,
-                                        addresses,
-                                        relay_addr: _,
-                                        timestamp_ms: _,
-                                    }) = serde_json::from_str::<NetworkEvent>(&text)
-                                    {
-                                        if target_peer_id == peer_id {
-                                            debug!(
-                                                "Ignoring connectivity test request for ourselves"
+                                    match serde_json::from_str::<NetworkEvent>(&text) {
+                                        Ok(NetworkEvent::ConnectivityTestRequest {
+                                            peer_id: target_peer_id,
+                                            addresses,
+                                            relay_addr: _,
+                                            timestamp_ms: _,
+                                        }) => {
+                                            if target_peer_id == peer_id {
+                                                debug!(
+                                                    "Ignoring connectivity test request for ourselves"
+                                                );
+                                                continue;
+                                            }
+
+                                            info!(
+                                                "Received connectivity test request for peer {} with {} addresses",
+                                                &target_peer_id[..8.min(target_peer_id.len())],
+                                                addresses.len()
                                             );
-                                            continue;
+
+                                            Self::handle_connectivity_test_request(
+                                                &endpoint,
+                                                &target_peer_id,
+                                                &addresses,
+                                                &event_tx,
+                                            )
+                                            .await;
                                         }
-
-                                        info!(
-                                            "Received connectivity test request for peer {}",
-                                            &target_peer_id[..8.min(target_peer_id.len())]
-                                        );
-
-                                        Self::handle_connectivity_test_request(
-                                            &endpoint,
-                                            &target_peer_id,
-                                            &addresses,
-                                            &event_tx,
-                                        )
-                                        .await;
+                                        Ok(_other_event) => {
+                                            debug!("WebSocket: received non-connectivity event");
+                                        }
+                                        Err(e) => {
+                                            debug!("WebSocket: failed to parse event: {}", e);
+                                        }
                                     }
                                 }
                                 Ok(Message::Ping(data)) => {

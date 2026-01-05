@@ -1535,4 +1535,26 @@ mod tests {
         assert_eq!(NatType::Upnp.to_string(), "UPnP");
         assert_eq!(NatType::NatPmp.to_string(), "NAT-PMP");
     }
+
+    #[test]
+    fn test_connectivity_test_request_deserialization() {
+        let json = r#"{"type":"connectivity_test_request","peer_id":"abc123def456","addresses":["127.0.0.1:9000","[::1]:9001"],"relay_addr":null,"timestamp_ms":1234567890}"#;
+        let event: NetworkEvent = serde_json::from_str(json).expect("should deserialize");
+        match event {
+            NetworkEvent::ConnectivityTestRequest {
+                peer_id,
+                addresses,
+                relay_addr,
+                timestamp_ms,
+            } => {
+                assert_eq!(peer_id, "abc123def456");
+                assert_eq!(addresses.len(), 2);
+                assert_eq!(addresses[0].to_string(), "127.0.0.1:9000");
+                assert_eq!(addresses[1].to_string(), "[::1]:9001");
+                assert!(relay_addr.is_none());
+                assert_eq!(timestamp_ms, 1234567890);
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
 }
