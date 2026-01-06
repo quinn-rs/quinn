@@ -4,9 +4,9 @@
 //! and coordinates updates from the network layer.
 
 use crate::tui::types::{
-    CacheHealth, ConnectedPeer, ConnectivityTestResults, FrameDirection, GeographicDistribution,
-    LocalNodeInfo, NatTraversalPhase, NatTypeAnalytics, NetworkStatistics, ProtocolFrame,
-    TestConnectivityMethod, TrafficType,
+    CacheHealth, ConnectedPeer, ConnectionHistoryEntry, ConnectionStatus, ConnectivityTestResults,
+    FrameDirection, GeographicDistribution, LocalNodeInfo, NatTraversalPhase, NatTypeAnalytics,
+    NetworkStatistics, ProtocolFrame, TestConnectivityMethod, TrafficType,
 };
 use std::collections::{HashMap, HashSet};
 use std::time::Instant;
@@ -29,6 +29,8 @@ pub struct App {
     pub local_node: LocalNodeInfo,
     /// Connected peers (peer_id -> peer info)
     pub connected_peers: HashMap<String, ConnectedPeer>,
+    /// Connection history (peer_id -> history entry) - persists after disconnection
+    pub connection_history: HashMap<String, ConnectionHistoryEntry>,
     /// Network statistics
     pub stats: NetworkStatistics,
     /// Auto-connect enabled
@@ -72,6 +74,7 @@ impl App {
             state: AppState::Running,
             local_node: LocalNodeInfo::default(),
             connected_peers: HashMap::new(),
+            connection_history: HashMap::new(),
             stats: NetworkStatistics {
                 started_at: Some(Instant::now()),
                 ..Default::default()
@@ -114,11 +117,25 @@ impl App {
 
     /// Add or update a connected peer.
     pub fn update_peer(&mut self, peer: ConnectedPeer) {
-        self.connected_peers.insert(peer.full_id.clone(), peer);
+        let peer_id = peer.full_id.clone();
+
+        if let Some(history) = self.connection_history.get_mut(&peer_id) {
+            history.update_from_peer(&peer);
+        } else {
+            self.connection_history.insert(
+                peer_id.clone(),
+                ConnectionHistoryEntry::from_connected_peer(&peer),
+            );
+        }
+
+        self.connected_peers.insert(peer_id, peer);
     }
 
     /// Remove a disconnected peer.
     pub fn remove_peer(&mut self, peer_id: &str) {
+        if let Some(history) = self.connection_history.get_mut(peer_id) {
+            history.mark_disconnected();
+        }
         self.connected_peers.remove(peer_id);
     }
 
@@ -226,15 +243,43 @@ impl App {
     /// Get sorted list of connected peers for display.
     pub fn peers_sorted(&self) -> Vec<&ConnectedPeer> {
         let mut peers: Vec<_> = self.connected_peers.values().collect();
-        // Sort by RTT (fastest first), then by connection time
         peers.sort_by(|a, b| match (a.rtt, b.rtt) {
             (Some(a_rtt), Some(b_rtt)) => a_rtt.cmp(&b_rtt),
             (Some(_), None) => std::cmp::Ordering::Less,
             (None, Some(_)) => std::cmp::Ordering::Greater,
             (None, None) => a.connected_at.cmp(&b.connected_at),
         });
-
         peers
+    }
+
+    /// Get sorted connection history for display (connected first, then by last_seen).
+    pub fn history_sorted(&self) -> Vec<&ConnectionHistoryEntry> {
+        let mut history: Vec<_> = self.connection_history.values().collect();
+        history.sort_by(|a, b| match (&a.status, &b.status) {
+            (ConnectionStatus::Connected, ConnectionStatus::Connected) => {
+                b.last_seen.cmp(&a.last_seen)
+            }
+            (ConnectionStatus::Connected, _) => std::cmp::Ordering::Less,
+            (_, ConnectionStatus::Connected) => std::cmp::Ordering::Greater,
+            _ => b.last_seen.cmp(&a.last_seen),
+        });
+        history
+    }
+
+    /// Get count of currently connected peers in history.
+    pub fn history_connected_count(&self) -> usize {
+        self.connection_history
+            .values()
+            .filter(|h| h.status == ConnectionStatus::Connected)
+            .count()
+    }
+
+    /// Get count of disconnected peers in history.
+    pub fn history_disconnected_count(&self) -> usize {
+        self.connection_history
+            .values()
+            .filter(|h| h.status == ConnectionStatus::Disconnected)
+            .count()
     }
 
     pub fn add_protocol_frame(&mut self, frame: ProtocolFrame) {

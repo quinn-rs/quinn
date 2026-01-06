@@ -7,6 +7,122 @@ use crate::registry::{ConnectionDirection, ConnectionMethod, ConnectivityMatrix,
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
+/// Historical connection record for tracking peers we've connected to.
+#[derive(Debug, Clone)]
+pub struct ConnectionHistoryEntry {
+    /// Short peer ID (first 8 chars)
+    pub short_id: String,
+    /// Full peer ID
+    pub full_id: String,
+    /// Location (country flag + code)
+    pub location: String,
+    /// Connection method used
+    pub method: ConnectionMethod,
+    /// Connection direction
+    pub direction: ConnectionDirection,
+    /// Current status
+    pub status: ConnectionStatus,
+    /// When first connected
+    pub first_connected: Instant,
+    /// When last seen
+    pub last_seen: Instant,
+    /// Total packets exchanged
+    pub total_packets: u64,
+    /// Best RTT ever recorded
+    pub best_rtt: Option<Duration>,
+    /// Number of times connected
+    pub connection_count: u32,
+    /// Whether NAT traversal was verified
+    pub nat_verified: bool,
+}
+
+/// Connection status for history entries.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConnectionStatus {
+    /// Currently connected
+    Connected,
+    /// Disconnected (with time since disconnection)
+    Disconnected,
+    /// Connection failed
+    Failed,
+}
+
+impl ConnectionStatus {
+    /// Get status emoji
+    pub fn emoji(&self) -> &'static str {
+        match self {
+            Self::Connected => "●",
+            Self::Disconnected => "○",
+            Self::Failed => "✗",
+        }
+    }
+
+    /// Get status color name
+    pub fn color_name(&self) -> &'static str {
+        match self {
+            Self::Connected => "green",
+            Self::Disconnected => "gray",
+            Self::Failed => "red",
+        }
+    }
+}
+
+impl ConnectionHistoryEntry {
+    /// Create a new history entry from a connected peer.
+    pub fn from_connected_peer(peer: &super::ConnectedPeer) -> Self {
+        Self {
+            short_id: peer.short_id.clone(),
+            full_id: peer.full_id.clone(),
+            location: peer.location.clone(),
+            method: peer.method,
+            direction: peer.direction,
+            status: ConnectionStatus::Connected,
+            first_connected: peer.connected_at,
+            last_seen: Instant::now(),
+            total_packets: peer.packets_sent + peer.packets_received,
+            best_rtt: peer.rtt,
+            connection_count: 1,
+            nat_verified: peer.is_nat_verified(),
+        }
+    }
+
+    /// Update from a connected peer (when reconnecting).
+    pub fn update_from_peer(&mut self, peer: &super::ConnectedPeer) {
+        self.status = ConnectionStatus::Connected;
+        self.last_seen = Instant::now();
+        self.total_packets += peer.packets_sent + peer.packets_received;
+        self.connection_count += 1;
+        if let Some(rtt) = peer.rtt {
+            match self.best_rtt {
+                Some(best) if rtt < best => self.best_rtt = Some(rtt),
+                None => self.best_rtt = Some(rtt),
+                _ => {}
+            }
+        }
+        if peer.is_nat_verified() {
+            self.nat_verified = true;
+        }
+    }
+
+    /// Mark as disconnected.
+    pub fn mark_disconnected(&mut self) {
+        self.status = ConnectionStatus::Disconnected;
+        self.last_seen = Instant::now();
+    }
+
+    /// Get time since last seen as a formatted string.
+    pub fn time_since_seen(&self) -> String {
+        let elapsed = self.last_seen.elapsed();
+        if elapsed.as_secs() < 60 {
+            format!("{}s", elapsed.as_secs())
+        } else if elapsed.as_secs() < 3600 {
+            format!("{}m", elapsed.as_secs() / 60)
+        } else {
+            format!("{}h", elapsed.as_secs() / 3600)
+        }
+    }
+}
+
 /// Connection quality indicator (5 levels).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConnectionQuality {
