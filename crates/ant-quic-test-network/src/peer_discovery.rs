@@ -23,14 +23,14 @@ use tracing::{debug, info};
 
 pub const BOOTSTRAP_NODES: &[(&str, &str)] = &[
     ("saorsa-1.saorsalabs.com", "9001"),
-    ("saorsa-2.saorsalabs.com", "9000"),
-    ("saorsa-3.saorsalabs.com", "9000"),
-    ("saorsa-4.saorsalabs.com", "9000"),
-    ("saorsa-5.saorsalabs.com", "9000"),
-    ("saorsa-6.saorsalabs.com", "9000"),
-    ("saorsa-7.saorsalabs.com", "9000"),
-    ("saorsa-8.saorsalabs.com", "9000"),
-    ("saorsa-9.saorsalabs.com", "9000"),
+    ("saorsa-2.saorsalabs.com", "9001"),
+    ("saorsa-3.saorsalabs.com", "9001"),
+    ("saorsa-4.saorsalabs.com", "9001"),
+    ("saorsa-5.saorsalabs.com", "9001"),
+    ("saorsa-6.saorsalabs.com", "9001"),
+    ("saorsa-7.saorsalabs.com", "9001"),
+    ("saorsa-8.saorsalabs.com", "9001"),
+    ("saorsa-9.saorsalabs.com", "9001"),
 ];
 
 /// Configuration for gossip-first discovery.
