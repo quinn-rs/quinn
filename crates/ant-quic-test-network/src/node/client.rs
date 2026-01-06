@@ -811,16 +811,24 @@ impl TestNode {
                             )));
 
                             // Create a ConnectedPeer for TUI display with Inbound direction
-                            // This ensures inbound connections appear in the peer list
                             let mut inbound_peer = ConnectedPeer::with_direction(
                                 &peer_hex,
-                                ConnectionMethod::HolePunched, // They punched through to us
+                                ConnectionMethod::HolePunched,
                                 ConnectionDirection::Inbound,
                             );
                             inbound_peer.addresses = vec![addr];
-                            // Mark connectivity matrix to show NAT traversal succeeded
+
+                            // Set connectivity matrix based on address type + NAT success
+                            let is_ipv6 = addr.is_ipv6();
+                            inbound_peer.connectivity.ipv4_direct_tested = !is_ipv6;
+                            inbound_peer.connectivity.ipv4_direct_success = !is_ipv6;
+                            inbound_peer.connectivity.ipv6_direct_tested = is_ipv6;
+                            inbound_peer.connectivity.ipv6_direct_success = is_ipv6;
                             inbound_peer.connectivity.nat_traversal_tested = true;
                             inbound_peer.connectivity.nat_traversal_success = true;
+                            inbound_peer.connectivity.active_is_ipv6 = is_ipv6;
+                            inbound_peer.connectivity.active_method =
+                                Some(ConnectionMethod::HolePunched);
 
                             // Look up country code from the peer's IP address
                             let (_lat, _lon, country_code) =
@@ -848,6 +856,16 @@ impl TestNode {
                                 ConnectionDirection::Outbound,
                             );
                             outbound_peer.addresses = vec![addr];
+
+                            // Set connectivity matrix based on address type
+                            let is_ipv6 = addr.is_ipv6();
+                            outbound_peer.connectivity.ipv4_direct_tested = !is_ipv6;
+                            outbound_peer.connectivity.ipv4_direct_success = !is_ipv6;
+                            outbound_peer.connectivity.ipv6_direct_tested = is_ipv6;
+                            outbound_peer.connectivity.ipv6_direct_success = is_ipv6;
+                            outbound_peer.connectivity.active_is_ipv6 = is_ipv6;
+                            outbound_peer.connectivity.active_method =
+                                Some(ConnectionMethod::Direct);
 
                             // Look up country code from the peer's IP address
                             let (_lat, _lon, country_code) =
