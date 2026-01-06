@@ -585,7 +585,21 @@ impl Node {
         };
 
         // Calculate average RTT from connected peers
-        let avg_rtt = Duration::ZERO; // TODO: Calculate from connection metrics
+        let mut total_rtt = Duration::ZERO;
+        let mut rtt_count = 0u32;
+        for peer in &connected_peers {
+            if let Some(metrics) = self.inner.connection_metrics(&peer.peer_id).await {
+                if let Some(rtt) = metrics.rtt {
+                    total_rtt += rtt;
+                    rtt_count += 1;
+                }
+            }
+        }
+        let avg_rtt = if rtt_count > 0 {
+            total_rtt / rtt_count
+        } else {
+            Duration::ZERO
+        };
 
         NodeStatus {
             peer_id: self.peer_id(),
