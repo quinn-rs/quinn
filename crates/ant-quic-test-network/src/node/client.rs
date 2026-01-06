@@ -571,6 +571,10 @@ impl TestNode {
 
         // Load or generate persistent keypair to maintain stable peer ID across restarts
         let (public_key, secret_key) = load_or_generate_keypair()?;
+        let keypair_bytes = (
+            public_key.as_bytes().to_vec(),
+            secret_key.as_bytes().to_vec(),
+        );
 
         // Port offset approach:
         // - If bind_addr port is 0: both P2pEndpoint and gossip use random ports
@@ -755,6 +759,7 @@ impl TestNode {
             listen_addr: gossip_listen_addr,
             bootstrap_peers: vps_bootstrap.clone(),
             registry_url: Some(config.registry_url.clone()),
+            keypair: Some(keypair_bytes.clone()),
             ..EpidemicConfig::default()
         };
         info!(
@@ -3185,15 +3190,14 @@ impl TestNode {
             let tx = tx.clone();
 
             tokio::spawn(async move {
-                match tokio::time::timeout(Duration::from_secs(3), ep.connect(peer_addr)).await {
-                    Ok(Ok(_conn)) => {
-                        tokio::time::sleep(Duration::from_millis(500)).await;
-                        let addrs = ext_addrs.read().await;
-                        if !addrs.is_empty() {
-                            let _ = tx.send(true).await;
-                        }
+                if let Ok(Ok(_conn)) =
+                    tokio::time::timeout(Duration::from_secs(3), ep.connect(peer_addr)).await
+                {
+                    tokio::time::sleep(Duration::from_millis(500)).await;
+                    let addrs = ext_addrs.read().await;
+                    if !addrs.is_empty() {
+                        let _ = tx.send(true).await;
                     }
-                    Ok(Err(_)) | Err(_) => {}
                 }
             });
         }

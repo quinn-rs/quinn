@@ -119,7 +119,7 @@ dependencies = [
 
 [[package]]
 name = "ant-quic"
-version = "0.14.176"
+version = "0.14.177"
 dependencies = [
  "anyhow",
  "arbitrary",
@@ -193,7 +193,7 @@ dependencies = [
 
 [[package]]
 name = "ant-quic-test-network"
-version = "0.14.176"
+version = "0.14.177"
 dependencies = [
  "ant-quic",
  "anyhow",
@@ -3365,9 +3365,9 @@ dependencies = [
 
 [[package]]
 name = "saorsa-gossip-transport"
-version = "0.1.16"
+version = "0.1.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b74cb618b848a4bf8d8a7f548d15e43082e440ef01f5855a796a8e83a10c35d3"
+checksum = "a8976e02da376fb02ec21441f60bf8130af7e0c7e193540f80818b489bd89b43"
 dependencies = [
  "ant-quic",
  "anyhow",

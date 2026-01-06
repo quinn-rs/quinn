@@ -193,6 +193,10 @@ pub struct EpidemicConfig {
     pub suspect_timeout: Duration,
     /// Registry URL for heartbeat reporting.
     pub registry_url: Option<String>,
+    /// Optional ML-DSA keypair bytes (public_key, secret_key) for identity persistence.
+    /// If provided, the transport will use this keypair to ensure the gossip layer's
+    /// peer ID matches the application's identity peer ID.
+    pub keypair: Option<(Vec<u8>, Vec<u8>)>,
 }
 
 impl Default for EpidemicConfig {
@@ -205,6 +209,7 @@ impl Default for EpidemicConfig {
             swim_interval: Duration::from_secs(1),
             suspect_timeout: Duration::from_secs(5),
             registry_url: None,
+            keypair: None,
         }
     }
 }
@@ -282,10 +287,15 @@ impl EpidemicGossip {
         );
 
         // Create transport configuration
-        let transport_config = AntQuicTransportConfig::new(
+        let mut transport_config = AntQuicTransportConfig::new(
             self.config.listen_addr,
             self.config.bootstrap_peers.clone(),
         );
+
+        if let Some((pub_key, sec_key)) = &self.config.keypair {
+            transport_config = transport_config.with_keypair(pub_key.clone(), sec_key.clone());
+            info!("Using provided keypair for gossip transport identity");
+        }
 
         // Create the AntQuicTransport
         let transport = AntQuicTransport::with_config(transport_config, None)
@@ -1383,6 +1393,7 @@ mod tests {
             swim_interval: Duration::from_millis(500),
             suspect_timeout: Duration::from_secs(10),
             registry_url: Some("https://registry.example.com".to_string()),
+            keypair: None,
         };
 
         assert_eq!(config.max_active, 12);
