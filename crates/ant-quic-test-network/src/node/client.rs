@@ -30,8 +30,8 @@ use std::time::{Duration, Instant};
 use tokio::sync::{RwLock, mpsc};
 use tracing::{debug, error, info, warn};
 
-// Real QUIC P2P endpoint imports
-use ant_quic::{NatConfig, P2pConfig, P2pEndpoint, P2pEvent, PeerId as QuicPeerId};
+use ant_quic::{Node, P2pEndpoint, P2pEvent, PeerId as QuicPeerId};
+use saorsa_gossip_transport::AntQuicTransport;
 // Import key types for persistence
 use ant_quic::crypto::raw_public_keys::key_utils::{
     MlDsaPublicKey, MlDsaSecretKey, generate_ml_dsa_keypair,
@@ -329,23 +329,14 @@ impl TrackedPeer {
 ///
 /// This uses REAL P2pEndpoint QUIC connections - NO simulations.
 pub struct TestNode {
-    /// Configuration.
     config: TestNodeConfig,
-    /// Registry client.
     registry: RegistryClient,
-    /// Real P2P QUIC endpoint for actual connections.
-    endpoint: Arc<P2pEndpoint>,
-    /// Our peer ID (hex encoded from QUIC endpoint).
+    node: Arc<Node>,
     peer_id: String,
-    /// Our public key (hex encoded ML-DSA-65 from QUIC endpoint).
     public_key: String,
-    /// Local addresses.
     listen_addresses: Vec<SocketAddr>,
-    /// External addresses (discovered).
     external_addresses: Arc<RwLock<Vec<SocketAddr>>>,
-    /// Connected peers with their QUIC connections.
     connected_peers: Arc<RwLock<HashMap<String, TrackedPeer>>>,
-    /// Global statistics (wrapped in Arc for safe sharing).
     total_bytes_sent: Arc<AtomicU64>,
     total_bytes_received: Arc<AtomicU64>,
     total_connections_success: Arc<AtomicU64>,
@@ -353,47 +344,21 @@ pub struct TestNode {
     direct_connections: Arc<AtomicU64>,
     holepunch_connections: Arc<AtomicU64>,
     relay_connections: Arc<AtomicU64>,
-    /// Shutdown flag.
     shutdown: Arc<AtomicBool>,
-    /// Event sender for TUI updates.
     event_tx: mpsc::Sender<TuiEvent>,
-    /// NAT stats for heartbeat.
     nat_stats: Arc<RwLock<NatStats>>,
-    /// Whether this node has IPv6 connectivity.
     has_ipv6: bool,
-    /// Actual bound port (may differ from config if port 0 was used).
-    actual_port: u16,
-    /// Gossip port (calculated via port offset approach).
-    /// Used when connecting to other nodes via gossip overlay.
-    gossip_port: u16,
-    /// Track peers that used hole-punching (saw Punching phase before Connected).
-    /// Key is hex-encoded peer ID, value is true if hole-punching was used.
     hole_punched_peers: Arc<RwLock<HashMap<String, bool>>>,
-    /// Track when we last disconnected from each peer.
-    /// Used for bidirectional connectivity testing - we only attempt fresh connections
-    /// to peers we've been disconnected from for >30 seconds (to ensure NAT mappings expired).
     disconnection_times: Arc<RwLock<HashMap<String, Instant>>>,
-    /// Track peer IDs we're currently trying to connect to (outbound).
-    /// When PeerConnected fires, if the peer is in this set it's outbound, otherwise inbound.
     pending_outbound: Arc<RwLock<HashSet<String>>>,
-    /// Count of inbound connections (they initiated to us).
-    /// This is the key metric for nodes behind NAT.
     inbound_connections: Arc<AtomicU64>,
-    /// Relay discovery state for NAT traversal fallback.
-    /// Tracks public nodes and manages relay connections.
     relay_state: Arc<RwLock<RelayState>>,
-    /// Gossip integration layer with bootstrap cache for decentralized peer discovery.
     gossip_integration: Arc<GossipIntegration>,
-    /// Receiver for gossip events.
     gossip_event_rx: Arc<RwLock<mpsc::Receiver<GossipEvent>>>,
-    /// True epidemic gossip using saorsa-gossip (HyParView + SWIM + PlumTree).
     epidemic_gossip: Arc<EpidemicGossip>,
-    /// Receiver for epidemic gossip events.
     epidemic_event_rx: Arc<RwLock<mpsc::Receiver<EpidemicEvent>>>,
     full_mesh_probes: Arc<RwLock<HashMap<String, FullMeshProbeResult>>>,
     geo_provider: Arc<BgpGeoProvider>,
-    /// Peers we've fully tested (outbound + inbound both verified).
-    /// These peers don't need retesting - they stay in the UI as verified.
     fully_tested_peers: Arc<RwLock<HashSet<String>>>,
 }
 
@@ -504,139 +469,70 @@ fn save_keypair(
 }
 
 impl TestNode {
-    /// Create a new test node with a REAL P2pEndpoint for actual QUIC connections.
-    ///
-    /// This is NOT a simulation - it creates a real QUIC endpoint with:
-    /// - Real ML-DSA-65 keypair for identity
-    /// - Real NAT traversal capability
-    /// - Real QUIC streams for data exchange
     pub async fn new(
         config: TestNodeConfig,
         event_tx: mpsc::Sender<TuiEvent>,
     ) -> Result<Self, anyhow::Error> {
         let registry = RegistryClient::new(&config.registry_url);
 
-        // Create REAL P2pEndpoint configuration
-        info!("Creating REAL P2pEndpoint for QUIC connections...");
+        info!("Creating unified QUIC endpoint via gossip transport...");
 
-        // Configure relay nodes for fallback when direct connection fails (P2pEndpoint port 9001)
-        let relay_nodes: Vec<SocketAddr> = vec![
-            "77.42.75.115:9001".parse().ok(),
-            "142.93.199.50:9001".parse().ok(),
-            "147.182.234.192:9001".parse().ok(),
-        ]
-        .into_iter()
-        .flatten()
-        .collect();
-
-        if !relay_nodes.is_empty() {
-            info!(
-                "Configured {} relay nodes for fallback (MASQUE not yet implemented)",
-                relay_nodes.len()
-            );
-        }
-
-        let nat_config = NatConfig {
-            enable_relay_fallback: true,
-            relay_nodes,
-            ..Default::default()
-        };
-
-        // Known peers for NAT traversal coordination.
-        // These are publicly reachable nodes that can coordinate hole-punching.
-        // When NAT traversal is needed, we use these as coordinators (not the unreachable target peer).
-        // VPS nodes run with --bind-port 9000, which means:
-        //   - Gossip (AntQuicTransport): port 9000
-        //   - P2pEndpoint: port 9001 (base + 1)
-        // For NAT traversal coordination via OBSERVED_ADDRESS frames, we need P2pEndpoint port (9001).
-        let known_peers: Vec<SocketAddr> = vec![
-            "77.42.75.115:9001".parse().ok(),  // saorsa-1 (Helsinki) - registry
-            "142.93.199.50:9001".parse().ok(), // saorsa-2 (NYC)
-            "147.182.234.192:9001".parse().ok(), // saorsa-3 (SFO)
-            "206.189.7.117:9001".parse().ok(), // saorsa-4 (AMS)
-            "144.126.230.161:9001".parse().ok(), // saorsa-5 (LON)
-            "65.21.157.229:9001".parse().ok(), // saorsa-6 (Helsinki)
-            "116.203.101.172:9001".parse().ok(), // saorsa-7 (Nuremberg)
-            "149.28.156.231:9001".parse().ok(), // saorsa-8 (Singapore)
-            "45.77.176.184:9001".parse().ok(), // saorsa-9 (Tokyo)
-        ]
-        .into_iter()
-        .flatten()
-        .collect();
-
-        info!(
-            "Configured {} known peers for NAT traversal coordination",
-            known_peers.len()
-        );
-
-        // Load or generate persistent keypair to maintain stable peer ID across restarts
         let (public_key, secret_key) = load_or_generate_keypair()?;
         let keypair_bytes = (
             public_key.as_bytes().to_vec(),
             secret_key.as_bytes().to_vec(),
         );
 
-        // Port offset approach:
-        // - If bind_addr port is 0: both P2pEndpoint and gossip use random ports
-        // - If bind_addr port is N (e.g., 9000): gossip uses N, P2pEndpoint uses N+1
-        // This allows firewall rules for ports 9000-9001 while maintaining security with random ports by default
-        let base_port = config.bind_addr.port();
-        let (p2p_port, gossip_port) = if base_port == 0 {
-            // Random ports for both (secure default)
-            (0u16, 0u16)
-        } else {
-            // Fixed ports: gossip on base_port, P2pEndpoint on base_port + 1
-            (base_port.saturating_add(1), base_port)
+        let (epidemic_event_tx, epidemic_event_rx) = mpsc::channel(100);
+        let vps_bootstrap = vps_gossip_bootstrap_addrs();
+        let epidemic_config = EpidemicConfig {
+            listen_addr: config.bind_addr,
+            bootstrap_peers: vps_bootstrap.clone(),
+            registry_url: Some(config.registry_url.clone()),
+            keypair: Some(keypair_bytes.clone()),
+            ..EpidemicConfig::default()
         };
 
-        let p2p_bind_addr = std::net::SocketAddr::new(config.bind_addr.ip(), p2p_port);
-        info!(
-            "Port allocation: gossip={}, p2p={} (base={})",
-            if gossip_port == 0 {
-                "random".to_string()
-            } else {
-                gossip_port.to_string()
-            },
-            if p2p_port == 0 {
-                "random".to_string()
-            } else {
-                p2p_port.to_string()
-            },
-            base_port
-        );
+        let temp_peer_id = {
+            let peer_id_bytes = hex::decode("0".repeat(64)).unwrap_or_else(|_| vec![0u8; 32]);
+            let mut id_array = [0u8; 32];
+            id_array.copy_from_slice(&peer_id_bytes[..32]);
+            GossipPeerId::new(id_array)
+        };
 
-        let p2p_config = P2pConfig::builder()
-            .bind_addr(p2p_bind_addr)
-            .known_peers(known_peers)
-            .nat(nat_config)
-            .keypair(public_key, secret_key)
-            .build()
-            .map_err(|e| anyhow::anyhow!("Failed to build P2P config: {}", e))?;
+        let epidemic_gossip = Arc::new(EpidemicGossip::new(
+            temp_peer_id,
+            epidemic_config,
+            epidemic_event_tx,
+        ));
 
-        // Create the REAL QUIC endpoint
-        let endpoint = P2pEndpoint::new(p2p_config)
+        epidemic_gossip
+            .start()
             .await
-            .map_err(|e| anyhow::anyhow!("Failed to create P2P endpoint: {}", e))?;
+            .map_err(|e| anyhow::anyhow!("Failed to start gossip: {:?}", e))?;
 
-        // Get REAL peer ID and public key from the endpoint
-        let quic_peer_id = endpoint.peer_id();
+        let transport: Arc<AntQuicTransport> = epidemic_gossip
+            .transport()
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to get transport: {:?}", e))?;
+        let node: Arc<Node> = transport.node();
+
+        let quic_peer_id = node.peer_id();
         let peer_id = hex::encode(quic_peer_id.0);
-        let public_key = hex::encode(endpoint.public_key_bytes());
+        let public_key = hex::encode(node.public_key_bytes());
 
-        info!("REAL Peer ID: {}...", &peer_id[..16.min(peer_id.len())]);
+        info!("Peer ID: {}...", &peer_id[..16.min(peer_id.len())]);
         info!(
-            "REAL Public Key (ML-DSA-65): {}... ({} bytes)",
+            "Public Key (ML-DSA-65): {}... ({} bytes)",
             &public_key[..32.min(public_key.len())],
-            endpoint.public_key_bytes().len()
+            node.public_key_bytes().len()
         );
 
-        // Get the actual bound port (may differ from config if port 0 was used)
-        let actual_port = endpoint
+        let actual_port = node
             .local_addr()
             .map(|a| a.port())
             .unwrap_or(config.bind_addr.port());
 
-        // Detect actual local addresses (not 0.0.0.0)
         let (local_ipv4, local_ipv6) = detect_local_addresses(actual_port);
 
         // Build listen_addresses from actual IPs, NOT the bind address (which could be 0.0.0.0)
@@ -647,9 +543,8 @@ impl TestNode {
         if let Some(addr) = local_ipv6 {
             listen_addresses.push(addr);
         }
-        // Fallback: if no addresses detected, use endpoint's local addr (but not if it's 0.0.0.0)
         if listen_addresses.is_empty() {
-            if let Some(addr) = endpoint.local_addr() {
+            if let Some(addr) = node.local_addr() {
                 if !addr.ip().is_unspecified() {
                     listen_addresses.push(addr);
                 }
@@ -740,43 +635,7 @@ impl TestNode {
             gossip_integration.cache_size()
         );
 
-        // Initialize true epidemic gossip using saorsa-gossip (HyParView + SWIM + PlumTree)
-        let (epidemic_event_tx, epidemic_event_rx) = mpsc::channel(100);
-        // Convert peer_id (hex string) to GossipPeerId (32 bytes)
-        let gossip_peer_id = {
-            let peer_id_bytes = hex::decode(&peer_id).unwrap_or_else(|_| vec![0u8; 32]);
-            let mut id_array = [0u8; 32];
-            let len = peer_id_bytes.len().min(32);
-            id_array[..len].copy_from_slice(&peer_id_bytes[..len]);
-            GossipPeerId::new(id_array)
-        };
-        // Use gossip_port calculated earlier via port offset approach
-        // - If --bind-port 0: random port (secure default)
-        // - If --bind-port 9000: gossip on 9000, P2pEndpoint on 9001
-        let gossip_listen_addr = std::net::SocketAddr::new(config.bind_addr.ip(), gossip_port);
-        let vps_bootstrap = vps_gossip_bootstrap_addrs();
-        let epidemic_config = EpidemicConfig {
-            listen_addr: gossip_listen_addr,
-            bootstrap_peers: vps_bootstrap.clone(),
-            registry_url: Some(config.registry_url.clone()),
-            keypair: Some(keypair_bytes.clone()),
-            ..EpidemicConfig::default()
-        };
-        info!(
-            "Epidemic gossip will listen on port {} ({}) with {} VPS bootstrap peers",
-            gossip_port,
-            if gossip_port == 0 { "random" } else { "fixed" },
-            vps_bootstrap.len()
-        );
-        let epidemic_gossip = Arc::new(EpidemicGossip::new(
-            gossip_peer_id,
-            epidemic_config,
-            epidemic_event_tx,
-        ));
-        info!("Initialized saorsa-gossip epidemic layer (HyParView + SWIM + PlumTree)");
-
-        // Spawn event handler for P2P events to update TUI
-        let endpoint_for_events = endpoint.clone();
+        let node_for_events = Arc::clone(&node);
         let event_tx_for_events = event_tx.clone();
         let hole_punched_for_events = Arc::clone(&hole_punched_peers);
         let external_addresses_for_events = Arc::clone(&external_addresses);
@@ -793,7 +652,7 @@ impl TestNode {
         let local_ipv4_for_events = local_ipv4;
         let local_ipv6_for_events = local_ipv6;
         tokio::spawn(async move {
-            let mut events = endpoint_for_events.subscribe();
+            let mut events = node_for_events.subscribe_raw();
             while let Ok(event) = events.recv().await {
                 match event {
                     P2pEvent::ExternalAddressDiscovered { addr } => {
@@ -1097,7 +956,7 @@ impl TestNode {
                         // This is the core of gossip-first peer discovery:
                         // When we connect to a peer, we send them our list of known peers,
                         // and they send us theirs.
-                        let endpoint_for_gossip = endpoint_for_events.clone();
+                        let node_for_gossip = Arc::clone(&node_for_events);
                         let connected_peers_for_gossip = Arc::clone(&connected_peers_for_events);
                         let our_peer_id_for_gossip = peer_id_for_events.clone();
                         let new_peer_hex = peer_hex.clone();
@@ -1111,9 +970,8 @@ impl TestNode {
                                 build_peer_list_from_connected(&connected, &our_peer_id_for_gossip)
                             };
 
-                            // Send our peer list to the newly connected peer
                             if let Err(e) = send_gossip_peer_list(
-                                &endpoint_for_gossip,
+                                node_for_gossip.inner_endpoint(),
                                 &new_peer_hex,
                                 &our_peer_id_for_gossip,
                                 peer_list.clone(),
@@ -1137,7 +995,7 @@ impl TestNode {
                         // Send ConnectBackRequest after outbound connection
                         // The peer will wait 30s for NAT hole to expire, then try to connect back
                         if !is_inbound {
-                            let endpoint_for_callback = endpoint_for_events.clone();
+                            let node_for_callback = Arc::clone(&node_for_events);
                             let external_addrs_for_callback =
                                 Arc::clone(&external_addresses_for_events);
                             let our_peer_id_for_callback = peer_id_for_events.clone();
@@ -1170,9 +1028,8 @@ impl TestNode {
                                             arr.copy_from_slice(&peer_bytes);
                                             let target_peer = ant_quic::PeerId(arr);
 
-                                            if let Err(e) = endpoint_for_callback
-                                                .send(&target_peer, &bytes)
-                                                .await
+                                            if let Err(e) =
+                                                node_for_callback.send(&target_peer, &bytes).await
                                             {
                                                 debug!(
                                                     "ConnectBackRequest: failed to send to {}: {}",
@@ -1239,8 +1096,7 @@ impl TestNode {
 
                                             let retry_result = tokio::time::timeout(
                                                 Duration::from_secs(10),
-                                                endpoint_for_callback
-                                                    .connect_to_peer(target_peer, None),
+                                                node_for_callback.connect(target_peer),
                                             )
                                             .await;
 
@@ -1339,11 +1195,11 @@ impl TestNode {
             listen_addresses,
             config,
             registry,
-            endpoint: Arc::new(endpoint),
+            node,
             peer_id,
             public_key,
-            external_addresses, // Use the shared Arc created before event handler
-            connected_peers,    // Use the shared Arc created before event handler
+            external_addresses,
+            connected_peers,
             total_bytes_sent: Arc::new(AtomicU64::new(0)),
             total_bytes_received: Arc::new(AtomicU64::new(0)),
             total_connections_success: Arc::new(AtomicU64::new(0)),
@@ -1355,14 +1211,12 @@ impl TestNode {
             event_tx,
             nat_stats,
             has_ipv6: has_global_ipv6(),
-            actual_port,
-            gossip_port,
             hole_punched_peers,
             disconnection_times,
             pending_outbound,
             inbound_connections,
             relay_state,
-            gossip_integration, // Already Arc-wrapped
+            gossip_integration,
             gossip_event_rx: Arc::new(RwLock::new(gossip_event_rx)),
             epidemic_gossip,
             epidemic_event_rx: Arc::new(RwLock::new(epidemic_event_rx)),
@@ -1372,9 +1226,8 @@ impl TestNode {
         })
     }
 
-    /// Get the underlying P2pEndpoint for direct access.
-    pub fn endpoint(&self) -> &Arc<P2pEndpoint> {
-        &self.endpoint
+    pub fn node(&self) -> &Arc<Node> {
+        &self.node
     }
 
     /// Get our peer ID.
@@ -1503,7 +1356,7 @@ impl TestNode {
 
         // 1. Try direct IPv4 connections
         for addr in peer.addresses.iter().filter(|a| a.is_ipv4()) {
-            match tokio::time::timeout(Duration::from_secs(10), self.endpoint.connect(*addr)).await
+            match tokio::time::timeout(Duration::from_secs(10), self.node.connect_addr(*addr)).await
             {
                 Ok(Ok(_conn)) => {
                     info!("Direct IPv4 connection to {} succeeded", peer_id_short);
@@ -1522,7 +1375,7 @@ impl TestNode {
 
         // 2. Try direct IPv6 connections
         for addr in peer.addresses.iter().filter(|a| a.is_ipv6()) {
-            match tokio::time::timeout(Duration::from_secs(10), self.endpoint.connect(*addr)).await
+            match tokio::time::timeout(Duration::from_secs(10), self.node.connect_addr(*addr)).await
             {
                 Ok(Ok(_conn)) => {
                     info!("Direct IPv6 connection to {} succeeded", peer_id_short);
@@ -1545,11 +1398,8 @@ impl TestNode {
                 peer_id_array.copy_from_slice(&peer_id_bytes[..32]);
                 let quic_peer_id = QuicPeerId(peer_id_array);
 
-                match tokio::time::timeout(
-                    Duration::from_secs(30),
-                    self.endpoint.connect_to_peer(quic_peer_id, None),
-                )
-                .await
+                match tokio::time::timeout(Duration::from_secs(30), self.node.connect(quic_peer_id))
+                    .await
                 {
                     Ok(Ok(_conn)) => {
                         info!("NAT traversal to {} succeeded", peer_id_short);
@@ -1684,7 +1534,7 @@ impl TestNode {
     /// Without this, we can only receive data from peers WE connected to.
     fn spawn_accept_loop(&self) -> tokio::task::JoinHandle<()> {
         let shutdown = Arc::clone(&self.shutdown);
-        let endpoint = Arc::clone(&self.endpoint);
+        let endpoint = Arc::clone(&self.node);
         let connected_peers = Arc::clone(&self.connected_peers);
         let gossip_integration = Arc::clone(&self.gossip_integration);
         let peer_id = self.peer_id.clone();
@@ -1806,14 +1656,14 @@ impl TestNode {
                     drop(connected);
 
                     if !peer_list.is_empty() && !at_capacity {
-                        let endpoint_clone = Arc::clone(&endpoint);
+                        let inner_ep = Arc::clone(endpoint.inner_endpoint());
                         let peer_id_clone = peer_id.clone();
                         let new_peer_hex_clone = new_peer_hex.clone();
                         let peer_list_clone = peer_list.clone();
 
                         tokio::spawn(async move {
                             if let Err(e) = send_gossip_peer_list(
-                                &endpoint_clone,
+                                &inner_ep,
                                 &new_peer_hex_clone,
                                 &peer_id_clone,
                                 peer_list_clone,
@@ -1872,7 +1722,7 @@ impl TestNode {
         let gossip_event_rx = Arc::clone(&self.gossip_event_rx);
         let event_tx = self.event_tx.clone();
         let peer_id = self.peer_id.clone();
-        let endpoint = Arc::clone(&self.endpoint);
+        let endpoint = Arc::clone(&self.node);
         let connected_peers = Arc::clone(&self.connected_peers);
         let fully_tested_peers = Arc::clone(&self.fully_tested_peers);
         let max_peers = self.config.max_peers;
@@ -1932,7 +1782,7 @@ impl TestNode {
                                         tokio::spawn(async move {
                                             match tokio::time::timeout(
                                                 Duration::from_secs(10),
-                                                endpoint_clone.connect(addr)
+                                                endpoint_clone.connect_addr(addr)
                                             ).await {
                                                 Ok(Ok(_conn)) => {
                                                     info!(
@@ -2063,12 +1913,12 @@ impl TestNode {
                                             peer_id.clone(),
                                             3,
                                         );
-                                        let endpoint_for_broadcast = Arc::clone(&endpoint);
+                                        let inner_ep_for_broadcast = Arc::clone(endpoint.inner_endpoint());
                                         let connected_for_broadcast = Arc::clone(&connected_peers);
                                         let sender_id = sender_hex.clone();
                                         tokio::spawn(async move {
                                             let _ = broadcast_peer_announcement(
-                                                &endpoint_for_broadcast,
+                                                &inner_ep_for_broadcast,
                                                 &connected_for_broadcast,
                                                 &announcement,
                                                 Some(&sender_id),
@@ -2084,7 +1934,7 @@ impl TestNode {
                                             tokio::spawn(async move {
                                                 if let Ok(Ok(_)) = tokio::time::timeout(
                                                     Duration::from_secs(10),
-                                                    endpoint_clone.connect(addr),
+                                                    endpoint_clone.connect_addr(addr),
                                                 ).await {
                                                     info!(
                                                         "Gossip: connected to {} via peer list",
@@ -2126,7 +1976,7 @@ impl TestNode {
                                             tokio::spawn(async move {
                                                 if let Ok(Ok(_)) = tokio::time::timeout(
                                                     Duration::from_secs(10),
-                                                    endpoint_clone.connect(addr),
+                                                    endpoint_clone.connect_addr(addr),
                                                 ).await {
                                                     info!(
                                                         "Gossip: connected to {} via announcement",
@@ -2177,7 +2027,7 @@ impl TestNode {
                                                     for addr in &addresses {
                                                         match tokio::time::timeout(
                                                             Duration::from_secs(10),
-                                                            endpoint_clone.connect(*addr),
+                                                            endpoint_clone.connect_addr(*addr),
                                                         ).await {
                                                             Ok(Ok(_)) => {
                                                                 info!(
@@ -2270,7 +2120,7 @@ impl TestNode {
                                                 for addr in &addresses {
                                                     match tokio::time::timeout(
                                                         Duration::from_secs(15),
-                                                        endpoint_clone.connect(*addr),
+                                                        endpoint_clone.connect_addr(*addr),
                                                     ).await {
                                                         Ok(Ok(_)) => {
                                                             info!(
@@ -2440,7 +2290,7 @@ impl TestNode {
                     let mut arr = [0u8; 32];
                     arr.copy_from_slice(&peer_bytes);
                     let peer_id = ant_quic::PeerId(arr);
-                    if self.endpoint.send(&peer_id, data).await.is_ok() {
+                    if self.node.send(&peer_id, data).await.is_ok() {
                         sent += 1;
                     }
                 }
@@ -2456,7 +2306,7 @@ impl TestNode {
         let shutdown = Arc::clone(&self.shutdown);
         let gossip_integration = Arc::clone(&self.gossip_integration);
         let epidemic_event_rx = Arc::clone(&self.epidemic_event_rx);
-        let endpoint = Arc::clone(&self.endpoint);
+        let endpoint = Arc::clone(&self.node);
         let connected_peers = Arc::clone(&self.connected_peers);
         let event_tx = self.event_tx.clone();
         let epidemic_gossip = Arc::clone(&self.epidemic_gossip);
@@ -2499,7 +2349,7 @@ impl TestNode {
                                             let gossip_clone = Arc::clone(&gossip_integration);
                                             let event_tx_clone = event_tx.clone();
                                             tokio::spawn(async move {
-                                                if let Err(e) = endpoint_clone.connect(addresses[0]).await {
+                                                if let Err(e) = endpoint_clone.connect_addr(addresses[0]).await {
                                                     debug!("Failed to connect to epidemic peer {}: {}", &peer_id_hex[..8], e);
                                                 } else {
                                                     gossip_clone.record_success(&peer_id_hex);
@@ -2952,7 +2802,11 @@ impl TestNode {
         };
 
         // Get connection to target
-        let connection = match self.endpoint.get_quic_connection(&target_peer_id) {
+        let connection = match self
+            .node
+            .inner_endpoint()
+            .get_quic_connection(&target_peer_id)
+        {
             Ok(Some(conn)) => conn,
             Ok(None) => {
                 warn!(
@@ -3059,7 +2913,11 @@ impl TestNode {
         };
 
         // Get connection to target
-        let connection = match self.endpoint.get_quic_connection(&target_peer_id) {
+        let connection = match self
+            .node
+            .inner_endpoint()
+            .get_quic_connection(&target_peer_id)
+        {
             Ok(Some(conn)) => conn,
             Ok(None) => {
                 warn!(
@@ -3151,22 +3009,13 @@ impl TestNode {
         request.to_bytes()
     }
 
-    /// Discover our external address by connecting to known QUIC peers in parallel.
-    ///
-    /// Uses fast parallel connection attempts with short timeouts for quick startup.
-    /// Returns as soon as ANY peer provides an external address (max 5 seconds total).
     async fn discover_external_address(&self) {
-        // CRITICAL: Use P2pEndpoint port (9001) NOT gossip port (9000)
-        // VPS nodes run with --bind-port 9000, which means:
-        //   - Gossip (AntQuicTransport): port 9000
-        //   - P2pEndpoint: port 9001 (base + 1)
-        // For address discovery via OBSERVED_ADDRESS frames, we need P2pEndpoint.
         let known_quic_peers: Vec<SocketAddr> = VPS_NODE_IPS
             .iter()
             .filter_map(|ip| {
                 ip.parse::<std::net::IpAddr>()
                     .ok()
-                    .map(|addr| SocketAddr::new(addr, 9001)) // P2pEndpoint port
+                    .map(|addr| SocketAddr::new(addr, 9000))
             })
             .collect();
 
@@ -3182,7 +3031,7 @@ impl TestNode {
 
         let (tx, mut rx) = mpsc::channel::<bool>(1);
         let external_addresses = Arc::clone(&self.external_addresses);
-        let endpoint = Arc::clone(&self.endpoint);
+        let endpoint = Arc::clone(&self.node);
 
         for peer_addr in known_quic_peers {
             let ep = Arc::clone(&endpoint);
@@ -3191,7 +3040,7 @@ impl TestNode {
 
             tokio::spawn(async move {
                 if let Ok(Ok(_conn)) =
-                    tokio::time::timeout(Duration::from_secs(3), ep.connect(peer_addr)).await
+                    tokio::time::timeout(Duration::from_secs(3), ep.connect_addr(peer_addr)).await
                 {
                     tokio::time::sleep(Duration::from_millis(500)).await;
                     let addrs = ext_addrs.read().await;
@@ -3384,8 +3233,8 @@ impl TestNode {
                         response.peers.len()
                     );
 
-                    // Update local node info with registration status
-                    let (local_ipv4, local_ipv6) = detect_local_addresses(self.actual_port);
+                    let local_port = self.node.local_addr().map(|a| a.port()).unwrap_or(9000);
+                    let (local_ipv4, local_ipv6) = detect_local_addresses(local_port);
 
                     let mut local_node = LocalNodeInfo::default();
                     local_node.set_peer_id(&registration_peer_id);
@@ -3427,50 +3276,25 @@ impl TestNode {
                         .event_tx
                         .try_send(TuiEvent::UpdateRegisteredCount(response.peers.len() + 1));
 
-                    // Add registry peers to epidemic gossip for HyParView overlay
-                    // This is critical for forming the gossip network
-                    //
-                    // Port selection logic:
-                    // - If we're using a fixed port (--bind-port N), assume VPS nodes use same port
-                    // - If we're using dynamic port (--bind-port 0), assume VPS nodes use 9000
-                    //   (the standard VPS deployment port)
-                    //
-                    // TODO: Proper fix is to have nodes register their actual gossip port
-                    // with the registry and include it in PeerInfo
                     if !response.peers.is_empty() {
-                        let vps_gossip_port = if self.gossip_port == 0 {
-                            // We're using dynamic port, but VPS nodes use 9000
-                            9000
-                        } else {
-                            // We're using fixed port, assume VPS nodes use same
-                            self.gossip_port
-                        };
-                        // Filter out our own addresses to avoid trying to connect to ourselves
-                        // We filter by:
-                        // 1. peer_id matching our registration (handles current session)
-                        // 2. IP addresses matching our external IPs (handles stale registry entries)
-                        // 3. IP addresses matching our local/listen IPs (IPv6 is globally routable)
-                        let mut our_ips: std::collections::HashSet<std::net::IpAddr> =
-                            external_addrs.iter().map(|a| a.ip()).collect();
-                        // Also add listen addresses (especially important for globally-routable IPv6)
+                        let mut our_addrs: std::collections::HashSet<SocketAddr> =
+                            external_addrs.iter().copied().collect();
                         for addr in &self.listen_addresses {
-                            our_ips.insert(addr.ip());
+                            our_addrs.insert(*addr);
                         }
-                        let bootstrap_addrs: Vec<std::net::SocketAddr> = response
+                        let bootstrap_addrs: Vec<SocketAddr> = response
                             .peers
                             .iter()
                             .filter(|p| p.peer_id != registration_peer_id)
-                            .flat_map(|p| p.addresses.iter())
-                            .filter(|addr| !our_ips.contains(&addr.ip()))
-                            .map(|addr| std::net::SocketAddr::new(addr.ip(), vps_gossip_port))
+                            .flat_map(|p| p.addresses.iter().copied())
+                            .filter(|addr| !our_addrs.contains(addr))
                             .collect();
 
                         if !bootstrap_addrs.is_empty() {
                             info!(
-                                "Adding {} bootstrap addresses to epidemic gossip from {} peers (using gossip port {})",
+                                "Adding {} bootstrap addresses to epidemic gossip from {} peers",
                                 bootstrap_addrs.len(),
-                                response.peers.len(),
-                                vps_gossip_port
+                                response.peers.len()
                             );
 
                             match self
@@ -3937,7 +3761,7 @@ impl TestNode {
         let direct = Arc::clone(&self.direct_connections);
         let holepunch = Arc::clone(&self.holepunch_connections);
         let relay = Arc::clone(&self.relay_connections);
-        let endpoint = Arc::clone(&self.endpoint);
+        let endpoint = Arc::clone(&self.node);
         let our_has_ipv6 = self.has_ipv6;
         let hole_punched_peers = Arc::clone(&self.hole_punched_peers);
         let pending_outbound = Arc::clone(&self.pending_outbound);
@@ -4392,7 +4216,7 @@ impl TestNode {
         // Use gossip transport for test packets (uses configured gossip_port)
         let gossip = Arc::clone(&self.epidemic_gossip);
         // Use QUIC transport for dual transport testing
-        let endpoint = Arc::clone(&self.endpoint);
+        let endpoint = Arc::clone(&self.node);
 
         tokio::spawn(async move {
             let mut ticker = tokio::time::interval(interval);
@@ -4603,7 +4427,7 @@ impl TestNode {
 
         let shutdown = Arc::clone(&self.shutdown);
         let connected_peers = Arc::clone(&self.connected_peers);
-        let endpoint = Arc::clone(&self.endpoint);
+        let endpoint = Arc::clone(&self.node);
         let external_addresses = Arc::clone(&self.external_addresses);
         let peer_id = self.peer_id.clone();
         let event_tx = self.event_tx.clone();
@@ -4707,7 +4531,7 @@ impl TestNode {
         use tokio_tungstenite::tungstenite::Message;
 
         let shutdown = Arc::clone(&self.shutdown);
-        let endpoint = Arc::clone(&self.endpoint);
+        let endpoint = Arc::clone(&self.node);
         let peer_id = self.peer_id.clone();
         let event_tx = self.event_tx.clone();
 
@@ -4807,7 +4631,7 @@ impl TestNode {
     }
 
     async fn handle_connectivity_test_request(
-        endpoint: &Arc<P2pEndpoint>,
+        node: &Arc<Node>,
         target_peer_id: &str,
         addresses: &[SocketAddr],
         event_tx: &mpsc::Sender<TuiEvent>,
@@ -4827,7 +4651,8 @@ impl TestNode {
             target_peer_id_short, ipv4_addr, ipv6_addr
         );
 
-        match endpoint
+        match node
+            .inner_endpoint()
             .connect_with_fallback(ipv4_addr, ipv6_addr, None, Some(target_quic_peer_id))
             .await
         {
@@ -4964,13 +4789,13 @@ struct ComprehensiveConnectResult {
 ///
 /// This enables comprehensive network testing for studies and design.
 async fn real_connect_comprehensive(
-    endpoint: &P2pEndpoint,
+    node: &Arc<Node>,
     peer: &PeerInfo,
 ) -> ComprehensiveConnectResult {
     let peer_id_short = &peer.peer_id[..8.min(peer.peer_id.len())];
     let mut matrix = ConnectivityMatrix::default();
+    let endpoint = node.inner_endpoint();
 
-    // Separate addresses by IP version
     let ipv4_addrs: Vec<_> = peer.addresses.iter().filter(|a| a.is_ipv4()).collect();
     let ipv6_addrs: Vec<_> = peer.addresses.iter().filter(|a| a.is_ipv6()).collect();
 
@@ -4981,7 +4806,6 @@ async fn real_connect_comprehensive(
         ipv6_addrs.len()
     );
 
-    // Test IPv4 direct connections
     if !ipv4_addrs.is_empty() {
         matrix.ipv4_direct_tested = true;
         let start = Instant::now();
@@ -5153,11 +4977,10 @@ async fn gossip_test_exchange(
 /// This uses the P2pEndpoint QUIC transport, sending directly to the peer.
 /// The response is handled asynchronously via P2pEvent::DataReceived.
 async fn quic_test_exchange(
-    endpoint: &P2pEndpoint,
+    node: &Arc<Node>,
     peer_id_hex: &str,
     packet: &TestPacket,
 ) -> Result<(), String> {
-    // Convert hex peer ID to QuicPeerId
     let peer_id_bytes =
         hex::decode(peer_id_hex).map_err(|e| format!("Invalid peer ID hex: {}", e))?;
 
@@ -5169,13 +4992,10 @@ async fn quic_test_exchange(
     peer_id_array.copy_from_slice(&peer_id_bytes);
     let quic_peer_id = ant_quic::PeerId(peer_id_array);
 
-    // Serialize the test packet
     let packet_data =
         serde_json::to_vec(packet).map_err(|e| format!("Failed to serialize packet: {}", e))?;
 
-    // Send via QUIC transport
-    endpoint
-        .send(&quic_peer_id, &packet_data)
+    node.send(&quic_peer_id, &packet_data)
         .await
         .map_err(|e| format!("QUIC send failed: {}", e))?;
 
@@ -5195,12 +5015,11 @@ async fn quic_test_exchange(
 ///
 /// Called when a new connection is established to exchange peer knowledge.
 async fn send_gossip_peer_list(
-    endpoint: &P2pEndpoint,
+    endpoint: &Arc<P2pEndpoint>,
     peer_id_hex: &str,
     our_peer_id: &str,
     peers: Vec<GossipPeerInfo>,
 ) -> Result<(), String> {
-    // Convert hex peer ID to QuicPeerId
     let peer_id_bytes =
         hex::decode(peer_id_hex).map_err(|e| format!("Invalid peer ID hex: {}", e))?;
 
@@ -5212,21 +5031,17 @@ async fn send_gossip_peer_list(
     peer_id_array.copy_from_slice(&peer_id_bytes[..32]);
     let quic_peer_id = QuicPeerId(peer_id_array);
 
-    // Get the QUIC connection for this peer
     let connection = endpoint
         .get_quic_connection(&quic_peer_id)
         .map_err(|e| format!("Failed to get connection: {}", e))?
         .ok_or_else(|| "No connection to peer".to_string())?;
 
-    // Create peer list message
     let message = PeerListMessage::new(our_peer_id.to_string(), peers);
 
-    // Serialize the message
     let message_data = message
         .to_bytes()
         .map_err(|e| format!("Failed to serialize peer list: {}", e))?;
 
-    // Open a unidirectional stream and send the message
     let mut send_stream = connection
         .open_uni()
         .await
@@ -5254,12 +5069,11 @@ async fn send_gossip_peer_list(
 ///
 /// Called when a new peer is discovered to propagate the information.
 async fn broadcast_peer_announcement(
-    endpoint: &P2pEndpoint,
+    endpoint: &Arc<P2pEndpoint>,
     connected_peers: &RwLock<HashMap<String, TrackedPeer>>,
     announcement: &GossipPeerAnnouncement,
     exclude_peer: Option<&str>,
 ) -> usize {
-    // Collect peer IDs first to avoid holding lock during network operations
     let peer_ids: Vec<String> = {
         let peers = connected_peers.read().await;
         peers
@@ -5278,7 +5092,6 @@ async fn broadcast_peer_announcement(
     let mut success_count = 0;
 
     for peer_id_hex in peer_ids {
-        // Convert hex peer ID to QuicPeerId
         let peer_id_bytes = match hex::decode(&peer_id_hex) {
             Ok(bytes) => bytes,
             Err(_) => continue,
@@ -5292,7 +5105,6 @@ async fn broadcast_peer_announcement(
         peer_id_array.copy_from_slice(&peer_id_bytes[..32]);
         let quic_peer_id = QuicPeerId(peer_id_array);
 
-        // Get the QUIC connection for this peer
         let connection = match endpoint.get_quic_connection(&quic_peer_id) {
             Ok(Some(conn)) => conn,
             _ => continue,

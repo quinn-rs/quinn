@@ -401,6 +401,11 @@ impl Node {
         self.inner.public_key_bytes()
     }
 
+    /// Get access to the underlying P2pEndpoint for advanced operations.
+    pub fn inner_endpoint(&self) -> &Arc<P2pEndpoint> {
+        &self.inner
+    }
+
     // === Connections ===
 
     /// Connect to a peer by address
