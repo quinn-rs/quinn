@@ -211,8 +211,6 @@ async fn main() -> anyhow::Result<()> {
 
         let test_node = TestNode::new(node_config, event_tx.clone()).await?;
 
-        // Auto-detect TTY availability - fall back to quiet mode if not a terminal
-        // This handles running from scripts, IDEs, CI, or piped environments
         let use_quiet_mode = args.quiet || !std::io::IsTerminal::is_terminal(&std::io::stdout());
 
         if use_quiet_mode && !args.quiet {
@@ -237,8 +235,6 @@ async fn main() -> anyhow::Result<()> {
             // Run test node directly
             test_node.run().await?;
         } else {
-            // Normal mode: run TUI with background tasks
-
             // Spawn the test node in the background
             let node_handle = tokio::spawn(async move {
                 if let Err(e) = test_node.run().await {

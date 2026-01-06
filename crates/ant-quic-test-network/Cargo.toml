@@ -1,6 +1,6 @@
 [package]
 name = "ant-quic-test-network"
-version = "0.14.178"
+version = "0.14.179"
 edition = "2024"
 rust-version = "1.85.0"
 license = "MIT OR Apache-2.0"
@@ -61,7 +61,7 @@ rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs", 
 
 # Gossip protocol for decentralized peer/relay discovery
 # Full saorsa-gossip stack for true epidemic broadcast
-saorsa-gossip-transport = "0.1.17"
+saorsa-gossip-transport = "0.1.18"
 saorsa-gossip-pubsub = "0.1.16"
 saorsa-gossip-membership = "0.1.16"
 saorsa-gossip-types = "0.1.16"

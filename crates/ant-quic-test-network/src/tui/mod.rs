@@ -304,14 +304,17 @@ impl Default for TuiConfig {
 ///
 /// Returns when the user quits (Q key or Esc).
 pub async fn run_tui(mut app: App, mut event_rx: mpsc::Receiver<TuiEvent>) -> anyhow::Result<()> {
+    use std::io::Write;
+
     // Setup terminal
     enable_raw_mode()?;
     let mut stdout = io::stdout();
+    stdout.flush()?;
     execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
+    stdout.flush()?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    // Clear terminal
     terminal.clear()?;
 
     let tick_rate = Duration::from_millis(250);
