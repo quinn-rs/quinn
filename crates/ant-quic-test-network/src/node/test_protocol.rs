@@ -886,6 +886,10 @@ pub enum GossipMessage {
     ConnectBackResponse(ConnectBackResponse),
     /// Request peer to disconnect and connect back after 30s (fresh NAT test).
     DisconnectAndConnectBack(DisconnectAndConnectBack),
+    /// Delta update: peer added or updated (epoch-based).
+    PeerUpsert(PeerUpsert),
+    /// Delta update: peer removed/dead (epoch-based tombstone).
+    PeerTombstone(PeerTombstone),
 }
 
 /// A list of known peers to share via gossip.
@@ -996,6 +1000,125 @@ impl GossipPeerAnnouncement {
             timestamp_ms: self.timestamp_ms,
             ttl: self.ttl - 1,
         })
+    }
+}
+
+/// Delta gossip: peer added or updated. Accept only if epoch > local epoch.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PeerUpsert {
+    pub magic: [u8; 4],
+    pub peer_id: String,
+    pub epoch: u64,
+    pub addresses: Vec<SocketAddr>,
+    pub is_public: bool,
+    pub expires_at_ms: u64,
+    pub announcer_id: String,
+}
+
+impl PeerUpsert {
+    pub fn new(
+        peer_id: String,
+        epoch: u64,
+        addresses: Vec<SocketAddr>,
+        is_public: bool,
+        ttl_secs: u64,
+        announcer_id: String,
+    ) -> Self {
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+        Self {
+            magic: GOSSIP_MAGIC,
+            peer_id,
+            epoch,
+            addresses,
+            is_public,
+            expires_at_ms: now_ms + (ttl_secs * 1000),
+            announcer_id,
+        }
+    }
+
+    pub fn to_bytes(&self) -> Result<Vec<u8>, serde_json::Error> {
+        serde_json::to_vec(&GossipMessage::PeerUpsert(self.clone()))
+    }
+
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, serde_json::Error> {
+        let msg: GossipMessage = serde_json::from_slice(bytes)?;
+        match msg {
+            GossipMessage::PeerUpsert(upsert) => Ok(upsert),
+            _ => Err(serde::de::Error::custom("Expected PeerUpsert")),
+        }
+    }
+
+    pub fn is_expired(&self) -> bool {
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+        now_ms > self.expires_at_ms
+    }
+}
+
+/// Delta gossip: peer removed/dead (tombstone). Accept only if epoch > local epoch.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PeerTombstone {
+    pub magic: [u8; 4],
+    pub peer_id: String,
+    pub epoch: u64,
+    pub reason: TombstoneReason,
+    pub tombstone_expires_at_ms: u64,
+    pub announcer_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum TombstoneReason {
+    SwimDead,
+    Timeout,
+    Unregistered,
+    Manual,
+}
+
+impl PeerTombstone {
+    pub fn new(
+        peer_id: String,
+        epoch: u64,
+        reason: TombstoneReason,
+        ttl_secs: u64,
+        announcer_id: String,
+    ) -> Self {
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+        Self {
+            magic: GOSSIP_MAGIC,
+            peer_id,
+            epoch,
+            reason,
+            tombstone_expires_at_ms: now_ms + (ttl_secs * 1000),
+            announcer_id,
+        }
+    }
+
+    pub fn to_bytes(&self) -> Result<Vec<u8>, serde_json::Error> {
+        serde_json::to_vec(&GossipMessage::PeerTombstone(self.clone()))
+    }
+
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, serde_json::Error> {
+        let msg: GossipMessage = serde_json::from_slice(bytes)?;
+        match msg {
+            GossipMessage::PeerTombstone(tombstone) => Ok(tombstone),
+            _ => Err(serde::de::Error::custom("Expected PeerTombstone")),
+        }
+    }
+
+    pub fn is_expired(&self) -> bool {
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+        now_ms > self.tombstone_expires_at_ms
     }
 }
 

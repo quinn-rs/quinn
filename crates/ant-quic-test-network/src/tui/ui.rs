@@ -42,6 +42,83 @@ fn method_emoji(method: &ConnectionMethod) -> &'static str {
     }
 }
 
+/// Format ConnectivityMatrix as compact string showing all tested paths
+/// Format: "4✓ 6✓ N✓ R·" where:
+/// - 4 = IPv4, 6 = IPv6, N = NAT, R = Relay
+/// - ✓ = tested & success, ✗ = tested & failed, · = not tested
+fn format_connectivity_matrix(matrix: &crate::registry::ConnectivityMatrix) -> Vec<Span<'static>> {
+    let mut spans = Vec::with_capacity(8);
+
+    // IPv4 Direct
+    let (v4_char, v4_color) = if matrix.ipv4_direct_tested {
+        if matrix.ipv4_direct_success {
+            ("✓", Color::Green)
+        } else {
+            ("✗", Color::Red)
+        }
+    } else {
+        ("·", Color::DarkGray)
+    };
+    spans.push(Span::styled("4", Style::default().fg(Color::Yellow)));
+    spans.push(Span::styled(
+        v4_char.to_string(),
+        Style::default().fg(v4_color),
+    ));
+    spans.push(Span::raw(" "));
+
+    // IPv6 Direct
+    let (v6_char, v6_color) = if matrix.ipv6_direct_tested {
+        if matrix.ipv6_direct_success {
+            ("✓", Color::Green)
+        } else {
+            ("✗", Color::Red)
+        }
+    } else {
+        ("·", Color::DarkGray)
+    };
+    spans.push(Span::styled("6", Style::default().fg(Color::Magenta)));
+    spans.push(Span::styled(
+        v6_char.to_string(),
+        Style::default().fg(v6_color),
+    ));
+    spans.push(Span::raw(" "));
+
+    // NAT Traversal
+    let (nat_char, nat_color) = if matrix.nat_traversal_tested {
+        if matrix.nat_traversal_success {
+            ("✓", Color::Green)
+        } else {
+            ("✗", Color::Red)
+        }
+    } else {
+        ("·", Color::DarkGray)
+    };
+    spans.push(Span::styled("N", Style::default().fg(Color::Cyan)));
+    spans.push(Span::styled(
+        nat_char.to_string(),
+        Style::default().fg(nat_color),
+    ));
+    spans.push(Span::raw(" "));
+
+    // Relay
+    let (relay_char, relay_color) = if matrix.relay_tested {
+        if matrix.relay_success {
+            ("✓", Color::Green)
+        } else {
+            ("✗", Color::Red)
+        }
+    } else {
+        ("·", Color::DarkGray)
+    };
+    spans.push(Span::styled("R", Style::default().fg(Color::Red)));
+    spans.push(Span::styled(
+        relay_char.to_string(),
+        Style::default().fg(relay_color),
+    ));
+
+    spans
+}
+
 /// Main UI rendering function.
 pub fn draw(frame: &mut Frame, app: &App) {
     let chunks = Layout::default()
@@ -461,17 +538,15 @@ fn draw_peers(frame: &mut Frame, app: &App, area: Rect) {
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::Blue));
 
-    // Table header with enhanced columns
     let header = Row::new(vec![
-        Cell::from("").style(Style::default().add_modifier(Modifier::BOLD)), // Traffic light
+        Cell::from("").style(Style::default().add_modifier(Modifier::BOLD)),
         Cell::from("Peer").style(Style::default().add_modifier(Modifier::BOLD)),
-        Cell::from("Location").style(Style::default().add_modifier(Modifier::BOLD)),
+        Cell::from("Loc").style(Style::default().add_modifier(Modifier::BOLD)),
         Cell::from("Dir").style(Style::default().add_modifier(Modifier::BOLD)),
+        Cell::from("Paths").style(Style::default().add_modifier(Modifier::BOLD)),
         Cell::from("NAT").style(Style::default().add_modifier(Modifier::BOLD)),
-        Cell::from("Test").style(Style::default().add_modifier(Modifier::BOLD)),
-        Cell::from("Traffic").style(Style::default().add_modifier(Modifier::BOLD)),
         Cell::from("RTT").style(Style::default().add_modifier(Modifier::BOLD)),
-        Cell::from("Quality").style(Style::default().add_modifier(Modifier::BOLD)),
+        Cell::from("Qlt").style(Style::default().add_modifier(Modifier::BOLD)),
     ])
     .height(1)
     .style(Style::default().fg(Color::White));
@@ -505,54 +580,8 @@ fn draw_peers(frame: &mut Frame, app: &App, area: Rect) {
                 peer.location.clone()
             };
 
-            // Enhanced traffic indicators with type differentiation
-            let protocol_indicator = if peer.protocol_tx || peer.protocol_rx {
-                "🔄"
-            } else {
-                "  "
-            };
-            let data_indicator = if peer.data_tx || peer.data_rx {
-                "📦"
-            } else {
-                "  "
-            };
-            let traffic_indicator = if peer.tx_active || peer.rx_active {
-                "◀━▶"
-            } else {
-                "   "
-            };
-
-            let traffic_spans = [
-                Span::styled(protocol_indicator, Style::default().fg(Color::Blue)),
-                Span::styled(data_indicator, Style::default().fg(Color::Green)),
-                Span::styled(
-                    traffic_indicator,
-                    Style::default()
-                        .fg(Color::Magenta)
-                        .add_modifier(Modifier::BOLD),
-                ),
-            ];
-
-            let traffic_style = if peer.tx_active
-                || peer.rx_active
-                || peer.protocol_tx
-                || peer.protocol_rx
-                || peer.data_tx
-                || peer.data_rx
-            {
-                Style::default().add_modifier(Modifier::BOLD)
-            } else {
-                Style::default().fg(Color::DarkGray)
-            };
-
-            // Quality bar based on RTT
             let quality = peer.quality.as_bar();
 
-            // NAT verification status: shows bidirectional connectivity
-            // ✓✓ = full bidirectional (both outbound and inbound verified)
-            // ✓• = outbound only (we connected to them)
-            // •✓ = inbound only (they connected to us)
-            // •• = neither verified yet
             let (nat_status, nat_style) = match (peer.outbound_verified, peer.inbound_verified) {
                 (true, true) => (
                     "✓✓",
@@ -565,52 +594,16 @@ fn draw_peers(frame: &mut Frame, app: &App, area: Rect) {
                 (false, false) => ("••", Style::default().fg(Color::DarkGray)),
             };
 
-            use crate::tui::types::PeerNatTestState;
-            let (test_display, test_style) = match &peer.nat_test_state {
-                PeerNatTestState::Pending => ("○", Style::default().fg(Color::DarkGray)),
-                PeerNatTestState::ConnectingOutbound => ("→", Style::default().fg(Color::Yellow)),
-                PeerNatTestState::WaitingForConnectBack { seconds_remaining } => {
-                    if *seconds_remaining > 30 {
-                        ("⏳", Style::default().fg(Color::Yellow))
-                    } else {
-                        (
-                            "⏳",
-                            Style::default()
-                                .fg(Color::LightYellow)
-                                .add_modifier(Modifier::BOLD),
-                        )
-                    }
-                }
-                PeerNatTestState::Verified => (
-                    "✓",
-                    Style::default()
-                        .fg(Color::Green)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                PeerNatTestState::TimedOut => ("⏱", Style::default().fg(Color::Red)),
-                PeerNatTestState::Retrying => (
-                    "↻",
-                    Style::default()
-                        .fg(Color::Yellow)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                PeerNatTestState::Unreachable => ("✗", Style::default().fg(Color::Red)),
-            };
+            let paths_spans = format_connectivity_matrix(&peer.connectivity);
+            let paths_str: String = paths_spans.iter().map(|s| s.content.as_ref()).collect();
 
             Row::new(vec![
                 Cell::from(method_indicator).style(Style::default().fg(row_color)),
                 Cell::from(peer.short_id.clone()).style(Style::default().fg(row_color)),
                 Cell::from(location),
                 Cell::from(direction_str).style(direction_style),
+                Cell::from(paths_str),
                 Cell::from(nat_status).style(nat_style),
-                Cell::from(test_display).style(test_style),
-                Cell::from(
-                    traffic_spans
-                        .iter()
-                        .map(|s| s.content.clone())
-                        .collect::<String>(),
-                )
-                .style(traffic_style),
                 Cell::from(peer.rtt_string()),
                 Cell::from(quality).style(Style::default().fg(row_color)),
             ])
@@ -620,15 +613,14 @@ fn draw_peers(frame: &mut Frame, app: &App, area: Rect) {
     let table = Table::new(
         rows,
         [
-            Constraint::Length(2), // Traffic light emoji
-            Constraint::Length(9), // Peer ID
-            Constraint::Length(8), // Location
-            Constraint::Length(4), // Direction (Out/In)
-            Constraint::Length(3), // NAT verification status
-            Constraint::Length(4), // Test state
-            Constraint::Length(5), // Traffic indicator
-            Constraint::Length(7), // RTT
-            Constraint::Min(6),    // Quality bar
+            Constraint::Length(2),  // Traffic light emoji
+            Constraint::Length(9),  // Peer ID
+            Constraint::Length(6),  // Location
+            Constraint::Length(4),  // Direction
+            Constraint::Length(12), // Paths (4✓ 6✓ N✓ R·)
+            Constraint::Length(3),  // NAT verification
+            Constraint::Length(7),  // RTT
+            Constraint::Min(4),     // Quality
         ],
     )
     .header(header)
@@ -1109,5 +1101,26 @@ mod tests {
         assert_eq!(method_emoji(&ConnectionMethod::Direct), "🟢");
         assert_eq!(method_emoji(&ConnectionMethod::HolePunched), "🟠");
         assert_eq!(method_emoji(&ConnectionMethod::Relayed), "🔴");
+    }
+
+    #[test]
+    fn test_format_connectivity_matrix() {
+        use crate::registry::ConnectivityMatrix;
+
+        let mut matrix = ConnectivityMatrix::default();
+        let spans = format_connectivity_matrix(&matrix);
+        let text: String = spans.iter().map(|s| s.content.as_ref()).collect();
+        assert_eq!(text, "4· 6· N· R·");
+
+        matrix.ipv4_direct_tested = true;
+        matrix.ipv4_direct_success = true;
+        matrix.ipv6_direct_tested = true;
+        matrix.ipv6_direct_success = false;
+        matrix.nat_traversal_tested = true;
+        matrix.nat_traversal_success = true;
+
+        let spans = format_connectivity_matrix(&matrix);
+        let text: String = spans.iter().map(|s| s.content.as_ref()).collect();
+        assert_eq!(text, "4✓ 6✗ N✓ R·");
     }
 }

@@ -51,6 +51,9 @@ pub struct PeerAnnouncement {
     pub country_code: Option<String>,
     /// Supported NAT traversal capabilities.
     pub capabilities: PeerCapabilities,
+    /// Monotonic epoch for delta-based gossip (0 = legacy, >0 = versioned).
+    #[serde(default)]
+    pub epoch: u64,
 }
 
 /// Capabilities advertised by a peer.
@@ -410,7 +413,6 @@ impl GossipDiscovery {
         &self.metrics
     }
 
-    /// Create our peer announcement.
     pub fn create_announcement(&self, capabilities: PeerCapabilities) -> PeerAnnouncement {
         PeerAnnouncement {
             peer_id: self.peer_id.clone(),
@@ -419,14 +421,14 @@ impl GossipDiscovery {
             is_public_ipv4: self.is_public_ipv4,
             is_public_ipv6: self.is_public_ipv6,
             timestamp_ms: Self::timestamp_ms(),
-            country_code: None, // TODO: Could be set from config
+            country_code: None,
             capabilities,
+            epoch: Self::timestamp_ms(),
         }
     }
 
     /// Handle an incoming peer announcement.
     pub async fn handle_peer_announcement(&self, announcement: PeerAnnouncement) {
-        // Don't process our own announcements
         if announcement.peer_id == self.peer_id {
             return;
         }
@@ -438,15 +440,22 @@ impl GossipDiscovery {
         let peer_id = announcement.peer_id.clone();
         let mut peers = self.known_peers.write().await;
 
-        // Check if this is a new peer or an update
-        let is_new = !peers.contains_key(&peer_id);
+        let (is_new, should_update) = if let Some((existing, _)) = peers.get(&peer_id) {
+            (
+                false,
+                announcement.epoch > existing.epoch || announcement.epoch == 0,
+            )
+        } else {
+            (true, true)
+        };
 
-        // Update or insert
+        if !should_update {
+            return;
+        }
+
         peers.insert(peer_id.clone(), (announcement.clone(), Instant::now()));
 
-        // Enforce max peers limit
         if peers.len() > self.config.max_peers {
-            // Remove oldest entries
             let mut entries: Vec<_> = peers.iter().map(|(k, (_, t))| (k.clone(), *t)).collect();
             entries.sort_by_key(|(_, t)| *t);
             for (k, _) in entries.iter().take(peers.len() - self.config.max_peers) {
@@ -456,12 +465,11 @@ impl GossipDiscovery {
 
         drop(peers);
 
-        // Notify if new peer
         if is_new {
             debug!(
-                "Gossip: discovered new peer {} with {} addresses",
+                "Gossip: discovered new peer {} (epoch {})",
                 &peer_id[..16.min(peer_id.len())],
-                announcement.addresses.len()
+                announcement.epoch
             );
             let _ = self
                 .event_tx
@@ -1115,6 +1123,7 @@ mod tests {
                 coordinator: true,
                 supports_dual_stack: false,
             },
+            epoch: 1234567890,
         };
 
         let bytes = serialize_peer_announcement(&announcement);

@@ -106,6 +106,17 @@ fn peer_is_vps(peer: &PeerInfo) -> bool {
     peer.addresses.iter().any(is_vps_node)
 }
 
+/// Check if our external addresses indicate we're a known VPS node.
+fn we_are_vps(external_addresses: &[SocketAddr]) -> bool {
+    external_addresses.iter().any(is_vps_node)
+}
+
+/// Check if both we and the peer are VPS nodes.
+/// When both are VPS, skip NAT/relay testing since direct connection always works.
+fn both_are_vps(peer: &PeerInfo, external_addresses: &[SocketAddr]) -> bool {
+    peer_is_vps(peer) && we_are_vps(external_addresses)
+}
+
 fn vps_gossip_bootstrap_addrs() -> Vec<SocketAddr> {
     VPS_NODE_IPS
         .iter()
@@ -2440,6 +2451,7 @@ impl TestNode {
                                                         coordinator: false,
                                                         supports_dual_stack: false,
                                                     },
+                                                    epoch: announcement.timestamp_ms,
                                                 };
                                                 gossip_integration.discovery().handle_peer_announcement(discovery_announcement).await;
                                             }
@@ -2481,7 +2493,6 @@ impl TestNode {
                                             announcement.peer.is_public,
                                         );
 
-                                        // ALSO update discovery layer (updates known_peers for get_peers())
                                         use crate::gossip::{PeerAnnouncement, PeerCapabilities};
                                         let discovery_announcement = PeerAnnouncement {
                                             peer_id: announcement.peer.peer_id.clone(),
@@ -2500,6 +2511,7 @@ impl TestNode {
                                                 coordinator: false,
                                                 supports_dual_stack: false,
                                             },
+                                            epoch: announcement.timestamp_ms,
                                         };
                                         gossip_integration.discovery().handle_peer_announcement(discovery_announcement).await;
                                     }
@@ -2534,10 +2546,55 @@ impl TestNode {
                     }
                 }
 
-                // Periodic tasks (announce via epidemic every 30s)
+                // Periodic tasks: re-announce ourselves every 30s to propagate to new nodes
                 if last_periodic.elapsed() >= periodic_interval {
                     last_periodic = Instant::now();
-                    debug!("Epidemic gossip loop: periodic check");
+
+                    let stats = epidemic_gossip.stats().await;
+                    let peer_count =
+                        stats.hyparview.active_view_size + stats.hyparview.passive_view_size;
+
+                    if epidemic_gossip.is_running() && peer_count > 0 {
+                        let external_addrs: Vec<std::net::SocketAddr> = {
+                            let peers = connected_peers.read().await;
+                            peers
+                                .values()
+                                .flat_map(|p| p.info.addresses.iter().cloned())
+                                .take(4)
+                                .collect()
+                        };
+
+                        if !external_addrs.is_empty() {
+                            let peer_info = crate::node::test_protocol::GossipPeerInfo {
+                                peer_id: our_peer_id_hex.clone(),
+                                addresses: external_addrs.clone(),
+                                is_public: true,
+                                is_connected: true,
+                                last_seen_ms: std::time::SystemTime::now()
+                                    .duration_since(std::time::UNIX_EPOCH)
+                                    .map(|d| d.as_millis() as u64)
+                                    .unwrap_or(0),
+                            };
+
+                            let announcement =
+                                crate::node::test_protocol::GossipPeerAnnouncement::new(
+                                    peer_info,
+                                    our_peer_id_hex.clone(),
+                                    8,
+                                );
+
+                            if let Ok(payload) = announcement.to_bytes() {
+                                if let Err(e) = epidemic_gossip.publish(payload).await {
+                                    debug!("Periodic epidemic announce failed: {}", e);
+                                } else {
+                                    debug!(
+                                        "Periodic epidemic announce: {} peers in view",
+                                        peer_count
+                                    );
+                                }
+                            }
+                        }
+                    }
                 }
             }
         })
@@ -3962,7 +4019,16 @@ impl TestNode {
                             context: candidate.country_code.clone(),
                         }));
 
-                        let result = real_connect_comprehensive(&endpoint, &candidate).await;
+                        let our_addrs = external_addresses.read().await;
+                        let skip_nat_for_vps_pair = both_are_vps(&candidate, &our_addrs);
+                        drop(our_addrs);
+
+                        let result = real_connect_comprehensive(
+                            &endpoint,
+                            &candidate,
+                            skip_nat_for_vps_pair,
+                        )
+                        .await;
 
                         if result.success {
                             success.fetch_add(1, Ordering::Relaxed);
@@ -4804,13 +4870,14 @@ struct ComprehensiveConnectResult {
 /// Unlike real_connect which returns on first success, this function tests:
 /// 1. IPv4 direct connections (all IPv4 addresses)
 /// 2. IPv6 direct connections (all IPv6 addresses)
-/// 3. NAT traversal (hole-punching)
+/// 3. NAT traversal (hole-punching) - skipped if `skip_nat_test` is true
 /// 4. Relay (if available)
 ///
-/// This enables comprehensive network testing for studies and design.
+/// Set `skip_nat_test` to true when both peers are VPS nodes (direct always works).
 async fn real_connect_comprehensive(
     node: &Arc<Node>,
     peer: &PeerInfo,
+    skip_nat_test: bool,
 ) -> ComprehensiveConnectResult {
     let peer_id_short = &peer.peer_id[..8.min(peer.peer_id.len())];
     let mut matrix = ConnectivityMatrix::default();
@@ -4875,8 +4942,12 @@ async fn real_connect_comprehensive(
         }
     }
 
-    // Test NAT traversal (even if direct succeeded - comprehensive testing)
-    if let Ok(peer_id_bytes) = hex::decode(&peer.peer_id) {
+    if skip_nat_test {
+        debug!(
+            "Skipping NAT traversal test to {} (VPS-to-VPS pair)",
+            peer_id_short
+        );
+    } else if let Ok(peer_id_bytes) = hex::decode(&peer.peer_id) {
         if peer_id_bytes.len() >= 32 {
             let mut peer_id_array = [0u8; 32];
             peer_id_array.copy_from_slice(&peer_id_bytes[..32]);
