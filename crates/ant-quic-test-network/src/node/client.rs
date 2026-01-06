@@ -1743,6 +1743,16 @@ impl TestNode {
                         ConnectionDirection::Inbound,
                     );
                     tui_peer.addresses = vec![addr];
+                    // Set connectivity matrix based on address type (inbound = NAT traversal success)
+                    let is_ipv6 = addr.is_ipv6();
+                    tui_peer.connectivity.ipv4_direct_tested = !is_ipv6;
+                    tui_peer.connectivity.ipv4_direct_success = !is_ipv6;
+                    tui_peer.connectivity.ipv6_direct_tested = is_ipv6;
+                    tui_peer.connectivity.ipv6_direct_success = is_ipv6;
+                    tui_peer.connectivity.nat_traversal_tested = true;
+                    tui_peer.connectivity.nat_traversal_success = true;
+                    tui_peer.connectivity.active_is_ipv6 = is_ipv6;
+                    tui_peer.connectivity.active_method = Some(ConnectionMethod::HolePunched);
                     send_tui_event(&event_tx, TuiEvent::PeerConnected(tui_peer));
 
                     // Record for connectivity test (inbound connection proves NAT traversal)
@@ -2743,12 +2753,18 @@ impl TestNode {
                     }
 
                     // Send PeerConnected events for gossip transport connections
-                    // This populates the TUI "CONNECTED PEERS" panel
                     let connected = epidemic_gossip.connected_peers_with_addresses().await;
                     for (peer_id, addr) in connected {
                         let peer_id_hex = hex::encode(peer_id.as_bytes());
                         let mut peer = ConnectedPeer::new(&peer_id_hex, ConnectionMethod::Direct);
                         peer.addresses = vec![addr];
+                        let is_ipv6 = addr.is_ipv6();
+                        peer.connectivity.ipv4_direct_tested = !is_ipv6;
+                        peer.connectivity.ipv4_direct_success = !is_ipv6;
+                        peer.connectivity.ipv6_direct_tested = is_ipv6;
+                        peer.connectivity.ipv6_direct_success = is_ipv6;
+                        peer.connectivity.active_is_ipv6 = is_ipv6;
+                        peer.connectivity.active_method = Some(ConnectionMethod::Direct);
                         send_tui_event(&event_tx, TuiEvent::PeerConnected(peer));
                     }
                 }
@@ -3413,6 +3429,14 @@ impl TestNode {
                                             ConnectionMethod::Direct,
                                         );
                                         peer.addresses = vec![addr];
+                                        let is_ipv6 = addr.is_ipv6();
+                                        peer.connectivity.ipv4_direct_tested = !is_ipv6;
+                                        peer.connectivity.ipv4_direct_success = !is_ipv6;
+                                        peer.connectivity.ipv6_direct_tested = is_ipv6;
+                                        peer.connectivity.ipv6_direct_success = is_ipv6;
+                                        peer.connectivity.active_is_ipv6 = is_ipv6;
+                                        peer.connectivity.active_method =
+                                            Some(ConnectionMethod::Direct);
                                         send_tui_event(
                                             &self.event_tx,
                                             TuiEvent::PeerConnected(peer),

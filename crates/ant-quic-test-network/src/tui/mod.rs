@@ -327,8 +327,7 @@ pub async fn run_tui(mut app: App, mut event_rx: mpsc::Receiver<TuiEvent>) -> an
     }
 
     loop {
-        // Draw UI
-        terminal.draw(|frame| ui::draw(frame, &app))?;
+        terminal.draw(|frame| ui::draw(frame, &mut app))?;
 
         // Calculate timeout for event polling
         let timeout = tick_rate
@@ -352,6 +351,18 @@ pub async fn run_tui(mut app: App, mut event_rx: mpsc::Receiver<TuiEvent>) -> an
                         }
                         InputEvent::ResetConnectivityTest => {
                             app.connectivity_test.reset();
+                        }
+                        InputEvent::ScrollUp => {
+                            app.scroll_connections_up();
+                        }
+                        InputEvent::ScrollDown => {
+                            app.scroll_connections_down();
+                        }
+                        InputEvent::PageUp => {
+                            app.scroll_connections_page_up();
+                        }
+                        InputEvent::PageDown => {
+                            app.scroll_connections_page_down();
                         }
                         InputEvent::Unknown => {}
                     }

@@ -8,6 +8,7 @@ use crate::tui::types::{
     FrameDirection, GeographicDistribution, LocalNodeInfo, NatTraversalPhase, NatTypeAnalytics,
     NetworkStatistics, ProtocolFrame, TestConnectivityMethod, TrafficType,
 };
+use ratatui::widgets::TableState;
 use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 
@@ -59,6 +60,8 @@ pub struct App {
     pub geographic_distribution: Option<GeographicDistribution>,
     /// Connectivity test results (inbound/outbound test matrix)
     pub connectivity_test: ConnectivityTestResults,
+    /// Scroll state for the connections table
+    pub connections_table_state: TableState,
 }
 
 impl Default for App {
@@ -92,6 +95,7 @@ impl App {
             nat_analytics: None,
             geographic_distribution: None,
             connectivity_test: ConnectivityTestResults::new(),
+            connections_table_state: TableState::default(),
         }
     }
 
@@ -284,9 +288,9 @@ impl App {
 
     pub fn add_protocol_frame(&mut self, frame: ProtocolFrame) {
         self.protocol_frames.push(frame);
-        if self.protocol_frames.len() > 50 {
+        if self.protocol_frames.len() > 200 {
             self.protocol_frames
-                .drain(0..self.protocol_frames.len() - 50);
+                .drain(0..self.protocol_frames.len() - 200);
         }
     }
 
@@ -393,6 +397,46 @@ impl App {
     pub fn connectivity_countdown_complete(&self) -> bool {
         self.connectivity_test.countdown_complete()
     }
+
+    pub fn scroll_connections_up(&mut self) {
+        let i = match self.connections_table_state.selected() {
+            Some(i) => i.saturating_sub(1),
+            None => 0,
+        };
+        self.connections_table_state.select(Some(i));
+    }
+
+    pub fn scroll_connections_down(&mut self) {
+        let len = self.connected_peers.len();
+        if len == 0 {
+            return;
+        }
+        let i = match self.connections_table_state.selected() {
+            Some(i) => (i + 1).min(len - 1),
+            None => 0,
+        };
+        self.connections_table_state.select(Some(i));
+    }
+
+    pub fn scroll_connections_page_up(&mut self) {
+        let i = match self.connections_table_state.selected() {
+            Some(i) => i.saturating_sub(10),
+            None => 0,
+        };
+        self.connections_table_state.select(Some(i));
+    }
+
+    pub fn scroll_connections_page_down(&mut self) {
+        let len = self.connected_peers.len();
+        if len == 0 {
+            return;
+        }
+        let i = match self.connections_table_state.selected() {
+            Some(i) => (i + 10).min(len - 1),
+            None => 0,
+        };
+        self.connections_table_state.select(Some(i));
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -401,6 +445,10 @@ pub enum InputEvent {
     ToggleAutoConnect,
     Refresh,
     ResetConnectivityTest,
+    ScrollUp,
+    ScrollDown,
+    PageUp,
+    PageDown,
     Unknown,
 }
 
@@ -413,6 +461,10 @@ impl InputEvent {
             KeyCode::Char('a') | KeyCode::Char('A') => Self::ToggleAutoConnect,
             KeyCode::Char('r') | KeyCode::Char('R') => Self::Refresh,
             KeyCode::Char('t') | KeyCode::Char('T') => Self::ResetConnectivityTest,
+            KeyCode::Up | KeyCode::Char('k') => Self::ScrollUp,
+            KeyCode::Down | KeyCode::Char('j') => Self::ScrollDown,
+            KeyCode::PageUp => Self::PageUp,
+            KeyCode::PageDown => Self::PageDown,
             KeyCode::Esc => Self::Quit,
             _ => Self::Unknown,
         }

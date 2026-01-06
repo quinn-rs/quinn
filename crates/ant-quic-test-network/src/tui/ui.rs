@@ -119,8 +119,7 @@ fn format_connectivity_matrix(matrix: &crate::registry::ConnectivityMatrix) -> V
     spans
 }
 
-/// Main UI rendering function.
-pub fn draw(frame: &mut Frame, app: &App) {
+pub fn draw(frame: &mut Frame, app: &mut App) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .margin(1)
@@ -516,17 +515,21 @@ fn draw_node_info(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(paragraph, area);
 }
 
-/// Draw connected peers table with traffic light colors.
-fn draw_peers(frame: &mut Frame, app: &App, area: Rect) {
+fn draw_peers(frame: &mut Frame, app: &mut App, area: Rect) {
     let auto_status = if app.auto_connecting {
         Span::styled("[Auto-connecting]", Style::default().fg(Color::Green))
     } else {
         Span::styled("[Paused]", Style::default().fg(Color::Yellow))
     };
 
+    let scroll_hint = Span::styled(
+        " [↑/↓/PgUp/PgDn to scroll]",
+        Style::default().fg(Color::DarkGray),
+    );
     let title = Line::from(vec![
-        Span::raw(format!(" LIVE CONNECTIONS ({}) ", app.connected_count(),)),
+        Span::raw(format!(" ALL CONNECTIONS ({}) ", app.connected_count())),
         auto_status,
+        scroll_hint,
         Span::raw("  "),
         Span::styled("🟢=Direct ", Style::default().fg(COLOR_DIRECT)),
         Span::styled("🟠=NAT ", Style::default().fg(COLOR_HOLEPUNCHED)),
@@ -625,9 +628,13 @@ fn draw_peers(frame: &mut Frame, app: &App, area: Rect) {
     )
     .header(header)
     .block(block)
-    .row_highlight_style(Style::default().add_modifier(Modifier::REVERSED));
+    .row_highlight_style(
+        Style::default()
+            .add_modifier(Modifier::REVERSED)
+            .fg(Color::Cyan),
+    );
 
-    frame.render_widget(table, area);
+    frame.render_stateful_widget(table, area, &mut app.connections_table_state);
 }
 
 /// Draw messages panel (errors and info).
@@ -683,18 +690,7 @@ fn draw_footer(frame: &mut Frame, _app: &App, area: Rect) {
 }
 
 fn draw_enhanced_analytics(frame: &mut Frame, app: &App, area: Rect) {
-    let chunks = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage(30),
-            Constraint::Percentage(30),
-            Constraint::Percentage(40),
-        ])
-        .split(area);
-
-    draw_cache_health_panel(frame, app, chunks[0]);
-    draw_nat_analytics_panel(frame, app, chunks[1]);
-    draw_activity_log(frame, app, chunks[2]);
+    draw_activity_log(frame, app, area);
 }
 
 fn draw_activity_log(frame: &mut Frame, app: &App, area: Rect) {
@@ -703,25 +699,40 @@ fn draw_activity_log(frame: &mut Frame, app: &App, area: Rect) {
         return;
     }
 
+    let stats = &app.stats;
+    let title = format!(
+        " ACTIVITY LOG  In:{} Out:{} Direct:{} NAT:{} Relay:{} ",
+        stats.inbound_connections,
+        stats
+            .connection_successes
+            .saturating_sub(stats.inbound_connections),
+        stats.direct_connections,
+        stats.hole_punched_connections,
+        stats.relayed_connections,
+    );
+
     let block = Block::default()
-        .title(" ACTIVITY LOG ")
+        .title(title)
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::Cyan));
 
     let mut lines: Vec<Line> = Vec::new();
     let now = std::time::Instant::now();
+    let max_lines = (area.height as usize).saturating_sub(2);
 
-    for pf in app.protocol_frames.iter().rev().take(9) {
+    for pf in app.protocol_frames.iter().rev().take(max_lines) {
         let age = now.duration_since(pf.timestamp);
         let age_str = if age.as_secs() < 60 {
-            format!("{}s", age.as_secs())
+            format!("{:>2}s", age.as_secs())
+        } else if age.as_secs() < 3600 {
+            format!("{:>2}m", age.as_secs() / 60)
         } else {
-            format!("{}m", age.as_secs() / 60)
+            format!("{:>2}h", age.as_secs() / 3600)
         };
 
-        let dir_color = match pf.direction {
-            crate::tui::types::FrameDirection::Sent => Color::Cyan,
-            crate::tui::types::FrameDirection::Received => Color::Green,
+        let (dir_arrow, dir_color) = match pf.direction {
+            crate::tui::types::FrameDirection::Sent => ("→", Color::Cyan),
+            crate::tui::types::FrameDirection::Received => ("←", Color::Green),
         };
 
         let peer_short = if pf.peer_id.len() > 8 {
@@ -730,25 +741,33 @@ fn draw_activity_log(frame: &mut Frame, app: &App, area: Rect) {
             &pf.peer_id
         };
 
-        let detail = pf.context.as_deref().unwrap_or("");
-        let detail_short = if detail.len() > 20 {
-            &detail[..20]
-        } else {
-            detail
+        let frame_color = match pf.frame_type.as_str() {
+            "CONNECTED" => Color::Green,
+            "DISCONNECTED" => Color::Red,
+            "DIRECT" | "Direct" => Color::Green,
+            "PUNCHED" | "HolePunched" => Color::Yellow,
+            "RELAYED" | "Relayed" => Color::Magenta,
+            "CONNECT" => Color::Cyan,
+            "NAT_TRAVERSE" => Color::Yellow,
+            _ => Color::White,
         };
+
+        let detail = pf.context.as_deref().unwrap_or("");
 
         lines.push(Line::from(vec![
             Span::styled(
-                format!("{:>3} ", age_str),
+                format!("{} ", age_str),
                 Style::default().fg(Color::DarkGray),
             ),
-            Span::styled(pf.direction.arrow(), Style::default().fg(dir_color)),
+            Span::styled(dir_arrow, Style::default().fg(dir_color)),
             Span::raw(" "),
             Span::styled(peer_short, Style::default().fg(Color::White)),
             Span::raw(" "),
-            Span::styled(&pf.frame_type, Style::default().fg(Color::Yellow)),
-            Span::raw(" "),
-            Span::styled(detail_short, Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                format!("{:<12}", &pf.frame_type),
+                Style::default().fg(frame_color),
+            ),
+            Span::styled(detail, Style::default().fg(Color::DarkGray)),
         ]));
     }
 
@@ -761,247 +780,6 @@ fn draw_activity_log(frame: &mut Frame, app: &App, area: Rect) {
 
     let paragraph = Paragraph::new(lines).block(block);
     frame.render_widget(paragraph, area);
-}
-
-fn draw_cache_health_panel(frame: &mut Frame, app: &App, area: Rect) {
-    let block = Block::default()
-        .title(" BOOTSTRAP CACHE HEALTH ")
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Magenta));
-
-    if let Some(ref health) = app.cache_health {
-        let validity = health.validity_percentage();
-        let validity_color = if validity >= 80.0 {
-            Color::Green
-        } else if validity >= 60.0 {
-            Color::Yellow
-        } else {
-            Color::Red
-        };
-
-        let hit_rate = health.cache_hit_rate();
-        let hit_rate_color = if hit_rate >= 80.0 {
-            Color::Green
-        } else if hit_rate >= 60.0 {
-            Color::Yellow
-        } else {
-            Color::Red
-        };
-
-        let freshness = health.freshness_percentage();
-        let freshness_color = if freshness >= 70.0 {
-            Color::Green
-        } else if freshness >= 40.0 {
-            Color::Yellow
-        } else {
-            Color::Red
-        };
-
-        let health_score = health.health_score();
-        let health_color = if health_score >= 0.8 {
-            Color::Green
-        } else if health_score >= 0.6 {
-            Color::Yellow
-        } else {
-            Color::Red
-        };
-
-        let validity_bar = "█".repeat((validity / 10.0) as usize);
-        let validity_bg = "░".repeat(10usize.saturating_sub((validity / 10.0) as usize));
-
-        let lines = vec![
-            Line::from(vec![
-                Span::raw("  Total: "),
-                Span::styled(
-                    format!("{}", health.total_peers),
-                    Style::default()
-                        .fg(Color::White)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::raw("  Valid: "),
-                Span::styled(
-                    format!("{:.1}%", validity),
-                    Style::default()
-                        .fg(validity_color)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::raw("  Hit Rate: "),
-                Span::styled(
-                    format!("{:.1}%", hit_rate),
-                    Style::default()
-                        .fg(hit_rate_color)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::raw("  Score: "),
-                Span::styled(
-                    format!("{:.2}", health_score),
-                    Style::default()
-                        .fg(health_color)
-                        .add_modifier(Modifier::BOLD),
-                ),
-            ]),
-            Line::from(vec![
-                Span::raw("  Fresh: "),
-                Span::styled(
-                    format!("{:.1}%", freshness),
-                    Style::default()
-                        .fg(freshness_color)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::raw("  Public: "),
-                Span::styled(
-                    format!("{:.1}%", health.public_percentage()),
-                    Style::default()
-                        .fg(Color::Cyan)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::raw("  Private: "),
-                Span::styled(
-                    format!("{:.1}%", health.private_percentage()),
-                    Style::default()
-                        .fg(Color::Yellow)
-                        .add_modifier(Modifier::BOLD),
-                ),
-            ]),
-            Line::from(vec![
-                Span::raw("  Validity: ["),
-                Span::styled(validity_bg, Style::default().fg(Color::DarkGray)),
-                Span::styled(validity_bar, Style::default().fg(validity_color)),
-                Span::raw("]  "),
-                Span::styled(
-                    if health.fresh_peers > health.stale_peers {
-                        "🟢 Fresh > Stale"
-                    } else if health.fresh_peers == health.stale_peers {
-                        "🟡 Fresh = Stale"
-                    } else {
-                        "🔴 Fresh < Stale"
-                    },
-                    Style::default().add_modifier(Modifier::BOLD),
-                ),
-            ]),
-        ];
-
-        let paragraph = Paragraph::new(lines).block(block);
-        frame.render_widget(paragraph, area);
-    } else {
-        let paragraph = Paragraph::new("  No cache health data available").block(block);
-        frame.render_widget(paragraph, area);
-    }
-}
-
-fn draw_nat_analytics_panel(frame: &mut Frame, app: &App, area: Rect) {
-    let block = Block::default()
-        .title(" NAT TYPE SUCCESS RATE ANALYTICS ")
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Yellow));
-
-    if let Some(ref analytics) = app.nat_analytics {
-        fn success_bar(rate: f64) -> String {
-            let filled = (rate / 10.0) as usize;
-            let empty = 10usize.saturating_sub(filled);
-            let bar_char = if rate >= 90.0 {
-                "█"
-            } else if rate >= 70.0 {
-                "▓"
-            } else if rate >= 50.0 {
-                "▒"
-            } else {
-                "░"
-            };
-            format!("{}{}", bar_char.repeat(filled), "░".repeat(empty))
-        }
-
-        let fc_rate = analytics.full_cone.success_rate();
-        let rc_rate = analytics.restricted_cone.success_rate();
-        let pr_rate = analytics.port_restricted.success_rate();
-        let sym_rate = analytics.symmetric.success_rate();
-        let cgnat_rate = analytics.cgnat.success_rate();
-
-        let lines = vec![
-            Line::from(vec![
-                Span::styled("FullCone :", Style::default().fg(Color::Green)),
-                Span::raw(" "),
-                Span::styled(
-                    format!("{:5.1}%", fc_rate),
-                    Style::default()
-                        .fg(Color::Green)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::raw(" "),
-                Span::styled(success_bar(fc_rate), Style::default().fg(Color::Green)),
-            ]),
-            Line::from(vec![
-                Span::styled("RestCone :", Style::default().fg(Color::Blue)),
-                Span::raw(" "),
-                Span::styled(
-                    format!("{:5.1}%", rc_rate),
-                    Style::default()
-                        .fg(Color::Blue)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::raw(" "),
-                Span::styled(success_bar(rc_rate), Style::default().fg(Color::Blue)),
-            ]),
-            Line::from(vec![
-                Span::styled("PortRest :", Style::default().fg(Color::Cyan)),
-                Span::raw(" "),
-                Span::styled(
-                    format!("{:5.1}%", pr_rate),
-                    Style::default()
-                        .fg(Color::Cyan)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::raw(" "),
-                Span::styled(success_bar(pr_rate), Style::default().fg(Color::Cyan)),
-            ]),
-            Line::from(vec![
-                Span::styled("Symmetric:", Style::default().fg(Color::LightYellow)),
-                Span::raw(" "),
-                Span::styled(
-                    format!("{:5.1}%", sym_rate),
-                    Style::default()
-                        .fg(Color::LightYellow)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::raw(" "),
-                Span::styled(
-                    success_bar(sym_rate),
-                    Style::default().fg(Color::LightYellow),
-                ),
-            ]),
-            Line::from(vec![
-                Span::styled("CGNAT    :", Style::default().fg(Color::Red)),
-                Span::raw(" "),
-                Span::styled(
-                    format!("{:5.1}%", cgnat_rate),
-                    Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
-                ),
-                Span::raw(" "),
-                Span::styled(success_bar(cgnat_rate), Style::default().fg(Color::Red)),
-            ]),
-            Line::from(vec![
-                Span::raw("  Overall: "),
-                Span::styled(
-                    format!("{:.1}%", analytics.overall_success_rate()),
-                    Style::default()
-                        .fg(Color::White)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::raw("  Total: "),
-                Span::styled(
-                    format!("{}", analytics.total_attempts()),
-                    Style::default().fg(Color::Cyan),
-                ),
-                Span::raw(" attempts"),
-            ]),
-        ];
-
-        let paragraph = Paragraph::new(lines).block(block);
-        frame.render_widget(paragraph, area);
-    } else {
-        let paragraph = Paragraph::new("  No NAT analytics data available").block(block);
-        frame.render_widget(paragraph, area);
-    }
 }
 
 fn draw_connectivity_results(frame: &mut Frame, app: &App, area: Rect) {
@@ -1077,11 +855,11 @@ mod tests {
 
     #[test]
     fn test_draw_functions_exist() {
-        let _ = draw as fn(&mut Frame, &App);
+        let _ = draw as fn(&mut Frame, &mut App);
         let _ = draw_header as fn(&mut Frame, Rect);
         let _ = draw_network_stats as fn(&mut Frame, &App, Rect);
         let _ = draw_node_info as fn(&mut Frame, &App, Rect);
-        let _ = draw_peers as fn(&mut Frame, &App, Rect);
+        let _ = draw_peers as fn(&mut Frame, &mut App, Rect);
         let _ = draw_enhanced_analytics as fn(&mut Frame, &App, Rect);
         let _ = draw_footer as fn(&mut Frame, &App, Rect);
     }
