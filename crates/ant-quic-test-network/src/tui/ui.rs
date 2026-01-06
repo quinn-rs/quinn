@@ -10,7 +10,7 @@
 
 use crate::registry::ConnectionMethod;
 use crate::tui::app::App;
-use crate::tui::types::{ConnectionStatus, ConnectivityTestPhase, country_flag};
+use crate::tui::types::{ConnectivityTestPhase, country_flag};
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},
@@ -49,24 +49,22 @@ pub fn draw(frame: &mut Frame, app: &App) {
         .margin(1)
         .constraints([
             Constraint::Length(3),  // Header
-            Constraint::Length(4),  // Connection Overview (traffic lights)
-            Constraint::Length(5),  // Your Node + Gossip Stats
+            Constraint::Length(6),  // Network Stats (comprehensive counts)
+            Constraint::Length(4),  // Your Node
             Constraint::Min(6),     // Connected Peers
-            Constraint::Length(8),  // Connection History
-            Constraint::Length(10), // Enhanced: Cache Health + NAT Analytics + ACTIVITY LOG
+            Constraint::Length(10), // Cache Health + NAT Analytics + ACTIVITY LOG
             Constraint::Length(3),  // Messages
             Constraint::Length(3),  // Footer
         ])
         .split(frame.area());
 
     draw_header(frame, chunks[0]);
-    draw_connection_overview(frame, app, chunks[1]);
+    draw_network_stats(frame, app, chunks[1]);
     draw_node_info(frame, app, chunks[2]);
     draw_peers(frame, app, chunks[3]);
-    draw_connection_history(frame, app, chunks[4]);
-    draw_enhanced_analytics(frame, app, chunks[5]);
-    draw_messages(frame, app, chunks[6]);
-    draw_footer(frame, app, chunks[7]);
+    draw_enhanced_analytics(frame, app, chunks[4]);
+    draw_messages(frame, app, chunks[5]);
+    draw_footer(frame, app, chunks[6]);
 }
 
 /// Draw the header with title and version.
@@ -103,20 +101,20 @@ fn draw_header(frame: &mut Frame, area: Rect) {
     frame.render_widget(paragraph, area);
 }
 
-/// Draw connection overview with traffic light summary.
-/// Shows at a glance how well we're connecting to the network.
-fn draw_connection_overview(frame: &mut Frame, app: &App, area: Rect) {
+fn draw_network_stats(frame: &mut Frame, app: &App, area: Rect) {
     let block = Block::default()
-        .title(" CONNECTION OVERVIEW ")
+        .title(" NETWORK STATS ")
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::White));
+        .border_style(Style::default().fg(Color::Cyan));
 
-    // Count connections by method
     let mut direct = 0usize;
     let mut holepunched = 0usize;
     let mut relayed = 0usize;
     let mut inbound = 0usize;
     let mut outbound = 0usize;
+    let mut ipv4 = 0usize;
+    let mut ipv6 = 0usize;
+    let mut nat_verified = 0usize;
 
     for peer in app.connected_peers.values() {
         match peer.method {
@@ -128,112 +126,196 @@ fn draw_connection_overview(frame: &mut Frame, app: &App, area: Rect) {
             crate::registry::ConnectionDirection::Inbound => inbound += 1,
             crate::registry::ConnectionDirection::Outbound => outbound += 1,
         }
+        for addr in &peer.addresses {
+            if addr.is_ipv4() {
+                ipv4 += 1;
+            } else {
+                ipv6 += 1;
+            }
+        }
+        if peer.is_nat_verified() {
+            nat_verified += 1;
+        }
     }
 
     let total = app.connected_peers.len();
+    let history_total = app.connection_history.len();
+    let history_disconnected = app.history_disconnected_count();
 
-    // Build visual bar representation
-    let bar_width = 30usize;
-    let direct_bar = if total > 0 {
-        (direct * bar_width) / total.max(1)
-    } else {
-        0
-    };
-    let holepunched_bar = if total > 0 {
-        (holepunched * bar_width) / total.max(1)
-    } else {
-        0
-    };
-    let relayed_bar = if total > 0 {
-        (relayed * bar_width) / total.max(1)
-    } else {
-        0
-    };
-
-    // Traffic activity indicator
     let tx_active = app.connected_peers.values().any(|p| p.tx_active);
     let rx_active = app.connected_peers.values().any(|p| p.rx_active);
-    let traffic_indicator = match (tx_active, rx_active) {
+    let traffic = match (tx_active, rx_active) {
         (true, true) => "◀▶",
         (true, false) => "▶▶",
         (false, true) => "◀◀",
-        (false, false) => "  ",
+        (false, false) => "··",
     };
 
     let line1 = Line::from(vec![
-        Span::raw("  "),
+        Span::raw("  LIVE: "),
         Span::styled(
-            "🟢 Direct: ",
-            Style::default()
-                .fg(COLOR_DIRECT)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(format!("{:3}", direct), Style::default().fg(COLOR_DIRECT)),
-        Span::raw(" "),
-        Span::styled("█".repeat(direct_bar), Style::default().fg(COLOR_DIRECT)),
-        Span::raw("  "),
-        Span::styled("█".repeat(direct_bar), Style::default().fg(COLOR_DIRECT)),
-        Span::raw("  "),
-        Span::styled(
-            format!("{:3}", holepunched),
-            Style::default().fg(COLOR_HOLEPUNCHED),
-        ),
-        Span::raw(" "),
-        Span::styled(
-            "█".repeat(holepunched_bar),
-            Style::default().fg(COLOR_HOLEPUNCHED),
-        ),
-        Span::raw("  "),
-        Span::styled(
-            "🔴 Relay: ",
-            Style::default()
-                .fg(COLOR_RELAYED)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(format!("{:3}", relayed), Style::default().fg(COLOR_RELAYED)),
-        Span::raw(" "),
-        Span::styled("█".repeat(relayed_bar), Style::default().fg(COLOR_RELAYED)),
-    ]);
-
-    // Inbound connections are VERY important - they prove NAT traversal works!
-    let inbound_style = if inbound > 0 {
-        Style::default()
-            .fg(Color::Green)
-            .add_modifier(Modifier::BOLD)
-    } else {
-        Style::default().fg(Color::DarkGray)
-    };
-
-    let line2 = Line::from(vec![
-        Span::raw("  "),
-        Span::styled(format!("← {} INBOUND", inbound), inbound_style),
-        Span::styled(
-            " (they connected to YOU!)",
-            Style::default().fg(Color::DarkGray),
-        ),
-        Span::raw("    "),
-        Span::styled(
-            format!("→ {} OUTBOUND", outbound),
-            Style::default().fg(Color::Cyan),
-        ),
-        Span::raw("    "),
-        Span::styled(
-            format!("TOTAL: {}", total),
+            format!("{}", total),
             Style::default()
                 .fg(Color::White)
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::raw("    Traffic: "),
+        Span::raw("  │  "),
+        Span::styled("🟢", Style::default().fg(COLOR_DIRECT)),
+        Span::styled(format!("{}", direct), Style::default().fg(COLOR_DIRECT)),
+        Span::raw(" "),
+        Span::styled("🟠", Style::default().fg(COLOR_HOLEPUNCHED)),
         Span::styled(
-            traffic_indicator,
+            format!("{}", holepunched),
+            Style::default().fg(COLOR_HOLEPUNCHED),
+        ),
+        Span::raw(" "),
+        Span::styled("🔴", Style::default().fg(COLOR_RELAYED)),
+        Span::styled(format!("{}", relayed), Style::default().fg(COLOR_RELAYED)),
+        Span::raw("  │  "),
+        Span::styled(
+            format!("←{}", inbound),
+            Style::default()
+                .fg(if inbound > 0 {
+                    Color::Green
+                } else {
+                    Color::DarkGray
+                })
+                .add_modifier(if inbound > 0 {
+                    Modifier::BOLD
+                } else {
+                    Modifier::empty()
+                }),
+        ),
+        Span::raw(" "),
+        Span::styled(format!("→{}", outbound), Style::default().fg(Color::Cyan)),
+        Span::raw("  │  "),
+        Span::styled(format!("v4:{}", ipv4), Style::default().fg(Color::Yellow)),
+        Span::raw(" "),
+        Span::styled(format!("v6:{}", ipv6), Style::default().fg(Color::Magenta)),
+        Span::raw("  │  "),
+        Span::styled(
+            format!("NAT✓{}", nat_verified),
+            Style::default().fg(Color::Green),
+        ),
+        Span::raw("  "),
+        Span::styled(
+            traffic,
             Style::default()
                 .fg(Color::Magenta)
+                .add_modifier(Modifier::BOLD),
+        ),
+    ]);
+
+    let hyparview_active = app.stats.hyparview_active;
+    let hyparview_passive = app.stats.hyparview_passive;
+    let swim_alive = app.stats.swim_alive;
+    let swim_suspect = app.stats.swim_suspect;
+    let swim_dead = app.stats.swim_dead;
+
+    let hyparview_color = if hyparview_active >= 6 {
+        Color::Green
+    } else if hyparview_active >= 3 {
+        Color::Yellow
+    } else {
+        Color::Red
+    };
+
+    let line2 = Line::from(vec![
+        Span::raw("  GOSSIP: HyPar "),
+        Span::styled(
+            format!("{}", hyparview_active),
+            Style::default()
+                .fg(hyparview_color)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw("/"),
+        Span::styled(
+            format!("{}", hyparview_passive),
+            Style::default().fg(Color::DarkGray),
+        ),
+        Span::raw("  SWIM "),
+        Span::styled(format!("{}", swim_alive), Style::default().fg(Color::Green)),
+        Span::raw("/"),
+        Span::styled(
+            format!("{}", swim_suspect),
+            Style::default().fg(Color::Yellow),
+        ),
+        Span::raw("/"),
+        Span::styled(format!("{}", swim_dead), Style::default().fg(Color::Red)),
+        Span::raw("  │  HISTORY: "),
+        Span::styled(
+            format!("{}", history_total),
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw(" ("),
+        Span::styled(
+            format!("{}○", history_disconnected),
+            Style::default().fg(Color::DarkGray),
+        ),
+        Span::raw(")  │  SEEN: "),
+        Span::styled(
+            format!("{}", app.peers_seen_count()),
+            Style::default()
+                .fg(Color::Cyan)
                 .add_modifier(Modifier::BOLD),
         ),
         connectivity_test_status_span(app),
     ]);
 
-    let paragraph = Paragraph::new(vec![line1, line2]).block(block);
+    let success_rate = app.stats.success_rate();
+    let success_color = if success_rate >= 90.0 {
+        Color::Green
+    } else if success_rate >= 70.0 {
+        Color::Yellow
+    } else {
+        Color::Red
+    };
+
+    let line3 = Line::from(vec![
+        Span::raw("  SUCCESS: "),
+        Span::styled(
+            format!("{:.0}%", success_rate),
+            Style::default()
+                .fg(success_color)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw(" ("),
+        Span::styled(
+            format!("{}", app.stats.connection_successes),
+            Style::default().fg(Color::Green),
+        ),
+        Span::raw("/"),
+        Span::styled(
+            format!("{}", app.stats.connection_attempts),
+            Style::default().fg(Color::White),
+        ),
+        Span::raw(")  │  PKTS: "),
+        Span::styled(
+            format!("{}↑", app.stats.packets_sent),
+            Style::default().fg(Color::Cyan),
+        ),
+        Span::raw(" "),
+        Span::styled(
+            format!("{}↓", app.stats.packets_received),
+            Style::default().fg(Color::Green),
+        ),
+        Span::raw("  │  UP: "),
+        Span::styled(
+            app.stats.uptime(),
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw("  │  REG: "),
+        Span::styled(
+            format!("{}", app.total_registered_nodes),
+            Style::default().fg(Color::Yellow),
+        ),
+    ]);
+
+    let paragraph = Paragraph::new(vec![line1, line2, line3]).block(block);
     frame.render_widget(paragraph, area);
 }
 
@@ -605,178 +687,6 @@ fn draw_footer(frame: &mut Frame, _app: &App, area: Rect) {
     ]);
 
     let paragraph = Paragraph::new(line).block(block);
-    frame.render_widget(paragraph, area);
-}
-
-fn draw_connection_history(frame: &mut Frame, app: &App, area: Rect) {
-    let chunks = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(70), Constraint::Percentage(30)])
-        .split(area);
-
-    draw_history_table(frame, app, chunks[0]);
-    draw_gossip_stats(frame, app, chunks[1]);
-}
-
-fn draw_history_table(frame: &mut Frame, app: &App, area: Rect) {
-    let connected = app.history_connected_count();
-    let disconnected = app.history_disconnected_count();
-    let total_seen = app.peers_seen_count();
-
-    let title = Line::from(vec![
-        Span::raw(format!(
-            " CONNECTION HISTORY ({} total, ",
-            app.connection_history.len()
-        )),
-        Span::styled(format!("{}●", connected), Style::default().fg(Color::Green)),
-        Span::raw(" "),
-        Span::styled(
-            format!("{}○", disconnected),
-            Style::default().fg(Color::DarkGray),
-        ),
-        Span::raw(format!(") Seen: {} ", total_seen)),
-    ]);
-
-    let block = Block::default()
-        .title(title)
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Magenta));
-
-    let header = Row::new(vec![
-        Cell::from("").style(Style::default().add_modifier(Modifier::BOLD)),
-        Cell::from("Peer").style(Style::default().add_modifier(Modifier::BOLD)),
-        Cell::from("Method").style(Style::default().add_modifier(Modifier::BOLD)),
-        Cell::from("Dir").style(Style::default().add_modifier(Modifier::BOLD)),
-        Cell::from("Best RTT").style(Style::default().add_modifier(Modifier::BOLD)),
-        Cell::from("#Conn").style(Style::default().add_modifier(Modifier::BOLD)),
-        Cell::from("Last Seen").style(Style::default().add_modifier(Modifier::BOLD)),
-    ])
-    .height(1)
-    .style(Style::default().fg(Color::White));
-
-    let rows: Vec<Row> = app
-        .history_sorted()
-        .iter()
-        .take(5)
-        .map(|entry| {
-            let (status_icon, row_color) = match entry.status {
-                ConnectionStatus::Connected => ("●", Color::Green),
-                ConnectionStatus::Disconnected => ("○", Color::DarkGray),
-                ConnectionStatus::Failed => ("✗", Color::Red),
-            };
-
-            let method_str = match entry.method {
-                ConnectionMethod::Direct => "Direct",
-                ConnectionMethod::HolePunched => "NAT",
-                ConnectionMethod::Relayed => "Relay",
-            };
-
-            let dir_str = match entry.direction {
-                crate::registry::ConnectionDirection::Outbound => "→",
-                crate::registry::ConnectionDirection::Inbound => "←",
-            };
-
-            let rtt_str = entry
-                .best_rtt
-                .map(|r| format!("{}ms", r.as_millis()))
-                .unwrap_or_else(|| "---".to_string());
-
-            let last_seen = if entry.status == ConnectionStatus::Connected {
-                "now".to_string()
-            } else {
-                entry.time_since_seen()
-            };
-
-            Row::new(vec![
-                Cell::from(status_icon).style(Style::default().fg(row_color)),
-                Cell::from(entry.short_id.clone()).style(Style::default().fg(row_color)),
-                Cell::from(method_str),
-                Cell::from(dir_str),
-                Cell::from(rtt_str),
-                Cell::from(format!("{}", entry.connection_count)),
-                Cell::from(last_seen),
-            ])
-        })
-        .collect();
-
-    let table = Table::new(
-        rows,
-        [
-            Constraint::Length(2),
-            Constraint::Length(9),
-            Constraint::Length(7),
-            Constraint::Length(3),
-            Constraint::Length(8),
-            Constraint::Length(5),
-            Constraint::Min(8),
-        ],
-    )
-    .header(header)
-    .block(block);
-
-    frame.render_widget(table, area);
-}
-
-fn draw_gossip_stats(frame: &mut Frame, app: &App, area: Rect) {
-    let block = Block::default()
-        .title(" GOSSIP NETWORK ")
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Cyan));
-
-    let hyparview_active = app.stats.hyparview_active;
-    let hyparview_passive = app.stats.hyparview_passive;
-    let swim_alive = app.stats.swim_alive;
-    let swim_suspect = app.stats.swim_suspect;
-    let swim_dead = app.stats.swim_dead;
-
-    let hyparview_color = if hyparview_active >= 6 {
-        Color::Green
-    } else if hyparview_active >= 3 {
-        Color::Yellow
-    } else {
-        Color::Red
-    };
-
-    let lines = vec![
-        Line::from(vec![
-            Span::raw("  HyParView Active: "),
-            Span::styled(
-                format!("{}", hyparview_active),
-                Style::default()
-                    .fg(hyparview_color)
-                    .add_modifier(Modifier::BOLD),
-            ),
-        ]),
-        Line::from(vec![
-            Span::raw("  HyParView Passive: "),
-            Span::styled(
-                format!("{}", hyparview_passive),
-                Style::default().fg(Color::Cyan),
-            ),
-        ]),
-        Line::from(vec![
-            Span::raw("  SWIM: "),
-            Span::styled(format!("{}", swim_alive), Style::default().fg(Color::Green)),
-            Span::raw("/"),
-            Span::styled(
-                format!("{}", swim_suspect),
-                Style::default().fg(Color::Yellow),
-            ),
-            Span::raw("/"),
-            Span::styled(format!("{}", swim_dead), Style::default().fg(Color::Red)),
-        ]),
-        Line::from(vec![
-            Span::raw("  Peers Seen: "),
-            Span::styled(
-                format!("{}", app.peers_seen_count()),
-                Style::default()
-                    .fg(Color::White)
-                    .add_modifier(Modifier::BOLD),
-            ),
-        ]),
-    ];
-
-    let paragraph = Paragraph::new(lines).block(block);
     frame.render_widget(paragraph, area);
 }
 
@@ -1177,10 +1087,10 @@ mod tests {
     fn test_draw_functions_exist() {
         let _ = draw as fn(&mut Frame, &App);
         let _ = draw_header as fn(&mut Frame, Rect);
-        let _ = draw_connection_overview as fn(&mut Frame, &App, Rect);
+        let _ = draw_network_stats as fn(&mut Frame, &App, Rect);
         let _ = draw_node_info as fn(&mut Frame, &App, Rect);
         let _ = draw_peers as fn(&mut Frame, &App, Rect);
-        let _ = draw_connection_history as fn(&mut Frame, &App, Rect);
+        let _ = draw_enhanced_analytics as fn(&mut Frame, &App, Rect);
         let _ = draw_footer as fn(&mut Frame, &App, Rect);
     }
 

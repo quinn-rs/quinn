@@ -829,6 +829,26 @@ impl TestNode {
                             pending.remove(&peer_hex);
                             // Track outbound connection
                             let _ = event_tx_for_events.try_send(TuiEvent::OutboundConnection);
+
+                            // Create a ConnectedPeer for TUI display with Outbound direction
+                            let mut outbound_peer = ConnectedPeer::with_direction(
+                                &peer_hex,
+                                ConnectionMethod::Direct,
+                                ConnectionDirection::Outbound,
+                            );
+                            outbound_peer.addresses = vec![addr];
+
+                            // Look up country code from the peer's IP address
+                            let (_lat, _lon, country_code) =
+                                geo_provider_for_events.lookup(addr.ip());
+                            if let Some(cc) = country_code {
+                                outbound_peer.location = format!("{} {}", country_flag(&cc), cc);
+                            }
+
+                            send_tui_event(
+                                &event_tx_for_events,
+                                TuiEvent::PeerConnected(outbound_peer),
+                            );
                         }
 
                         // === ADD PEER TO CONNECTED_PEERS IMMEDIATELY ===
