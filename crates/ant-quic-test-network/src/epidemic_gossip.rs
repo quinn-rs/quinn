@@ -401,18 +401,19 @@ impl EpidemicGossip {
             return Err(GossipError::NotRunning);
         }
 
-        let stack_guard = self.stack.read().await;
-        let stack = stack_guard.as_ref().ok_or(GossipError::NotRunning)?;
+        let pubsub = {
+            let stack_guard = self.stack.read().await;
+            let stack = stack_guard.as_ref().ok_or(GossipError::NotRunning)?;
+            Arc::clone(&stack.pubsub)
+        };
 
         let topic = TopicId::from_entity(NETWORK_TOPIC)
             .map_err(|e| GossipError::Publish(format!("Invalid topic: {e}")))?;
-        stack
-            .pubsub
+        pubsub
             .publish(topic, payload.into())
             .await
             .map_err(|e| GossipError::Publish(e.to_string()))?;
 
-        // Update stats
         {
             let mut stats = self.stats.write().await;
             stats.plumtree.messages_sent += 1;
@@ -443,9 +444,12 @@ impl EpidemicGossip {
 
     /// Get SWIM state for a peer.
     pub async fn peer_state(&self, peer_id: &PeerId) -> Option<PeerState> {
-        let stack_guard = self.stack.read().await;
-        if let Some(stack) = stack_guard.as_ref() {
-            stack.membership.swim().get_state(peer_id).await
+        let membership = {
+            let stack_guard = self.stack.read().await;
+            stack_guard.as_ref().map(|s| Arc::clone(&s.membership))
+        };
+        if let Some(membership) = membership {
+            membership.swim().get_state(peer_id).await
         } else {
             None
         }
@@ -492,9 +496,12 @@ impl EpidemicGossip {
     /// }
     /// ```
     pub async fn get_peer_address(&self, peer_id: &PeerId) -> Option<SocketAddr> {
-        let stack_guard = self.stack.read().await;
-        if let Some(stack) = stack_guard.as_ref() {
-            let peers = stack.transport.connected_peers().await;
+        let transport = {
+            let stack_guard = self.stack.read().await;
+            stack_guard.as_ref().map(|s| Arc::clone(&s.transport))
+        };
+        if let Some(transport) = transport {
+            let peers = transport.connected_peers().await;
             peers
                 .into_iter()
                 .find(|(id, _)| id == peer_id)
@@ -514,9 +521,12 @@ impl EpidemicGossip {
     /// A vector of `(PeerId, SocketAddr)` pairs for all peers currently connected
     /// via the gossip transport (HyParView active view).
     pub async fn connected_peers_with_addresses(&self) -> Vec<(PeerId, SocketAddr)> {
-        let stack_guard = self.stack.read().await;
-        if let Some(stack) = stack_guard.as_ref() {
-            stack.transport.connected_peers().await
+        let transport = {
+            let stack_guard = self.stack.read().await;
+            stack_guard.as_ref().map(|s| Arc::clone(&s.transport))
+        };
+        if let Some(transport) = transport {
+            transport.connected_peers().await
         } else {
             Vec::new()
         }
@@ -527,10 +537,13 @@ impl EpidemicGossip {
     /// Returns a snapshot of which peers are alive, suspect, or dead
     /// according to SWIM failure detection.
     pub async fn peer_liveness(&self) -> (Vec<PeerId>, Vec<PeerId>, Vec<PeerId>) {
-        let stack_guard = self.stack.read().await;
-        if let Some(stack) = stack_guard.as_ref() {
-            let active = stack.membership.active_view();
-            let passive = stack.membership.passive_view();
+        let membership = {
+            let stack_guard = self.stack.read().await;
+            stack_guard.as_ref().map(|s| Arc::clone(&s.membership))
+        };
+        if let Some(membership) = membership {
+            let active = membership.active_view();
+            let passive = membership.passive_view();
             let all_peers: Vec<_> = active.iter().chain(passive.iter()).cloned().collect();
 
             let mut alive = Vec::new();
@@ -538,7 +551,7 @@ impl EpidemicGossip {
             let mut dead = Vec::new();
 
             for peer in all_peers {
-                if let Some(state) = stack.membership.swim().get_state(&peer).await {
+                if let Some(state) = membership.swim().get_state(&peer).await {
                     match state {
                         PeerState::Alive => alive.push(peer),
                         PeerState::Suspect => suspect.push(peer),
@@ -562,13 +575,16 @@ impl EpidemicGossip {
             return Err(GossipError::NotRunning);
         }
 
-        let stack_guard = self.stack.read().await;
-        let stack = stack_guard.as_ref().ok_or(GossipError::NotRunning)?;
-
         if self.config.bootstrap_peers.is_empty() {
             debug!("No bootstrap peers configured");
             return Ok(0);
         }
+
+        let (transport, membership) = {
+            let stack_guard = self.stack.read().await;
+            let stack = stack_guard.as_ref().ok_or(GossipError::NotRunning)?;
+            (Arc::clone(&stack.transport), Arc::clone(&stack.membership))
+        };
 
         info!(
             "Bootstrapping from {} peers: {:?}",
@@ -583,11 +599,10 @@ impl EpidemicGossip {
         let mut connected = 0;
         for addr in &self.config.bootstrap_peers {
             info!("Dialing bootstrap peer at {}", addr);
-            match stack.transport.dial_bootstrap(*addr).await {
+            match transport.dial_bootstrap(*addr).await {
                 Ok(peer_id) => {
                     info!("Connected to bootstrap peer {} ({})", peer_id, addr);
-                    // Add to active view
-                    if let Err(e) = stack.membership.add_active(peer_id).await {
+                    if let Err(e) = membership.add_active(peer_id).await {
                         warn!("Failed to add peer {} to active view: {}", peer_id, e);
                     } else {
                         info!("Added peer {} to HyParView active view", peer_id);
@@ -600,7 +615,6 @@ impl EpidemicGossip {
             }
         }
 
-        // Update stats
         {
             let mut stats = self.stats.write().await;
             stats.hyparview.joins += 1;
@@ -639,8 +653,11 @@ impl EpidemicGossip {
             return Ok(0);
         }
 
-        let stack_guard = self.stack.read().await;
-        let stack = stack_guard.as_ref().ok_or(GossipError::NotRunning)?;
+        let (transport, membership) = {
+            let stack_guard = self.stack.read().await;
+            let stack = stack_guard.as_ref().ok_or(GossipError::NotRunning)?;
+            (Arc::clone(&stack.transport), Arc::clone(&stack.membership))
+        };
 
         info!(
             "Adding {} bootstrap peers from registry: {:?}",
@@ -655,11 +672,10 @@ impl EpidemicGossip {
         let mut connected = 0;
         for addr in &peers {
             info!("Dialing bootstrap peer at {}", addr);
-            match stack.transport.dial_bootstrap(*addr).await {
+            match transport.dial_bootstrap(*addr).await {
                 Ok(peer_id) => {
                     info!("Connected to bootstrap peer {} ({})", peer_id, addr);
-                    // Add to active view
-                    if let Err(e) = stack.membership.add_active(peer_id).await {
+                    if let Err(e) = membership.add_active(peer_id).await {
                         warn!("Failed to add peer {} to active view: {}", peer_id, e);
                     } else {
                         info!("Added peer {} to HyParView active view", peer_id);
@@ -672,7 +688,6 @@ impl EpidemicGossip {
             }
         }
 
-        // Update stats
         {
             let mut stats = self.stats.write().await;
             stats.hyparview.joins += 1;
@@ -695,21 +710,22 @@ impl EpidemicGossip {
 
     /// Add a peer to the active view.
     pub async fn add_peer(&self, peer_id: PeerId) -> Result<(), GossipError> {
-        let stack_guard = self.stack.read().await;
-        let stack = stack_guard.as_ref().ok_or(GossipError::NotRunning)?;
+        let membership = {
+            let stack_guard = self.stack.read().await;
+            let stack = stack_guard.as_ref().ok_or(GossipError::NotRunning)?;
+            Arc::clone(&stack.membership)
+        };
 
-        stack
-            .membership
+        membership
             .add_active(peer_id)
             .await
             .map_err(|e| GossipError::Membership(e.to_string()))?;
 
-        // Emit event
         let _ = self
             .event_tx
             .send(EpidemicEvent::PeerJoined {
                 peer_id,
-                addresses: vec![], // Will be filled by transport
+                addresses: vec![],
             })
             .await;
 
@@ -718,16 +734,17 @@ impl EpidemicGossip {
 
     /// Remove a peer from the active view.
     pub async fn remove_peer(&self, peer_id: PeerId) -> Result<(), GossipError> {
-        let stack_guard = self.stack.read().await;
-        let stack = stack_guard.as_ref().ok_or(GossipError::NotRunning)?;
+        let membership = {
+            let stack_guard = self.stack.read().await;
+            let stack = stack_guard.as_ref().ok_or(GossipError::NotRunning)?;
+            Arc::clone(&stack.membership)
+        };
 
-        stack
-            .membership
+        membership
             .remove_active(peer_id)
             .await
             .map_err(|e| GossipError::Membership(e.to_string()))?;
 
-        // Emit event
         let _ = self
             .event_tx
             .send(EpidemicEvent::PeerLeft { peer_id })
@@ -740,11 +757,13 @@ impl EpidemicGossip {
     /// This bypasses the P2pEndpoint and uses the gossip connections directly,
     /// which uses the port configured via --bind-port (or random if 0).
     pub async fn send_to_peer(&self, peer_id: PeerId, data: Vec<u8>) -> Result<(), GossipError> {
-        let stack_guard = self.stack.read().await;
-        let stack = stack_guard.as_ref().ok_or(GossipError::NotRunning)?;
+        let transport = {
+            let stack_guard = self.stack.read().await;
+            let stack = stack_guard.as_ref().ok_or(GossipError::NotRunning)?;
+            Arc::clone(&stack.transport)
+        };
 
-        stack
-            .transport
+        transport
             .send_to_peer(peer_id, StreamType::Bulk, Bytes::from(data))
             .await
             .map_err(|e| GossipError::Transport(e.to_string()))?;
