@@ -417,15 +417,22 @@ impl App {
         method: TestConnectivityMethod,
         success: bool,
     ) {
-        let mapped_method = match method {
-            TestConnectivityMethod::DirectIpv4 | TestConnectivityMethod::DirectIpv6 => {
-                crate::registry::ConnectionMethod::Direct
+        let (mapped_method, is_ipv6) = match method {
+            TestConnectivityMethod::DirectIpv4 => {
+                (crate::registry::ConnectionMethod::Direct, false)
             }
-            TestConnectivityMethod::NatTraversalIpv4 | TestConnectivityMethod::NatTraversalIpv6 => {
-                crate::registry::ConnectionMethod::HolePunched
+            TestConnectivityMethod::DirectIpv6 => (crate::registry::ConnectionMethod::Direct, true),
+            TestConnectivityMethod::NatTraversalIpv4 => {
+                (crate::registry::ConnectionMethod::HolePunched, false)
             }
-            TestConnectivityMethod::RelayedIpv4 | TestConnectivityMethod::RelayedIpv6 => {
-                crate::registry::ConnectionMethod::Relayed
+            TestConnectivityMethod::NatTraversalIpv6 => {
+                (crate::registry::ConnectionMethod::HolePunched, true)
+            }
+            TestConnectivityMethod::RelayedIpv4 => {
+                (crate::registry::ConnectionMethod::Relayed, false)
+            }
+            TestConnectivityMethod::RelayedIpv6 => {
+                (crate::registry::ConnectionMethod::Relayed, true)
             }
         };
 
@@ -433,7 +440,32 @@ impl App {
             .connection_history
             .entry(peer_id.to_string())
             .or_insert_with(|| ConnectionHistoryEntry::new(peer_id));
-        entry.record_attempt(direction, mapped_method, success);
+        entry.record_attempt_with_ip(direction, mapped_method, success, is_ipv6);
+
+        self.prune_history_if_needed();
+    }
+
+    const MAX_HISTORY_ENTRIES: usize = 1000;
+
+    fn prune_history_if_needed(&mut self) {
+        if self.connection_history.len() <= Self::MAX_HISTORY_ENTRIES {
+            return;
+        }
+
+        let mut entries: Vec<_> = self.connection_history.iter().collect();
+        entries.sort_by(|a, b| a.1.last_seen.cmp(&b.1.last_seen));
+
+        let to_remove = entries.len() - Self::MAX_HISTORY_ENTRIES;
+        let keys_to_remove: Vec<_> = entries
+            .into_iter()
+            .take(to_remove)
+            .filter(|(_, e)| e.status != ConnectionStatus::Connected)
+            .map(|(k, _)| k.clone())
+            .collect();
+
+        for key in keys_to_remove {
+            self.connection_history.remove(&key);
+        }
     }
 
     pub fn connectivity_countdown(&self) -> u32 {

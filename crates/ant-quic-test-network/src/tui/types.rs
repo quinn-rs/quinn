@@ -71,20 +71,15 @@ impl MethodOutcome {
 /// Per-direction connection outcomes.
 #[derive(Debug, Clone, Default)]
 pub struct DirectionalMethodStats {
-    /// Last method attempted for this direction
     pub last_method: Option<ConnectionMethod>,
-    /// Total attempts
     pub attempts: u32,
-    /// Successful attempts
     pub successes: u32,
-    /// Failed attempts
     pub failures: u32,
-    /// Direct method outcome
     pub direct: MethodOutcome,
-    /// NAT traversal outcome
     pub nat: MethodOutcome,
-    /// Relay outcome
     pub relay: MethodOutcome,
+    pub used_ipv4: bool,
+    pub used_ipv6: bool,
 }
 
 impl DirectionalMethodStats {
@@ -118,18 +113,17 @@ impl DirectionalMethodStats {
     }
 
     fn update_outcome(slot: &mut MethodOutcome, outcome: MethodOutcome) {
-        match (slot, outcome) {
-            (_, MethodOutcome::Success) => {
+        match outcome {
+            MethodOutcome::Success => {
                 *slot = MethodOutcome::Success;
             }
-            (MethodOutcome::Unknown, MethodOutcome::Failed) => {
+            MethodOutcome::Failed if *slot == MethodOutcome::Unknown => {
                 *slot = MethodOutcome::Failed;
             }
             _ => {}
         }
     }
 
-    /// Compact summary string (e.g. "D✓N×R·").
     pub fn summary_compact(&self) -> String {
         format!(
             "D{}N{}R{}",
@@ -137,6 +131,28 @@ impl DirectionalMethodStats {
             self.nat.symbol(),
             self.relay.symbol()
         )
+    }
+
+    pub fn has_ipv4(&self) -> bool {
+        self.used_ipv4
+    }
+
+    pub fn has_ipv6(&self) -> bool {
+        self.used_ipv6
+    }
+
+    pub fn record_with_ip_version(
+        &mut self,
+        method: ConnectionMethod,
+        success: bool,
+        is_ipv6: bool,
+    ) {
+        self.record(method, success);
+        if is_ipv6 {
+            self.used_ipv6 = true;
+        } else {
+            self.used_ipv4 = true;
+        }
     }
 }
 
@@ -243,12 +259,21 @@ impl ConnectionHistoryEntry {
         }
     }
 
-    /// Record a connection attempt for inbound/outbound history.
     pub fn record_attempt(
         &mut self,
         direction: ConnectionDirection,
         method: ConnectionMethod,
         success: bool,
+    ) {
+        self.record_attempt_with_ip(direction, method, success, false);
+    }
+
+    pub fn record_attempt_with_ip(
+        &mut self,
+        direction: ConnectionDirection,
+        method: ConnectionMethod,
+        success: bool,
+        is_ipv6: bool,
     ) {
         self.last_seen = Instant::now();
         self.method = Some(method);
@@ -256,10 +281,12 @@ impl ConnectionHistoryEntry {
 
         match direction {
             ConnectionDirection::Outbound => {
-                self.outbound.record(method, success);
+                self.outbound
+                    .record_with_ip_version(method, success, is_ipv6);
             }
             ConnectionDirection::Inbound => {
-                self.inbound.record(method, success);
+                self.inbound
+                    .record_with_ip_version(method, success, is_ipv6);
             }
         }
 
@@ -289,6 +316,26 @@ impl ConnectionHistoryEntry {
             format!("{}m", elapsed.as_secs() / 60)
         } else {
             format!("{}h", elapsed.as_secs() / 3600)
+        }
+    }
+
+    /// Get best RTT as a formatted string.
+    pub fn rtt_string(&self) -> String {
+        match self.best_rtt {
+            Some(rtt) => format!("{}ms", rtt.as_millis()),
+            None => "-".to_string(),
+        }
+    }
+
+    /// Get IPv4/IPv6 indicator based on connection history.
+    pub fn ip_version_indicator(&self) -> &'static str {
+        let has_v4 = self.outbound.has_ipv4() || self.inbound.has_ipv4();
+        let has_v6 = self.outbound.has_ipv6() || self.inbound.has_ipv6();
+        match (has_v4, has_v6) {
+            (true, true) => "4+6",
+            (true, false) => "v4",
+            (false, true) => "v6",
+            (false, false) => "-",
         }
     }
 }

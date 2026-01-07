@@ -33,7 +33,7 @@ fn method_color(method: &ConnectionMethod) -> Color {
     }
 }
 
-/// Get emoji for connection method
+#[allow(dead_code)]
 fn method_emoji(method: &ConnectionMethod) -> &'static str {
     match method {
         ConnectionMethod::Direct => "🟢",
@@ -42,10 +42,7 @@ fn method_emoji(method: &ConnectionMethod) -> &'static str {
     }
 }
 
-/// Format ConnectivityMatrix as compact string showing all tested paths
-/// Format: "4✓ 6✓ N✓ R·" where:
-/// - 4 = IPv4, 6 = IPv6, N = NAT, R = Relay
-/// - ✓ = tested & success, ✗ = tested & failed, · = not tested
+#[allow(dead_code)]
 fn format_connectivity_matrix(matrix: &crate::registry::ConnectivityMatrix) -> Vec<Span<'static>> {
     let mut spans = Vec::with_capacity(8);
 
@@ -552,8 +549,9 @@ fn draw_peers(frame: &mut Frame, app: &mut App, area: Rect) {
         Cell::from("Loc").style(Style::default().add_modifier(Modifier::BOLD)),
         Cell::from("Out").style(Style::default().add_modifier(Modifier::BOLD)),
         Cell::from("In").style(Style::default().add_modifier(Modifier::BOLD)),
+        Cell::from("IP").style(Style::default().add_modifier(Modifier::BOLD)),
+        Cell::from("RTT").style(Style::default().add_modifier(Modifier::BOLD)),
         Cell::from("Seen").style(Style::default().add_modifier(Modifier::BOLD)),
-        Cell::from("Cnt").style(Style::default().add_modifier(Modifier::BOLD)),
     ])
     .height(1)
     .style(Style::default().fg(Color::White));
@@ -594,9 +592,9 @@ fn draw_peers(frame: &mut Frame, app: &mut App, area: Rect) {
                 Cell::from(location),
                 Cell::from(outbound_summary),
                 Cell::from(inbound_summary),
+                Cell::from(entry.ip_version_indicator()).style(Style::default().fg(Color::Cyan)),
+                Cell::from(entry.rtt_string()).style(Style::default().fg(Color::Yellow)),
                 Cell::from(entry.time_since_seen()).style(Style::default().fg(Color::DarkGray)),
-                Cell::from(entry.connection_count.to_string())
-                    .style(Style::default().fg(Color::DarkGray)),
             ])
         })
         .collect();
@@ -606,11 +604,12 @@ fn draw_peers(frame: &mut Frame, app: &mut App, area: Rect) {
         [
             Constraint::Length(2), // Status
             Constraint::Length(9), // Peer ID
-            Constraint::Length(6), // Location
+            Constraint::Length(5), // Location
             Constraint::Length(7), // Outbound summary
             Constraint::Length(7), // Inbound summary
-            Constraint::Length(6), // Last seen
-            Constraint::Min(4),    // Connection count
+            Constraint::Length(4), // IP version
+            Constraint::Length(6), // RTT
+            Constraint::Min(4),    // Last seen
         ],
     )
     .header(header)
