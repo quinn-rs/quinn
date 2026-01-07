@@ -3547,9 +3547,13 @@ impl TestNode {
                 heartbeat_count += 1;
 
                 // Get the gossip transport's peer ID (cache it once we have it)
-                // This is CRITICAL: must match the peer ID used in registration
                 if cached_peer_id.is_none() {
-                    if let Ok(gossip_pid) = epidemic_gossip.transport_peer_id().await {
+                    if let Ok(Ok(gossip_pid)) = tokio::time::timeout(
+                        Duration::from_secs(2),
+                        epidemic_gossip.transport_peer_id(),
+                    )
+                    .await
+                    {
                         let gossip_hex = hex::encode(gossip_pid.as_bytes());
                         if gossip_hex != quic_peer_id {
                             info!(
