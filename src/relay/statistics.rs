@@ -112,16 +112,20 @@ impl RelayStatisticsCollector {
     }
 
     /// Update queue statistics (called from endpoint)
-    #[allow(clippy::unwrap_used)]
     pub fn update_queue_stats(&self, stats: &RelayStats) {
-        let mut queue_stats = self.queue_stats.lock().unwrap();
+        let mut queue_stats = self
+            .queue_stats
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         *queue_stats = stats.clone();
     }
 
     /// Record an authentication attempt
-    #[allow(clippy::unwrap_used)]
     pub fn record_auth_attempt(&self, success: bool, error: Option<&str>) {
-        let mut auth_stats = self.auth_stats.lock().unwrap();
+        let mut auth_stats = self
+            .auth_stats
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         auth_stats.total_auth_attempts += 1;
 
         if success {
@@ -148,9 +152,11 @@ impl RelayStatisticsCollector {
     }
 
     /// Record a rate limiting decision
-    #[allow(clippy::unwrap_used)]
     pub fn record_rate_limit(&self, allowed: bool) {
-        let mut rate_stats = self.rate_limit_stats.lock().unwrap();
+        let mut rate_stats = self
+            .rate_limit_stats
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         rate_stats.total_requests += 1;
 
         if allowed {
@@ -167,19 +173,28 @@ impl RelayStatisticsCollector {
     }
 
     /// Record an error occurrence
-    #[allow(clippy::unwrap_used)]
     pub fn record_error(&self, error_type: &str) {
-        let mut error_counts = self.error_counts.lock().unwrap();
+        let mut error_counts = self
+            .error_counts
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         *error_counts.entry(error_type.to_string()).or_insert(0) += 1;
     }
 
     /// Collect comprehensive statistics from all sources
-    #[allow(clippy::unwrap_used)]
     pub fn collect_statistics(&self) -> RelayStatistics {
         let session_stats = self.collect_session_statistics();
         let connection_stats = self.collect_connection_statistics();
-        let auth_stats = self.auth_stats.lock().unwrap().clone();
-        let rate_limit_stats = self.rate_limit_stats.lock().unwrap().clone();
+        let auth_stats = self
+            .auth_stats
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone();
+        let rate_limit_stats = self
+            .rate_limit_stats
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone();
         let error_stats = self.collect_error_statistics();
 
         let stats = RelayStatistics {
@@ -191,18 +206,21 @@ impl RelayStatisticsCollector {
         };
 
         // Update last snapshot
-        {
-            let mut last_snapshot = self.last_snapshot.lock().unwrap();
-            *last_snapshot = stats.clone();
-        }
+        let mut last_snapshot = self
+            .last_snapshot
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        *last_snapshot = stats.clone();
 
         stats
     }
 
     /// Get the last collected statistics snapshot
-    #[allow(clippy::unwrap_used)]
     pub fn get_last_snapshot(&self) -> RelayStatistics {
-        self.last_snapshot.lock().unwrap().clone()
+        self.last_snapshot
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
     }
 
     /// Collect session statistics from atomic counters
@@ -251,10 +269,15 @@ impl RelayStatisticsCollector {
     }
 
     /// Collect error statistics
-    #[allow(clippy::unwrap_used)]
     fn collect_error_statistics(&self) -> ErrorStatistics {
-        let error_counts = self.error_counts.lock().unwrap();
-        let queue_stats = self.queue_stats.lock().unwrap();
+        let error_counts = self
+            .error_counts
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let queue_stats = self
+            .queue_stats
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
 
         let mut error_stats = ErrorStatistics::default();
         error_stats.error_breakdown = error_counts.clone();
@@ -297,22 +320,33 @@ impl RelayStatisticsCollector {
     }
 
     /// Reset all statistics (useful for testing)
-    #[allow(clippy::unwrap_used)]
     pub fn reset(&self) {
         {
-            let mut queue_stats = self.queue_stats.lock().unwrap();
+            let mut queue_stats = self
+                .queue_stats
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             *queue_stats = RelayStats::default();
         }
         {
-            let mut error_counts = self.error_counts.lock().unwrap();
+            let mut error_counts = self
+                .error_counts
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             error_counts.clear();
         }
         {
-            let mut auth_stats = self.auth_stats.lock().unwrap();
+            let mut auth_stats = self
+                .auth_stats
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             *auth_stats = AuthenticationStatistics::default();
         }
         {
-            let mut rate_limit_stats = self.rate_limit_stats.lock().unwrap();
+            let mut rate_limit_stats = self
+                .rate_limit_stats
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             *rate_limit_stats = RateLimitingStatistics::default();
         }
 

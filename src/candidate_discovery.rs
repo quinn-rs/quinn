@@ -538,7 +538,6 @@ impl CandidateDiscoveryManager {
     }
 
     /// Discover local network interface candidates synchronously
-    #[allow(clippy::panic)]
     pub fn discover_local_candidates(&mut self) -> Result<Vec<ValidatedCandidate>, DiscoveryError> {
         // Start interface scan
         let mut interface_discovery = self
@@ -558,12 +557,13 @@ impl CandidateDiscoveryManager {
                 return Err(DiscoveryError::DiscoveryTimeout);
             }
 
-            if let Some(interfaces) = self
+            let scan_complete = self
                 .interface_discovery
                 .lock()
-                .unwrap_or_else(|_| panic!("interface discovery mutex should be valid"))
-                .check_scan_complete()
-            {
+                .map_err(|e| DiscoveryError::NetworkError(format!("Mutex poisoned: {e}")))?
+                .check_scan_complete();
+
+            if let Some(interfaces) = scan_complete {
                 // Convert interfaces to candidates
                 let mut candidates = Vec::new();
 
@@ -1795,7 +1795,6 @@ impl CandidateDiscoveryManager {
     }
 
     #[allow(dead_code)]
-    #[allow(clippy::panic)]
     fn calculate_consensus_address(&self, responses: &[ServerReflexiveResponse]) -> SocketAddr {
         // Simple majority consensus - in practice, would use more sophisticated algorithm
         let mut address_counts: HashMap<SocketAddr, usize> = HashMap::new();
@@ -1808,11 +1807,7 @@ impl CandidateDiscoveryManager {
             .into_iter()
             .max_by_key(|(_, count)| *count)
             .map(|(addr, _)| addr)
-            .unwrap_or_else(|| {
-                "0.0.0.0:0"
-                    .parse()
-                    .unwrap_or_else(|_| panic!("hardcoded fallback address should be valid"))
-            })
+            .unwrap_or_else(|| SocketAddr::from(([0, 0, 0, 0], 0)))
     }
 
     /// Calculate the accuracy of predictions based on pattern consistency
@@ -2017,7 +2012,6 @@ impl CandidateDiscoveryManager {
     }
 
     /// Poll discovery progress and get pending events
-    #[allow(clippy::panic)]
     pub fn poll_discovery_progress(&mut self, peer_id: PeerId) -> Vec<DiscoveryEvent> {
         let mut events = Vec::new();
 
@@ -2027,9 +2021,7 @@ impl CandidateDiscoveryManager {
                 if matches!(candidate.state, CandidateState::New) {
                     events.push(DiscoveryEvent::ServerReflexiveCandidateDiscovered {
                         candidate: candidate.to_candidate_address(),
-                        bootstrap_node: "0.0.0.0:0".parse().unwrap_or_else(|_| {
-                            panic!("hardcoded placeholder address should be valid")
-                        }), // Placeholder for QUIC-discovered
+                        bootstrap_node: SocketAddr::from(([0, 0, 0, 0], 0)),
                     });
                 }
             }
@@ -2471,15 +2463,9 @@ impl ServerReflexiveDiscovery {
     fn simulate_bootstrap_response(&mut self, node_id: BootstrapNodeId, now: Instant) {
         // Simulate network delay
         let simulated_external_addr = match node_id.0 % 3 {
-            0 => "203.0.113.1:45678"
-                .parse()
-                .expect("Failed to parse hardcoded test address"),
-            1 => "198.51.100.2:45679"
-                .parse()
-                .expect("Failed to parse hardcoded test address"),
-            _ => "192.0.2.3:45680"
-                .parse()
-                .expect("Failed to parse hardcoded test address"),
+            0 => SocketAddr::from(([203, 0, 113, 1], 45_678)),
+            1 => SocketAddr::from(([198, 51, 100, 2], 45_679)),
+            _ => SocketAddr::from(([192, 0, 2, 3], 45_680)),
         };
 
         let response = ServerReflexiveResponse {
@@ -2767,12 +2753,7 @@ impl SymmetricNatPredictor {
         let priority = (base_priority as f64 * confidence) as u32;
 
         DiscoveryCandidate {
-            address: SocketAddr::new(
-                "0.0.0.0"
-                    .parse()
-                    .expect("Failed to parse hardcoded placeholder IP"),
-                port,
-            ),
+            address: SocketAddr::from(([0, 0, 0, 0], port)),
             priority,
             source: DiscoverySourceType::Predicted,
             state: CandidateState::New,
@@ -3257,7 +3238,10 @@ impl BootstrapNodeManager {
 
         // Calculate metrics from stats
         let (_success_rate, new_health_status, _average_rtt) = {
-            let stats = self.health_stats.get_mut(&node_id).unwrap();
+            let Some(stats) = self.health_stats.get_mut(&node_id) else {
+                warn!("No health stats found for bootstrap node {:?}", node_id);
+                return;
+            };
 
             // Calculate success rate
             let success_rate = if stats.connection_attempts > 0 {
@@ -3499,7 +3483,10 @@ impl BootstrapNodeManager {
         node_id: BootstrapNodeId,
         _node_info: &BootstrapNodeInfo,
     ) -> f64 {
-        let stats = self.health_stats.get(&node_id).unwrap();
+        let Some(stats) = self.health_stats.get(&node_id) else {
+            warn!("No health stats found for bootstrap node {:?}", node_id);
+            return 0.0;
+        };
 
         let mut score = 0.0;
 
@@ -3696,17 +3683,12 @@ impl NetworkInterfaceDiscovery for GenericInterfaceDiscovery {
         Ok(())
     }
 
-    #[allow(clippy::panic)]
     fn check_scan_complete(&mut self) -> Option<Vec<NetworkInterface>> {
         if self.scan_complete {
             self.scan_complete = false;
             Some(vec![NetworkInterface {
                 name: "generic".to_string(),
-                addresses: vec![
-                    "127.0.0.1:0"
-                        .parse()
-                        .unwrap_or_else(|_| panic!("Failed to parse hardcoded localhost address")),
-                ],
+                addresses: vec![SocketAddr::from(([127, 0, 0, 1], 0))],
                 is_up: true,
                 is_wireless: false,
                 mtu: Some(1500),

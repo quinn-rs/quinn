@@ -19,6 +19,7 @@
 use std::{any::Any, str, sync::Arc};
 
 use bytes::BytesMut;
+use thiserror::Error;
 
 use crate::{
     ConnectError, Side, TransportError, shared::ConnectionId,
@@ -171,6 +172,17 @@ pub trait ClientConfig: Send + Sync {
     ) -> Result<Box<dyn Session>, ConnectError>;
 }
 
+/// Errors encountered while starting a server-side crypto session
+#[derive(Debug, Error, Clone, PartialEq, Eq)]
+pub enum ServerStartError {
+    /// Failed to encode transport parameters
+    #[error("transport parameter encoding failed: {0}")]
+    TransportParameters(#[from] crate::transport_parameters::Error),
+    /// TLS-related error during session setup
+    #[error("TLS error: {0}")]
+    TlsError(String),
+}
+
 /// Server-side configuration for the crypto protocol
 pub trait ServerConfig: Send + Sync {
     /// Create the initial set of keys given the client's initial destination ConnectionId
@@ -192,7 +204,7 @@ pub trait ServerConfig: Send + Sync {
         self: Arc<Self>,
         version: u32,
         params: &TransportParameters,
-    ) -> Box<dyn Session>;
+    ) -> Result<Box<dyn Session>, ServerStartError>;
 }
 
 /// Keys used to protect packet payloads

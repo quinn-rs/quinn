@@ -574,18 +574,19 @@ impl EndpointInner {
         respond(transmit, &response_buffer, &*state.socket);
     }
 
-    pub(crate) fn retry(&self, incoming: crate::Incoming) -> Result<(), std::io::Error> {
-        let mut state = self
-            .state
-            .lock()
-            .map_err(|_| std::io::Error::other("Endpoint state mutex poisoned"))?;
-        let mut response_buffer = Vec::new();
-        let transmit = match state.inner.retry(incoming, &mut response_buffer) {
-            Ok(transmit) => transmit,
+    pub(crate) fn retry(
+        &self,
+        incoming: crate::Incoming,
+    ) -> Result<(), crate::endpoint::RetryError> {
+        let mut state = match self.state.lock() {
+            Ok(state) => state,
             Err(_) => {
-                return Err(std::io::Error::other("Retry failed"));
+                error!("Failed to retry connection: endpoint state mutex poisoned");
+                return Err(crate::endpoint::RetryError::incoming(incoming));
             }
         };
+        let mut response_buffer = Vec::new();
+        let transmit = state.inner.retry(incoming, &mut response_buffer)?;
         respond(transmit, &response_buffer, &*state.socket);
         Ok(())
     }

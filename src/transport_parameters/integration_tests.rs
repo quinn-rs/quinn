@@ -21,7 +21,7 @@ mod transport_parameter_error_integration_tests {
         params.ack_delay_exponent = VarInt::from_u32(21); // Invalid: > 20
 
         let mut buf = Vec::new();
-        params.write(&mut buf);
+        params.write(&mut buf).unwrap();
 
         let result = TransportParameters::read(Side::Client, &mut buf.as_slice());
         assert!(result.is_err());
@@ -86,7 +86,7 @@ mod transport_parameter_error_integration_tests {
         );
 
         let mut buf = Vec::new();
-        params.write(&mut buf);
+        params.write(&mut buf).unwrap();
 
         // Server reading this should fail due to invalid concurrency_limit
         let result = TransportParameters::read(Side::Server, &mut buf.as_slice());
@@ -160,7 +160,7 @@ mod transport_parameter_error_integration_tests {
         params.active_connection_id_limit = VarInt::from_u32(4);
 
         let mut buf = Vec::new();
-        params.write(&mut buf);
+        params.write(&mut buf).unwrap();
 
         let result = TransportParameters::read(Side::Client, &mut buf.as_slice());
         assert!(result.is_ok());

@@ -102,7 +102,7 @@ mod transport_parameter_error_tests {
         params.max_ack_delay = VarInt::from_u32(25); // 25ms
 
         let mut buf = Vec::new();
-        params.write(&mut buf);
+        params.write(&mut buf).unwrap();
 
         // Append min_ack_delay parameter
         buf.write_var(0xFF04DE1B); // min_ack_delay ID (draft-ietf-quic-ack-frequency)
@@ -203,7 +203,7 @@ mod transport_parameter_error_tests {
         );
 
         let mut buf = Vec::new();
-        params.write(&mut buf);
+        params.write(&mut buf).unwrap();
 
         let result = TransportParameters::read(Side::Server, &mut buf.as_slice());
         assert!(result.is_err());

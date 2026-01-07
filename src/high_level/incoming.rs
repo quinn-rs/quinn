@@ -7,7 +7,7 @@
 
 use std::{
     future::{Future, IntoFuture},
-    net::{IpAddr, SocketAddr},
+    net::{IpAddr, Ipv4Addr, SocketAddr},
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
@@ -66,23 +66,23 @@ impl Incoming {
     /// Respond with a retry packet, requiring the client to retry with address validation
     ///
     /// Errors if `may_retry()` is false.
-    #[allow(clippy::panic)]
     pub fn retry(mut self) -> Result<(), RetryError> {
         let state = match self.0.take() {
             Some(state) => state,
             None => {
                 error!("Incoming connection state already consumed");
-                // This is a programming error - the connection has already been consumed
-                // In a production system, this should be handled more gracefully
-                // For now, we'll panic since this indicates a bug in the calling code
-                panic!("Incoming connection state already consumed - this is a programming error");
+                return Err(RetryError::incoming(self));
             }
         };
-        state.endpoint.retry(state.inner).map_err(|_| {
-            // Since we can't create a proper RetryError without an Incoming,
-            // we'll panic as this indicates a serious internal error
-            panic!("Retry failed due to internal error");
-        })
+
+        let State { inner, endpoint } = state;
+        match endpoint.retry(inner) {
+            Ok(()) => Ok(()),
+            Err(err) => Err(RetryError::incoming(Incoming::new(
+                err.into_incoming(),
+                endpoint,
+            ))),
+        }
     }
 
     /// Ignore this incoming connection attempt, not sending any packet in response
@@ -100,16 +100,11 @@ impl Incoming {
     }
 
     /// The peer's UDP address
-    #[allow(clippy::panic)]
     pub fn remote_address(&self) -> SocketAddr {
         self.0
             .as_ref()
             .map(|state| state.inner.remote_address())
-            .unwrap_or_else(|| {
-                "0.0.0.0:0".parse().unwrap_or_else(|_| {
-                    panic!("Failed to parse fallback address");
-                })
-            })
+            .unwrap_or_else(|| SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0))
     }
 
     /// Whether the socket address that is initiating this connection has been validated
@@ -163,13 +158,23 @@ struct State {
 
 /// Error for attempting to retry an [`Incoming`] which already bears a token from a previous retry
 #[derive(Debug, Error)]
-#[error("retry() with validated Incoming")]
-pub struct RetryError(Box<Incoming>);
+pub enum RetryError {
+    /// Retry was attempted with an invalid or already-consumed Incoming.
+    #[error("retry() with invalid Incoming")]
+    Incoming(Box<Incoming>),
+}
 
 impl RetryError {
+    /// Create a retry error carrying the original Incoming.
+    pub fn incoming(incoming: Incoming) -> Self {
+        Self::Incoming(Box::new(incoming))
+    }
+
     /// Get the [`Incoming`]
     pub fn into_incoming(self) -> Incoming {
-        *self.0
+        match self {
+            Self::Incoming(incoming) => *incoming,
+        }
     }
 }
 

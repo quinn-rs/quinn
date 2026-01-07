@@ -1239,7 +1239,17 @@ impl Endpoint {
             });
         }
 
-        let tls = server_config.crypto.clone().start_session(version, &params);
+        let tls = match server_config.crypto.clone().start_session(version, &params) {
+            Ok(session) => session,
+            Err(e) => {
+                return Err(AcceptError {
+                    cause: ConnectionError::TransportError(TransportError::INTERNAL_ERROR(
+                        format!("server session start failed: {e}"),
+                    )),
+                    response: None,
+                });
+            }
+        };
         let transport_config = server_config.transport.clone();
         let mut conn = self.add_connection(
             ch,
@@ -1347,11 +1357,11 @@ impl Endpoint {
     /// Errors if `incoming.may_retry()` is false.
     pub fn retry(&mut self, incoming: Incoming, buf: &mut Vec<u8>) -> Result<Transmit, RetryError> {
         if !incoming.may_retry() {
-            return Err(RetryError(Box::new(incoming)));
+            return Err(RetryError::incoming(incoming));
         }
 
         let Some(server_config_arc) = self.server_config.clone() else {
-            return Err(RetryError(Box::new(incoming)));
+            return Err(RetryError::incoming(incoming));
         };
 
         self.clean_up_incoming(&incoming);
@@ -1963,6 +1973,9 @@ pub enum ConnectError {
     /// A TLS-related error occurred during connection establishment
     #[error("TLS error: {0}")]
     TlsError(String),
+    /// Failed to encode transport parameters for the handshake
+    #[error("transport parameters encoding failed: {0}")]
+    TransportParameters(crate::transport_parameters::Error),
 }
 
 /// Error type for attempting to accept an [`Incoming`]
@@ -1991,13 +2004,23 @@ impl From<crate::transport_error::Error> for AcceptError {
 
 /// Error for attempting to retry an [`Incoming`] which already bears a token from a previous retry
 #[derive(Debug, Error)]
-#[error("retry() with validated Incoming")]
-pub struct RetryError(Box<Incoming>);
+pub enum RetryError {
+    /// Retry was attempted with an invalid or already-consumed Incoming.
+    #[error("retry() with invalid Incoming")]
+    Incoming(Box<Incoming>),
+}
 
 impl RetryError {
+    /// Create a retry error carrying the original Incoming.
+    pub fn incoming(incoming: Incoming) -> Self {
+        Self::Incoming(Box::new(incoming))
+    }
+
     /// Get the [`Incoming`]
     pub fn into_incoming(self) -> Incoming {
-        *self.0
+        match self {
+            Self::Incoming(incoming) => *incoming,
+        }
     }
 }
 

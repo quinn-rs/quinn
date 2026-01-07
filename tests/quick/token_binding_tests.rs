@@ -12,7 +12,7 @@ fn retry_token_round_trip_binds_peer_and_cid() {
     let pid = PeerId([7u8; 32]);
     let cid = ConnectionId::new(&[9u8; 8]); // use 8-byte cid
 
-    let tok = ant_quic::token_v2::encode_retry_token(&key, &pid, &cid);
+    let tok = ant_quic::token_v2::encode_retry_token(&key, &pid, &cid).unwrap();
     let dec = ant_quic::token_v2::decode_retry_token(&key, &tok).expect("decodes");
 
     assert_eq!(dec.peer_id, pid);

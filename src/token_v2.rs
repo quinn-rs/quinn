@@ -24,6 +24,7 @@
 // It will only be compiled when ring or aws-lc-rs features are enabled
 
 use rand::RngCore;
+use thiserror::Error;
 
 use crate::{nat_traversal_api::PeerId, shared::ConnectionId};
 
@@ -46,6 +47,20 @@ pub struct RetryTokenDecoded {
     pub nonce: u128,
 }
 
+/// Errors that can occur while encoding retry tokens.
+#[derive(Debug, Error, Clone, PartialEq, Eq)]
+pub enum TokenError {
+    /// Key length was invalid for AES-256-GCM.
+    #[error("invalid key length")]
+    InvalidKeyLength,
+    /// Nonce length was invalid for AES-256-GCM.
+    #[error("invalid nonce length")]
+    InvalidNonceLength,
+    /// Encryption failed.
+    #[error("token encryption failed")]
+    EncryptionFailed,
+}
+
 /// Generate a random token key for testing purposes.
 /// Fills a 32-byte array with random data from the provided RNG.
 pub fn test_key_from_rng(rng: &mut dyn RngCore) -> TokenKey {
@@ -56,13 +71,13 @@ pub fn test_key_from_rng(rng: &mut dyn RngCore) -> TokenKey {
 
 /// Encode a retry token containing peer ID, connection ID, and a fresh nonce.
 /// Encrypts the token contents using AES-256-GCM with the provided key.
-/// Returns the encrypted token as bytes, including authentication tag and nonce.
+/// Returns the encrypted token bytes, including authentication tag and nonce.
 pub fn encode_retry_token_with_rng<R: RngCore>(
     key: &TokenKey,
     peer_id: &PeerId,
     cid: &ConnectionId,
     rng: &mut R,
-) -> Vec<u8> {
+) -> Result<Vec<u8>, TokenError> {
     let mut nonce_bytes = [0u8; 12]; // AES-GCM standard nonce length is 12 bytes
     rng.fill_bytes(&mut nonce_bytes);
 
@@ -74,7 +89,11 @@ pub fn encode_retry_token_with_rng<R: RngCore>(
     seal(&key.0, &nonce_bytes, &pt)
 }
 
-pub fn encode_retry_token(key: &TokenKey, peer_id: &PeerId, cid: &ConnectionId) -> Vec<u8> {
+pub fn encode_retry_token(
+    key: &TokenKey,
+    peer_id: &PeerId,
+    cid: &ConnectionId,
+) -> Result<Vec<u8>, TokenError> {
     encode_retry_token_with_rng(key, peer_id, cid, &mut rand::thread_rng())
 }
 
@@ -131,24 +150,26 @@ pub fn validate_token(
 
 /// Encrypt plaintext using AES-256-GCM with the provided key and nonce.
 /// Returns the ciphertext with authentication tag and nonce suffix.
-#[allow(clippy::expect_used, clippy::let_unit_value)]
-fn seal(key: &[u8; 32], nonce: &[u8; 12], pt: &[u8]) -> Vec<u8> {
-    let unbound_key = UnboundKey::new(&AES_256_GCM, key).expect("invalid key length");
+#[allow(clippy::let_unit_value)]
+fn seal(key: &[u8; 32], nonce: &[u8; 12], pt: &[u8]) -> Result<Vec<u8>, TokenError> {
+    let unbound_key =
+        UnboundKey::new(&AES_256_GCM, key).map_err(|_| TokenError::InvalidKeyLength)?;
     let key = LessSafeKey::new(unbound_key);
 
     // Store nonce bytes for later use before creating Nonce object
     let nonce_bytes = *nonce;
 
     // Use 12-byte nonce for AES-GCM encryption
-    let nonce = Nonce::try_assume_unique_for_key(&nonce_bytes).expect("invalid nonce length");
+    let nonce = Nonce::try_assume_unique_for_key(&nonce_bytes)
+        .map_err(|_| TokenError::InvalidNonceLength)?;
 
     let mut in_out = pt.to_vec();
     key.seal_in_place_append_tag(nonce, Aad::empty(), &mut in_out)
-        .expect("encryption failed");
+        .map_err(|_| TokenError::EncryptionFailed)?;
 
     // Append the full 12-byte nonce as suffix (standard for QUIC tokens)
     in_out.extend_from_slice(&nonce_bytes);
-    in_out
+    Ok(in_out)
 }
 
 /// Decrypt ciphertext using AES-256-GCM with the provided key and nonce suffix.

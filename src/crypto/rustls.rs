@@ -29,7 +29,8 @@ static DEBUG_KEM_ONLY: AtomicBool = AtomicBool::new(false);
 use crate::{
     ConnectError, ConnectionId, Side, TransportError, TransportErrorCode,
     crypto::{
-        self, CryptoError, ExportKeyingMaterialError, HeaderKey, KeyPair, Keys, UnsupportedVersion,
+        self, CryptoError, ExportKeyingMaterialError, HeaderKey, KeyPair, Keys, ServerStartError,
+        UnsupportedVersion,
         tls_extension_simulation::{
             ExtensionAwareTlsSession, SimulatedExtensionContext, TlsExtensionHooks,
         },
@@ -401,7 +402,7 @@ impl crypto::ClientConfig for QuicClientConfig {
                 ServerName::try_from(server_name)
                     .map_err(|_| ConnectError::InvalidServerName(server_name.into()))?
                     .to_owned(),
-                to_vec(params),
+                to_vec(params).map_err(ConnectError::TransportParameters)?,
             )?),
             suite: self.initial,
         });
@@ -577,21 +578,18 @@ impl crypto::ServerConfig for QuicServerConfig {
         self: Arc<Self>,
         version: u32,
         params: &TransportParameters,
-    ) -> Box<dyn crypto::Session> {
+    ) -> Result<Box<dyn crypto::Session>, ServerStartError> {
         // Safe: `start_session()` is never called if `initial_keys()` rejected `version`
         let version = interpret_version(version).map_err(|_| {
-            rustls::Error::General("Invalid QUIC version for server connection".into())
-        }).expect("Version should be valid at this point - start_session() is never called if initial_keys() rejected version");
+            ServerStartError::TlsError("Invalid QUIC version for server connection".into())
+        })?;
         let inner_session = Box::new(TlsSession {
             version,
             got_handshake_data: false,
             next_secrets: None,
             inner: rustls::quic::Connection::Server(
-                rustls::quic::ServerConnection::new(self.inner.clone(), version, to_vec(params))
-                    .map_err(|_| {
-                        rustls::Error::General("Failed to create server connection".into())
-                    })
-                    .expect("Server connection creation should not fail with valid parameters"),
+                rustls::quic::ServerConnection::new(self.inner.clone(), version, to_vec(params)?)
+                    .map_err(|e| ServerStartError::TlsError(e.to_string()))?,
             ),
             suite: self.initial,
         });
@@ -605,14 +603,14 @@ impl crypto::ServerConfig for QuicServerConfig {
                     .unwrap_or_else(|_| std::time::Duration::from_secs(0))
                     .as_nanos()
             );
-            Box::new(ExtensionAwareTlsSession::new(
+            Ok(Box::new(ExtensionAwareTlsSession::new(
                 inner_session,
                 extension_context.clone() as Arc<dyn TlsExtensionHooks>,
                 conn_id,
                 false, // is_client = false for server
-            ))
+            )))
         } else {
-            inner_session
+            Ok(inner_session)
         }
     }
 
@@ -737,10 +735,10 @@ pub fn debug_kem_only_enabled() -> bool {
     DEBUG_KEM_ONLY.load(Ordering::Relaxed)
 }
 
-fn to_vec(params: &TransportParameters) -> Vec<u8> {
+fn to_vec(params: &TransportParameters) -> Result<Vec<u8>, crate::transport_parameters::Error> {
     let mut bytes = Vec::new();
-    params.write(&mut bytes);
-    bytes
+    params.write(&mut bytes)?;
+    Ok(bytes)
 }
 
 pub(crate) fn initial_keys(

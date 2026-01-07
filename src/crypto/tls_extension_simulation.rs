@@ -535,9 +535,9 @@ impl QuicServerConfig for Rfc7250QuicServerConfig {
         self: Arc<Self>,
         version: u32,
         params: &crate::transport_parameters::TransportParameters,
-    ) -> Box<dyn crate::crypto::Session> {
+    ) -> Result<Box<dyn crate::crypto::Session>, crate::crypto::ServerStartError> {
         // Create the base session
-        let inner_session = self.base_config.clone().start_session(version, params);
+        let inner_session = self.base_config.clone().start_session(version, params)?;
 
         // Create connection ID for this session
         let conn_id = format!(
@@ -549,12 +549,12 @@ impl QuicServerConfig for Rfc7250QuicServerConfig {
         );
 
         // Create wrapper with extension hooks
-        Box::new(ExtensionAwareTlsSession::new(
+        Ok(Box::new(ExtensionAwareTlsSession::new(
             inner_session,
             self.extension_context.clone() as Arc<dyn TlsExtensionHooks>,
             conn_id,
             false, // is_client = false for server
-        ))
+        )))
     }
 
     fn initial_keys(

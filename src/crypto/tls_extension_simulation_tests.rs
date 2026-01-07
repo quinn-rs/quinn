@@ -109,7 +109,10 @@ mod tests {
         
         // Start a session
         let params = TransportParameters::default();
-        let mut session = rfc7250_config.clone().start_session(0x00000001, &params);
+        let mut session = rfc7250_config
+            .clone()
+            .start_session(0x00000001, &params)
+            .unwrap();
         
         // Test initial keys
         let dst_cid = ConnectionId::from_vec(vec![5, 6, 7, 8]);

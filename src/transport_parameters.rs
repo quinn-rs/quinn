@@ -469,6 +469,9 @@ pub enum Error {
     /// Catch-all error for problems while decoding transport parameters
     #[error("parameters were malformed")]
     Malformed,
+    /// Internal error while encoding transport parameters
+    #[error("internal transport parameter encoding error")]
+    Internal,
 }
 
 impl From<Error> for TransportError {
@@ -476,6 +479,7 @@ impl From<Error> for TransportError {
         match e {
             Error::IllegalValue => Self::TRANSPORT_PARAMETER_ERROR("illegal value"),
             Error::Malformed => Self::TRANSPORT_PARAMETER_ERROR("malformed"),
+            Error::Internal => Self::INTERNAL_ERROR("transport parameter encoding failed"),
         }
     }
 }
@@ -488,7 +492,7 @@ impl From<UnexpectedEnd> for Error {
 
 impl TransportParameters {
     /// Encode `TransportParameters` into buffer
-    pub fn write<W: BufMut>(&self, w: &mut W) {
+    pub fn write<W: BufMut>(&self, w: &mut W) -> Result<(), Error> {
         for idx in self
             .write_order
             .as_ref()
@@ -620,14 +624,16 @@ impl TransportParameters {
                                 $(TransportParameterId::$id => {
                                     if self.$name.0 != $default {
                                         w.write_var(id as u64);
-                                        w.write(VarInt::try_from(self.$name.size()).unwrap());
+                                        let size = VarInt::try_from(self.$name.size())
+                                            .map_err(|_| Error::Internal)?;
+                                        w.write(size);
                                         w.write(self.$name);
                                     }
                                 })*,
                                 _ => {
                                     // This should never be reached for supported parameters
                                     // All supported parameters should be handled in specific match arms above
-                                    panic!("Unsupported transport parameter reached write implementation: {id:?}");
+                                    return Err(Error::Internal);
                                 }
                             }
                         }
@@ -636,6 +642,7 @@ impl TransportParameters {
                 }
             }
         }
+        Ok(())
     }
 
     /// Decode `TransportParameters` from buffer
@@ -1207,7 +1214,7 @@ mod test {
         client_params.nat_traversal = Some(client_config);
 
         let mut encoded = Vec::new();
-        client_params.write(&mut encoded);
+        client_params.write(&mut encoded).unwrap();
 
         // Server reads client params
         let server_decoded = TransportParameters::read(Side::Server, &mut encoded.as_slice())
@@ -1227,7 +1234,7 @@ mod test {
         server_params.nat_traversal = Some(server_config);
 
         let mut encoded = Vec::new();
-        server_params.write(&mut encoded);
+        server_params.write(&mut encoded).unwrap();
 
         // Client reads server params
         let client_decoded = TransportParameters::read(Side::Client, &mut encoded.as_slice())
@@ -1252,7 +1259,7 @@ mod test {
         params.nat_traversal = Some(config);
 
         let mut encoded = Vec::new();
-        params.write(&mut encoded);
+        params.write(&mut encoded).unwrap();
 
         // Server reads client's parameters
         let decoded_params = TransportParameters::read(Side::Server, &mut encoded.as_slice())
@@ -1273,7 +1280,7 @@ mod test {
         server_params.nat_traversal = Some(server_config);
 
         let mut server_encoded = Vec::new();
-        server_params.write(&mut server_encoded);
+        server_params.write(&mut server_encoded).unwrap();
 
         // Client reads server's parameters
         let decoded_server_params =
@@ -1297,7 +1304,7 @@ mod test {
         params.nat_traversal = None;
 
         let mut encoded = Vec::new();
-        params.write(&mut encoded);
+        params.write(&mut encoded).unwrap();
 
         let decoded_params = TransportParameters::read(Side::Client, &mut encoded.as_slice())
             .expect("Failed to decode transport parameters");
@@ -1316,7 +1323,7 @@ mod test {
         client_params.nat_traversal = Some(client_config);
 
         let mut encoded = Vec::new();
-        client_params.write(&mut encoded);
+        client_params.write(&mut encoded).unwrap();
 
         // Verify the encoded data contains empty value for client
         // Find the NAT traversal parameter in the encoded data
@@ -1343,7 +1350,7 @@ mod test {
         server_params.nat_traversal = Some(server_config);
 
         let mut encoded = Vec::new();
-        server_params.write(&mut encoded);
+        server_params.write(&mut encoded).unwrap();
 
         // Verify the encoded data contains 1-byte value for server
         let mut cursor = &encoded[..];
@@ -1423,7 +1430,7 @@ mod test {
         client_params.nat_traversal = Some(NatTraversalConfig::ClientSupport);
 
         let mut encoded = Vec::new();
-        client_params.write(&mut encoded);
+        client_params.write(&mut encoded).unwrap();
 
         // Verify it can be decoded by server
         let decoded = TransportParameters::read(Side::Server, &mut encoded.as_slice())
@@ -1440,7 +1447,7 @@ mod test {
         });
 
         let mut encoded = Vec::new();
-        server_params.write(&mut encoded);
+        server_params.write(&mut encoded).unwrap();
 
         // Verify it can be decoded by client
         let decoded = TransportParameters::read(Side::Client, &mut encoded.as_slice())
@@ -1537,7 +1544,7 @@ mod test {
 
         // Test encoding
         let mut encoded = Vec::new();
-        params.write(&mut encoded);
+        params.write(&mut encoded).unwrap();
         assert!(!encoded.is_empty());
 
         // Test decoding
@@ -1577,7 +1584,7 @@ mod test {
 
         // 2. Client encodes and sends to server
         let mut client_encoded = Vec::new();
-        client_params.write(&mut client_encoded);
+        client_params.write(&mut client_encoded).unwrap();
 
         // 3. Server receives and decodes client parameters
         let server_received =
@@ -1600,7 +1607,7 @@ mod test {
 
         // 5. Server encodes and sends to client
         let mut server_encoded = Vec::new();
-        server_params.write(&mut server_encoded);
+        server_params.write(&mut server_encoded).unwrap();
 
         // 6. Client receives and decodes server parameters
         let client_received =
@@ -1636,7 +1643,7 @@ mod test {
         peer1_params.nat_traversal = Some(peer1_config);
 
         let mut encoded = Vec::new();
-        peer1_params.write(&mut encoded);
+        peer1_params.write(&mut encoded).unwrap();
 
         // Peer 2 (acting as server side) receives peer 1's ServerSupport
         // This currently FAILS but should PASS after P2P fix
@@ -1692,7 +1699,7 @@ mod test {
         params.nat_traversal = Some(config);
 
         let mut encoded = Vec::new();
-        params.write(&mut encoded);
+        params.write(&mut encoded).unwrap();
 
         // Should reject zero concurrency limit
         let result = TransportParameters::read(Side::Server, &mut encoded.as_slice());
@@ -1714,7 +1721,7 @@ mod test {
         params.nat_traversal = Some(config);
 
         let mut encoded = Vec::new();
-        params.write(&mut encoded);
+        params.write(&mut encoded).unwrap();
 
         // Should reject concurrency limit > 100
         let result = TransportParameters::read(Side::Server, &mut encoded.as_slice());
@@ -1735,7 +1742,7 @@ mod test {
         params.nat_traversal = Some(config);
 
         let mut encoded = Vec::new();
-        params.write(&mut encoded);
+        params.write(&mut encoded).unwrap();
 
         // Client receiving ClientSupport (currently FAILS, should PASS after P2P fix)
         let decoded = TransportParameters::read(Side::Client, &mut encoded.as_slice())
@@ -1790,7 +1797,7 @@ mod test {
         client_params.nat_traversal = Some(client_config);
 
         let mut encoded = Vec::new();
-        client_params.write(&mut encoded);
+        client_params.write(&mut encoded).unwrap();
 
         // Server decodes client's parameters
         let server_decoded = TransportParameters::read(Side::Server, &mut encoded.as_slice())
@@ -1815,7 +1822,7 @@ mod test {
         server_params.nat_traversal = Some(server_config);
 
         let mut encoded = Vec::new();
-        server_params.write(&mut encoded);
+        server_params.write(&mut encoded).unwrap();
 
         // Client decodes server's parameters
         let client_decoded = TransportParameters::read(Side::Client, &mut encoded.as_slice())
@@ -1848,7 +1855,7 @@ mod test {
             min_ack_delay: Some(2_000u32.into()),
             ..TransportParameters::default()
         };
-        params.write(&mut buf);
+        params.write(&mut buf).unwrap();
         assert_eq!(
             TransportParameters::read(Side::Client, &mut buf.as_slice()).unwrap(),
             params
@@ -1927,7 +1934,7 @@ mod test {
             let mut buf = Vec::new();
             let mut params = TransportParameters::default();
             builder(&mut params);
-            params.write(&mut buf);
+            params.write(&mut buf).unwrap();
 
             assert_eq!(
                 TransportParameters::read(Side::Server, &mut buf.as_slice()),
@@ -2010,7 +2017,7 @@ mod test {
         params.address_discovery = Some(config);
 
         let mut encoded = Vec::new();
-        params.write(&mut encoded);
+        params.write(&mut encoded).unwrap();
 
         // The encoded data should contain our parameter
         assert!(!encoded.is_empty());
@@ -2025,7 +2032,7 @@ mod test {
         params.address_discovery = Some(config);
 
         let mut encoded = Vec::new();
-        params.write(&mut encoded);
+        params.write(&mut encoded).unwrap();
 
         // Decode as peer
         let decoded = TransportParameters::read(Side::Client, &mut encoded.as_slice())
@@ -2055,7 +2062,7 @@ mod test {
             params.address_discovery = Some(variant);
 
             let mut encoded = Vec::new();
-            params.write(&mut encoded);
+            params.write(&mut encoded).unwrap();
 
             let decoded = TransportParameters::read(Side::Server, &mut encoded.as_slice())
                 .expect("Failed to decode");
@@ -2071,7 +2078,7 @@ mod test {
         params.address_discovery = None;
 
         let mut encoded = Vec::new();
-        params.write(&mut encoded);
+        params.write(&mut encoded).unwrap();
 
         let decoded = TransportParameters::read(Side::Client, &mut encoded.as_slice())
             .expect("Failed to decode");
@@ -2087,7 +2094,7 @@ mod test {
         params.initial_max_data = VarInt::from_u32(1_000_000);
 
         let mut encoded = Vec::new();
-        params.write(&mut encoded);
+        params.write(&mut encoded).unwrap();
 
         let decoded = TransportParameters::read(Side::Client, &mut encoded.as_slice())
             .expect("Failed to decode");
@@ -2175,7 +2182,7 @@ mod test {
         params.address_discovery = Some(AddressDiscoveryConfig::SendAndReceive);
 
         let mut encoded = Vec::new();
-        params.write(&mut encoded);
+        params.write(&mut encoded).unwrap();
 
         let decoded = TransportParameters::read(Side::Client, &mut encoded.as_slice())
             .expect("Failed to decode");
@@ -2200,7 +2207,7 @@ mod test {
 
         // Encode
         let mut encoded = Vec::new();
-        params.write(&mut encoded);
+        params.write(&mut encoded).unwrap();
 
         // Decode
         let decoded = TransportParameters::read(Side::Client, &mut encoded.as_slice())
@@ -2226,7 +2233,7 @@ mod test {
 
                 // Encode and decode
                 let mut encoded = Vec::new();
-                params.write(&mut encoded);
+                params.write(&mut encoded).unwrap();
                 let decoded = TransportParameters::read(Side::Client, &mut encoded.as_slice())
                     .expect("Failed to decode");
 
@@ -2245,7 +2252,7 @@ mod test {
         params.pqc_algorithms = None;
 
         let mut encoded = Vec::new();
-        params.write(&mut encoded);
+        params.write(&mut encoded).unwrap();
 
         // Check that the parameter ID doesn't appear in the encoding
         // (Can't easily check for exact bytes due to VarInt encoding)
