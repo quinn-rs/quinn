@@ -3638,7 +3638,20 @@ impl TestNode {
 
                 // Get real saorsa-gossip stats (HyParView + SWIM + PlumTree + Connection Types)
                 // Connection type breakdown comes from gossip transport which is the source of truth
-                let epidemic_stats = epidemic_gossip.stats().await;
+                // Use timeout to prevent blocking if stats lock is contended
+                let epidemic_stats =
+                    match tokio::time::timeout(Duration::from_secs(2), epidemic_gossip.stats())
+                        .await
+                    {
+                        Ok(stats) => stats,
+                        Err(_) => {
+                            warn!(
+                                "Heartbeat #{}: TIMEOUT waiting for epidemic_gossip.stats()!",
+                                heartbeat_count
+                            );
+                            continue;
+                        }
+                    };
 
                 // Connection type breakdown from gossip layer (inferred from socket addresses)
                 let (conn_direct_ipv4, conn_direct_ipv6, conn_hole_punched, conn_relayed) = {
@@ -3715,15 +3728,25 @@ impl TestNode {
                     conn_relayed,
                 };
 
-                // Get full-mesh probe results (clone to avoid holding lock during HTTP call)
-                let probes = {
-                    let probes_guard = full_mesh_probes.read().await;
-                    if probes_guard.is_empty() {
-                        None
-                    } else {
-                        Some(probes_guard.clone())
-                    }
-                };
+                let probes =
+                    match tokio::time::timeout(Duration::from_secs(2), full_mesh_probes.read())
+                        .await
+                    {
+                        Ok(probes_guard) => {
+                            if probes_guard.is_empty() {
+                                None
+                            } else {
+                                Some(probes_guard.clone())
+                            }
+                        }
+                        Err(_) => {
+                            warn!(
+                                "Heartbeat #{}: TIMEOUT waiting for full_mesh_probes lock!",
+                                heartbeat_count
+                            );
+                            None
+                        }
+                    };
 
                 let heartbeat = NodeHeartbeat {
                     peer_id: peer_id.clone(),
