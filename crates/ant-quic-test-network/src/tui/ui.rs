@@ -526,14 +526,19 @@ fn draw_peers(frame: &mut Frame, app: &mut App, area: Rect) {
         " [↑/↓/PgUp/PgDn to scroll]",
         Style::default().fg(Color::DarkGray),
     );
+    let history_total = app.connection_history.len();
+    let history_live = app.history_connected_count();
     let title = Line::from(vec![
-        Span::raw(format!(" ALL CONNECTIONS ({}) ", app.connected_count())),
+        Span::raw(format!(
+            " ALL CONNECTIONS ({} live / {} total) ",
+            history_live, history_total
+        )),
         auto_status,
         scroll_hint,
         Span::raw("  "),
-        Span::styled("🟢=Direct ", Style::default().fg(COLOR_DIRECT)),
-        Span::styled("🟠=NAT ", Style::default().fg(COLOR_HOLEPUNCHED)),
-        Span::styled("🔴=Relay", Style::default().fg(COLOR_RELAYED)),
+        Span::styled("D/N/R", Style::default().fg(Color::DarkGray)),
+        Span::raw(" "),
+        Span::styled("✓×·", Style::default().fg(Color::DarkGray)),
     ]);
 
     let block = Block::default()
@@ -545,70 +550,53 @@ fn draw_peers(frame: &mut Frame, app: &mut App, area: Rect) {
         Cell::from("").style(Style::default().add_modifier(Modifier::BOLD)),
         Cell::from("Peer").style(Style::default().add_modifier(Modifier::BOLD)),
         Cell::from("Loc").style(Style::default().add_modifier(Modifier::BOLD)),
-        Cell::from("Dir").style(Style::default().add_modifier(Modifier::BOLD)),
-        Cell::from("Paths").style(Style::default().add_modifier(Modifier::BOLD)),
-        Cell::from("NAT").style(Style::default().add_modifier(Modifier::BOLD)),
-        Cell::from("RTT").style(Style::default().add_modifier(Modifier::BOLD)),
-        Cell::from("Qlt").style(Style::default().add_modifier(Modifier::BOLD)),
+        Cell::from("Out").style(Style::default().add_modifier(Modifier::BOLD)),
+        Cell::from("In").style(Style::default().add_modifier(Modifier::BOLD)),
+        Cell::from("Seen").style(Style::default().add_modifier(Modifier::BOLD)),
+        Cell::from("Cnt").style(Style::default().add_modifier(Modifier::BOLD)),
     ])
     .height(1)
     .style(Style::default().fg(Color::White));
 
     // Table rows with traffic light colors
     let rows: Vec<Row> = app
-        .peers_sorted()
+        .history_sorted()
         .iter()
-        .map(|peer| {
-            // Traffic light emoji based on connection method
-            let method_indicator = method_emoji(&peer.method);
-            let row_color = method_color(&peer.method);
-
-            // Direction with emphasis on inbound (proves NAT traversal!)
-            let (direction_str, direction_style) = match peer.direction {
-                crate::registry::ConnectionDirection::Outbound => {
-                    ("→Out", Style::default().fg(Color::Cyan))
-                }
-                crate::registry::ConnectionDirection::Inbound => (
-                    "←IN!",
-                    Style::default()
-                        .fg(Color::Green)
-                        .add_modifier(Modifier::BOLD),
-                ),
+        .map(|entry| {
+            let status_color = match entry.status {
+                crate::tui::types::ConnectionStatus::Connected => Color::Green,
+                crate::tui::types::ConnectionStatus::Disconnected => Color::DarkGray,
+                crate::tui::types::ConnectionStatus::Failed => Color::Red,
             };
 
-            // Get country flag
-            let location = if peer.location.len() == 2 {
-                format!("{} {}", country_flag(&peer.location), peer.location)
+            let row_color = match entry.status {
+                crate::tui::types::ConnectionStatus::Connected => entry
+                    .method
+                    .as_ref()
+                    .map(method_color)
+                    .unwrap_or(Color::Green),
+                crate::tui::types::ConnectionStatus::Disconnected => Color::DarkGray,
+                crate::tui::types::ConnectionStatus::Failed => Color::Red,
+            };
+
+            let location = if entry.location.len() == 2 {
+                format!("{} {}", country_flag(&entry.location), entry.location)
             } else {
-                peer.location.clone()
+                entry.location.clone()
             };
 
-            let quality = peer.quality.as_bar();
-
-            let (nat_status, nat_style) = match (peer.outbound_verified, peer.inbound_verified) {
-                (true, true) => (
-                    "✓✓",
-                    Style::default()
-                        .fg(Color::Green)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                (true, false) => ("✓•", Style::default().fg(Color::Cyan)),
-                (false, true) => ("•✓", Style::default().fg(Color::Yellow)),
-                (false, false) => ("••", Style::default().fg(Color::DarkGray)),
-            };
-
-            let paths_spans = format_connectivity_matrix(&peer.connectivity);
-            let paths_str: String = paths_spans.iter().map(|s| s.content.as_ref()).collect();
+            let outbound_summary = entry.outbound.summary_compact();
+            let inbound_summary = entry.inbound.summary_compact();
 
             Row::new(vec![
-                Cell::from(method_indicator).style(Style::default().fg(row_color)),
-                Cell::from(peer.short_id.clone()).style(Style::default().fg(row_color)),
+                Cell::from(entry.status.emoji()).style(Style::default().fg(status_color)),
+                Cell::from(entry.short_id.clone()).style(Style::default().fg(row_color)),
                 Cell::from(location),
-                Cell::from(direction_str).style(direction_style),
-                Cell::from(paths_str),
-                Cell::from(nat_status).style(nat_style),
-                Cell::from(peer.rtt_string()),
-                Cell::from(quality).style(Style::default().fg(row_color)),
+                Cell::from(outbound_summary),
+                Cell::from(inbound_summary),
+                Cell::from(entry.time_since_seen()).style(Style::default().fg(Color::DarkGray)),
+                Cell::from(entry.connection_count.to_string())
+                    .style(Style::default().fg(Color::DarkGray)),
             ])
         })
         .collect();
@@ -616,14 +604,13 @@ fn draw_peers(frame: &mut Frame, app: &mut App, area: Rect) {
     let table = Table::new(
         rows,
         [
-            Constraint::Length(2),  // Traffic light emoji
-            Constraint::Length(9),  // Peer ID
-            Constraint::Length(6),  // Location
-            Constraint::Length(4),  // Direction
-            Constraint::Length(12), // Paths (4✓ 6✓ N✓ R·)
-            Constraint::Length(3),  // NAT verification
-            Constraint::Length(7),  // RTT
-            Constraint::Min(4),     // Quality
+            Constraint::Length(2), // Status
+            Constraint::Length(9), // Peer ID
+            Constraint::Length(6), // Location
+            Constraint::Length(7), // Outbound summary
+            Constraint::Length(7), // Inbound summary
+            Constraint::Length(6), // Last seen
+            Constraint::Min(4),    // Connection count
         ],
     )
     .header(header)

@@ -157,6 +157,10 @@ impl App {
             peer.packets_sent += 1;
             peer.tx_active = true;
         }
+        if let Some(history) = self.connection_history.get_mut(peer_id) {
+            history.total_packets += 1;
+            history.last_seen = Instant::now();
+        }
     }
 
     /// Mark that we received a packet from a peer.
@@ -167,6 +171,10 @@ impl App {
         if let Some(peer) = self.connected_peers.get_mut(peer_id) {
             peer.packets_received += 1;
             peer.rx_active = true;
+        }
+        if let Some(history) = self.connection_history.get_mut(peer_id) {
+            history.total_packets += 1;
+            history.last_seen = Instant::now();
         }
     }
 
@@ -377,6 +385,12 @@ impl App {
     ) {
         self.connectivity_test
             .record_inbound(peer_id, method, success, rtt_ms, None);
+        self.record_history_attempt(
+            peer_id,
+            crate::registry::ConnectionDirection::Inbound,
+            method,
+            success,
+        );
     }
 
     pub fn record_outbound_connection(
@@ -388,6 +402,38 @@ impl App {
     ) {
         self.connectivity_test
             .record_outbound(peer_id, method, success, rtt_ms, None);
+        self.record_history_attempt(
+            peer_id,
+            crate::registry::ConnectionDirection::Outbound,
+            method,
+            success,
+        );
+    }
+
+    fn record_history_attempt(
+        &mut self,
+        peer_id: &str,
+        direction: crate::registry::ConnectionDirection,
+        method: TestConnectivityMethod,
+        success: bool,
+    ) {
+        let mapped_method = match method {
+            TestConnectivityMethod::DirectIpv4 | TestConnectivityMethod::DirectIpv6 => {
+                crate::registry::ConnectionMethod::Direct
+            }
+            TestConnectivityMethod::NatTraversalIpv4 | TestConnectivityMethod::NatTraversalIpv6 => {
+                crate::registry::ConnectionMethod::HolePunched
+            }
+            TestConnectivityMethod::RelayedIpv4 | TestConnectivityMethod::RelayedIpv6 => {
+                crate::registry::ConnectionMethod::Relayed
+            }
+        };
+
+        let entry = self
+            .connection_history
+            .entry(peer_id.to_string())
+            .or_insert_with(|| ConnectionHistoryEntry::new(peer_id));
+        entry.record_attempt(direction, mapped_method, success);
     }
 
     pub fn connectivity_countdown(&self) -> u32 {
@@ -407,7 +453,7 @@ impl App {
     }
 
     pub fn scroll_connections_down(&mut self) {
-        let len = self.connected_peers.len();
+        let len = self.connection_history.len();
         if len == 0 {
             return;
         }
@@ -427,7 +473,7 @@ impl App {
     }
 
     pub fn scroll_connections_page_down(&mut self) {
-        let len = self.connected_peers.len();
+        let len = self.connection_history.len();
         if len == 0 {
             return;
         }

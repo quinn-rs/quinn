@@ -16,12 +16,16 @@ pub struct ConnectionHistoryEntry {
     pub full_id: String,
     /// Location (country flag + code)
     pub location: String,
-    /// Connection method used
-    pub method: ConnectionMethod,
-    /// Connection direction
-    pub direction: ConnectionDirection,
+    /// Last connection method observed
+    pub method: Option<ConnectionMethod>,
+    /// Last connection direction observed
+    pub direction: Option<ConnectionDirection>,
     /// Current status
     pub status: ConnectionStatus,
+    /// Outbound connection summary (us -> them)
+    pub outbound: DirectionalMethodStats,
+    /// Inbound connection summary (them -> us)
+    pub inbound: DirectionalMethodStats,
     /// When first connected
     pub first_connected: Instant,
     /// When last seen
@@ -34,6 +38,106 @@ pub struct ConnectionHistoryEntry {
     pub connection_count: u32,
     /// Whether NAT traversal was verified
     pub nat_verified: bool,
+}
+
+/// Outcome for a connection method attempt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MethodOutcome {
+    /// Not attempted
+    Unknown,
+    /// Attempt succeeded
+    Success,
+    /// Attempt failed
+    Failed,
+}
+
+impl Default for MethodOutcome {
+    fn default() -> Self {
+        Self::Unknown
+    }
+}
+
+impl MethodOutcome {
+    /// Compact status symbol.
+    pub fn symbol(&self) -> &'static str {
+        match self {
+            Self::Unknown => "·",
+            Self::Success => "✓",
+            Self::Failed => "×",
+        }
+    }
+}
+
+/// Per-direction connection outcomes.
+#[derive(Debug, Clone, Default)]
+pub struct DirectionalMethodStats {
+    /// Last method attempted for this direction
+    pub last_method: Option<ConnectionMethod>,
+    /// Total attempts
+    pub attempts: u32,
+    /// Successful attempts
+    pub successes: u32,
+    /// Failed attempts
+    pub failures: u32,
+    /// Direct method outcome
+    pub direct: MethodOutcome,
+    /// NAT traversal outcome
+    pub nat: MethodOutcome,
+    /// Relay outcome
+    pub relay: MethodOutcome,
+}
+
+impl DirectionalMethodStats {
+    /// Record an attempt outcome.
+    pub fn record(&mut self, method: ConnectionMethod, success: bool) {
+        self.attempts += 1;
+        if success {
+            self.successes += 1;
+        } else {
+            self.failures += 1;
+        }
+        self.last_method = Some(method);
+
+        let outcome = if success {
+            MethodOutcome::Success
+        } else {
+            MethodOutcome::Failed
+        };
+
+        match method {
+            ConnectionMethod::Direct => {
+                Self::update_outcome(&mut self.direct, outcome);
+            }
+            ConnectionMethod::HolePunched => {
+                Self::update_outcome(&mut self.nat, outcome);
+            }
+            ConnectionMethod::Relayed => {
+                Self::update_outcome(&mut self.relay, outcome);
+            }
+        }
+    }
+
+    fn update_outcome(slot: &mut MethodOutcome, outcome: MethodOutcome) {
+        match (slot, outcome) {
+            (_, MethodOutcome::Success) => {
+                *slot = MethodOutcome::Success;
+            }
+            (MethodOutcome::Unknown, MethodOutcome::Failed) => {
+                *slot = MethodOutcome::Failed;
+            }
+            _ => {}
+        }
+    }
+
+    /// Compact summary string (e.g. "D✓N×R·").
+    pub fn summary_compact(&self) -> String {
+        format!(
+            "D{}N{}R{}",
+            self.direct.symbol(),
+            self.nat.symbol(),
+            self.relay.symbol()
+        )
+    }
 }
 
 /// Connection status for history entries.
@@ -68,28 +172,63 @@ impl ConnectionStatus {
 }
 
 impl ConnectionHistoryEntry {
+    /// Create a new history entry for a peer (no successful connection yet).
+    pub fn new(peer_id: &str) -> Self {
+        let short_id = if peer_id.len() > 8 {
+            peer_id[..8].to_string()
+        } else {
+            peer_id.to_string()
+        };
+        let now = Instant::now();
+        Self {
+            short_id,
+            full_id: peer_id.to_string(),
+            location: "??".to_string(),
+            method: None,
+            direction: None,
+            status: ConnectionStatus::Failed,
+            outbound: DirectionalMethodStats::default(),
+            inbound: DirectionalMethodStats::default(),
+            first_connected: now,
+            last_seen: now,
+            total_packets: 0,
+            best_rtt: None,
+            connection_count: 0,
+            nat_verified: false,
+        }
+    }
+
     /// Create a new history entry from a connected peer.
     pub fn from_connected_peer(peer: &super::ConnectedPeer) -> Self {
-        Self {
+        let mut entry = Self {
             short_id: peer.short_id.clone(),
             full_id: peer.full_id.clone(),
             location: peer.location.clone(),
-            method: peer.method,
-            direction: peer.direction,
+            method: Some(peer.method),
+            direction: Some(peer.direction),
             status: ConnectionStatus::Connected,
+            outbound: DirectionalMethodStats::default(),
+            inbound: DirectionalMethodStats::default(),
             first_connected: peer.connected_at,
             last_seen: Instant::now(),
             total_packets: peer.packets_sent + peer.packets_received,
             best_rtt: peer.rtt,
             connection_count: 1,
             nat_verified: peer.is_nat_verified(),
-        }
+        };
+
+        entry.record_attempt(peer.direction, peer.method, true);
+        entry.status = ConnectionStatus::Connected;
+        entry
     }
 
     /// Update from a connected peer (when reconnecting).
     pub fn update_from_peer(&mut self, peer: &super::ConnectedPeer) {
         self.status = ConnectionStatus::Connected;
         self.last_seen = Instant::now();
+        self.method = Some(peer.method);
+        self.direction = Some(peer.direction);
+        self.record_attempt(peer.direction, peer.method, true);
         self.total_packets += peer.packets_sent + peer.packets_received;
         self.connection_count += 1;
         if let Some(rtt) = peer.rtt {
@@ -101,6 +240,37 @@ impl ConnectionHistoryEntry {
         }
         if peer.is_nat_verified() {
             self.nat_verified = true;
+        }
+    }
+
+    /// Record a connection attempt for inbound/outbound history.
+    pub fn record_attempt(
+        &mut self,
+        direction: ConnectionDirection,
+        method: ConnectionMethod,
+        success: bool,
+    ) {
+        self.last_seen = Instant::now();
+        self.method = Some(method);
+        self.direction = Some(direction);
+
+        match direction {
+            ConnectionDirection::Outbound => {
+                self.outbound.record(method, success);
+            }
+            ConnectionDirection::Inbound => {
+                self.inbound.record(method, success);
+            }
+        }
+
+        if self.status != ConnectionStatus::Connected {
+            if success {
+                if self.status == ConnectionStatus::Failed {
+                    self.status = ConnectionStatus::Disconnected;
+                }
+            } else if self.status == ConnectionStatus::Failed {
+                self.status = ConnectionStatus::Failed;
+            }
         }
     }
 
