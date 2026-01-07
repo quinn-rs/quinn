@@ -3235,7 +3235,9 @@ impl TestNode {
             });
         }
 
+        info!("DIAGNOSTIC: About to spawn heartbeat loop...");
         let heartbeat_handle = self.spawn_heartbeat_loop();
+        info!("DIAGNOSTIC: Heartbeat loop spawned, JoinHandle created");
         let connect_handle = self.spawn_connect_loop();
         let test_handle = self.spawn_test_loop();
         let health_handle = self.spawn_health_check_loop();
@@ -3536,6 +3538,7 @@ impl TestNode {
         let geo_provider = Arc::clone(&self.geo_provider);
 
         tokio::spawn(async move {
+            info!("DIAGNOSTIC: Heartbeat task STARTED - entering main loop");
             let mut ticker = tokio::time::interval(interval);
             let mut consecutive_failures = 0u32;
             let mut heartbeat_count = 0u64;
@@ -3543,7 +3546,12 @@ impl TestNode {
             let mut cached_peer_id: Option<String> = None;
 
             while !shutdown.load(Ordering::SeqCst) {
+                info!("DIAGNOSTIC: Heartbeat awaiting ticker.tick()...");
                 ticker.tick().await;
+                info!(
+                    "DIAGNOSTIC: Heartbeat ticker fired, count={}",
+                    heartbeat_count
+                );
                 heartbeat_count += 1;
 
                 // Get the gossip transport's peer ID (cache it once we have it)
