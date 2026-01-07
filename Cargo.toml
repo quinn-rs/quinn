@@ -6,7 +6,7 @@ members = [
 
 [package]
 name = "ant-quic"
-version = "0.14.186"
+version = "0.14.187"
 edition = "2024"
 rust-version = "1.85.0"
 license = "MIT OR Apache-2.0"
