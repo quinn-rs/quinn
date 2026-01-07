@@ -903,18 +903,23 @@ impl EpidemicGossip {
                     break;
                 }
 
-                let stack_guard = stack.read().await;
-                if let Some(ref s) = *stack_guard {
-                    let active = s.membership.active_view();
-                    let passive = s.membership.passive_view();
+                // Extract Arc refs from stack - clone Arcs to release lock quickly
+                let stack_refs = {
+                    let stack_guard = stack.read().await;
+                    stack_guard
+                        .as_ref()
+                        .map(|s| (Arc::clone(&s.membership), Arc::clone(&s.transport)))
+                };
 
-                    // Count SWIM states
+                if let Some((membership, transport)) = stack_refs {
+                    let active = membership.active_view();
+                    let passive = membership.passive_view();
                     let mut alive_count = 0;
                     let mut suspect_count = 0;
                     let mut dead_count = 0;
 
                     for peer in &active {
-                        if let Some(state) = s.membership.swim().get_state(peer).await {
+                        if let Some(state) = membership.swim().get_state(peer).await {
                             match state {
                                 PeerState::Alive => alive_count += 1,
                                 PeerState::Suspect => suspect_count += 1,
@@ -923,12 +928,9 @@ impl EpidemicGossip {
                         }
                     }
 
-                    // Infer connection types from connected peer addresses
-                    // This is the source of truth for IPv4/IPv6 breakdown
-                    let connected_peers = s.transport.connected_peers().await;
+                    let connected_peers = transport.connected_peers().await;
                     let mut breakdown = ConnectionBreakdown::default();
 
-                    // Update connection_types map and compute breakdown simultaneously
                     {
                         let mut conn_types = connection_types.write().await;
                         for (peer_id, addr) in &connected_peers {
@@ -949,7 +951,6 @@ impl EpidemicGossip {
                         }
                     }
 
-                    // Update stats
                     let mut stats_guard = stats.write().await;
                     stats_guard.hyparview.active_view_size = active.len();
                     stats_guard.hyparview.passive_view_size = passive.len();
@@ -987,25 +988,21 @@ impl EpidemicGossip {
                     break;
                 }
 
-                let stack_guard = stack.read().await;
-                if let Some(ref s) = *stack_guard {
-                    // Check for dead peers and emit events
-                    // Use try_send() to avoid blocking if channel is full (prevents deadlock)
-                    let dead_peers = s
-                        .membership
-                        .swim()
-                        .get_peers_in_state(PeerState::Dead)
-                        .await;
+                // Clone Arc to release lock quickly - prevents deadlock
+                let membership = {
+                    let stack_guard = stack.read().await;
+                    stack_guard.as_ref().map(|s| Arc::clone(&s.membership))
+                };
+
+                if let Some(membership) = membership {
+                    let dead_peers = membership.swim().get_peers_in_state(PeerState::Dead).await;
                     for peer_id in dead_peers {
                         if let Err(e) = event_tx.try_send(EpidemicEvent::PeerLeft { peer_id }) {
                             debug!("Channel full, dropping PeerLeft event: {}", e);
                         }
                     }
 
-                    // Check for suspected peers
-                    // Use try_send() to avoid blocking if channel is full (prevents deadlock)
-                    let suspect_peers = s
-                        .membership
+                    let suspect_peers = membership
                         .swim()
                         .get_peers_in_state(PeerState::Suspect)
                         .await;

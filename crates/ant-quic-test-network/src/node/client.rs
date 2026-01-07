@@ -3777,7 +3777,18 @@ impl TestNode {
                 };
                 drop(peers);
 
-                if let Err(e) = registry.heartbeat(&heartbeat).await {
+                // Add timeout to registry heartbeat to prevent blocking
+                let heartbeat_result =
+                    tokio::time::timeout(Duration::from_secs(10), registry.heartbeat(&heartbeat))
+                        .await;
+
+                let heartbeat_err = match heartbeat_result {
+                    Ok(Ok(())) => None,
+                    Ok(Err(e)) => Some(format!("{}", e)),
+                    Err(_) => Some("TIMEOUT waiting for registry response".to_string()),
+                };
+
+                if let Some(e) = heartbeat_err {
                     consecutive_failures += 1;
                     warn!("Heartbeat failed (attempt {}): {}", consecutive_failures, e);
 
@@ -3806,22 +3817,30 @@ impl TestNode {
                             location_label: None,
                         };
 
-                        match registry.register(&registration).await {
-                            Ok(response) if response.success => {
+                        match tokio::time::timeout(
+                            Duration::from_secs(15),
+                            registry.register(&registration),
+                        )
+                        .await
+                        {
+                            Ok(Ok(response)) if response.success => {
                                 info!(
                                     "Re-registered successfully, got {} peers",
                                     response.peers.len()
                                 );
                                 consecutive_failures = 0;
                             }
-                            Ok(response) => {
+                            Ok(Ok(response)) => {
                                 let err = response
                                     .error
                                     .unwrap_or_else(|| "Unknown error".to_string());
                                 error!("Re-registration failed: {}", err);
                             }
-                            Err(e) => {
+                            Ok(Err(e)) => {
                                 error!("Re-registration request failed: {}", e);
+                            }
+                            Err(_) => {
+                                error!("Re-registration TIMEOUT - registry unresponsive");
                             }
                         }
                     }
