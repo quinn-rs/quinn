@@ -66,8 +66,11 @@ pub use persistence::{PersistedData, PersistenceConfig, PersistentStorage, Stats
 pub use store::PeerStore;
 pub use types::{
     ConnectionBreakdown, ConnectionDirection, ConnectionMethod, ConnectionReport,
-    ConnectionTechnique, ConnectivityMatrix, ExperimentResults, FilteringBehavior,
-    FullMeshProbeResult, MappingBehavior, NatBehavior, NatStats, NatType, NetworkEvent,
-    NetworkStats, NodeCapabilities, NodeGossipStats, NodeHeartbeat, NodeRegistration, PeerInfo,
-    PeerStatus, RegistrationResponse, TechniqueAttempt, unix_timestamp_ms,
+    ConnectionTechnique, ConnectivityMatrix, DataProof, ExperimentResults, FailureReasonCode,
+    FilteringBehavior, FullMeshProbeResult, ImpairmentMetrics, MappingBehavior, MethodProof,
+    MigrationMetrics, NatBehavior, NatScenario, NatStats, NatType, NetworkEvent, NetworkProfile,
+    NetworkStats, NodeCapabilities, NodeGossipStats, NodeHeartbeat, NodeRegistration, PathTuple,
+    PeerInfo, PeerStatus, RegistrationResponse, RelayMetrics, SuccessLevel, TechniqueAttempt,
+    TemporalMetrics, TemporalScenario, TestPattern, TestReport, TestSuite, TestSuiteConfig,
+    unix_timestamp_ms,
 };

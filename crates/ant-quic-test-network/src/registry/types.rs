@@ -454,16 +454,148 @@ impl std::fmt::Display for ConnectionTechnique {
 /// Record of a single technique attempt.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TechniqueAttempt {
-    /// The technique that was tried
     pub technique: ConnectionTechnique,
-    /// Whether it succeeded
     pub success: bool,
-    /// Time taken in milliseconds
     pub duration_ms: u64,
-    /// Error message if failed
     pub error: Option<String>,
-    /// Timestamp of attempt (unix ms)
     pub timestamp_ms: u64,
+    #[serde(default)]
+    pub data_proof: Option<DataProof>,
+    #[serde(default)]
+    pub method_proof: Option<MethodProof>,
+}
+
+/// Proof of bidirectional data transfer.
+///
+/// A connection is not considered "working" unless we can prove
+/// data flows in BOTH directions. This struct captures that evidence.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DataProof {
+    /// Bytes sent from local to remote
+    pub bytes_sent: u64,
+    /// Bytes received from remote to local
+    pub bytes_received: u64,
+    /// SHA-256 checksum of sent payload
+    pub sent_checksum: String,
+    /// SHA-256 checksum of received payload (should match what remote sent)
+    pub received_checksum: String,
+    /// Whether the received data was verified correct
+    pub verified: bool,
+    /// Round-trip time for echo test (send + receive + verify)
+    pub echo_rtt_ms: Option<u64>,
+    /// Whether stream-based transfer was tested
+    pub stream_tested: bool,
+    /// Whether datagram-based transfer was tested  
+    pub datagram_tested: bool,
+    /// Timestamp when data proof was captured
+    pub timestamp_ms: u64,
+}
+
+impl DataProof {
+    /// Create a new data proof with the given measurements.
+    pub fn new(
+        bytes_sent: u64,
+        bytes_received: u64,
+        sent_checksum: String,
+        received_checksum: String,
+        verified: bool,
+    ) -> Self {
+        Self {
+            bytes_sent,
+            bytes_received,
+            sent_checksum,
+            received_checksum,
+            verified,
+            echo_rtt_ms: None,
+            stream_tested: true,
+            datagram_tested: false,
+            timestamp_ms: unix_timestamp_ms(),
+        }
+    }
+
+    /// Check if this data proof demonstrates bidirectional communication.
+    pub fn is_bidirectional(&self) -> bool {
+        self.bytes_sent > 0 && self.bytes_received > 0 && self.verified
+    }
+
+    /// Create a failed/empty data proof.
+    pub fn failed() -> Self {
+        Self {
+            bytes_sent: 0,
+            bytes_received: 0,
+            sent_checksum: String::new(),
+            received_checksum: String::new(),
+            verified: false,
+            echo_rtt_ms: None,
+            stream_tested: false,
+            datagram_tested: false,
+            timestamp_ms: unix_timestamp_ms(),
+        }
+    }
+}
+
+impl Default for DataProof {
+    fn default() -> Self {
+        Self::failed()
+    }
+}
+
+/// Success level for connectivity verification.
+///
+/// These levels define escalating proof requirements for "connectivity works".
+/// Tests MUST achieve at least Level 2 (Usable) + Level 4 (CorrectMethod) to pass.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SuccessLevel {
+    /// Level 0: Connection failed entirely
+    Failed = 0,
+    /// Level 1: Established - QUIC handshake completed, peer authenticated
+    /// Necessary but NOT sufficient for "connectivity works"
+    Established = 1,
+    /// Level 2: Usable - Bidirectional application data verified
+    /// MINIMUM requirement for pass
+    Usable = 2,
+    /// Level 3: Sustained - Transfer maintained under impairment
+    /// No spurious disconnects or stalled streams
+    Sustained = 3,
+    /// Level 4: CorrectMethod - Proved the right technique was used
+    /// (direct vs hole-punched vs relayed with evidence)
+    CorrectMethod = 4,
+    /// Level 5: Temporal - Survives time and change
+    /// Idle/expiry resilience, reconnect within SLO
+    Temporal = 5,
+}
+
+impl SuccessLevel {
+    /// Check if this level meets the minimum requirement for a passing test.
+    /// Requires at least Level 2 (Usable).
+    pub fn is_passing(&self) -> bool {
+        *self >= SuccessLevel::Usable
+    }
+
+    /// Human-readable description of this success level.
+    pub fn description(&self) -> &'static str {
+        match self {
+            Self::Failed => "Connection failed",
+            Self::Established => "QUIC handshake completed (no data proof)",
+            Self::Usable => "Bidirectional data transfer verified",
+            Self::Sustained => "Sustained transfer under impairment",
+            Self::CorrectMethod => "Correct technique attribution verified",
+            Self::Temporal => "Temporal resilience verified",
+        }
+    }
+}
+
+impl Default for SuccessLevel {
+    fn default() -> Self {
+        Self::Failed
+    }
+}
+
+impl std::fmt::Display for SuccessLevel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "L{}: {}", *self as u8, self.description())
+    }
 }
 
 impl std::fmt::Display for ConnectionMethod {
@@ -473,6 +605,231 @@ impl std::fmt::Display for ConnectionMethod {
             Self::HolePunched => write!(f, "HolePunched"),
             Self::Relayed => write!(f, "Relayed"),
         }
+    }
+}
+
+/// Proof of connection method attribution.
+///
+/// Captures NAT frame exchange evidence to prove HOW a connection succeeded.
+/// Without this evidence, we cannot distinguish between:
+/// - "Direct succeeded because peer was reachable"
+/// - "NAT traversal succeeded but we recorded it wrong"
+/// - "Relay was used but we think it was direct"
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct MethodProof {
+    /// Claimed connection method
+    pub claimed_method: Option<ConnectionMethod>,
+
+    /// ADD_ADDRESS frames sent during connection establishment
+    pub add_address_sent: u32,
+    /// ADD_ADDRESS frames received during connection establishment
+    pub add_address_received: u32,
+
+    /// PUNCH_ME_NOW frames sent during connection establishment
+    pub punch_me_now_sent: u32,
+    /// PUNCH_ME_NOW frames received during connection establishment
+    pub punch_me_now_received: u32,
+
+    /// OBSERVED_ADDRESS frames sent during connection establishment
+    pub observed_address_sent: u32,
+    /// OBSERVED_ADDRESS frames received during connection establishment
+    pub observed_address_received: u32,
+
+    /// Local address used for connection (our side of the 5-tuple)
+    pub local_addr: Option<String>,
+    /// Remote address used for connection (peer side of the 5-tuple)
+    pub remote_addr: Option<String>,
+
+    /// External address as reported by peer (from OBSERVED_ADDRESS)
+    pub observed_external_addr: Option<String>,
+
+    /// Relay peer ID if connection is relayed
+    pub relay_peer_id: Option<String>,
+    /// Relay address if connection is relayed
+    pub relay_addr: Option<String>,
+
+    /// Coordinator peer ID if hole-punch was coordinated
+    pub coordinator_peer_id: Option<String>,
+
+    /// Timestamp when first NAT frame was exchanged (ms since epoch)
+    pub first_nat_frame_ms: Option<u64>,
+    /// Timestamp when connection was established (ms since epoch)
+    pub connection_established_ms: Option<u64>,
+
+    /// Whether the path changed during connection (migration detected)
+    pub path_changed: bool,
+
+    /// Confidence score for the method attribution (0.0 - 1.0)
+    pub confidence: f64,
+}
+
+impl MethodProof {
+    /// Create a new empty method proof.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Create a proof for a direct connection (no NAT frames exchanged).
+    pub fn direct(local: &str, remote: &str) -> Self {
+        Self {
+            claimed_method: Some(ConnectionMethod::Direct),
+            local_addr: Some(local.to_string()),
+            remote_addr: Some(remote.to_string()),
+            confidence: 1.0,
+            connection_established_ms: Some(unix_timestamp_ms()),
+            ..Default::default()
+        }
+    }
+
+    /// Create a proof for a hole-punched connection.
+    pub fn hole_punched(
+        local: &str,
+        remote: &str,
+        coordinator: Option<&str>,
+        nat_frames_exchanged: u32,
+    ) -> Self {
+        let confidence = if nat_frames_exchanged > 0 { 0.9 } else { 0.5 };
+        Self {
+            claimed_method: Some(ConnectionMethod::HolePunched),
+            local_addr: Some(local.to_string()),
+            remote_addr: Some(remote.to_string()),
+            coordinator_peer_id: coordinator.map(String::from),
+            add_address_sent: nat_frames_exchanged / 2,
+            punch_me_now_sent: nat_frames_exchanged / 2,
+            confidence,
+            connection_established_ms: Some(unix_timestamp_ms()),
+            ..Default::default()
+        }
+    }
+
+    /// Create a proof for a relayed connection.
+    pub fn relayed(relay_peer: &str, relay_addr: &str) -> Self {
+        Self {
+            claimed_method: Some(ConnectionMethod::Relayed),
+            relay_peer_id: Some(relay_peer.to_string()),
+            relay_addr: Some(relay_addr.to_string()),
+            confidence: 1.0,
+            connection_established_ms: Some(unix_timestamp_ms()),
+            ..Default::default()
+        }
+    }
+
+    /// Check if this proof has sufficient evidence for the claimed method.
+    pub fn has_sufficient_evidence(&self) -> bool {
+        match self.claimed_method {
+            Some(ConnectionMethod::Direct) => {
+                self.add_address_sent == 0
+                    && self.punch_me_now_sent == 0
+                    && self.relay_peer_id.is_none()
+            }
+            Some(ConnectionMethod::HolePunched) => {
+                (self.add_address_sent > 0 || self.punch_me_now_sent > 0)
+                    && self.relay_peer_id.is_none()
+            }
+            Some(ConnectionMethod::Relayed) => self.relay_peer_id.is_some(),
+            None => false,
+        }
+    }
+
+    /// Calculate confidence score based on evidence.
+    pub fn calculate_confidence(&self) -> f64 {
+        match self.claimed_method {
+            Some(ConnectionMethod::Direct) => {
+                if self.add_address_sent == 0
+                    && self.punch_me_now_sent == 0
+                    && self.relay_peer_id.is_none()
+                {
+                    1.0
+                } else if self.relay_peer_id.is_some() {
+                    0.0
+                } else {
+                    0.3
+                }
+            }
+            Some(ConnectionMethod::HolePunched) => {
+                let nat_frames = self.add_address_sent + self.punch_me_now_sent;
+                if nat_frames == 0 {
+                    0.3
+                } else if nat_frames >= 2 && self.coordinator_peer_id.is_some() {
+                    0.95
+                } else if nat_frames >= 2 {
+                    0.8
+                } else {
+                    0.6
+                }
+            }
+            Some(ConnectionMethod::Relayed) => {
+                if self.relay_peer_id.is_some() && self.relay_addr.is_some() {
+                    1.0
+                } else if self.relay_peer_id.is_some() {
+                    0.8
+                } else {
+                    0.2
+                }
+            }
+            None => 0.0,
+        }
+    }
+
+    /// Update confidence score based on current evidence.
+    pub fn update_confidence(&mut self) {
+        self.confidence = self.calculate_confidence();
+    }
+
+    /// Record that an ADD_ADDRESS frame was sent.
+    pub fn record_add_address_sent(&mut self) {
+        self.add_address_sent += 1;
+        if self.first_nat_frame_ms.is_none() {
+            self.first_nat_frame_ms = Some(unix_timestamp_ms());
+        }
+    }
+
+    /// Record that an ADD_ADDRESS frame was received.
+    pub fn record_add_address_received(&mut self) {
+        self.add_address_received += 1;
+        if self.first_nat_frame_ms.is_none() {
+            self.first_nat_frame_ms = Some(unix_timestamp_ms());
+        }
+    }
+
+    /// Record that a PUNCH_ME_NOW frame was sent.
+    pub fn record_punch_me_now_sent(&mut self) {
+        self.punch_me_now_sent += 1;
+        if self.first_nat_frame_ms.is_none() {
+            self.first_nat_frame_ms = Some(unix_timestamp_ms());
+        }
+    }
+
+    /// Record that a PUNCH_ME_NOW frame was received.
+    pub fn record_punch_me_now_received(&mut self) {
+        self.punch_me_now_received += 1;
+        if self.first_nat_frame_ms.is_none() {
+            self.first_nat_frame_ms = Some(unix_timestamp_ms());
+        }
+    }
+
+    /// Record that an OBSERVED_ADDRESS frame was received with our external address.
+    pub fn record_observed_address(&mut self, external_addr: &str) {
+        self.observed_address_received += 1;
+        self.observed_external_addr = Some(external_addr.to_string());
+        if self.first_nat_frame_ms.is_none() {
+            self.first_nat_frame_ms = Some(unix_timestamp_ms());
+        }
+    }
+
+    /// Total NAT frames exchanged (sent + received).
+    pub fn total_nat_frames(&self) -> u32 {
+        self.add_address_sent
+            + self.add_address_received
+            + self.punch_me_now_sent
+            + self.punch_me_now_received
+            + self.observed_address_sent
+            + self.observed_address_received
+    }
+
+    /// Check if any NAT traversal frames were exchanged.
+    pub fn has_nat_frame_evidence(&self) -> bool {
+        self.total_nat_frames() > 0
     }
 }
 
@@ -495,6 +852,805 @@ impl std::fmt::Display for ConnectionDirection {
         match self {
             Self::Outbound => write!(f, "Outbound"),
             Self::Inbound => write!(f, "Inbound"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum TestPattern {
+    #[default]
+    Outbound,
+    Inbound,
+    Simultaneous,
+    InboundUnderLoad,
+}
+
+impl std::fmt::Display for TestPattern {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Outbound => write!(f, "A→B"),
+            Self::Inbound => write!(f, "B→A"),
+            Self::Simultaneous => write!(f, "A↔B"),
+            Self::InboundUnderLoad => write!(f, "B→A (load)"),
+        }
+    }
+}
+
+impl TestPattern {
+    pub fn requires_coordination(&self) -> bool {
+        matches!(self, Self::Simultaneous)
+    }
+
+    pub fn is_bidirectional_test(&self) -> bool {
+        matches!(self, Self::Simultaneous)
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NetworkProfile {
+    pub name: String,
+    pub mtu: u16,
+    pub latency_ms: u32,
+    pub loss_percent: f32,
+    pub jitter_ms: u32,
+    pub bandwidth_kbps: Option<u32>,
+}
+
+impl Default for NetworkProfile {
+    fn default() -> Self {
+        Self::ideal()
+    }
+}
+
+impl NetworkProfile {
+    pub fn ideal() -> Self {
+        Self {
+            name: "ideal".to_string(),
+            mtu: 1500,
+            latency_ms: 0,
+            loss_percent: 0.0,
+            jitter_ms: 0,
+            bandwidth_kbps: None,
+        }
+    }
+
+    pub fn low_mtu() -> Self {
+        Self {
+            name: "low_mtu".to_string(),
+            mtu: 1200,
+            latency_ms: 10,
+            loss_percent: 0.0,
+            jitter_ms: 5,
+            bandwidth_kbps: None,
+        }
+    }
+
+    pub fn high_latency() -> Self {
+        Self {
+            name: "high_latency".to_string(),
+            mtu: 1500,
+            latency_ms: 200,
+            loss_percent: 0.0,
+            jitter_ms: 50,
+            bandwidth_kbps: None,
+        }
+    }
+
+    pub fn lossy() -> Self {
+        Self {
+            name: "lossy".to_string(),
+            mtu: 1500,
+            latency_ms: 50,
+            loss_percent: 3.0,
+            jitter_ms: 20,
+            bandwidth_kbps: None,
+        }
+    }
+
+    pub fn mobile() -> Self {
+        Self {
+            name: "mobile".to_string(),
+            mtu: 1400,
+            latency_ms: 100,
+            loss_percent: 1.0,
+            jitter_ms: 30,
+            bandwidth_kbps: Some(5000),
+        }
+    }
+
+    pub fn stressed() -> Self {
+        Self {
+            name: "stressed".to_string(),
+            mtu: 1200,
+            latency_ms: 300,
+            loss_percent: 5.0,
+            jitter_ms: 100,
+            bandwidth_kbps: Some(1000),
+        }
+    }
+
+    pub fn is_impaired(&self) -> bool {
+        self.mtu < 1400 || self.latency_ms > 50 || self.loss_percent > 0.5
+    }
+
+    pub fn severity_score(&self) -> f32 {
+        let mtu_penalty = if self.mtu < 1400 {
+            (1400 - self.mtu) as f32 / 200.0
+        } else {
+            0.0
+        };
+        let latency_penalty = self.latency_ms as f32 / 500.0;
+        let loss_penalty = self.loss_percent / 5.0;
+        (mtu_penalty + latency_penalty + loss_penalty).min(1.0)
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ImpairmentMetrics {
+    pub handshake_bytes: u64,
+    pub handshake_messages: u32,
+    pub pmtu_probes_sent: u32,
+    pub pmtu_blackholes_detected: u32,
+    pub retransmissions: u64,
+    pub pto_events: u32,
+    pub handshake_duration_ms: u64,
+    pub crypto_cpu_us: Option<u64>,
+    pub fragmentation_events: u32,
+    pub connection_migrations: u32,
+}
+
+impl ImpairmentMetrics {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn record_handshake(&mut self, bytes: u64, messages: u32, duration_ms: u64) {
+        self.handshake_bytes = bytes;
+        self.handshake_messages = messages;
+        self.handshake_duration_ms = duration_ms;
+    }
+
+    pub fn record_pmtu_probe(&mut self) {
+        self.pmtu_probes_sent += 1;
+    }
+
+    pub fn record_blackhole(&mut self) {
+        self.pmtu_blackholes_detected += 1;
+    }
+
+    pub fn record_retransmission(&mut self) {
+        self.retransmissions += 1;
+    }
+
+    pub fn record_pto(&mut self) {
+        self.pto_events += 1;
+    }
+
+    pub fn has_issues(&self) -> bool {
+        self.pmtu_blackholes_detected > 0 || self.pto_events > 3 || self.retransmissions > 10
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum TemporalScenario {
+    #[default]
+    ColdStart,
+    WarmReconnect,
+    NatBindingExpiry,
+    RepeatedChurn,
+}
+
+impl std::fmt::Display for TemporalScenario {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::ColdStart => write!(f, "Cold Start"),
+            Self::WarmReconnect => write!(f, "Warm Reconnect"),
+            Self::NatBindingExpiry => write!(f, "NAT Binding Expiry"),
+            Self::RepeatedChurn => write!(f, "Repeated Churn"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct TemporalMetrics {
+    pub scenario: TemporalScenario,
+    pub idle_duration_ms: u64,
+    pub keepalive_sent: u32,
+    pub keepalive_received: u32,
+    pub binding_expired: bool,
+    pub reconnect_required: bool,
+    pub reconnect_time_ms: Option<u64>,
+    pub re_hole_punch_required: bool,
+    pub churn_cycles_completed: u32,
+    pub churn_cycles_failed: u32,
+    pub connection_survived: bool,
+}
+
+impl TemporalMetrics {
+    pub fn new(scenario: TemporalScenario) -> Self {
+        Self {
+            scenario,
+            ..Default::default()
+        }
+    }
+
+    pub fn record_idle(&mut self, duration_ms: u64) {
+        self.idle_duration_ms = duration_ms;
+    }
+
+    pub fn record_keepalive_sent(&mut self) {
+        self.keepalive_sent += 1;
+    }
+
+    pub fn record_keepalive_received(&mut self) {
+        self.keepalive_received += 1;
+    }
+
+    pub fn record_binding_expired(&mut self) {
+        self.binding_expired = true;
+    }
+
+    pub fn record_reconnect(&mut self, time_ms: u64, re_hole_punch: bool) {
+        self.reconnect_required = true;
+        self.reconnect_time_ms = Some(time_ms);
+        self.re_hole_punch_required = re_hole_punch;
+    }
+
+    pub fn record_churn_cycle(&mut self, success: bool) {
+        if success {
+            self.churn_cycles_completed += 1;
+        } else {
+            self.churn_cycles_failed += 1;
+        }
+    }
+
+    pub fn mark_survived(&mut self) {
+        self.connection_survived = true;
+    }
+
+    pub fn is_level5_passing(&self) -> bool {
+        self.connection_survived
+            || (self.reconnect_required && self.reconnect_time_ms.is_some_and(|t| t < 5000))
+    }
+
+    pub fn keepalive_effective(&self) -> bool {
+        self.keepalive_sent > 0 && !self.binding_expired
+    }
+
+    pub fn churn_success_rate(&self) -> f64 {
+        let total = self.churn_cycles_completed + self.churn_cycles_failed;
+        if total == 0 {
+            1.0
+        } else {
+            self.churn_cycles_completed as f64 / total as f64
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct MigrationMetrics {
+    pub migrations_attempted: u32,
+    pub migrations_succeeded: u32,
+    pub path_challenges_sent: u32,
+    pub path_responses_received: u32,
+    pub data_continued_after_migration: bool,
+    pub path_history: Vec<PathTuple>,
+    pub source_changes: u32,
+    pub nat_rebindings: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PathTuple {
+    pub local_addr: String,
+    pub remote_addr: String,
+    pub timestamp_ms: u64,
+}
+
+impl MigrationMetrics {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn record_migration_attempt(&mut self) {
+        self.migrations_attempted += 1;
+    }
+
+    pub fn record_migration_success(&mut self) {
+        self.migrations_succeeded += 1;
+    }
+
+    pub fn record_path_challenge(&mut self) {
+        self.path_challenges_sent += 1;
+    }
+
+    pub fn record_path_response(&mut self) {
+        self.path_responses_received += 1;
+    }
+
+    pub fn record_path_change(&mut self, local: &str, remote: &str) {
+        self.path_history.push(PathTuple {
+            local_addr: local.to_string(),
+            remote_addr: remote.to_string(),
+            timestamp_ms: unix_timestamp_ms(),
+        });
+    }
+
+    pub fn mark_data_continued(&mut self) {
+        self.data_continued_after_migration = true;
+    }
+
+    pub fn migration_success_rate(&self) -> f64 {
+        if self.migrations_attempted == 0 {
+            1.0
+        } else {
+            self.migrations_succeeded as f64 / self.migrations_attempted as f64
+        }
+    }
+
+    pub fn path_validation_rate(&self) -> f64 {
+        if self.path_challenges_sent == 0 {
+            1.0
+        } else {
+            self.path_responses_received as f64 / self.path_challenges_sent as f64
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FailureReasonCode {
+    Success,
+    Timeout,
+    ConnectionRefused,
+    HandshakeFailed,
+    CryptoError,
+    PmtuBlackhole,
+    NatBindingExpired,
+    AddressUnreachable,
+    NoRouteToHost,
+    PortUnreachable,
+    TlsError,
+    PqcNegotiationFailed,
+    StreamReset,
+    DataVerificationFailed,
+    KeepaliveTimeout,
+    MigrationFailed,
+    RelayUnavailable,
+    CoordinatorUnreachable,
+    RateLimited,
+    ResourceExhausted,
+    ProtocolViolation,
+    InternalError,
+    Unknown,
+}
+
+impl Default for FailureReasonCode {
+    fn default() -> Self {
+        Self::Unknown
+    }
+}
+
+impl std::fmt::Display for FailureReasonCode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Success => write!(f, "Success"),
+            Self::Timeout => write!(f, "Connection timeout"),
+            Self::ConnectionRefused => write!(f, "Connection refused"),
+            Self::HandshakeFailed => write!(f, "Handshake failed"),
+            Self::CryptoError => write!(f, "Cryptographic error"),
+            Self::PmtuBlackhole => write!(f, "PMTU blackhole detected"),
+            Self::NatBindingExpired => write!(f, "NAT binding expired"),
+            Self::AddressUnreachable => write!(f, "Address unreachable"),
+            Self::NoRouteToHost => write!(f, "No route to host"),
+            Self::PortUnreachable => write!(f, "Port unreachable"),
+            Self::TlsError => write!(f, "TLS error"),
+            Self::PqcNegotiationFailed => write!(f, "PQC negotiation failed"),
+            Self::StreamReset => write!(f, "Stream reset"),
+            Self::DataVerificationFailed => write!(f, "Data verification failed"),
+            Self::KeepaliveTimeout => write!(f, "Keepalive timeout"),
+            Self::MigrationFailed => write!(f, "Migration failed"),
+            Self::RelayUnavailable => write!(f, "Relay unavailable"),
+            Self::CoordinatorUnreachable => write!(f, "Coordinator unreachable"),
+            Self::RateLimited => write!(f, "Rate limited"),
+            Self::ResourceExhausted => write!(f, "Resource exhausted"),
+            Self::ProtocolViolation => write!(f, "Protocol violation"),
+            Self::InternalError => write!(f, "Internal error"),
+            Self::Unknown => write!(f, "Unknown error"),
+        }
+    }
+}
+
+impl FailureReasonCode {
+    pub fn is_success(&self) -> bool {
+        matches!(self, Self::Success)
+    }
+
+    pub fn is_recoverable(&self) -> bool {
+        matches!(
+            self,
+            Self::Timeout
+                | Self::NatBindingExpired
+                | Self::KeepaliveTimeout
+                | Self::RateLimited
+                | Self::RelayUnavailable
+        )
+    }
+
+    pub fn is_configuration_issue(&self) -> bool {
+        matches!(
+            self,
+            Self::AddressUnreachable | Self::NoRouteToHost | Self::PortUnreachable
+        )
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct TestReport {
+    pub run_id: String,
+    pub git_sha: Option<String>,
+    pub timestamp_ms: u64,
+    pub duration_ms: u64,
+    pub topology: String,
+    pub network_profile: Option<NetworkProfile>,
+    pub total_pairs: u32,
+    pub pairs_passed: u32,
+    pub pairs_failed: u32,
+    pub pass_rate: f64,
+    pub techniques_tested: Vec<ConnectionTechnique>,
+    pub failure_breakdown: HashMap<FailureReasonCode, u32>,
+    pub latency_p50_ms: Option<u64>,
+    pub latency_p95_ms: Option<u64>,
+    pub latency_p99_ms: Option<u64>,
+}
+
+impl TestReport {
+    pub fn new(run_id: &str) -> Self {
+        Self {
+            run_id: run_id.to_string(),
+            timestamp_ms: unix_timestamp_ms(),
+            ..Default::default()
+        }
+    }
+
+    pub fn set_git_sha(&mut self, sha: &str) {
+        self.git_sha = Some(sha.to_string());
+    }
+
+    pub fn set_topology(&mut self, topology: &str) {
+        self.topology = topology.to_string();
+    }
+
+    pub fn record_pair_result(&mut self, passed: bool, failure_code: Option<FailureReasonCode>) {
+        self.total_pairs += 1;
+        if passed {
+            self.pairs_passed += 1;
+        } else {
+            self.pairs_failed += 1;
+            if let Some(code) = failure_code {
+                *self.failure_breakdown.entry(code).or_insert(0) += 1;
+            }
+        }
+        self.update_pass_rate();
+    }
+
+    pub fn update_pass_rate(&mut self) {
+        if self.total_pairs > 0 {
+            self.pass_rate = self.pairs_passed as f64 / self.total_pairs as f64;
+        }
+    }
+
+    pub fn set_latencies(&mut self, p50: u64, p95: u64, p99: u64) {
+        self.latency_p50_ms = Some(p50);
+        self.latency_p95_ms = Some(p95);
+        self.latency_p99_ms = Some(p99);
+    }
+
+    pub fn finalize(&mut self, duration_ms: u64) {
+        self.duration_ms = duration_ms;
+        self.update_pass_rate();
+    }
+
+    pub fn top_failures(&self, n: usize) -> Vec<(FailureReasonCode, u32)> {
+        let mut failures: Vec<_> = self
+            .failure_breakdown
+            .iter()
+            .map(|(k, v)| (*k, *v))
+            .collect();
+        failures.sort_by(|a, b| b.1.cmp(&a.1));
+        failures.truncate(n);
+        failures
+    }
+
+    pub fn human_summary(&self) -> String {
+        let status = if self.pass_rate >= 0.95 {
+            "PASS"
+        } else if self.pass_rate >= 0.80 {
+            "DEGRADED"
+        } else {
+            "FAIL"
+        };
+        let top_fails = self
+            .top_failures(3)
+            .iter()
+            .map(|(code, count)| format!("{}: {}", code, count))
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!(
+            "[{}] {}/{} pairs passed ({:.1}%) | p50={}ms p95={}ms | top failures: {}",
+            status,
+            self.pairs_passed,
+            self.total_pairs,
+            self.pass_rate * 100.0,
+            self.latency_p50_ms.unwrap_or(0),
+            self.latency_p95_ms.unwrap_or(0),
+            if top_fails.is_empty() {
+                "none".to_string()
+            } else {
+                top_fails
+            }
+        )
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NatScenario {
+    BothPublic,
+    SingleNatOnePublic,
+    SingleNatBoth,
+    Cgnat,
+    DoubleNat,
+    Hairpin,
+    NatRebinding,
+    MobileCarrier,
+    Ipv6OnlyNat64,
+    SymmetricBoth,
+}
+
+impl std::fmt::Display for NatScenario {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::BothPublic => write!(f, "Both Public"),
+            Self::SingleNatOnePublic => write!(f, "Single NAT + Public"),
+            Self::SingleNatBoth => write!(f, "Single NAT Both"),
+            Self::Cgnat => write!(f, "CGNAT"),
+            Self::DoubleNat => write!(f, "Double NAT"),
+            Self::Hairpin => write!(f, "Hairpin NAT"),
+            Self::NatRebinding => write!(f, "NAT Rebinding"),
+            Self::MobileCarrier => write!(f, "Mobile Carrier"),
+            Self::Ipv6OnlyNat64 => write!(f, "IPv6-only + NAT64"),
+            Self::SymmetricBoth => write!(f, "Symmetric Both"),
+        }
+    }
+}
+
+impl NatScenario {
+    pub fn is_ci_fast(&self) -> bool {
+        matches!(
+            self,
+            Self::BothPublic | Self::SingleNatOnePublic | Self::SingleNatBoth | Self::Cgnat
+        )
+    }
+
+    pub fn requires_relay(&self) -> bool {
+        matches!(self, Self::SymmetricBoth | Self::DoubleNat)
+    }
+
+    pub fn expected_difficulty(&self) -> u8 {
+        match self {
+            Self::BothPublic => 1,
+            Self::SingleNatOnePublic => 2,
+            Self::SingleNatBoth => 3,
+            Self::Cgnat => 4,
+            Self::Hairpin => 3,
+            Self::NatRebinding => 4,
+            Self::MobileCarrier => 5,
+            Self::DoubleNat => 5,
+            Self::Ipv6OnlyNat64 => 4,
+            Self::SymmetricBoth => 5,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct RelayMetrics {
+    pub relay_peer_id: Option<String>,
+    pub relay_addr: Option<String>,
+    pub relay_hop_count: u32,
+    pub relay_latency_overhead_ms: Option<u64>,
+    pub relay_throughput_kbps: Option<u32>,
+    pub fallback_sequence: Vec<ConnectionTechnique>,
+    pub direct_failed: bool,
+    pub hole_punch_failed: bool,
+    pub relay_required: bool,
+    pub relay_success: bool,
+}
+
+impl RelayMetrics {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn record_direct_failed(&mut self) {
+        self.direct_failed = true;
+        self.fallback_sequence.push(ConnectionTechnique::DirectIpv4);
+    }
+
+    pub fn record_hole_punch_failed(&mut self) {
+        self.hole_punch_failed = true;
+        self.fallback_sequence.push(ConnectionTechnique::HolePunch);
+    }
+
+    pub fn record_relay_attempt(&mut self, peer_id: &str, addr: &str) {
+        self.relay_required = true;
+        self.relay_peer_id = Some(peer_id.to_string());
+        self.relay_addr = Some(addr.to_string());
+        self.fallback_sequence.push(ConnectionTechnique::Relay);
+    }
+
+    pub fn record_relay_success(&mut self, hop_count: u32, latency_overhead_ms: u64) {
+        self.relay_success = true;
+        self.relay_hop_count = hop_count;
+        self.relay_latency_overhead_ms = Some(latency_overhead_ms);
+    }
+
+    pub fn is_relay_proven(&self) -> bool {
+        self.relay_success && self.relay_peer_id.is_some() && self.relay_hop_count > 0
+    }
+
+    pub fn fallback_depth(&self) -> usize {
+        self.fallback_sequence.len()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum TestSuite {
+    #[default]
+    CiFast,
+    NightlyDeep,
+    Full,
+}
+
+impl std::fmt::Display for TestSuite {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::CiFast => write!(f, "CI-Fast (~5min)"),
+            Self::NightlyDeep => write!(f, "Nightly-Deep (~30min)"),
+            Self::Full => write!(f, "Full (~60min)"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TestSuiteConfig {
+    pub suite: TestSuite,
+    pub nat_scenarios: Vec<NatScenario>,
+    pub test_patterns: Vec<TestPattern>,
+    pub network_profiles: Vec<NetworkProfile>,
+    pub temporal_scenarios: Vec<TemporalScenario>,
+    pub enable_migration_tests: bool,
+    pub enable_relay_tests: bool,
+    pub churn_cycles: u32,
+    pub timeout_secs: u32,
+}
+
+impl Default for TestSuiteConfig {
+    fn default() -> Self {
+        Self::ci_fast()
+    }
+}
+
+impl TestSuiteConfig {
+    pub fn ci_fast() -> Self {
+        Self {
+            suite: TestSuite::CiFast,
+            nat_scenarios: vec![
+                NatScenario::BothPublic,
+                NatScenario::SingleNatOnePublic,
+                NatScenario::SingleNatBoth,
+            ],
+            test_patterns: vec![TestPattern::Outbound, TestPattern::Inbound],
+            network_profiles: vec![NetworkProfile::ideal(), NetworkProfile::low_mtu()],
+            temporal_scenarios: vec![TemporalScenario::ColdStart],
+            enable_migration_tests: false,
+            enable_relay_tests: false,
+            churn_cycles: 0,
+            timeout_secs: 300,
+        }
+    }
+
+    pub fn nightly_deep() -> Self {
+        Self {
+            suite: TestSuite::NightlyDeep,
+            nat_scenarios: vec![
+                NatScenario::BothPublic,
+                NatScenario::SingleNatOnePublic,
+                NatScenario::SingleNatBoth,
+                NatScenario::Cgnat,
+                NatScenario::DoubleNat,
+                NatScenario::Hairpin,
+                NatScenario::MobileCarrier,
+            ],
+            test_patterns: vec![
+                TestPattern::Outbound,
+                TestPattern::Inbound,
+                TestPattern::Simultaneous,
+                TestPattern::InboundUnderLoad,
+            ],
+            network_profiles: vec![
+                NetworkProfile::ideal(),
+                NetworkProfile::low_mtu(),
+                NetworkProfile::high_latency(),
+                NetworkProfile::lossy(),
+                NetworkProfile::mobile(),
+            ],
+            temporal_scenarios: vec![
+                TemporalScenario::ColdStart,
+                TemporalScenario::WarmReconnect,
+                TemporalScenario::NatBindingExpiry,
+                TemporalScenario::RepeatedChurn,
+            ],
+            enable_migration_tests: true,
+            enable_relay_tests: true,
+            churn_cycles: 10,
+            timeout_secs: 1800,
+        }
+    }
+
+    pub fn full() -> Self {
+        Self {
+            suite: TestSuite::Full,
+            nat_scenarios: vec![
+                NatScenario::BothPublic,
+                NatScenario::SingleNatOnePublic,
+                NatScenario::SingleNatBoth,
+                NatScenario::Cgnat,
+                NatScenario::DoubleNat,
+                NatScenario::Hairpin,
+                NatScenario::NatRebinding,
+                NatScenario::MobileCarrier,
+                NatScenario::Ipv6OnlyNat64,
+                NatScenario::SymmetricBoth,
+            ],
+            test_patterns: vec![
+                TestPattern::Outbound,
+                TestPattern::Inbound,
+                TestPattern::Simultaneous,
+                TestPattern::InboundUnderLoad,
+            ],
+            network_profiles: vec![
+                NetworkProfile::ideal(),
+                NetworkProfile::low_mtu(),
+                NetworkProfile::high_latency(),
+                NetworkProfile::lossy(),
+                NetworkProfile::mobile(),
+                NetworkProfile::stressed(),
+            ],
+            temporal_scenarios: vec![
+                TemporalScenario::ColdStart,
+                TemporalScenario::WarmReconnect,
+                TemporalScenario::NatBindingExpiry,
+                TemporalScenario::RepeatedChurn,
+            ],
+            enable_migration_tests: true,
+            enable_relay_tests: true,
+            churn_cycles: 20,
+            timeout_secs: 3600,
+        }
+    }
+
+    pub fn estimated_pairs(&self) -> usize {
+        self.nat_scenarios.len() * self.test_patterns.len()
+    }
+
+    pub fn estimated_duration_secs(&self) -> u32 {
+        match self.suite {
+            TestSuite::CiFast => 300,
+            TestSuite::NightlyDeep => 1800,
+            TestSuite::Full => 3600,
         }
     }
 }
@@ -1039,6 +2195,24 @@ pub struct ConnectivityMatrix {
     /// Unix timestamp when connection was first established
     #[serde(default)]
     pub connected_at_ms: Option<u64>,
+
+    #[serde(default)]
+    pub success_level: SuccessLevel,
+
+    #[serde(default)]
+    pub data_proof: Option<DataProof>,
+
+    #[serde(default)]
+    pub method_proof: Option<MethodProof>,
+
+    #[serde(default)]
+    pub test_pattern: TestPattern,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub network_profile: Option<NetworkProfile>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub impairment_metrics: Option<ImpairmentMetrics>,
 }
 
 impl ConnectivityMatrix {
@@ -1140,10 +2314,11 @@ impl ConnectivityMatrix {
             duration_ms,
             error,
             timestamp_ms: unix_timestamp_ms(),
+            data_proof: None,
+            method_proof: None,
         };
         self.technique_attempts.push(attempt);
 
-        // Also update the legacy fields for backward compatibility
         match technique {
             ConnectionTechnique::DirectIpv4 => {
                 self.ipv4_direct_tested = true;
@@ -1230,6 +2405,150 @@ impl ConnectivityMatrix {
     /// Get total time spent on all attempts.
     pub fn total_attempt_time_ms(&self) -> u64 {
         self.technique_attempts.iter().map(|a| a.duration_ms).sum()
+    }
+
+    /// Record a technique attempt with bidirectional data proof.
+    pub fn record_attempt_with_proof(
+        &mut self,
+        technique: ConnectionTechnique,
+        success: bool,
+        duration_ms: u64,
+        error: Option<String>,
+        data_proof: Option<DataProof>,
+    ) {
+        let attempt = TechniqueAttempt {
+            technique,
+            success,
+            duration_ms,
+            error,
+            timestamp_ms: unix_timestamp_ms(),
+            data_proof: data_proof.clone(),
+            method_proof: None,
+        };
+        self.technique_attempts.push(attempt);
+
+        match technique {
+            ConnectionTechnique::DirectIpv4 => {
+                self.ipv4_direct_tested = true;
+                if success {
+                    self.ipv4_direct_success = true;
+                    self.ipv4_direct_rtt_ms = Some(duration_ms);
+                }
+            }
+            ConnectionTechnique::DirectIpv6 => {
+                self.ipv6_direct_tested = true;
+                if success {
+                    self.ipv6_direct_success = true;
+                    self.ipv6_direct_rtt_ms = Some(duration_ms);
+                }
+            }
+            ConnectionTechnique::HolePunch | ConnectionTechnique::HolePunchCoordinated => {
+                self.nat_traversal_tested = true;
+                if success {
+                    self.nat_traversal_success = true;
+                    self.nat_traversal_rtt_ms = Some(duration_ms);
+                }
+            }
+            ConnectionTechnique::Relay => {
+                self.relay_tested = true;
+                if success {
+                    self.relay_success = true;
+                    self.relay_rtt_ms = Some(duration_ms);
+                }
+            }
+            ConnectionTechnique::UPnP | ConnectionTechnique::NatPmp => {
+                self.ipv4_direct_tested = true;
+                if success {
+                    self.ipv4_direct_success = true;
+                    self.ipv4_direct_rtt_ms = Some(duration_ms);
+                }
+            }
+        }
+
+        if data_proof.is_some() {
+            self.data_proof = data_proof;
+        }
+
+        self.success_level = self.calculate_success_level();
+    }
+
+    /// Calculate the success level based on current state.
+    pub fn calculate_success_level(&self) -> SuccessLevel {
+        let any_success = self.ipv4_direct_success
+            || self.ipv6_direct_success
+            || self.nat_traversal_success
+            || self.relay_success;
+
+        if !any_success {
+            return SuccessLevel::Failed;
+        }
+
+        let has_bidirectional_proof = self
+            .data_proof
+            .as_ref()
+            .is_some_and(|p| p.is_bidirectional());
+
+        if !has_bidirectional_proof {
+            return SuccessLevel::Established;
+        }
+
+        let has_method_proof = self
+            .method_proof
+            .as_ref()
+            .is_some_and(|p| p.has_sufficient_evidence());
+
+        if has_method_proof {
+            return SuccessLevel::CorrectMethod;
+        }
+
+        SuccessLevel::Usable
+    }
+
+    pub fn is_passing(&self) -> bool {
+        self.success_level.is_passing()
+    }
+
+    pub fn has_data_proof(&self) -> bool {
+        self.data_proof
+            .as_ref()
+            .is_some_and(|p| p.is_bidirectional())
+    }
+
+    pub fn has_method_proof(&self) -> bool {
+        self.method_proof
+            .as_ref()
+            .is_some_and(|p| p.has_sufficient_evidence())
+    }
+
+    pub fn is_fully_passing(&self) -> bool {
+        self.success_level >= SuccessLevel::Usable && self.has_method_proof()
+    }
+
+    pub fn passes_for_pattern(&self, pattern: TestPattern) -> bool {
+        if !self.is_passing() {
+            return false;
+        }
+        self.test_pattern == pattern
+    }
+
+    pub fn passes_under_impairment(&self) -> bool {
+        self.is_passing()
+            && self
+                .network_profile
+                .as_ref()
+                .is_some_and(|p| p.is_impaired())
+    }
+
+    pub fn set_test_pattern(&mut self, pattern: TestPattern) {
+        self.test_pattern = pattern;
+    }
+
+    pub fn set_network_profile(&mut self, profile: NetworkProfile) {
+        self.network_profile = Some(profile);
+    }
+
+    pub fn record_impairment_metrics(&mut self, metrics: ImpairmentMetrics) {
+        self.impairment_metrics = Some(metrics);
     }
 }
 
@@ -1476,6 +2795,8 @@ mod tests {
             duration_ms: 123,
             error: None,
             timestamp_ms: 1234567890123,
+            data_proof: None,
+            method_proof: None,
         };
 
         let json = serde_json::to_string(&attempt).expect("serialization should work");
@@ -1556,5 +2877,960 @@ mod tests {
             }
             _ => panic!("wrong variant"),
         }
+    }
+
+    // ===== DataProof Tests =====
+
+    #[test]
+    fn test_data_proof_new() {
+        let proof = DataProof::new(1024, 1024, "abc123".to_string(), "def456".to_string(), true);
+
+        assert_eq!(proof.bytes_sent, 1024);
+        assert_eq!(proof.bytes_received, 1024);
+        assert_eq!(proof.sent_checksum, "abc123");
+        assert_eq!(proof.received_checksum, "def456");
+        assert!(proof.verified);
+        assert!(proof.stream_tested);
+        assert!(!proof.datagram_tested);
+        assert!(proof.timestamp_ms > 0);
+    }
+
+    #[test]
+    fn test_data_proof_is_bidirectional() {
+        // Valid bidirectional proof
+        let proof = DataProof::new(1024, 1024, "a".into(), "b".into(), true);
+        assert!(proof.is_bidirectional());
+
+        // Missing send data
+        let no_send = DataProof::new(0, 1024, "".into(), "b".into(), true);
+        assert!(!no_send.is_bidirectional());
+
+        // Missing receive data
+        let no_recv = DataProof::new(1024, 0, "a".into(), "".into(), true);
+        assert!(!no_recv.is_bidirectional());
+
+        // Not verified
+        let unverified = DataProof::new(1024, 1024, "a".into(), "b".into(), false);
+        assert!(!unverified.is_bidirectional());
+    }
+
+    #[test]
+    fn test_data_proof_failed() {
+        let proof = DataProof::failed();
+        assert_eq!(proof.bytes_sent, 0);
+        assert_eq!(proof.bytes_received, 0);
+        assert!(!proof.verified);
+        assert!(!proof.is_bidirectional());
+    }
+
+    #[test]
+    fn test_data_proof_default() {
+        let proof = DataProof::default();
+        assert!(!proof.is_bidirectional());
+        assert!(!proof.verified);
+    }
+
+    #[test]
+    fn test_data_proof_serialization() {
+        let proof = DataProof::new(512, 512, "checksum1".into(), "checksum2".into(), true);
+        let json = serde_json::to_string(&proof).expect("serialization should work");
+        assert!(json.contains("512"));
+        assert!(json.contains("checksum1"));
+        assert!(json.contains("checksum2"));
+        assert!(json.contains("true"));
+
+        // Round-trip
+        let decoded: DataProof = serde_json::from_str(&json).expect("deserialization should work");
+        assert_eq!(decoded.bytes_sent, 512);
+        assert_eq!(decoded.bytes_received, 512);
+        assert!(decoded.verified);
+    }
+
+    // ===== SuccessLevel Tests =====
+
+    #[test]
+    fn test_success_level_ordering() {
+        assert!(SuccessLevel::Failed < SuccessLevel::Established);
+        assert!(SuccessLevel::Established < SuccessLevel::Usable);
+        assert!(SuccessLevel::Usable < SuccessLevel::Sustained);
+        assert!(SuccessLevel::Sustained < SuccessLevel::CorrectMethod);
+        assert!(SuccessLevel::CorrectMethod < SuccessLevel::Temporal);
+    }
+
+    #[test]
+    fn test_success_level_is_passing() {
+        assert!(!SuccessLevel::Failed.is_passing());
+        assert!(!SuccessLevel::Established.is_passing());
+        assert!(SuccessLevel::Usable.is_passing());
+        assert!(SuccessLevel::Sustained.is_passing());
+        assert!(SuccessLevel::CorrectMethod.is_passing());
+        assert!(SuccessLevel::Temporal.is_passing());
+    }
+
+    #[test]
+    fn test_success_level_display() {
+        assert!(SuccessLevel::Failed.to_string().contains("L0"));
+        assert!(SuccessLevel::Established.to_string().contains("L1"));
+        assert!(SuccessLevel::Usable.to_string().contains("L2"));
+        assert!(SuccessLevel::Sustained.to_string().contains("L3"));
+        assert!(SuccessLevel::CorrectMethod.to_string().contains("L4"));
+        assert!(SuccessLevel::Temporal.to_string().contains("L5"));
+    }
+
+    #[test]
+    fn test_success_level_description() {
+        assert!(SuccessLevel::Failed.description().contains("failed"));
+        assert!(
+            SuccessLevel::Established
+                .description()
+                .contains("handshake")
+        );
+        assert!(SuccessLevel::Usable.description().contains("Bidirectional"));
+        assert!(SuccessLevel::Sustained.description().contains("Sustained"));
+        assert!(
+            SuccessLevel::CorrectMethod
+                .description()
+                .contains("technique")
+        );
+        assert!(SuccessLevel::Temporal.description().contains("Temporal"));
+    }
+
+    #[test]
+    fn test_success_level_serialization() {
+        let level = SuccessLevel::Usable;
+        let json = serde_json::to_string(&level).expect("serialization should work");
+        assert!(json.contains("usable"));
+
+        let decoded: SuccessLevel =
+            serde_json::from_str(&json).expect("deserialization should work");
+        assert_eq!(decoded, SuccessLevel::Usable);
+    }
+
+    // ===== ConnectivityMatrix with DataProof Tests =====
+
+    #[test]
+    fn test_connectivity_matrix_record_attempt_with_proof() {
+        let mut matrix = ConnectivityMatrix::new();
+
+        // Record successful connection with data proof
+        let proof = DataProof::new(1024, 1024, "sent".into(), "recv".into(), true);
+        matrix.record_attempt_with_proof(
+            ConnectionTechnique::DirectIpv4,
+            true,
+            50,
+            None,
+            Some(proof),
+        );
+
+        assert!(matrix.ipv4_direct_success);
+        assert!(matrix.has_data_proof());
+        assert_eq!(matrix.success_level, SuccessLevel::Usable);
+        assert!(matrix.is_passing());
+    }
+
+    #[test]
+    fn test_connectivity_matrix_without_data_proof() {
+        let mut matrix = ConnectivityMatrix::new();
+
+        // Record successful connection WITHOUT data proof
+        matrix.record_attempt_with_proof(ConnectionTechnique::DirectIpv4, true, 50, None, None);
+
+        assert!(matrix.ipv4_direct_success);
+        assert!(!matrix.has_data_proof());
+        assert_eq!(matrix.success_level, SuccessLevel::Established);
+        assert!(!matrix.is_passing()); // Must have data proof to pass
+    }
+
+    #[test]
+    fn test_connectivity_matrix_calculate_success_level() {
+        let mut matrix = ConnectivityMatrix::new();
+
+        // No success = Failed
+        assert_eq!(matrix.calculate_success_level(), SuccessLevel::Failed);
+
+        // Connection success but no data proof = Established
+        matrix.ipv4_direct_success = true;
+        assert_eq!(matrix.calculate_success_level(), SuccessLevel::Established);
+
+        // With bidirectional data proof = Usable
+        matrix.data_proof = Some(DataProof::new(1024, 1024, "a".into(), "b".into(), true));
+        assert_eq!(matrix.calculate_success_level(), SuccessLevel::Usable);
+
+        // With invalid data proof (not verified) = Established
+        matrix.data_proof = Some(DataProof::new(1024, 1024, "a".into(), "b".into(), false));
+        assert_eq!(matrix.calculate_success_level(), SuccessLevel::Established);
+    }
+
+    #[test]
+    fn test_technique_attempt_with_data_proof() {
+        let proof = DataProof::new(512, 512, "x".into(), "y".into(), true);
+        let attempt = TechniqueAttempt {
+            technique: ConnectionTechnique::DirectIpv4,
+            success: true,
+            duration_ms: 25,
+            error: None,
+            timestamp_ms: 1234567890,
+            data_proof: Some(proof),
+            method_proof: None,
+        };
+
+        assert!(attempt.data_proof.is_some());
+        assert!(attempt.data_proof.as_ref().unwrap().is_bidirectional());
+
+        let json = serde_json::to_string(&attempt).expect("serialization should work");
+        assert!(json.contains("data_proof"));
+        let decoded: TechniqueAttempt =
+            serde_json::from_str(&json).expect("deserialization should work");
+        assert!(decoded.data_proof.is_some());
+    }
+
+    #[test]
+    fn test_method_proof_direct() {
+        let proof = MethodProof::direct("127.0.0.1:9000", "192.168.1.1:9000");
+        assert_eq!(proof.claimed_method, Some(ConnectionMethod::Direct));
+        assert!(proof.has_sufficient_evidence());
+        assert_eq!(proof.confidence, 1.0);
+        assert_eq!(proof.total_nat_frames(), 0);
+    }
+
+    #[test]
+    fn test_method_proof_hole_punched() {
+        let proof = MethodProof::hole_punched(
+            "127.0.0.1:9000",
+            "192.168.1.1:9000",
+            Some("coordinator-peer-id"),
+            4,
+        );
+        assert_eq!(proof.claimed_method, Some(ConnectionMethod::HolePunched));
+        assert!(proof.coordinator_peer_id.is_some());
+        assert!(proof.add_address_sent > 0 || proof.punch_me_now_sent > 0);
+    }
+
+    #[test]
+    fn test_method_proof_relayed() {
+        let proof = MethodProof::relayed("relay-peer-id", "10.0.0.1:9000");
+        assert_eq!(proof.claimed_method, Some(ConnectionMethod::Relayed));
+        assert!(proof.has_sufficient_evidence());
+        assert_eq!(proof.relay_peer_id, Some("relay-peer-id".to_string()));
+        assert_eq!(proof.confidence, 1.0);
+    }
+
+    #[test]
+    fn test_method_proof_has_sufficient_evidence() {
+        let mut proof = MethodProof::new();
+        proof.claimed_method = Some(ConnectionMethod::Direct);
+        assert!(proof.has_sufficient_evidence());
+
+        proof.claimed_method = Some(ConnectionMethod::HolePunched);
+        assert!(!proof.has_sufficient_evidence());
+
+        proof.add_address_sent = 2;
+        assert!(proof.has_sufficient_evidence());
+
+        proof.claimed_method = Some(ConnectionMethod::Relayed);
+        assert!(!proof.has_sufficient_evidence());
+
+        proof.relay_peer_id = Some("relay".to_string());
+        assert!(proof.has_sufficient_evidence());
+    }
+
+    #[test]
+    fn test_method_proof_calculate_confidence() {
+        let mut proof = MethodProof::new();
+
+        proof.claimed_method = Some(ConnectionMethod::Direct);
+        assert_eq!(proof.calculate_confidence(), 1.0);
+
+        proof.add_address_sent = 1;
+        assert!(proof.calculate_confidence() < 1.0);
+
+        proof.claimed_method = Some(ConnectionMethod::HolePunched);
+        proof.add_address_sent = 2;
+        proof.coordinator_peer_id = Some("coord".to_string());
+        assert!(proof.calculate_confidence() >= 0.95);
+
+        proof.claimed_method = Some(ConnectionMethod::Relayed);
+        proof.relay_peer_id = Some("relay".to_string());
+        proof.relay_addr = Some("10.0.0.1:9000".to_string());
+        assert_eq!(proof.calculate_confidence(), 1.0);
+    }
+
+    #[test]
+    fn test_method_proof_record_nat_frames() {
+        let mut proof = MethodProof::new();
+        assert_eq!(proof.total_nat_frames(), 0);
+        assert!(!proof.has_nat_frame_evidence());
+
+        proof.record_add_address_sent();
+        assert_eq!(proof.total_nat_frames(), 1);
+        assert!(proof.has_nat_frame_evidence());
+        assert!(proof.first_nat_frame_ms.is_some());
+
+        proof.record_punch_me_now_received();
+        assert_eq!(proof.total_nat_frames(), 2);
+
+        proof.record_observed_address("203.0.113.1:9000");
+        assert_eq!(proof.total_nat_frames(), 3);
+        assert_eq!(
+            proof.observed_external_addr,
+            Some("203.0.113.1:9000".to_string())
+        );
+    }
+
+    #[test]
+    fn test_method_proof_serialization() {
+        let proof = MethodProof::direct("127.0.0.1:9000", "192.168.1.1:9000");
+        let json = serde_json::to_string(&proof).expect("serialization should work");
+        assert!(json.contains("direct"));
+        assert!(json.contains("127.0.0.1:9000"));
+
+        let decoded: MethodProof =
+            serde_json::from_str(&json).expect("deserialization should work");
+        assert_eq!(decoded.claimed_method, Some(ConnectionMethod::Direct));
+    }
+
+    #[test]
+    fn test_connectivity_matrix_with_method_proof() {
+        let mut matrix = ConnectivityMatrix::new();
+        matrix.ipv4_direct_success = true;
+        matrix.data_proof = Some(DataProof::new(1024, 1024, "a".into(), "b".into(), true));
+
+        assert_eq!(matrix.calculate_success_level(), SuccessLevel::Usable);
+        assert!(!matrix.has_method_proof());
+
+        matrix.method_proof = Some(MethodProof::direct("127.0.0.1:9000", "192.168.1.1:9000"));
+
+        assert!(matrix.has_method_proof());
+        assert_eq!(
+            matrix.calculate_success_level(),
+            SuccessLevel::CorrectMethod
+        );
+    }
+
+    #[test]
+    fn test_connectivity_matrix_success_level_with_method_proof() {
+        let mut matrix = ConnectivityMatrix::new();
+
+        assert_eq!(matrix.calculate_success_level(), SuccessLevel::Failed);
+
+        matrix.nat_traversal_success = true;
+        assert_eq!(matrix.calculate_success_level(), SuccessLevel::Established);
+
+        matrix.data_proof = Some(DataProof::new(1024, 1024, "a".into(), "b".into(), true));
+        assert_eq!(matrix.calculate_success_level(), SuccessLevel::Usable);
+
+        let mut method_proof = MethodProof::new();
+        method_proof.claimed_method = Some(ConnectionMethod::HolePunched);
+        method_proof.add_address_sent = 2;
+        method_proof.punch_me_now_sent = 1;
+        matrix.method_proof = Some(method_proof);
+
+        assert_eq!(
+            matrix.calculate_success_level(),
+            SuccessLevel::CorrectMethod
+        );
+    }
+
+    #[test]
+    fn test_test_pattern_display() {
+        assert_eq!(TestPattern::Outbound.to_string(), "A→B");
+        assert_eq!(TestPattern::Inbound.to_string(), "B→A");
+        assert_eq!(TestPattern::Simultaneous.to_string(), "A↔B");
+        assert_eq!(TestPattern::InboundUnderLoad.to_string(), "B→A (load)");
+    }
+
+    #[test]
+    fn test_test_pattern_requires_coordination() {
+        assert!(!TestPattern::Outbound.requires_coordination());
+        assert!(!TestPattern::Inbound.requires_coordination());
+        assert!(TestPattern::Simultaneous.requires_coordination());
+        assert!(!TestPattern::InboundUnderLoad.requires_coordination());
+    }
+
+    #[test]
+    fn test_test_pattern_serialization() {
+        let pattern = TestPattern::Simultaneous;
+        let json = serde_json::to_string(&pattern).expect("serialization should work");
+        assert!(json.contains("simultaneous"));
+
+        let decoded: TestPattern =
+            serde_json::from_str(&json).expect("deserialization should work");
+        assert_eq!(decoded, TestPattern::Simultaneous);
+    }
+
+    #[test]
+    fn test_network_profile_ideal() {
+        let profile = NetworkProfile::ideal();
+        assert_eq!(profile.mtu, 1500);
+        assert_eq!(profile.latency_ms, 0);
+        assert_eq!(profile.loss_percent, 0.0);
+        assert!(!profile.is_impaired());
+        assert_eq!(profile.severity_score(), 0.0);
+    }
+
+    #[test]
+    fn test_network_profile_low_mtu() {
+        let profile = NetworkProfile::low_mtu();
+        assert_eq!(profile.mtu, 1200);
+        assert!(profile.is_impaired());
+        assert!(profile.severity_score() > 0.0);
+    }
+
+    #[test]
+    fn test_network_profile_high_latency() {
+        let profile = NetworkProfile::high_latency();
+        assert_eq!(profile.latency_ms, 200);
+        assert!(profile.is_impaired());
+    }
+
+    #[test]
+    fn test_network_profile_lossy() {
+        let profile = NetworkProfile::lossy();
+        assert_eq!(profile.loss_percent, 3.0);
+        assert!(profile.is_impaired());
+    }
+
+    #[test]
+    fn test_network_profile_mobile() {
+        let profile = NetworkProfile::mobile();
+        assert!(profile.bandwidth_kbps.is_some());
+        assert!(profile.is_impaired());
+    }
+
+    #[test]
+    fn test_network_profile_stressed() {
+        let profile = NetworkProfile::stressed();
+        assert!(profile.is_impaired());
+        assert!(profile.severity_score() > 0.5);
+    }
+
+    #[test]
+    fn test_network_profile_serialization() {
+        let profile = NetworkProfile::mobile();
+        let json = serde_json::to_string(&profile).expect("serialization should work");
+        assert!(json.contains("mobile"));
+        assert!(json.contains("bandwidth_kbps"));
+
+        let decoded: NetworkProfile =
+            serde_json::from_str(&json).expect("deserialization should work");
+        assert_eq!(decoded.name, "mobile");
+    }
+
+    #[test]
+    fn test_impairment_metrics_new() {
+        let metrics = ImpairmentMetrics::new();
+        assert_eq!(metrics.handshake_bytes, 0);
+        assert_eq!(metrics.retransmissions, 0);
+        assert!(!metrics.has_issues());
+    }
+
+    #[test]
+    fn test_impairment_metrics_record() {
+        let mut metrics = ImpairmentMetrics::new();
+        metrics.record_handshake(5000, 4, 150);
+        assert_eq!(metrics.handshake_bytes, 5000);
+        assert_eq!(metrics.handshake_messages, 4);
+        assert_eq!(metrics.handshake_duration_ms, 150);
+
+        metrics.record_pmtu_probe();
+        assert_eq!(metrics.pmtu_probes_sent, 1);
+
+        metrics.record_blackhole();
+        assert!(metrics.has_issues());
+    }
+
+    #[test]
+    fn test_impairment_metrics_has_issues() {
+        let mut metrics = ImpairmentMetrics::new();
+        assert!(!metrics.has_issues());
+
+        metrics.pto_events = 4;
+        assert!(metrics.has_issues());
+
+        metrics.pto_events = 0;
+        metrics.retransmissions = 15;
+        assert!(metrics.has_issues());
+    }
+
+    #[test]
+    fn test_impairment_metrics_serialization() {
+        let mut metrics = ImpairmentMetrics::new();
+        metrics.record_handshake(3000, 3, 100);
+        let json = serde_json::to_string(&metrics).expect("serialization should work");
+        assert!(json.contains("3000"));
+
+        let decoded: ImpairmentMetrics =
+            serde_json::from_str(&json).expect("deserialization should work");
+        assert_eq!(decoded.handshake_bytes, 3000);
+    }
+
+    #[test]
+    fn test_connectivity_matrix_is_fully_passing() {
+        let mut matrix = ConnectivityMatrix::new();
+        assert!(!matrix.is_fully_passing());
+
+        matrix.ipv4_direct_success = true;
+        matrix.success_level = SuccessLevel::Usable;
+        assert!(!matrix.is_fully_passing());
+
+        matrix.method_proof = Some(MethodProof::direct("127.0.0.1:9000", "192.168.1.1:9000"));
+        assert!(matrix.is_fully_passing());
+    }
+
+    #[test]
+    fn test_connectivity_matrix_passes_for_pattern() {
+        let mut matrix = ConnectivityMatrix::new();
+        matrix.ipv4_direct_success = true;
+        matrix.success_level = SuccessLevel::Usable;
+        matrix.test_pattern = TestPattern::Outbound;
+
+        assert!(matrix.passes_for_pattern(TestPattern::Outbound));
+        assert!(!matrix.passes_for_pattern(TestPattern::Inbound));
+    }
+
+    #[test]
+    fn test_connectivity_matrix_passes_under_impairment() {
+        let mut matrix = ConnectivityMatrix::new();
+        matrix.ipv4_direct_success = true;
+        matrix.success_level = SuccessLevel::Usable;
+
+        assert!(!matrix.passes_under_impairment());
+
+        matrix.network_profile = Some(NetworkProfile::stressed());
+        assert!(matrix.passes_under_impairment());
+    }
+
+    #[test]
+    fn test_connectivity_matrix_set_test_pattern() {
+        let mut matrix = ConnectivityMatrix::new();
+        assert_eq!(matrix.test_pattern, TestPattern::Outbound);
+
+        matrix.set_test_pattern(TestPattern::Simultaneous);
+        assert_eq!(matrix.test_pattern, TestPattern::Simultaneous);
+    }
+
+    #[test]
+    fn test_connectivity_matrix_set_network_profile() {
+        let mut matrix = ConnectivityMatrix::new();
+        assert!(matrix.network_profile.is_none());
+
+        matrix.set_network_profile(NetworkProfile::mobile());
+        assert!(matrix.network_profile.is_some());
+        assert_eq!(matrix.network_profile.as_ref().unwrap().name, "mobile");
+    }
+
+    #[test]
+    fn test_connectivity_matrix_record_impairment_metrics() {
+        let mut matrix = ConnectivityMatrix::new();
+        assert!(matrix.impairment_metrics.is_none());
+
+        let mut metrics = ImpairmentMetrics::new();
+        metrics.record_handshake(4000, 4, 200);
+        matrix.record_impairment_metrics(metrics);
+
+        assert!(matrix.impairment_metrics.is_some());
+        assert_eq!(
+            matrix.impairment_metrics.as_ref().unwrap().handshake_bytes,
+            4000
+        );
+    }
+
+    #[test]
+    fn test_temporal_scenario_display() {
+        assert_eq!(TemporalScenario::ColdStart.to_string(), "Cold Start");
+        assert_eq!(
+            TemporalScenario::WarmReconnect.to_string(),
+            "Warm Reconnect"
+        );
+        assert_eq!(
+            TemporalScenario::NatBindingExpiry.to_string(),
+            "NAT Binding Expiry"
+        );
+        assert_eq!(
+            TemporalScenario::RepeatedChurn.to_string(),
+            "Repeated Churn"
+        );
+    }
+
+    #[test]
+    fn test_temporal_metrics_new() {
+        let metrics = TemporalMetrics::new(TemporalScenario::ColdStart);
+        assert_eq!(metrics.scenario, TemporalScenario::ColdStart);
+        assert_eq!(metrics.idle_duration_ms, 0);
+        assert!(!metrics.binding_expired);
+    }
+
+    #[test]
+    fn test_temporal_metrics_record_idle() {
+        let mut metrics = TemporalMetrics::new(TemporalScenario::NatBindingExpiry);
+        metrics.record_idle(60000);
+        assert_eq!(metrics.idle_duration_ms, 60000);
+    }
+
+    #[test]
+    fn test_temporal_metrics_keepalive() {
+        let mut metrics = TemporalMetrics::new(TemporalScenario::NatBindingExpiry);
+        metrics.record_keepalive_sent();
+        metrics.record_keepalive_sent();
+        metrics.record_keepalive_received();
+
+        assert_eq!(metrics.keepalive_sent, 2);
+        assert_eq!(metrics.keepalive_received, 1);
+        assert!(metrics.keepalive_effective());
+
+        metrics.record_binding_expired();
+        assert!(!metrics.keepalive_effective());
+    }
+
+    #[test]
+    fn test_temporal_metrics_reconnect() {
+        let mut metrics = TemporalMetrics::new(TemporalScenario::NatBindingExpiry);
+        metrics.record_reconnect(3000, true);
+
+        assert!(metrics.reconnect_required);
+        assert_eq!(metrics.reconnect_time_ms, Some(3000));
+        assert!(metrics.re_hole_punch_required);
+        assert!(metrics.is_level5_passing());
+    }
+
+    #[test]
+    fn test_temporal_metrics_churn() {
+        let mut metrics = TemporalMetrics::new(TemporalScenario::RepeatedChurn);
+        metrics.record_churn_cycle(true);
+        metrics.record_churn_cycle(true);
+        metrics.record_churn_cycle(false);
+
+        assert_eq!(metrics.churn_cycles_completed, 2);
+        assert_eq!(metrics.churn_cycles_failed, 1);
+        assert!((metrics.churn_success_rate() - 0.666).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_temporal_metrics_is_level5_passing() {
+        let mut metrics = TemporalMetrics::new(TemporalScenario::ColdStart);
+        assert!(!metrics.is_level5_passing());
+
+        metrics.mark_survived();
+        assert!(metrics.is_level5_passing());
+    }
+
+    #[test]
+    fn test_temporal_metrics_serialization() {
+        let metrics = TemporalMetrics::new(TemporalScenario::WarmReconnect);
+        let json = serde_json::to_string(&metrics).expect("serialization should work");
+        assert!(json.contains("warm_reconnect"));
+
+        let decoded: TemporalMetrics =
+            serde_json::from_str(&json).expect("deserialization should work");
+        assert_eq!(decoded.scenario, TemporalScenario::WarmReconnect);
+    }
+
+    #[test]
+    fn test_migration_metrics_new() {
+        let metrics = MigrationMetrics::new();
+        assert_eq!(metrics.migrations_attempted, 0);
+        assert_eq!(metrics.migrations_succeeded, 0);
+        assert!(metrics.path_history.is_empty());
+    }
+
+    #[test]
+    fn test_migration_metrics_record() {
+        let mut metrics = MigrationMetrics::new();
+        metrics.record_migration_attempt();
+        metrics.record_migration_success();
+        metrics.record_path_challenge();
+        metrics.record_path_response();
+
+        assert_eq!(metrics.migrations_attempted, 1);
+        assert_eq!(metrics.migrations_succeeded, 1);
+        assert_eq!(metrics.migration_success_rate(), 1.0);
+        assert_eq!(metrics.path_validation_rate(), 1.0);
+    }
+
+    #[test]
+    fn test_migration_metrics_path_change() {
+        let mut metrics = MigrationMetrics::new();
+        metrics.record_path_change("192.168.1.1:9000", "10.0.0.1:9000");
+        metrics.record_path_change("192.168.1.1:9001", "10.0.0.1:9000");
+
+        assert_eq!(metrics.path_history.len(), 2);
+        assert_eq!(metrics.path_history[0].local_addr, "192.168.1.1:9000");
+    }
+
+    #[test]
+    fn test_migration_metrics_success_rate() {
+        let mut metrics = MigrationMetrics::new();
+        metrics.record_migration_attempt();
+        metrics.record_migration_attempt();
+        metrics.record_migration_success();
+
+        assert_eq!(metrics.migration_success_rate(), 0.5);
+    }
+
+    #[test]
+    fn test_migration_metrics_serialization() {
+        let mut metrics = MigrationMetrics::new();
+        metrics.record_migration_attempt();
+        metrics.mark_data_continued();
+        let json = serde_json::to_string(&metrics).expect("serialization should work");
+        assert!(json.contains("data_continued_after_migration"));
+
+        let decoded: MigrationMetrics =
+            serde_json::from_str(&json).expect("deserialization should work");
+        assert!(decoded.data_continued_after_migration);
+    }
+
+    #[test]
+    fn test_failure_reason_code_display() {
+        assert_eq!(FailureReasonCode::Success.to_string(), "Success");
+        assert_eq!(FailureReasonCode::Timeout.to_string(), "Connection timeout");
+        assert_eq!(
+            FailureReasonCode::PmtuBlackhole.to_string(),
+            "PMTU blackhole detected"
+        );
+    }
+
+    #[test]
+    fn test_failure_reason_code_is_success() {
+        assert!(FailureReasonCode::Success.is_success());
+        assert!(!FailureReasonCode::Timeout.is_success());
+    }
+
+    #[test]
+    fn test_failure_reason_code_is_recoverable() {
+        assert!(FailureReasonCode::Timeout.is_recoverable());
+        assert!(FailureReasonCode::NatBindingExpired.is_recoverable());
+        assert!(!FailureReasonCode::HandshakeFailed.is_recoverable());
+        assert!(!FailureReasonCode::CryptoError.is_recoverable());
+    }
+
+    #[test]
+    fn test_failure_reason_code_is_configuration_issue() {
+        assert!(FailureReasonCode::AddressUnreachable.is_configuration_issue());
+        assert!(FailureReasonCode::NoRouteToHost.is_configuration_issue());
+        assert!(!FailureReasonCode::Timeout.is_configuration_issue());
+    }
+
+    #[test]
+    fn test_failure_reason_code_serialization() {
+        let code = FailureReasonCode::PqcNegotiationFailed;
+        let json = serde_json::to_string(&code).expect("serialization should work");
+        assert!(json.contains("pqc_negotiation_failed"));
+
+        let decoded: FailureReasonCode =
+            serde_json::from_str(&json).expect("deserialization should work");
+        assert_eq!(decoded, FailureReasonCode::PqcNegotiationFailed);
+    }
+
+    #[test]
+    fn test_test_report_new() {
+        let report = TestReport::new("run-123");
+        assert_eq!(report.run_id, "run-123");
+        assert_eq!(report.total_pairs, 0);
+        assert!(report.timestamp_ms > 0);
+    }
+
+    #[test]
+    fn test_test_report_record_pair_result() {
+        let mut report = TestReport::new("test-run");
+        report.record_pair_result(true, None);
+        report.record_pair_result(true, None);
+        report.record_pair_result(false, Some(FailureReasonCode::Timeout));
+
+        assert_eq!(report.total_pairs, 3);
+        assert_eq!(report.pairs_passed, 2);
+        assert_eq!(report.pairs_failed, 1);
+        assert!((report.pass_rate - 0.666).abs() < 0.01);
+        assert_eq!(
+            report.failure_breakdown.get(&FailureReasonCode::Timeout),
+            Some(&1)
+        );
+    }
+
+    #[test]
+    fn test_test_report_top_failures() {
+        let mut report = TestReport::new("test-run");
+        report.record_pair_result(false, Some(FailureReasonCode::Timeout));
+        report.record_pair_result(false, Some(FailureReasonCode::Timeout));
+        report.record_pair_result(false, Some(FailureReasonCode::HandshakeFailed));
+
+        let top = report.top_failures(2);
+        assert_eq!(top.len(), 2);
+        assert_eq!(top[0].0, FailureReasonCode::Timeout);
+        assert_eq!(top[0].1, 2);
+    }
+
+    #[test]
+    fn test_test_report_human_summary() {
+        let mut report = TestReport::new("test-run");
+        report.record_pair_result(true, None);
+        report.record_pair_result(true, None);
+        report.set_latencies(50, 150, 300);
+        report.finalize(5000);
+
+        let summary = report.human_summary();
+        assert!(summary.contains("PASS"));
+        assert!(summary.contains("2/2"));
+        assert!(summary.contains("100.0%"));
+        assert!(summary.contains("p50=50ms"));
+    }
+
+    #[test]
+    fn test_test_report_serialization() {
+        let mut report = TestReport::new("test-run");
+        report.set_git_sha("abc123");
+        report.set_topology("2-node");
+        let json = serde_json::to_string(&report).expect("serialization should work");
+        assert!(json.contains("test-run"));
+        assert!(json.contains("abc123"));
+
+        let decoded: TestReport = serde_json::from_str(&json).expect("deserialization should work");
+        assert_eq!(decoded.run_id, "test-run");
+        assert_eq!(decoded.git_sha, Some("abc123".to_string()));
+    }
+
+    #[test]
+    fn test_nat_scenario_display() {
+        assert_eq!(NatScenario::BothPublic.to_string(), "Both Public");
+        assert_eq!(NatScenario::DoubleNat.to_string(), "Double NAT");
+        assert_eq!(NatScenario::Cgnat.to_string(), "CGNAT");
+    }
+
+    #[test]
+    fn test_nat_scenario_is_ci_fast() {
+        assert!(NatScenario::BothPublic.is_ci_fast());
+        assert!(NatScenario::SingleNatBoth.is_ci_fast());
+        assert!(!NatScenario::DoubleNat.is_ci_fast());
+        assert!(!NatScenario::Hairpin.is_ci_fast());
+    }
+
+    #[test]
+    fn test_nat_scenario_requires_relay() {
+        assert!(!NatScenario::BothPublic.requires_relay());
+        assert!(NatScenario::SymmetricBoth.requires_relay());
+        assert!(NatScenario::DoubleNat.requires_relay());
+    }
+
+    #[test]
+    fn test_nat_scenario_difficulty() {
+        assert!(
+            NatScenario::BothPublic.expected_difficulty()
+                < NatScenario::Cgnat.expected_difficulty()
+        );
+        assert!(
+            NatScenario::Cgnat.expected_difficulty()
+                < NatScenario::SymmetricBoth.expected_difficulty()
+        );
+    }
+
+    #[test]
+    fn test_nat_scenario_serialization() {
+        let scenario = NatScenario::MobileCarrier;
+        let json = serde_json::to_string(&scenario).expect("serialization should work");
+        assert!(json.contains("mobile_carrier"));
+
+        let decoded: NatScenario =
+            serde_json::from_str(&json).expect("deserialization should work");
+        assert_eq!(decoded, NatScenario::MobileCarrier);
+    }
+
+    #[test]
+    fn test_relay_metrics_new() {
+        let metrics = RelayMetrics::new();
+        assert!(!metrics.relay_required);
+        assert!(!metrics.relay_success);
+        assert!(metrics.fallback_sequence.is_empty());
+    }
+
+    #[test]
+    fn test_relay_metrics_fallback_sequence() {
+        let mut metrics = RelayMetrics::new();
+        metrics.record_direct_failed();
+        metrics.record_hole_punch_failed();
+        metrics.record_relay_attempt("relay-peer", "10.0.0.1:9000");
+
+        assert!(metrics.direct_failed);
+        assert!(metrics.hole_punch_failed);
+        assert!(metrics.relay_required);
+        assert_eq!(metrics.fallback_depth(), 3);
+    }
+
+    #[test]
+    fn test_relay_metrics_is_relay_proven() {
+        let mut metrics = RelayMetrics::new();
+        assert!(!metrics.is_relay_proven());
+
+        metrics.record_relay_attempt("relay-peer", "10.0.0.1:9000");
+        metrics.record_relay_success(1, 50);
+
+        assert!(metrics.is_relay_proven());
+    }
+
+    #[test]
+    fn test_relay_metrics_serialization() {
+        let mut metrics = RelayMetrics::new();
+        metrics.record_relay_attempt("relay-peer", "10.0.0.1:9000");
+        let json = serde_json::to_string(&metrics).expect("serialization should work");
+        assert!(json.contains("relay-peer"));
+
+        let decoded: RelayMetrics =
+            serde_json::from_str(&json).expect("deserialization should work");
+        assert_eq!(decoded.relay_peer_id, Some("relay-peer".to_string()));
+    }
+
+    #[test]
+    fn test_test_suite_display() {
+        assert_eq!(TestSuite::CiFast.to_string(), "CI-Fast (~5min)");
+        assert_eq!(TestSuite::NightlyDeep.to_string(), "Nightly-Deep (~30min)");
+        assert_eq!(TestSuite::Full.to_string(), "Full (~60min)");
+    }
+
+    #[test]
+    fn test_test_suite_config_ci_fast() {
+        let config = TestSuiteConfig::ci_fast();
+        assert_eq!(config.suite, TestSuite::CiFast);
+        assert!(!config.enable_relay_tests);
+        assert!(!config.enable_migration_tests);
+        assert_eq!(config.churn_cycles, 0);
+        assert!(config.nat_scenarios.contains(&NatScenario::BothPublic));
+    }
+
+    #[test]
+    fn test_test_suite_config_nightly_deep() {
+        let config = TestSuiteConfig::nightly_deep();
+        assert_eq!(config.suite, TestSuite::NightlyDeep);
+        assert!(config.enable_relay_tests);
+        assert!(config.enable_migration_tests);
+        assert!(config.churn_cycles > 0);
+        assert!(config.nat_scenarios.contains(&NatScenario::DoubleNat));
+    }
+
+    #[test]
+    fn test_test_suite_config_full() {
+        let config = TestSuiteConfig::full();
+        assert_eq!(config.suite, TestSuite::Full);
+        assert!(config.nat_scenarios.len() >= 10);
+        assert!(config.network_profiles.len() >= 6);
+    }
+
+    #[test]
+    fn test_test_suite_config_estimated_pairs() {
+        let config = TestSuiteConfig::ci_fast();
+        assert!(config.estimated_pairs() > 0);
+        assert_eq!(
+            config.estimated_pairs(),
+            config.nat_scenarios.len() * config.test_patterns.len()
+        );
+    }
+
+    #[test]
+    fn test_test_suite_config_serialization() {
+        let config = TestSuiteConfig::ci_fast();
+        let json = serde_json::to_string(&config).expect("serialization should work");
+        assert!(json.contains("ci_fast"));
+
+        let decoded: TestSuiteConfig =
+            serde_json::from_str(&json).expect("deserialization should work");
+        assert_eq!(decoded.suite, TestSuite::CiFast);
     }
 }

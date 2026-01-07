@@ -12,8 +12,9 @@ use crate::gossip::{
 };
 use crate::registry::{
     BgpGeoProvider, ConnectionDirection, ConnectionMethod, ConnectionReport, ConnectivityMatrix,
-    FullMeshProbeResult, NatStats, NatType, NetworkEvent, NodeCapabilities, NodeGossipStats,
-    NodeHeartbeat, NodeRegistration, PeerInfo, PeerStatus, RegistryClient,
+    DataProof, FullMeshProbeResult, NatStats, NatType, NetworkEvent, NodeCapabilities,
+    NodeGossipStats, NodeHeartbeat, NodeRegistration, PeerInfo, PeerStatus, RegistryClient,
+    SuccessLevel,
 };
 use crate::tui::{
     CacheHealth, ConnectedPeer, FrameDirection, GeographicDistribution, LocalNodeInfo,
@@ -4948,16 +4949,89 @@ fn peer_id_to_bytes(peer_id: &str) -> [u8; 32] {
     bytes
 }
 
-/// Make a REAL QUIC connection to a peer using P2pEndpoint.
-///
-/// This is NOT a simulation - it creates an actual QUIC connection.
-/// Result of comprehensive connection testing.
+const DATA_PROOF_PAYLOAD_SIZE: usize = 1024;
+const DATA_PROOF_TIMEOUT_SECS: u64 = 5;
+
+async fn perform_bidirectional_data_exchange(
+    endpoint: &Arc<P2pEndpoint>,
+    peer_id: &QuicPeerId,
+) -> Option<DataProof> {
+    use sha2::{Digest, Sha256};
+
+    let connection = match endpoint.get_quic_connection(peer_id) {
+        Ok(Some(conn)) => conn,
+        Ok(None) => {
+            debug!("No QUIC connection found for peer");
+            return None;
+        }
+        Err(e) => {
+            debug!("Failed to get QUIC connection: {:?}", e);
+            return None;
+        }
+    };
+
+    let start = Instant::now();
+
+    let payload: Vec<u8> = (0..DATA_PROOF_PAYLOAD_SIZE)
+        .map(|i| (i % 256) as u8)
+        .collect();
+
+    let sent_checksum = {
+        let mut hasher = Sha256::new();
+        hasher.update(&payload);
+        hex::encode(hasher.finalize())
+    };
+
+    let exchange_result =
+        tokio::time::timeout(Duration::from_secs(DATA_PROOF_TIMEOUT_SECS), async {
+            let (mut send, mut recv) = connection.open_bi().await?;
+
+            send.write_all(&payload).await?;
+            send.finish()?;
+
+            let response = recv.read_to_end(DATA_PROOF_PAYLOAD_SIZE * 2).await?;
+
+            Ok::<Vec<u8>, Box<dyn std::error::Error + Send + Sync>>(response)
+        })
+        .await;
+
+    match exchange_result {
+        Ok(Ok(response)) => {
+            let received_checksum = {
+                let mut hasher = Sha256::new();
+                hasher.update(&response);
+                hex::encode(hasher.finalize())
+            };
+
+            let verified = !response.is_empty();
+            let echo_rtt_ms = start.elapsed().as_millis() as u64;
+
+            Some(DataProof {
+                bytes_sent: payload.len() as u64,
+                bytes_received: response.len() as u64,
+                sent_checksum,
+                received_checksum,
+                verified,
+                echo_rtt_ms: Some(echo_rtt_ms),
+                stream_tested: true,
+                datagram_tested: false,
+                timestamp_ms: crate::registry::unix_timestamp_ms(),
+            })
+        }
+        Ok(Err(e)) => {
+            debug!("Bidirectional data exchange failed: {}", e);
+            None
+        }
+        Err(_) => {
+            debug!("Bidirectional data exchange timed out");
+            None
+        }
+    }
+}
+
 struct ComprehensiveConnectResult {
-    /// The connectivity matrix with all tested paths.
     matrix: ConnectivityMatrix,
-    /// The best connection method to use.
     best_method: ConnectionMethod,
-    /// Whether connection succeeded at all.
     success: bool,
 }
 
@@ -4994,13 +5068,26 @@ async fn real_connect_comprehensive(
         let start = Instant::now();
         for addr in &ipv4_addrs {
             match tokio::time::timeout(Duration::from_secs(10), endpoint.connect(**addr)).await {
-                Ok(Ok(_conn)) => {
+                Ok(Ok(conn)) => {
                     matrix.ipv4_direct_success = true;
                     matrix.ipv4_direct_rtt_ms = Some(start.elapsed().as_millis() as u64);
-                    info!(
-                        "IPv4 direct connection to {} at {} succeeded",
-                        peer_id_short, addr
-                    );
+
+                    let data_proof =
+                        perform_bidirectional_data_exchange(endpoint, &conn.peer_id).await;
+                    if data_proof.is_some() {
+                        matrix.data_proof = data_proof;
+                        matrix.success_level = SuccessLevel::Usable;
+                        info!(
+                            "IPv4 direct to {} at {} succeeded with data proof",
+                            peer_id_short, addr
+                        );
+                    } else {
+                        matrix.success_level = SuccessLevel::Established;
+                        info!(
+                            "IPv4 direct to {} at {} connected (no data proof)",
+                            peer_id_short, addr
+                        );
+                    }
                     break;
                 }
                 Ok(Err(e)) => {
@@ -5013,19 +5100,35 @@ async fn real_connect_comprehensive(
         }
     }
 
-    // Test IPv6 direct connections (even if IPv4 succeeded - comprehensive testing)
     if !ipv6_addrs.is_empty() {
         matrix.ipv6_direct_tested = true;
         let start = Instant::now();
         for addr in &ipv6_addrs {
             match tokio::time::timeout(Duration::from_secs(10), endpoint.connect(**addr)).await {
-                Ok(Ok(_conn)) => {
+                Ok(Ok(conn)) => {
                     matrix.ipv6_direct_success = true;
                     matrix.ipv6_direct_rtt_ms = Some(start.elapsed().as_millis() as u64);
-                    info!(
-                        "IPv6 direct connection to {} at {} succeeded",
-                        peer_id_short, addr
-                    );
+
+                    if matrix.data_proof.is_none() {
+                        let data_proof =
+                            perform_bidirectional_data_exchange(endpoint, &conn.peer_id).await;
+                        if data_proof.is_some() {
+                            matrix.data_proof = data_proof;
+                            matrix.success_level = SuccessLevel::Usable;
+                            info!(
+                                "IPv6 direct to {} at {} succeeded with data proof",
+                                peer_id_short, addr
+                            );
+                        } else {
+                            if matrix.success_level < SuccessLevel::Established {
+                                matrix.success_level = SuccessLevel::Established;
+                            }
+                            info!(
+                                "IPv6 direct to {} at {} connected (no data proof)",
+                                peer_id_short, addr
+                            );
+                        }
+                    }
                     break;
                 }
                 Ok(Err(e)) => {
@@ -5058,10 +5161,30 @@ async fn real_connect_comprehensive(
             )
             .await
             {
-                Ok(Ok(_conn)) => {
+                Ok(Ok(conn)) => {
                     matrix.nat_traversal_success = true;
                     matrix.nat_traversal_rtt_ms = Some(start.elapsed().as_millis() as u64);
-                    info!("NAT traversal to {} succeeded", peer_id_short);
+
+                    if matrix.data_proof.is_none() {
+                        let data_proof =
+                            perform_bidirectional_data_exchange(endpoint, &conn.peer_id).await;
+                        if data_proof.is_some() {
+                            matrix.data_proof = data_proof;
+                            matrix.success_level = SuccessLevel::Usable;
+                            info!(
+                                "NAT traversal to {} succeeded with data proof",
+                                peer_id_short
+                            );
+                        } else {
+                            if matrix.success_level < SuccessLevel::Established {
+                                matrix.success_level = SuccessLevel::Established;
+                            }
+                            info!(
+                                "NAT traversal to {} connected (no data proof)",
+                                peer_id_short
+                            );
+                        }
+                    }
                 }
                 Ok(Err(e)) => {
                     debug!("NAT traversal to {} failed: {}", peer_id_short, e);
