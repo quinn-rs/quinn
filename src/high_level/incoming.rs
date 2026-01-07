@@ -201,3 +201,19 @@ impl IntoFuture for Incoming {
         IncomingFuture(self.accept())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{Incoming, RetryError};
+
+    #[test]
+    fn retry_on_consumed_incoming_returns_error() {
+        let incoming = Incoming(None);
+        let err = incoming.retry().unwrap_err();
+        match err {
+            RetryError::Incoming(inner) => {
+                assert!(inner.0.is_none());
+            }
+        }
+    }
+}

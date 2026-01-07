@@ -117,6 +117,18 @@ mod transport_parameter_error_tests {
     }
 
     #[test]
+    fn test_write_order_invalid_index_returns_internal() {
+        let mut params = TransportParameters::default();
+        let mut order = std::array::from_fn(|i| i as u8);
+        order[0] = u8::MAX;
+        params.write_order = Some(order);
+
+        let mut buf = Vec::new();
+        let result = params.write(&mut buf);
+        assert_eq!(result, Err(Error::Internal));
+    }
+
+    #[test]
     fn test_preferred_address_server_only() {
         // preferred_address can only be sent by servers
         let mut buf = Vec::new();

@@ -71,7 +71,7 @@ pub fn test_key_from_rng(rng: &mut dyn RngCore) -> TokenKey {
 
 /// Encode a retry token containing peer ID, connection ID, and a fresh nonce.
 /// Encrypts the token contents using AES-256-GCM with the provided key.
-/// Returns the encrypted token bytes, including authentication tag and nonce.
+/// Returns the encrypted token bytes, including authentication tag and nonce, or an error.
 pub fn encode_retry_token_with_rng<R: RngCore>(
     key: &TokenKey,
     peer_id: &PeerId,

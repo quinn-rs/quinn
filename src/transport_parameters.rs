@@ -498,7 +498,10 @@ impl TransportParameters {
             .as_ref()
             .unwrap_or(&std::array::from_fn(|i| i as u8))
         {
-            let id = TransportParameterId::SUPPORTED[*idx as usize];
+            let index = *idx as usize;
+            let Some(&id) = TransportParameterId::SUPPORTED.get(index) else {
+                return Err(Error::Internal);
+            };
             match id {
                 TransportParameterId::ReservedTransportParameter => {
                     if let Some(param) = self.grease_transport_parameter {
