@@ -561,7 +561,10 @@ fn draw_gossip_status(frame: &mut Frame, app: &App, area: Rect) {
         }
 
         // Summary at the end
-        let passed = crates.iter().filter(|(_, r)| r.status == TestStatus::Passed).count();
+        let passed = crates
+            .iter()
+            .filter(|(_, r)| r.status == TestStatus::Passed)
+            .count();
         let total = crates.len();
         let summary_color = if passed == total {
             Color::Green
@@ -573,7 +576,9 @@ fn draw_gossip_status(frame: &mut Frame, app: &App, area: Rect) {
         spans.push(Span::raw("  "));
         spans.push(Span::styled(
             format!("[{}/{}]", passed, total),
-            Style::default().fg(summary_color).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(summary_color)
+                .add_modifier(Modifier::BOLD),
         ));
     } else {
         spans.push(Span::styled(

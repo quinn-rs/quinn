@@ -214,8 +214,7 @@ impl HistoryManager {
         }
 
         // Sort entries by timestamp
-        self.entries
-            .sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
+        self.entries.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
 
         Ok(())
     }
@@ -330,8 +329,7 @@ impl HistoryManager {
 
     /// Get unique peers tested.
     pub fn unique_peers(&self) -> usize {
-        let mut peers: std::collections::HashSet<&str> =
-            std::collections::HashSet::new();
+        let mut peers: std::collections::HashSet<&str> = std::collections::HashSet::new();
         for entry in &self.entries {
             peers.insert(&entry.peer_id);
         }
@@ -398,10 +396,8 @@ mod tests {
 
         // Create and save a file
         let mut file = HistoryFile::new("test_node");
-        file.entries.push(HistoryEntry::new(
-            "peer1",
-            PeerConnectivity::default(),
-        ));
+        file.entries
+            .push(HistoryEntry::new("peer1", PeerConnectivity::default()));
 
         storage.save(&file).unwrap();
 

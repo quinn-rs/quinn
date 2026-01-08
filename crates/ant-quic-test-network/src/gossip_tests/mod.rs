@@ -427,9 +427,7 @@ impl GossipTestCoordinator {
     pub async fn run_crate_tests(&self, crate_name: &str) -> Option<CrateTestResult> {
         let result = match crate_name {
             "types" | "saorsa-gossip-types" => Some(crate_tests::test_types_crate().await),
-            "identity" | "saorsa-gossip-identity" => {
-                Some(crate_tests::test_identity_crate().await)
-            }
+            "identity" | "saorsa-gossip-identity" => Some(crate_tests::test_identity_crate().await),
             "transport" | "saorsa-gossip-transport" => {
                 Some(crate_tests::test_transport_crate().await)
             }
@@ -456,16 +454,12 @@ impl GossipTestCoordinator {
             match crate_name {
                 "types" | "saorsa-gossip-types" => results.types = crate_result.clone(),
                 "identity" | "saorsa-gossip-identity" => results.identity = crate_result.clone(),
-                "transport" | "saorsa-gossip-transport" => {
-                    results.transport = crate_result.clone()
-                }
+                "transport" | "saorsa-gossip-transport" => results.transport = crate_result.clone(),
                 "membership" | "saorsa-gossip-membership" => {
                     results.membership = crate_result.clone()
                 }
                 "pubsub" | "saorsa-gossip-pubsub" => results.pubsub = crate_result.clone(),
-                "crdt-sync" | "saorsa-gossip-crdt-sync" => {
-                    results.crdt_sync = crate_result.clone()
-                }
+                "crdt-sync" | "saorsa-gossip-crdt-sync" => results.crdt_sync = crate_result.clone(),
                 "groups" | "saorsa-gossip-groups" => results.groups = crate_result.clone(),
                 "coordinator" | "saorsa-gossip-coordinator" => {
                     results.coordinator = crate_result.clone()

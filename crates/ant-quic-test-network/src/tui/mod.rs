@@ -376,7 +376,8 @@ pub async fn run_tui(
                                 // Spawn async task to run gossip tests
                                 let tx = event_tx.clone();
                                 tokio::spawn(async move {
-                                    let coordinator = crate::gossip_tests::GossipTestCoordinator::new();
+                                    let coordinator =
+                                        crate::gossip_tests::GossipTestCoordinator::new();
                                     let results = coordinator.run_all_tests().await;
                                     let _ = tx.send(TuiEvent::GossipTestsComplete(results)).await;
                                 });
