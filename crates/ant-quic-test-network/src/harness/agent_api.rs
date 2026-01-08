@@ -187,6 +187,82 @@ pub struct ClearProfileResponse {
     pub error: Option<String>,
 }
 
+#[derive(Debug, Clone)]
+pub struct StartRunResult {
+    pub run_id: Uuid,
+    pub started_agents: Vec<String>,
+    pub failed_agents: Vec<(String, String)>,
+}
+
+impl StartRunResult {
+    pub fn new(run_id: Uuid) -> Self {
+        Self {
+            run_id,
+            started_agents: Vec::new(),
+            failed_agents: Vec::new(),
+        }
+    }
+
+    pub fn record_success(&mut self, agent_id: &str) {
+        self.started_agents.push(agent_id.to_string());
+    }
+
+    pub fn record_failure(&mut self, agent_id: &str, error: &str) {
+        self.failed_agents
+            .push((agent_id.to_string(), error.to_string()));
+    }
+
+    pub fn has_any_success(&self) -> bool {
+        !self.started_agents.is_empty()
+    }
+
+    pub fn all_succeeded(&self) -> bool {
+        self.failed_agents.is_empty() && !self.started_agents.is_empty()
+    }
+
+    pub fn successful_agents(&self) -> &[String] {
+        &self.started_agents
+    }
+
+    pub fn failed_agents(&self) -> &[(String, String)] {
+        &self.failed_agents
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct CollectionResult<T> {
+    pub items: Vec<T>,
+    pub failed_sources: Vec<(String, String)>,
+}
+
+impl<T> CollectionResult<T> {
+    pub fn new() -> Self {
+        Self {
+            items: Vec::new(),
+            failed_sources: Vec::new(),
+        }
+    }
+
+    pub fn add_items(&mut self, _source: &str, mut items: Vec<T>) {
+        self.items.append(&mut items);
+    }
+
+    pub fn record_failure(&mut self, source: &str, error: &str) {
+        self.failed_sources
+            .push((source.to_string(), error.to_string()));
+    }
+
+    pub fn is_complete(&self) -> bool {
+        self.failed_sources.is_empty()
+    }
+}
+
+impl<T> Default for CollectionResult<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HealthCheckResponse {
     pub healthy: bool,
@@ -433,5 +509,77 @@ mod tests {
         };
 
         assert!(peer.api_base_url.is_none());
+    }
+
+    #[test]
+    fn test_start_run_result_all_success() {
+        let run_id = Uuid::new_v4();
+        let mut result = StartRunResult::new(run_id);
+        result.record_success("agent-1");
+        result.record_success("agent-2");
+
+        assert!(result.has_any_success());
+        assert!(result.all_succeeded());
+        assert_eq!(result.successful_agents().len(), 2);
+        assert!(result.failed_agents().is_empty());
+    }
+
+    #[test]
+    fn test_start_run_result_partial_failure() {
+        let run_id = Uuid::new_v4();
+        let mut result = StartRunResult::new(run_id);
+        result.record_success("agent-1");
+        result.record_failure("agent-2", "Connection refused");
+
+        assert!(result.has_any_success());
+        assert!(!result.all_succeeded());
+        assert_eq!(result.successful_agents().len(), 1);
+        assert_eq!(result.failed_agents().len(), 1);
+    }
+
+    #[test]
+    fn test_start_run_result_all_failed() {
+        let run_id = Uuid::new_v4();
+        let mut result = StartRunResult::new(run_id);
+        result.record_failure("agent-1", "Timeout");
+        result.record_failure("agent-2", "Connection refused");
+
+        assert!(!result.has_any_success());
+        assert!(!result.all_succeeded());
+        assert!(result.successful_agents().is_empty());
+        assert_eq!(result.failed_agents().len(), 2);
+    }
+
+    #[test]
+    fn test_collection_result_complete() {
+        let mut result = CollectionResult::<String>::new();
+        result.add_items("agent-1", vec!["a".into(), "b".into()]);
+        result.add_items("agent-2", vec!["c".into()]);
+
+        assert!(result.is_complete());
+        assert_eq!(result.items.len(), 3);
+        assert!(result.failed_sources.is_empty());
+    }
+
+    #[test]
+    fn test_collection_result_partial() {
+        let mut result = CollectionResult::<String>::new();
+        result.add_items("agent-1", vec!["a".into()]);
+        result.record_failure("agent-2", "Network error");
+
+        assert!(!result.is_complete());
+        assert_eq!(result.items.len(), 1);
+        assert_eq!(result.failed_sources.len(), 1);
+    }
+
+    #[test]
+    fn test_collection_result_all_failed() {
+        let mut result = CollectionResult::<String>::new();
+        result.record_failure("agent-1", "Timeout");
+        result.record_failure("agent-2", "DNS error");
+
+        assert!(!result.is_complete());
+        assert!(result.items.is_empty());
+        assert_eq!(result.failed_sources.len(), 2);
     }
 }

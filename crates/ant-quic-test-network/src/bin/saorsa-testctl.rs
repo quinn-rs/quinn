@@ -1,9 +1,10 @@
 use ant_quic_test_network::{
     harness::{
-        AgentCapabilities, AgentClient, AgentInfo, AttemptResult, FALLBACK_SOCKET_ADDR,
-        GetResultsRequest, GetResultsResponse, HandshakeRequest, HandshakeResponse,
-        HealthCheckResponse, ResultFormat, RunStatus, RunStatusResponse, RunSummary, ScenarioSpec,
-        StartRunRequest, StartRunResponse, StopRunResponse,
+        AgentCapabilities, AgentClient, AgentInfo, AttemptResult, CollectionResult,
+        FALLBACK_SOCKET_ADDR, GetResultsRequest, GetResultsResponse, HandshakeRequest,
+        HandshakeResponse, HealthCheckResponse, ResultFormat, RunStatus, RunStatusResponse,
+        RunSummary, ScenarioSpec, StartRunRequest, StartRunResponse, StartRunResult,
+        StopRunResponse,
     },
     orchestrator::NatTestMatrix,
 };
@@ -218,9 +219,10 @@ impl Orchestrator {
         Ok(responses)
     }
 
-    async fn start_run(&mut self, scenario: ScenarioSpec) -> Result<Uuid> {
+    async fn start_run(&mut self, scenario: ScenarioSpec) -> Result<StartRunResult> {
         let run_id = Uuid::new_v4();
         self.run_id = Some(run_id);
+        let mut result = StartRunResult::new(run_id);
 
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(30))
@@ -248,27 +250,54 @@ impl Orchestrator {
             let url = agent_client.start_run_url();
             match client.post(&url).json(&request).send().await {
                 Ok(resp) if resp.status().is_success() => {
-                    if let Ok(start_resp) = resp.json::<StartRunResponse>().await {
-                        if start_resp.success {
+                    match resp.json::<StartRunResponse>().await {
+                        Ok(start_resp) if start_resp.success => {
                             info!("Started run {} on agent {}", run_id, agent_id);
-                        } else {
-                            error!(
-                                "Failed to start run on {}: {:?}",
-                                agent_id, start_resp.error
-                            );
+                            result.record_success(agent_id);
+                        }
+                        Ok(start_resp) => {
+                            let err = start_resp
+                                .error
+                                .unwrap_or_else(|| "Unknown error".to_string());
+                            error!("Failed to start run on {}: {}", agent_id, err);
+                            result.record_failure(agent_id, &err);
+                        }
+                        Err(e) => {
+                            error!("Failed to parse response from {}: {}", agent_id, e);
+                            result.record_failure(agent_id, &format!("JSON parse error: {}", e));
                         }
                     }
                 }
                 Ok(resp) => {
-                    error!("Start run on {} returned: {}", agent_id, resp.status());
+                    let err = format!("HTTP {}", resp.status());
+                    error!("Start run on {} returned: {}", agent_id, err);
+                    result.record_failure(agent_id, &err);
                 }
                 Err(e) => {
                     error!("Failed to start run on {}: {}", agent_id, e);
+                    result.record_failure(agent_id, &e.to_string());
                 }
             }
         }
 
-        Ok(run_id)
+        if !result.has_any_success() {
+            anyhow::bail!(
+                "Failed to start run on ANY agent. Failures: {:?}",
+                result.failed_agents()
+            );
+        }
+
+        if !result.all_succeeded() {
+            warn!(
+                "Run {} started on {}/{} agents. Failed: {:?}",
+                run_id,
+                result.successful_agents().len(),
+                result.successful_agents().len() + result.failed_agents().len(),
+                result.failed_agents()
+            );
+        }
+
+        Ok(result)
     }
 
     async fn get_status(&self, run_id: Uuid) -> Result<HashMap<String, RunStatusResponse>> {
@@ -325,12 +354,12 @@ impl Orchestrator {
         Ok(())
     }
 
-    async fn collect_results(&self, run_id: Uuid) -> Result<Vec<AttemptResult>> {
+    async fn collect_results(&self, run_id: Uuid) -> Result<CollectionResult<AttemptResult>> {
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(60))
             .build()?;
 
-        let mut all_results = Vec::new();
+        let mut collection = CollectionResult::new();
 
         for (agent_id, agent_client) in &self.agents {
             let url = agent_client.results_url(run_id);
@@ -342,22 +371,42 @@ impl Orchestrator {
 
             match client.post(&url).json(&request).send().await {
                 Ok(resp) if resp.status().is_success() => {
-                    if let Ok(results_resp) = resp.json::<GetResultsResponse>().await {
-                        info!(
-                            "Collected {} results from {}",
-                            results_resp.results.len(),
-                            agent_id
-                        );
-                        all_results.extend(results_resp.results);
+                    match resp.json::<GetResultsResponse>().await {
+                        Ok(results_resp) => {
+                            info!(
+                                "Collected {} results from {}",
+                                results_resp.results.len(),
+                                agent_id
+                            );
+                            collection.add_items(agent_id, results_resp.results);
+                        }
+                        Err(e) => {
+                            error!("Failed to parse results from {}: {}", agent_id, e);
+                            collection
+                                .record_failure(agent_id, &format!("JSON parse error: {}", e));
+                        }
                     }
                 }
-                _ => {
-                    warn!("Failed to collect results from {}", agent_id);
+                Ok(resp) => {
+                    let err = format!("HTTP {}", resp.status());
+                    warn!("Failed to collect results from {}: {}", agent_id, err);
+                    collection.record_failure(agent_id, &err);
+                }
+                Err(e) => {
+                    warn!("Failed to collect results from {}: {}", agent_id, e);
+                    collection.record_failure(agent_id, &e.to_string());
                 }
             }
         }
 
-        Ok(all_results)
+        if !collection.is_complete() {
+            warn!(
+                "Results collection incomplete. Failed sources: {:?}",
+                collection.failed_sources
+            );
+        }
+
+        Ok(collection)
     }
 }
 
@@ -502,8 +551,14 @@ async fn main() -> Result<()> {
             scenario_spec.test_matrix.attempts_per_cell = attempts;
 
             info!("Starting run with scenario: {}", scenario);
-            let run_id = orchestrator.start_run(scenario_spec).await?;
-            info!("Run started: {}", run_id);
+            let start_result = orchestrator.start_run(scenario_spec).await?;
+            let run_id = start_result.run_id;
+            info!(
+                "Run started: {} ({}/{} agents)",
+                run_id,
+                start_result.successful_agents().len(),
+                start_result.successful_agents().len() + start_result.failed_agents().len()
+            );
 
             loop {
                 tokio::time::sleep(Duration::from_secs(5)).await;
@@ -524,8 +579,8 @@ async fn main() -> Result<()> {
                 info!("Progress: {} attempts completed", total_progress);
             }
 
-            let results = orchestrator.collect_results(run_id).await?;
-            let summary = RunSummary::from_attempts(run_id, &scenario, &results);
+            let collection = orchestrator.collect_results(run_id).await?;
+            let summary = RunSummary::from_attempts(run_id, &scenario, &collection.items);
 
             info!(
                 "Run complete: {}/{} successful ({:.1}%)",
@@ -534,8 +589,15 @@ async fn main() -> Result<()> {
                 summary.success_rate * 100.0
             );
 
+            if !collection.is_complete() {
+                warn!(
+                    "WARNING: Results incomplete - {} sources failed",
+                    collection.failed_sources.len()
+                );
+            }
+
             if let Some(output_path) = output {
-                let json = serde_json::to_string_pretty(&results)?;
+                let json = serde_json::to_string_pretty(&collection.items)?;
                 std::fs::write(&output_path, json)?;
                 info!("Results written to {:?}", output_path);
             }
@@ -585,16 +647,25 @@ async fn main() -> Result<()> {
             }
 
             orchestrator.discover_agents(&agents).await?;
-            let results = orchestrator.collect_results(run_id).await?;
+            let collection = orchestrator.collect_results(run_id).await?;
+
+            if !collection.is_complete() {
+                warn!(
+                    "WARNING: Results incomplete - {} sources failed: {:?}",
+                    collection.failed_sources.len(),
+                    collection.failed_sources
+                );
+            }
 
             let output_str = match format.as_str() {
-                "json" => serde_json::to_string_pretty(&results)?,
-                "jsonl" => results
+                "json" => serde_json::to_string_pretty(&collection.items)?,
+                "jsonl" => collection
+                    .items
                     .iter()
                     .filter_map(|r| r.to_jsonl().ok())
                     .collect::<Vec<_>>()
                     .join("\n"),
-                _ => format!("{:?}", results),
+                _ => format!("{:?}", collection.items),
             };
 
             if let Some(output_path) = output {
@@ -680,7 +751,14 @@ async fn main() -> Result<()> {
                 }
             } else if !agents.is_empty() {
                 orchestrator.discover_agents(&agents).await?;
-                orchestrator.collect_results(run_id).await?
+                let collection = orchestrator.collect_results(run_id).await?;
+                if !collection.is_complete() {
+                    warn!(
+                        "WARNING: Results incomplete - {} sources failed",
+                        collection.failed_sources.len()
+                    );
+                }
+                collection.items
             } else {
                 anyhow::bail!("Either --results-file or --agents required");
             };
