@@ -48,16 +48,20 @@ impl FailureCategory {
         reason: FailureReasonCode,
         harness_healthy: bool,
         test_ran_as_intended: bool,
-    ) -> Self {
+    ) -> Option<Self> {
+        if reason == FailureReasonCode::Success {
+            return None;
+        }
+
         if !harness_healthy {
-            return Self::HarnessPreflightError;
+            return Some(Self::HarnessPreflightError);
         }
 
         if !test_ran_as_intended {
-            return Self::HarnessOrchestrationError;
+            return Some(Self::HarnessOrchestrationError);
         }
 
-        match reason {
+        Some(match reason {
             FailureReasonCode::Timeout
             | FailureReasonCode::ConnectionRefused
             | FailureReasonCode::HandshakeFailed
@@ -83,12 +87,12 @@ impl FailureCategory {
                 Self::InfrastructureFlake
             }
 
-            FailureReasonCode::InternalError => Self::HarnessObservationError,
+            FailureReasonCode::InternalError | FailureReasonCode::Unknown => {
+                Self::HarnessObservationError
+            }
 
-            FailureReasonCode::Unknown => Self::HarnessObservationError,
-
-            FailureReasonCode::Success => Self::SutConnectivityFailure,
-        }
+            FailureReasonCode::Success => unreachable!("Success handled above"),
+        })
     }
 
     pub fn should_retry(&self) -> bool {
@@ -135,7 +139,8 @@ impl ClassifiedFailure {
         test_ran_as_intended: bool,
     ) -> Self {
         let category =
-            FailureCategory::from_context(reason_code, harness_healthy, test_ran_as_intended);
+            FailureCategory::from_context(reason_code, harness_healthy, test_ran_as_intended)
+                .unwrap_or(FailureCategory::HarnessObservationError);
         Self {
             category,
             reason_code,
@@ -144,6 +149,24 @@ impl ClassifiedFailure {
             test_ran_as_intended,
             evidence: FailureEvidence::default(),
         }
+    }
+
+    pub fn try_new(
+        reason_code: FailureReasonCode,
+        message: &str,
+        harness_healthy: bool,
+        test_ran_as_intended: bool,
+    ) -> Option<Self> {
+        let category =
+            FailureCategory::from_context(reason_code, harness_healthy, test_ran_as_intended)?;
+        Some(Self {
+            category,
+            reason_code,
+            message: message.to_string(),
+            harness_healthy,
+            test_ran_as_intended,
+            evidence: FailureEvidence::default(),
+        })
     }
 
     pub fn with_evidence(mut self, evidence: FailureEvidence) -> Self {
@@ -225,16 +248,16 @@ mod tests {
     #[test]
     fn test_failure_category_from_context() {
         let cat = FailureCategory::from_context(FailureReasonCode::Timeout, true, true);
-        assert_eq!(cat, FailureCategory::SutConnectivityFailure);
+        assert_eq!(cat, Some(FailureCategory::SutConnectivityFailure));
 
         let cat = FailureCategory::from_context(FailureReasonCode::Timeout, false, true);
-        assert_eq!(cat, FailureCategory::HarnessPreflightError);
+        assert_eq!(cat, Some(FailureCategory::HarnessPreflightError));
 
         let cat = FailureCategory::from_context(FailureReasonCode::Timeout, true, false);
-        assert_eq!(cat, FailureCategory::HarnessOrchestrationError);
+        assert_eq!(cat, Some(FailureCategory::HarnessOrchestrationError));
 
         let cat = FailureCategory::from_context(FailureReasonCode::CryptoError, true, true);
-        assert_eq!(cat, FailureCategory::SutBehaviorMismatch);
+        assert_eq!(cat, Some(FailureCategory::SutBehaviorMismatch));
     }
 
     #[test]
@@ -261,5 +284,41 @@ mod tests {
         );
         assert_eq!(failure.category, FailureCategory::SutConnectivityFailure);
         assert!(failure.category.counts_against_sut());
+    }
+
+    #[test]
+    fn test_from_context_success_returns_none() {
+        let result = FailureCategory::from_context(FailureReasonCode::Success, true, true);
+        assert!(result.is_none(), "Success should not classify as a failure");
+    }
+
+    #[test]
+    fn test_from_context_success_with_unhealthy_harness_returns_none() {
+        let result = FailureCategory::from_context(FailureReasonCode::Success, false, true);
+        assert!(
+            result.is_none(),
+            "Success should return None regardless of harness state"
+        );
+    }
+
+    #[test]
+    fn test_from_context_failure_returns_some() {
+        let result = FailureCategory::from_context(FailureReasonCode::Timeout, true, true);
+        assert!(result.is_some(), "Timeout should classify as a failure");
+        assert_eq!(result.unwrap(), FailureCategory::SutConnectivityFailure);
+    }
+
+    #[test]
+    fn test_classified_failure_new_with_success_returns_none() {
+        let result = ClassifiedFailure::try_new(
+            FailureReasonCode::Success,
+            "This is actually a success",
+            true,
+            true,
+        );
+        assert!(
+            result.is_none(),
+            "ClassifiedFailure::try_new should return None for Success"
+        );
     }
 }
