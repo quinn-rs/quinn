@@ -61,6 +61,7 @@ pub mod dashboard;
 pub mod epidemic_gossip;
 pub mod gossip;
 pub mod gossip_tests;
+pub mod harness;
 pub mod history;
 pub mod node;
 pub mod orchestrator;
@@ -103,4 +104,16 @@ pub use gossip_tests::{
 pub use history::{
     ConnectivityStatus, GossipResults, GossipStatus, HistoryConfig, HistoryEntry, HistoryFile,
     HistoryManager, HistoryStorage, PeerConnectivity,
+};
+
+pub use harness::{
+    AgentCapabilities, AgentClient, AgentInfo, AgentStatus, ApplyProfileRequest,
+    ApplyProfileResponse, ArtifactBundle, ArtifactEntry, ArtifactManifest, ArtifactSpec,
+    ArtifactType, AttemptResult, BarrierRequest, BarrierResponse, ClassifiedFailure,
+    DimensionStats, FailureBreakdown, FailureCategory, FailureEvidence, FrameCounters,
+    GetResultsRequest, GetResultsResponse, HandshakeRequest, HandshakeResponse,
+    HealthCheckResponse, IpMode, NatProfileSpec, RunProgress, RunStatus, RunStatusRequest,
+    RunStatusResponse, RunSummary, ScenarioSpec, StartRunRequest, StartRunResponse, StopRunRequest,
+    StopRunResponse, TechniqueResult, TestMatrixSpec, ThresholdSpec, TimingSpec, TopologySpec,
+    TopologyType,
 };
