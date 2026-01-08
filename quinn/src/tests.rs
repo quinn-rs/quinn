@@ -80,8 +80,7 @@ async fn close_endpoint() {
     let mut roots = RootCertStore::empty();
     roots.add(cert.cert.into()).unwrap();
 
-    let mut endpoint =
-        Endpoint::client(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0)).unwrap();
+    let endpoint = Endpoint::client(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0)).unwrap();
     endpoint
         .set_default_client_config(ClientConfig::with_root_certificates(Arc::new(roots)).unwrap());
 
@@ -290,7 +289,7 @@ impl EndpointFactory {
 
         let mut roots = rustls::RootCertStore::empty();
         roots.add(self.cert.cert.der().clone()).unwrap();
-        let mut endpoint = Endpoint::new(
+        let endpoint = Endpoint::new(
             self.endpoint_config.clone(),
             Some(server_config),
             UdpSocket::bind(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0)).unwrap(),
@@ -519,7 +518,7 @@ fn run_echo(args: EchoArgs) {
                 .with_no_client_auth();
         client_crypto.key_log = Arc::new(rustls::KeyLogFile::new());
 
-        let mut client = {
+        let client = {
             let _guard = runtime.enter();
             let _guard = error_span!("client").entered();
             Endpoint::client(args.client_addr).unwrap()
@@ -682,7 +681,7 @@ async fn rebind_recv() {
     let mut roots = rustls::RootCertStore::empty();
     roots.add(cert.clone()).unwrap();
 
-    let mut client = Endpoint::client(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0)).unwrap();
+    let client = Endpoint::client(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0)).unwrap();
     let mut client_config = ClientConfig::with_root_certificates(Arc::new(roots)).unwrap();
     client_config.transport_config(Arc::new({
         let mut cfg = TransportConfig::default();
