@@ -151,19 +151,29 @@ impl Orchestrator {
             let health_url = format!("{}/health", url.trim_end_matches('/'));
             match client.get(&health_url).send().await {
                 Ok(resp) if resp.status().is_success() => {
-                    if let Ok(health) = resp.json::<HealthCheckResponse>().await {
-                        let agent_info = AgentInfo {
-                            agent_id: health.agent_id.clone(),
-                            version: health.version,
-                            capabilities: AgentCapabilities::default(),
-                            api_base_url: url.clone(),
-                            p2p_listen_addr: health.p2p_listen_addr.unwrap_or(FALLBACK_SOCKET_ADDR),
-                            nat_profiles_available: vec![],
-                            status: health.status,
-                        };
-                        self.add_agent(&health.agent_id, url);
-                        discovered.push(agent_info);
-                        info!("Discovered agent: {} at {}", health.agent_id, url);
+                    match resp.json::<HealthCheckResponse>().await {
+                        Ok(health) => {
+                            let agent_info = AgentInfo {
+                                agent_id: health.agent_id.clone(),
+                                version: health.version,
+                                capabilities: AgentCapabilities::default(),
+                                api_base_url: url.clone(),
+                                p2p_listen_addr: health
+                                    .p2p_listen_addr
+                                    .unwrap_or(FALLBACK_SOCKET_ADDR),
+                                nat_profiles_available: vec![],
+                                status: health.status,
+                            };
+                            self.add_agent(&health.agent_id, url);
+                            discovered.push(agent_info);
+                            info!("Discovered agent: {} at {}", health.agent_id, url);
+                        }
+                        Err(e) => {
+                            error!(
+                                "Agent at {} returned invalid JSON: {}. Schema mismatch?",
+                                url, e
+                            );
+                        }
                     }
                 }
                 Ok(resp) => {
@@ -195,16 +205,21 @@ impl Orchestrator {
             let url = agent_client.handshake_url();
             match client.post(&url).json(&request).send().await {
                 Ok(resp) if resp.status().is_success() => {
-                    if let Ok(handshake) = resp.json::<HandshakeResponse>().await {
-                        if handshake.compatible {
-                            info!("Handshake successful with {}", agent_id);
-                        } else {
-                            warn!(
-                                "Agent {} missing capabilities: {:?}",
-                                agent_id, handshake.missing_capabilities
-                            );
+                    match resp.json::<HandshakeResponse>().await {
+                        Ok(handshake) => {
+                            if handshake.compatible {
+                                info!("Handshake successful with {}", agent_id);
+                            } else {
+                                warn!(
+                                    "Agent {} missing capabilities: {:?}",
+                                    agent_id, handshake.missing_capabilities
+                                );
+                            }
+                            responses.push(handshake);
                         }
-                        responses.push(handshake);
+                        Err(e) => {
+                            error!("Handshake response from {} invalid JSON: {}", agent_id, e);
+                        }
                     }
                 }
                 Ok(resp) => {
@@ -311,8 +326,13 @@ impl Orchestrator {
             let url = agent_client.status_url(run_id);
             match client.get(&url).send().await {
                 Ok(resp) if resp.status().is_success() => {
-                    if let Ok(status) = resp.json::<RunStatusResponse>().await {
-                        statuses.insert(agent_id.clone(), status);
+                    match resp.json::<RunStatusResponse>().await {
+                        Ok(status) => {
+                            statuses.insert(agent_id.clone(), status);
+                        }
+                        Err(e) => {
+                            error!("Failed to parse status response from {}: {}", agent_id, e);
+                        }
                     }
                 }
                 _ => {
@@ -338,11 +358,16 @@ impl Orchestrator {
 
             match client.post(&url).json(&request).send().await {
                 Ok(resp) if resp.status().is_success() => {
-                    if let Ok(stop_resp) = resp.json::<StopRunResponse>().await {
-                        info!(
-                            "Stopped run on {}: {} attempts completed",
-                            agent_id, stop_resp.attempts_completed
-                        );
+                    match resp.json::<StopRunResponse>().await {
+                        Ok(stop_resp) => {
+                            info!(
+                                "Stopped run on {}: {} attempts completed",
+                                agent_id, stop_resp.attempts_completed
+                            );
+                        }
+                        Err(e) => {
+                            error!("Failed to parse stop response from {}: {}", agent_id, e);
+                        }
                     }
                 }
                 _ => {
