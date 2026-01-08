@@ -1,7 +1,7 @@
 use crate::registry::{
     ConnectionMethod, ConnectionTechnique, ConnectivityMatrix, DataProof, FailureReasonCode,
-    ImpairmentMetrics, MethodProof, MigrationMetrics, NatType, NetworkProfile, RelayMetrics,
-    SuccessLevel, TemporalMetrics, TestPattern,
+    ImpairmentMetrics, MethodProof, MigrationMetrics, NatScenario, NatType, NetworkProfile,
+    RelayMetrics, SuccessLevel, TemporalMetrics, TemporalScenario, TestPattern,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -19,6 +19,9 @@ pub struct AttemptResult {
     pub nat_a: NatType,
     pub nat_b: NatType,
     pub ip_mode: IpMode,
+    pub nat_scenario: NatScenario,
+    pub temporal_scenario: TemporalScenario,
+    pub retry_index: u32,
 
     pub success: bool,
     pub path_used: Option<ConnectionMethod>,
@@ -62,6 +65,9 @@ impl AttemptResult {
             nat_a: NatType::Unknown,
             nat_b: NatType::Unknown,
             ip_mode: IpMode::Ipv4Only,
+            nat_scenario: NatScenario::BothPublic,
+            temporal_scenario: TemporalScenario::ColdStart,
+            retry_index: 0,
             success: false,
             path_used: None,
             connect_time_ms: None,
@@ -93,6 +99,21 @@ impl AttemptResult {
         self.nat_a = nat_a;
         self.nat_b = nat_b;
         self.ip_mode = ip_mode;
+        self
+    }
+
+    pub fn with_scenario_dimensions(
+        mut self,
+        nat_scenario: NatScenario,
+        temporal_scenario: TemporalScenario,
+    ) -> Self {
+        self.nat_scenario = nat_scenario;
+        self.temporal_scenario = temporal_scenario;
+        self
+    }
+
+    pub fn with_retry_index(mut self, retry_index: u32) -> Self {
+        self.retry_index = retry_index;
         self
     }
 
@@ -180,7 +201,26 @@ impl AttemptResult {
     }
 
     pub fn dimension_key(&self) -> String {
-        format!("{:?}_{:?}_{:?}", self.nat_a, self.nat_b, self.ip_mode)
+        format!(
+            "{}_{}_{}_{}_{}",
+            to_snake_case(&format!("{:?}", self.nat_a)),
+            to_snake_case(&format!("{:?}", self.nat_b)),
+            to_snake_case(&format!("{:?}", self.ip_mode)),
+            to_snake_case(&format!("{:?}", self.nat_scenario)),
+            to_snake_case(&format!("{:?}", self.temporal_scenario)),
+        )
+    }
+
+    pub fn full_dimension_key(&self) -> String {
+        format!(
+            "{}_{}_{}_{}_{}_{}",
+            to_snake_case(&format!("{:?}", self.nat_a)),
+            to_snake_case(&format!("{:?}", self.nat_b)),
+            to_snake_case(&format!("{:?}", self.ip_mode)),
+            to_snake_case(&format!("{:?}", self.nat_scenario)),
+            to_snake_case(&format!("{:?}", self.temporal_scenario)),
+            to_snake_case(&format!("{:?}", self.test_pattern)),
+        )
     }
 
     pub fn to_jsonl(&self) -> Result<String, serde_json::Error> {
@@ -404,9 +444,25 @@ fn percentile(sorted: &[u64], p: u32) -> Option<u64> {
     Some(sorted[idx.saturating_sub(1).min(sorted.len() - 1)])
 }
 
+fn to_snake_case(s: &str) -> String {
+    let mut result = String::with_capacity(s.len() + 4);
+    for (i, c) in s.chars().enumerate() {
+        if c.is_uppercase() {
+            if i > 0 {
+                result.push('_');
+            }
+            result.push(c.to_ascii_lowercase());
+        } else {
+            result.push(c);
+        }
+    }
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::registry::{NatScenario, TemporalScenario};
 
     #[test]
     fn test_attempt_result_new() {
@@ -491,5 +547,69 @@ mod tests {
         assert!((summary.success_rate - 0.8).abs() < 0.01);
         assert_eq!(summary.sut_failures, 2);
         assert_eq!(summary.harness_failures, 0);
+    }
+
+    #[test]
+    fn test_attempt_result_has_nat_scenario() {
+        let result = AttemptResult::new(Uuid::new_v4(), "test", 1);
+        assert_eq!(result.nat_scenario, NatScenario::BothPublic);
+    }
+
+    #[test]
+    fn test_attempt_result_has_temporal_scenario() {
+        let result = AttemptResult::new(Uuid::new_v4(), "test", 1);
+        assert_eq!(result.temporal_scenario, TemporalScenario::ColdStart);
+    }
+
+    #[test]
+    fn test_attempt_result_has_retry_index() {
+        let result = AttemptResult::new(Uuid::new_v4(), "test", 1);
+        assert_eq!(result.retry_index, 0);
+    }
+
+    #[test]
+    fn test_with_full_dimensions() {
+        let result = AttemptResult::new(Uuid::new_v4(), "test", 1)
+            .with_dimensions(NatType::FullCone, NatType::Symmetric, IpMode::DualStack)
+            .with_scenario_dimensions(NatScenario::DoubleNat, TemporalScenario::WarmReconnect);
+
+        assert_eq!(result.nat_a, NatType::FullCone);
+        assert_eq!(result.nat_b, NatType::Symmetric);
+        assert_eq!(result.ip_mode, IpMode::DualStack);
+        assert_eq!(result.nat_scenario, NatScenario::DoubleNat);
+        assert_eq!(result.temporal_scenario, TemporalScenario::WarmReconnect);
+    }
+
+    #[test]
+    fn test_dimension_key_includes_all_dimensions() {
+        let result = AttemptResult::new(Uuid::new_v4(), "test", 1)
+            .with_dimensions(NatType::FullCone, NatType::Symmetric, IpMode::DualStack)
+            .with_scenario_dimensions(NatScenario::DoubleNat, TemporalScenario::WarmReconnect);
+
+        let key = result.dimension_key();
+        assert!(key.contains("full_cone"), "Key should contain nat_a");
+        assert!(key.contains("symmetric"), "Key should contain nat_b");
+        assert!(key.contains("dual_stack"), "Key should contain ip_mode");
+        assert!(
+            key.contains("double_nat"),
+            "Key should contain nat_scenario"
+        );
+        assert!(
+            key.contains("warm_reconnect"),
+            "Key should contain temporal_scenario"
+        );
+    }
+
+    #[test]
+    fn test_full_dimension_key_stable_format() {
+        let result = AttemptResult::new(Uuid::new_v4(), "test", 1)
+            .with_dimensions(NatType::FullCone, NatType::Symmetric, IpMode::Ipv4Only)
+            .with_scenario_dimensions(NatScenario::BothPublic, TemporalScenario::ColdStart);
+
+        let key = result.full_dimension_key();
+        assert_eq!(
+            key,
+            "full_cone_symmetric_ipv4_only_both_public_cold_start_outbound"
+        );
     }
 }
