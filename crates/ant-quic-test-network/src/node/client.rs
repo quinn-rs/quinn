@@ -709,7 +709,7 @@ impl TestNode {
                         )));
                         let _ =
                             event_tx_for_events.try_send(TuiEvent::ProtocolFrame(ProtocolFrame {
-                                peer_id: "bootstrap".to_string(),
+                                peer_id: String::new(),
                                 frame_type: "OBSERVED_ADDRESS".to_string(),
                                 direction: FrameDirection::Received,
                                 timestamp: Instant::now(),
@@ -2752,22 +2752,7 @@ impl TestNode {
                             .collect();
                         debug!("SWIM alive peers (first 5): {:?}", preview);
                     }
-
-                    // Send PeerConnected events for gossip transport connections
-                    let connected = epidemic_gossip.connected_peers_with_addresses().await;
-                    for (peer_id, addr) in connected {
-                        let peer_id_hex = hex::encode(peer_id.as_bytes());
-                        let mut peer = ConnectedPeer::new(&peer_id_hex, ConnectionMethod::Direct);
-                        peer.addresses = vec![addr];
-                        let is_ipv6 = addr.is_ipv6();
-                        peer.connectivity.ipv4_direct_tested = !is_ipv6;
-                        peer.connectivity.ipv4_direct_success = !is_ipv6;
-                        peer.connectivity.ipv6_direct_tested = is_ipv6;
-                        peer.connectivity.ipv6_direct_success = is_ipv6;
-                        peer.connectivity.active_is_ipv6 = is_ipv6;
-                        peer.connectivity.active_method = Some(ConnectionMethod::Direct);
-                        send_tui_event(&event_tx, TuiEvent::PeerConnected(peer));
-                    }
+                    // PeerConnected events sent by QUIC layer only (avoids duplicate peer_id encodings)
                 }
 
                 tokio::time::sleep(Duration::from_secs(5)).await;
@@ -3421,30 +3406,7 @@ impl TestNode {
                                         "Epidemic gossip joined HyParView overlay with {} peers",
                                         count
                                     );
-
-                                    // Send immediate TUI updates for connected peers
-                                    let connected =
-                                        self.epidemic_gossip.connected_peers_with_addresses().await;
-                                    for (peer_id, addr) in connected {
-                                        let peer_id_hex = hex::encode(peer_id.as_bytes());
-                                        let mut peer = ConnectedPeer::new(
-                                            &peer_id_hex,
-                                            ConnectionMethod::Direct,
-                                        );
-                                        peer.addresses = vec![addr];
-                                        let is_ipv6 = addr.is_ipv6();
-                                        peer.connectivity.ipv4_direct_tested = !is_ipv6;
-                                        peer.connectivity.ipv4_direct_success = !is_ipv6;
-                                        peer.connectivity.ipv6_direct_tested = is_ipv6;
-                                        peer.connectivity.ipv6_direct_success = is_ipv6;
-                                        peer.connectivity.active_is_ipv6 = is_ipv6;
-                                        peer.connectivity.active_method =
-                                            Some(ConnectionMethod::Direct);
-                                        send_tui_event(
-                                            &self.event_tx,
-                                            TuiEvent::PeerConnected(peer),
-                                        );
-                                    }
+                                    // PeerConnected events sent by QUIC layer only (avoids duplicate peer_id encodings)
 
                                     // Send immediate SWIM update
                                     let (alive, suspect, dead) =

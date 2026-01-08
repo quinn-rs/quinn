@@ -337,6 +337,7 @@ fn draw_network_stats(frame: &mut Frame, app: &App, area: Rect) {
         connectivity_test_status_span(app),
     ]);
 
+    let (connected, attempted) = app.stats.unique_peer_counts();
     let success_rate = app.stats.success_rate();
     let success_color = if success_rate >= 90.0 {
         Color::Green
@@ -355,15 +356,9 @@ fn draw_network_stats(frame: &mut Frame, app: &App, area: Rect) {
                 .add_modifier(Modifier::BOLD),
         ),
         Span::raw(" ("),
-        Span::styled(
-            format!("{}", app.stats.connection_successes),
-            Style::default().fg(Color::Green),
-        ),
+        Span::styled(format!("{}", connected), Style::default().fg(Color::Green)),
         Span::raw("/"),
-        Span::styled(
-            format!("{}", app.stats.connection_attempts),
-            Style::default().fg(Color::White),
-        ),
+        Span::styled(format!("{}", attempted), Style::default().fg(Color::White)),
         Span::raw(")  │  PKTS: "),
         Span::styled(
             format!("{}↑", app.stats.packets_sent),
@@ -565,6 +560,7 @@ fn draw_peers(frame: &mut Frame, app: &mut App, area: Rect) {
                 crate::tui::types::ConnectionStatus::Connected => Color::Green,
                 crate::tui::types::ConnectionStatus::Disconnected => Color::DarkGray,
                 crate::tui::types::ConnectionStatus::Failed => Color::Red,
+                crate::tui::types::ConnectionStatus::Coordinating => Color::Yellow,
             };
 
             let row_color = match entry.status {
@@ -575,6 +571,7 @@ fn draw_peers(frame: &mut Frame, app: &mut App, area: Rect) {
                     .unwrap_or(Color::Green),
                 crate::tui::types::ConnectionStatus::Disconnected => Color::DarkGray,
                 crate::tui::types::ConnectionStatus::Failed => Color::Red,
+                crate::tui::types::ConnectionStatus::Coordinating => Color::Yellow,
             };
 
             let location = if entry.location.len() == 2 {

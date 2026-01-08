@@ -4,6 +4,7 @@
 //! to display network state and peer connections.
 
 use crate::registry::{ConnectionDirection, ConnectionMethod, ConnectivityMatrix, NatType};
+use std::collections::HashSet;
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
@@ -165,6 +166,8 @@ pub enum ConnectionStatus {
     Disconnected,
     /// Connection failed
     Failed,
+    /// Seen coordination frames but not connected
+    Coordinating,
 }
 
 impl ConnectionStatus {
@@ -174,6 +177,7 @@ impl ConnectionStatus {
             Self::Connected => "●",
             Self::Disconnected => "○",
             Self::Failed => "✗",
+            Self::Coordinating => "◌",
         }
     }
 
@@ -183,6 +187,7 @@ impl ConnectionStatus {
             Self::Connected => "green",
             Self::Disconnected => "gray",
             Self::Failed => "red",
+            Self::Coordinating => "yellow",
         }
     }
 }
@@ -202,7 +207,7 @@ impl ConnectionHistoryEntry {
             location: "??".to_string(),
             method: None,
             direction: None,
-            status: ConnectionStatus::Failed,
+            status: ConnectionStatus::Coordinating,
             outbound: DirectionalMethodStats::default(),
             inbound: DirectionalMethodStats::default(),
             first_connected: now,
@@ -292,10 +297,12 @@ impl ConnectionHistoryEntry {
 
         if self.status != ConnectionStatus::Connected {
             if success {
-                if self.status == ConnectionStatus::Failed {
+                if self.status == ConnectionStatus::Failed
+                    || self.status == ConnectionStatus::Coordinating
+                {
                     self.status = ConnectionStatus::Disconnected;
                 }
-            } else if self.status == ConnectionStatus::Failed {
+            } else if self.status == ConnectionStatus::Coordinating {
                 self.status = ConnectionStatus::Failed;
             }
         }
@@ -735,16 +742,29 @@ pub struct NetworkStatistics {
     pub hyparview_active: usize,
     /// HyParView: passive view size
     pub hyparview_passive: usize,
+    /// Unique peers we attempted to connect to
+    pub unique_peers_attempted: HashSet<String>,
+    /// Unique peers we successfully connected to
+    pub unique_peers_connected: HashSet<String>,
 }
 
 impl NetworkStatistics {
-    /// Get connection success rate as percentage.
+    /// Get connection success rate as percentage (unique peers connected / unique peers attempted).
     pub fn success_rate(&self) -> f64 {
-        if self.connection_attempts == 0 {
+        let attempted = self.unique_peers_attempted.len();
+        if attempted == 0 {
             0.0
         } else {
-            (self.connection_successes as f64 / self.connection_attempts as f64) * 100.0
+            (self.unique_peers_connected.len() as f64 / attempted as f64) * 100.0
         }
+    }
+
+    /// Get unique peer counts as (connected, attempted).
+    pub fn unique_peer_counts(&self) -> (usize, usize) {
+        (
+            self.unique_peers_connected.len(),
+            self.unique_peers_attempted.len(),
+        )
     }
 
     /// Get uptime string.

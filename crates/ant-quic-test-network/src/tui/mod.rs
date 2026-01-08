@@ -450,6 +450,7 @@ fn handle_tui_event(app: &mut App, event: TuiEvent) {
         }
         TuiEvent::PeerConnected(peer) => {
             app.peer_seen(&peer.full_id);
+            let peer_id = peer.full_id.clone();
             let method_str = match peer.method {
                 crate::registry::ConnectionMethod::Direct => {
                     app.stats.direct_connections += 1;
@@ -465,13 +466,15 @@ fn handle_tui_event(app: &mut App, event: TuiEvent) {
                 }
             };
             app.add_protocol_frame(ProtocolFrame {
-                peer_id: peer.full_id.clone(),
+                peer_id: peer_id.clone(),
                 frame_type: "CONNECTED".to_string(),
                 direction: FrameDirection::Received,
                 timestamp: std::time::Instant::now(),
                 context: Some(method_str.to_string()),
             });
             app.update_peer(peer);
+            app.stats.unique_peers_attempted.insert(peer_id.clone());
+            app.stats.unique_peers_connected.insert(peer_id);
             app.stats.connection_successes += 1;
             app.stats.connection_attempts += 1;
         }

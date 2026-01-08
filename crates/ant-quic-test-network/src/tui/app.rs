@@ -295,11 +295,20 @@ impl App {
     }
 
     pub fn add_protocol_frame(&mut self, frame: ProtocolFrame) {
+        if !frame.peer_id.is_empty() && frame.peer_id != "registry" {
+            let peer_id = frame.peer_id.clone();
+            self.connection_history
+                .entry(peer_id.clone())
+                .or_insert_with(|| ConnectionHistoryEntry::new(&peer_id))
+                .last_seen = std::time::Instant::now();
+        }
+
         self.protocol_frames.push(frame);
         if self.protocol_frames.len() > 200 {
             self.protocol_frames
                 .drain(0..self.protocol_frames.len() - 200);
         }
+        self.prune_history_if_needed();
     }
 
     /// Update NAT traversal phase for a peer
