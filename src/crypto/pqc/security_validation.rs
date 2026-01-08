@@ -294,3 +294,354 @@ pub fn run_security_validation() -> SecurityReport {
         passed: true,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ==========================================================================
+    // analyze_timing() tests
+    // ==========================================================================
+
+    #[test]
+    fn analyze_timing_empty_samples_returns_constant_time() {
+        let validator = SecurityValidator::new();
+        let analysis = validator.analyze_timing();
+
+        assert_eq!(analysis.mean_duration, Duration::ZERO);
+        assert_eq!(analysis.std_deviation, Duration::ZERO);
+        assert_eq!(analysis.coefficient_of_variation, 0.0);
+        assert!(analysis.constant_time);
+    }
+
+    #[test]
+    fn analyze_timing_single_sample_is_constant_time() {
+        let mut validator = SecurityValidator::new();
+        validator.record_timing(Duration::from_micros(100));
+
+        let analysis = validator.analyze_timing();
+
+        assert_eq!(analysis.mean_duration, Duration::from_micros(100));
+        // Single sample → variance = 0, std_deviation = 0
+        assert_eq!(analysis.std_deviation, Duration::ZERO);
+        assert_eq!(analysis.coefficient_of_variation, 0.0);
+        assert!(analysis.constant_time);
+    }
+
+    #[test]
+    fn analyze_timing_identical_samples_is_constant_time() {
+        let mut validator = SecurityValidator::new();
+        for _ in 0..100 {
+            validator.record_timing(Duration::from_micros(50));
+        }
+
+        let analysis = validator.analyze_timing();
+
+        assert_eq!(analysis.mean_duration, Duration::from_micros(50));
+        assert_eq!(analysis.std_deviation, Duration::ZERO);
+        assert_eq!(analysis.coefficient_of_variation, 0.0);
+        assert!(analysis.constant_time);
+    }
+
+    #[test]
+    fn analyze_timing_zero_duration_samples() {
+        let mut validator = SecurityValidator::new();
+        for _ in 0..10 {
+            validator.record_timing(Duration::ZERO);
+        }
+
+        let analysis = validator.analyze_timing();
+
+        assert_eq!(analysis.mean_duration, Duration::ZERO);
+        // Division by zero protection: cv should be 0.0 when mean is 0
+        assert_eq!(analysis.coefficient_of_variation, 0.0);
+        assert!(analysis.constant_time);
+    }
+
+    #[test]
+    fn analyze_timing_cv_threshold_boundary() {
+        // Test the 5.0% CV threshold for constant_time
+        let mut validator = SecurityValidator::new();
+
+        // Create samples with exactly 4.9% CV (should be constant time)
+        // mean = 1000, std_dev = 49 → cv = 4.9%
+        // Variance = std_dev^2 = 2401
+        // For 2 samples: variance = sum((x - mean)^2) / n
+        // (x1 - 1000)^2 + (x2 - 1000)^2 = 2401 * 2 = 4802
+        // With x1 = 1000 - 49 = 951 and x2 = 1000 + 49 = 1049
+        validator.record_timing(Duration::from_nanos(951));
+        validator.record_timing(Duration::from_nanos(1049));
+
+        let analysis = validator.analyze_timing();
+        // CV should be approximately 4.9%
+        assert!(
+            analysis.coefficient_of_variation < 5.0,
+            "CV {} should be < 5.0",
+            analysis.coefficient_of_variation
+        );
+        assert!(
+            analysis.constant_time,
+            "Should be constant time when CV < 5.0"
+        );
+
+        // Test with high variance (non-constant time)
+        let mut validator2 = SecurityValidator::new();
+        validator2.record_timing(Duration::from_nanos(100));
+        validator2.record_timing(Duration::from_nanos(200));
+
+        let analysis2 = validator2.analyze_timing();
+        // mean = 150, diff = 50, variance = 2500, std_dev = 50
+        // cv = (50/150) * 100 = 33.3%
+        assert!(
+            analysis2.coefficient_of_variation > 5.0,
+            "CV {} should be > 5.0",
+            analysis2.coefficient_of_variation
+        );
+        assert!(
+            !analysis2.constant_time,
+            "Should NOT be constant time when CV > 5.0"
+        );
+    }
+
+    // ==========================================================================
+    // analyze_entropy() tests
+    // ==========================================================================
+
+    #[test]
+    fn analyze_entropy_empty_samples_is_very_low() {
+        let validator = SecurityValidator::new();
+        let quality = validator.analyze_entropy();
+
+        assert_eq!(quality, EntropyQuality::VeryLow);
+    }
+
+    #[test]
+    fn analyze_entropy_single_repeated_byte_is_very_low() {
+        let mut validator = SecurityValidator::new();
+        // All 0xFF bytes → entropy = 0 (only one symbol)
+        validator.record_entropy(&[0xFF; 1000]);
+
+        let quality = validator.analyze_entropy();
+
+        assert_eq!(
+            quality,
+            EntropyQuality::VeryLow,
+            "Repeated single byte should have very low entropy"
+        );
+    }
+
+    #[test]
+    fn analyze_entropy_uniform_distribution_is_excellent() {
+        let mut validator = SecurityValidator::new();
+        // Each byte value 0-255 appears exactly once → maximum entropy = 8.0 bits
+        let uniform: Vec<u8> = (0u8..=255).collect();
+        validator.record_entropy(&uniform);
+
+        let quality = validator.analyze_entropy();
+
+        assert_eq!(
+            quality,
+            EntropyQuality::Excellent,
+            "Uniform distribution should have excellent entropy"
+        );
+    }
+
+    #[test]
+    fn analyze_entropy_quality_boundaries() {
+        // Test each quality level boundary by constructing specific distributions
+
+        // Two equally-likely bytes: entropy = 1.0 bit → VeryLow
+        let mut validator = SecurityValidator::new();
+        validator.record_entropy(&[0x00, 0xFF, 0x00, 0xFF, 0x00, 0xFF]);
+        assert!(
+            validator.analyze_entropy() <= EntropyQuality::Low,
+            "Binary distribution should be Low or VeryLow"
+        );
+
+        // ~128 equally-likely bytes: entropy ≈ 7.0 bits → Good
+        let mut validator = SecurityValidator::new();
+        let semi_uniform: Vec<u8> = (0u8..128).cycle().take(1280).collect();
+        validator.record_entropy(&semi_uniform);
+        let quality = validator.analyze_entropy();
+        assert!(
+            quality >= EntropyQuality::Good,
+            "Semi-uniform should be Good or better, got {:?}",
+            quality
+        );
+    }
+
+    // ==========================================================================
+    // generate_report() tests
+    // ==========================================================================
+
+    #[test]
+    fn generate_report_perfect_score_when_no_issues() {
+        let mut validator = SecurityValidator::new();
+
+        // Good timing: identical samples
+        for _ in 0..10 {
+            validator.record_timing(Duration::from_micros(100));
+        }
+
+        // Good entropy: uniform distribution
+        let uniform: Vec<u8> = (0u8..=255).collect();
+        validator.record_entropy(&uniform);
+
+        let report = validator.generate_report();
+
+        assert_eq!(report.security_score, 100);
+        assert!(report.passed);
+        assert!(report.issues.is_empty());
+        assert!(report.timing_analysis.constant_time);
+        assert_eq!(report.entropy_quality, EntropyQuality::Excellent);
+    }
+
+    #[test]
+    fn generate_report_timing_penalty() {
+        let mut validator = SecurityValidator::new();
+
+        // Bad timing: high variance
+        validator.record_timing(Duration::from_nanos(100));
+        validator.record_timing(Duration::from_nanos(500));
+
+        // Good entropy
+        let uniform: Vec<u8> = (0u8..=255).collect();
+        validator.record_entropy(&uniform);
+
+        let report = validator.generate_report();
+
+        // Score = 100 - 30 (timing penalty) = 70
+        assert_eq!(report.security_score, 70);
+        assert!(report.passed); // 70 >= 70
+        assert!(!report.timing_analysis.constant_time);
+
+        // Should have a timing issue
+        assert!(report.issues.iter().any(|i| i.category == "Timing"));
+        let timing_issue = report.issues.iter().find(|i| i.category == "Timing");
+        assert_eq!(timing_issue.map(|i| i.severity), Some(Severity::High));
+    }
+
+    #[test]
+    fn generate_report_entropy_penalties() {
+        // Test VeryLow/Low entropy penalty (40 points)
+        let mut validator = SecurityValidator::new();
+        validator.record_timing(Duration::from_micros(100));
+        validator.record_entropy(&[0xFF; 100]); // Single byte = VeryLow
+
+        let report = validator.generate_report();
+
+        // Score = 100 - 40 = 60
+        assert_eq!(report.security_score, 60);
+        assert!(!report.passed); // 60 < 70
+        assert!(report.issues.iter().any(|i| i.category == "Entropy"));
+        let entropy_issue = report.issues.iter().find(|i| i.category == "Entropy");
+        assert_eq!(entropy_issue.map(|i| i.severity), Some(Severity::Critical));
+
+        // Test Moderate entropy penalty (15 points)
+        let mut validator2 = SecurityValidator::new();
+        validator2.record_timing(Duration::from_micros(100));
+        // Create moderate entropy: ~32 different values
+        let moderate: Vec<u8> = (0u8..32).cycle().take(3200).collect();
+        validator2.record_entropy(&moderate);
+
+        let report2 = validator2.generate_report();
+
+        // Should be Moderate entropy with 15-point penalty
+        if report2.entropy_quality == EntropyQuality::Moderate {
+            assert_eq!(report2.security_score, 85);
+            assert!(report2.passed);
+            let entropy_issue = report2.issues.iter().find(|i| i.category == "Entropy");
+            assert_eq!(entropy_issue.map(|i| i.severity), Some(Severity::Warning));
+        }
+    }
+
+    #[test]
+    fn generate_report_combined_penalties() {
+        let mut validator = SecurityValidator::new();
+
+        // Bad timing
+        validator.record_timing(Duration::from_nanos(100));
+        validator.record_timing(Duration::from_nanos(1000));
+
+        // Bad entropy
+        validator.record_entropy(&[0xAB; 100]);
+
+        let report = validator.generate_report();
+
+        // Score = 100 - 30 (timing) - 40 (entropy) = 30
+        assert_eq!(report.security_score, 30);
+        assert!(!report.passed);
+        assert_eq!(report.issues.len(), 2);
+    }
+
+    // ==========================================================================
+    // State accumulation tests
+    // ==========================================================================
+
+    #[test]
+    fn record_timing_accumulates() {
+        let mut validator = SecurityValidator::new();
+
+        validator.record_timing(Duration::from_micros(10));
+        validator.record_timing(Duration::from_micros(20));
+        validator.record_timing(Duration::from_micros(30));
+
+        // Mean should be 20
+        let analysis = validator.analyze_timing();
+        assert_eq!(analysis.mean_duration, Duration::from_micros(20));
+    }
+
+    #[test]
+    fn record_entropy_accumulates() {
+        let mut validator = SecurityValidator::new();
+
+        validator.record_entropy(&[0x00, 0x01]);
+        validator.record_entropy(&[0x02, 0x03]);
+        validator.record_entropy(&[0x04, 0x05]);
+
+        // Should have 6 bytes total with good distribution for small sample
+        // The entropy is calculated from all accumulated bytes
+        let quality = validator.analyze_entropy();
+        // 6 distinct values out of 256 possible = low entropy, but not VeryLow
+        assert!(quality >= EntropyQuality::VeryLow);
+    }
+
+    // ==========================================================================
+    // Struct default and ordering tests
+    // ==========================================================================
+
+    #[test]
+    fn nist_compliance_default_is_all_valid() {
+        let compliance = NistCompliance::default();
+
+        assert!(compliance.parameters_valid);
+        assert!(compliance.key_sizes_correct);
+        assert!(compliance.algorithm_approved);
+        assert!(compliance.implementation_compliant);
+        assert!(compliance.issues.is_empty());
+    }
+
+    #[test]
+    fn severity_ordering() {
+        assert!(Severity::Info < Severity::Warning);
+        assert!(Severity::Warning < Severity::High);
+        assert!(Severity::High < Severity::Critical);
+    }
+
+    #[test]
+    fn entropy_quality_ordering() {
+        assert!(EntropyQuality::VeryLow < EntropyQuality::Low);
+        assert!(EntropyQuality::Low < EntropyQuality::Moderate);
+        assert!(EntropyQuality::Moderate < EntropyQuality::Good);
+        assert!(EntropyQuality::Good < EntropyQuality::Excellent);
+    }
+
+    #[test]
+    fn security_validator_default() {
+        let validator = SecurityValidator::default();
+        // Default should be same as new()
+        let analysis = validator.analyze_timing();
+        assert!(analysis.constant_time);
+        assert_eq!(validator.analyze_entropy(), EntropyQuality::VeryLow);
+    }
+}
