@@ -17,7 +17,8 @@ pub struct AgentInfo {
     pub agent_id: String,
     pub version: String,
     pub capabilities: AgentCapabilities,
-    pub listen_addr: SocketAddr,
+    pub api_base_url: String,
+    pub p2p_listen_addr: SocketAddr,
     pub nat_profiles_available: Vec<String>,
     pub status: AgentStatus,
 }
@@ -75,7 +76,8 @@ pub struct StartRunRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PeerAgentInfo {
     pub agent_id: String,
-    pub listen_addr: SocketAddr,
+    pub api_base_url: Option<String>,
+    pub p2p_listen_addr: SocketAddr,
     pub nat_profile: Option<String>,
 }
 
@@ -194,6 +196,7 @@ pub struct HealthCheckResponse {
     pub uptime_secs: u64,
     pub active_runs: Vec<Uuid>,
     pub last_error: Option<String>,
+    pub p2p_listen_addr: Option<SocketAddr>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -328,7 +331,8 @@ mod tests {
             agent_id: "agent-1".into(),
             version: "0.1.0".into(),
             capabilities: AgentCapabilities::default(),
-            listen_addr: "127.0.0.1:8080".parse().unwrap(),
+            api_base_url: "http://127.0.0.1:8080".into(),
+            p2p_listen_addr: "127.0.0.1:9000".parse().unwrap(),
             nat_profiles_available: vec!["none".into()],
             status: AgentStatus::Idle,
         };
@@ -385,5 +389,49 @@ mod tests {
     fn test_parse_socket_addr_missing_port_returns_fallback() {
         let result = parse_socket_addr_or_fallback("192.168.1.1");
         assert_eq!(result, FALLBACK_SOCKET_ADDR);
+    }
+
+    #[test]
+    fn test_agent_info_has_separate_api_and_p2p_addresses() {
+        let info = AgentInfo {
+            agent_id: "agent-1".into(),
+            version: "0.1.0".into(),
+            capabilities: AgentCapabilities::default(),
+            api_base_url: "http://agent-1.example.com:8080".into(),
+            p2p_listen_addr: "192.168.1.100:9000".parse().unwrap(),
+            nat_profiles_available: vec!["none".into()],
+            status: AgentStatus::Idle,
+        };
+
+        assert_eq!(info.api_base_url, "http://agent-1.example.com:8080");
+        assert_eq!(info.p2p_listen_addr.to_string(), "192.168.1.100:9000");
+    }
+
+    #[test]
+    fn test_peer_agent_info_has_separate_api_and_p2p_addresses() {
+        let peer = PeerAgentInfo {
+            agent_id: "peer-1".into(),
+            api_base_url: Some("http://peer-1.example.com:8080".into()),
+            p2p_listen_addr: "10.0.0.1:9000".parse().unwrap(),
+            nat_profile: Some("full_cone".into()),
+        };
+
+        assert_eq!(
+            peer.api_base_url,
+            Some("http://peer-1.example.com:8080".into())
+        );
+        assert_eq!(peer.p2p_listen_addr.to_string(), "10.0.0.1:9000");
+    }
+
+    #[test]
+    fn test_peer_agent_info_api_url_is_optional() {
+        let peer = PeerAgentInfo {
+            agent_id: "peer-2".into(),
+            api_base_url: None,
+            p2p_listen_addr: "10.0.0.2:9000".parse().unwrap(),
+            nat_profile: None,
+        };
+
+        assert!(peer.api_base_url.is_none());
     }
 }

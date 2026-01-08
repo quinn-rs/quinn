@@ -1,9 +1,9 @@
 use ant_quic_test_network::{
     harness::{
-        AgentCapabilities, AgentClient, AgentInfo, AttemptResult, GetResultsRequest,
-        GetResultsResponse, HandshakeRequest, HandshakeResponse, HealthCheckResponse, ResultFormat,
-        RunStatus, RunStatusResponse, RunSummary, ScenarioSpec, StartRunRequest, StartRunResponse,
-        StopRunResponse, parse_socket_addr_or_fallback,
+        AgentCapabilities, AgentClient, AgentInfo, AttemptResult, FALLBACK_SOCKET_ADDR,
+        GetResultsRequest, GetResultsResponse, HandshakeRequest, HandshakeResponse,
+        HealthCheckResponse, ResultFormat, RunStatus, RunStatusResponse, RunSummary, ScenarioSpec,
+        StartRunRequest, StartRunResponse, StopRunResponse,
     },
     orchestrator::NatTestMatrix,
 };
@@ -155,7 +155,8 @@ impl Orchestrator {
                             agent_id: health.agent_id.clone(),
                             version: health.version,
                             capabilities: AgentCapabilities::default(),
-                            listen_addr: parse_socket_addr_or_fallback(url),
+                            api_base_url: url.clone(),
+                            p2p_listen_addr: health.p2p_listen_addr.unwrap_or(FALLBACK_SOCKET_ADDR),
                             nat_profiles_available: vec![],
                             status: health.status,
                         };
@@ -230,7 +231,8 @@ impl Orchestrator {
             .iter()
             .map(|(id, c)| ant_quic_test_network::harness::PeerAgentInfo {
                 agent_id: id.clone(),
-                listen_addr: parse_socket_addr_or_fallback(&c.base_url),
+                api_base_url: Some(c.base_url.clone()),
+                p2p_listen_addr: FALLBACK_SOCKET_ADDR,
                 nat_profile: None,
             })
             .collect();
