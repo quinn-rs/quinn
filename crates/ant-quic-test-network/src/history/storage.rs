@@ -445,8 +445,10 @@ mod tests {
         manager.init().unwrap();
 
         // Add entry with success
-        let mut connectivity = PeerConnectivity::default();
-        connectivity.ipv4_direct = super::super::ConnectivityStatus::Success { rtt_ms: 50 };
+        let connectivity = PeerConnectivity {
+            ipv4_direct: super::super::ConnectivityStatus::Success { rtt_ms: 50 },
+            ..Default::default()
+        };
 
         manager.add_entry(HistoryEntry::new("peer1", connectivity));
 

@@ -496,7 +496,7 @@ fn test_peer_cache_creation() -> Result<(), String> {
     let cache = PeerCache::new();
 
     // Cache should start empty
-    if cache.len() != 0 {
+    if !cache.is_empty() {
         return Err("New PeerCache should be empty".to_string());
     }
 
