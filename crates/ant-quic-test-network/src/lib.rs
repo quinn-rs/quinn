@@ -60,6 +60,8 @@
 pub mod dashboard;
 pub mod epidemic_gossip;
 pub mod gossip;
+pub mod gossip_tests;
+pub mod history;
 pub mod node;
 pub mod orchestrator;
 pub mod peer_discovery;
@@ -92,4 +94,13 @@ pub use dashboard::dashboard_routes;
 pub use orchestrator::{
     OrchestratorConfig, OrchestratorStatus, PeerTestResult, TestCommand, TestOrchestrator,
     TestRound, TestTarget,
+};
+
+pub use gossip_tests::{
+    CrateTestResult, GossipTestCoordinator, GossipTestResults, TestDetail, TestStatus,
+};
+
+pub use history::{
+    ConnectivityStatus, GossipResults, GossipStatus, HistoryConfig, HistoryEntry, HistoryFile,
+    HistoryManager, HistoryStorage, PeerConnectivity,
 };

@@ -8,6 +8,7 @@
 //! - 🟠 Orange: NAT Traversed / Hole-punched (great - NAT was bypassed!)
 //! - 🔴 Red: Relayed connections (works but slower - last resort)
 
+use crate::gossip_tests::TestStatus;
 use crate::registry::ConnectionMethod;
 use crate::tui::app::App;
 use crate::tui::types::{ConnectivityTestPhase, country_flag};
@@ -124,6 +125,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
             Constraint::Length(3),  // Header
             Constraint::Length(6),  // Network Stats (comprehensive counts)
             Constraint::Length(4),  // Your Node
+            Constraint::Length(3),  // Gossip Crate Status (compact)
             Constraint::Min(6),     // Connected Peers
             Constraint::Length(10), // Cache Health + NAT Analytics + ACTIVITY LOG
             Constraint::Length(3),  // Messages
@@ -134,10 +136,11 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     draw_header(frame, chunks[0]);
     draw_network_stats(frame, app, chunks[1]);
     draw_node_info(frame, app, chunks[2]);
-    draw_peers(frame, app, chunks[3]);
-    draw_enhanced_analytics(frame, app, chunks[4]);
-    draw_messages(frame, app, chunks[5]);
-    draw_footer(frame, app, chunks[6]);
+    draw_gossip_status(frame, app, chunks[3]);
+    draw_peers(frame, app, chunks[4]);
+    draw_enhanced_analytics(frame, app, chunks[5]);
+    draw_messages(frame, app, chunks[6]);
+    draw_footer(frame, app, chunks[7]);
 }
 
 /// Draw the header with title and version.
@@ -507,6 +510,83 @@ fn draw_node_info(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(paragraph, area);
 }
 
+/// Draw gossip crate test status (compact single-line format).
+fn draw_gossip_status(frame: &mut Frame, app: &App, area: Rect) {
+    let block = Block::default()
+        .title(" GOSSIP CRATES ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Magenta));
+
+    let mut spans: Vec<Span> = vec![Span::raw("  ")];
+
+    if app.gossip_tests_running {
+        spans.push(Span::styled(
+            "🔄 Running tests...",
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        ));
+    } else if let Some(ref results) = app.gossip_test_results {
+        // All 9 crates in compact format
+        let crates = [
+            ("types", &results.types),
+            ("identity", &results.identity),
+            ("transport", &results.transport),
+            ("membership", &results.membership),
+            ("pubsub", &results.pubsub),
+            ("crdt", &results.crdt_sync),
+            ("groups", &results.groups),
+            ("coord", &results.coordinator),
+            ("rdv", &results.rendezvous),
+        ];
+
+        for (i, (name, result)) in crates.iter().enumerate() {
+            if i > 0 {
+                spans.push(Span::raw("  "));
+            }
+
+            let (icon, color) = match result.status {
+                TestStatus::Passed => ("✓", Color::Green),
+                TestStatus::Failed => ("✗", Color::Red),
+                TestStatus::Running => ("◐", Color::Yellow),
+                TestStatus::Skipped => ("-", Color::DarkGray),
+                TestStatus::Pending => ("·", Color::DarkGray),
+            };
+
+            spans.push(Span::styled(
+                format!("{}:", name),
+                Style::default().fg(Color::White),
+            ));
+            spans.push(Span::styled(icon, Style::default().fg(color)));
+        }
+
+        // Summary at the end
+        let passed = crates.iter().filter(|(_, r)| r.status == TestStatus::Passed).count();
+        let total = crates.len();
+        let summary_color = if passed == total {
+            Color::Green
+        } else if passed >= 7 {
+            Color::Yellow
+        } else {
+            Color::Red
+        };
+        spans.push(Span::raw("  "));
+        spans.push(Span::styled(
+            format!("[{}/{}]", passed, total),
+            Style::default().fg(summary_color).add_modifier(Modifier::BOLD),
+        ));
+    } else {
+        spans.push(Span::styled(
+            "Press [G] to run gossip tests",
+            Style::default().fg(Color::DarkGray),
+        ));
+    }
+
+    let line = Line::from(spans);
+    let paragraph = Paragraph::new(vec![line]).block(block);
+    frame.render_widget(paragraph, area);
+}
+
 fn draw_peers(frame: &mut Frame, app: &mut App, area: Rect) {
     let auto_status = if app.auto_connecting {
         Span::styled("[Auto-connecting]", Style::default().fg(Color::Green))
@@ -654,7 +734,9 @@ fn draw_footer(frame: &mut Frame, _app: &App, area: Rect) {
         Span::styled("  [Q]", Style::default().fg(Color::Yellow)),
         Span::raw(" Quit  "),
         Span::styled("[T]", Style::default().fg(Color::Yellow)),
-        Span::raw(" Test    "),
+        Span::raw(" Test  "),
+        Span::styled("[G]", Style::default().fg(Color::Magenta)),
+        Span::raw(" Gossip    "),
         Span::styled(
             "🔐 ML-KEM-768 + ML-DSA-65",
             Style::default().fg(Color::Green),

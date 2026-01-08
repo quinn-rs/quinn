@@ -431,6 +431,12 @@ pub enum ConnectionTechnique {
     HolePunchCoordinated,
     /// Connection via relay node
     Relay,
+    /// MASQUE CONNECT-UDP relay (RFC 9298)
+    MasqueRelay,
+    /// MASQUE CONNECT-UDP relay over IPv4
+    MasqueRelayIpv4,
+    /// MASQUE CONNECT-UDP relay over IPv6
+    MasqueRelayIpv6,
     /// UPnP port mapping
     UPnP,
     /// NAT-PMP port mapping
@@ -445,6 +451,9 @@ impl std::fmt::Display for ConnectionTechnique {
             Self::HolePunch => write!(f, "Hole Punch"),
             Self::HolePunchCoordinated => write!(f, "Coordinated Hole Punch"),
             Self::Relay => write!(f, "Relay"),
+            Self::MasqueRelay => write!(f, "MASQUE Relay"),
+            Self::MasqueRelayIpv4 => write!(f, "MASQUE IPv4"),
+            Self::MasqueRelayIpv6 => write!(f, "MASQUE IPv6"),
             Self::UPnP => write!(f, "UPnP"),
             Self::NatPmp => write!(f, "NAT-PMP"),
         }
@@ -2166,6 +2175,16 @@ pub struct ConnectivityMatrix {
     /// Relay RTT in ms
     pub relay_rtt_ms: Option<u64>,
 
+    /// MASQUE CONNECT-UDP relay tested
+    #[serde(default)]
+    pub masque_tested: bool,
+    /// MASQUE CONNECT-UDP relay succeeded
+    #[serde(default)]
+    pub masque_success: bool,
+    /// MASQUE CONNECT-UDP relay RTT in ms
+    #[serde(default)]
+    pub masque_rtt_ms: Option<u64>,
+
     /// Active connection method (which path we're using for data)
     pub active_method: Option<ConnectionMethod>,
     /// Active connection is IPv6
@@ -2257,6 +2276,11 @@ impl ConnectivityMatrix {
             parts.push(format!("Relay:{}", status));
         }
 
+        if self.masque_tested {
+            let status = if self.masque_success { "✓" } else { "✗" };
+            parts.push(format!("MASQUE:{}", status));
+        }
+
         if parts.is_empty() {
             "Not tested".to_string()
         } else {
@@ -2279,6 +2303,9 @@ impl ConnectivityMatrix {
         if self.relay_success {
             count += 1;
         }
+        if self.masque_success {
+            count += 1;
+        }
         count
     }
 
@@ -2295,6 +2322,9 @@ impl ConnectivityMatrix {
             count += 1;
         }
         if self.relay_tested {
+            count += 1;
+        }
+        if self.masque_tested {
             count += 1;
         }
         count
@@ -2346,6 +2376,15 @@ impl ConnectivityMatrix {
                 if success {
                     self.relay_success = true;
                     self.relay_rtt_ms = Some(duration_ms);
+                }
+            }
+            ConnectionTechnique::MasqueRelay
+            | ConnectionTechnique::MasqueRelayIpv4
+            | ConnectionTechnique::MasqueRelayIpv6 => {
+                self.masque_tested = true;
+                if success {
+                    self.masque_success = true;
+                    self.masque_rtt_ms = Some(duration_ms);
                 }
             }
             ConnectionTechnique::UPnP | ConnectionTechnique::NatPmp => {
@@ -2456,6 +2495,15 @@ impl ConnectivityMatrix {
                     self.relay_rtt_ms = Some(duration_ms);
                 }
             }
+            ConnectionTechnique::MasqueRelay
+            | ConnectionTechnique::MasqueRelayIpv4
+            | ConnectionTechnique::MasqueRelayIpv6 => {
+                self.masque_tested = true;
+                if success {
+                    self.masque_success = true;
+                    self.masque_rtt_ms = Some(duration_ms);
+                }
+            }
             ConnectionTechnique::UPnP | ConnectionTechnique::NatPmp => {
                 self.ipv4_direct_tested = true;
                 if success {
@@ -2477,7 +2525,8 @@ impl ConnectivityMatrix {
         let any_success = self.ipv4_direct_success
             || self.ipv6_direct_success
             || self.nat_traversal_success
-            || self.relay_success;
+            || self.relay_success
+            || self.masque_success;
 
         if !any_success {
             return SuccessLevel::Failed;

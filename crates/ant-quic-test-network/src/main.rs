@@ -209,7 +209,8 @@ async fn main() -> anyhow::Result<()> {
             ..Default::default()
         };
 
-        let test_node = TestNode::new(node_config, event_tx.clone()).await?;
+        let tui_event_tx = event_tx.clone();
+        let test_node = TestNode::new(node_config, event_tx).await?;
 
         let use_quiet_mode = args.quiet || !std::io::IsTerminal::is_terminal(&std::io::stdout());
 
@@ -243,7 +244,7 @@ async fn main() -> anyhow::Result<()> {
             });
 
             // Run TUI in foreground
-            run_tui(app, event_rx).await?;
+            run_tui(app, event_rx, tui_event_tx).await?;
 
             // When TUI exits, abort the node
             node_handle.abort();

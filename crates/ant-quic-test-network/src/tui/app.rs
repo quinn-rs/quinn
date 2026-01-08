@@ -3,6 +3,7 @@
 //! This module manages the terminal UI state, handles user input,
 //! and coordinates updates from the network layer.
 
+use crate::gossip_tests::GossipTestResults;
 use crate::tui::types::{
     CacheHealth, ConnectedPeer, ConnectionHistoryEntry, ConnectionStatus, ConnectivityTestResults,
     FrameDirection, GeographicDistribution, LocalNodeInfo, NatTraversalPhase, NatTypeAnalytics,
@@ -62,6 +63,10 @@ pub struct App {
     pub connectivity_test: ConnectivityTestResults,
     /// Scroll state for the connections table
     pub connections_table_state: TableState,
+    /// Gossip crate test results (all 9 saorsa-gossip crates)
+    pub gossip_test_results: Option<GossipTestResults>,
+    /// Whether gossip tests are currently running
+    pub gossip_tests_running: bool,
 }
 
 impl Default for App {
@@ -96,7 +101,20 @@ impl App {
             geographic_distribution: None,
             connectivity_test: ConnectivityTestResults::new(),
             connections_table_state: TableState::default(),
+            gossip_test_results: None,
+            gossip_tests_running: false,
         }
+    }
+
+    /// Update gossip test results.
+    pub fn update_gossip_results(&mut self, results: GossipTestResults) {
+        self.gossip_test_results = Some(results);
+        self.gossip_tests_running = false;
+    }
+
+    /// Mark gossip tests as running.
+    pub fn start_gossip_tests(&mut self) {
+        self.gossip_tests_running = true;
     }
 
     /// Mark a peer as seen (we've communicated with them).
@@ -532,6 +550,7 @@ pub enum InputEvent {
     ToggleAutoConnect,
     Refresh,
     ResetConnectivityTest,
+    RunGossipTests,
     ScrollUp,
     ScrollDown,
     PageUp,
@@ -548,6 +567,7 @@ impl InputEvent {
             KeyCode::Char('a') | KeyCode::Char('A') => Self::ToggleAutoConnect,
             KeyCode::Char('r') | KeyCode::Char('R') => Self::Refresh,
             KeyCode::Char('t') | KeyCode::Char('T') => Self::ResetConnectivityTest,
+            KeyCode::Char('g') | KeyCode::Char('G') => Self::RunGossipTests,
             KeyCode::Up | KeyCode::Char('k') => Self::ScrollUp,
             KeyCode::Down | KeyCode::Char('j') => Self::ScrollDown,
             KeyCode::PageUp => Self::PageUp,
@@ -575,8 +595,13 @@ mod tests {
     fn test_connection_stats() {
         let mut app = App::new();
 
+        // Track unique peers (success_rate uses unique peer tracking)
+        app.stats.unique_peers_attempted.insert("peer1".to_string());
         app.connection_attempted();
         app.connection_succeeded(ConnectionMethod::Direct);
+        app.stats.unique_peers_connected.insert("peer1".to_string());
+
+        app.stats.unique_peers_attempted.insert("peer2".to_string());
         app.connection_attempted();
         app.connection_failed();
 
@@ -584,6 +609,7 @@ mod tests {
         assert_eq!(app.stats.connection_successes, 1);
         assert_eq!(app.stats.connection_failures, 1);
         assert_eq!(app.stats.direct_connections, 1);
+        // success_rate is based on unique peers: 1 connected / 2 attempted = 50%
         assert!((app.stats.success_rate() - 50.0).abs() < 0.001);
     }
 

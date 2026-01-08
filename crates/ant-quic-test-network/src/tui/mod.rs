@@ -127,6 +127,9 @@ fn event_name(event: &TuiEvent) -> &'static str {
         TuiEvent::NatTestRetrying { .. } => "NatTestRetrying",
         TuiEvent::NatTestPeerUnreachable { .. } => "NatTestPeerUnreachable",
         TuiEvent::FirewallDetected { .. } => "FirewallDetected",
+        TuiEvent::GossipTestsStarted => "GossipTestsStarted",
+        TuiEvent::GossipTestsComplete(_) => "GossipTestsComplete",
+        TuiEvent::GossipCrateTestComplete { .. } => "GossipCrateTestComplete",
     }
 }
 
@@ -277,6 +280,17 @@ pub enum TuiEvent {
     NatTestPeerUnreachable { peer_id: String },
     /// Firewall detected: cannot connect outbound to any peer
     FirewallDetected { attempted_count: usize },
+    /// Gossip tests: started running all 9 crate tests
+    GossipTestsStarted,
+    /// Gossip tests: all 9 crate tests completed
+    GossipTestsComplete(crate::gossip_tests::GossipTestResults),
+    /// Gossip tests: single crate test completed
+    GossipCrateTestComplete {
+        crate_name: String,
+        passed: bool,
+        tests_passed: u32,
+        tests_total: u32,
+    },
 }
 
 /// Configuration for the TUI.
@@ -303,7 +317,11 @@ impl Default for TuiConfig {
 /// Run the terminal UI with the given application state.
 ///
 /// Returns when the user quits (Q key or Esc).
-pub async fn run_tui(mut app: App, mut event_rx: mpsc::Receiver<TuiEvent>) -> anyhow::Result<()> {
+pub async fn run_tui(
+    mut app: App,
+    mut event_rx: mpsc::Receiver<TuiEvent>,
+    event_tx: mpsc::Sender<TuiEvent>,
+) -> anyhow::Result<()> {
     use std::io::Write;
 
     // Setup terminal
@@ -351,6 +369,18 @@ pub async fn run_tui(mut app: App, mut event_rx: mpsc::Receiver<TuiEvent>) -> an
                         }
                         InputEvent::ResetConnectivityTest => {
                             app.connectivity_test.reset();
+                        }
+                        InputEvent::RunGossipTests => {
+                            if !app.gossip_tests_running {
+                                app.start_gossip_tests();
+                                // Spawn async task to run gossip tests
+                                let tx = event_tx.clone();
+                                tokio::spawn(async move {
+                                    let coordinator = crate::gossip_tests::GossipTestCoordinator::new();
+                                    let results = coordinator.run_all_tests().await;
+                                    let _ = tx.send(TuiEvent::GossipTestsComplete(results)).await;
+                                });
+                            }
                         }
                         InputEvent::ScrollUp => {
                             app.scroll_connections_up();
@@ -668,6 +698,30 @@ fn handle_tui_event(app: &mut App, event: TuiEvent) {
                 attempted_count
             ));
         }
+        TuiEvent::GossipTestsStarted => {
+            app.start_gossip_tests();
+            app.set_info("Running gossip crate tests...");
+        }
+        TuiEvent::GossipTestsComplete(results) => {
+            let summary = results.summary();
+            app.update_gossip_results(results);
+            app.set_info(&format!("Gossip tests complete: {}", summary));
+        }
+        TuiEvent::GossipCrateTestComplete {
+            crate_name,
+            passed,
+            tests_passed,
+            tests_total,
+        } => {
+            let status = if passed { "✓" } else { "✗" };
+            tracing::debug!(
+                "Gossip crate {} {}: {}/{} tests passed",
+                crate_name,
+                status,
+                tests_passed,
+                tests_total
+            );
+        }
     }
 }
 
@@ -676,8 +730,8 @@ fn handle_tui_event(app: &mut App, event: TuiEvent) {
 /// Creates the TUI with an empty event channel (no TestNode backend).
 pub async fn run_standalone() -> anyhow::Result<()> {
     let app = App::new();
-    let (_tx, rx) = mpsc::channel(100);
-    run_tui(app, rx).await
+    let (tx, rx) = mpsc::channel(100);
+    run_tui(app, rx, tx).await
 }
 
 #[cfg(test)]

@@ -1,0 +1,192 @@
+# Gossip Crate Fix Workflow
+#
+# This workflow is triggered when a saorsa-gossip crate test fails in the
+# ant-quic-test TUI. It automates the diagnosis and fix cycle.
+#
+# Workflow: diagnose -> fix -> test -> bump -> redeploy
+#
+# Usage:
+#   gh workflow run fix-gossip.yml -f crate=types
+#   gh workflow run fix-gossip.yml -f crate=membership -f severity=critical
+
+name: Fix Gossip Crate
+
+on:
+  workflow_dispatch:
+    inputs:
+      crate:
+        description: 'Crate to fix (types, identity, transport, membership, pubsub, crdt-sync, groups, coordinator, rendezvous)'
+        required: true
+        type: choice
+        options:
+          - types
+          - identity
+          - transport
+          - membership
+          - pubsub
+          - crdt-sync
+          - groups
+          - coordinator
+          - rendezvous
+      severity:
+        description: 'Issue severity level'
+        required: false
+        type: choice
+        default: normal
+        options:
+          - normal
+          - high
+          - critical
+      diagnostic_level:
+        description: 'How much diagnostic info to capture'
+        required: false
+        type: choice
+        default: standard
+        options:
+          - minimal
+          - standard
+          - verbose
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+jobs:
+  diagnose:
+    name: Diagnose ${{ inputs.crate }}
+    runs-on: ubuntu-latest
+    outputs:
+      test_output: ${{ steps.run_tests.outputs.output }}
+      has_failures: ${{ steps.run_tests.outputs.has_failures }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run diagnostic tests
+        id: run_tests
+        run: |
+          echo "Running tests for saorsa-gossip-${{ inputs.crate }}..."
+
+          # Run tests with verbose output
+          set +e
+          TEST_OUTPUT=$(cargo test -p saorsa-gossip-${{ inputs.crate }} -- --nocapture 2>&1)
+          TEST_EXIT=$?
+          set -e
+
+          # Save output
+          echo "$TEST_OUTPUT" > test_output.txt
+
+          # Check for failures
+          if [ $TEST_EXIT -ne 0 ]; then
+            echo "has_failures=true" >> $GITHUB_OUTPUT
+            echo "::error::Tests failed for saorsa-gossip-${{ inputs.crate }}"
+          else
+            echo "has_failures=false" >> $GITHUB_OUTPUT
+            echo "::notice::All tests passed for saorsa-gossip-${{ inputs.crate }}"
+          fi
+
+          # Output first 100 lines for logs
+          head -100 test_output.txt
+
+      - name: Upload diagnostic artifacts
+        if: steps.run_tests.outputs.has_failures == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: diagnostic-${{ inputs.crate }}-${{ github.run_id }}
+          path: test_output.txt
+          retention-days: 30
+
+  create-issue:
+    name: Create Issue
+    needs: diagnose
+    if: needs.diagnose.outputs.has_failures == 'true'
+    runs-on: ubuntu-latest
+    outputs:
+      issue_number: ${{ steps.create_issue.outputs.issue_number }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download diagnostics
+        uses: actions/download-artifact@v4
+        with:
+          name: diagnostic-${{ inputs.crate }}-${{ github.run_id }}
+
+      - name: Create GitHub Issue
+        id: create_issue
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const testOutput = fs.readFileSync('test_output.txt', 'utf8');
+
+            // Truncate if too long
+            const maxLen = 3000;
+            const truncatedOutput = testOutput.length > maxLen
+              ? testOutput.substring(0, maxLen) + '\n\n... (truncated, see artifacts for full output)'
+              : testOutput;
+
+            const issue = await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `[Auto] Fix saorsa-gossip-${{ inputs.crate }} test failures`,
+              body: `## Automated Issue from fix-gossip.yml
+
+            ### Crate: \`saorsa-gossip-${{ inputs.crate }}\`
+            ### Severity: ${{ inputs.severity }}
+            ### Triggered by: Workflow Run #${{ github.run_id }}
+
+            ### Test Output
+            \`\`\`
+            ${truncatedOutput}
+            \`\`\`
+
+            ### Workflow Run
+            [View workflow run](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})
+
+            ### Next Steps
+            1. Review the test failures above
+            2. Implement fix in the saorsa-gossip-${{ inputs.crate }} crate
+            3. Run local tests: \`cargo test -p saorsa-gossip-${{ inputs.crate }}\`
+            4. Push fix and verify in ant-quic-test TUI
+
+            ---
+            *This issue was auto-generated by the fix-gossip workflow*`,
+              labels: ['bug', 'gossip', 'automated', `crate:${{ inputs.crate }}`]
+            });
+
+            console.log(`Created issue #${issue.data.number}`);
+            core.setOutput('issue_number', issue.data.number);
+
+  notify:
+    name: Notify
+    needs: [diagnose, create-issue]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Summary
+        run: |
+          echo "## Fix Gossip Workflow Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Field | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Crate | saorsa-gossip-${{ inputs.crate }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Severity | ${{ inputs.severity }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Has Failures | ${{ needs.diagnose.outputs.has_failures }} |" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ needs.create-issue.outputs.issue_number }}" != "" ]; then
+            echo "| Issue | #${{ needs.create-issue.outputs.issue_number }} |" >> $GITHUB_STEP_SUMMARY
+          fi
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          if [ "${{ needs.diagnose.outputs.has_failures }}" == "true" ]; then
+            echo ":warning: Tests failed - issue created for tracking" >> $GITHUB_STEP_SUMMARY
+          else
+            echo ":white_check_mark: All tests passed - no action needed" >> $GITHUB_STEP_SUMMARY
+          fi
