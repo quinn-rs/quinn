@@ -3,7 +3,7 @@ use ant_quic_test_network::{
         AgentCapabilities, AgentClient, AgentInfo, AttemptResult, GetResultsRequest,
         GetResultsResponse, HandshakeRequest, HandshakeResponse, HealthCheckResponse, ResultFormat,
         RunStatus, RunStatusResponse, RunSummary, ScenarioSpec, StartRunRequest, StartRunResponse,
-        StopRunResponse,
+        StopRunResponse, parse_socket_addr_or_fallback,
     },
     orchestrator::NatTestMatrix,
 };
@@ -155,9 +155,7 @@ impl Orchestrator {
                             agent_id: health.agent_id.clone(),
                             version: health.version,
                             capabilities: AgentCapabilities::default(),
-                            listen_addr: url
-                                .parse()
-                                .unwrap_or_else(|_| "0.0.0.0:0".parse().unwrap()),
+                            listen_addr: parse_socket_addr_or_fallback(url),
                             nat_profiles_available: vec![],
                             status: health.status,
                         };
@@ -232,10 +230,7 @@ impl Orchestrator {
             .iter()
             .map(|(id, c)| ant_quic_test_network::harness::PeerAgentInfo {
                 agent_id: id.clone(),
-                listen_addr: c
-                    .base_url
-                    .parse()
-                    .unwrap_or_else(|_| "0.0.0.0:0".parse().unwrap()),
+                listen_addr: parse_socket_addr_or_fallback(&c.base_url),
                 nat_profile: None,
             })
             .collect();

@@ -1,9 +1,16 @@
 use serde::{Deserialize, Serialize};
-use std::net::SocketAddr;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use uuid::Uuid;
 
 use super::{ArtifactManifest, AttemptResult, NatProfileSpec, ScenarioSpec};
 use crate::registry::NatType;
+
+pub const FALLBACK_SOCKET_ADDR: SocketAddr =
+    SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), 0);
+
+pub fn parse_socket_addr_or_fallback(s: &str) -> SocketAddr {
+    s.parse().unwrap_or(FALLBACK_SOCKET_ADDR)
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentInfo {
@@ -336,5 +343,47 @@ mod tests {
         let status = RunStatus::Running;
         let json = serde_json::to_string(&status).unwrap();
         assert_eq!(json, "\"running\"");
+    }
+
+    #[test]
+    fn test_fallback_addr_is_unspecified_port_zero() {
+        assert!(FALLBACK_SOCKET_ADDR.ip().is_unspecified());
+        assert_eq!(FALLBACK_SOCKET_ADDR.port(), 0);
+    }
+
+    #[test]
+    fn test_parse_socket_addr_valid_ipv4() {
+        let result = parse_socket_addr_or_fallback("192.168.1.100:8080");
+        assert_eq!(result.to_string(), "192.168.1.100:8080");
+    }
+
+    #[test]
+    fn test_parse_socket_addr_valid_ipv6() {
+        let result = parse_socket_addr_or_fallback("[::1]:9000");
+        assert_eq!(result.to_string(), "[::1]:9000");
+    }
+
+    #[test]
+    fn test_parse_socket_addr_invalid_returns_fallback() {
+        let result = parse_socket_addr_or_fallback("not-an-address");
+        assert_eq!(result, FALLBACK_SOCKET_ADDR);
+    }
+
+    #[test]
+    fn test_parse_socket_addr_http_url_returns_fallback() {
+        let result = parse_socket_addr_or_fallback("http://localhost:8080");
+        assert_eq!(result, FALLBACK_SOCKET_ADDR);
+    }
+
+    #[test]
+    fn test_parse_socket_addr_empty_returns_fallback() {
+        let result = parse_socket_addr_or_fallback("");
+        assert_eq!(result, FALLBACK_SOCKET_ADDR);
+    }
+
+    #[test]
+    fn test_parse_socket_addr_missing_port_returns_fallback() {
+        let result = parse_socket_addr_or_fallback("192.168.1.1");
+        assert_eq!(result, FALLBACK_SOCKET_ADDR);
     }
 }
