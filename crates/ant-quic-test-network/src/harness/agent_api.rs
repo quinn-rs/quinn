@@ -8,6 +8,47 @@ use crate::registry::NatType;
 pub const FALLBACK_SOCKET_ADDR: SocketAddr =
     SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), 0);
 
+/// Error type for socket address parsing failures
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SocketAddrParseError {
+    /// The input string that failed to parse
+    pub input: String,
+    /// The reason for the failure
+    pub reason: String,
+}
+
+impl std::fmt::Display for SocketAddrParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "failed to parse socket address '{}': {}",
+            self.input, self.reason
+        )
+    }
+}
+
+impl std::error::Error for SocketAddrParseError {}
+
+/// Parse a socket address string, returning an error with context on failure.
+///
+/// This function explicitly fails rather than silently falling back to a default,
+/// ensuring that configuration errors are caught early.
+pub fn parse_socket_addr(s: &str) -> Result<SocketAddr, SocketAddrParseError> {
+    s.parse().map_err(|e: std::net::AddrParseError| SocketAddrParseError {
+        input: s.to_string(),
+        reason: e.to_string(),
+    })
+}
+
+/// Parse a socket address with explicit fallback handling.
+///
+/// **DEPRECATED**: This function silently falls back to `0.0.0.0:0` on parse failure,
+/// which can mask configuration errors. Use `parse_socket_addr()` instead and handle
+/// errors explicitly.
+#[deprecated(
+    since = "0.2.0",
+    note = "Use parse_socket_addr() and handle errors explicitly"
+)]
 pub fn parse_socket_addr_or_fallback(s: &str) -> SocketAddr {
     s.parse().unwrap_or(FALLBACK_SOCKET_ADDR)
 }
@@ -127,6 +168,21 @@ pub enum RunStatus {
     Completed,
     Failed,
     Cancelled,
+}
+
+impl RunStatus {
+    /// Returns true if this is a terminal state (no further transitions possible).
+    ///
+    /// Uses exhaustive matching to ensure compile-time safety when new variants are added.
+    pub fn is_terminal(&self) -> bool {
+        match self {
+            RunStatus::Pending
+            | RunStatus::Preflight
+            | RunStatus::Running
+            | RunStatus::Uploading => false,
+            RunStatus::Completed | RunStatus::Failed | RunStatus::Cancelled => true,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -292,16 +348,20 @@ impl StatusPollResult {
         self.statuses.len() + self.failed_agents.len() >= self.expected_count
     }
 
+    /// Returns true if all agents have reached a terminal state.
+    ///
+    /// An agent is considered terminal if:
+    /// - It responded with a terminal RunStatus (Completed, Failed, Cancelled), OR
+    /// - It failed to respond (communication failure - won't recover)
+    ///
+    /// Callers should check `failed_agents` separately to handle communication failures.
     pub fn all_complete(&self) -> bool {
         if !self.all_responded() {
             return false;
         }
-        if !self.failed_agents.is_empty() {
-            return false;
-        }
-        self.statuses
-            .values()
-            .all(|s| matches!(s.status, RunStatus::Completed | RunStatus::Failed))
+        // Failed agents are terminal from polling perspective - they won't provide further updates.
+        // All responding agents must also be in terminal state.
+        self.statuses.values().all(|s| s.status.is_terminal())
     }
 
     pub fn missing_count(&self) -> usize {
@@ -481,39 +541,79 @@ mod tests {
         assert_eq!(FALLBACK_SOCKET_ADDR.port(), 0);
     }
 
+    // ==================== parse_socket_addr (new API) ====================
+
     #[test]
     fn test_parse_socket_addr_valid_ipv4() {
-        let result = parse_socket_addr_or_fallback("192.168.1.100:8080");
-        assert_eq!(result.to_string(), "192.168.1.100:8080");
+        let result = parse_socket_addr("192.168.1.100:8080");
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().to_string(), "192.168.1.100:8080");
     }
 
     #[test]
     fn test_parse_socket_addr_valid_ipv6() {
-        let result = parse_socket_addr_or_fallback("[::1]:9000");
-        assert_eq!(result.to_string(), "[::1]:9000");
+        let result = parse_socket_addr("[::1]:9000");
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().to_string(), "[::1]:9000");
     }
 
     #[test]
-    fn test_parse_socket_addr_invalid_returns_fallback() {
+    fn test_parse_socket_addr_invalid_returns_error() {
+        let result = parse_socket_addr("not-an-address");
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(err.input, "not-an-address");
+        assert!(!err.reason.is_empty());
+    }
+
+    #[test]
+    fn test_parse_socket_addr_http_url_returns_error() {
+        let result = parse_socket_addr("http://localhost:8080");
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(err.input, "http://localhost:8080");
+    }
+
+    #[test]
+    fn test_parse_socket_addr_empty_returns_error() {
+        let result = parse_socket_addr("");
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(err.input, "");
+    }
+
+    #[test]
+    fn test_parse_socket_addr_missing_port_returns_error() {
+        let result = parse_socket_addr("192.168.1.1");
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(err.input, "192.168.1.1");
+    }
+
+    #[test]
+    fn test_socket_addr_parse_error_display() {
+        let err = SocketAddrParseError {
+            input: "bad:addr".to_string(),
+            reason: "invalid format".to_string(),
+        };
+        let display = format!("{}", err);
+        assert!(display.contains("bad:addr"));
+        assert!(display.contains("invalid format"));
+    }
+
+    // ==================== parse_socket_addr_or_fallback (deprecated) ====================
+
+    #[test]
+    #[allow(deprecated)]
+    fn test_parse_socket_addr_or_fallback_invalid_returns_fallback() {
         let result = parse_socket_addr_or_fallback("not-an-address");
         assert_eq!(result, FALLBACK_SOCKET_ADDR);
     }
 
     #[test]
-    fn test_parse_socket_addr_http_url_returns_fallback() {
-        let result = parse_socket_addr_or_fallback("http://localhost:8080");
-        assert_eq!(result, FALLBACK_SOCKET_ADDR);
-    }
-
-    #[test]
-    fn test_parse_socket_addr_empty_returns_fallback() {
+    #[allow(deprecated)]
+    fn test_parse_socket_addr_or_fallback_empty_returns_fallback() {
         let result = parse_socket_addr_or_fallback("");
-        assert_eq!(result, FALLBACK_SOCKET_ADDR);
-    }
-
-    #[test]
-    fn test_parse_socket_addr_missing_port_returns_fallback() {
-        let result = parse_socket_addr_or_fallback("192.168.1.1");
         assert_eq!(result, FALLBACK_SOCKET_ADDR);
     }
 
@@ -669,6 +769,23 @@ mod tests {
         }
     }
 
+    fn make_cancelled_status() -> RunStatusResponse {
+        RunStatusResponse {
+            run_id: Uuid::new_v4(),
+            status: RunStatus::Cancelled,
+            progress: RunProgress {
+                total_attempts: 10,
+                completed_attempts: 5,
+                successful_attempts: 5,
+                failed_attempts: 0,
+                current_attempt: None,
+                elapsed_ms: 2500,
+            },
+            current_stage: None,
+            error: None,
+        }
+    }
+
     #[test]
     fn test_status_poll_result_all_responded_when_all_succeed() {
         let mut result = StatusPollResult::new(2);
@@ -698,7 +815,65 @@ mod tests {
         result.record_failure("agent-2", "Connection timeout");
 
         assert!(result.all_responded());
-        assert!(!result.all_complete());
+        // Failed agents are terminal - they won't recover, so polling is complete.
+        // Callers should check failed_agents separately.
+        assert!(
+            result.all_complete(),
+            "Failed agents should be treated as terminal"
+        );
         assert_eq!(result.failed_agents.len(), 1);
+    }
+
+    #[test]
+    fn test_status_poll_result_cancelled_is_terminal() {
+        let mut result = StatusPollResult::new(2);
+        result.record_status("agent-1", make_completed_status());
+        result.record_status("agent-2", make_cancelled_status());
+
+        assert!(result.all_responded());
+        assert!(
+            result.all_complete(),
+            "Cancelled status should be treated as terminal"
+        );
+    }
+
+    #[test]
+    fn test_run_status_is_terminal() {
+        // Non-terminal states
+        assert!(!RunStatus::Pending.is_terminal());
+        assert!(!RunStatus::Preflight.is_terminal());
+        assert!(!RunStatus::Running.is_terminal());
+        assert!(!RunStatus::Uploading.is_terminal());
+
+        // Terminal states
+        assert!(RunStatus::Completed.is_terminal());
+        assert!(RunStatus::Failed.is_terminal());
+        assert!(RunStatus::Cancelled.is_terminal());
+    }
+
+    #[test]
+    fn test_all_complete_with_running_agent_returns_false() {
+        let mut result = StatusPollResult::new(2);
+        result.record_status("agent-1", make_completed_status());
+        result.record_status("agent-2", RunStatusResponse {
+            run_id: Uuid::new_v4(),
+            status: RunStatus::Running,
+            progress: RunProgress {
+                total_attempts: 10,
+                completed_attempts: 5,
+                successful_attempts: 5,
+                failed_attempts: 0,
+                current_attempt: Some(6),
+                elapsed_ms: 2500,
+            },
+            current_stage: None,
+            error: None,
+        });
+
+        assert!(result.all_responded());
+        assert!(
+            !result.all_complete(),
+            "Should not be complete while agent is still Running"
+        );
     }
 }

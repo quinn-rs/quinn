@@ -132,12 +132,29 @@ pub struct ClassifiedFailure {
 }
 
 impl ClassifiedFailure {
+    /// Create a new classified failure, explicitly handling the case when classification fails.
+    ///
+    /// **DEPRECATED**: This function silently falls back to `HarnessObservationError` when
+    /// `from_context` returns `None` (e.g., for Success codes). This can corrupt failure
+    /// statistics. Use `try_new()` instead and handle the `None` case explicitly.
+    ///
+    /// # Panics in debug builds
+    /// In debug builds, this function panics if called with a Success reason code,
+    /// as this indicates a programming error.
+    #[deprecated(
+        since = "0.2.0",
+        note = "Use try_new() and handle the None case explicitly to avoid corrupting failure statistics"
+    )]
     pub fn new(
         reason_code: FailureReasonCode,
         message: &str,
         harness_healthy: bool,
         test_ran_as_intended: bool,
     ) -> Self {
+        debug_assert!(
+            reason_code != FailureReasonCode::Success,
+            "ClassifiedFailure::new called with Success code - use try_new() instead"
+        );
         let category =
             FailureCategory::from_context(reason_code, harness_healthy, test_ran_as_intended)
                 .unwrap_or(FailureCategory::HarnessObservationError);
@@ -151,6 +168,10 @@ impl ClassifiedFailure {
         }
     }
 
+    /// Create a new classified failure, returning `None` if the reason code is Success.
+    ///
+    /// This is the preferred way to create a `ClassifiedFailure` as it forces callers
+    /// to handle the case where classification is not appropriate (e.g., for success outcomes).
     pub fn try_new(
         reason_code: FailureReasonCode,
         message: &str,
@@ -275,6 +296,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn test_classified_failure() {
         let failure = ClassifiedFailure::new(
             FailureReasonCode::Timeout,

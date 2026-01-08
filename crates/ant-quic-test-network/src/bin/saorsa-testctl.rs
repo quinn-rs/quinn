@@ -154,18 +154,25 @@ impl Orchestrator {
                 Ok(resp) if resp.status().is_success() => {
                     match resp.json::<HealthCheckResponse>().await {
                         Ok(health) => {
+                            let p2p_addr = match health.p2p_listen_addr {
+                                Some(addr) => addr,
+                                None => {
+                                    warn!(
+                                        "Agent {} at {} did not report p2p_listen_addr; using fallback 0.0.0.0:0 which may cause test failures",
+                                        health.agent_id, url
+                                    );
+                                    FALLBACK_SOCKET_ADDR
+                                }
+                            };
                             let agent_info = AgentInfo {
                                 agent_id: health.agent_id.clone(),
                                 version: health.version,
                                 capabilities: AgentCapabilities::default(),
                                 api_base_url: url.clone(),
-                                p2p_listen_addr: health
-                                    .p2p_listen_addr
-                                    .unwrap_or(FALLBACK_SOCKET_ADDR),
+                                p2p_listen_addr: p2p_addr,
                                 nat_profiles_available: vec![],
                                 status: health.status,
                             };
-                            let p2p_addr = health.p2p_listen_addr.unwrap_or(FALLBACK_SOCKET_ADDR);
                             self.add_agent(&health.agent_id, url, p2p_addr);
                             discovered.push(agent_info);
                             info!("Discovered agent: {} at {}", health.agent_id, url);
@@ -467,7 +474,7 @@ fn generate_matrix_report(scope: &str) -> String {
 
     let mut report = String::new();
     report.push_str("# NAT Connectivity Matrix\n\n");
-    report.push_str(&format!("## Summary\n"));
+    report.push_str("## Summary\n");
     report.push_str(&format!("- Total combinations: {}\n", summary.total));
     report.push_str(&format!("- Easy (≥90%): {}\n", summary.easy));
     report.push_str(&format!("- Moderate (70-89%): {}\n", summary.moderate));
@@ -793,7 +800,7 @@ async fn main() -> Result<()> {
         } => {
             let results: Vec<AttemptResult> = if let Some(file_path) = results_file {
                 let content = std::fs::read_to_string(&file_path)?;
-                if file_path.extension().map_or(false, |e| e == "jsonl") {
+                if file_path.extension().is_some_and(|e| e == "jsonl") {
                     content
                         .lines()
                         .filter_map(|line| serde_json::from_str(line).ok())
