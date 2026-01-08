@@ -49,15 +49,8 @@ wildcards = "allow"
 highlight = "all"
 
 # Skip specific crates that have multiple versions due to dependency tree
-skip = [
-    # async-channel has both 1.x and 2.x in the tree
-    { name = "async-channel" },
-    # event-listener also has multiple versions
-    { name = "event-listener" },
-    { name = "event-listener-strategy" },
-    { name = "async-task" },
-    { name = "futures-lite" },
-]
+# Note: Keep this list minimal - only add entries when cargo tree -d shows duplicates
+skip = []
 
 [advisories]
 # Configure advisory database
@@ -67,6 +60,7 @@ db-urls = ["https://github.com/rustsec/advisory-db"]
 # Ignore specific advisories (unmaintained warnings, not vulnerabilities)
 ignore = [
     "RUSTSEC-2025-0134", # rustls-pemfile - unmaintained, migrate to rustls-pki-types
+    "RUSTSEC-2025-0141", # bincode - unmaintained, used by saorsa-pqc (external dependency)
 ]
 
 [sources]
