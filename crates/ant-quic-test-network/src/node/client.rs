@@ -4071,7 +4071,7 @@ impl TestNode {
                         }
 
                         let _ = event_tx.try_send(TuiEvent::ProtocolFrame(ProtocolFrame {
-                            peer_id: peer_id_short.to_string(),
+                            peer_id: candidate.peer_id.clone(),
                             frame_type: "CONNECT".to_string(),
                             direction: FrameDirection::Sent,
                             timestamp: Instant::now(),
@@ -4163,7 +4163,7 @@ impl TestNode {
                             );
 
                             let _ = event_tx.try_send(TuiEvent::ProtocolFrame(ProtocolFrame {
-                                peer_id: peer_id_short.to_string(),
+                                peer_id: candidate.peer_id.clone(),
                                 frame_type: format!("{:?}", final_method).to_uppercase(),
                                 direction: FrameDirection::Received,
                                 timestamp: Instant::now(),
@@ -4313,7 +4313,7 @@ impl TestNode {
                                     );
                                     let _ =
                                         event_tx.try_send(TuiEvent::ProtocolFrame(ProtocolFrame {
-                                            peer_id: peer_id_short.to_string(),
+                                            peer_id: candidate.peer_id.clone(),
                                             frame_type: "FAILED".to_string(),
                                             direction: FrameDirection::Sent,
                                             timestamp: Instant::now(),
