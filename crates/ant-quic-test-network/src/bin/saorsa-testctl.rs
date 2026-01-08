@@ -11,6 +11,7 @@ use ant_quic_test_network::{
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use std::collections::HashMap;
+use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::time::Duration;
 use tracing::{error, info, warn};
@@ -135,8 +136,8 @@ impl Orchestrator {
         }
     }
 
-    fn add_agent(&mut self, agent_id: &str, base_url: &str) {
-        let client = AgentClient::new(base_url, agent_id);
+    fn add_agent(&mut self, agent_id: &str, base_url: &str, p2p_listen_addr: SocketAddr) {
+        let client = AgentClient::new(base_url, agent_id, p2p_listen_addr);
         self.agents.insert(agent_id.to_string(), client);
     }
 
@@ -164,7 +165,8 @@ impl Orchestrator {
                                 nat_profiles_available: vec![],
                                 status: health.status,
                             };
-                            self.add_agent(&health.agent_id, url);
+                            let p2p_addr = health.p2p_listen_addr.unwrap_or(FALLBACK_SOCKET_ADDR);
+                            self.add_agent(&health.agent_id, url, p2p_addr);
                             discovered.push(agent_info);
                             info!("Discovered agent: {} at {}", health.agent_id, url);
                         }
@@ -249,7 +251,7 @@ impl Orchestrator {
             .map(|(id, c)| ant_quic_test_network::harness::PeerAgentInfo {
                 agent_id: id.clone(),
                 api_base_url: Some(c.base_url.clone()),
-                p2p_listen_addr: FALLBACK_SOCKET_ADDR,
+                p2p_listen_addr: c.p2p_listen_addr,
                 nat_profile: None,
             })
             .collect();

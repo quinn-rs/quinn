@@ -15,6 +15,7 @@ This document describes the VPS infrastructure used for running bootstrap nodes,
 | saorsa-7 | Hetzner | 116.203.101.172 | Nuremberg | Test Node | Active |
 | saorsa-8 | Vultr | 149.28.156.231 | Singapore | Test Node | Active |
 | saorsa-9 | Vultr | 45.77.176.184 | Tokyo | Test Node | Active |
+| saorsa-10 | Hetzner | 77.42.39.239 | Falkenstein | **Symmetric NAT Sim** | Active |
 
 ## Port Allocation
 
@@ -81,6 +82,45 @@ Bootstrap nodes use dynamic ports. New nodes discover bootstrap addresses via:
 - Can be spun up/down for specific tests
 - Geographically distributed (EU, UK, etc.)
 - May run experimental code
+
+### NAT Simulation Node (saorsa-10)
+- **IP:** 77.42.39.239
+- **Provider:** Hetzner (Falkenstein, DE)
+- **Purpose:** Symmetric NAT simulation for hole-punching tests
+- **NAT Type:** Symmetric (endpoint-dependent mapping/filtering)
+
+**Architecture:**
+```
+Internet <---> eth0 (77.42.39.239) <---> [iptables MASQUERADE --random-fully] <---> veth-host (10.0.0.1)
+                                                                                        |
+                                                                               [natbox namespace]
+                                                                                        |
+                                                                               veth-nat (10.0.0.2)
+                                                                                        |
+                                                                               ant-quic-test
+```
+
+**Key Characteristics:**
+- Uses network namespace (`natbox`) to isolate the test node
+- iptables MASQUERADE with `--random-fully` creates endpoint-dependent port mapping
+- Blocks unsolicited inbound connections (state NEW from external)
+- Each connection to a different destination gets a unique external port
+- Service: `ant-quic-test-nat.service`
+
+**Managing the NAT Simulation:**
+```bash
+# Check service status
+ssh root@77.42.39.239 systemctl status ant-quic-test-nat
+
+# View NAT mappings
+ssh root@77.42.39.239 conntrack -L | grep udp
+
+# Check iptables rules
+ssh root@77.42.39.239 iptables -t nat -L -v -n
+
+# Run commands inside NAT namespace
+ssh root@77.42.39.239 ip netns exec natbox <command>
+```
 
 ## Provider CLI Setup
 

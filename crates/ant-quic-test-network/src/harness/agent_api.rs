@@ -342,13 +342,15 @@ pub mod endpoints {
 pub struct AgentClient {
     pub base_url: String,
     pub agent_id: String,
+    pub p2p_listen_addr: SocketAddr,
 }
 
 impl AgentClient {
-    pub fn new(base_url: &str, agent_id: &str) -> Self {
+    pub fn new(base_url: &str, agent_id: &str, p2p_listen_addr: SocketAddr) -> Self {
         Self {
             base_url: base_url.trim_end_matches('/').to_string(),
             agent_id: agent_id.to_string(),
+            p2p_listen_addr,
         }
     }
 
@@ -394,7 +396,8 @@ mod tests {
 
     #[test]
     fn test_agent_client_urls() {
-        let client = AgentClient::new("http://localhost:8080", "agent-1");
+        let addr: SocketAddr = "127.0.0.1:9000".parse().unwrap();
+        let client = AgentClient::new("http://localhost:8080", "agent-1", addr);
         assert_eq!(client.health_url(), "http://localhost:8080/health");
 
         let run_id = Uuid::new_v4();
@@ -581,5 +584,24 @@ mod tests {
         assert!(!result.is_complete());
         assert!(result.items.is_empty());
         assert_eq!(result.failed_sources.len(), 2);
+    }
+
+    #[test]
+    fn test_agent_client_stores_p2p_listen_addr() {
+        let p2p_addr: SocketAddr = "192.168.1.100:9000".parse().unwrap();
+        let client = AgentClient::new("http://localhost:8080", "agent-1", p2p_addr);
+
+        assert_eq!(client.base_url, "http://localhost:8080");
+        assert_eq!(client.agent_id, "agent-1");
+        assert_eq!(client.p2p_listen_addr, p2p_addr);
+    }
+
+    #[test]
+    fn test_agent_client_p2p_addr_not_fallback_when_discovered() {
+        let discovered_addr: SocketAddr = "10.0.0.5:9000".parse().unwrap();
+        let client = AgentClient::new("http://agent.example.com:8080", "agent-x", discovered_addr);
+
+        assert_ne!(client.p2p_listen_addr, FALLBACK_SOCKET_ADDR);
+        assert_eq!(client.p2p_listen_addr.port(), 9000);
     }
 }
