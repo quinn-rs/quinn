@@ -401,6 +401,30 @@ pub async fn start_registry_server(config: RegistryConfig) -> anyhow::Result<()>
 
     tracing::info!("Starting registry server on {}", config.bind_addr);
     tracing::info!("Experiment data will be saved to {:?}", config.data_dir);
+
+    // Pre-check if the port is available to avoid warp panicking
+    // This provides a graceful error message instead of a panic
+    match std::net::TcpListener::bind(config.bind_addr) {
+        Ok(listener) => {
+            // Successfully bound, release the socket so warp can bind
+            drop(listener);
+            tracing::debug!("Port {} is available", config.bind_addr.port());
+        }
+        Err(e) => {
+            tracing::error!(
+                "Failed to bind to {}: {}. Is another instance already running?",
+                config.bind_addr,
+                e
+            );
+            return Err(anyhow::anyhow!(
+                "Failed to bind to port {}: {}. Try a different port or stop the existing service.",
+                config.bind_addr.port(),
+                e
+            ));
+        }
+    }
+
+    // Now warp can safely bind (port was just released)
     warp::serve(routes).run(config.bind_addr).await;
 
     Ok(())

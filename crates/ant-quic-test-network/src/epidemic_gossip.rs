@@ -937,6 +937,10 @@ impl EpidemicGossip {
                     let mut suspect_count = 0;
                     let mut dead_count = 0;
 
+                    // First, get transport connected peers - these are the actually connected peers
+                    let connected_peers = transport.connected_peers().await;
+
+                    // Check SWIM state for peers in active view
                     for peer in &active {
                         if let Some(state) = membership.swim().get_state(peer).await {
                             match state {
@@ -947,7 +951,21 @@ impl EpidemicGossip {
                         }
                     }
 
-                    let connected_peers = transport.connected_peers().await;
+                    // WORKAROUND: If HyParView active_view is empty but transport has connections,
+                    // count transport connected peers as "alive" since they are actually connected.
+                    // This handles the case where peers connect but aren't added to HyParView.
+                    if alive_count == 0 && !connected_peers.is_empty() {
+                        for (peer_id, _) in &connected_peers {
+                            // Only count if not already in active view (avoid double counting)
+                            if !active.contains(peer_id) {
+                                alive_count += 1;
+                            }
+                        }
+                        debug!(
+                            "Using transport connected peers for alive count: {} peers",
+                            connected_peers.len()
+                        );
+                    }
                     let mut breakdown = ConnectionBreakdown::default();
 
                     {
