@@ -263,6 +263,53 @@ impl<T> Default for CollectionResult<T> {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct StatusPollResult {
+    pub statuses: std::collections::HashMap<String, RunStatusResponse>,
+    pub failed_agents: Vec<(String, String)>,
+    pub expected_count: usize,
+}
+
+impl StatusPollResult {
+    pub fn new(expected_count: usize) -> Self {
+        Self {
+            statuses: std::collections::HashMap::new(),
+            failed_agents: Vec::new(),
+            expected_count,
+        }
+    }
+
+    pub fn record_status(&mut self, agent_id: &str, status: RunStatusResponse) {
+        self.statuses.insert(agent_id.to_string(), status);
+    }
+
+    pub fn record_failure(&mut self, agent_id: &str, error: &str) {
+        self.failed_agents
+            .push((agent_id.to_string(), error.to_string()));
+    }
+
+    pub fn all_responded(&self) -> bool {
+        self.statuses.len() + self.failed_agents.len() >= self.expected_count
+    }
+
+    pub fn all_complete(&self) -> bool {
+        if !self.all_responded() {
+            return false;
+        }
+        if !self.failed_agents.is_empty() {
+            return false;
+        }
+        self.statuses
+            .values()
+            .all(|s| matches!(s.status, RunStatus::Completed | RunStatus::Failed))
+    }
+
+    pub fn missing_count(&self) -> usize {
+        self.expected_count
+            .saturating_sub(self.statuses.len() + self.failed_agents.len())
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HealthCheckResponse {
     pub healthy: bool,
@@ -603,5 +650,55 @@ mod tests {
 
         assert_ne!(client.p2p_listen_addr, FALLBACK_SOCKET_ADDR);
         assert_eq!(client.p2p_listen_addr.port(), 9000);
+    }
+
+    fn make_completed_status() -> RunStatusResponse {
+        RunStatusResponse {
+            run_id: Uuid::new_v4(),
+            status: RunStatus::Completed,
+            progress: RunProgress {
+                total_attempts: 10,
+                completed_attempts: 10,
+                successful_attempts: 10,
+                failed_attempts: 0,
+                current_attempt: None,
+                elapsed_ms: 5000,
+            },
+            current_stage: None,
+            error: None,
+        }
+    }
+
+    #[test]
+    fn test_status_poll_result_all_responded_when_all_succeed() {
+        let mut result = StatusPollResult::new(2);
+        result.record_status("agent-1", make_completed_status());
+        result.record_status("agent-2", make_completed_status());
+
+        assert!(result.all_responded());
+        assert!(result.all_complete());
+        assert_eq!(result.missing_count(), 0);
+    }
+
+    #[test]
+    fn test_status_poll_result_not_complete_when_agent_missing() {
+        let mut result = StatusPollResult::new(3);
+        result.record_status("agent-1", make_completed_status());
+        result.record_status("agent-2", make_completed_status());
+
+        assert!(!result.all_responded());
+        assert!(!result.all_complete());
+        assert_eq!(result.missing_count(), 1);
+    }
+
+    #[test]
+    fn test_status_poll_result_tracks_failed_agents() {
+        let mut result = StatusPollResult::new(2);
+        result.record_status("agent-1", make_completed_status());
+        result.record_failure("agent-2", "Connection timeout");
+
+        assert!(result.all_responded());
+        assert!(!result.all_complete());
+        assert_eq!(result.failed_agents.len(), 1);
     }
 }

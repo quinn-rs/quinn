@@ -2,8 +2,8 @@ use ant_quic_test_network::{
     harness::{
         AgentCapabilities, AgentClient, AgentInfo, AttemptResult, CollectionResult,
         FALLBACK_SOCKET_ADDR, GetResultsRequest, GetResultsResponse, HandshakeRequest,
-        HandshakeResponse, HealthCheckResponse, ResultFormat, RunStatus, RunStatusResponse,
-        RunSummary, ScenarioSpec, StartRunRequest, StartRunResponse, StartRunResult,
+        HandshakeResponse, HealthCheckResponse, ResultFormat, RunStatusResponse, RunSummary,
+        ScenarioSpec, StartRunRequest, StartRunResponse, StartRunResult, StatusPollResult,
         StopRunResponse,
     },
     orchestrator::NatTestMatrix,
@@ -317,12 +317,12 @@ impl Orchestrator {
         Ok(result)
     }
 
-    async fn get_status(&self, run_id: Uuid) -> Result<HashMap<String, RunStatusResponse>> {
+    async fn get_status(&self, run_id: Uuid) -> Result<StatusPollResult> {
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(10))
             .build()?;
 
-        let mut statuses = HashMap::new();
+        let mut result = StatusPollResult::new(self.agents.len());
 
         for (agent_id, agent_client) in &self.agents {
             let url = agent_client.status_url(run_id);
@@ -330,20 +330,29 @@ impl Orchestrator {
                 Ok(resp) if resp.status().is_success() => {
                     match resp.json::<RunStatusResponse>().await {
                         Ok(status) => {
-                            statuses.insert(agent_id.clone(), status);
+                            result.record_status(agent_id, status);
                         }
                         Err(e) => {
+                            let err = format!("JSON parse error: {}", e);
                             error!("Failed to parse status response from {}: {}", agent_id, e);
+                            result.record_failure(agent_id, &err);
                         }
                     }
                 }
-                _ => {
-                    warn!("Failed to get status from {}", agent_id);
+                Ok(resp) => {
+                    let err = format!("HTTP {}", resp.status());
+                    warn!("Status request to {} failed: {}", agent_id, err);
+                    result.record_failure(agent_id, &err);
+                }
+                Err(e) => {
+                    let err = e.to_string();
+                    warn!("Failed to get status from {}: {}", agent_id, err);
+                    result.record_failure(agent_id, &err);
                 }
             }
         }
 
-        Ok(statuses)
+        Ok(result)
     }
 
     async fn stop_run(&self, run_id: Uuid, reason: Option<&str>) -> Result<()> {
@@ -589,21 +598,31 @@ async fn main() -> Result<()> {
 
             loop {
                 tokio::time::sleep(Duration::from_secs(5)).await;
-                let statuses = orchestrator.get_status(run_id).await?;
+                let poll_result = orchestrator.get_status(run_id).await?;
 
-                let all_complete = statuses
-                    .values()
-                    .all(|s| matches!(s.status, RunStatus::Completed | RunStatus::Failed));
-
-                if all_complete {
+                if poll_result.all_complete() {
                     break;
                 }
 
-                let total_progress: u32 = statuses
+                if !poll_result.failed_agents.is_empty() {
+                    warn!(
+                        "Status poll: {}/{} agents failed to respond",
+                        poll_result.failed_agents.len(),
+                        poll_result.expected_count
+                    );
+                }
+
+                let total_progress: u32 = poll_result
+                    .statuses
                     .values()
                     .map(|s| s.progress.completed_attempts)
                     .sum();
-                info!("Progress: {} attempts completed", total_progress);
+                info!(
+                    "Progress: {} attempts completed ({}/{} agents reporting)",
+                    total_progress,
+                    poll_result.statuses.len(),
+                    poll_result.expected_count
+                );
             }
 
             let collection = orchestrator.collect_results(run_id).await?;
@@ -636,9 +655,9 @@ async fn main() -> Result<()> {
             }
 
             orchestrator.discover_agents(&agents).await?;
-            let statuses = orchestrator.get_status(run_id).await?;
+            let poll_result = orchestrator.get_status(run_id).await?;
 
-            for (agent_id, status) in statuses {
+            for (agent_id, status) in &poll_result.statuses {
                 println!(
                     "{}: {:?} - {}/{} completed",
                     agent_id,
@@ -646,6 +665,12 @@ async fn main() -> Result<()> {
                     status.progress.completed_attempts,
                     status.progress.total_attempts
                 );
+            }
+
+            if !poll_result.failed_agents.is_empty() {
+                for (agent_id, err) in &poll_result.failed_agents {
+                    println!("{}: FAILED - {}", agent_id, err);
+                }
             }
         }
 
