@@ -53,7 +53,6 @@ use crate::{
 #[derive(Debug, Clone)]
 pub struct Endpoint {
     pub(crate) inner: EndpointRef,
-    pub(crate) default_client_config: Option<ClientConfig>,
     runtime: Arc<dyn Runtime>,
 }
 
@@ -170,11 +169,7 @@ impl Endpoint {
             }
             .instrument(Span::current()),
         ));
-        Ok(Self {
-            inner: rc,
-            default_client_config: None,
-            runtime,
-        })
+        Ok(Self { inner: rc, runtime })
     }
 
     /// Get the next incoming connection attempt from a client
@@ -191,8 +186,8 @@ impl Endpoint {
     }
 
     /// Set the client configuration used by `connect`
-    pub fn set_default_client_config(&mut self, config: ClientConfig) {
-        self.default_client_config = Some(config);
+    pub fn set_default_client_config(&self, config: ClientConfig) {
+        self.inner.0.state.lock().unwrap().default_client_config = Some(config);
     }
 
     /// Connect to a remote endpoint
@@ -204,9 +199,16 @@ impl Endpoint {
     /// May fail immediately due to configuration errors, or in the future if the connection could
     /// not be established.
     pub fn connect(&self, addr: SocketAddr, server_name: &str) -> Result<Connecting, ConnectError> {
-        let config = match &self.default_client_config {
-            Some(config) => config.clone(),
-            None => return Err(ConnectError::NoDefaultClientConfig),
+        let Some(config) = self
+            .inner
+            .0
+            .state
+            .lock()
+            .unwrap()
+            .default_client_config
+            .clone()
+        else {
+            return Err(ConnectError::NoDefaultClientConfig);
         };
 
         self.connect_with(config, addr, server_name)
@@ -496,6 +498,7 @@ pub(crate) struct State {
     driver_lost: bool,
     runtime: Arc<dyn Runtime>,
     stats: EndpointStats,
+    default_client_config: Option<ClientConfig>,
 }
 
 #[derive(Debug)]
@@ -752,6 +755,7 @@ impl EndpointRef {
                 recv_state,
                 runtime,
                 stats: EndpointStats::default(),
+                default_client_config: None,
             }),
         }))
     }
