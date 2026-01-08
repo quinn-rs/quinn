@@ -29,19 +29,19 @@ pub mod artifact_manifest;
 pub mod attempt_result;
 pub mod baseline;
 pub mod debug_bundle;
+#[cfg(test)]
+pub mod failure_oracle;
 pub mod failure_taxonomy;
+#[cfg(test)]
+pub mod golden_fixtures;
 pub mod harness_metrics;
 pub mod replay_mode;
 pub mod run_recovery;
 pub mod scenario_spec;
-pub mod structured_logging;
-pub mod version_compat;
-#[cfg(test)]
-pub mod failure_oracle;
-#[cfg(test)]
-pub mod golden_fixtures;
 #[cfg(test)]
 pub mod self_tests;
+pub mod structured_logging;
+pub mod version_compat;
 
 pub use agent_api::*;
 pub use artifact_manifest::*;

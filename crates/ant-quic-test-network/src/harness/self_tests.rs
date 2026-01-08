@@ -245,7 +245,11 @@ fn test_version_negotiator_create_request() {
     assert_eq!(request.sender_id(), "ctl-main");
     assert_eq!(request.sender_role(), "controller");
     assert_eq!(request.policy(), CompatibilityPolicy::Compatible);
-    assert!(request.versions().contains_key(&VersionedComponent::Protocol));
+    assert!(
+        request
+            .versions()
+            .contains_key(&VersionedComponent::Protocol)
+    );
 }
 
 // ==================== Run Stage Tests ====================
@@ -380,7 +384,10 @@ fn test_version_handshake_response_accept() {
     let request_id = fixtures::fixed_uuid();
     let response = VersionHandshakeResponse::accept(request_id, "agent-1")
         .with_negotiated_version(VersionedComponent::Protocol, Version::new(1, 0, 0))
-        .with_result(VersionedComponent::Protocol, CompatibilityResult::Compatible);
+        .with_result(
+            VersionedComponent::Protocol,
+            CompatibilityResult::Compatible,
+        );
 
     assert!(response.is_accepted());
     assert_eq!(response.request_id, request_id);
@@ -439,27 +446,35 @@ fn test_agent_capabilities_default() {
 #[test]
 fn test_compatibility_result_is_ok() {
     assert!(CompatibilityResult::Compatible.is_ok());
-    assert!(CompatibilityResult::CompatibleWithWarning {
-        warning: "minor mismatch".to_string()
-    }
-    .is_ok());
-    assert!(!CompatibilityResult::Incompatible {
-        reason: "major mismatch".to_string()
-    }
-    .is_ok());
+    assert!(
+        CompatibilityResult::CompatibleWithWarning {
+            warning: "minor mismatch".to_string()
+        }
+        .is_ok()
+    );
+    assert!(
+        !CompatibilityResult::Incompatible {
+            reason: "major mismatch".to_string()
+        }
+        .is_ok()
+    );
 }
 
 #[test]
 fn test_compatibility_result_is_error() {
     assert!(!CompatibilityResult::Compatible.is_error());
-    assert!(!CompatibilityResult::CompatibleWithWarning {
-        warning: "minor mismatch".to_string()
-    }
-    .is_error());
-    assert!(CompatibilityResult::Incompatible {
-        reason: "major mismatch".to_string()
-    }
-    .is_error());
+    assert!(
+        !CompatibilityResult::CompatibleWithWarning {
+            warning: "minor mismatch".to_string()
+        }
+        .is_error()
+    );
+    assert!(
+        CompatibilityResult::Incompatible {
+            reason: "major mismatch".to_string()
+        }
+        .is_error()
+    );
 }
 
 #[test]

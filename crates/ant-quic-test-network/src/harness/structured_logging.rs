@@ -303,17 +303,26 @@ impl LogBatch {
 
     /// Filter entries by level
     pub fn filter_by_level(&self, min_level: LogLevel) -> Vec<&StructuredLogEntry> {
-        self.entries.iter().filter(|e| e.level >= min_level).collect()
+        self.entries
+            .iter()
+            .filter(|e| e.level >= min_level)
+            .collect()
     }
 
     /// Filter entries by category
     pub fn filter_by_category(&self, category: &LogCategory) -> Vec<&StructuredLogEntry> {
-        self.entries.iter().filter(|e| &e.category == category).collect()
+        self.entries
+            .iter()
+            .filter(|e| &e.category == category)
+            .collect()
     }
 
     /// Filter entries by run ID
     pub fn filter_by_run(&self, run_id: Uuid) -> Vec<&StructuredLogEntry> {
-        self.entries.iter().filter(|e| e.context.run_id == run_id).collect()
+        self.entries
+            .iter()
+            .filter(|e| e.context.run_id == run_id)
+            .collect()
     }
 
     /// Filter entries by test ID
@@ -658,8 +667,8 @@ mod tests {
     #[test]
     fn test_log_entry_with_category() {
         let ctx = LogContext::for_run(Uuid::new_v4());
-        let entry = StructuredLogEntry::new(ctx, LogLevel::Info, "msg")
-            .with_category(LogCategory::Network);
+        let entry =
+            StructuredLogEntry::new(ctx, LogLevel::Info, "msg").with_category(LogCategory::Network);
 
         assert_eq!(entry.category, LogCategory::Network);
     }
@@ -692,8 +701,7 @@ mod tests {
     #[test]
     fn test_log_entry_with_source() {
         let ctx = LogContext::for_run(Uuid::new_v4());
-        let entry = StructuredLogEntry::new(ctx, LogLevel::Info, "msg")
-            .with_source("test.rs", 42);
+        let entry = StructuredLogEntry::new(ctx, LogLevel::Info, "msg").with_source("test.rs", 42);
 
         assert_eq!(entry.source_file, Some("test.rs".to_string()));
         assert_eq!(entry.source_line, Some(42));
@@ -784,7 +792,11 @@ mod tests {
 
         batch.add(StructuredLogEntry::new(ctx.clone(), LogLevel::Info, "info"));
         batch.add(StructuredLogEntry::new(ctx.clone(), LogLevel::Warn, "warn"));
-        batch.add(StructuredLogEntry::new(ctx.clone(), LogLevel::Error, "error"));
+        batch.add(StructuredLogEntry::new(
+            ctx.clone(),
+            LogLevel::Error,
+            "error",
+        ));
         batch.add(StructuredLogEntry::new(ctx, LogLevel::Debug, "debug"));
 
         let warnings = batch.filter_by_level(LogLevel::Warn);
@@ -924,7 +936,11 @@ mod tests {
         let mut batch = LogBatch::new();
         let ctx = LogContext::for_run(Uuid::new_v4());
 
-        batch.add(StructuredLogEntry::new(ctx.clone(), LogLevel::Info, "first"));
+        batch.add(StructuredLogEntry::new(
+            ctx.clone(),
+            LogLevel::Info,
+            "first",
+        ));
         batch.add(StructuredLogEntry::new(ctx, LogLevel::Warn, "second"));
 
         let jsonl = batch.to_jsonl().unwrap();
@@ -1004,8 +1020,16 @@ mod tests {
         let ctx = LogContext::for_run(Uuid::new_v4());
 
         // Add in random order - they should be sorted by timestamp
-        agg.add_entry(StructuredLogEntry::new(ctx.clone(), LogLevel::Info, "first"));
-        agg.add_entry(StructuredLogEntry::new(ctx.clone(), LogLevel::Info, "second"));
+        agg.add_entry(StructuredLogEntry::new(
+            ctx.clone(),
+            LogLevel::Info,
+            "first",
+        ));
+        agg.add_entry(StructuredLogEntry::new(
+            ctx.clone(),
+            LogLevel::Info,
+            "second",
+        ));
         agg.add_entry(StructuredLogEntry::new(ctx, LogLevel::Info, "third"));
 
         let sorted = agg.sorted_entries();
@@ -1129,7 +1153,8 @@ mod tests {
                 .with_category(LogCategory::Security),
         );
         agg.add_entry(
-            StructuredLogEntry::new(ctx, LogLevel::Info, "info").with_category(LogCategory::Network),
+            StructuredLogEntry::new(ctx, LogLevel::Info, "info")
+                .with_category(LogCategory::Network),
         );
 
         let summary = agg.error_summary();

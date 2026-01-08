@@ -9,7 +9,7 @@
 //! If a test fails after a code change, it indicates a potential
 //! breaking change to the wire format that needs careful review.
 
-use serde::{de::DeserializeOwned, Serialize};
+use serde::{Serialize, de::DeserializeOwned};
 use std::collections::HashMap;
 
 /// Result of comparing actual output against golden fixture
@@ -73,7 +73,7 @@ impl<T: Serialize + DeserializeOwned + PartialEq> GoldenFixture<T> {
             Err(e) => {
                 return GoldenCompareResult::SerializeError {
                     error: e.to_string(),
-                }
+                };
             }
         };
 
@@ -83,7 +83,7 @@ impl<T: Serialize + DeserializeOwned + PartialEq> GoldenFixture<T> {
             Err(e) => {
                 return GoldenCompareResult::ParseError {
                     error: e.to_string(),
-                }
+                };
             }
         };
 
@@ -92,7 +92,7 @@ impl<T: Serialize + DeserializeOwned + PartialEq> GoldenFixture<T> {
             Err(e) => {
                 return GoldenCompareResult::SerializeError {
                     error: format!("failed to normalize actual JSON: {e}"),
-                }
+                };
             }
         };
 
@@ -113,7 +113,7 @@ impl<T: Serialize + DeserializeOwned + PartialEq> GoldenFixture<T> {
             Err(e) => {
                 return GoldenCompareResult::SerializeError {
                     error: e.to_string(),
-                }
+                };
             }
         };
 
@@ -122,7 +122,7 @@ impl<T: Serialize + DeserializeOwned + PartialEq> GoldenFixture<T> {
             Err(e) => {
                 return GoldenCompareResult::ParseError {
                     error: e.to_string(),
-                }
+                };
             }
         };
 
@@ -281,11 +281,13 @@ mod tests {
     #[test]
     fn test_golden_compare_result_is_match() {
         assert!(GoldenCompareResult::Match.is_match());
-        assert!(!GoldenCompareResult::Mismatch {
-            expected: "a".to_string(),
-            actual: "b".to_string()
-        }
-        .is_match());
+        assert!(
+            !GoldenCompareResult::Mismatch {
+                expected: "a".to_string(),
+                actual: "b".to_string()
+            }
+            .is_match()
+        );
     }
 
     #[test]
@@ -310,8 +312,11 @@ mod tests {
 
     #[test]
     fn test_golden_fixture_new() {
-        let fixture =
-            GoldenFixture::new("test", Version::new(1, 0, 0), r#"{"major":1,"minor":0,"patch":0}"#);
+        let fixture = GoldenFixture::new(
+            "test",
+            Version::new(1, 0, 0),
+            r#"{"major":1,"minor":0,"patch":0}"#,
+        );
 
         assert_eq!(fixture.name, "test");
         assert_eq!(fixture.value, Version::new(1, 0, 0));
@@ -557,7 +562,11 @@ mod tests {
                 VersionedComponent::Schema,
                 r#""schema""#,
             ))
-            .with_fixture(GoldenFixture::new("api", VersionedComponent::Api, r#""api""#))
+            .with_fixture(GoldenFixture::new(
+                "api",
+                VersionedComponent::Api,
+                r#""api""#,
+            ))
             .with_fixture(GoldenFixture::new(
                 "harness",
                 VersionedComponent::Harness,
@@ -668,7 +677,11 @@ mod tests {
                 LogCategory::Harness,
                 r#""harness""#,
             ))
-            .with_fixture(GoldenFixture::new("agent", LogCategory::Agent, r#""agent""#))
+            .with_fixture(GoldenFixture::new(
+                "agent",
+                LogCategory::Agent,
+                r#""agent""#,
+            ))
             .with_fixture(GoldenFixture::new(
                 "network",
                 LogCategory::Network,
@@ -759,7 +772,11 @@ mod tests {
                 RunStage::Running,
                 r#""running""#,
             ))
-            .with_fixture(GoldenFixture::new("paused", RunStage::Paused, r#""paused""#))
+            .with_fixture(GoldenFixture::new(
+                "paused",
+                RunStage::Paused,
+                r#""paused""#,
+            ))
             .with_fixture(GoldenFixture::new(
                 "collecting",
                 RunStage::Collecting,
@@ -775,7 +792,11 @@ mod tests {
                 RunStage::Completed,
                 r#""completed""#,
             ))
-            .with_fixture(GoldenFixture::new("failed", RunStage::Failed, r#""failed""#))
+            .with_fixture(GoldenFixture::new(
+                "failed",
+                RunStage::Failed,
+                r#""failed""#,
+            ))
             .with_fixture(GoldenFixture::new(
                 "cancelled",
                 RunStage::Cancelled,
@@ -922,7 +943,10 @@ mod tests {
     fn test_golden_version_handshake_response_roundtrip() {
         let response = VersionHandshakeResponse::accept(fixed_uuid(), "agent-1")
             .with_negotiated_version(VersionedComponent::Protocol, Version::new(1, 0, 0))
-            .with_result(VersionedComponent::Protocol, CompatibilityResult::Compatible)
+            .with_result(
+                VersionedComponent::Protocol,
+                CompatibilityResult::Compatible,
+            )
             // Fix timestamp and ID for determinism
             .with_fixed_timestamp(fixed_time())
             .with_fixed_id(fixed_uuid());
@@ -974,25 +998,32 @@ mod tests {
         }
 
         // CompatibilityPolicy
-        let policy_registry = FixtureRegistry::new("CompatibilityPolicy").with_fixture(GoldenFixture::new(
-            "compatible",
-            CompatibilityPolicy::Compatible,
-            r#""compatible""#,
-        ));
+        let policy_registry =
+            FixtureRegistry::new("CompatibilityPolicy").with_fixture(GoldenFixture::new(
+                "compatible",
+                CompatibilityPolicy::Compatible,
+                r#""compatible""#,
+            ));
         for (name, result) in policy_registry.validate_all() {
             summary.add_result(&format!("CompatibilityPolicy::{name}"), &result);
         }
 
         // LogLevel (uses UPPERCASE)
-        let level_registry = FixtureRegistry::new("LogLevel")
-            .with_fixture(GoldenFixture::new("info", LogLevel::Info, r#""INFO""#));
+        let level_registry = FixtureRegistry::new("LogLevel").with_fixture(GoldenFixture::new(
+            "info",
+            LogLevel::Info,
+            r#""INFO""#,
+        ));
         for (name, result) in level_registry.validate_all() {
             summary.add_result(&format!("LogLevel::{name}"), &result);
         }
 
         // RunStage
-        let stage_registry = FixtureRegistry::new("RunStage")
-            .with_fixture(GoldenFixture::new("running", RunStage::Running, r#""running""#));
+        let stage_registry = FixtureRegistry::new("RunStage").with_fixture(GoldenFixture::new(
+            "running",
+            RunStage::Running,
+            r#""running""#,
+        ));
         for (name, result) in stage_registry.validate_all() {
             summary.add_result(&format!("RunStage::{name}"), &result);
         }

@@ -84,7 +84,9 @@ impl RunCompletenessMetric {
         if self.started_attempts == 0 {
             return 0.0;
         }
-        let incomplete = self.started_attempts.saturating_sub(self.completed_attempts);
+        let incomplete = self
+            .started_attempts
+            .saturating_sub(self.completed_attempts);
         incomplete as f64 / self.started_attempts as f64
     }
 
@@ -178,12 +180,13 @@ impl StageTiming {
 impl StageHealthMetric {
     /// Record timing for a stage
     pub fn record_stage(&mut self, stage: &str, duration_ms: u64, timed_out: bool, failed: bool) {
-        let timing = self.stages.entry(stage.to_string()).or_insert_with(|| {
-            StageTiming {
+        let timing = self
+            .stages
+            .entry(stage.to_string())
+            .or_insert_with(|| StageTiming {
                 stage_name: stage.to_string(),
                 ..Default::default()
-            }
-        });
+            });
         timing.record(duration_ms, timed_out, failed);
     }
 

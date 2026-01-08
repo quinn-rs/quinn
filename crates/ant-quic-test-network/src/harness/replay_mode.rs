@@ -569,7 +569,10 @@ mod tests {
         let source = ReplaySource::from_bundle(bundle_id, "/tmp/bundle");
 
         match source {
-            ReplaySource::DebugBundle { bundle_id: id, path } => {
+            ReplaySource::DebugBundle {
+                bundle_id: id,
+                path,
+            } => {
                 assert_eq!(id, bundle_id);
                 assert_eq!(path, PathBuf::from("/tmp/bundle"));
             }
@@ -594,7 +597,10 @@ mod tests {
         let source = ReplaySource::from_manifest(manifest_id, "/tmp/manifest.json");
 
         match source {
-            ReplaySource::ArtifactManifest { manifest_id: id, path } => {
+            ReplaySource::ArtifactManifest {
+                manifest_id: id,
+                path,
+            } => {
                 assert_eq!(id, manifest_id);
                 assert_eq!(path, PathBuf::from("/tmp/manifest.json"));
             }
@@ -707,7 +713,10 @@ mod tests {
     fn test_classification_result_new() {
         let result = ClassificationResult::new(FailureCategory::SutConnectivityFailure, 0.9);
 
-        assert_eq!(result.failure_category, FailureCategory::SutConnectivityFailure);
+        assert_eq!(
+            result.failure_category,
+            FailureCategory::SutConnectivityFailure
+        );
         assert_eq!(result.confidence, 0.9);
         assert!(result.evidence.is_empty());
         assert!(result.alternatives.is_empty());
@@ -786,8 +795,7 @@ mod tests {
     fn test_classification_comparison_with_delta() {
         let original = Some(FailureCategory::SutConnectivityFailure);
         let replay = ClassificationResult::new(FailureCategory::SutConnectivityFailure, 0.9);
-        let comparison =
-            ClassificationComparison::new(original, replay).with_confidence_delta(0.1);
+        let comparison = ClassificationComparison::new(original, replay).with_confidence_delta(0.1);
 
         assert_eq!(comparison.confidence_delta, Some(0.1));
     }
@@ -900,7 +908,8 @@ mod tests {
         let mut session = ReplaySession::new(run_id, source);
 
         session.start();
-        let classification = ClassificationResult::new(FailureCategory::SutConnectivityFailure, 0.9);
+        let classification =
+            ClassificationResult::new(FailureCategory::SutConnectivityFailure, 0.9);
         session.complete(classification);
 
         assert_eq!(session.status, ReplayStatus::Completed);
@@ -917,7 +926,10 @@ mod tests {
 
         session.start();
         let classification = ClassificationResult::new(FailureCategory::InfrastructureFlake, 0.9);
-        session.complete_with_comparison(classification, Some(FailureCategory::SutConnectivityFailure));
+        session.complete_with_comparison(
+            classification,
+            Some(FailureCategory::SutConnectivityFailure),
+        );
 
         assert!(session.comparison.is_some());
         assert!(!session.comparison.as_ref().unwrap().matches);
@@ -944,8 +956,10 @@ mod tests {
         let source = ReplaySource::from_logs("/tmp/logs.jsonl");
         let mut session = ReplaySession::new(run_id, source);
 
-        session.add_event(ReplayEvent::new(ReplayEventType::ConnectionAttempt).with_agent("agent-1"));
-        session.add_event(ReplayEvent::new(ReplayEventType::ConnectionAttempt).with_agent("agent-2"));
+        session
+            .add_event(ReplayEvent::new(ReplayEventType::ConnectionAttempt).with_agent("agent-1"));
+        session
+            .add_event(ReplayEvent::new(ReplayEventType::ConnectionAttempt).with_agent("agent-2"));
         session.add_event(ReplayEvent::new(ReplayEventType::Timeout).with_agent("agent-1"));
 
         let agent1_events = session.events_for_agent("agent-1");
@@ -972,8 +986,10 @@ mod tests {
         let source = ReplaySource::from_logs("/tmp/logs.jsonl");
         let mut session = ReplaySession::new(run_id, source);
 
-        session.add_event(ReplayEvent::new(ReplayEventType::ConnectionAttempt).with_agent("agent-2"));
-        session.add_event(ReplayEvent::new(ReplayEventType::ConnectionAttempt).with_agent("agent-1"));
+        session
+            .add_event(ReplayEvent::new(ReplayEventType::ConnectionAttempt).with_agent("agent-2"));
+        session
+            .add_event(ReplayEvent::new(ReplayEventType::ConnectionAttempt).with_agent("agent-1"));
         session.add_event(ReplayEvent::new(ReplayEventType::Timeout).with_agent("agent-2"));
 
         let ids = session.agent_ids();
@@ -1028,8 +1044,10 @@ mod tests {
         let mut session = ReplaySession::new(run_id, source);
 
         session.start();
-        session.add_event(ReplayEvent::new(ReplayEventType::ConnectionAttempt).with_agent("agent-1"));
-        let classification = ClassificationResult::new(FailureCategory::SutConnectivityFailure, 0.9);
+        session
+            .add_event(ReplayEvent::new(ReplayEventType::ConnectionAttempt).with_agent("agent-1"));
+        let classification =
+            ClassificationResult::new(FailureCategory::SutConnectivityFailure, 0.9);
         session.complete(classification);
 
         let json = serde_json::to_string(&session).unwrap();

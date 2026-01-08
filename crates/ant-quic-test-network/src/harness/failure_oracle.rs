@@ -754,10 +754,7 @@ pub fn run_oracle_suite() -> OracleSuiteResult {
 
     let passed = results.iter().filter(|r| r.passed).count();
     let failed = results.iter().filter(|r| !r.passed).count();
-    let errors: Vec<String> = results
-        .iter()
-        .filter_map(|r| r.error_message())
-        .collect();
+    let errors: Vec<String> = results.iter().filter_map(|r| r.error_message()).collect();
 
     OracleSuiteResult {
         total: results.len(),
@@ -823,11 +820,7 @@ mod tests {
             let found = entries
                 .iter()
                 .any(|e| std::mem::discriminant(&e.reason) == std::mem::discriminant(code));
-            assert!(
-                found,
-                "Oracle table missing entry for {:?}",
-                code
-            );
+            assert!(found, "Oracle table missing entry for {:?}", code);
         }
     }
 
@@ -928,16 +921,14 @@ mod tests {
     #[test]
     fn test_success_never_classified() {
         // Success should never be classified as a failure, regardless of context
-        let contexts = [
-            (true, true),
-            (true, false),
-            (false, true),
-            (false, false),
-        ];
+        let contexts = [(true, true), (true, false), (false, true), (false, false)];
 
         for (harness_healthy, test_ran) in contexts {
-            let result =
-                FailureCategory::from_context(FailureReasonCode::Success, harness_healthy, test_ran);
+            let result = FailureCategory::from_context(
+                FailureReasonCode::Success,
+                harness_healthy,
+                test_ran,
+            );
             assert!(
                 result.is_none(),
                 "Success should not be classified (harness_healthy={harness_healthy}, test_ran={test_ran})"
@@ -1056,10 +1047,7 @@ mod tests {
 
     #[test]
     fn test_observation_errors_under_normal_conditions() {
-        let observation_codes = [
-            FailureReasonCode::InternalError,
-            FailureReasonCode::Unknown,
-        ];
+        let observation_codes = [FailureReasonCode::InternalError, FailureReasonCode::Unknown];
 
         for code in &observation_codes {
             let result = FailureCategory::from_context(*code, true, true);

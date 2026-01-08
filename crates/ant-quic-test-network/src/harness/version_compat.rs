@@ -211,7 +211,9 @@ impl CompatibilityPolicy {
                     CompatibilityResult::Compatible
                 } else {
                     CompatibilityResult::Incompatible {
-                        reason: format!("strict policy requires exact match: local={local}, remote={remote}"),
+                        reason: format!(
+                            "strict policy requires exact match: local={local}, remote={remote}"
+                        ),
                     }
                 }
             }
@@ -502,7 +504,11 @@ impl VersionHandshakeResponse {
     }
 
     /// Create a rejected response
-    pub fn reject(request_id: Uuid, responder_id: impl Into<String>, error: impl Into<String>) -> Self {
+    pub fn reject(
+        request_id: Uuid,
+        responder_id: impl Into<String>,
+        error: impl Into<String>,
+    ) -> Self {
         Self {
             request_id,
             response_id: Uuid::new_v4(),
@@ -517,13 +523,21 @@ impl VersionHandshakeResponse {
     }
 
     /// Add a negotiated version
-    pub fn with_negotiated_version(mut self, component: VersionedComponent, version: Version) -> Self {
+    pub fn with_negotiated_version(
+        mut self,
+        component: VersionedComponent,
+        version: Version,
+    ) -> Self {
         self.negotiated_versions.insert(component, version);
         self
     }
 
     /// Add a compatibility result
-    pub fn with_result(mut self, component: VersionedComponent, result: CompatibilityResult) -> Self {
+    pub fn with_result(
+        mut self,
+        component: VersionedComponent,
+        result: CompatibilityResult,
+    ) -> Self {
         // Collect warnings
         if let Some(warning) = result.warning() {
             self.warnings.push(warning.to_string());
@@ -609,9 +623,13 @@ impl VersionNegotiator {
     }
 
     /// Create a handshake request
-    pub fn create_request(&self, sender_id: impl Into<String>, sender_role: impl Into<String>) -> VersionHandshakeRequest {
-        let mut request = VersionHandshakeRequest::new(sender_id, sender_role)
-            .with_policy(self.default_policy);
+    pub fn create_request(
+        &self,
+        sender_id: impl Into<String>,
+        sender_role: impl Into<String>,
+    ) -> VersionHandshakeRequest {
+        let mut request =
+            VersionHandshakeRequest::new(sender_id, sender_role).with_policy(self.default_policy);
 
         for cv in self.local_versions.values() {
             request = request.with_version(cv.clone());
@@ -621,7 +639,11 @@ impl VersionNegotiator {
     }
 
     /// Process an incoming request and generate response
-    pub fn process_request(&self, request: &VersionHandshakeRequest, responder_id: impl Into<String>) -> VersionHandshakeResponse {
+    pub fn process_request(
+        &self,
+        request: &VersionHandshakeRequest,
+        responder_id: impl Into<String>,
+    ) -> VersionHandshakeResponse {
         let responder_id = responder_id.into();
         let policy = request.policy();
         let mut response = VersionHandshakeResponse::accept(request.request_id(), &responder_id);
@@ -817,7 +839,10 @@ mod tests {
 
     #[test]
     fn test_policy_default() {
-        assert_eq!(CompatibilityPolicy::default(), CompatibilityPolicy::Compatible);
+        assert_eq!(
+            CompatibilityPolicy::default(),
+            CompatibilityPolicy::Compatible
+        );
     }
 
     #[test]
@@ -858,23 +883,29 @@ mod tests {
     #[test]
     fn test_compatibility_result_is_ok() {
         assert!(CompatibilityResult::Compatible.is_ok());
-        assert!(CompatibilityResult::CompatibleWithWarning {
-            warning: "test".to_string()
-        }
-        .is_ok());
-        assert!(!CompatibilityResult::Incompatible {
-            reason: "test".to_string()
-        }
-        .is_ok());
+        assert!(
+            CompatibilityResult::CompatibleWithWarning {
+                warning: "test".to_string()
+            }
+            .is_ok()
+        );
+        assert!(
+            !CompatibilityResult::Incompatible {
+                reason: "test".to_string()
+            }
+            .is_ok()
+        );
     }
 
     #[test]
     fn test_compatibility_result_is_error() {
         assert!(!CompatibilityResult::Compatible.is_error());
-        assert!(CompatibilityResult::Incompatible {
-            reason: "test".to_string()
-        }
-        .is_error());
+        assert!(
+            CompatibilityResult::Incompatible {
+                reason: "test".to_string()
+            }
+            .is_error()
+        );
     }
 
     #[test]
@@ -954,7 +985,11 @@ mod tests {
         let cv = ComponentVersion::new(VersionedComponent::Protocol, Version::new(1, 0, 0));
         let request = VersionHandshakeRequest::new("ctl-1", "controller").with_version(cv);
 
-        assert!(request.versions().contains_key(&VersionedComponent::Protocol));
+        assert!(
+            request
+                .versions()
+                .contains_key(&VersionedComponent::Protocol)
+        );
     }
 
     #[test]
@@ -967,8 +1002,8 @@ mod tests {
 
     #[test]
     fn test_handshake_request_with_capability() {
-        let request = VersionHandshakeRequest::new("ctl-1", "controller")
-            .with_capability("compression");
+        let request =
+            VersionHandshakeRequest::new("ctl-1", "controller").with_capability("compression");
 
         assert!(request.capabilities().contains(&"compression".to_string()));
     }
@@ -1001,7 +1036,8 @@ mod tests {
     #[test]
     fn test_handshake_response_reject() {
         let request_id = Uuid::new_v4();
-        let response = VersionHandshakeResponse::reject(request_id, "agent-1", "incompatible versions");
+        let response =
+            VersionHandshakeResponse::reject(request_id, "agent-1", "incompatible versions");
 
         assert!(!response.is_accepted());
         assert_eq!(response.error, Some("incompatible versions".to_string()));
@@ -1014,7 +1050,9 @@ mod tests {
             .with_negotiated_version(VersionedComponent::Protocol, Version::new(1, 0, 0));
 
         assert_eq!(
-            response.negotiated_versions.get(&VersionedComponent::Protocol),
+            response
+                .negotiated_versions
+                .get(&VersionedComponent::Protocol),
             Some(&Version::new(1, 0, 0))
         );
     }
@@ -1022,24 +1060,27 @@ mod tests {
     #[test]
     fn test_handshake_response_with_result() {
         let request_id = Uuid::new_v4();
-        let response = VersionHandshakeResponse::accept(request_id, "agent-1")
-            .with_result(VersionedComponent::Protocol, CompatibilityResult::Compatible);
+        let response = VersionHandshakeResponse::accept(request_id, "agent-1").with_result(
+            VersionedComponent::Protocol,
+            CompatibilityResult::Compatible,
+        );
 
-        assert!(response
-            .compatibility_results
-            .contains_key(&VersionedComponent::Protocol));
+        assert!(
+            response
+                .compatibility_results
+                .contains_key(&VersionedComponent::Protocol)
+        );
     }
 
     #[test]
     fn test_handshake_response_collects_warnings() {
         let request_id = Uuid::new_v4();
-        let response = VersionHandshakeResponse::accept(request_id, "agent-1")
-            .with_result(
-                VersionedComponent::Protocol,
-                CompatibilityResult::CompatibleWithWarning {
-                    warning: "version mismatch".to_string(),
-                },
-            );
+        let response = VersionHandshakeResponse::accept(request_id, "agent-1").with_result(
+            VersionedComponent::Protocol,
+            CompatibilityResult::CompatibleWithWarning {
+                warning: "version mismatch".to_string(),
+            },
+        );
 
         assert!(response.warnings.contains(&"version mismatch".to_string()));
     }
@@ -1057,7 +1098,11 @@ mod tests {
         let cv = ComponentVersion::new(VersionedComponent::Protocol, Version::new(1, 0, 0));
         let negotiator = VersionNegotiator::new().with_version(cv);
 
-        assert!(negotiator.local_versions.contains_key(&VersionedComponent::Protocol));
+        assert!(
+            negotiator
+                .local_versions
+                .contains_key(&VersionedComponent::Protocol)
+        );
     }
 
     #[test]
@@ -1068,7 +1113,11 @@ mod tests {
         let request = negotiator.create_request("ctl-1", "controller");
 
         assert_eq!(request.sender_id(), "ctl-1");
-        assert!(request.versions().contains_key(&VersionedComponent::Protocol));
+        assert!(
+            request
+                .versions()
+                .contains_key(&VersionedComponent::Protocol)
+        );
     }
 
     #[test]
@@ -1108,13 +1157,20 @@ mod tests {
             .require(VersionedComponent::Schema);
 
         // Request without schema version
-        let request = VersionHandshakeRequest::new("ctl-1", "controller")
-            .with_version(ComponentVersion::new(VersionedComponent::Protocol, Version::new(1, 0, 0)));
+        let request = VersionHandshakeRequest::new("ctl-1", "controller").with_version(
+            ComponentVersion::new(VersionedComponent::Protocol, Version::new(1, 0, 0)),
+        );
 
         let response = negotiator.process_request(&request, "agent-1");
 
         assert!(!response.is_accepted());
-        assert!(response.error.as_ref().unwrap().contains("missing required"));
+        assert!(
+            response
+                .error
+                .as_ref()
+                .unwrap()
+                .contains("missing required")
+        );
     }
 
     #[test]
@@ -1129,7 +1185,9 @@ mod tests {
 
         assert!(response.is_accepted());
         assert_eq!(
-            response.negotiated_versions.get(&VersionedComponent::Protocol),
+            response
+                .negotiated_versions
+                .get(&VersionedComponent::Protocol),
             Some(&Version::new(1, 1, 0)) // Lower of the two
         );
     }
@@ -1146,10 +1204,18 @@ mod tests {
     fn test_current_negotiator() {
         let negotiator = current::negotiator();
 
-        assert!(negotiator.get_version(VersionedComponent::Protocol).is_some());
+        assert!(
+            negotiator
+                .get_version(VersionedComponent::Protocol)
+                .is_some()
+        );
         assert!(negotiator.get_version(VersionedComponent::Schema).is_some());
         assert!(negotiator.get_version(VersionedComponent::Api).is_some());
-        assert!(negotiator.get_version(VersionedComponent::Harness).is_some());
+        assert!(
+            negotiator
+                .get_version(VersionedComponent::Harness)
+                .is_some()
+        );
     }
 
     // ==================== Integration Tests ====================
@@ -1216,7 +1282,10 @@ mod tests {
         let request_id = Uuid::new_v4();
         let response = VersionHandshakeResponse::accept(request_id, "agent-1")
             .with_negotiated_version(VersionedComponent::Protocol, Version::new(1, 0, 0))
-            .with_result(VersionedComponent::Protocol, CompatibilityResult::Compatible);
+            .with_result(
+                VersionedComponent::Protocol,
+                CompatibilityResult::Compatible,
+            );
 
         let json = serde_json::to_string(&response).unwrap();
         let restored: VersionHandshakeResponse = serde_json::from_str(&json).unwrap();

@@ -530,8 +530,7 @@ impl GoldenRunBaseline {
         };
 
         // Check against historical data
-        if let (Some(mean), Some(std_dev)) =
-            (self.mean_success_rate(), self.std_dev_success_rate())
+        if let (Some(mean), Some(std_dev)) = (self.mean_success_rate(), self.std_dev_success_rate())
         {
             let z_score = (result.success_rate - mean) / std_dev.max(0.001);
             comparison.within_historical_range = z_score.abs() < 2.0; // Within 2 standard deviations

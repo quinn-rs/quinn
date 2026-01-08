@@ -34,10 +34,11 @@ impl std::error::Error for SocketAddrParseError {}
 /// This function explicitly fails rather than silently falling back to a default,
 /// ensuring that configuration errors are caught early.
 pub fn parse_socket_addr(s: &str) -> Result<SocketAddr, SocketAddrParseError> {
-    s.parse().map_err(|e: std::net::AddrParseError| SocketAddrParseError {
-        input: s.to_string(),
-        reason: e.to_string(),
-    })
+    s.parse()
+        .map_err(|e: std::net::AddrParseError| SocketAddrParseError {
+            input: s.to_string(),
+            reason: e.to_string(),
+        })
 }
 
 /// Parse a socket address with explicit fallback handling.
@@ -855,20 +856,23 @@ mod tests {
     fn test_all_complete_with_running_agent_returns_false() {
         let mut result = StatusPollResult::new(2);
         result.record_status("agent-1", make_completed_status());
-        result.record_status("agent-2", RunStatusResponse {
-            run_id: Uuid::new_v4(),
-            status: RunStatus::Running,
-            progress: RunProgress {
-                total_attempts: 10,
-                completed_attempts: 5,
-                successful_attempts: 5,
-                failed_attempts: 0,
-                current_attempt: Some(6),
-                elapsed_ms: 2500,
+        result.record_status(
+            "agent-2",
+            RunStatusResponse {
+                run_id: Uuid::new_v4(),
+                status: RunStatus::Running,
+                progress: RunProgress {
+                    total_attempts: 10,
+                    completed_attempts: 5,
+                    successful_attempts: 5,
+                    failed_attempts: 0,
+                    current_attempt: Some(6),
+                    elapsed_ms: 2500,
+                },
+                current_stage: None,
+                error: None,
             },
-            current_stage: None,
-            error: None,
-        });
+        );
 
         assert!(result.all_responded());
         assert!(

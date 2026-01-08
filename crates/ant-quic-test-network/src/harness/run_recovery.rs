@@ -720,7 +720,10 @@ mod tests {
     fn test_checkpoint_data_get_agent() {
         let run_id = Uuid::new_v4();
         let mut data = CheckpointData::new(run_id, RunStage::Running);
-        data.add_agent(AgentCheckpointState::new("agent-1", "http://localhost:8080"));
+        data.add_agent(AgentCheckpointState::new(
+            "agent-1",
+            "http://localhost:8080",
+        ));
 
         assert!(data.get_agent("agent-1").is_some());
         assert!(data.get_agent("agent-2").is_none());
@@ -734,10 +737,7 @@ mod tests {
             .with_metadata("environment", "test");
 
         assert_eq!(data.metadata.get("version"), Some(&"1.0.0".to_string()));
-        assert_eq!(
-            data.metadata.get("environment"),
-            Some(&"test".to_string())
-        );
+        assert_eq!(data.metadata.get("environment"), Some(&"test".to_string()));
     }
 
     // ==================== Checkpoint Tests ====================
@@ -799,7 +799,10 @@ mod tests {
     fn test_checkpoint_serialization() {
         let run_id = Uuid::new_v4();
         let mut data = CheckpointData::new(run_id, RunStage::Running);
-        data.add_agent(AgentCheckpointState::new("agent-1", "http://localhost:8080"));
+        data.add_agent(AgentCheckpointState::new(
+            "agent-1",
+            "http://localhost:8080",
+        ));
         data.complete_test(Uuid::new_v4());
 
         let checkpoint = Checkpoint::new(0, data);
@@ -808,10 +811,7 @@ mod tests {
 
         assert_eq!(restored.run_id(), checkpoint.run_id());
         assert_eq!(restored.stage(), checkpoint.stage());
-        assert_eq!(
-            restored.data.agents.len(),
-            checkpoint.data.agents.len()
-        );
+        assert_eq!(restored.data.agents.len(), checkpoint.data.agents.len());
     }
 
     // ==================== RecoveryResult Tests ====================
@@ -872,7 +872,10 @@ mod tests {
         let run_id = Uuid::new_v4();
         let manager = RunRecoveryManager::new(run_id).with_storage_path("/tmp/checkpoints");
 
-        assert_eq!(manager.storage_path, Some(PathBuf::from("/tmp/checkpoints")));
+        assert_eq!(
+            manager.storage_path,
+            Some(PathBuf::from("/tmp/checkpoints"))
+        );
     }
 
     #[test]
@@ -943,7 +946,10 @@ mod tests {
         let mut manager = RunRecoveryManager::new(run_id);
 
         let mut data = CheckpointData::new(run_id, RunStage::Running);
-        data.add_agent(AgentCheckpointState::new("agent-1", "http://localhost:8080"));
+        data.add_agent(AgentCheckpointState::new(
+            "agent-1",
+            "http://localhost:8080",
+        ));
         data.complete_test(Uuid::new_v4());
         data.complete_test(Uuid::new_v4());
         manager.checkpoint(data);
@@ -995,8 +1001,8 @@ mod tests {
     #[test]
     fn test_recovery_manager_needs_checkpoint() {
         let run_id = Uuid::new_v4();
-        let mut manager = RunRecoveryManager::new(run_id)
-            .with_checkpoint_interval(Duration::from_secs(1));
+        let mut manager =
+            RunRecoveryManager::new(run_id).with_checkpoint_interval(Duration::from_secs(1));
 
         // Initially needs checkpoint
         assert!(manager.needs_checkpoint());
@@ -1071,7 +1077,10 @@ mod tests {
         let mut manager = RunRecoveryManager::new(run_id);
 
         let mut data = CheckpointData::new(run_id, RunStage::Running);
-        data.add_agent(AgentCheckpointState::new("agent-1", "http://localhost:8080"));
+        data.add_agent(AgentCheckpointState::new(
+            "agent-1",
+            "http://localhost:8080",
+        ));
         manager.checkpoint(data);
 
         let json = serde_json::to_string(&manager).unwrap();

@@ -642,7 +642,10 @@ mod tests {
         artifact.fail_collection("Permission denied");
 
         assert_eq!(artifact.status, CollectionStatus::Failed);
-        assert_eq!(artifact.error_message, Some("Permission denied".to_string()));
+        assert_eq!(
+            artifact.error_message,
+            Some("Permission denied".to_string())
+        );
     }
 
     #[test]
@@ -687,7 +690,10 @@ mod tests {
             .with_metadata("interface", "eth0")
             .with_metadata("filter", "port 9000");
 
-        assert_eq!(artifact.metadata.get("interface"), Some(&"eth0".to_string()));
+        assert_eq!(
+            artifact.metadata.get("interface"),
+            Some(&"eth0".to_string())
+        );
         assert_eq!(
             artifact.metadata.get("filter"),
             Some(&"port 9000".to_string())
@@ -726,8 +732,8 @@ mod tests {
     fn test_collection_request_for_test() {
         let run_id = Uuid::new_v4();
         let test_id = Uuid::new_v4();
-        let request =
-            CollectionRequest::new(run_id, vec![DebugArtifactType::PacketCapture]).for_test(test_id);
+        let request = CollectionRequest::new(run_id, vec![DebugArtifactType::PacketCapture])
+            .for_test(test_id);
 
         assert_eq!(request.test_id, Some(test_id));
     }
@@ -746,8 +752,7 @@ mod tests {
         let run_id = Uuid::new_v4();
 
         // Empty target_agents means collect from all
-        let request =
-            CollectionRequest::new(run_id, vec![DebugArtifactType::PacketCapture]);
+        let request = CollectionRequest::new(run_id, vec![DebugArtifactType::PacketCapture]);
         assert!(request.should_collect_from("agent-1"));
         assert!(request.should_collect_from("agent-99"));
 
@@ -816,7 +821,11 @@ mod tests {
         assert_eq!(manifest.artifacts.len(), 1);
         assert_eq!(manifest.artifacts_collected, 1);
         assert_eq!(manifest.total_size_bytes, 1024);
-        assert!(manifest.contributing_agents.contains(&"agent-1".to_string()));
+        assert!(
+            manifest
+                .contributing_agents
+                .contains(&"agent-1".to_string())
+        );
     }
 
     #[test]
