@@ -1675,6 +1675,7 @@ impl TestNode {
                             );
 
                             // Update epidemic gossip layer with inbound connection type
+                            // AND add to HyParView membership so stats show this peer
                             if let Ok(peer_bytes) = hex::decode(&new_peer_hex) {
                                 if peer_bytes.len() == 32 {
                                     let mut arr = [0u8; 32];
@@ -1686,6 +1687,22 @@ impl TestNode {
                                         GossipConnectionType::DirectIpv4
                                     };
                                     epidemic_gossip.set_connection_type(gossip_peer_id, gossip_conn_type).await;
+
+                                    // CRITICAL: Add inbound peer to HyParView membership
+                                    // Without this, the stats loop won't see inbound connections
+                                    // because the gossip transport's acceptor lost the race to us
+                                    if let Err(e) = epidemic_gossip.add_peer(gossip_peer_id).await {
+                                        debug!(
+                                            "Could not add inbound peer {} to HyParView: {:?}",
+                                            &new_peer_hex[..8.min(new_peer_hex.len())],
+                                            e
+                                        );
+                                    } else {
+                                        debug!(
+                                            "Added inbound peer {} to HyParView active view",
+                                            &new_peer_hex[..8.min(new_peer_hex.len())]
+                                        );
+                                    }
                                 }
                             }
                         }
@@ -3796,6 +3813,9 @@ impl TestNode {
                         }
                     };
 
+                // Clone gossip_stats for TUI before moving into heartbeat
+                let gossip_stats_for_tui = gossip_stats.clone();
+
                 let heartbeat = NodeHeartbeat {
                     peer_id: peer_id.clone(),
                     connected_peers: total_connections,
@@ -3897,6 +3917,8 @@ impl TestNode {
                         timestamp: Instant::now(),
                         context: Some(format!("{} peers", total_connections)),
                     }));
+                    // Send gossip stats to TUI for display
+                    let _ = event_tx.try_send(TuiEvent::UpdateGossipStats(gossip_stats_for_tui.clone()));
 
                     let cache_health = CacheHealth {
                         total_peers: gossip_integration.cache_size(),

@@ -130,6 +130,7 @@ fn event_name(event: &TuiEvent) -> &'static str {
         TuiEvent::GossipTestsStarted => "GossipTestsStarted",
         TuiEvent::GossipTestsComplete(_) => "GossipTestsComplete",
         TuiEvent::GossipCrateTestComplete { .. } => "GossipCrateTestComplete",
+        TuiEvent::UpdateGossipStats(_) => "UpdateGossipStats",
     }
 }
 
@@ -291,6 +292,8 @@ pub enum TuiEvent {
         tests_passed: u32,
         tests_total: u32,
     },
+    /// Update gossip stats for TUI display
+    UpdateGossipStats(crate::registry::NodeGossipStats),
 }
 
 /// Configuration for the TUI.
@@ -740,6 +743,9 @@ fn handle_tui_event(app: &mut App, event: TuiEvent) {
                 tests_passed,
                 tests_total
             );
+        }
+        TuiEvent::UpdateGossipStats(stats) => {
+            app.update_gossip_stats(stats);
         }
     }
 }

@@ -1829,6 +1829,9 @@ impl EpidemicGossip {
 
                     {
                         let mut conn_types = connection_types.write().await;
+
+                        // First, update connection_types from transport's connected_peers
+                        // (in case transport tracked some peers we don't know about)
                         for (peer_id, addr) in &connected_peers {
                             let inferred_type = if addr.is_ipv4() {
                                 ConnectionType::DirectIpv4
@@ -1836,8 +1839,13 @@ impl EpidemicGossip {
                                 ConnectionType::DirectIpv6
                             };
                             conn_types.insert(*peer_id, inferred_type);
+                        }
 
-                            match inferred_type {
+                        // Now build breakdown from ALL known connection types
+                        // This includes peers set via set_connection_type() from client.rs
+                        // (inbound connections that the transport didn't see due to race)
+                        for conn_type in conn_types.values() {
+                            match conn_type {
                                 ConnectionType::DirectIpv4 => breakdown.direct_ipv4 += 1,
                                 ConnectionType::DirectIpv6 => breakdown.direct_ipv6 += 1,
                                 ConnectionType::HolePunched => breakdown.hole_punched += 1,
