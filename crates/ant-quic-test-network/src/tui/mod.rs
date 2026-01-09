@@ -41,7 +41,7 @@ mod app;
 mod types;
 mod ui;
 
-pub use app::{App, AppState, InputEvent};
+pub use app::{App, AppState, InputEvent, Tab};
 pub use types::{
     CacheHealth, ConnectedPeer, ConnectionQuality, ConnectivityTestResults, FrameDirection,
     GeographicDistribution, LocalNodeInfo, NatTraversalPhase, NatTypeAnalytics, NetworkStatistics,
@@ -394,6 +394,24 @@ pub async fn run_tui(
                         }
                         InputEvent::PageDown => {
                             app.scroll_connections_page_down();
+                        }
+                        InputEvent::NextTab => {
+                            app.next_tab();
+                        }
+                        InputEvent::PrevTab => {
+                            app.prev_tab();
+                        }
+                        InputEvent::TabOverview => {
+                            app.active_tab = app::Tab::Overview;
+                        }
+                        InputEvent::TabGossipHealth => {
+                            app.active_tab = app::Tab::GossipHealth;
+                        }
+                        InputEvent::TabConnectivityMatrix => {
+                            app.active_tab = app::Tab::ConnectivityMatrix;
+                        }
+                        InputEvent::TabProtocolLog => {
+                            app.active_tab = app::Tab::ProtocolLog;
                         }
                         InputEvent::Unknown => {}
                     }

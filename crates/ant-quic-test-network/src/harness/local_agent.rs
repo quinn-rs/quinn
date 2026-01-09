@@ -47,8 +47,8 @@ use super::{
     AgentCapabilities, AgentClient, AgentInfo, AgentStatus, ApplyProfileResponse, AttemptResult,
     ClearProfileResponse, CollectionResult, FailureCategory, GetResultsResponse, HandshakeResponse,
     HealthCheckResponse, IpMode, NatProfileSpec, PeerAgentInfo, RunProgress, RunStatus,
-    RunStatusResponse, RunSummary, ScenarioSpec, StartRunRequest, StartRunResponse,
-    StartRunResult, StatusPollResult, StopRunResponse,
+    RunStatusResponse, RunSummary, ScenarioSpec, StartRunRequest, StartRunResponse, StartRunResult,
+    StatusPollResult, StopRunResponse,
 };
 use crate::registry::{ConnectionMethod, FailureReasonCode, NatType, SuccessLevel};
 use anyhow::Result;
@@ -77,7 +77,11 @@ pub trait AgentEndpoint: Send + Sync {
     async fn health_check(&self) -> Result<HealthCheckResponse>;
 
     /// Perform handshake to verify compatibility.
-    async fn handshake(&self, orchestrator_id: &str, protocol_version: u32) -> Result<HandshakeResponse>;
+    async fn handshake(
+        &self,
+        orchestrator_id: &str,
+        protocol_version: u32,
+    ) -> Result<HandshakeResponse>;
 
     /// Start a test run on this agent.
     async fn start_run(&self, request: StartRunRequest) -> Result<StartRunResponse>;
@@ -143,8 +147,16 @@ impl LocalAgent {
             version: env!("CARGO_PKG_VERSION").to_string(),
             capabilities: AgentCapabilities {
                 protocol_version: 1,
-                supported_artifact_types: vec!["agent_log".into(), "sut_log".into(), "metrics".into()],
-                supported_nat_profiles: vec![NatType::None, NatType::FullCone, NatType::AddressRestricted],
+                supported_artifact_types: vec![
+                    "agent_log".into(),
+                    "sut_log".into(),
+                    "metrics".into(),
+                ],
+                supported_nat_profiles: vec![
+                    NatType::None,
+                    NatType::FullCone,
+                    NatType::AddressRestricted,
+                ],
                 max_concurrent_tests: 4,
                 can_capture_pcaps: false,
                 can_simulate_nat: true,
@@ -194,7 +206,9 @@ impl LocalAgent {
             capabilities: self.capabilities.clone(),
             api_base_url: format!("local://{}", self.agent_id),
             p2p_listen_addr: self.p2p_listen_addr,
-            nat_profiles_available: self.capabilities.supported_nat_profiles
+            nat_profiles_available: self
+                .capabilities
+                .supported_nat_profiles
                 .iter()
                 .map(|n| format!("{:?}", n))
                 .collect(),
@@ -247,7 +261,8 @@ impl LocalAgent {
                         peer,
                         nat_type,
                         attempt_timeout,
-                    ).await;
+                    )
+                    .await;
 
                     // Record result
                     {
@@ -302,12 +317,17 @@ impl LocalAgent {
             .with_agents(agent_id, &peer.agent_id);
 
         // Simulate success/failure based on NAT types and address reachability
-        let success_probability = Self::calculate_success_probability(local_nat, peer.p2p_listen_addr);
+        let success_probability =
+            Self::calculate_success_probability(local_nat, peer.p2p_listen_addr);
         let random_val: f64 = rand::random();
 
         if random_val < success_probability {
             if let Some(rtt) = simulated_rtt {
-                result.record_success(ConnectionMethod::Direct, u64::from(rtt), SuccessLevel::Usable);
+                result.record_success(
+                    ConnectionMethod::Direct,
+                    u64::from(rtt),
+                    SuccessLevel::Usable,
+                );
             } else {
                 result.record_failure(
                     "Simulated timeout",
@@ -397,7 +417,11 @@ impl AgentEndpoint for LocalAgent {
         })
     }
 
-    async fn handshake(&self, orchestrator_id: &str, protocol_version: u32) -> Result<HandshakeResponse> {
+    async fn handshake(
+        &self,
+        orchestrator_id: &str,
+        protocol_version: u32,
+    ) -> Result<HandshakeResponse> {
         debug!(
             "Local agent {} handshake with orchestrator {} (protocol v{})",
             self.agent_id, orchestrator_id, protocol_version
@@ -503,9 +527,7 @@ impl AgentEndpoint for LocalAgent {
             run.status = RunStatus::Cancelled;
             info!(
                 "Local agent {} stopped run {}: {:?}",
-                self.agent_id,
-                run_id,
-                reason
+                self.agent_id, run_id, reason
             );
 
             Ok(StopRunResponse {
@@ -636,7 +658,10 @@ impl RemoteAgent {
             .build()
             .expect("Failed to create HTTP client");
 
-        Self { client, http_client }
+        Self {
+            client,
+            http_client,
+        }
     }
 }
 
@@ -651,7 +676,8 @@ impl AgentEndpoint for RemoteAgent {
     }
 
     async fn health_check(&self) -> Result<HealthCheckResponse> {
-        let resp = self.http_client
+        let resp = self
+            .http_client
             .get(self.client.health_url())
             .send()
             .await?;
@@ -659,14 +685,19 @@ impl AgentEndpoint for RemoteAgent {
         Ok(resp.json().await?)
     }
 
-    async fn handshake(&self, orchestrator_id: &str, protocol_version: u32) -> Result<HandshakeResponse> {
+    async fn handshake(
+        &self,
+        orchestrator_id: &str,
+        protocol_version: u32,
+    ) -> Result<HandshakeResponse> {
         let request = super::HandshakeRequest {
             orchestrator_id: orchestrator_id.to_string(),
             protocol_version,
             required_capabilities: vec![],
         };
 
-        let resp = self.http_client
+        let resp = self
+            .http_client
             .post(self.client.handshake_url())
             .json(&request)
             .send()
@@ -676,7 +707,8 @@ impl AgentEndpoint for RemoteAgent {
     }
 
     async fn start_run(&self, request: StartRunRequest) -> Result<StartRunResponse> {
-        let resp = self.http_client
+        let resp = self
+            .http_client
             .post(self.client.start_run_url())
             .json(&request)
             .send()
@@ -686,7 +718,8 @@ impl AgentEndpoint for RemoteAgent {
     }
 
     async fn get_status(&self, run_id: Uuid) -> Result<RunStatusResponse> {
-        let resp = self.http_client
+        let resp = self
+            .http_client
             .get(self.client.status_url(run_id))
             .send()
             .await?;
@@ -700,7 +733,8 @@ impl AgentEndpoint for RemoteAgent {
             reason: reason.map(String::from),
         };
 
-        let resp = self.http_client
+        let resp = self
+            .http_client
             .post(self.client.stop_run_url(run_id))
             .json(&request)
             .send()
@@ -716,7 +750,8 @@ impl AgentEndpoint for RemoteAgent {
             include_artifacts: false,
         };
 
-        let resp = self.http_client
+        let resp = self
+            .http_client
             .post(self.client.results_url(run_id))
             .json(&request)
             .send()
@@ -731,7 +766,8 @@ impl AgentEndpoint for RemoteAgent {
             interface: None,
         };
 
-        let resp = self.http_client
+        let resp = self
+            .http_client
             .post(self.client.apply_profile_url())
             .json(&request)
             .send()
@@ -743,7 +779,8 @@ impl AgentEndpoint for RemoteAgent {
     async fn clear_profile(&self) -> Result<ClearProfileResponse> {
         let request = super::ClearProfileRequest { interface: None };
 
-        let resp = self.http_client
+        let resp = self
+            .http_client
             .post(format!("{}/node/profile/clear", self.client.base_url))
             .json(&request)
             .send()
@@ -827,7 +864,10 @@ impl MixedOrchestrator {
     }
 
     /// Handshake with all agents.
-    pub async fn handshake_all(&self, orchestrator_id: &str) -> Vec<(String, Result<HandshakeResponse>)> {
+    pub async fn handshake_all(
+        &self,
+        orchestrator_id: &str,
+    ) -> Vec<(String, Result<HandshakeResponse>)> {
         let mut results = Vec::new();
 
         for agent in &self.agents {
@@ -846,10 +886,8 @@ impl MixedOrchestrator {
         let mut result = StartRunResult::new(run_id);
 
         // Build peer info for all agents
-        let peer_agents: Vec<PeerAgentInfo> = self.agents
-            .iter()
-            .map(|a| a.as_peer_info())
-            .collect();
+        let peer_agents: Vec<PeerAgentInfo> =
+            self.agents.iter().map(|a| a.as_peer_info()).collect();
 
         for agent in &self.agents {
             let request = StartRunRequest {
@@ -973,7 +1011,8 @@ impl MixedOrchestrator {
                 break;
             }
 
-            let progress: u32 = status.statuses
+            let progress: u32 = status
+                .statuses
                 .values()
                 .map(|s| s.progress.completed_attempts)
                 .sum();
@@ -1064,10 +1103,16 @@ mod tests {
     #[test]
     fn test_calculate_success_probability() {
         let loopback: SocketAddr = "127.0.0.1:9000".parse().unwrap();
-        assert_eq!(LocalAgent::calculate_success_probability(NatType::None, loopback), 1.0);
+        assert_eq!(
+            LocalAgent::calculate_success_probability(NatType::None, loopback),
+            1.0
+        );
 
         let unspecified: SocketAddr = "0.0.0.0:0".parse().unwrap();
-        assert_eq!(LocalAgent::calculate_success_probability(NatType::None, unspecified), 0.0);
+        assert_eq!(
+            LocalAgent::calculate_success_probability(NatType::None, unspecified),
+            0.0
+        );
 
         let remote: SocketAddr = "192.168.1.100:9000".parse().unwrap();
         assert!(LocalAgent::calculate_success_probability(NatType::None, remote) > 0.9);

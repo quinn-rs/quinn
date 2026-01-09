@@ -2030,6 +2030,134 @@ pub struct NodeGossipStats {
     /// Connection type breakdown - Relayed
     #[serde(default)]
     pub conn_relayed: usize,
+
+    // === Extended saorsa-gossip crate stats ===
+
+    // HyParView extended stats
+    /// Number of view shuffles performed
+    #[serde(default)]
+    pub hyparview_shuffles: u64,
+    /// Join messages sent
+    #[serde(default)]
+    pub hyparview_joins: u64,
+    /// ForwardJoin messages processed
+    #[serde(default)]
+    pub hyparview_forward_joins: u64,
+
+    // SWIM extended stats
+    /// SWIM pings sent
+    #[serde(default)]
+    pub swim_pings_sent: u64,
+    /// SWIM pings received
+    #[serde(default)]
+    pub swim_pings_received: u64,
+    /// SWIM ping-req sent (indirect pings)
+    #[serde(default)]
+    pub swim_ping_req_sent: u64,
+    /// SWIM acks received
+    #[serde(default)]
+    pub swim_acks_received: u64,
+
+    // Plumtree extended stats
+    /// IHAVE messages sent (lazy push)
+    #[serde(default)]
+    pub plumtree_ihaves_sent: u64,
+    /// IHAVE messages received
+    #[serde(default)]
+    pub plumtree_ihaves_received: u64,
+    /// GRAFT messages sent (request missing data)
+    #[serde(default)]
+    pub plumtree_grafts_sent: u64,
+    /// PRUNE messages sent (demote eager to lazy)
+    #[serde(default)]
+    pub plumtree_prunes_sent: u64,
+    /// Total messages broadcast
+    #[serde(default)]
+    pub plumtree_broadcasts: u64,
+
+    // CRDT-sync stats (saorsa-gossip-crdt-sync)
+    /// Number of CRDT entries currently stored
+    #[serde(default)]
+    pub crdt_entries: usize,
+    /// Total CRDT merges performed
+    #[serde(default)]
+    pub crdt_merges: u64,
+    /// Current vector clock length
+    #[serde(default)]
+    pub crdt_vector_clock_len: usize,
+    /// CRDT sync rounds completed
+    #[serde(default)]
+    pub crdt_sync_rounds: u64,
+    /// CRDT delta messages sent
+    #[serde(default)]
+    pub crdt_deltas_sent: u64,
+    /// CRDT delta messages received
+    #[serde(default)]
+    pub crdt_deltas_received: u64,
+
+    // Coordinator stats (saorsa-gossip-coordinator)
+    /// Active NAT traversal coordinations
+    #[serde(default)]
+    pub coordinator_active: usize,
+    /// Successful coordinations
+    #[serde(default)]
+    pub coordinator_success: u64,
+    /// Failed coordinations
+    #[serde(default)]
+    pub coordinator_failed: u64,
+    /// Coordination requests sent
+    #[serde(default)]
+    pub coordinator_requests: u64,
+
+    // Groups stats (saorsa-gossip-groups)
+    /// Number of groups this node is a member of
+    #[serde(default)]
+    pub groups_count: usize,
+    /// Total members across all groups
+    #[serde(default)]
+    pub groups_total_members: usize,
+    /// Group join messages sent
+    #[serde(default)]
+    pub groups_joins: u64,
+    /// Group leave messages sent
+    #[serde(default)]
+    pub groups_leaves: u64,
+
+    // Rendezvous stats (saorsa-gossip-rendezvous)
+    /// Rendezvous registrations
+    #[serde(default)]
+    pub rendezvous_registrations: u64,
+    /// Rendezvous discoveries
+    #[serde(default)]
+    pub rendezvous_discoveries: u64,
+    /// Active rendezvous points
+    #[serde(default)]
+    pub rendezvous_points: usize,
+    /// Rendezvous queries sent
+    #[serde(default)]
+    pub rendezvous_queries: u64,
+
+    // Identity stats (saorsa-gossip-identity)
+    /// Known peer identities
+    #[serde(default)]
+    pub identity_known_peers: usize,
+    /// Identity verifications performed
+    #[serde(default)]
+    pub identity_verifications: u64,
+
+    // Transport stats (saorsa-gossip-transport)
+    /// UDP packets sent via gossip transport
+    #[serde(default)]
+    pub transport_packets_sent: u64,
+    /// UDP packets received via gossip transport
+    #[serde(default)]
+    pub transport_packets_received: u64,
+    /// Transport bytes sent
+    #[serde(default)]
+    pub transport_bytes_sent: u64,
+    /// Transport bytes received
+    #[serde(default)]
+    pub transport_bytes_received: u64,
 }
 
 /// Gossip network statistics (aggregated from all nodes).

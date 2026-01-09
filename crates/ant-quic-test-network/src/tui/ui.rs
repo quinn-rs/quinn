@@ -7,17 +7,23 @@
 //! - 🟢 Green: Direct connections (best - fully connectable)
 //! - 🟠 Orange: NAT Traversed / Hole-punched (great - NAT was bypassed!)
 //! - 🔴 Red: Relayed connections (works but slower - last resort)
+//!
+//! ## Tab Navigation
+//! - [1] Overview - Main dashboard (default)
+//! - [2] Gossip Health - Detailed stats for all 9 saorsa-gossip crates
+//! - [3] Connectivity Matrix - N×N peer-to-peer connectivity test results
+//! - [4] Protocol Log - Real-time message flow visualization
 
 use crate::gossip_tests::TestStatus;
 use crate::registry::ConnectionMethod;
-use crate::tui::app::App;
+use crate::tui::app::{App, Tab};
 use crate::tui::types::{ConnectivityTestPhase, country_flag};
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Cell, Paragraph, Row, Table},
+    widgets::{Block, Borders, Cell, Paragraph, Row, Table, Tabs},
 };
 
 /// Traffic light colors for connection methods
@@ -118,63 +124,85 @@ fn format_connectivity_matrix(matrix: &crate::registry::ConnectivityMatrix) -> V
 }
 
 pub fn draw(frame: &mut Frame, app: &mut App) {
-    let chunks = Layout::default()
+    // Main layout: tabs at top, content in middle, footer at bottom
+    let main_chunks = Layout::default()
         .direction(Direction::Vertical)
         .margin(1)
         .constraints([
-            Constraint::Length(3),  // Header
+            Constraint::Length(3), // Tab bar
+            Constraint::Min(10),   // Main content area
+            Constraint::Length(3), // Messages
+            Constraint::Length(3), // Footer with controls
+        ])
+        .split(frame.area());
+
+    // Draw tab bar
+    draw_tab_bar(frame, app, main_chunks[0]);
+
+    // Draw content based on active tab
+    match app.active_tab {
+        Tab::Overview => draw_overview_tab(frame, app, main_chunks[1]),
+        Tab::GossipHealth => draw_gossip_health_tab(frame, app, main_chunks[1]),
+        Tab::ConnectivityMatrix => draw_connectivity_matrix_tab(frame, app, main_chunks[1]),
+        Tab::ProtocolLog => draw_protocol_log_tab(frame, app, main_chunks[1]),
+    }
+
+    draw_messages(frame, app, main_chunks[2]);
+    draw_footer(frame, app, main_chunks[3]);
+}
+
+/// Draw the tab bar for navigation.
+fn draw_tab_bar(frame: &mut Frame, app: &App, area: Rect) {
+    let tab_titles = vec![
+        "[1] Overview",
+        "[2] Gossip Health",
+        "[3] Connectivity Matrix",
+        "[4] Protocol Log",
+    ];
+    let selected_idx = match app.active_tab {
+        Tab::Overview => 0,
+        Tab::GossipHealth => 1,
+        Tab::ConnectivityMatrix => 2,
+        Tab::ProtocolLog => 3,
+    };
+
+    let tabs = Tabs::new(tab_titles)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::Cyan))
+                .title(" ant-quic Network Test - Tab/Shift+Tab to navigate "),
+        )
+        .select(selected_idx)
+        .style(Style::default().fg(Color::White))
+        .highlight_style(
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
+        )
+        .divider(" │ ");
+
+    frame.render_widget(tabs, area);
+}
+
+/// Draw the Overview tab (original layout).
+fn draw_overview_tab(frame: &mut Frame, app: &mut App, area: Rect) {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
             Constraint::Length(6),  // Network Stats (comprehensive counts)
             Constraint::Length(4),  // Your Node
             Constraint::Length(3),  // Gossip Crate Status (compact)
             Constraint::Min(6),     // Connected Peers
             Constraint::Length(10), // Cache Health + NAT Analytics + ACTIVITY LOG
-            Constraint::Length(3),  // Messages
-            Constraint::Length(3),  // Footer
         ])
-        .split(frame.area());
+        .split(area);
 
-    draw_header(frame, chunks[0]);
-    draw_network_stats(frame, app, chunks[1]);
-    draw_node_info(frame, app, chunks[2]);
-    draw_gossip_status(frame, app, chunks[3]);
-    draw_peers(frame, app, chunks[4]);
-    draw_enhanced_analytics(frame, app, chunks[5]);
-    draw_messages(frame, app, chunks[6]);
-    draw_footer(frame, app, chunks[7]);
-}
-
-/// Draw the header with title and version.
-fn draw_header(frame: &mut Frame, area: Rect) {
-    let version = env!("CARGO_PKG_VERSION");
-    let title = vec![Line::from(vec![
-        Span::styled(
-            "ant-quic Network Test",
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::raw(" "),
-        Span::styled(
-            format!("v{}", version),
-            Style::default()
-                .fg(Color::Green)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::raw("                    "),
-        Span::styled(
-            "\"We will be legion!!\"",
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::ITALIC),
-        ),
-    ])];
-
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Cyan));
-
-    let paragraph = Paragraph::new(title).block(block);
-    frame.render_widget(paragraph, area);
+    draw_network_stats(frame, app, chunks[0]);
+    draw_node_info(frame, app, chunks[1]);
+    draw_gossip_status(frame, app, chunks[2]);
+    draw_peers(frame, app, chunks[3]);
+    draw_enhanced_analytics(frame, app, chunks[4]);
 }
 
 fn draw_network_stats(frame: &mut Frame, app: &App, area: Rect) {
@@ -919,6 +947,795 @@ fn draw_connectivity_results(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(paragraph, area);
 }
 
+/// Draw the Gossip Health tab - detailed stats for all 9 saorsa-gossip crates.
+fn draw_gossip_health_tab(frame: &mut Frame, app: &App, area: Rect) {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(8), // Transport + Identity
+            Constraint::Length(8), // Membership (HyParView + SWIM)
+            Constraint::Length(8), // Pubsub (Plumtree)
+            Constraint::Min(8),    // CRDT + Coordinator + Groups + Rendezvous
+        ])
+        .split(area);
+
+    draw_transport_identity_panel(frame, app, chunks[0]);
+    draw_membership_panel(frame, app, chunks[1]);
+    draw_pubsub_panel(frame, app, chunks[2]);
+    draw_extended_gossip_panel(frame, app, chunks[3]);
+}
+
+/// Draw transport and identity stats panel.
+fn draw_transport_identity_panel(frame: &mut Frame, app: &App, area: Rect) {
+    let chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+        .split(area);
+
+    // Transport panel
+    let transport_block = Block::default()
+        .title(" saorsa-gossip-transport ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Cyan));
+
+    let transport_lines = if let Some(ref stats) = app.gossip_stats {
+        vec![
+            Line::from(vec![
+                Span::raw("  Packets Sent: "),
+                Span::styled(
+                    format!("{}", stats.transport_packets_sent),
+                    Style::default().fg(Color::Cyan),
+                ),
+            ]),
+            Line::from(vec![
+                Span::raw("  Packets Recv: "),
+                Span::styled(
+                    format!("{}", stats.transport_packets_received),
+                    Style::default().fg(Color::Green),
+                ),
+            ]),
+            Line::from(vec![
+                Span::raw("  Bytes Sent: "),
+                Span::styled(
+                    format_bytes_short(stats.transport_bytes_sent),
+                    Style::default().fg(Color::Cyan),
+                ),
+            ]),
+            Line::from(vec![
+                Span::raw("  Bytes Recv: "),
+                Span::styled(
+                    format_bytes_short(stats.transport_bytes_received),
+                    Style::default().fg(Color::Green),
+                ),
+            ]),
+        ]
+    } else {
+        vec![Line::from(Span::styled(
+            "  No data available",
+            Style::default().fg(Color::DarkGray),
+        ))]
+    };
+
+    frame.render_widget(
+        Paragraph::new(transport_lines).block(transport_block),
+        chunks[0],
+    );
+
+    // Identity panel
+    let identity_block = Block::default()
+        .title(" saorsa-gossip-identity ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Magenta));
+
+    let identity_lines = if let Some(ref stats) = app.gossip_stats {
+        vec![
+            Line::from(vec![
+                Span::raw("  Known Peers: "),
+                Span::styled(
+                    format!("{}", stats.identity_known_peers),
+                    Style::default().fg(Color::Yellow),
+                ),
+            ]),
+            Line::from(vec![
+                Span::raw("  Verifications: "),
+                Span::styled(
+                    format!("{}", stats.identity_verifications),
+                    Style::default().fg(Color::Green),
+                ),
+            ]),
+        ]
+    } else {
+        vec![Line::from(Span::styled(
+            "  No data available",
+            Style::default().fg(Color::DarkGray),
+        ))]
+    };
+
+    frame.render_widget(
+        Paragraph::new(identity_lines).block(identity_block),
+        chunks[1],
+    );
+}
+
+/// Draw membership (HyParView + SWIM) stats panel.
+fn draw_membership_panel(frame: &mut Frame, app: &App, area: Rect) {
+    let chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+        .split(area);
+
+    // HyParView panel
+    let hyparview_block = Block::default()
+        .title(" HyParView Membership ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Blue));
+
+    let hyparview_lines = if let Some(ref stats) = app.gossip_stats {
+        let active_color = if stats.hyparview_active >= 6 {
+            Color::Green
+        } else if stats.hyparview_active >= 3 {
+            Color::Yellow
+        } else {
+            Color::Red
+        };
+        vec![
+            Line::from(vec![
+                Span::raw("  Active View: "),
+                Span::styled(
+                    format!("{}", stats.hyparview_active),
+                    Style::default()
+                        .fg(active_color)
+                        .add_modifier(Modifier::BOLD),
+                ),
+            ]),
+            Line::from(vec![
+                Span::raw("  Passive View: "),
+                Span::styled(
+                    format!("{}", stats.hyparview_passive),
+                    Style::default().fg(Color::DarkGray),
+                ),
+            ]),
+            Line::from(vec![
+                Span::raw("  Shuffles: "),
+                Span::styled(
+                    format!("{}", stats.hyparview_shuffles),
+                    Style::default().fg(Color::Cyan),
+                ),
+            ]),
+            Line::from(vec![
+                Span::raw("  Joins: "),
+                Span::styled(
+                    format!("{}", stats.hyparview_joins),
+                    Style::default().fg(Color::Green),
+                ),
+            ]),
+            Line::from(vec![
+                Span::raw("  Forward Joins: "),
+                Span::styled(
+                    format!("{}", stats.hyparview_forward_joins),
+                    Style::default().fg(Color::Yellow),
+                ),
+            ]),
+        ]
+    } else {
+        vec![Line::from(Span::styled(
+            "  No data available",
+            Style::default().fg(Color::DarkGray),
+        ))]
+    };
+
+    frame.render_widget(
+        Paragraph::new(hyparview_lines).block(hyparview_block),
+        chunks[0],
+    );
+
+    // SWIM panel
+    let swim_block = Block::default()
+        .title(" SWIM Failure Detection ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Yellow));
+
+    let swim_lines = if let Some(ref stats) = app.gossip_stats {
+        vec![
+            Line::from(vec![
+                Span::styled("  Alive: ", Style::default().fg(Color::Green)),
+                Span::styled(
+                    format!("{}", stats.swim_alive),
+                    Style::default()
+                        .fg(Color::Green)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::raw("  "),
+                Span::styled("Suspect: ", Style::default().fg(Color::Yellow)),
+                Span::styled(
+                    format!("{}", stats.swim_suspect),
+                    Style::default().fg(Color::Yellow),
+                ),
+                Span::raw("  "),
+                Span::styled("Dead: ", Style::default().fg(Color::Red)),
+                Span::styled(
+                    format!("{}", stats.swim_dead),
+                    Style::default().fg(Color::Red),
+                ),
+            ]),
+            Line::from(vec![
+                Span::raw("  Pings Sent: "),
+                Span::styled(
+                    format!("{}", stats.swim_pings_sent),
+                    Style::default().fg(Color::Cyan),
+                ),
+            ]),
+            Line::from(vec![
+                Span::raw("  Pings Recv: "),
+                Span::styled(
+                    format!("{}", stats.swim_pings_received),
+                    Style::default().fg(Color::Green),
+                ),
+            ]),
+            Line::from(vec![
+                Span::raw("  Ping-Req Sent: "),
+                Span::styled(
+                    format!("{}", stats.swim_ping_req_sent),
+                    Style::default().fg(Color::Yellow),
+                ),
+            ]),
+            Line::from(vec![
+                Span::raw("  ACKs Received: "),
+                Span::styled(
+                    format!("{}", stats.swim_acks_received),
+                    Style::default().fg(Color::Green),
+                ),
+            ]),
+        ]
+    } else {
+        vec![Line::from(Span::styled(
+            "  No data available",
+            Style::default().fg(Color::DarkGray),
+        ))]
+    };
+
+    frame.render_widget(Paragraph::new(swim_lines).block(swim_block), chunks[1]);
+}
+
+/// Draw pubsub (Plumtree) stats panel.
+fn draw_pubsub_panel(frame: &mut Frame, app: &App, area: Rect) {
+    let block = Block::default()
+        .title(" Plumtree Epidemic Broadcast ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Green));
+
+    let lines = if let Some(ref stats) = app.gossip_stats {
+        vec![
+            Line::from(vec![
+                Span::raw("  Eager Peers: "),
+                Span::styled(
+                    format!("{}", stats.plumtree_eager),
+                    Style::default()
+                        .fg(Color::Green)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::raw("    Lazy Peers: "),
+                Span::styled(
+                    format!("{}", stats.plumtree_lazy),
+                    Style::default().fg(Color::Yellow),
+                ),
+            ]),
+            Line::from(vec![
+                Span::raw("  Messages Sent: "),
+                Span::styled(
+                    format!("{}", stats.plumtree_sent),
+                    Style::default().fg(Color::Cyan),
+                ),
+                Span::raw("    Messages Recv: "),
+                Span::styled(
+                    format!("{}", stats.plumtree_received),
+                    Style::default().fg(Color::Green),
+                ),
+            ]),
+            Line::from(vec![
+                Span::raw("  Broadcasts: "),
+                Span::styled(
+                    format!("{}", stats.plumtree_broadcasts),
+                    Style::default().fg(Color::Yellow),
+                ),
+            ]),
+            Line::from(vec![
+                Span::raw("  IHAVEs Sent: "),
+                Span::styled(
+                    format!("{}", stats.plumtree_ihaves_sent),
+                    Style::default().fg(Color::DarkGray),
+                ),
+                Span::raw("    IHAVEs Recv: "),
+                Span::styled(
+                    format!("{}", stats.plumtree_ihaves_received),
+                    Style::default().fg(Color::DarkGray),
+                ),
+            ]),
+            Line::from(vec![
+                Span::raw("  GRAFTs Sent: "),
+                Span::styled(
+                    format!("{}", stats.plumtree_grafts_sent),
+                    Style::default().fg(Color::Magenta),
+                ),
+                Span::raw("    PRUNEs Sent: "),
+                Span::styled(
+                    format!("{}", stats.plumtree_prunes_sent),
+                    Style::default().fg(Color::Red),
+                ),
+            ]),
+        ]
+    } else {
+        vec![Line::from(Span::styled(
+            "  No data available",
+            Style::default().fg(Color::DarkGray),
+        ))]
+    };
+
+    frame.render_widget(Paragraph::new(lines).block(block), area);
+}
+
+/// Draw extended gossip stats (CRDT, Coordinator, Groups, Rendezvous).
+fn draw_extended_gossip_panel(frame: &mut Frame, app: &App, area: Rect) {
+    let chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage(25),
+            Constraint::Percentage(25),
+            Constraint::Percentage(25),
+            Constraint::Percentage(25),
+        ])
+        .split(area);
+
+    // CRDT-sync panel
+    let crdt_block = Block::default()
+        .title(" CRDT Sync ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Magenta));
+
+    let crdt_lines = if let Some(ref stats) = app.gossip_stats {
+        vec![
+            Line::from(vec![
+                Span::raw(" Entries: "),
+                Span::styled(
+                    format!("{}", stats.crdt_entries),
+                    Style::default().fg(Color::Yellow),
+                ),
+            ]),
+            Line::from(vec![
+                Span::raw(" Merges: "),
+                Span::styled(
+                    format!("{}", stats.crdt_merges),
+                    Style::default().fg(Color::Green),
+                ),
+            ]),
+            Line::from(vec![
+                Span::raw(" VClock: "),
+                Span::styled(
+                    format!("{}", stats.crdt_vector_clock_len),
+                    Style::default().fg(Color::Cyan),
+                ),
+            ]),
+            Line::from(vec![
+                Span::raw(" Rounds: "),
+                Span::styled(
+                    format!("{}", stats.crdt_sync_rounds),
+                    Style::default().fg(Color::White),
+                ),
+            ]),
+        ]
+    } else {
+        vec![Line::from(Span::styled(
+            " N/A",
+            Style::default().fg(Color::DarkGray),
+        ))]
+    };
+
+    frame.render_widget(Paragraph::new(crdt_lines).block(crdt_block), chunks[0]);
+
+    // Coordinator panel
+    let coord_block = Block::default()
+        .title(" Coordinator ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Yellow));
+
+    let coord_lines = if let Some(ref stats) = app.gossip_stats {
+        vec![
+            Line::from(vec![
+                Span::raw(" Active: "),
+                Span::styled(
+                    format!("{}", stats.coordinator_active),
+                    Style::default().fg(Color::Yellow),
+                ),
+            ]),
+            Line::from(vec![
+                Span::raw(" Success: "),
+                Span::styled(
+                    format!("{}", stats.coordinator_success),
+                    Style::default().fg(Color::Green),
+                ),
+            ]),
+            Line::from(vec![
+                Span::raw(" Failed: "),
+                Span::styled(
+                    format!("{}", stats.coordinator_failed),
+                    Style::default().fg(Color::Red),
+                ),
+            ]),
+            Line::from(vec![
+                Span::raw(" Requests: "),
+                Span::styled(
+                    format!("{}", stats.coordinator_requests),
+                    Style::default().fg(Color::Cyan),
+                ),
+            ]),
+        ]
+    } else {
+        vec![Line::from(Span::styled(
+            " N/A",
+            Style::default().fg(Color::DarkGray),
+        ))]
+    };
+
+    frame.render_widget(Paragraph::new(coord_lines).block(coord_block), chunks[1]);
+
+    // Groups panel
+    let groups_block = Block::default()
+        .title(" Groups ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Blue));
+
+    let groups_lines = if let Some(ref stats) = app.gossip_stats {
+        vec![
+            Line::from(vec![
+                Span::raw(" Count: "),
+                Span::styled(
+                    format!("{}", stats.groups_count),
+                    Style::default().fg(Color::Cyan),
+                ),
+            ]),
+            Line::from(vec![
+                Span::raw(" Members: "),
+                Span::styled(
+                    format!("{}", stats.groups_total_members),
+                    Style::default().fg(Color::Yellow),
+                ),
+            ]),
+            Line::from(vec![
+                Span::raw(" Joins: "),
+                Span::styled(
+                    format!("{}", stats.groups_joins),
+                    Style::default().fg(Color::Green),
+                ),
+            ]),
+            Line::from(vec![
+                Span::raw(" Leaves: "),
+                Span::styled(
+                    format!("{}", stats.groups_leaves),
+                    Style::default().fg(Color::Red),
+                ),
+            ]),
+        ]
+    } else {
+        vec![Line::from(Span::styled(
+            " N/A",
+            Style::default().fg(Color::DarkGray),
+        ))]
+    };
+
+    frame.render_widget(Paragraph::new(groups_lines).block(groups_block), chunks[2]);
+
+    // Rendezvous panel
+    let rdv_block = Block::default()
+        .title(" Rendezvous ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Green));
+
+    let rdv_lines = if let Some(ref stats) = app.gossip_stats {
+        vec![
+            Line::from(vec![
+                Span::raw(" Points: "),
+                Span::styled(
+                    format!("{}", stats.rendezvous_points),
+                    Style::default().fg(Color::Yellow),
+                ),
+            ]),
+            Line::from(vec![
+                Span::raw(" Regs: "),
+                Span::styled(
+                    format!("{}", stats.rendezvous_registrations),
+                    Style::default().fg(Color::Green),
+                ),
+            ]),
+            Line::from(vec![
+                Span::raw(" Discover: "),
+                Span::styled(
+                    format!("{}", stats.rendezvous_discoveries),
+                    Style::default().fg(Color::Cyan),
+                ),
+            ]),
+            Line::from(vec![
+                Span::raw(" Queries: "),
+                Span::styled(
+                    format!("{}", stats.rendezvous_queries),
+                    Style::default().fg(Color::White),
+                ),
+            ]),
+        ]
+    } else {
+        vec![Line::from(Span::styled(
+            " N/A",
+            Style::default().fg(Color::DarkGray),
+        ))]
+    };
+
+    frame.render_widget(Paragraph::new(rdv_lines).block(rdv_block), chunks[3]);
+}
+
+/// Draw the Connectivity Matrix tab - N×N peer connectivity results.
+fn draw_connectivity_matrix_tab(frame: &mut Frame, app: &App, area: Rect) {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3), // Summary header
+            Constraint::Min(10),   // Matrix table
+        ])
+        .split(area);
+
+    // Summary header
+    let total_peers = app.connection_history.len();
+    let connected = app.connected_peers.len();
+    let tested = app.connectivity_test.peer_results.len();
+
+    let header_block = Block::default()
+        .title(" CONNECTIVITY MATRIX ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Cyan));
+
+    let header_line = Line::from(vec![
+        Span::raw("  Total Peers: "),
+        Span::styled(
+            format!("{}", total_peers),
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw("  │  Connected: "),
+        Span::styled(format!("{}", connected), Style::default().fg(Color::Green)),
+        Span::raw("  │  Tested: "),
+        Span::styled(format!("{}", tested), Style::default().fg(Color::Yellow)),
+        Span::raw("  │  Press [T] to run connectivity test"),
+    ]);
+
+    frame.render_widget(
+        Paragraph::new(vec![header_line]).block(header_block),
+        chunks[0],
+    );
+
+    // Matrix table showing per-peer connectivity
+    let matrix_block = Block::default()
+        .title(" Per-Peer Connectivity (D=Direct, N=NAT, R=Relay) ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Blue));
+
+    let header = Row::new(vec![
+        Cell::from("Peer").style(Style::default().add_modifier(Modifier::BOLD)),
+        Cell::from("Status").style(Style::default().add_modifier(Modifier::BOLD)),
+        Cell::from("Out D4").style(Style::default().add_modifier(Modifier::BOLD)),
+        Cell::from("Out D6").style(Style::default().add_modifier(Modifier::BOLD)),
+        Cell::from("Out N").style(Style::default().add_modifier(Modifier::BOLD)),
+        Cell::from("Out R").style(Style::default().add_modifier(Modifier::BOLD)),
+        Cell::from("In D4").style(Style::default().add_modifier(Modifier::BOLD)),
+        Cell::from("In D6").style(Style::default().add_modifier(Modifier::BOLD)),
+        Cell::from("In N").style(Style::default().add_modifier(Modifier::BOLD)),
+        Cell::from("In R").style(Style::default().add_modifier(Modifier::BOLD)),
+        Cell::from("RTT").style(Style::default().add_modifier(Modifier::BOLD)),
+    ])
+    .height(1)
+    .style(Style::default().fg(Color::White));
+
+    let rows: Vec<Row> = app
+        .history_sorted()
+        .iter()
+        .map(|entry| {
+            let status_color = match entry.status {
+                crate::tui::types::ConnectionStatus::Connected => Color::Green,
+                crate::tui::types::ConnectionStatus::Disconnected => Color::DarkGray,
+                crate::tui::types::ConnectionStatus::Failed => Color::Red,
+                crate::tui::types::ConnectionStatus::Coordinating => Color::Yellow,
+            };
+
+            // Helper for outcome cell
+            let outcome_cell = |outcome: &crate::tui::types::MethodOutcome| -> Cell {
+                let (text, color) = match outcome {
+                    crate::tui::types::MethodOutcome::Success => ("✓", Color::Green),
+                    crate::tui::types::MethodOutcome::Failed => ("✗", Color::Red),
+                    crate::tui::types::MethodOutcome::Unknown => ("·", Color::DarkGray),
+                };
+                Cell::from(text).style(Style::default().fg(color))
+            };
+
+            Row::new(vec![
+                Cell::from(entry.short_id.clone()).style(Style::default().fg(status_color)),
+                Cell::from(entry.status.emoji()).style(Style::default().fg(status_color)),
+                outcome_cell(&entry.outbound.direct), // D4 (approx)
+                Cell::from("·").style(Style::default().fg(Color::DarkGray)), // D6
+                outcome_cell(&entry.outbound.nat),
+                outcome_cell(&entry.outbound.relay),
+                outcome_cell(&entry.inbound.direct),
+                Cell::from("·").style(Style::default().fg(Color::DarkGray)),
+                outcome_cell(&entry.inbound.nat),
+                outcome_cell(&entry.inbound.relay),
+                Cell::from(entry.rtt_string()).style(Style::default().fg(Color::Yellow)),
+            ])
+        })
+        .collect();
+
+    let table = Table::new(
+        rows,
+        [
+            Constraint::Length(9), // Peer
+            Constraint::Length(6), // Status
+            Constraint::Length(6), // Out D4
+            Constraint::Length(6), // Out D6
+            Constraint::Length(6), // Out N
+            Constraint::Length(6), // Out R
+            Constraint::Length(6), // In D4
+            Constraint::Length(6), // In D6
+            Constraint::Length(6), // In N
+            Constraint::Length(6), // In R
+            Constraint::Min(6),    // RTT
+        ],
+    )
+    .header(header)
+    .block(matrix_block);
+
+    frame.render_widget(table, chunks[1]);
+}
+
+/// Draw the Protocol Log tab - real-time message flow visualization.
+fn draw_protocol_log_tab(frame: &mut Frame, app: &App, area: Rect) {
+    let block = Block::default()
+        .title(format!(
+            " PROTOCOL LOG ({} frames) - Real-time Message Flow ",
+            app.protocol_frames.len()
+        ))
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Cyan));
+
+    let mut lines: Vec<Line> = Vec::new();
+    let now = std::time::Instant::now();
+    let max_lines = (area.height as usize).saturating_sub(2);
+
+    // Header line
+    lines.push(Line::from(vec![
+        Span::styled(
+            " Time  ",
+            Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            "Dir ",
+            Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            "Peer     ",
+            Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            "Frame Type   ",
+            Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            "Details",
+            Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::BOLD),
+        ),
+    ]));
+
+    lines.push(Line::from(Span::styled(
+        "─".repeat(80),
+        Style::default().fg(Color::DarkGray),
+    )));
+
+    for pf in app
+        .protocol_frames
+        .iter()
+        .rev()
+        .take(max_lines.saturating_sub(2))
+    {
+        let age = now.duration_since(pf.timestamp);
+        let age_str = if age.as_secs() < 60 {
+            format!("{:>3}s", age.as_secs())
+        } else if age.as_secs() < 3600 {
+            format!("{:>2}m{:02}s", age.as_secs() / 60, age.as_secs() % 60)
+        } else {
+            format!(
+                "{:>2}h{:02}m",
+                age.as_secs() / 3600,
+                (age.as_secs() % 3600) / 60
+            )
+        };
+
+        let (dir_arrow, dir_color) = match pf.direction {
+            crate::tui::types::FrameDirection::Sent => ("→", Color::Cyan),
+            crate::tui::types::FrameDirection::Received => ("←", Color::Green),
+        };
+
+        let peer_short = if pf.peer_id.len() > 8 {
+            &pf.peer_id[..8]
+        } else {
+            &pf.peer_id
+        };
+
+        let frame_color = match pf.frame_type.as_str() {
+            "CONNECTED" => Color::Green,
+            "DISCONNECTED" => Color::Red,
+            "DIRECT" | "Direct" => Color::Green,
+            "PUNCHED" | "HolePunched" => Color::Yellow,
+            "RELAYED" | "Relayed" => Color::Magenta,
+            "CONNECT" => Color::Cyan,
+            "NAT_TRAVERSE" => Color::Yellow,
+            "ADD_ADDRESS" => Color::Blue,
+            "PUNCH_ME_NOW" => Color::Yellow,
+            "OBSERVED_ADDRESS" => Color::Magenta,
+            _ => Color::White,
+        };
+
+        let detail = pf.context.as_deref().unwrap_or("");
+
+        lines.push(Line::from(vec![
+            Span::styled(
+                format!(" {} ", age_str),
+                Style::default().fg(Color::DarkGray),
+            ),
+            Span::styled(format!(" {} ", dir_arrow), Style::default().fg(dir_color)),
+            Span::styled(
+                format!("{:<8} ", peer_short),
+                Style::default().fg(Color::White),
+            ),
+            Span::styled(
+                format!("{:<12} ", &pf.frame_type),
+                Style::default().fg(frame_color),
+            ),
+            Span::styled(detail, Style::default().fg(Color::DarkGray)),
+        ]));
+    }
+
+    if app.protocol_frames.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "  Waiting for protocol frames...",
+            Style::default().fg(Color::DarkGray),
+        )));
+    }
+
+    frame.render_widget(Paragraph::new(lines).block(block), area);
+}
+
+/// Format bytes into short string.
+fn format_bytes_short(bytes: u64) -> String {
+    const KB: u64 = 1024;
+    const MB: u64 = KB * 1024;
+    const GB: u64 = MB * 1024;
+
+    if bytes >= GB {
+        format!("{:.1}G", bytes as f64 / GB as f64)
+    } else if bytes >= MB {
+        format!("{:.1}M", bytes as f64 / MB as f64)
+    } else if bytes >= KB {
+        format!("{:.1}K", bytes as f64 / KB as f64)
+    } else {
+        format!("{}B", bytes)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -926,7 +1743,11 @@ mod tests {
     #[test]
     fn test_draw_functions_exist() {
         let _ = draw as fn(&mut Frame, &mut App);
-        let _ = draw_header as fn(&mut Frame, Rect);
+        let _ = draw_tab_bar as fn(&mut Frame, &App, Rect);
+        let _ = draw_overview_tab as fn(&mut Frame, &mut App, Rect);
+        let _ = draw_gossip_health_tab as fn(&mut Frame, &App, Rect);
+        let _ = draw_connectivity_matrix_tab as fn(&mut Frame, &App, Rect);
+        let _ = draw_protocol_log_tab as fn(&mut Frame, &App, Rect);
         let _ = draw_network_stats as fn(&mut Frame, &App, Rect);
         let _ = draw_node_info as fn(&mut Frame, &App, Rect);
         let _ = draw_peers as fn(&mut Frame, &mut App, Rect);

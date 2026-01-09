@@ -363,14 +363,12 @@ impl IpMode {
     #[must_use]
     pub fn localhost(&self, port: u16) -> std::net::SocketAddr {
         match self {
-            Self::Ipv4Only => std::net::SocketAddr::new(
-                std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
-                port,
-            ),
-            Self::Ipv6Only | Self::DualStack => std::net::SocketAddr::new(
-                std::net::IpAddr::V6(std::net::Ipv6Addr::LOCALHOST),
-                port,
-            ),
+            Self::Ipv4Only => {
+                std::net::SocketAddr::new(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST), port)
+            }
+            Self::Ipv6Only | Self::DualStack => {
+                std::net::SocketAddr::new(std::net::IpAddr::V6(std::net::Ipv6Addr::LOCALHOST), port)
+            }
         }
     }
 
@@ -493,7 +491,7 @@ impl IpModeConfig {
             require_ipv6: true,
             test_ipv4_mapped: false,
             happy_eyeballs_delay_ms: 0, // Not applicable
-            ci_compatible: false, // IPv6 not always available in CI
+            ci_compatible: false,       // IPv6 not always available in CI
             docker_network: Some(DockerIpConfig::ipv6_only()),
         }
     }

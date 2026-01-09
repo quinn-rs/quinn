@@ -22,6 +22,20 @@ pub enum AppState {
     Quitting,
 }
 
+/// TUI Tab for navigation between different views.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Tab {
+    /// Main overview (default - current layout)
+    #[default]
+    Overview,
+    /// Detailed gossip health view for all 9 saorsa-gossip crates
+    GossipHealth,
+    /// N×N peer connectivity matrix
+    ConnectivityMatrix,
+    /// Protocol frame log (detailed message flow)
+    ProtocolLog,
+}
+
 /// Main TUI application state.
 #[derive(Debug)]
 pub struct App {
@@ -67,6 +81,10 @@ pub struct App {
     pub gossip_test_results: Option<GossipTestResults>,
     /// Whether gossip tests are currently running
     pub gossip_tests_running: bool,
+    /// Current active tab for navigation
+    pub active_tab: Tab,
+    /// Local gossip stats from epidemic gossip system
+    pub gossip_stats: Option<crate::registry::NodeGossipStats>,
 }
 
 impl Default for App {
@@ -103,7 +121,34 @@ impl App {
             connections_table_state: TableState::default(),
             gossip_test_results: None,
             gossip_tests_running: false,
+            active_tab: Tab::default(),
+            gossip_stats: None,
         }
+    }
+
+    /// Cycle to the next tab.
+    pub fn next_tab(&mut self) {
+        self.active_tab = match self.active_tab {
+            Tab::Overview => Tab::GossipHealth,
+            Tab::GossipHealth => Tab::ConnectivityMatrix,
+            Tab::ConnectivityMatrix => Tab::ProtocolLog,
+            Tab::ProtocolLog => Tab::Overview,
+        };
+    }
+
+    /// Cycle to the previous tab.
+    pub fn prev_tab(&mut self) {
+        self.active_tab = match self.active_tab {
+            Tab::Overview => Tab::ProtocolLog,
+            Tab::GossipHealth => Tab::Overview,
+            Tab::ConnectivityMatrix => Tab::GossipHealth,
+            Tab::ProtocolLog => Tab::ConnectivityMatrix,
+        };
+    }
+
+    /// Update gossip stats from epidemic gossip system.
+    pub fn update_gossip_stats(&mut self, stats: crate::registry::NodeGossipStats) {
+        self.gossip_stats = Some(stats);
     }
 
     /// Update gossip test results.
@@ -555,6 +600,12 @@ pub enum InputEvent {
     ScrollDown,
     PageUp,
     PageDown,
+    NextTab,
+    PrevTab,
+    TabOverview,
+    TabGossipHealth,
+    TabConnectivityMatrix,
+    TabProtocolLog,
     Unknown,
 }
 
@@ -572,6 +623,13 @@ impl InputEvent {
             KeyCode::Down | KeyCode::Char('j') => Self::ScrollDown,
             KeyCode::PageUp => Self::PageUp,
             KeyCode::PageDown => Self::PageDown,
+            // Tab navigation
+            KeyCode::Tab => Self::NextTab,
+            KeyCode::BackTab => Self::PrevTab,
+            KeyCode::Char('1') => Self::TabOverview,
+            KeyCode::Char('2') => Self::TabGossipHealth,
+            KeyCode::Char('3') => Self::TabConnectivityMatrix,
+            KeyCode::Char('4') => Self::TabProtocolLog,
             KeyCode::Esc => Self::Quit,
             _ => Self::Unknown,
         }

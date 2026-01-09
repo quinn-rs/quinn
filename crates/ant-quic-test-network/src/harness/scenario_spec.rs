@@ -923,10 +923,8 @@ impl ConnectionPath {
         ip_mode: &IpMode,
     ) -> Self {
         let category = Self::determine_category(behavior_a, behavior_b);
-        let technique_priority =
-            Self::build_technique_priority(behavior_a, behavior_b, ip_mode);
-        let estimated_success_rate =
-            Self::calculate_success_rate(behavior_a, behavior_b, ip_mode);
+        let technique_priority = Self::build_technique_priority(behavior_a, behavior_b, ip_mode);
+        let estimated_success_rate = Self::calculate_success_rate(behavior_a, behavior_b, ip_mode);
 
         let relay_recommended = matches!(
             category,
@@ -1084,8 +1082,7 @@ impl ConnectionPath {
             }
             PathCategory::HolePunchable => {
                 // Standard hole-punch
-                let success_rate =
-                    NatBehavior::estimate_pair_success_rate(behavior_a, behavior_b);
+                let success_rate = NatBehavior::estimate_pair_success_rate(behavior_a, behavior_b);
                 techniques.push(TechniquePriority::viable(
                     ConnectionTechnique::HolePunch,
                     2,
@@ -1225,9 +1222,9 @@ impl ConnectionPath {
 
         // Apply IP mode modifier
         let ip_modifier = match ip_mode {
-            IpMode::Ipv6Only => 1.15, // IPv6 often has better direct connectivity
+            IpMode::Ipv6Only => 1.15,  // IPv6 often has better direct connectivity
             IpMode::DualStack => 1.10, // Can use best available
-            IpMode::Ipv4Only => 1.0, // Baseline
+            IpMode::Ipv4Only => 1.0,   // Baseline
         };
 
         // Apply hairpin bonus if both support it
@@ -1256,7 +1253,9 @@ impl ConnectionPath {
         }
 
         // Timeout notes
-        let min_timeout = behavior_a.mapping_timeout_secs.min(behavior_b.mapping_timeout_secs);
+        let min_timeout = behavior_a
+            .mapping_timeout_secs
+            .min(behavior_b.mapping_timeout_secs);
         if min_timeout < 60 {
             notes.push(format!(
                 "Short NAT timeout ({min_timeout}s) - keepalives needed"
@@ -1382,9 +1381,7 @@ impl ConnectionMatrixAnalysis {
         let mut relay_required_count = 0;
 
         for path in paths {
-            *by_category
-                .entry(path.category.to_string())
-                .or_insert(0) += 1;
+            *by_category.entry(path.category.to_string()).or_insert(0) += 1;
 
             if path.relay_recommended {
                 relay_required_count += 1;
@@ -1763,9 +1760,11 @@ mod tests {
         assert_eq!(docker_profiles.len(), 7);
 
         // All docker profiles should have a build context
-        assert!(docker_profiles
-            .iter()
-            .all(|p| p.docker_build_context.is_some()));
+        assert!(
+            docker_profiles
+                .iter()
+                .all(|p| p.docker_build_context.is_some())
+        );
 
         // Verify specific Docker paths
         let paths: Vec<_> = docker_profiles
@@ -1786,10 +1785,12 @@ mod tests {
         assert!(hairpin.ci_compatible);
 
         // Hairpin should have specific iptables rules for loopback
-        assert!(hairpin
-            .iptables_rules
-            .iter()
-            .any(|r| r.contains("$INTERNAL_IFACE -o $INTERNAL_IFACE")));
+        assert!(
+            hairpin
+                .iptables_rules
+                .iter()
+                .any(|r| r.contains("$INTERNAL_IFACE -o $INTERNAL_IFACE"))
+        );
     }
 
     #[test]
@@ -1935,7 +1936,10 @@ mod tests {
         assert_eq!(path.category, PathCategory::Direct);
         assert!(path.estimated_success_rate >= 0.95);
         assert!(!path.relay_recommended);
-        assert!(path.viable_techniques().contains(&ConnectionTechnique::DirectIpv4));
+        assert!(
+            path.viable_techniques()
+                .contains(&ConnectionTechnique::DirectIpv4)
+        );
     }
 
     #[test]
@@ -2053,7 +2057,9 @@ mod tests {
         assert!(!path.notes.is_empty());
         // Mobile carrier has 30s timeout which triggers the note
         assert!(
-            path.notes.iter().any(|n| n.contains("timeout") || n.contains("keepalive")),
+            path.notes
+                .iter()
+                .any(|n| n.contains("timeout") || n.contains("keepalive")),
             "Expected timeout note, got: {:?}",
             path.notes
         );
@@ -2099,10 +2105,7 @@ mod tests {
 
     #[test]
     fn test_build_connection_matrix() {
-        let profiles = vec![
-            NatBehaviorProfile::none(),
-            NatBehaviorProfile::full_cone(),
-        ];
+        let profiles = vec![NatBehaviorProfile::none(), NatBehaviorProfile::full_cone()];
         let ip_modes = vec![super::IpMode::Ipv4Only];
 
         let matrix = build_connection_matrix(&profiles, &ip_modes);
@@ -2150,10 +2153,7 @@ mod tests {
 
     #[test]
     fn test_connection_matrix_analysis_category_percentages() {
-        let profiles = vec![
-            NatBehaviorProfile::none(),
-            NatBehaviorProfile::symmetric(),
-        ];
+        let profiles = vec![NatBehaviorProfile::none(), NatBehaviorProfile::symmetric()];
         let ip_modes = vec![super::IpMode::Ipv4Only];
 
         let matrix = build_connection_matrix(&profiles, &ip_modes);
@@ -2207,11 +2207,8 @@ mod tests {
         let no_upnp = NatBehavior::from_nat_type(NatType::FullCone);
 
         // When at least one has UPnP, techniques should include UPnP
-        let path = ConnectionPath::classify_behaviors(
-            &upnp_behavior,
-            &no_upnp,
-            &super::IpMode::Ipv4Only,
-        );
+        let path =
+            ConnectionPath::classify_behaviors(&upnp_behavior, &no_upnp, &super::IpMode::Ipv4Only);
 
         let viable = path.viable_techniques();
         assert!(viable.contains(&ConnectionTechnique::UPnP));
@@ -2223,11 +2220,8 @@ mod tests {
         let no_upnp_a = NatBehavior::from_nat_type(NatType::Symmetric);
         let no_upnp_b = NatBehavior::from_nat_type(NatType::Symmetric);
 
-        let path = ConnectionPath::classify_behaviors(
-            &no_upnp_a,
-            &no_upnp_b,
-            &super::IpMode::Ipv4Only,
-        );
+        let path =
+            ConnectionPath::classify_behaviors(&no_upnp_a, &no_upnp_b, &super::IpMode::Ipv4Only);
 
         // When neither has UPnP, it shouldn't be in viable techniques
         let viable = path.viable_techniques();

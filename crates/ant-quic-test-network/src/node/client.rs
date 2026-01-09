@@ -3701,6 +3701,60 @@ impl TestNode {
                     conn_direct_ipv6,
                     conn_hole_punched,
                     conn_relayed,
+
+                    // Extended HyParView stats
+                    hyparview_shuffles: epidemic_stats.hyparview.shuffles,
+                    hyparview_joins: epidemic_stats.hyparview.joins,
+                    hyparview_forward_joins: 0, // Not tracked in current implementation
+
+                    // Extended SWIM stats
+                    swim_pings_sent: epidemic_stats.swim.pings_sent,
+                    swim_pings_received: 0, // Not tracked in current implementation
+                    swim_ping_req_sent: 0,  // Not tracked in current implementation
+                    swim_acks_received: epidemic_stats.swim.acks_received,
+
+                    // Extended Plumtree stats
+                    plumtree_ihaves_sent: 0, // Not tracked in current implementation
+                    plumtree_ihaves_received: 0, // Not tracked in current implementation
+                    plumtree_grafts_sent: epidemic_stats.plumtree.grafts,
+                    plumtree_prunes_sent: epidemic_stats.plumtree.prunes,
+                    plumtree_broadcasts: epidemic_stats.plumtree.messages_sent,
+
+                    // CRDT stats - default for now until wired up
+                    crdt_entries: 0,
+                    crdt_merges: 0,
+                    crdt_vector_clock_len: 0,
+                    crdt_sync_rounds: 0,
+                    crdt_deltas_sent: 0,
+                    crdt_deltas_received: 0,
+
+                    // Coordinator stats - default for now
+                    coordinator_active: 0,
+                    coordinator_success: 0,
+                    coordinator_failed: 0,
+                    coordinator_requests: 0,
+
+                    // Groups stats - default for now
+                    groups_count: 0,
+                    groups_total_members: 0,
+                    groups_joins: 0,
+                    groups_leaves: 0,
+
+                    // Rendezvous stats - default for now
+                    rendezvous_registrations: 0,
+                    rendezvous_discoveries: 0,
+                    rendezvous_points: 0,
+                    rendezvous_queries: 0,
+
+                    // Identity stats - use alive count as known peers
+                    identity_known_peers: epidemic_stats.swim.alive_count,
+                    identity_verifications: 0,
+
+                    // Transport stats - use connection counts for now
+                    transport_packets_sent: epidemic_stats.plumtree.messages_sent,
+                    transport_packets_received: epidemic_stats.plumtree.messages_received,
+                    transport_bytes_sent: 0, // Not tracked in current implementation
+                    transport_bytes_received: 0, // Not tracked in current implementation
                 };
 
                 let probes =

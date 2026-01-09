@@ -19,16 +19,16 @@
 use ant_quic_test_network::harness::{
     AgentCapabilities, AgentInfo, AgentStatus, ApplyProfileRequest, ApplyProfileResponse,
     AttemptResult, BarrierRequest, BarrierResponse, ClearProfileRequest, ClearProfileResponse,
-    FailureCategory, GetResultsResponse, HandshakeRequest, HandshakeResponse,
-    HealthCheckResponse, IpMode, PeerAgentInfo, RunProgress, RunStatus, RunStatusResponse,
-    RunSummary, ScenarioSpec, StartRunRequest, StartRunResponse, StopRunRequest, StopRunResponse,
+    FailureCategory, GetResultsResponse, HandshakeRequest, HandshakeResponse, HealthCheckResponse,
+    IpMode, PeerAgentInfo, RunProgress, RunStatus, RunStatusResponse, RunSummary, ScenarioSpec,
+    StartRunRequest, StartRunResponse, StopRunRequest, StopRunResponse,
 };
 use ant_quic_test_network::registry::{ConnectionMethod, FailureReasonCode, NatType, SuccessLevel};
 use axum::{
+    Json, Router,
     extract::{Path, State},
     http::StatusCode,
     routing::{get, post},
-    Json, Router,
 };
 use clap::Parser;
 use std::collections::HashMap;
@@ -146,10 +146,7 @@ async fn main() -> anyhow::Result<()> {
     info!("Starting test-agent {} v{}", agent_id, VERSION);
 
     // Bind P2P UDP socket to discover actual port
-    let p2p_bind_addr = SocketAddr::new(
-        IpAddr::V4(Ipv4Addr::UNSPECIFIED),
-        cli.p2p_port,
-    );
+    let p2p_bind_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), cli.p2p_port);
     let p2p_socket = UdpSocket::bind(p2p_bind_addr).await?;
     let p2p_listen_addr = p2p_socket.local_addr()?;
     info!("P2P UDP socket bound to {}", p2p_listen_addr);
@@ -315,7 +312,10 @@ async fn start_run_handler(
     Json(request): Json<StartRunRequest>,
 ) -> Result<Json<StartRunResponse>, StatusCode> {
     let run_id = request.run_id;
-    info!("Starting run {} with scenario {:?}", run_id, request.scenario.name);
+    info!(
+        "Starting run {} with scenario {:?}",
+        run_id, request.scenario.name
+    );
 
     // Check if we're at capacity
     let active_count = state.active_runs.read().await.len();
@@ -449,9 +449,9 @@ async fn execute_test_run(run_id: Uuid, state: SharedState) {
     // Update agent status if no more active runs
     {
         let runs = state.active_runs.read().await;
-        let has_active = runs.values().any(|r| {
-            r.status == RunStatus::Running || r.status == RunStatus::Preflight
-        });
+        let has_active = runs
+            .values()
+            .any(|r| r.status == RunStatus::Running || r.status == RunStatus::Preflight);
         if !has_active {
             *state.current_status.write().await = AgentStatus::Idle;
         }

@@ -896,7 +896,8 @@ async fn main() -> Result<()> {
                     Ok(resp) if resp.status().is_success() => {
                         match resp.json::<HealthCheckResponse>().await {
                             Ok(health) => {
-                                let p2p_addr = health.p2p_listen_addr.unwrap_or(FALLBACK_SOCKET_ADDR);
+                                let p2p_addr =
+                                    health.p2p_listen_addr.unwrap_or(FALLBACK_SOCKET_ADDR);
                                 let remote = RemoteAgent::new(&health.agent_id, url, p2p_addr);
                                 info!("Added remote agent: {} at {}", health.agent_id, url);
                                 mixed_orch.add_remote(remote);
@@ -952,10 +953,7 @@ async fn main() -> Result<()> {
             println!("Total attempts:    {}", summary.total_attempts);
             println!("Successful:        {}", summary.successful_attempts);
             println!("Failed:            {}", summary.failed_attempts);
-            println!(
-                "Success rate:      {:.1}%",
-                summary.success_rate * 100.0
-            );
+            println!("Success rate:      {:.1}%", summary.success_rate * 100.0);
 
             if let Some(p50) = summary.latency_p50_ms {
                 println!("Latency p50:       {}ms", p50);

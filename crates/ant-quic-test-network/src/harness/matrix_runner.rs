@@ -35,9 +35,7 @@
 //! ```
 
 use super::{AgentClient, PeerAgentInfo};
-use super::{
-    ConnectionMatrixAnalysis, ConnectionPath, IpMode, NatBehaviorProfile, PathCategory,
-};
+use super::{ConnectionMatrixAnalysis, ConnectionPath, IpMode, NatBehaviorProfile, PathCategory};
 use crate::registry::ConnectionTechnique;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -138,10 +136,7 @@ impl MatrixSuccessCriteria {
     #[must_use]
     pub fn production() -> Self {
         let mut category_criteria = HashMap::new();
-        category_criteria.insert(
-            PathCategory::Direct,
-            CategorySuccessCriteria::for_direct(),
-        );
+        category_criteria.insert(PathCategory::Direct, CategorySuccessCriteria::for_direct());
         category_criteria.insert(
             PathCategory::HolePunchable,
             CategorySuccessCriteria::for_holepunchable(),
@@ -1089,9 +1084,17 @@ impl<'a> MatrixReportGenerator<'a> {
 
         // Header
         let status_emoji = if self.report.passed { "✓" } else { "✗" };
-        let status_text = if self.report.passed { "PASSED" } else { "FAILED" };
+        let status_text = if self.report.passed {
+            "PASSED"
+        } else {
+            "FAILED"
+        };
         let status_color = if use_colors {
-            if self.report.passed { "\x1b[32m" } else { "\x1b[31m" }
+            if self.report.passed {
+                "\x1b[32m"
+            } else {
+                "\x1b[31m"
+            }
         } else {
             ""
         };
@@ -1121,7 +1124,10 @@ impl<'a> MatrixReportGenerator<'a> {
                 completed.format("%Y-%m-%d %H:%M:%S UTC")
             ));
             let duration = completed - self.report.started_at;
-            output.push_str(&format!("  Duration:         {}s\n", duration.num_seconds()));
+            output.push_str(&format!(
+                "  Duration:         {}s\n",
+                duration.num_seconds()
+            ));
         }
         output.push_str(&format!(
             "  Overall Success:  {}{:.1}%{}\n",
@@ -1193,7 +1199,11 @@ impl<'a> MatrixReportGenerator<'a> {
                 output.push_str("  Category Status:\n");
                 for (category, passes) in &eval.category_results {
                     let status = if *passes {
-                        if use_colors { "\x1b[32m✓\x1b[0m" } else { "✓" }
+                        if use_colors {
+                            "\x1b[32m✓\x1b[0m"
+                        } else {
+                            "✓"
+                        }
                     } else if use_colors {
                         "\x1b[31m✗\x1b[0m"
                     } else {
@@ -1343,9 +1353,11 @@ impl<'a> MatrixReportGenerator<'a> {
         };
 
         if pretty {
-            serde_json::to_string_pretty(&json_report).unwrap_or_else(|e| format!("{{\"error\": \"{e}\"}}"))
+            serde_json::to_string_pretty(&json_report)
+                .unwrap_or_else(|e| format!("{{\"error\": \"{e}\"}}"))
         } else {
-            serde_json::to_string(&json_report).unwrap_or_else(|e| format!("{{\"error\": \"{e}\"}}"))
+            serde_json::to_string(&json_report)
+                .unwrap_or_else(|e| format!("{{\"error\": \"{e}\"}}"))
         }
     }
 
@@ -1381,7 +1393,11 @@ impl<'a> MatrixReportGenerator<'a> {
         ));
         output.push_str(&format!(
             "| Status | {} |\n",
-            if self.report.passed { "✅ PASSED" } else { "❌ FAILED" }
+            if self.report.passed {
+                "✅ PASSED"
+            } else {
+                "❌ FAILED"
+            }
         ));
         output.push('\n');
 
@@ -1643,11 +1659,7 @@ impl ConnectivityMatrixRunner {
 
     /// Register an agent for testing.
     pub fn register_agent(&mut self, agent: MatrixAgentInfo) {
-        let client = AgentClient::new(
-            &agent.api_base_url,
-            &agent.agent_id,
-            agent.p2p_listen_addr,
-        );
+        let client = AgentClient::new(&agent.api_base_url, &agent.agent_id, agent.p2p_listen_addr);
         self.clients.insert(agent.agent_id.clone(), client);
         self.agents.push(agent);
     }
@@ -1670,10 +1682,8 @@ impl ConnectivityMatrixRunner {
         let mut test_cases = Vec::new();
 
         // Group agents by their assigned NAT profile
-        let agents_by_profile: HashMap<String, Vec<&MatrixAgentInfo>> = self
-            .agents
-            .iter()
-            .fold(HashMap::new(), |mut acc, agent| {
+        let agents_by_profile: HashMap<String, Vec<&MatrixAgentInfo>> =
+            self.agents.iter().fold(HashMap::new(), |mut acc, agent| {
                 acc.entry(agent.nat_profile.clone())
                     .or_default()
                     .push(agent);
@@ -1693,11 +1703,13 @@ impl ConnectivityMatrixRunner {
             let agents_b = agents_by_profile.get(&path.nat_b);
 
             if let (Some(agents_a), Some(agents_b)) = (agents_a, agents_b) {
-                if let (Some(agent_a), Some(agent_b)) =
-                    (agents_a.first(), agents_b.first())
-                {
+                if let (Some(agent_a), Some(agent_b)) = (agents_a.first(), agents_b.first()) {
                     let mut test_case = MatrixTestCase {
-                        id: format!("{}_{}", self.run_id.as_deref().unwrap_or("run"), path.dimension_key()),
+                        id: format!(
+                            "{}_{}",
+                            self.run_id.as_deref().unwrap_or("run"),
+                            path.dimension_key()
+                        ),
                         path: path.clone(),
                         agent_a: MatrixAgentAssignment {
                             agent_id: agent_a.agent_id.clone(),
@@ -1844,7 +1856,11 @@ impl ConnectivityMatrixRunner {
 
     /// Build a start run request for an agent.
     #[must_use]
-    pub fn build_start_request(&self, test_case: &MatrixTestCase, agent_id: &str) -> MatrixStartRunRequest {
+    pub fn build_start_request(
+        &self,
+        test_case: &MatrixTestCase,
+        agent_id: &str,
+    ) -> MatrixStartRunRequest {
         let (target_addr, initiator) = if agent_id == test_case.agent_a.agent_id {
             (test_case.agent_b.p2p_addr, true)
         } else {
@@ -1874,7 +1890,11 @@ impl ConnectivityMatrixRunner {
             peer_agents,
             connection_target: Some(target_addr.to_string()),
             initiator,
-            techniques: test_case.techniques.iter().map(|t| format!("{t:?}")).collect(),
+            techniques: test_case
+                .techniques
+                .iter()
+                .map(|t| format!("{t:?}"))
+                .collect(),
             attempts: test_case.attempts,
             timeout_ms: self.config.attempt_timeout.as_millis() as u64,
         }
@@ -1912,9 +1932,7 @@ impl ConnectivityMatrixRunner {
 
                 // Track best technique
                 if let Some(tech) = result.successful_technique {
-                    if category_result.best_technique.is_none()
-                        || result.success_rate > 0.9
-                    {
+                    if category_result.best_technique.is_none() || result.success_rate > 0.9 {
                         category_result.best_technique = Some(tech);
                     }
                 }
@@ -2001,11 +2019,8 @@ impl ConnectivityMatrixRunner {
             .flat_map(|p| vec![p.nat_a.clone(), p.nat_b.clone()])
             .collect();
 
-        let profiles_available: std::collections::HashSet<_> = self
-            .agents
-            .iter()
-            .map(|a| a.nat_profile.clone())
-            .collect();
+        let profiles_available: std::collections::HashSet<_> =
+            self.agents.iter().map(|a| a.nat_profile.clone()).collect();
 
         profiles_needed.is_subset(&profiles_available)
     }
@@ -2019,11 +2034,8 @@ impl ConnectivityMatrixRunner {
             .flat_map(|p| vec![p.nat_a.clone(), p.nat_b.clone()])
             .collect();
 
-        let profiles_available: std::collections::HashSet<_> = self
-            .agents
-            .iter()
-            .map(|a| a.nat_profile.clone())
-            .collect();
+        let profiles_available: std::collections::HashSet<_> =
+            self.agents.iter().map(|a| a.nat_profile.clone()).collect();
 
         profiles_needed
             .difference(&profiles_available)
@@ -2194,12 +2206,18 @@ mod tests {
         // Agent A should be initiator
         let request_a = runner.build_start_request(&test_case, "agent-a");
         assert!(request_a.initiator);
-        assert_eq!(request_a.connection_target, Some("127.0.0.1:9001".to_string()));
+        assert_eq!(
+            request_a.connection_target,
+            Some("127.0.0.1:9001".to_string())
+        );
 
         // Agent B should not be initiator
         let request_b = runner.build_start_request(&test_case, "agent-b");
         assert!(!request_b.initiator);
-        assert_eq!(request_b.connection_target, Some("127.0.0.1:9000".to_string()));
+        assert_eq!(
+            request_b.connection_target,
+            Some("127.0.0.1:9000".to_string())
+        );
     }
 
     #[test]
@@ -2217,49 +2235,47 @@ mod tests {
         let mut runner = ConnectivityMatrixRunner::new(MatrixRunnerConfig::default());
         runner.set_run_id("test_run_1".to_string());
 
-        let test_cases = vec![
-            MatrixTestCase {
-                id: "test_1".to_string(),
-                path: ConnectionPath {
-                    category: PathCategory::Direct,
-                    nat_a: "none".to_string(),
-                    nat_b: "none".to_string(),
-                    ip_mode: IpMode::Ipv4Only,
-                    technique_priority: vec![],
-                    estimated_success_rate: 0.99,
-                    relay_recommended: false,
-                    notes: vec![],
-                },
-                agent_a: MatrixAgentAssignment {
-                    agent_id: "agent-a".to_string(),
-                    control_url: "http://localhost:8080".to_string(),
-                    p2p_addr: "127.0.0.1:9000".parse().unwrap(),
-                    nat_profile: "none".to_string(),
-                    status: MatrixAgentAssignmentStatus::Completed,
-                    last_peer_contact: None,
-                },
-                agent_b: MatrixAgentAssignment {
-                    agent_id: "agent-b".to_string(),
-                    control_url: "http://localhost:8081".to_string(),
-                    p2p_addr: "127.0.0.1:9001".parse().unwrap(),
-                    nat_profile: "none".to_string(),
-                    status: MatrixAgentAssignmentStatus::Completed,
-                    last_peer_contact: None,
-                },
-                techniques: vec![ConnectionTechnique::DirectIpv4],
-                attempts: 10,
-                status: TestCaseStatus::Completed(TestCaseResult {
-                    attempts: 10,
-                    successes: 10,
-                    success_rate: 1.0,
-                    successful_technique: Some(ConnectionTechnique::DirectIpv4),
-                    avg_rtt_ms: Some(5.0),
-                    p95_rtt_ms: Some(8.0),
-                    technique_results: HashMap::new(),
-                }),
-                cooldown_status: CooldownStatus::Ready,
+        let test_cases = vec![MatrixTestCase {
+            id: "test_1".to_string(),
+            path: ConnectionPath {
+                category: PathCategory::Direct,
+                nat_a: "none".to_string(),
+                nat_b: "none".to_string(),
+                ip_mode: IpMode::Ipv4Only,
+                technique_priority: vec![],
+                estimated_success_rate: 0.99,
+                relay_recommended: false,
+                notes: vec![],
             },
-        ];
+            agent_a: MatrixAgentAssignment {
+                agent_id: "agent-a".to_string(),
+                control_url: "http://localhost:8080".to_string(),
+                p2p_addr: "127.0.0.1:9000".parse().unwrap(),
+                nat_profile: "none".to_string(),
+                status: MatrixAgentAssignmentStatus::Completed,
+                last_peer_contact: None,
+            },
+            agent_b: MatrixAgentAssignment {
+                agent_id: "agent-b".to_string(),
+                control_url: "http://localhost:8081".to_string(),
+                p2p_addr: "127.0.0.1:9001".parse().unwrap(),
+                nat_profile: "none".to_string(),
+                status: MatrixAgentAssignmentStatus::Completed,
+                last_peer_contact: None,
+            },
+            techniques: vec![ConnectionTechnique::DirectIpv4],
+            attempts: 10,
+            status: TestCaseStatus::Completed(TestCaseResult {
+                attempts: 10,
+                successes: 10,
+                success_rate: 1.0,
+                successful_technique: Some(ConnectionTechnique::DirectIpv4),
+                avg_rtt_ms: Some(5.0),
+                p95_rtt_ms: Some(8.0),
+                technique_results: HashMap::new(),
+            }),
+            cooldown_status: CooldownStatus::Ready,
+        }];
 
         let report = runner.aggregate_results(test_cases);
 
@@ -2318,7 +2334,10 @@ mod tests {
         // Test with recent contact - should be WaitingUntil
         test_case.agent_a.last_peer_contact = Some(Utc::now());
         test_case.update_cooldown_status(Duration::from_secs(30), true);
-        assert!(matches!(test_case.cooldown_status, CooldownStatus::WaitingUntil(_)));
+        assert!(matches!(
+            test_case.cooldown_status,
+            CooldownStatus::WaitingUntil(_)
+        ));
         assert!(!test_case.is_cooldown_satisfied());
 
         // Test with old contact - should be Ready
@@ -2388,9 +2407,21 @@ mod tests {
     fn test_success_criteria_production() {
         let criteria = MatrixSuccessCriteria::production();
         assert!(criteria.overall_min_success_rate >= 0.90);
-        assert!(criteria.category_criteria.contains_key(&PathCategory::Direct));
-        assert!(criteria.category_criteria.contains_key(&PathCategory::HolePunchable));
-        assert!(criteria.category_criteria.contains_key(&PathCategory::RelayRequired));
+        assert!(
+            criteria
+                .category_criteria
+                .contains_key(&PathCategory::Direct)
+        );
+        assert!(
+            criteria
+                .category_criteria
+                .contains_key(&PathCategory::HolePunchable)
+        );
+        assert!(
+            criteria
+                .category_criteria
+                .contains_key(&PathCategory::RelayRequired)
+        );
         assert!(!criteria.fail_on_category_failure);
     }
 
@@ -2608,10 +2639,7 @@ mod tests {
         let parsed: serde_json::Value = serde_json::from_str(&json).expect("Valid JSON");
 
         assert!(parsed.get("report").is_some());
-        assert_eq!(
-            parsed["report"]["run_id"].as_str().unwrap(),
-            "test_run_001"
-        );
+        assert_eq!(parsed["report"]["run_id"].as_str().unwrap(), "test_run_001");
         assert!(parsed["report"]["passed"].as_bool().unwrap());
     }
 
@@ -2771,9 +2799,6 @@ mod tests {
     #[test]
     fn test_file_output_adapter_creation() {
         let adapter = FileOutput::new("/tmp/test_report.txt");
-        assert_eq!(
-            adapter.path.to_string_lossy(),
-            "/tmp/test_report.txt"
-        );
+        assert_eq!(adapter.path.to_string_lossy(), "/tmp/test_report.txt");
     }
 }
