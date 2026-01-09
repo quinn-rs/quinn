@@ -35,6 +35,8 @@ pub mod failure_taxonomy;
 #[cfg(test)]
 pub mod golden_fixtures;
 pub mod harness_metrics;
+pub mod local_agent;
+pub mod matrix_runner;
 pub mod replay_mode;
 pub mod run_recovery;
 pub mod scenario_spec;
@@ -50,6 +52,8 @@ pub use baseline::*;
 pub use debug_bundle::*;
 pub use failure_taxonomy::*;
 pub use harness_metrics::*;
+pub use local_agent::*;
+pub use matrix_runner::*;
 pub use replay_mode::*;
 pub use run_recovery::*;
 pub use scenario_spec::*;

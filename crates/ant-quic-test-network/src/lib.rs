@@ -112,8 +112,8 @@ pub use harness::{
     ArtifactType, AttemptResult, BarrierRequest, BarrierResponse, ClassifiedFailure,
     DimensionStats, FailureBreakdown, FailureCategory, FailureEvidence, FrameCounters,
     GetResultsRequest, GetResultsResponse, HandshakeRequest, HandshakeResponse,
-    HealthCheckResponse, IpMode, NatProfileSpec, RunProgress, RunStatus, RunStatusRequest,
-    RunStatusResponse, RunSummary, ScenarioSpec, StartRunRequest, StartRunResponse, StopRunRequest,
-    StopRunResponse, TechniqueResult, TestMatrixSpec, ThresholdSpec, TimingSpec, TopologySpec,
-    TopologyType,
+    HealthCheckResponse, IpMode, NatBehaviorProfile, NatProfileSpec, RunProgress, RunStatus,
+    RunStatusRequest, RunStatusResponse, RunSummary, ScenarioSpec, StartRunRequest,
+    StartRunResponse, StopRunRequest, StopRunResponse, TechniqueResult, TestMatrixSpec,
+    ThresholdSpec, TimingSpec, TopologySpec, TopologyType,
 };

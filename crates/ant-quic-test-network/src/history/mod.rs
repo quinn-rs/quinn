@@ -47,7 +47,7 @@ impl Default for HistoryConfig {
 }
 
 /// Status of a connectivity test method.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 #[serde(tag = "status")]
 pub enum ConnectivityStatus {
     /// Test succeeded with RTT measurement.
@@ -58,13 +58,8 @@ pub enum ConnectivityStatus {
     Failed { reason: String },
     /// Test was not attempted.
     #[serde(rename = "untested")]
+    #[default]
     Untested,
-}
-
-impl Default for ConnectivityStatus {
-    fn default() -> Self {
-        Self::Untested
-    }
 }
 
 /// Connectivity results for a single peer.

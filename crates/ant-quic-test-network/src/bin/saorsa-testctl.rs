@@ -2,9 +2,9 @@ use ant_quic_test_network::{
     harness::{
         AgentCapabilities, AgentClient, AgentInfo, AttemptResult, CollectionResult,
         FALLBACK_SOCKET_ADDR, GetResultsRequest, GetResultsResponse, HandshakeRequest,
-        HandshakeResponse, HealthCheckResponse, ResultFormat, RunStatusResponse, RunSummary,
-        ScenarioSpec, StartRunRequest, StartRunResponse, StartRunResult, StatusPollResult,
-        StopRunResponse,
+        HandshakeResponse, HealthCheckResponse, LocalAgent, MixedOrchestrator, RemoteAgent,
+        ResultFormat, RunStatusResponse, RunSummary, ScenarioSpec, StartRunRequest,
+        StartRunResponse, StartRunResult, StatusPollResult, StopRunResponse,
     },
     orchestrator::NatTestMatrix,
 };
@@ -120,6 +120,33 @@ enum Commands {
 
         #[arg(long)]
         agents: Vec<String>,
+    },
+
+    /// Run tests using local in-process agents (no VPS required)
+    LocalRun {
+        /// Scenario to run (connectivity_matrix, ci_fast, gossip_coverage, oracle_suite)
+        #[arg(long, default_value = "ci_fast")]
+        scenario: String,
+
+        /// Number of local agents to spawn
+        #[arg(long, default_value = "2")]
+        local_agents: u32,
+
+        /// Optional VPS agents to include (URLs)
+        #[arg(long)]
+        remote_agents: Vec<String>,
+
+        /// Number of attempts per test cell
+        #[arg(long, default_value = "10")]
+        attempts: u32,
+
+        /// Output file for results
+        #[arg(long)]
+        output: Option<PathBuf>,
+
+        /// Timeout for the entire run in seconds
+        #[arg(long, default_value = "300")]
+        timeout_secs: u64,
     },
 }
 
@@ -829,6 +856,126 @@ async fn main() -> Result<()> {
                 info!("Report written to {:?}", output_path);
             } else {
                 println!("{}", report);
+            }
+        }
+
+        Commands::LocalRun {
+            scenario,
+            local_agents,
+            remote_agents,
+            attempts,
+            output,
+            timeout_secs,
+        } => {
+            info!("Starting local test run with {} local agents", local_agents);
+
+            let mut mixed_orch = MixedOrchestrator::new();
+
+            // Create local agents
+            for i in 0..local_agents {
+                let agent_id = format!("local-{}", i);
+                match LocalAgent::new(&agent_id).await {
+                    Ok(agent) => {
+                        info!("Created local agent: {}", agent_id);
+                        mixed_orch.add_local(agent);
+                    }
+                    Err(e) => {
+                        error!("Failed to create local agent {}: {}", agent_id, e);
+                    }
+                }
+            }
+
+            // Add remote agents if specified
+            for url in &remote_agents {
+                let health_url = format!("{}/health", url.trim_end_matches('/'));
+                let client = reqwest::Client::builder()
+                    .timeout(Duration::from_secs(10))
+                    .build()?;
+
+                match client.get(&health_url).send().await {
+                    Ok(resp) if resp.status().is_success() => {
+                        match resp.json::<HealthCheckResponse>().await {
+                            Ok(health) => {
+                                let p2p_addr = health.p2p_listen_addr.unwrap_or(FALLBACK_SOCKET_ADDR);
+                                let remote = RemoteAgent::new(&health.agent_id, url, p2p_addr);
+                                info!("Added remote agent: {} at {}", health.agent_id, url);
+                                mixed_orch.add_remote(remote);
+                            }
+                            Err(e) => {
+                                warn!("Failed to parse health response from {}: {}", url, e);
+                            }
+                        }
+                    }
+                    _ => {
+                        warn!("Failed to reach remote agent at {}", url);
+                    }
+                }
+            }
+
+            if mixed_orch.agent_count() < 2 {
+                anyhow::bail!(
+                    "Need at least 2 agents for connectivity testing, got {}",
+                    mixed_orch.agent_count()
+                );
+            }
+
+            info!(
+                "Orchestrator ready: {} local + {} remote = {} total agents",
+                mixed_orch.local_agent_count(),
+                mixed_orch.remote_agent_count(),
+                mixed_orch.agent_count()
+            );
+
+            // Load and configure scenario
+            let mut scenario_spec = load_scenario(&scenario)?;
+            scenario_spec.test_matrix.attempts_per_cell = attempts;
+
+            info!(
+                "Running scenario '{}' with {} attempts per cell",
+                scenario, attempts
+            );
+
+            // Run tests
+            let collection = mixed_orch
+                .run_and_wait(
+                    scenario_spec,
+                    Duration::from_secs(2),
+                    Duration::from_secs(timeout_secs),
+                )
+                .await?;
+
+            // Generate summary
+            let run_id = Uuid::new_v4();
+            let summary = RunSummary::from_attempts(run_id, &scenario, &collection.items);
+
+            println!("\n=== Test Run Complete ===");
+            println!("Total attempts:    {}", summary.total_attempts);
+            println!("Successful:        {}", summary.successful_attempts);
+            println!("Failed:            {}", summary.failed_attempts);
+            println!(
+                "Success rate:      {:.1}%",
+                summary.success_rate * 100.0
+            );
+
+            if let Some(p50) = summary.latency_p50_ms {
+                println!("Latency p50:       {}ms", p50);
+            }
+            if let Some(p95) = summary.latency_p95_ms {
+                println!("Latency p95:       {}ms", p95);
+            }
+
+            if !collection.is_complete() {
+                warn!(
+                    "WARNING: Results incomplete - {} sources failed",
+                    collection.failed_sources.len()
+                );
+            }
+
+            // Save results if output specified
+            if let Some(output_path) = output {
+                let json = serde_json::to_string_pretty(&collection.items)?;
+                std::fs::write(&output_path, json)?;
+                info!("Results written to {:?}", output_path);
             }
         }
     }

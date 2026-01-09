@@ -30,6 +30,12 @@ serde_json = "1"
 # HTTP client for registry communication (rustls-tls for cross-compilation)
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 
+# HTTP server for test agent
+axum = "0.8"
+
+# Get hostname for agent ID
+hostname = "0.4"
+
 # WebSocket client for registry event subscription
 tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
 futures = "0.3"
@@ -93,6 +99,12 @@ clap = { version = "4", features = ["derive"] }
 # YAML parsing for scenario files
 serde_yaml = "0.9"
 
+# Async trait support for agent endpoint abstraction
+async-trait = "0.1"
+
+# Local IP address discovery for local agents
+local-ip-address = "0.6"
+
 [dev-dependencies]
 tempfile = "3"
 
@@ -103,3 +115,7 @@ path = "src/main.rs"
 [[bin]]
 name = "saorsa-testctl"
 path = "src/bin/saorsa-testctl.rs"
+
+[[bin]]
+name = "test-agent"
+path = "src/bin/test-agent.rs"

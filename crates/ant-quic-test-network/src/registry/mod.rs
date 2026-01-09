@@ -70,7 +70,7 @@ pub use types::{
     FilteringBehavior, FullMeshProbeResult, ImpairmentMetrics, MappingBehavior, MethodProof,
     MigrationMetrics, NatBehavior, NatScenario, NatStats, NatType, NetworkEvent, NetworkProfile,
     NetworkStats, NodeCapabilities, NodeGossipStats, NodeHeartbeat, NodeRegistration, PathTuple,
-    PeerInfo, PeerStatus, RegistrationResponse, RelayMetrics, SuccessLevel, TechniqueAttempt,
-    TemporalMetrics, TemporalScenario, TestPattern, TestReport, TestSuite, TestSuiteConfig,
-    unix_timestamp_ms,
+    PeerInfo, PeerStatus, PortPreservation, RegistrationResponse, RelayMetrics, SuccessLevel,
+    TechniqueAttempt, TemporalMetrics, TemporalScenario, TestPattern, TestReport, TestSuite,
+    TestSuiteConfig, unix_timestamp_ms,
 };

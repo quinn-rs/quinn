@@ -19,10 +19,13 @@ use uuid::Uuid;
 use super::RunStatus;
 
 /// Stage of a test run where checkpoints can be taken
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord, Default,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum RunStage {
     /// Initial setup, before any agents contacted
+    #[default]
     Init,
     /// Preflight checks completed
     Preflight,
@@ -75,12 +78,6 @@ impl RunStage {
             Self::Uploading => Some(Self::Completed),
             Self::Completed | Self::Failed | Self::Cancelled => None,
         }
-    }
-}
-
-impl Default for RunStage {
-    fn default() -> Self {
-        Self::Init
     }
 }
 

@@ -228,12 +228,20 @@ impl AttemptResult {
     }
 }
 
+/// IP addressing mode for connectivity testing.
+///
+/// Controls which IP address families are used for connection attempts.
+/// This affects socket binding, address selection, and NAT traversal behavior.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum IpMode {
+    /// IPv4-only mode - uses only IPv4 addresses.
     #[default]
     Ipv4Only,
+    /// IPv6-only mode - uses only IPv6 addresses.
     Ipv6Only,
+    /// Dual-stack mode - can use both IPv4 and IPv6 addresses.
+    /// Prefers IPv6 when available (Happy Eyeballs behavior).
     DualStack,
 }
 
@@ -244,6 +252,358 @@ impl std::fmt::Display for IpMode {
             Self::Ipv6Only => write!(f, "IPv6"),
             Self::DualStack => write!(f, "Dual-Stack"),
         }
+    }
+}
+
+impl IpMode {
+    /// Returns all IP modes for comprehensive testing.
+    #[must_use]
+    pub fn all() -> &'static [Self] {
+        &[Self::Ipv4Only, Self::Ipv6Only, Self::DualStack]
+    }
+
+    /// Returns CI-compatible subset (IPv4 only for faster tests).
+    #[must_use]
+    pub fn ci_subset() -> &'static [Self] {
+        &[Self::Ipv4Only]
+    }
+
+    /// Returns modes suitable for Docker testing (IPv4 only currently).
+    #[must_use]
+    pub fn docker_compatible() -> &'static [Self] {
+        // Docker NAT emulation currently only supports IPv4
+        &[Self::Ipv4Only]
+    }
+
+    /// Returns modes suitable for VPS testing (all modes).
+    #[must_use]
+    pub fn vps_compatible() -> &'static [Self] {
+        // VPS nodes can test all IP modes
+        &[Self::Ipv4Only, Self::Ipv6Only, Self::DualStack]
+    }
+
+    /// Check if this mode accepts IPv4 addresses.
+    #[must_use]
+    pub fn accepts_ipv4(&self) -> bool {
+        matches!(self, Self::Ipv4Only | Self::DualStack)
+    }
+
+    /// Check if this mode accepts IPv6 addresses.
+    #[must_use]
+    pub fn accepts_ipv6(&self) -> bool {
+        matches!(self, Self::Ipv6Only | Self::DualStack)
+    }
+
+    /// Check if an address is compatible with this IP mode.
+    #[must_use]
+    pub fn is_address_compatible(&self, addr: &std::net::IpAddr) -> bool {
+        matches!(
+            (self, addr),
+            (Self::Ipv4Only, std::net::IpAddr::V4(_))
+                | (Self::Ipv6Only, std::net::IpAddr::V6(_))
+                | (Self::DualStack, _)
+        )
+    }
+
+    /// Check if a socket address is compatible with this IP mode.
+    #[must_use]
+    pub fn is_socket_addr_compatible(&self, addr: &std::net::SocketAddr) -> bool {
+        self.is_address_compatible(&addr.ip())
+    }
+
+    /// Filter addresses to only those compatible with this mode.
+    pub fn filter_addresses<'a>(
+        &self,
+        addrs: impl IntoIterator<Item = &'a std::net::IpAddr>,
+    ) -> Vec<std::net::IpAddr> {
+        addrs
+            .into_iter()
+            .filter(|addr| self.is_address_compatible(addr))
+            .copied()
+            .collect()
+    }
+
+    /// Filter socket addresses to only those compatible with this mode.
+    pub fn filter_socket_addrs<'a>(
+        &self,
+        addrs: impl IntoIterator<Item = &'a std::net::SocketAddr>,
+    ) -> Vec<std::net::SocketAddr> {
+        addrs
+            .into_iter()
+            .filter(|addr| self.is_socket_addr_compatible(addr))
+            .copied()
+            .collect()
+    }
+
+    /// Get the bind address for this IP mode.
+    ///
+    /// Returns the appropriate wildcard address for socket binding.
+    #[must_use]
+    pub fn bind_address(&self, port: u16) -> std::net::SocketAddr {
+        match self {
+            Self::Ipv4Only => std::net::SocketAddr::new(
+                std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED),
+                port,
+            ),
+            Self::Ipv6Only => std::net::SocketAddr::new(
+                std::net::IpAddr::V6(std::net::Ipv6Addr::UNSPECIFIED),
+                port,
+            ),
+            Self::DualStack => {
+                // Dual-stack uses IPv6 socket with V6ONLY=false
+                std::net::SocketAddr::new(
+                    std::net::IpAddr::V6(std::net::Ipv6Addr::UNSPECIFIED),
+                    port,
+                )
+            }
+        }
+    }
+
+    /// Get localhost address for this IP mode.
+    #[must_use]
+    pub fn localhost(&self, port: u16) -> std::net::SocketAddr {
+        match self {
+            Self::Ipv4Only => std::net::SocketAddr::new(
+                std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
+                port,
+            ),
+            Self::Ipv6Only | Self::DualStack => std::net::SocketAddr::new(
+                std::net::IpAddr::V6(std::net::Ipv6Addr::LOCALHOST),
+                port,
+            ),
+        }
+    }
+
+    /// Predict success rate modifier for this IP mode combination.
+    ///
+    /// IPv6 generally has better NAT traversal characteristics because:
+    /// - Less NAT (more end-to-end connectivity)
+    /// - Better support for hole punching
+    /// - No CGNAT issues
+    #[must_use]
+    pub fn success_rate_modifier(&self, other: &Self) -> f64 {
+        match (self, other) {
+            // IPv6 to IPv6: Best case, often direct connectivity
+            (Self::Ipv6Only, Self::Ipv6Only) => 1.15,
+            // Dual-stack to dual-stack: Good, can use best available
+            (Self::DualStack, Self::DualStack) => 1.10,
+            // IPv4 to IPv4: Baseline
+            (Self::Ipv4Only, Self::Ipv4Only) => 1.0,
+            // Mixed modes with dual-stack: Works but may need fallback
+            (Self::DualStack, _) | (_, Self::DualStack) => 1.05,
+            // IPv4 to IPv6 or vice versa: Incompatible, needs relay
+            (Self::Ipv4Only, Self::Ipv6Only) | (Self::Ipv6Only, Self::Ipv4Only) => 0.3,
+        }
+    }
+
+    /// Check if two modes are directly compatible (can communicate).
+    #[must_use]
+    pub fn is_compatible_with(&self, other: &Self) -> bool {
+        match (self, other) {
+            // Same mode: always compatible
+            (Self::Ipv4Only, Self::Ipv4Only) => true,
+            (Self::Ipv6Only, Self::Ipv6Only) => true,
+            (Self::DualStack, Self::DualStack) => true,
+            // Dual-stack is compatible with either
+            (Self::DualStack, _) | (_, Self::DualStack) => true,
+            // IPv4-only and IPv6-only are incompatible
+            (Self::Ipv4Only, Self::Ipv6Only) | (Self::Ipv6Only, Self::Ipv4Only) => false,
+        }
+    }
+
+    /// Get the address family preference for dual-stack mode.
+    ///
+    /// Returns IPv6 first (Happy Eyeballs preference).
+    #[must_use]
+    pub fn address_family_preference(&self) -> Vec<std::net::IpAddr> {
+        match self {
+            Self::Ipv4Only => vec![std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED)],
+            Self::Ipv6Only => vec![std::net::IpAddr::V6(std::net::Ipv6Addr::UNSPECIFIED)],
+            Self::DualStack => vec![
+                // Prefer IPv6 (Happy Eyeballs)
+                std::net::IpAddr::V6(std::net::Ipv6Addr::UNSPECIFIED),
+                std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED),
+            ],
+        }
+    }
+
+    /// Short identifier for dimension keys.
+    #[must_use]
+    pub fn short_id(&self) -> &'static str {
+        match self {
+            Self::Ipv4Only => "v4",
+            Self::Ipv6Only => "v6",
+            Self::DualStack => "ds",
+        }
+    }
+}
+
+/// Configuration for IP mode testing.
+///
+/// Provides detailed configuration for testing connectivity across
+/// different IP addressing modes.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IpModeConfig {
+    /// The IP mode to test.
+    pub mode: IpMode,
+    /// Whether to require IPv6 support (fail if unavailable).
+    pub require_ipv6: bool,
+    /// Whether to test IPv4-mapped IPv6 addresses.
+    pub test_ipv4_mapped: bool,
+    /// Happy Eyeballs delay (ms) for dual-stack connection racing.
+    pub happy_eyeballs_delay_ms: u32,
+    /// Whether this config is CI-compatible.
+    pub ci_compatible: bool,
+    /// Docker network configuration (if applicable).
+    pub docker_network: Option<DockerIpConfig>,
+}
+
+impl Default for IpModeConfig {
+    fn default() -> Self {
+        Self {
+            mode: IpMode::Ipv4Only,
+            require_ipv6: false,
+            test_ipv4_mapped: false,
+            happy_eyeballs_delay_ms: 250,
+            ci_compatible: true,
+            docker_network: None,
+        }
+    }
+}
+
+impl IpModeConfig {
+    /// Create config for IPv4-only testing.
+    #[must_use]
+    pub fn ipv4_only() -> Self {
+        Self {
+            mode: IpMode::Ipv4Only,
+            require_ipv6: false,
+            test_ipv4_mapped: false,
+            happy_eyeballs_delay_ms: 0, // Not applicable
+            ci_compatible: true,
+            docker_network: Some(DockerIpConfig::ipv4_only()),
+        }
+    }
+
+    /// Create config for IPv6-only testing.
+    #[must_use]
+    pub fn ipv6_only() -> Self {
+        Self {
+            mode: IpMode::Ipv6Only,
+            require_ipv6: true,
+            test_ipv4_mapped: false,
+            happy_eyeballs_delay_ms: 0, // Not applicable
+            ci_compatible: false, // IPv6 not always available in CI
+            docker_network: Some(DockerIpConfig::ipv6_only()),
+        }
+    }
+
+    /// Create config for dual-stack testing.
+    #[must_use]
+    pub fn dual_stack() -> Self {
+        Self {
+            mode: IpMode::DualStack,
+            require_ipv6: false, // Graceful fallback to IPv4
+            test_ipv4_mapped: true,
+            happy_eyeballs_delay_ms: 250,
+            ci_compatible: false, // Dual-stack not always available in CI
+            docker_network: Some(DockerIpConfig::dual_stack()),
+        }
+    }
+
+    /// Get all configurations for comprehensive testing.
+    #[must_use]
+    pub fn all_configs() -> Vec<Self> {
+        vec![Self::ipv4_only(), Self::ipv6_only(), Self::dual_stack()]
+    }
+
+    /// Get CI-compatible configurations.
+    #[must_use]
+    pub fn ci_configs() -> Vec<Self> {
+        vec![Self::ipv4_only()]
+    }
+}
+
+/// Docker network IP configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DockerIpConfig {
+    /// Enable IPv6 in Docker network.
+    pub enable_ipv6: bool,
+    /// IPv4 subnet (e.g., "10.100.1.0/24").
+    pub ipv4_subnet: Option<String>,
+    /// IPv6 subnet (e.g., "fd00:1::/64").
+    pub ipv6_subnet: Option<String>,
+    /// IPv4 gateway address.
+    pub ipv4_gateway: Option<String>,
+    /// IPv6 gateway address.
+    pub ipv6_gateway: Option<String>,
+}
+
+impl DockerIpConfig {
+    /// Create IPv4-only Docker network config.
+    #[must_use]
+    pub fn ipv4_only() -> Self {
+        Self {
+            enable_ipv6: false,
+            ipv4_subnet: Some("10.100.1.0/24".into()),
+            ipv6_subnet: None,
+            ipv4_gateway: Some("10.100.1.1".into()),
+            ipv6_gateway: None,
+        }
+    }
+
+    /// Create IPv6-only Docker network config.
+    #[must_use]
+    pub fn ipv6_only() -> Self {
+        Self {
+            enable_ipv6: true,
+            ipv4_subnet: None,
+            ipv6_subnet: Some("fd00:1::/64".into()),
+            ipv4_gateway: None,
+            ipv6_gateway: Some("fd00:1::1".into()),
+        }
+    }
+
+    /// Create dual-stack Docker network config.
+    #[must_use]
+    pub fn dual_stack() -> Self {
+        Self {
+            enable_ipv6: true,
+            ipv4_subnet: Some("10.100.1.0/24".into()),
+            ipv6_subnet: Some("fd00:1::/64".into()),
+            ipv4_gateway: Some("10.100.1.1".into()),
+            ipv6_gateway: Some("fd00:1::1".into()),
+        }
+    }
+
+    /// Generate Docker Compose network configuration YAML snippet.
+    #[must_use]
+    pub fn to_compose_yaml(&self, network_name: &str) -> String {
+        let mut yaml = format!("  {}:\n", network_name);
+        yaml.push_str("    driver: bridge\n");
+
+        if self.enable_ipv6 {
+            yaml.push_str("    enable_ipv6: true\n");
+        }
+
+        yaml.push_str("    ipam:\n");
+        yaml.push_str("      config:\n");
+
+        if let Some(ref subnet) = self.ipv4_subnet {
+            yaml.push_str(&format!("        - subnet: {}\n", subnet));
+            if let Some(ref gateway) = self.ipv4_gateway {
+                yaml.push_str(&format!("          gateway: {}\n", gateway));
+            }
+        }
+
+        if let Some(ref subnet) = self.ipv6_subnet {
+            yaml.push_str(&format!("        - subnet: {}\n", subnet));
+            if let Some(ref gateway) = self.ipv6_gateway {
+                yaml.push_str(&format!("          gateway: {}\n", gateway));
+            }
+        }
+
+        yaml
     }
 }
 
@@ -611,5 +971,235 @@ mod tests {
             key,
             "full_cone_symmetric_ipv4_only_both_public_cold_start_outbound"
         );
+    }
+
+    // =========================================================================
+    // IpMode tests
+    // =========================================================================
+
+    #[test]
+    fn test_ip_mode_all() {
+        let modes = IpMode::all();
+        assert_eq!(modes.len(), 3);
+        assert!(modes.contains(&IpMode::Ipv4Only));
+        assert!(modes.contains(&IpMode::Ipv6Only));
+        assert!(modes.contains(&IpMode::DualStack));
+    }
+
+    #[test]
+    fn test_ip_mode_ci_subset() {
+        let modes = IpMode::ci_subset();
+        assert_eq!(modes.len(), 1);
+        assert!(modes.contains(&IpMode::Ipv4Only));
+    }
+
+    #[test]
+    fn test_ip_mode_accepts() {
+        // IPv4Only
+        assert!(IpMode::Ipv4Only.accepts_ipv4());
+        assert!(!IpMode::Ipv4Only.accepts_ipv6());
+
+        // IPv6Only
+        assert!(!IpMode::Ipv6Only.accepts_ipv4());
+        assert!(IpMode::Ipv6Only.accepts_ipv6());
+
+        // DualStack
+        assert!(IpMode::DualStack.accepts_ipv4());
+        assert!(IpMode::DualStack.accepts_ipv6());
+    }
+
+    #[test]
+    fn test_ip_mode_address_compatibility() {
+        use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+
+        let v4 = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1));
+        let v6 = IpAddr::V6(Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 1));
+
+        // IPv4Only mode
+        assert!(IpMode::Ipv4Only.is_address_compatible(&v4));
+        assert!(!IpMode::Ipv4Only.is_address_compatible(&v6));
+
+        // IPv6Only mode
+        assert!(!IpMode::Ipv6Only.is_address_compatible(&v4));
+        assert!(IpMode::Ipv6Only.is_address_compatible(&v6));
+
+        // DualStack mode
+        assert!(IpMode::DualStack.is_address_compatible(&v4));
+        assert!(IpMode::DualStack.is_address_compatible(&v6));
+    }
+
+    #[test]
+    fn test_ip_mode_filter_addresses() {
+        use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+
+        let addrs = vec![
+            IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)),
+            IpAddr::V6(Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 1)),
+            IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)),
+        ];
+
+        // IPv4Only keeps only IPv4
+        let filtered = IpMode::Ipv4Only.filter_addresses(&addrs);
+        assert_eq!(filtered.len(), 2);
+        assert!(filtered.iter().all(|a| a.is_ipv4()));
+
+        // IPv6Only keeps only IPv6
+        let filtered = IpMode::Ipv6Only.filter_addresses(&addrs);
+        assert_eq!(filtered.len(), 1);
+        assert!(filtered.iter().all(|a| a.is_ipv6()));
+
+        // DualStack keeps all
+        let filtered = IpMode::DualStack.filter_addresses(&addrs);
+        assert_eq!(filtered.len(), 3);
+    }
+
+    #[test]
+    fn test_ip_mode_bind_address() {
+        use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+
+        let v4_bind = IpMode::Ipv4Only.bind_address(9000);
+        assert_eq!(v4_bind.ip(), IpAddr::V4(Ipv4Addr::UNSPECIFIED));
+        assert_eq!(v4_bind.port(), 9000);
+
+        let v6_bind = IpMode::Ipv6Only.bind_address(9000);
+        assert_eq!(v6_bind.ip(), IpAddr::V6(Ipv6Addr::UNSPECIFIED));
+        assert_eq!(v6_bind.port(), 9000);
+
+        // DualStack uses IPv6 socket (with V6ONLY=false)
+        let ds_bind = IpMode::DualStack.bind_address(9000);
+        assert_eq!(ds_bind.ip(), IpAddr::V6(Ipv6Addr::UNSPECIFIED));
+        assert_eq!(ds_bind.port(), 9000);
+    }
+
+    #[test]
+    fn test_ip_mode_localhost() {
+        use std::net::{Ipv4Addr, Ipv6Addr};
+
+        let v4_local = IpMode::Ipv4Only.localhost(8080);
+        assert_eq!(v4_local.ip(), std::net::IpAddr::V4(Ipv4Addr::LOCALHOST));
+
+        let v6_local = IpMode::Ipv6Only.localhost(8080);
+        assert_eq!(v6_local.ip(), std::net::IpAddr::V6(Ipv6Addr::LOCALHOST));
+    }
+
+    #[test]
+    fn test_ip_mode_compatibility() {
+        // Same mode is always compatible
+        assert!(IpMode::Ipv4Only.is_compatible_with(&IpMode::Ipv4Only));
+        assert!(IpMode::Ipv6Only.is_compatible_with(&IpMode::Ipv6Only));
+        assert!(IpMode::DualStack.is_compatible_with(&IpMode::DualStack));
+
+        // DualStack is compatible with both
+        assert!(IpMode::DualStack.is_compatible_with(&IpMode::Ipv4Only));
+        assert!(IpMode::DualStack.is_compatible_with(&IpMode::Ipv6Only));
+        assert!(IpMode::Ipv4Only.is_compatible_with(&IpMode::DualStack));
+        assert!(IpMode::Ipv6Only.is_compatible_with(&IpMode::DualStack));
+
+        // IPv4 and IPv6 only are NOT compatible
+        assert!(!IpMode::Ipv4Only.is_compatible_with(&IpMode::Ipv6Only));
+        assert!(!IpMode::Ipv6Only.is_compatible_with(&IpMode::Ipv4Only));
+    }
+
+    #[test]
+    fn test_ip_mode_success_rate_modifier() {
+        // IPv6 to IPv6 is best
+        assert!(IpMode::Ipv6Only.success_rate_modifier(&IpMode::Ipv6Only) > 1.0);
+
+        // IPv4 to IPv4 is baseline
+        assert_eq!(
+            IpMode::Ipv4Only.success_rate_modifier(&IpMode::Ipv4Only),
+            1.0
+        );
+
+        // Incompatible modes have low success rate
+        assert!(IpMode::Ipv4Only.success_rate_modifier(&IpMode::Ipv6Only) < 0.5);
+    }
+
+    #[test]
+    fn test_ip_mode_short_id() {
+        assert_eq!(IpMode::Ipv4Only.short_id(), "v4");
+        assert_eq!(IpMode::Ipv6Only.short_id(), "v6");
+        assert_eq!(IpMode::DualStack.short_id(), "ds");
+    }
+
+    // =========================================================================
+    // IpModeConfig tests
+    // =========================================================================
+
+    #[test]
+    fn test_ip_mode_config_ipv4_only() {
+        let config = IpModeConfig::ipv4_only();
+        assert_eq!(config.mode, IpMode::Ipv4Only);
+        assert!(!config.require_ipv6);
+        assert!(config.ci_compatible);
+        assert!(config.docker_network.is_some());
+    }
+
+    #[test]
+    fn test_ip_mode_config_ipv6_only() {
+        let config = IpModeConfig::ipv6_only();
+        assert_eq!(config.mode, IpMode::Ipv6Only);
+        assert!(config.require_ipv6);
+        assert!(!config.ci_compatible); // IPv6 not always available
+    }
+
+    #[test]
+    fn test_ip_mode_config_dual_stack() {
+        let config = IpModeConfig::dual_stack();
+        assert_eq!(config.mode, IpMode::DualStack);
+        assert!(config.test_ipv4_mapped);
+        assert_eq!(config.happy_eyeballs_delay_ms, 250);
+    }
+
+    #[test]
+    fn test_ip_mode_config_all_configs() {
+        let configs = IpModeConfig::all_configs();
+        assert_eq!(configs.len(), 3);
+    }
+
+    #[test]
+    fn test_ip_mode_config_ci_configs() {
+        let configs = IpModeConfig::ci_configs();
+        assert!(configs.iter().all(|c| c.ci_compatible));
+    }
+
+    // =========================================================================
+    // DockerIpConfig tests
+    // =========================================================================
+
+    #[test]
+    fn test_docker_ip_config_ipv4_only() {
+        let config = DockerIpConfig::ipv4_only();
+        assert!(!config.enable_ipv6);
+        assert!(config.ipv4_subnet.is_some());
+        assert!(config.ipv6_subnet.is_none());
+    }
+
+    #[test]
+    fn test_docker_ip_config_ipv6_only() {
+        let config = DockerIpConfig::ipv6_only();
+        assert!(config.enable_ipv6);
+        assert!(config.ipv4_subnet.is_none());
+        assert!(config.ipv6_subnet.is_some());
+    }
+
+    #[test]
+    fn test_docker_ip_config_dual_stack() {
+        let config = DockerIpConfig::dual_stack();
+        assert!(config.enable_ipv6);
+        assert!(config.ipv4_subnet.is_some());
+        assert!(config.ipv6_subnet.is_some());
+    }
+
+    #[test]
+    fn test_docker_ip_config_to_compose_yaml() {
+        let config = DockerIpConfig::dual_stack();
+        let yaml = config.to_compose_yaml("test-network");
+
+        assert!(yaml.contains("test-network:"));
+        assert!(yaml.contains("driver: bridge"));
+        assert!(yaml.contains("enable_ipv6: true"));
+        assert!(yaml.contains("10.100.1.0/24")); // IPv4 subnet
+        assert!(yaml.contains("fd00:1::/64")); // IPv6 subnet
     }
 }

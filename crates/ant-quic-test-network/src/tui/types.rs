@@ -42,20 +42,15 @@ pub struct ConnectionHistoryEntry {
 }
 
 /// Outcome for a connection method attempt.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum MethodOutcome {
     /// Not attempted
+    #[default]
     Unknown,
     /// Attempt succeeded
     Success,
     /// Attempt failed
     Failed,
-}
-
-impl Default for MethodOutcome {
-    fn default() -> Self {
-        Self::Unknown
-    }
 }
 
 impl MethodOutcome {
@@ -400,9 +395,10 @@ pub enum TrafficDirection {
 }
 
 /// NAT test state for a peer - tracks the connect-back verification flow.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum PeerNatTestState {
     /// Not yet tested
+    #[default]
     Pending,
     /// Attempting outbound connection
     ConnectingOutbound,
@@ -416,12 +412,6 @@ pub enum PeerNatTestState {
     Retrying,
     /// Peer is unreachable (may have gone offline)
     Unreachable,
-}
-
-impl Default for PeerNatTestState {
-    fn default() -> Self {
-        Self::Pending
-    }
 }
 
 impl PeerNatTestState {

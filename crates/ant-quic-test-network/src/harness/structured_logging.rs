@@ -13,7 +13,9 @@ use std::time::{Duration, SystemTime};
 use uuid::Uuid;
 
 /// Log severity level
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, Default,
+)]
 #[serde(rename_all = "UPPERCASE")]
 pub enum LogLevel {
     /// Detailed debugging information
@@ -21,6 +23,7 @@ pub enum LogLevel {
     /// Debugging information
     Debug,
     /// Informational messages
+    #[default]
     Info,
     /// Warning conditions
     Warn,
@@ -28,12 +31,6 @@ pub enum LogLevel {
     Error,
     /// Critical failures
     Fatal,
-}
-
-impl Default for LogLevel {
-    fn default() -> Self {
-        Self::Info
-    }
 }
 
 impl std::fmt::Display for LogLevel {
@@ -124,10 +121,11 @@ impl LogContext {
 }
 
 /// Log category for filtering and routing
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum LogCategory {
     /// Harness coordination events
+    #[default]
     Harness,
     /// Agent lifecycle events
     Agent,
@@ -143,12 +141,6 @@ pub enum LogCategory {
     Resource,
     /// Custom category
     Custom(String),
-}
-
-impl Default for LogCategory {
-    fn default() -> Self {
-        Self::Harness
-    }
 }
 
 /// Structured log entry with correlation IDs
