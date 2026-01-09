@@ -422,6 +422,121 @@
             font-family: 'SF Mono', Monaco, monospace;
         }
 
+        /* Gossip Protocol Health Panel */
+        .gossip-panel {
+            max-height: 240px;
+            overflow-y: auto;
+        }
+
+        .gossip-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 0.5rem;
+        }
+
+        .gossip-component {
+            background: rgba(255, 255, 255, 0.03);
+            border-radius: 8px;
+            padding: 0.6rem;
+        }
+
+        .gossip-component h4 {
+            font-size: 0.65rem;
+            font-weight: 600;
+            color: var(--accent-cyan);
+            text-transform: uppercase;
+            letter-spacing: 0.3px;
+            margin-bottom: 0.4rem;
+        }
+
+        .gossip-stat {
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.7rem;
+            padding: 0.15rem 0;
+        }
+
+        .gossip-stat .label {
+            color: var(--text-secondary);
+        }
+
+        .gossip-stat .value {
+            font-weight: 600;
+            font-family: 'SF Mono', Monaco, monospace;
+        }
+
+        .gossip-stat .value.green { color: var(--accent-green); }
+        .gossip-stat .value.yellow { color: var(--accent-gold); }
+        .gossip-stat .value.red { color: #ff6b6b; }
+        .gossip-stat .value.cyan { color: var(--accent-cyan); }
+        .gossip-stat .value.purple { color: var(--accent-purple); }
+
+        .gossip-status-badge {
+            display: inline-block;
+            padding: 0.2rem 0.5rem;
+            border-radius: 10px;
+            font-size: 0.65rem;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        .gossip-status-badge.healthy {
+            background: rgba(0, 255, 136, 0.15);
+            color: var(--accent-green);
+        }
+
+        .gossip-status-badge.degraded {
+            background: rgba(255, 215, 0, 0.15);
+            color: var(--accent-gold);
+        }
+
+        .gossip-status-badge.unhealthy {
+            background: rgba(255, 107, 107, 0.15);
+            color: #ff6b6b;
+        }
+
+        /* Connectivity Matrix Mini Panel */
+        .matrix-panel {
+            max-height: 180px;
+        }
+
+        .matrix-summary {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 0.75rem;
+        }
+
+        .matrix-score {
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: var(--accent-green);
+        }
+
+        .matrix-paths {
+            display: flex;
+            gap: 0.75rem;
+        }
+
+        .matrix-path {
+            text-align: center;
+        }
+
+        .matrix-path .value {
+            font-size: 0.9rem;
+            font-weight: 600;
+        }
+
+        .matrix-path .label {
+            font-size: 0.6rem;
+            color: var(--text-secondary);
+        }
+
+        .matrix-path.ipv4 .value { color: var(--accent-green); }
+        .matrix-path.ipv6 .value { color: var(--accent-cyan); }
+        .matrix-path.nat .value { color: var(--accent-gold); }
+        .matrix-path.relay .value { color: var(--accent-purple); }
+
         /* Legend */
         .legend {
             position: fixed;
@@ -1019,6 +1134,14 @@
             display: none;
         }
 
+        .stats-overlay.minimized .gossip-panel {
+            display: none;
+        }
+
+        .stats-overlay.minimized .matrix-panel {
+            display: none;
+        }
+
         .stats-toggle {
             position: absolute;
             top: -12px;
@@ -1171,6 +1294,90 @@
                 <div class="activity-item">
                     <span class="activity-time">Waiting for connections...</span>
                 </div>
+            </div>
+        </div>
+        <div class="stat-card gossip-panel">
+            <h3>Gossip Protocol <span class="gossip-status-badge healthy" id="gossip-status">Healthy</span></h3>
+            <div class="gossip-grid">
+                <div class="gossip-component">
+                    <h4>HyParView</h4>
+                    <div class="gossip-stat">
+                        <span class="label">Active</span>
+                        <span class="value green" id="hv-active">0</span>
+                    </div>
+                    <div class="gossip-stat">
+                        <span class="label">Passive</span>
+                        <span class="value cyan" id="hv-passive">0</span>
+                    </div>
+                </div>
+                <div class="gossip-component">
+                    <h4>SWIM</h4>
+                    <div class="gossip-stat">
+                        <span class="label">Alive</span>
+                        <span class="value green" id="swim-alive">0</span>
+                    </div>
+                    <div class="gossip-stat">
+                        <span class="label">Suspect</span>
+                        <span class="value yellow" id="swim-suspect">0</span>
+                    </div>
+                    <div class="gossip-stat">
+                        <span class="label">Dead</span>
+                        <span class="value red" id="swim-dead">0</span>
+                    </div>
+                </div>
+                <div class="gossip-component">
+                    <h4>Plumtree</h4>
+                    <div class="gossip-stat">
+                        <span class="label">Eager</span>
+                        <span class="value purple" id="pt-eager">0</span>
+                    </div>
+                    <div class="gossip-stat">
+                        <span class="label">Lazy</span>
+                        <span class="value cyan" id="pt-lazy">0</span>
+                    </div>
+                    <div class="gossip-stat">
+                        <span class="label">Msgs</span>
+                        <span class="value" id="pt-msgs">0</span>
+                    </div>
+                </div>
+                <div class="gossip-component">
+                    <h4>Discovery</h4>
+                    <div class="gossip-stat">
+                        <span class="label">Peers</span>
+                        <span class="value green" id="gossip-peers">0</span>
+                    </div>
+                    <div class="gossip-stat">
+                        <span class="label">Relays</span>
+                        <span class="value cyan" id="gossip-relays">0</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="stat-card matrix-panel">
+            <h3>Connectivity Matrix</h3>
+            <div class="matrix-summary">
+                <div class="matrix-score" id="matrix-score">0%</div>
+                <div class="matrix-paths">
+                    <div class="matrix-path ipv4">
+                        <div class="value" id="matrix-ipv4">0</div>
+                        <div class="label">IPv4</div>
+                    </div>
+                    <div class="matrix-path ipv6">
+                        <div class="value" id="matrix-ipv6">0</div>
+                        <div class="label">IPv6</div>
+                    </div>
+                    <div class="matrix-path nat">
+                        <div class="value" id="matrix-nat">0</div>
+                        <div class="label">NAT</div>
+                    </div>
+                    <div class="matrix-path relay">
+                        <div class="value" id="matrix-relay">0</div>
+                        <div class="label">Relay</div>
+                    </div>
+                </div>
+            </div>
+            <div style="font-size: 0.7rem; color: var(--text-secondary);">
+                <span id="matrix-tested">0</span> paths tested, <span id="matrix-success">0</span> successful
             </div>
         </div>
     </div>
@@ -1802,6 +2009,115 @@
             document.getElementById('data-transferred').textContent = formatBytes(data.total_bytes_transferred || 0);
         }
 
+        // Fetch and update gossip protocol health
+        async function fetchGossipHealth() {
+            try {
+                const res = await fetch('/api/gossip/health');
+                const data = await res.json();
+                updateGossipPanel(data);
+            } catch (e) {
+                console.error('Gossip health fetch error:', e);
+            }
+        }
+
+        // Update gossip panel with aggregated stats from all nodes
+        function updateGossipPanel(data) {
+            // Update discovery stats
+            document.getElementById('gossip-peers').textContent = data.peers_discovered || 0;
+            document.getElementById('gossip-relays').textContent = data.relays_known || 0;
+
+            // Update status badge
+            const statusBadge = document.getElementById('gossip-status');
+            statusBadge.textContent = data.status || 'Unknown';
+            statusBadge.className = 'gossip-status-badge ' + (data.status || 'unknown').toLowerCase();
+
+            // For per-node gossip stats, we aggregate from the stats API
+            // These are updated via aggregated_gossip in the breakdown endpoint
+        }
+
+        // Fetch aggregated gossip stats from breakdown endpoint
+        async function fetchAggregatedGossipStats() {
+            try {
+                const res = await fetch('/api/results/breakdown');
+                const data = await res.json();
+                if (data.gossip) {
+                    updateAggregatedGossip(data.gossip);
+                }
+            } catch (e) {
+                console.error('Breakdown fetch error:', e);
+            }
+        }
+
+        // Update gossip panel with aggregated per-protocol stats
+        function updateAggregatedGossip(gossip) {
+            // HyParView stats (average across nodes)
+            document.getElementById('hv-active').textContent = gossip.avg_hyparview_active || 0;
+            document.getElementById('hv-passive').textContent = gossip.avg_hyparview_passive || 0;
+
+            // SWIM stats (totals across network)
+            document.getElementById('swim-alive').textContent = gossip.total_swim_alive || 0;
+            document.getElementById('swim-suspect').textContent = gossip.total_swim_suspect || 0;
+            document.getElementById('swim-dead').textContent = gossip.total_swim_dead || 0;
+
+            // Plumtree stats
+            document.getElementById('pt-eager').textContent = gossip.avg_plumtree_eager || 0;
+            document.getElementById('pt-lazy').textContent = gossip.avg_plumtree_lazy || 0;
+            document.getElementById('pt-msgs').textContent = formatNumber(gossip.plumtree_messages_sent || 0);
+        }
+
+        // Fetch and update connectivity matrix
+        async function fetchConnectivityMatrix() {
+            try {
+                const res = await fetch('/api/results/matrix');
+                const data = await res.json();
+                updateMatrixPanel(data);
+            } catch (e) {
+                console.error('Matrix fetch error:', e);
+            }
+        }
+
+        // Update matrix panel with connectivity data
+        function updateMatrixPanel(data) {
+            const tested = data.total_tested || 0;
+            const success = data.total_success || 0;
+            const score = tested > 0 ? Math.round((success / tested) * 100) : 0;
+
+            document.getElementById('matrix-score').textContent = score + '%';
+            document.getElementById('matrix-tested').textContent = tested;
+            document.getElementById('matrix-success').textContent = success;
+
+            // Count successes by path type
+            let ipv4 = 0, ipv6 = 0, nat = 0, relay = 0;
+            for (const entry of (data.matrix || [])) {
+                if (entry.ipv4?.success) ipv4++;
+                if (entry.ipv6?.success) ipv6++;
+                if (entry.nat?.success) nat++;
+                if (entry.relay?.success) relay++;
+            }
+
+            document.getElementById('matrix-ipv4').textContent = ipv4;
+            document.getElementById('matrix-ipv6').textContent = ipv6;
+            document.getElementById('matrix-nat').textContent = nat;
+            document.getElementById('matrix-relay').textContent = relay;
+
+            // Update score color based on value
+            const scoreEl = document.getElementById('matrix-score');
+            if (score >= 80) {
+                scoreEl.style.color = 'var(--accent-green)';
+            } else if (score >= 50) {
+                scoreEl.style.color = 'var(--accent-gold)';
+            } else {
+                scoreEl.style.color = '#ff6b6b';
+            }
+        }
+
+        // Format large numbers
+        function formatNumber(num) {
+            if (num >= 1000000) return (num / 1000000).toFixed(1) + 'M';
+            if (num >= 1000) return (num / 1000).toFixed(1) + 'K';
+            return num.toString();
+        }
+
         // Add activity
         function addActivity(message) {
             const feed = document.getElementById('activity-feed');
@@ -1873,6 +2189,11 @@
                 }
                 console.log('[Globe Debug] Final nodes array:', nodes.length, nodes);
                 globe.pointsData(nodes);
+
+                // Also fetch gossip and matrix data
+                fetchGossipHealth();
+                fetchAggregatedGossipStats();
+                fetchConnectivityMatrix();
             } catch (e) {
                 console.error('Fetch error:', e);
             }

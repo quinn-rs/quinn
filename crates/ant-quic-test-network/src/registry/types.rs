@@ -11,7 +11,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 /// NAT type classification for connectivity assessment.
 ///
 /// Based on RFC 4787 NAT behavioral requirements and RFC 3489 classic NAT types.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum NatType {
     /// No NAT - publicly routable address
@@ -25,6 +25,7 @@ pub enum NatType {
     /// Symmetric NAT - most restrictive (APDM/APDF)
     Symmetric,
     /// Unknown NAT type (not yet determined)
+    #[default]
     Unknown,
     // =========================================================================
     // Extended NAT types for comprehensive home/ISP emulation
@@ -47,12 +48,6 @@ pub enum NatType {
     /// NAT-PMP enabled NAT (Apple's port mapping protocol)
     /// Similar to UPnP but simpler protocol
     NatPmp,
-}
-
-impl Default for NatType {
-    fn default() -> Self {
-        Self::Unknown
-    }
 }
 
 impl std::fmt::Display for NatType {
@@ -246,16 +241,44 @@ impl std::fmt::Display for FilteringBehavior {
     }
 }
 
+/// RFC 4787 REQ-1: Port preservation behavior.
+///
+/// Describes whether a NAT attempts to preserve the internal port number
+/// when allocating an external mapping.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum PortPreservation {
+    /// NAT always tries to use the same external port as internal.
+    /// Falls back to random if port is in use.
+    Preferred,
+    /// NAT does not preserve port - always allocates from its pool.
+    #[default]
+    NotPreserved,
+    /// NAT uses a fixed overloaded port (rare, breaks most things).
+    Overloaded,
+}
+
+impl std::fmt::Display for PortPreservation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Preferred => write!(f, "Port Preservation Preferred"),
+            Self::NotPreserved => write!(f, "No Port Preservation"),
+            Self::Overloaded => write!(f, "Overloaded Port"),
+        }
+    }
+}
+
 /// Comprehensive NAT behavior description based on RFC 4787.
 ///
 /// Provides detailed information about NAT characteristics beyond simple type.
+/// Includes all RFC 4787 behavioral requirements for accurate NAT simulation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NatBehavior {
-    /// How internal addresses are mapped to external
+    /// How internal addresses are mapped to external (REQ-1 mapping behavior)
     pub mapping: MappingBehavior,
-    /// What external traffic is allowed through
+    /// What external traffic is allowed through (REQ-8 filtering behavior)
     pub filtering: FilteringBehavior,
-    /// Whether hairpin NAT (NAT loopback) is supported
+    /// Whether hairpin NAT (NAT loopback) is supported (REQ-6)
     pub hairpin: bool,
     /// Whether UPnP port mapping is available
     pub upnp_available: bool,
@@ -267,6 +290,14 @@ pub struct NatBehavior {
     pub is_double_nat: bool,
     /// Estimated hole-punch success rate (0.0 - 1.0)
     pub estimated_success_rate: f64,
+    /// RFC 4787 REQ-1: Port preservation behavior
+    pub port_preservation: PortPreservation,
+    /// RFC 4787 REQ-5: UDP mapping timeout in seconds (minimum recommended: 120)
+    pub mapping_timeout_secs: u32,
+    /// RFC 4787 REQ-7: Whether NAT preserves port parity (odd/even)
+    pub port_parity: bool,
+    /// RFC 4787 REQ-8: Whether NAT allocates contiguous port blocks
+    pub port_contiguity: bool,
 }
 
 impl Default for NatBehavior {
@@ -280,12 +311,21 @@ impl Default for NatBehavior {
             port_range: None,
             is_double_nat: false,
             estimated_success_rate: 0.5,
+            port_preservation: PortPreservation::Preferred,
+            mapping_timeout_secs: 120, // RFC 4787 REQ-5 minimum
+            port_parity: false,
+            port_contiguity: false,
         }
     }
 }
 
 impl NatBehavior {
     /// Create behavior from a NAT type.
+    ///
+    /// Sets appropriate RFC 4787 behavioral requirements based on NAT type:
+    /// - Port preservation: Whether NAT tries to use same external port (REQ-1)
+    /// - Mapping timeout: How long NAT mappings remain active (REQ-5)
+    /// - Port parity/contiguity: Advanced allocation properties (REQ-7, REQ-8)
     #[must_use]
     pub fn from_nat_type(nat_type: NatType) -> Self {
         match nat_type {
@@ -294,6 +334,10 @@ impl NatBehavior {
                 filtering: FilteringBehavior::EndpointIndependent,
                 hairpin: true,
                 estimated_success_rate: 1.0,
+                port_preservation: PortPreservation::Preferred, // No NAT, ports pass through
+                mapping_timeout_secs: u32::MAX,                 // No timeout without NAT
+                port_parity: true,
+                port_contiguity: true,
                 ..Default::default()
             },
             NatType::FullCone => Self {
@@ -301,24 +345,40 @@ impl NatBehavior {
                 filtering: FilteringBehavior::EndpointIndependent,
                 hairpin: false,
                 estimated_success_rate: 0.95,
+                port_preservation: PortPreservation::Preferred, // Good routers preserve
+                mapping_timeout_secs: 300,                      // 5 minutes typical
+                port_parity: true,
+                port_contiguity: false,
                 ..Default::default()
             },
             NatType::AddressRestricted => Self {
                 mapping: MappingBehavior::EndpointIndependent,
                 filtering: FilteringBehavior::AddressDependent,
                 estimated_success_rate: 0.85,
+                port_preservation: PortPreservation::Preferred,
+                mapping_timeout_secs: 180, // 3 minutes
+                port_parity: true,
+                port_contiguity: false,
                 ..Default::default()
             },
             NatType::PortRestricted => Self {
                 mapping: MappingBehavior::EndpointIndependent,
                 filtering: FilteringBehavior::AddressPortDependent,
                 estimated_success_rate: 0.80,
+                port_preservation: PortPreservation::Preferred,
+                mapping_timeout_secs: 120, // RFC 4787 minimum
+                port_parity: false,
+                port_contiguity: false,
                 ..Default::default()
             },
             NatType::Symmetric => Self {
                 mapping: MappingBehavior::AddressPortDependent,
                 filtering: FilteringBehavior::AddressPortDependent,
                 estimated_success_rate: 0.40,
+                port_preservation: PortPreservation::NotPreserved, // Different port per dest
+                mapping_timeout_secs: 120,
+                port_parity: false,
+                port_contiguity: false,
                 ..Default::default()
             },
             NatType::Cgnat => Self {
@@ -326,6 +386,10 @@ impl NatBehavior {
                 filtering: FilteringBehavior::AddressPortDependent,
                 port_range: Some((32768, 33023)), // 256 ports typical
                 estimated_success_rate: 0.35,
+                port_preservation: PortPreservation::NotPreserved, // Randomized from pool
+                mapping_timeout_secs: 60, // CGNAT often has shorter timeouts
+                port_parity: false,
+                port_contiguity: false,
                 ..Default::default()
             },
             NatType::DoubleNat => Self {
@@ -333,6 +397,10 @@ impl NatBehavior {
                 filtering: FilteringBehavior::AddressPortDependent,
                 is_double_nat: true,
                 estimated_success_rate: 0.25,
+                port_preservation: PortPreservation::NotPreserved, // Outer NAT dominates
+                mapping_timeout_secs: 60,                          // Use minimum of both layers
+                port_parity: false,
+                port_contiguity: false,
                 ..Default::default()
             },
             NatType::HairpinNat => Self {
@@ -340,6 +408,10 @@ impl NatBehavior {
                 filtering: FilteringBehavior::AddressDependent,
                 hairpin: true,
                 estimated_success_rate: 0.85,
+                port_preservation: PortPreservation::Preferred, // Quality router
+                mapping_timeout_secs: 300,                      // 5 minutes
+                port_parity: true,
+                port_contiguity: false,
                 ..Default::default()
             },
             NatType::MobileCarrier => Self {
@@ -347,6 +419,10 @@ impl NatBehavior {
                 filtering: FilteringBehavior::AddressPortDependent,
                 port_range: Some((32768, 40959)), // Larger CGNAT range
                 estimated_success_rate: 0.30,
+                port_preservation: PortPreservation::NotPreserved,
+                mapping_timeout_secs: 30, // Mobile carriers often aggressive
+                port_parity: false,
+                port_contiguity: false,
                 ..Default::default()
             },
             NatType::Upnp => Self {
@@ -354,6 +430,10 @@ impl NatBehavior {
                 filtering: FilteringBehavior::AddressPortDependent,
                 upnp_available: true,
                 estimated_success_rate: 0.90,
+                port_preservation: PortPreservation::Preferred,
+                mapping_timeout_secs: 3600, // UPnP mappings are long-lived
+                port_parity: true,
+                port_contiguity: false,
                 ..Default::default()
             },
             NatType::NatPmp => Self {
@@ -361,6 +441,10 @@ impl NatBehavior {
                 filtering: FilteringBehavior::AddressPortDependent,
                 nat_pmp_available: true,
                 estimated_success_rate: 0.90,
+                port_preservation: PortPreservation::Preferred,
+                mapping_timeout_secs: 7200, // NAT-PMP default lease is 2 hours
+                port_parity: true,
+                port_contiguity: false,
                 ..Default::default()
             },
             NatType::Unknown => Self::default(),
@@ -418,7 +502,7 @@ pub enum ConnectionMethod {
 ///
 /// This provides finer granularity than `ConnectionMethod` to track
 /// exactly which NAT traversal techniques were attempted.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ConnectionTechnique {
     /// Direct IPv4 connection
@@ -553,10 +637,11 @@ impl Default for DataProof {
 ///
 /// These levels define escalating proof requirements for "connectivity works".
 /// Tests MUST achieve at least Level 2 (Usable) + Level 4 (CorrectMethod) to pass.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum SuccessLevel {
     /// Level 0: Connection failed entirely
+    #[default]
     Failed = 0,
     /// Level 1: Established - QUIC handshake completed, peer authenticated
     /// Necessary but NOT sufficient for "connectivity works"
@@ -592,12 +677,6 @@ impl SuccessLevel {
             Self::CorrectMethod => "Correct technique attribution verified",
             Self::Temporal => "Temporal resilience verified",
         }
-    }
-}
-
-impl Default for SuccessLevel {
-    fn default() -> Self {
-        Self::Failed
     }
 }
 
@@ -1207,7 +1286,7 @@ impl MigrationMetrics {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum FailureReasonCode {
     Success,
@@ -1232,13 +1311,8 @@ pub enum FailureReasonCode {
     ResourceExhausted,
     ProtocolViolation,
     InternalError,
+    #[default]
     Unknown,
-}
-
-impl Default for FailureReasonCode {
-    fn default() -> Self {
-        Self::Unknown
-    }
 }
 
 impl std::fmt::Display for FailureReasonCode {
@@ -2123,21 +2197,16 @@ pub struct ExperimentResults {
 }
 
 /// Status of a peer (active or historical).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum PeerStatus {
     /// Currently active (heartbeat within threshold)
+    #[default]
     Active,
     /// Recently inactive (within 5 minutes)
     Inactive,
     /// Historical (offline for more than 5 minutes)
     Historical,
-}
-
-impl Default for PeerStatus {
-    fn default() -> Self {
-        Self::Active
-    }
 }
 
 /// Connectivity matrix for comprehensive path testing.
@@ -2687,6 +2756,29 @@ pub struct AggregatedGossipStats {
     pub swim_alive_total: u64,
     /// Average active view size per node
     pub avg_active_view_size: f64,
+
+    // Additional fields for dashboard gossip panel
+    /// Average HyParView active view size per node
+    #[serde(default)]
+    pub avg_hyparview_active: usize,
+    /// Average HyParView passive view size per node
+    #[serde(default)]
+    pub avg_hyparview_passive: usize,
+    /// Total SWIM alive peers across network
+    #[serde(default)]
+    pub total_swim_alive: usize,
+    /// Total SWIM suspect peers across network
+    #[serde(default)]
+    pub total_swim_suspect: usize,
+    /// Total SWIM dead peers across network
+    #[serde(default)]
+    pub total_swim_dead: usize,
+    /// Average Plumtree eager peers per node
+    #[serde(default)]
+    pub avg_plumtree_eager: usize,
+    /// Average Plumtree lazy peers per node
+    #[serde(default)]
+    pub avg_plumtree_lazy: usize,
 }
 
 /// Breakdown by IP version.
