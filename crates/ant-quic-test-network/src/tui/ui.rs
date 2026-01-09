@@ -539,13 +539,15 @@ fn draw_node_info(frame: &mut Frame, app: &App, area: Rect) {
 }
 
 /// Draw gossip crate test status (compact single-line format).
+/// Shows status of all 9 saorsa-gossip crates: types, identity, transport,
+/// membership, pubsub, crdt-sync, groups, coordinator, rendezvous.
 fn draw_gossip_status(frame: &mut Frame, app: &App, area: Rect) {
     let block = Block::default()
-        .title(" GOSSIP CRATES ")
+        .title(" SAORSA-GOSSIP CRATES (9) — Press [G] to test ")
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::Magenta));
 
-    let mut spans: Vec<Span> = vec![Span::raw("  ")];
+    let mut spans: Vec<Span> = vec![Span::raw(" ")];
 
     if app.gossip_tests_running {
         spans.push(Span::styled(
@@ -555,37 +557,38 @@ fn draw_gossip_status(frame: &mut Frame, app: &App, area: Rect) {
                 .add_modifier(Modifier::BOLD),
         ));
     } else if let Some(ref results) = app.gossip_test_results {
-        // All 9 crates in compact format
+        // All 9 crates with full names for clarity
         let crates = [
             ("types", &results.types),
             ("identity", &results.identity),
             ("transport", &results.transport),
             ("membership", &results.membership),
             ("pubsub", &results.pubsub),
-            ("crdt", &results.crdt_sync),
+            ("crdt-sync", &results.crdt_sync),
             ("groups", &results.groups),
-            ("coord", &results.coordinator),
-            ("rdv", &results.rendezvous),
+            ("coordinator", &results.coordinator),
+            ("rendezvous", &results.rendezvous),
         ];
 
         for (i, (name, result)) in crates.iter().enumerate() {
             if i > 0 {
-                spans.push(Span::raw("  "));
+                spans.push(Span::raw(" │ "));
             }
 
             let (icon, color) = match result.status {
                 TestStatus::Passed => ("✓", Color::Green),
                 TestStatus::Failed => ("✗", Color::Red),
                 TestStatus::Running => ("◐", Color::Yellow),
-                TestStatus::Skipped => ("-", Color::DarkGray),
+                TestStatus::Skipped => ("−", Color::DarkGray),
                 TestStatus::Pending => ("·", Color::DarkGray),
             };
 
-            spans.push(Span::styled(
-                format!("{}:", name),
-                Style::default().fg(Color::White),
-            ));
+            // Color-code the crate name based on status
             spans.push(Span::styled(icon, Style::default().fg(color)));
+            spans.push(Span::styled(
+                name.to_string(),
+                Style::default().fg(color),
+            ));
         }
 
         // Summary at the end
@@ -609,9 +612,15 @@ fn draw_gossip_status(frame: &mut Frame, app: &App, area: Rect) {
                 .add_modifier(Modifier::BOLD),
         ));
     } else {
+        // No test results yet - show what crates will be tested
         spans.push(Span::styled(
-            "Press [G] to run gossip tests",
+            "types│identity│transport│membership│pubsub│crdt-sync│groups│coordinator│rendezvous",
             Style::default().fg(Color::DarkGray),
+        ));
+        spans.push(Span::raw("  "));
+        spans.push(Span::styled(
+            "[not tested]",
+            Style::default().fg(Color::Yellow),
         ));
     }
 
@@ -633,17 +642,27 @@ fn draw_peers(frame: &mut Frame, app: &mut App, area: Rect) {
     );
     let history_total = app.connection_history.len();
     let history_live = app.history_connected_count();
+    // Legend: D=Direct, N=NAT traversal, R=Relay | ✓=ok, ✗=fail, ·=untested
     let title = Line::from(vec![
         Span::raw(format!(
-            " ALL CONNECTIONS ({} live / {} total) ",
+            " CONNECTIONS ({} live / {} total) ",
             history_live, history_total
         )),
         auto_status,
         scroll_hint,
-        Span::raw("  "),
-        Span::styled("D/N/R", Style::default().fg(Color::DarkGray)),
         Span::raw(" "),
-        Span::styled("✓×·", Style::default().fg(Color::DarkGray)),
+        Span::styled("D", Style::default().fg(Color::Green)),
+        Span::styled("irect/", Style::default().fg(Color::DarkGray)),
+        Span::styled("N", Style::default().fg(Color::Yellow)),
+        Span::styled("AT/", Style::default().fg(Color::DarkGray)),
+        Span::styled("R", Style::default().fg(Color::Red)),
+        Span::styled("elay ", Style::default().fg(Color::DarkGray)),
+        Span::styled("✓", Style::default().fg(Color::Green)),
+        Span::styled("ok ", Style::default().fg(Color::DarkGray)),
+        Span::styled("✗", Style::default().fg(Color::Red)),
+        Span::styled("fail ", Style::default().fg(Color::DarkGray)),
+        Span::styled("·", Style::default().fg(Color::DarkGray)),
+        Span::styled("untested", Style::default().fg(Color::DarkGray)),
     ]);
 
     let block = Block::default()
@@ -651,13 +670,16 @@ fn draw_peers(frame: &mut Frame, app: &mut App, area: Rect) {
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::Blue));
 
+    // Column headers with explanatory abbreviations
+    // D=Direct, N=NAT hole-punch, R=Relay
+    // ✓=success, ·=untested, ✗=failed
     let header = Row::new(vec![
-        Cell::from("").style(Style::default().add_modifier(Modifier::BOLD)),
-        Cell::from("Peer").style(Style::default().add_modifier(Modifier::BOLD)),
+        Cell::from("St").style(Style::default().add_modifier(Modifier::BOLD)),
+        Cell::from("Peer ID").style(Style::default().add_modifier(Modifier::BOLD)),
         Cell::from("Loc").style(Style::default().add_modifier(Modifier::BOLD)),
-        Cell::from("Out").style(Style::default().add_modifier(Modifier::BOLD)),
-        Cell::from("In").style(Style::default().add_modifier(Modifier::BOLD)),
-        Cell::from("IP").style(Style::default().add_modifier(Modifier::BOLD)),
+        Cell::from("→ D·N·R").style(Style::default().add_modifier(Modifier::BOLD).fg(Color::Cyan)),
+        Cell::from("← D·N·R").style(Style::default().add_modifier(Modifier::BOLD).fg(Color::Magenta)),
+        Cell::from("IPv").style(Style::default().add_modifier(Modifier::BOLD)),
         Cell::from("RTT").style(Style::default().add_modifier(Modifier::BOLD)),
         Cell::from("Seen").style(Style::default().add_modifier(Modifier::BOLD)),
     ])
@@ -687,8 +709,11 @@ fn draw_peers(frame: &mut Frame, app: &mut App, area: Rect) {
                 crate::tui::types::ConnectionStatus::Coordinating => Color::Yellow,
             };
 
+            // Display location with country flag if available
             let location = if entry.location.len() == 2 {
                 format!("{} {}", country_flag(&entry.location), entry.location)
+            } else if entry.location == "---" || entry.location == "??" {
+                "🌍 ?".to_string()  // Globe icon for unknown location
             } else {
                 entry.location.clone()
             };
