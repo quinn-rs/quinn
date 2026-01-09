@@ -1131,21 +1131,55 @@ impl EpidemicGossip {
         // It logs "(TODO: transport)" and doesn't actually dial the seeds.
         // Instead, we use transport.dial_bootstrap() directly to connect to each peer,
         // then add them to the active view.
+        //
+        // OPTIMIZATION: Dial all bootstrap peers CONCURRENTLY with a per-dial timeout.
+        // This prevents blocking the main run() loop for minutes when many peers time out.
+        const DIAL_TIMEOUT: Duration = Duration::from_secs(10);
+        const MAX_CONCURRENT_DIALS: usize = 8;
+
+        info!(
+            "Dialing {} bootstrap peers concurrently (timeout={}s, max_concurrent={})",
+            peers.len(),
+            DIAL_TIMEOUT.as_secs(),
+            MAX_CONCURRENT_DIALS
+        );
+
+        // Dial all peers concurrently in batches
         let mut connected = 0;
-        for addr in &peers {
-            info!("Dialing bootstrap peer at {}", addr);
-            match transport.dial_bootstrap(*addr).await {
-                Ok(peer_id) => {
-                    info!("Connected to bootstrap peer {} ({})", peer_id, addr);
-                    if let Err(e) = membership.add_active(peer_id).await {
-                        warn!("Failed to add peer {} to active view: {}", peer_id, e);
-                    } else {
-                        info!("Added peer {} to HyParView active view", peer_id);
-                        connected += 1;
+        for chunk in peers.chunks(MAX_CONCURRENT_DIALS) {
+            let dial_futures: Vec<_> = chunk
+                .iter()
+                .map(|addr| {
+                    let transport = Arc::clone(&transport);
+                    let addr = *addr;
+                    async move {
+                        let result = tokio::time::timeout(DIAL_TIMEOUT, transport.dial_bootstrap(addr)).await;
+                        (addr, result)
                     }
-                }
-                Err(e) => {
-                    warn!("Failed to dial bootstrap peer {}: {}", addr, e);
+                })
+                .collect();
+
+            // Wait for all dials in this batch to complete
+            let results = futures::future::join_all(dial_futures).await;
+
+            // Process results and add successful connections to membership
+            for (addr, result) in results {
+                match result {
+                    Ok(Ok(peer_id)) => {
+                        info!("Connected to bootstrap peer {} ({})", peer_id, addr);
+                        if let Err(e) = membership.add_active(peer_id).await {
+                            warn!("Failed to add peer {} to active view: {}", peer_id, e);
+                        } else {
+                            debug!("Added peer {} to HyParView active view", peer_id);
+                            connected += 1;
+                        }
+                    }
+                    Ok(Err(e)) => {
+                        debug!("Failed to dial bootstrap peer {}: {}", addr, e);
+                    }
+                    Err(_) => {
+                        debug!("Timeout dialing bootstrap peer {} ({}s)", addr, DIAL_TIMEOUT.as_secs());
+                    }
                 }
             }
         }
