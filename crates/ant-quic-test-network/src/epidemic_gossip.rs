@@ -778,6 +778,12 @@ impl EpidemicGossip {
                     }
                 }
             }
+            // Debug: verify groups were added
+            let stats = groups_guard.stats();
+            info!(
+                "Groups initialized: count={}, members={}",
+                stats.groups_count, stats.total_members
+            );
         }
 
         // Register as a provider for the network topic (rendezvous)
@@ -1831,14 +1837,16 @@ impl EpidemicGossip {
                     stats_guard.rendezvous = rendezvous_stats;
 
                     debug!(
-                        "Stats updated: active={}, passive={}, alive={}, suspect={}, dead={}, crdt_entries={}, coordinators={}",
+                        "Stats updated: active={}, passive={}, alive={}, suspect={}, dead={}, crdt_entries={}, coordinators={}, groups={}, rdv={}",
                         active.len(),
                         passive.len(),
                         alive_count,
                         suspect_count,
                         dead_count,
                         stats_guard.crdt.entries,
-                        stats_guard.coordinator.active_coordinators
+                        stats_guard.coordinator.active_coordinators,
+                        stats_guard.groups.groups_count,
+                        stats_guard.rendezvous.registrations
                     );
                 }
             }

@@ -3659,7 +3659,7 @@ impl TestNode {
                             + breakdown.hole_punched
                             + breakdown.relayed;
                         info!(
-                            "Heartbeat #{}: P2P={} (out={}, in={}), Gossip={} (IPv4={}, IPv6={})",
+                            "Heartbeat #{}: P2P={} (out={}, in={}), Gossip={} (IPv4={}, IPv6={}), CRDT={}, Groups={}, RDV={}",
                             hb_count,
                             p2p_total,
                             peers.len(),
@@ -3667,6 +3667,9 @@ impl TestNode {
                             gossip_total,
                             breakdown.direct_ipv4,
                             breakdown.direct_ipv6,
+                            epidemic_stats.crdt.entries,
+                            epidemic_stats.groups.groups_count,
+                            epidemic_stats.rendezvous.registrations,
                         );
                     }
 
