@@ -505,6 +505,19 @@ impl tokio::io::AsyncRead for RecvStream {
 
 impl Drop for RecvStream {
     fn drop(&mut self) {
+        if self.all_data_read {
+            debug_assert!(
+                !self
+                    .conn
+                    .state
+                    .lock("RecvStream:drop")
+                    .blocked_readers
+                    .contains_key(&self.stream),
+                "Stream {} should not have a blocked reader when all data read is true",
+                &self.stream
+            );
+            return;
+        }
         let mut conn = self.conn.state.lock("RecvStream::drop");
 
         // clean up any previously registered wakers
@@ -513,11 +526,10 @@ impl Drop for RecvStream {
         if conn.error.is_some() || (self.is_0rtt && conn.check_0rtt().is_err()) {
             return;
         }
-        if !self.all_data_read {
-            // Ignore ClosedStream errors
-            let _ = conn.inner.recv_stream(self.stream).stop(0u32.into());
-            conn.wake();
-        }
+
+        // Ignore ClosedStream errors
+        let _ = conn.inner.recv_stream(self.stream).stop(0u32.into());
+        conn.wake();
     }
 }
 
