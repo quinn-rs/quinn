@@ -492,6 +492,17 @@ async fn handle_heartbeat(
     heartbeat: NodeHeartbeat,
     store: Arc<PeerStore>,
 ) -> Result<impl Reply, Rejection> {
+    // Debug: log received gossip stats
+    if let Some(ref gs) = heartbeat.gossip_stats {
+        tracing::info!(
+            "Heartbeat from {}: groups={}, rdv={}, crdt={}, hyparview_active={}",
+            &heartbeat.peer_id[..8],
+            gs.groups_count,
+            gs.rendezvous_registrations,
+            gs.crdt_entries,
+            gs.hyparview_active
+        );
+    }
     match store.heartbeat(heartbeat) {
         Ok(()) => Ok(warp::reply::with_status(
             warp::reply::json(&serde_json::json!({"success": true})),

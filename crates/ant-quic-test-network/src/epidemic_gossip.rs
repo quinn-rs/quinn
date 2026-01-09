@@ -807,6 +807,21 @@ impl EpidemicGossip {
             );
         }
 
+        // Initialize stats immediately with groups and rendezvous data
+        // (stats updater waits 5 seconds before first update, which would miss first heartbeats)
+        {
+            let groups_stats = self.groups_state.read().await.stats();
+            let rendezvous_stats = self.rendezvous_state.read().await.stats();
+            let mut stats_guard = self.stats.write().await;
+            stats_guard.groups = groups_stats;
+            stats_guard.rendezvous = rendezvous_stats;
+            info!(
+                "Initial stats populated: groups={}, rendezvous={}",
+                stats_guard.groups.groups_count,
+                stats_guard.rendezvous.registrations
+            );
+        }
+
         // Spawn background tasks
         self.spawn_stats_updater();
         self.spawn_event_monitor();
