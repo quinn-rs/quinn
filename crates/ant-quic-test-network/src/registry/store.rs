@@ -998,8 +998,30 @@ impl PeerStore {
         let mut total_conn_hole_punched = 0u64;
         let mut total_conn_relayed = 0u64;
 
+        // CRDT stats (saorsa-gossip-crdt-sync)
+        let mut total_crdt_entries = 0u64;
+        let mut total_crdt_merges = 0u64;
+        let mut total_crdt_vector_clock_len = 0u64;
+
+        // Coordinator stats (saorsa-gossip-coordinator)
+        let mut total_coordinator_active = 0u64;
+        let mut total_coordinator_success = 0u64;
+        let mut total_coordinator_failed = 0u64;
+
+        // Groups stats (saorsa-gossip-groups)
+        let mut total_groups_count = 0u64;
+        let mut total_groups_members = 0u64;
+
+        // Rendezvous stats (saorsa-gossip-rendezvous)
+        let mut total_rendezvous_registrations = 0u64;
+        let mut total_rendezvous_discoveries = 0u64;
+        let mut total_rendezvous_points = 0u64;
+
+        let mut node_count = 0u64;
+
         // Aggregate gossip stats and NAT types from registered nodes
         for entry in self.peers.iter() {
+            node_count += 1;
             // NAT type distribution
             match entry.registration.nat_type {
                 NatType::None | NatType::Upnp | NatType::NatPmp => nat_type_public += 1,
@@ -1034,7 +1056,33 @@ impl PeerStore {
             total_conn_direct_ipv6 += entry.gossip_stats.conn_direct_ipv6 as u64;
             total_conn_hole_punched += entry.gossip_stats.conn_hole_punched as u64;
             total_conn_relayed += entry.gossip_stats.conn_relayed as u64;
+
+            // Aggregate CRDT stats (saorsa-gossip-crdt-sync)
+            total_crdt_entries += entry.gossip_stats.crdt_entries as u64;
+            total_crdt_merges += entry.gossip_stats.crdt_merges;
+            total_crdt_vector_clock_len += entry.gossip_stats.crdt_vector_clock_len as u64;
+
+            // Aggregate coordinator stats (saorsa-gossip-coordinator)
+            total_coordinator_active += entry.gossip_stats.coordinator_active as u64;
+            total_coordinator_success += entry.gossip_stats.coordinator_success;
+            total_coordinator_failed += entry.gossip_stats.coordinator_failed;
+
+            // Aggregate groups stats (saorsa-gossip-groups)
+            total_groups_count += entry.gossip_stats.groups_count as u64;
+            total_groups_members += entry.gossip_stats.groups_total_members as u64;
+
+            // Aggregate rendezvous stats (saorsa-gossip-rendezvous)
+            total_rendezvous_registrations += entry.gossip_stats.rendezvous_registrations;
+            total_rendezvous_discoveries += entry.gossip_stats.rendezvous_discoveries;
+            total_rendezvous_points += entry.gossip_stats.rendezvous_points as u64;
         }
+
+        // Calculate averages
+        let avg_crdt_vector_clock_len = if node_count > 0 {
+            total_crdt_vector_clock_len as f64 / node_count as f64
+        } else {
+            0.0
+        };
 
         GossipStats {
             total_announcements,
@@ -1056,6 +1104,18 @@ impl PeerStore {
             total_conn_direct_ipv6,
             total_conn_hole_punched,
             total_conn_relayed,
+            // New stats for saorsa-gossip crates
+            total_crdt_entries,
+            total_crdt_merges,
+            avg_crdt_vector_clock_len,
+            total_coordinator_active,
+            total_coordinator_success,
+            total_coordinator_failed,
+            total_groups_count,
+            total_groups_members,
+            total_rendezvous_registrations,
+            total_rendezvous_discoveries,
+            total_rendezvous_points,
         }
     }
 }

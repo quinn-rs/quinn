@@ -2205,6 +2205,36 @@ pub struct GossipStats {
     pub total_conn_hole_punched: u64,
     /// Total relayed connections across all nodes
     pub total_conn_relayed: u64,
+
+    // === CRDT Stats (saorsa-gossip-crdt-sync) ===
+    /// Total CRDT entries across all nodes
+    pub total_crdt_entries: u64,
+    /// Total CRDT merges across all nodes
+    pub total_crdt_merges: u64,
+    /// Average vector clock length
+    pub avg_crdt_vector_clock_len: f64,
+
+    // === Coordinator Stats (saorsa-gossip-coordinator) ===
+    /// Total active coordinators across network
+    pub total_coordinator_active: u64,
+    /// Total successful coordinations
+    pub total_coordinator_success: u64,
+    /// Total failed coordinations
+    pub total_coordinator_failed: u64,
+
+    // === Groups Stats (saorsa-gossip-groups) ===
+    /// Total groups across network
+    pub total_groups_count: u64,
+    /// Total group members across network
+    pub total_groups_members: u64,
+
+    // === Rendezvous Stats (saorsa-gossip-rendezvous) ===
+    /// Total rendezvous registrations
+    pub total_rendezvous_registrations: u64,
+    /// Total rendezvous discoveries
+    pub total_rendezvous_discoveries: u64,
+    /// Total active rendezvous points
+    pub total_rendezvous_points: u64,
 }
 
 /// Real-time event for WebSocket streaming.

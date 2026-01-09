@@ -201,7 +201,9 @@ async fn main() -> anyhow::Result<()> {
         // Create TUI application
         let app = App::new();
 
-        let bind_addr: SocketAddr = format!("0.0.0.0:{}", args.bind_port).parse()?;
+        // Use dual-stack (IPv6 + IPv4) by binding to [::] instead of 0.0.0.0
+        // On most systems, [::]:port accepts both IPv4 and IPv6 connections
+        let bind_addr: SocketAddr = format!("[::]:{}", args.bind_port).parse()?;
         let node_config = TestNodeConfig {
             registry_url: args.registry_url.clone(),
             max_peers: args.max_peers,

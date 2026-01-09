@@ -6,7 +6,7 @@
 //! automatic connections using REAL P2pEndpoint QUIC connections,
 //! and test traffic generation over actual QUIC streams.
 
-use crate::epidemic_gossip::{EpidemicConfig, EpidemicEvent, EpidemicGossip};
+use crate::epidemic_gossip::{ConnectionType as GossipConnectionType, EpidemicConfig, EpidemicEvent, EpidemicGossip};
 use crate::gossip::{
     GossipConfig, GossipEvent, GossipIntegration, PeerCapabilities as GossipCapabilities,
 };
@@ -1587,6 +1587,7 @@ impl TestNode {
         let endpoint = Arc::clone(&self.node);
         let connected_peers = Arc::clone(&self.connected_peers);
         let gossip_integration = Arc::clone(&self.gossip_integration);
+        let epidemic_gossip = Arc::clone(&self.epidemic_gossip);
         let peer_id = self.peer_id.clone();
         let event_tx = self.event_tx.clone();
         let inbound_connections = Arc::clone(&self.inbound_connections);
@@ -1672,6 +1673,21 @@ impl TestNode {
                                 &new_peer_hex[..8.min(new_peer_hex.len())],
                                 if is_ipv6 { "IPv6" } else { "IPv4" }
                             );
+
+                            // Update epidemic gossip layer with inbound connection type
+                            if let Ok(peer_bytes) = hex::decode(&new_peer_hex) {
+                                if peer_bytes.len() == 32 {
+                                    let mut arr = [0u8; 32];
+                                    arr.copy_from_slice(&peer_bytes);
+                                    let gossip_peer_id = GossipPeerId::new(arr);
+                                    let gossip_conn_type = if is_ipv6 {
+                                        GossipConnectionType::DirectIpv6
+                                    } else {
+                                        GossipConnectionType::DirectIpv4
+                                    };
+                                    epidemic_gossip.set_connection_type(gossip_peer_id, gossip_conn_type).await;
+                                }
+                            }
                         }
                     }
 
@@ -3720,31 +3736,31 @@ impl TestNode {
                     plumtree_prunes_sent: epidemic_stats.plumtree.prunes,
                     plumtree_broadcasts: epidemic_stats.plumtree.messages_sent,
 
-                    // CRDT stats - default for now until wired up
-                    crdt_entries: 0,
-                    crdt_merges: 0,
-                    crdt_vector_clock_len: 0,
-                    crdt_sync_rounds: 0,
-                    crdt_deltas_sent: 0,
-                    crdt_deltas_received: 0,
+                    // CRDT stats from saorsa-gossip-crdt-sync
+                    crdt_entries: epidemic_stats.crdt.entries,
+                    crdt_merges: epidemic_stats.crdt.merges,
+                    crdt_vector_clock_len: epidemic_stats.crdt.vector_clock_len,
+                    crdt_sync_rounds: 0, // Not tracked in current implementation
+                    crdt_deltas_sent: 0, // Not tracked in current implementation
+                    crdt_deltas_received: 0, // Not tracked in current implementation
 
-                    // Coordinator stats - default for now
-                    coordinator_active: 0,
-                    coordinator_success: 0,
-                    coordinator_failed: 0,
-                    coordinator_requests: 0,
+                    // Coordinator stats from saorsa-gossip-coordinator
+                    coordinator_active: epidemic_stats.coordinator.active_coordinators,
+                    coordinator_success: epidemic_stats.coordinator.coordination_success,
+                    coordinator_failed: epidemic_stats.coordinator.coordination_failed,
+                    coordinator_requests: 0, // Not tracked in current implementation
 
-                    // Groups stats - default for now
-                    groups_count: 0,
-                    groups_total_members: 0,
-                    groups_joins: 0,
-                    groups_leaves: 0,
+                    // Groups stats from saorsa-gossip-groups
+                    groups_count: epidemic_stats.groups.groups_count,
+                    groups_total_members: epidemic_stats.groups.total_members,
+                    groups_joins: 0, // Not tracked in current implementation
+                    groups_leaves: 0, // Not tracked in current implementation
 
-                    // Rendezvous stats - default for now
-                    rendezvous_registrations: 0,
-                    rendezvous_discoveries: 0,
-                    rendezvous_points: 0,
-                    rendezvous_queries: 0,
+                    // Rendezvous stats from saorsa-gossip-rendezvous
+                    rendezvous_registrations: epidemic_stats.rendezvous.registrations,
+                    rendezvous_discoveries: epidemic_stats.rendezvous.discoveries,
+                    rendezvous_points: epidemic_stats.rendezvous.active_providers,
+                    rendezvous_queries: 0, // Not tracked in current implementation
 
                     // Identity stats - use alive count as known peers
                     identity_known_peers: epidemic_stats.swim.alive_count,
@@ -3957,6 +3973,7 @@ impl TestNode {
         let pending_outbound = Arc::clone(&self.pending_outbound);
         let gossip_integration = Arc::clone(&self.gossip_integration);
         let relay_state = Arc::clone(&self.relay_state);
+        let epidemic_gossip = Arc::clone(&self.epidemic_gossip);
         #[allow(unused_variables)]
         let disconnection_times = Arc::clone(&self.disconnection_times);
 
@@ -4095,6 +4112,7 @@ impl TestNode {
                     let our_peer_id = our_peer_id.clone();
                     let gossip_integration = Arc::clone(&gossip_integration);
                     let relay_state = Arc::clone(&relay_state);
+                    let epidemic_gossip = Arc::clone(&epidemic_gossip);
 
                     let fut = async move {
                         let peer_id_short = &candidate.peer_id[..8.min(candidate.peer_id.len())];
@@ -4179,6 +4197,28 @@ impl TestNode {
 
                             let now = Instant::now();
                             let is_ipv6 = result.matrix.active_is_ipv6;
+
+                            // Update epidemic gossip layer with the actual connection type
+                            // This ensures NAT traversal stats in gossip match the registry
+                            if let Ok(peer_bytes) = hex::decode(&candidate.peer_id) {
+                                if peer_bytes.len() == 32 {
+                                    let mut arr = [0u8; 32];
+                                    arr.copy_from_slice(&peer_bytes);
+                                    let gossip_peer_id = GossipPeerId::new(arr);
+                                    let gossip_conn_type = match final_method {
+                                        ConnectionMethod::Direct => {
+                                            if is_ipv6 {
+                                                GossipConnectionType::DirectIpv6
+                                            } else {
+                                                GossipConnectionType::DirectIpv4
+                                            }
+                                        }
+                                        ConnectionMethod::HolePunched => GossipConnectionType::HolePunched,
+                                        ConnectionMethod::Relayed => GossipConnectionType::Relayed,
+                                    };
+                                    epidemic_gossip.set_connection_type(gossip_peer_id, gossip_conn_type).await;
+                                }
+                            }
                             let connectivity_for_report = result.matrix.clone();
 
                             // Preserve inbound_verified if peer already had inbound connection
@@ -4292,6 +4332,16 @@ impl TestNode {
                                 {
                                     let mut stats = nat_stats.write().await;
                                     stats.relay_success += 1;
+                                }
+
+                                // Update epidemic gossip layer with relay connection type
+                                if let Ok(peer_bytes) = hex::decode(&candidate.peer_id) {
+                                    if peer_bytes.len() == 32 {
+                                        let mut arr = [0u8; 32];
+                                        arr.copy_from_slice(&peer_bytes);
+                                        let gossip_peer_id = GossipPeerId::new(arr);
+                                        epidemic_gossip.set_connection_type(gossip_peer_id, GossipConnectionType::Relayed).await;
+                                    }
                                 }
 
                                 let now = Instant::now();

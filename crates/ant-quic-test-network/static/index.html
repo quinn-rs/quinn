@@ -1351,6 +1351,50 @@
                         <span class="value cyan" id="gossip-relays">0</span>
                     </div>
                 </div>
+                <div class="gossip-component">
+                    <h4>CRDT Sync</h4>
+                    <div class="gossip-stat">
+                        <span class="label">Entries</span>
+                        <span class="value green" id="crdt-entries">0</span>
+                    </div>
+                    <div class="gossip-stat">
+                        <span class="label">Merges</span>
+                        <span class="value cyan" id="crdt-merges">0</span>
+                    </div>
+                </div>
+                <div class="gossip-component">
+                    <h4>Coordinator</h4>
+                    <div class="gossip-stat">
+                        <span class="label">Active</span>
+                        <span class="value green" id="coord-active">0</span>
+                    </div>
+                    <div class="gossip-stat">
+                        <span class="label">Success</span>
+                        <span class="value cyan" id="coord-success">0</span>
+                    </div>
+                </div>
+                <div class="gossip-component">
+                    <h4>Groups</h4>
+                    <div class="gossip-stat">
+                        <span class="label">Count</span>
+                        <span class="value purple" id="groups-count">0</span>
+                    </div>
+                    <div class="gossip-stat">
+                        <span class="label">Members</span>
+                        <span class="value cyan" id="groups-members">0</span>
+                    </div>
+                </div>
+                <div class="gossip-component">
+                    <h4>Rendezvous</h4>
+                    <div class="gossip-stat">
+                        <span class="label">Registrations</span>
+                        <span class="value green" id="rdv-registrations">0</span>
+                    </div>
+                    <div class="gossip-stat">
+                        <span class="label">Discoveries</span>
+                        <span class="value cyan" id="rdv-discoveries">0</span>
+                    </div>
+                </div>
             </div>
         </div>
         <div class="stat-card matrix-panel">
@@ -2063,6 +2107,22 @@
             document.getElementById('pt-eager').textContent = gossip.avg_plumtree_eager || 0;
             document.getElementById('pt-lazy').textContent = gossip.avg_plumtree_lazy || 0;
             document.getElementById('pt-msgs').textContent = formatNumber(gossip.plumtree_messages_sent || 0);
+
+            // CRDT stats (saorsa-gossip-crdt-sync)
+            document.getElementById('crdt-entries').textContent = formatNumber(gossip.total_crdt_entries || 0);
+            document.getElementById('crdt-merges').textContent = formatNumber(gossip.total_crdt_merges || 0);
+
+            // Coordinator stats (saorsa-gossip-coordinator)
+            document.getElementById('coord-active').textContent = gossip.total_coordinator_active || 0;
+            document.getElementById('coord-success').textContent = formatNumber(gossip.total_coordinator_success || 0);
+
+            // Groups stats (saorsa-gossip-groups)
+            document.getElementById('groups-count').textContent = gossip.total_groups_count || 0;
+            document.getElementById('groups-members').textContent = gossip.total_groups_members || 0;
+
+            // Rendezvous stats (saorsa-gossip-rendezvous)
+            document.getElementById('rdv-registrations').textContent = formatNumber(gossip.total_rendezvous_registrations || 0);
+            document.getElementById('rdv-discoveries').textContent = formatNumber(gossip.total_rendezvous_discoveries || 0);
         }
 
         // Fetch and update connectivity matrix
