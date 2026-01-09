@@ -218,6 +218,10 @@ async fn main() -> anyhow::Result<()> {
 
         if use_quiet_mode && !args.quiet {
             eprintln!("INFO: No TTY detected, falling back to quiet mode");
+            // CRITICAL: Initialize tracing for auto-detected quiet mode
+            // The initial check at line 159 only inits when --quiet is explicit,
+            // but when running as a systemd service without TTY, we also need logging!
+            tracing_subscriber::fmt::init();
         }
 
         if use_quiet_mode {
