@@ -46,7 +46,7 @@ use tokio::sync::RwLock;
 
 use crate::VarInt;
 use crate::masque::{
-    Capsule, CompressedDatagram, CompressionAck, CompressionAssign, CompressionClose, ConnectError,
+    Capsule, CompressedDatagram, CompressionAck, CompressionAssign, CompressionClose,
     ConnectUdpRequest, ConnectUdpResponse, ContextManager, Datagram, UncompressedDatagram,
 };
 use crate::relay::error::{RelayError, RelayResult, SessionErrorKind};

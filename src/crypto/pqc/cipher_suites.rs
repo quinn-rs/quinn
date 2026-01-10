@@ -16,10 +16,7 @@
 //!
 //! This is a greenfield network with no legacy compatibility requirements.
 
-use rustls::{
-    CipherSuite, NamedGroup, SignatureScheme, SupportedCipherSuite,
-    crypto::{ActiveKeyExchange, SupportedKxGroup},
-};
+use rustls::{CipherSuite, NamedGroup, SignatureScheme};
 
 /// Pure PQC named groups for key exchange
 ///

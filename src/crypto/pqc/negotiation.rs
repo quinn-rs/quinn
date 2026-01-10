@@ -19,7 +19,6 @@
 use crate::crypto::pqc::{
     config::PqcConfig,
     tls_extensions::{NamedGroup, SignatureScheme},
-    types::*,
 };
 use std::collections::HashSet;
 use tracing::{debug, info, trace, warn};

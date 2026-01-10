@@ -61,7 +61,7 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use thiserror::Error;
 
 use crate::VarInt;
-use crate::coding::{self, Codec};
+use crate::coding::Codec;
 
 /// The protocol identifier for Extended CONNECT
 pub const CONNECT_UDP_PROTOCOL: &str = "connect-udp";

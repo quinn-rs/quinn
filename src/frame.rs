@@ -1983,10 +1983,7 @@ mod test {
     // NAT frame interoperability tests
     mod nat_frame_interop {
         use super::*;
-        use crate::frame::{
-            nat_compat::*,
-            rfc_nat_traversal::{RfcAddAddress, RfcPunchMeNow, RfcRemoveAddress},
-        };
+        use crate::frame::nat_compat::*;
 
         #[test]
         fn test_add_address_conversions() {

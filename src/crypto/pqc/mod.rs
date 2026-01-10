@@ -105,25 +105,6 @@ use types::{
 };
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_pqc_module_imports() {
-        // Verify all submodules are accessible
-        use crate::crypto::pqc::{ml_dsa, ml_kem, types};
-
-        // This test just verifies compilation
-    }
-
-    #[test]
-    fn test_aws_lc_pqc_available() {
-        // Verify aws-lc-rs PQC APIs are always available
-        // Note: aws-lc-rs may not export these directly, we'll verify in implementation
-    }
-}
-
-#[cfg(test)]
 mod performance_tests {
     use super::*;
     use std::time::Instant;

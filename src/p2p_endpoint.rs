@@ -64,7 +64,7 @@ use crate::connection_strategy::{
     ConnectionMethod, ConnectionStage, ConnectionStrategy, StrategyConfig,
 };
 use crate::crypto::raw_public_keys::key_utils::{
-    MlDsaPublicKey, MlDsaSecretKey, derive_peer_id_from_public_key, generate_ml_dsa_keypair,
+    derive_peer_id_from_public_key, generate_ml_dsa_keypair,
 };
 use crate::nat_traversal_api::{
     NatTraversalEndpoint, NatTraversalError, NatTraversalEvent, NatTraversalStatistics, PeerId,
@@ -606,7 +606,6 @@ impl P2pEndpoint {
         peer_id: Option<PeerId>,
     ) -> Result<PeerConnection, EndpointError> {
         use std::net::IpAddr;
-        use tokio::time::{Duration, timeout};
 
         if self.shutdown.load(Ordering::SeqCst) {
             return Err(EndpointError::ShuttingDown);

@@ -12,10 +12,7 @@
 
 use std::sync::Arc;
 
-use rustls::{
-    CipherSuite, Error as TlsError, NamedGroup, SignatureScheme,
-    crypto::{CryptoProvider, SupportedKxGroup},
-};
+use rustls::crypto::CryptoProvider;
 
 use crate::crypto::pqc::types::PqcError;
 

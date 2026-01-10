@@ -8,7 +8,7 @@
 use crate::TransportError;
 use crate::VarInt;
 use crate::frame;
-use crate::transport_parameters::{Side, TransportParameterId, TransportParameters};
+use crate::transport_parameters::{Side, TransportParameters};
 use tracing::error;
 
 /// Enhanced error handling for transport parameter validation

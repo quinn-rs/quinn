@@ -28,7 +28,7 @@ use thiserror::Error;
 
 use crate::{nat_traversal_api::PeerId, shared::ConnectionId};
 
-use aws_lc_rs::aead::{AES_256_GCM, Aad, LessSafeKey, NONCE_LEN, Nonce, UnboundKey};
+use aws_lc_rs::aead::{AES_256_GCM, Aad, LessSafeKey, Nonce, UnboundKey};
 
 /// A 256-bit key used for encrypting and authenticating retry tokens.
 /// Used with AES-256-GCM for authenticated encryption of token contents.

@@ -29,8 +29,6 @@ mod tests {
     };
     use tracing::Level;
 
-    use std::sync::{Arc, Mutex};
-
     // Removed unused mock collector scaffolding
 
     #[test]

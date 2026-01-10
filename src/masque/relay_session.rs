@@ -30,7 +30,6 @@
 //! let session = RelaySession::new(config, public_addr);
 //! ```
 
-use bytes::Bytes;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -40,7 +39,7 @@ use std::time::{Duration, Instant};
 use crate::VarInt;
 use crate::masque::{
     Capsule, CompressionAck, CompressionAssign, CompressionClose, ContextError, ContextManager,
-    ContextState, Datagram, UncompressedDatagram,
+    Datagram,
 };
 use crate::relay::error::{RelayError, RelayResult, SessionErrorKind};
 

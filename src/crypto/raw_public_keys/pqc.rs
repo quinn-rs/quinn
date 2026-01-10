@@ -17,7 +17,7 @@
 //!
 //! This is a greenfield network - Pure PQC from day one.
 
-use rustls::{CertificateError, DigitallySignedStruct, Error as TlsError, SignatureScheme};
+use rustls::{CertificateError, Error as TlsError, SignatureScheme};
 
 use crate::crypto::pqc::{
     MlDsaOperations,

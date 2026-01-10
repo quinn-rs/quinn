@@ -32,8 +32,8 @@ use super::{
     udp_transmit,
 };
 use crate::{
-    ConnectError, ConnectionError, ConnectionHandle, ConnectionStats, Dir, Duration, EndpointEvent,
-    Instant, Side, StreamEvent, StreamId, VarInt, congestion::Controller,
+    ConnectionError, ConnectionHandle, ConnectionStats, Dir, Duration, EndpointEvent, Instant,
+    Side, StreamEvent, StreamId, VarInt, congestion::Controller,
 };
 
 /// In-progress connection attempt future

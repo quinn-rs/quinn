@@ -12,7 +12,7 @@
 //! QUIC connections through NATs using sophisticated hole punching and
 //! coordination protocols.
 
-use std::{collections::HashMap, fmt, net::SocketAddr, sync::Arc, time::Duration};
+use std::{fmt, net::SocketAddr, sync::Arc, time::Duration};
 
 /// Creates a bind address that allows the OS to select a random available port
 ///
@@ -76,7 +76,7 @@ use parking_lot::{Mutex as ParkingMutex, RwLock as ParkingRwLock};
 
 use tokio::{
     net::UdpSocket,
-    sync::{mpsc, mpsc::error::TryRecvError},
+    sync::mpsc,
     time::{sleep, timeout},
 };
 
@@ -94,7 +94,7 @@ use crate::{
 };
 
 use crate::{
-    ClientConfig, ConnectionError, EndpointConfig, ServerConfig, Side, TransportConfig,
+    ClientConfig, EndpointConfig, ServerConfig, Side, TransportConfig,
     high_level::{Connection as InnerConnection, Endpoint as InnerEndpoint},
 };
 
@@ -2202,63 +2202,6 @@ impl NatTraversalEndpoint {
         let _ = event_tx.send(NatTraversalEvent::ConnectionLost { peer_id, reason });
     }
 
-    /// Handle a bidirectional stream
-    async fn handle_bi_stream(
-        _send: crate::high_level::SendStream,
-        _recv: crate::high_level::RecvStream,
-    ) {
-        // TODO: Implement bidirectional stream handling
-        // Note: read() and write_all() methods ARE available on RecvStream and SendStream
-
-        /* Original code that uses high-level API:
-        let mut buffer = vec![0u8; 1024];
-
-        loop {
-            match recv.read(&mut buffer).await {
-                Ok(Some(size)) => {
-                    debug!("Received {} bytes on bidirectional stream", size);
-
-                    // Echo back the data for now
-                    if let Err(e) = send.write_all(&buffer[..size]).await {
-                        debug!("Failed to write to stream: {}", e);
-                        break;
-                    }
-                }
-                Ok(None) => {
-                    debug!("Bidirectional stream closed by peer");
-                    break;
-                }
-                Err(e) => {
-                    debug!("Error reading from bidirectional stream: {}", e);
-                    break;
-                }
-            }
-        }
-        */
-    }
-
-    /// Handle a unidirectional stream
-    async fn handle_uni_stream(mut recv: crate::high_level::RecvStream) {
-        let mut buffer = vec![0u8; 1024];
-
-        loop {
-            match recv.read(&mut buffer).await {
-                Ok(Some(size)) => {
-                    debug!("Received {} bytes on unidirectional stream", size);
-                    // Process the data
-                }
-                Ok(None) => {
-                    debug!("Unidirectional stream closed by peer");
-                    break;
-                }
-                Err(e) => {
-                    debug!("Error reading from unidirectional stream: {}", e);
-                    break;
-                }
-            }
-        }
-    }
-
     /// Connect to a peer using NAT traversal
     pub async fn connect_to_peer(
         &self,
@@ -2843,73 +2786,6 @@ impl NatTraversalEndpoint {
 
         debug!("No observed external address available from any connection");
         Ok(None)
-    }
-
-    /// Handle incoming data from a connection
-    pub async fn handle_connection_data(
-        &self,
-        peer_id: PeerId,
-        connection: &InnerConnection,
-    ) -> Result<(), NatTraversalError> {
-        info!("Handling connection data from peer {:?}", peer_id);
-
-        // Spawn task to handle bidirectional streams
-        let connection_clone = connection.clone();
-        let peer_id_clone = peer_id;
-        tokio::spawn(async move {
-            loop {
-                match connection_clone.accept_bi().await {
-                    Ok((send, recv)) => {
-                        debug!(
-                            "Accepted bidirectional stream from peer {:?}",
-                            peer_id_clone
-                        );
-                        tokio::spawn(Self::handle_bi_stream(send, recv));
-                    }
-                    Err(ConnectionError::ApplicationClosed(_)) => {
-                        debug!("Connection closed by peer {:?}", peer_id_clone);
-                        break;
-                    }
-                    Err(e) => {
-                        debug!(
-                            "Error accepting bidirectional stream from peer {:?}: {}",
-                            peer_id_clone, e
-                        );
-                        break;
-                    }
-                }
-            }
-        });
-
-        // Spawn task to handle unidirectional streams
-        let connection_clone = connection.clone();
-        let peer_id_clone = peer_id;
-        tokio::spawn(async move {
-            loop {
-                match connection_clone.accept_uni().await {
-                    Ok(recv) => {
-                        debug!(
-                            "Accepted unidirectional stream from peer {:?}",
-                            peer_id_clone
-                        );
-                        tokio::spawn(Self::handle_uni_stream(recv));
-                    }
-                    Err(ConnectionError::ApplicationClosed(_)) => {
-                        debug!("Connection closed by peer {:?}", peer_id_clone);
-                        break;
-                    }
-                    Err(e) => {
-                        debug!(
-                            "Error accepting unidirectional stream from peer {:?}: {}",
-                            peer_id_clone, e
-                        );
-                        break;
-                    }
-                }
-            }
-        });
-
-        Ok(())
     }
 
     /// Generate a local peer ID

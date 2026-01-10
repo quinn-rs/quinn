@@ -18,7 +18,7 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::time::Duration;
 
-use futures_util::stream::{Stream, StreamExt};
+use futures_util::stream::Stream;
 use tokio::sync::mpsc;
 
 use crate::nat_traversal_api::PeerId;

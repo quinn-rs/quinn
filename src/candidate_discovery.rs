@@ -15,15 +15,13 @@
 //! - Bootstrap node health management and consensus
 
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::HashMap,
     net::{IpAddr, SocketAddr},
     sync::Arc,
     time::{Duration, Instant},
 };
 
 use tracing::{debug, error, info, warn};
-
-use crate::Connection;
 
 use crate::{
     connection::nat_traversal::{CandidateSource, CandidateState},
@@ -106,14 +104,7 @@ impl DiscoveryCandidate {
 
 /// Per-peer discovery session containing all state for a single peer's discovery
 #[derive(Debug)]
-
 pub struct DiscoverySession {
-    /// Peer ID for this discovery session
-    #[allow(dead_code)]
-    peer_id: PeerId,
-    /// Unique session identifier
-    #[allow(dead_code)]
-    session_id: u64,
     /// Current discovery phase
     current_phase: DiscoveryPhase,
     /// Session start time
@@ -122,9 +113,6 @@ pub struct DiscoverySession {
     discovered_candidates: Vec<DiscoveryCandidate>,
     /// Discovery statistics
     statistics: DiscoveryStatistics,
-    /// Port allocation history (legacy, unused)
-    #[allow(dead_code)]
-    allocation_history: VecDeque<PortAllocationEvent>,
 }
 
 /// Main candidate discovery manager coordinating all discovery phases
@@ -137,18 +125,10 @@ pub struct CandidateDiscoveryManager {
     /// tokio runtime deadlocks. parking_lot locks are faster, don't poison,
     /// and have fair locking semantics.
     interface_discovery: Arc<parking_lot::Mutex<Box<dyn NetworkInterfaceDiscovery + Send>>>,
-    // Symmetric NAT predictor removed; minimal flow does not require it
-    // Bootstrap node manager removed; minimal flow does not require it
-    /// Discovery result cache (shared)
-    #[allow(dead_code)]
-    cache: DiscoveryCache,
     /// Active discovery sessions per peer
     active_sessions: HashMap<PeerId, DiscoverySession>,
     /// Cached local interface results (shared across all sessions)
     cached_local_candidates: Option<(Instant, Vec<ValidatedCandidate>)>,
-    /// Cache duration for local candidates
-    #[allow(dead_code)]
-    local_cache_duration: Duration,
 }
 
 /// Configuration for candidate discovery behavior
@@ -305,45 +285,6 @@ pub struct ServerReflexiveResponse {
     pub timestamp: Instant,
 }
 
-// Removed PatternAnalysisState (not used)
-
-/// Port allocation event for pattern analysis
-#[derive(Debug, Clone, PartialEq)]
-pub struct PortAllocationEvent {
-    pub port: u16,
-    pub timestamp: Instant,
-    pub source_address: SocketAddr,
-}
-
-/// Detected port allocation pattern
-#[derive(Debug, Clone, PartialEq)]
-pub struct PortAllocationPattern {
-    pub pattern_type: AllocationPatternType,
-    pub base_port: u16,
-    pub stride: u16,
-    pub pool_boundaries: Option<(u16, u16)>,
-    pub confidence: f64,
-}
-
-/// Types of port allocation patterns
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum AllocationPatternType {
-    /// Sequential allocation (port + 1, port + 2, ...)
-    Sequential,
-    /// Fixed stride allocation (port + N, port + 2N, ...)
-    FixedStride,
-    /// Random allocation within range
-    Random,
-    /// Pool-based allocation
-    PoolBased,
-    /// Time-based allocation
-    TimeBased,
-    /// Unknown/unpredictable pattern
-    Unknown,
-}
-
-// Removed PortPatternAnalysis (not used)
-
 /// Unique identifier for candidates
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct CandidateId(pub u64);
@@ -492,15 +433,12 @@ impl Default for DiscoveryConfig {
 
 impl DiscoverySession {
     /// Create a new discovery session for a peer
-    fn new(peer_id: PeerId, _config: &DiscoveryConfig) -> Self {
+    fn new(_config: &DiscoveryConfig) -> Self {
         Self {
-            peer_id,
-            session_id: rand::random(),
             current_phase: DiscoveryPhase::Idle,
             started_at: Instant::now(),
             discovered_candidates: Vec::new(),
             statistics: DiscoveryStatistics::default(),
-            allocation_history: VecDeque::new(),
         }
     }
 }
@@ -511,16 +449,12 @@ impl CandidateDiscoveryManager {
         let interface_discovery = Arc::new(parking_lot::Mutex::new(
             create_platform_interface_discovery(),
         ));
-        let cache = DiscoveryCache::new(&config);
-        let local_cache_duration = config.interface_cache_ttl;
 
         Self {
             config,
             interface_discovery,
-            cache,
             active_sessions: HashMap::new(),
             cached_local_candidates: None,
-            local_cache_duration,
         }
     }
 
@@ -617,7 +551,7 @@ impl CandidateDiscoveryManager {
         info!("Starting candidate discovery for peer {:?}", peer_id);
 
         // Create new session
-        let mut session = DiscoverySession::new(peer_id, &self.config);
+        let mut session = DiscoverySession::new(&self.config);
 
         // Start with local interface scanning
         session.current_phase = DiscoveryPhase::LocalInterfaceScanning {
@@ -1301,21 +1235,6 @@ pub struct NetworkInterface {
     pub is_up: bool,
     pub is_wireless: bool,
     pub mtu: Option<u16>,
-}
-
-/// Discovery result cache
-#[derive(Debug)]
-pub(crate) struct DiscoveryCache {
-    #[allow(dead_code)]
-    config: DiscoveryConfig,
-}
-
-impl DiscoveryCache {
-    pub(crate) fn new(config: &DiscoveryConfig) -> Self {
-        Self {
-            config: config.clone(),
-        }
-    }
 }
 
 /// Create platform-specific network interface discovery

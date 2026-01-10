@@ -52,7 +52,6 @@ use crate::crypto::pqc::types::{MlDsaPublicKey, MlDsaSecretKey};
 use tokio::sync::broadcast;
 use tracing::info;
 
-use crate::crypto::raw_public_keys::key_utils::derive_peer_id_from_public_key;
 use crate::host_identity::HostIdentity;
 use crate::nat_traversal_api::PeerId;
 use crate::node_config::NodeConfig;
@@ -740,6 +739,7 @@ impl Clone for Node {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::derive_peer_id_from_public_key;
 
     #[tokio::test]
     async fn test_node_new_default() {

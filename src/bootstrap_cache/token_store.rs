@@ -12,7 +12,6 @@ use crate::nat_traversal_api::PeerId;
 use crate::token::TokenStore;
 use bytes::Bytes;
 use std::collections::HashMap;
-use std::str::FromStr;
 use std::sync::{Arc, RwLock};
 use tracing::{debug, warn};
 

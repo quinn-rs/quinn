@@ -24,7 +24,6 @@
 //! The ciphertext contains the JSON-serialized CacheData.
 
 use super::entry::CachedPeer;
-use crate::nat_traversal_api::PeerId;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs::{self, File, OpenOptions};
@@ -616,6 +615,7 @@ mod peer_map_serde {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::PeerId;
     use crate::bootstrap_cache::entry::PeerSource;
     use tempfile::TempDir;
 

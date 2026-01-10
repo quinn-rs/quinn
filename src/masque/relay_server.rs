@@ -39,7 +39,6 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 
-use crate::VarInt;
 use crate::masque::{
     Capsule, ConnectUdpRequest, ConnectUdpResponse, Datagram, RelaySession, RelaySessionConfig,
     RelaySessionState,

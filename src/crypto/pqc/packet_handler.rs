@@ -17,13 +17,7 @@
 //! - Efficient fragmentation of large CRYPTO frames
 //! - Coalescing logic aware of PQC constraints
 
-use crate::{
-    MAX_UDP_PAYLOAD, MtuDiscoveryConfig, TransportError,
-    connection::Connection,
-    crypto::pqc::types::*,
-    frame::{self, Crypto},
-    packet::{PacketNumber, SpaceId},
-};
+use crate::{MAX_UDP_PAYLOAD, MtuDiscoveryConfig, frame::Crypto, packet::SpaceId};
 use std::cmp;
 use tracing::{debug, trace};
 

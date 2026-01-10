@@ -11,7 +11,7 @@
 //! This module provides comprehensive security checks for the PQC implementation
 //! to ensure compliance with NIST standards and prevent common vulnerabilities.
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use thiserror::Error;
 
 /// Security validation errors

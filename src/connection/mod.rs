@@ -70,7 +70,6 @@ use datagrams::DatagramState;
 pub use datagrams::{Datagrams, SendDatagramError};
 
 mod mtud;
-use mtud::MtuDiscovery;
 
 mod pacing;
 

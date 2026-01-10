@@ -6,7 +6,7 @@
 use std::{
     fs, io,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex, OnceLock},
+    sync::{Arc, Mutex},
 };
 
 /// Global trust runtime storage that allows resetting for tests
@@ -536,7 +536,6 @@ pub async fn recv_verify_binding(
     store: &dyn PinStore,
     policy: &TransportPolicy,
 ) -> Result<PeerId, TrustError> {
-    use tokio::io::AsyncReadExt;
     let mut stream = conn
         .accept_uni()
         .await

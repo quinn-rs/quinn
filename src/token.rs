@@ -18,7 +18,6 @@ use crate::{
     Duration, RESET_TOKEN_SIZE, ServerConfig, SystemTime, UNIX_EPOCH,
     coding::{BufExt, BufMutExt},
     crypto::{HandshakeTokenKey, HmacKey},
-    nat_traversal_api::PeerId,
     packet::InitialHeader,
     shared::ConnectionId,
     token_v2::{TokenKey, decode_retry_token},
