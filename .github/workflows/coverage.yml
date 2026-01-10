@@ -50,7 +50,6 @@ jobs:
       - name: Run coverage
         run: |
           cargo llvm-cov \
-            --features="rustls-aws-lc-rs" \
             --lib \
             --lcov \
             --output-path lcov.info \

@@ -114,8 +114,8 @@ jobs:
 
       - name: Run integration tests
         run: |
-          cargo test --test quick --features "test-utils" -- --test-threads=2 --skip auto_binding --skip binding_stream
-          cargo test --test standard --features "test-utils" -- --test-threads=2
+          cargo test --test quick -- --test-threads=2 --skip auto_binding --skip binding_stream
+          cargo test --test standard -- --test-threads=2
         shell: bash
 
   # Feature combination tests
@@ -134,16 +134,13 @@ jobs:
           key: features
 
       - name: Test minimal features
-        run: cargo test --lib --no-default-features --features "rustls-aws-lc-rs"
+        run: cargo test --lib --no-default-features
 
       - name: Test all features
         run: cargo test --lib --all-features
 
-      - name: Test aws-lc-rs crypto provider
-        run: |
-          cargo test --lib --no-default-features --features "rustls-aws-lc-rs"
-          cargo test --lib --no-default-features --features "rustls-aws-lc-rs,runtime-tokio"
-        continue-on-error: true  # aws-lc-rs has some PQC compatibility issues
+      - name: Test default features
+        run: cargo test --lib
 
   # Property-based tests
   property-tests:

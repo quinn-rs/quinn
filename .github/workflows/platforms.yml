@@ -176,7 +176,7 @@ jobs:
       - name: Check MSRV
         run: |
           cargo check --all-features
-          cargo check --no-default-features --features rustls-aws-lc-rs
+          cargo check --no-default-features
 
   summary:
     name: Summary

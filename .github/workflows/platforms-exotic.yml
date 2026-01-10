@@ -230,7 +230,7 @@ jobs:
     env:
       RUSTFLAGS: -Dwarnings
       # Skip features with compatibility issues
-      SKIP_FEATURES: ${{ matrix.os != 'ubuntu-latest' && 'rustls-aws-lc-rs,rustls-aws-lc-rs-fips,aws-lc-rs,aws-lc-rs-fips,pqc,property_testing' || 'rustls-aws-lc-rs,aws-lc-rs,pqc,property_testing' }}
+      SKIP_FEATURES: property_testing
 
     steps:
       - uses: actions/checkout@v4
@@ -244,7 +244,7 @@ jobs:
       - uses: taiki-e/install-action@cargo-hack
 
       - name: Check feature powerset
-        run: cargo hack check --feature-powerset --depth 2 --no-dev-deps --ignore-private --skip "${{env.SKIP_FEATURES}}" --include-features rustls-aws-lc-rs
+        run: cargo hack check --feature-powerset --depth 2 --no-dev-deps --ignore-private --skip "${{env.SKIP_FEATURES}}"
 
   # Summary job
   summary:

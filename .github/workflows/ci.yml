@@ -119,13 +119,13 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: NAT traversal tests
-        run: cargo test --lib nat_traversal --features test-utils -- --test-threads=2
+        run: cargo test --lib nat_traversal -- --test-threads=2
 
       - name: Candidate discovery tests
-        run: cargo test --lib candidate_discovery --features test-utils -- --test-threads=2
+        run: cargo test --lib candidate_discovery -- --test-threads=2
 
       - name: Connection establishment tests
-        run: cargo test --lib connection_establishment --features test-utils -- --test-threads=2
+        run: cargo test --lib connection_establishment -- --test-threads=2
 
   # MSRV verification
   msrv:
