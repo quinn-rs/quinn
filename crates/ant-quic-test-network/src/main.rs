@@ -143,8 +143,8 @@ EXAMPLES:
     );
 }
 
-// Use 8 worker threads to prevent thread starvation from blocking locks
-// This is a mitigation until std::sync::RwLock is replaced with tokio::sync::RwLock
+// Use 8 worker threads for better parallelism in network operations
+// Note: std::sync locks have been replaced with parking_lot locks to prevent deadlocks
 #[tokio::main(flavor = "multi_thread", worker_threads = 8)]
 async fn main() -> anyhow::Result<()> {
     // CRITICAL: Install rustls crypto provider before any TLS/QUIC operations

@@ -225,48 +225,40 @@ impl LogFilterBuilder {
 }
 
 /// Dynamic filter that can be updated at runtime
+///
+/// Uses `parking_lot::RwLock` instead of `std::sync::RwLock` to prevent
+/// tokio runtime deadlocks. parking_lot locks are faster, don't poison,
+/// and have fair locking semantics.
 pub struct DynamicLogFilter {
-    inner: std::sync::RwLock<LogFilter>,
+    inner: parking_lot::RwLock<LogFilter>,
 }
 
 impl DynamicLogFilter {
     /// Create a new dynamic filter
     pub fn new(filter: LogFilter) -> Self {
         Self {
-            inner: std::sync::RwLock::new(filter),
+            inner: parking_lot::RwLock::new(filter),
         }
     }
 
     /// Update the filter
-    #[allow(clippy::expect_used)]
     pub fn update<F>(&self, updater: F) -> Result<(), Box<dyn std::error::Error>>
     where
         F: FnOnce(&mut LogFilter) -> Result<(), Box<dyn std::error::Error>>,
     {
-        let mut filter = self
-            .inner
-            .write()
-            .expect("Mutex poisoning is unexpected in normal operation");
+        let mut filter = self.inner.write();
         updater(&mut filter)?;
         Ok(())
     }
 
     /// Check if should log
-    #[allow(clippy::unwrap_used, clippy::expect_used)]
     pub fn should_log(&self, target: &str, level: Level, message: &str) -> bool {
-        self.inner
-            .read()
-            .expect("Mutex poisoning is unexpected in normal operation")
-            .should_log(target, level, message)
+        self.inner.read().should_log(target, level, message)
     }
 
     /// Get level for target
-    #[allow(clippy::unwrap_used, clippy::expect_used)]
     pub fn level_for(&self, target: &str) -> Option<Level> {
-        self.inner
-            .read()
-            .expect("Mutex poisoning is unexpected in normal operation")
-            .level_for(target)
+        self.inner.read().level_for(target)
     }
 }
 

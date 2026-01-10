@@ -132,7 +132,11 @@ pub struct CandidateDiscoveryManager {
     /// Configuration for discovery behavior
     config: DiscoveryConfig,
     /// Platform-specific interface discovery (shared)
-    interface_discovery: Arc<std::sync::Mutex<Box<dyn NetworkInterfaceDiscovery + Send>>>,
+    ///
+    /// Uses `parking_lot::Mutex` instead of `std::sync::Mutex` to prevent
+    /// tokio runtime deadlocks. parking_lot locks are faster, don't poison,
+    /// and have fair locking semantics.
+    interface_discovery: Arc<parking_lot::Mutex<Box<dyn NetworkInterfaceDiscovery + Send>>>,
     // Symmetric NAT predictor removed; minimal flow does not require it
     // Bootstrap node manager removed; minimal flow does not require it
     /// Discovery result cache (shared)
@@ -515,7 +519,7 @@ impl CandidateDiscoveryManager {
     /// Create a new candidate discovery manager
     pub fn new(config: DiscoveryConfig) -> Self {
         let interface_discovery =
-            Arc::new(std::sync::Mutex::new(create_platform_interface_discovery()));
+            Arc::new(parking_lot::Mutex::new(create_platform_interface_discovery()));
         let cache = DiscoveryCache::new(&config);
         let local_cache_duration = config.interface_cache_ttl;
 
@@ -540,11 +544,7 @@ impl CandidateDiscoveryManager {
     /// Discover local network interface candidates synchronously
     pub fn discover_local_candidates(&mut self) -> Result<Vec<ValidatedCandidate>, DiscoveryError> {
         // Start interface scan
-        let mut interface_discovery = self
-            .interface_discovery
-            .lock()
-            .map_err(|e| DiscoveryError::NetworkError(format!("Mutex poisoned: {e}")))?;
-        interface_discovery.start_scan().map_err(|e| {
+        self.interface_discovery.lock().start_scan().map_err(|e| {
             DiscoveryError::NetworkError(format!("Failed to start interface scan: {e}"))
         })?;
 
@@ -557,11 +557,7 @@ impl CandidateDiscoveryManager {
                 return Err(DiscoveryError::DiscoveryTimeout);
             }
 
-            let scan_complete = self
-                .interface_discovery
-                .lock()
-                .map_err(|e| DiscoveryError::NetworkError(format!("Mutex poisoned: {e}")))?
-                .check_scan_complete();
+            let scan_complete = self.interface_discovery.lock().check_scan_complete();
 
             if let Some(interfaces) = scan_complete {
                 // Convert interfaces to candidates
@@ -663,13 +659,7 @@ impl CandidateDiscoveryManager {
             {
                 // Step 1: Start interface scan if just entering phase (within first 50ms)
                 if started_at.elapsed().as_millis() < 50 {
-                    let scan_result = match self.interface_discovery.lock() {
-                        Ok(mut interface_discovery) => interface_discovery.start_scan(),
-                        Err(e) => {
-                            error!("Interface discovery mutex poisoned: {}", e);
-                            continue;
-                        }
-                    };
+                    let scan_result = self.interface_discovery.lock().start_scan();
                     if let Err(e) = scan_result {
                         error!("Failed to start interface scan for {:?}: {}", peer_id, e);
                     } else {
@@ -679,13 +669,7 @@ impl CandidateDiscoveryManager {
                 }
 
                 // Step 2: Check if scanning is complete
-                let scan_complete_result = match self.interface_discovery.lock() {
-                    Ok(mut interface_discovery) => interface_discovery.check_scan_complete(),
-                    Err(e) => {
-                        error!("Interface discovery mutex poisoned: {}", e);
-                        continue;
-                    }
-                };
+                let scan_complete_result = self.interface_discovery.lock().check_scan_complete();
 
                 if let Some(interfaces) = scan_complete_result {
                     // Step 3: Process interfaces and add candidates
@@ -1128,13 +1112,7 @@ impl CandidateDiscoveryManager {
         // Start the scan if not already started
         // We check if the scan is at the very beginning (within first 10ms) to avoid repeated start_scan calls
         if started_at.elapsed().as_millis() < 10 {
-            let scan_result = match self.interface_discovery.lock() {
-                Ok(mut interface_discovery) => interface_discovery.start_scan(),
-                Err(e) => {
-                    error!("Interface discovery mutex poisoned: {}", e);
-                    return;
-                }
-            };
+            let scan_result = self.interface_discovery.lock().start_scan();
             match scan_result {
                 Ok(()) => {
                     debug!(
@@ -1161,13 +1139,7 @@ impl CandidateDiscoveryManager {
         }
 
         // Check if scanning is complete
-        let scan_complete_result = match self.interface_discovery.lock() {
-            Ok(mut interface_discovery) => interface_discovery.check_scan_complete(),
-            Err(e) => {
-                error!("Interface discovery mutex poisoned: {}", e);
-                return;
-            }
-        };
+        let scan_complete_result = self.interface_discovery.lock().check_scan_complete();
         if let Some(interfaces) = scan_complete_result {
             self.process_session_local_interfaces(session, interfaces, events, now);
         }

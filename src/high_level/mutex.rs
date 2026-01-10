@@ -26,9 +26,13 @@ mod tracking {
     }
 
     /// A Mutex which optionally allows to track the time a lock was held and
-    /// emit warnings in case of excessive lock times
+    /// emit warnings in case of excessive lock times.
+    ///
+    /// Uses `parking_lot::Mutex` instead of `std::sync::Mutex` to prevent
+    /// tokio runtime deadlocks. parking_lot locks are faster, don't poison,
+    /// and have fair locking semantics.
     pub(crate) struct Mutex<T> {
-        inner: std::sync::Mutex<Inner<T>>,
+        inner: parking_lot::Mutex<Inner<T>>,
     }
 
     impl<T: Debug> std::fmt::Debug for Mutex<T> {
@@ -40,7 +44,7 @@ mod tracking {
     impl<T> Mutex<T> {
         pub(crate) fn new(value: T) -> Self {
             Self {
-                inner: std::sync::Mutex::new(Inner {
+                inner: parking_lot::Mutex::new(Inner {
                     last_lock_owner: VecDeque::new(),
                     value,
                 }),
@@ -54,13 +58,7 @@ mod tracking {
             // We don't bother dispatching through Runtime::now because they're pure performance
             // diagnostics.
             let now = Instant::now();
-            let guard = self.inner.lock().unwrap_or_else(|poisoned| {
-                // Log the error but continue with the poisoned data
-                // This is safe because we're in a controlled environment and
-                // the poisoning indicates a panic in another thread, not data corruption
-                tracing::error!("Mutex poisoned while locking for {}: recovering", purpose);
-                poisoned.into_inner()
-            });
+            let guard = self.inner.lock();
 
             let lock_time = Instant::now();
             let elapsed = lock_time.duration_since(now);
@@ -81,7 +79,7 @@ mod tracking {
     }
 
     pub(crate) struct MutexGuard<'a, T> {
-        guard: std::sync::MutexGuard<'a, Inner<T>>,
+        guard: parking_lot::MutexGuard<'a, Inner<T>>,
         start_time: Instant,
         purpose: &'static str,
     }
@@ -132,37 +130,36 @@ mod non_tracking {
     use super::*;
 
     /// A Mutex which optionally allows to track the time a lock was held and
-    /// emit warnings in case of excessive lock times
+    /// emit warnings in case of excessive lock times.
+    ///
+    /// Uses `parking_lot::Mutex` instead of `std::sync::Mutex` to prevent
+    /// tokio runtime deadlocks. parking_lot locks are faster, don't poison,
+    /// and have fair locking semantics.
     #[derive(Debug)]
     pub(crate) struct Mutex<T> {
-        inner: std::sync::Mutex<T>,
+        inner: parking_lot::Mutex<T>,
     }
 
     impl<T> Mutex<T> {
         pub(crate) fn new(value: T) -> Self {
             Self {
-                inner: std::sync::Mutex::new(value),
+                inner: parking_lot::Mutex::new(value),
             }
         }
 
         /// Acquires the lock for a certain purpose
         ///
         /// The purpose will be recorded in the list of last lock owners
+        #[allow(unused_variables)]
         pub(crate) fn lock(&self, purpose: &'static str) -> MutexGuard<'_, T> {
             MutexGuard {
-                guard: self.inner.lock().unwrap_or_else(|poisoned| {
-                    // Log the error but continue with the poisoned data
-                    // This is safe because we're in a controlled environment and
-                    // the poisoning indicates a panic in another thread, not data corruption
-                    tracing::error!("Mutex poisoned while locking for {}: recovering", purpose);
-                    poisoned.into_inner()
-                }),
+                guard: self.inner.lock(),
             }
         }
     }
 
     pub(crate) struct MutexGuard<'a, T> {
-        guard: std::sync::MutexGuard<'a, T>,
+        guard: parking_lot::MutexGuard<'a, T>,
     }
 
     impl<T> Deref for MutexGuard<'_, T> {
