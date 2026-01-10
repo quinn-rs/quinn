@@ -1140,6 +1140,20 @@ impl NatTraversalEndpoint {
         peer_id: PeerId,
         coordinator: SocketAddr,
     ) -> Result<(), NatTraversalError> {
+        // CRITICAL: Check for existing active session FIRST to prevent race conditions.
+        // Multiple concurrent calls for the same peer would otherwise:
+        // 1. Each create a new session
+        // 2. Each insert into DashMap (replacing previous)
+        // 3. Then fail in start_discovery() with "already in progress"
+        // This race condition can cause resource leaks and potential deadlocks.
+        if self.active_sessions.contains_key(&peer_id) {
+            debug!(
+                "NAT traversal already in progress for peer {:?}, skipping duplicate request",
+                peer_id
+            );
+            return Ok(()); // Already handling this peer, not an error
+        }
+
         info!(
             "Starting NAT traversal to peer {:?} via coordinator {}",
             peer_id, coordinator
