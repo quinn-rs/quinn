@@ -162,60 +162,46 @@ jobs:
           - os: ubuntu-24.04
             target: x86_64-unknown-linux-gnu
             binary: ant-quic
-            test_binary: ant-quic-test
             archive: ant-quic-x86_64-linux.tar.gz
-            test_archive: ant-quic-test-x86_64-linux.tar.gz
 
           # Linux musl (static, Alpine-compatible)
           - os: ubuntu-24.04
             target: x86_64-unknown-linux-musl
             binary: ant-quic
-            test_binary: ant-quic-test
             archive: ant-quic-x86_64-linux-musl.tar.gz
-            test_archive: ant-quic-test-x86_64-linux-musl.tar.gz
             use-cross: true
 
           # Linux ARM64
           - os: ubuntu-24.04
             target: aarch64-unknown-linux-gnu
             binary: ant-quic
-            test_binary: ant-quic-test
             archive: ant-quic-aarch64-linux.tar.gz
-            test_archive: ant-quic-test-aarch64-linux.tar.gz
             use-cross: true
 
           # Linux ARMv7 (Raspberry Pi, etc.)
           - os: ubuntu-24.04
             target: armv7-unknown-linux-gnueabihf
             binary: ant-quic
-            test_binary: ant-quic-test
             archive: ant-quic-armv7-linux.tar.gz
-            test_archive: ant-quic-test-armv7-linux.tar.gz
             use-cross: true
 
           # macOS Intel
           - os: macos-latest
             target: x86_64-apple-darwin
             binary: ant-quic
-            test_binary: ant-quic-test
             archive: ant-quic-x86_64-macos.tar.gz
-            test_archive: ant-quic-test-x86_64-macos.tar.gz
 
           # macOS Apple Silicon
           - os: macos-latest
             target: aarch64-apple-darwin
             binary: ant-quic
-            test_binary: ant-quic-test
             archive: ant-quic-aarch64-macos.tar.gz
-            test_archive: ant-quic-test-aarch64-macos.tar.gz
 
           # Windows MSVC
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             binary: ant-quic.exe
-            test_binary: ant-quic-test.exe
             archive: ant-quic-x86_64-windows.zip
-            test_archive: ant-quic-test-x86_64-windows.zip
 
     steps:
       - name: Checkout
@@ -234,15 +220,6 @@ jobs:
           command: build
           target: ${{ matrix.target }}
           args: "--locked --release --bin ant-quic"
-          strip: true
-
-      - name: Build ant-quic-test (cross)
-        if: matrix.use-cross == true
-        uses: houseabsolute/actions-rust-cross@v1
-        with:
-          command: build
-          target: ${{ matrix.target }}
-          args: "--locked --release -p ant-quic-test-network --bin ant-quic-test"
           strip: true
 
       # Native builds for non-cross targets
@@ -269,17 +246,11 @@ jobs:
         run: cargo build --release --target ${{ matrix.target }} --bin ant-quic
         shell: bash
 
-      - name: Build ant-quic-test (native)
-        if: matrix.use-cross != true
-        run: cargo build --release --target ${{ matrix.target }} -p ant-quic-test-network --bin ant-quic-test
-        shell: bash
-
       - name: Strip binaries (Unix, native builds only)
         if: matrix.os != 'windows-latest' && matrix.use-cross != true
         run: |
           if command -v strip &> /dev/null; then
             strip target/${{ matrix.target }}/release/${{ matrix.binary }} || true
-            strip target/${{ matrix.target }}/release/${{ matrix.test_binary }} || true
           fi
 
       # macOS Code Signing
@@ -313,15 +284,10 @@ jobs:
           codesign --force --options runtime --sign "$MACOS_SIGNING_IDENTITY" \
             target/${{ matrix.target }}/release/${{ matrix.binary }}
 
-          # Sign the test binary
-          codesign --force --options runtime --sign "$MACOS_SIGNING_IDENTITY" \
-            target/${{ matrix.target }}/release/${{ matrix.test_binary }}
-
-          # Verify signatures
+          # Verify signature
           codesign --verify --verbose target/${{ matrix.target }}/release/${{ matrix.binary }}
-          codesign --verify --verbose target/${{ matrix.target }}/release/${{ matrix.test_binary }}
 
-          echo "✅ Binaries signed successfully"
+          echo "✅ Binary signed successfully"
 
       - name: Notarize macOS Binaries
         if: matrix.os == 'macos-latest' && env.MACOS_NOTARIZATION_APPLE_ID != ''
@@ -333,7 +299,6 @@ jobs:
           # Create ZIP for notarization (required format)
           cd target/${{ matrix.target }}/release
           zip ant-quic-notarize.zip ${{ matrix.binary }}
-          zip ant-quic-test-notarize.zip ${{ matrix.test_binary }}
 
           # Submit for notarization
           echo "Submitting ant-quic for notarization..."
@@ -343,19 +308,11 @@ jobs:
             --team-id "$MACOS_NOTARIZATION_TEAM_ID" \
             --wait
 
-          echo "Submitting ant-quic-test for notarization..."
-          xcrun notarytool submit ant-quic-test-notarize.zip \
-            --apple-id "$MACOS_NOTARIZATION_APPLE_ID" \
-            --password "$MACOS_NOTARIZATION_PASSWORD" \
-            --team-id "$MACOS_NOTARIZATION_TEAM_ID" \
-            --wait
-
-          # Staple the notarization ticket to binaries
-          xcrun stapler staple ${{ matrix.binary }} || echo "Stapling main binary (may fail for CLI tools)"
-          xcrun stapler staple ${{ matrix.test_binary }} || echo "Stapling test binary (may fail for CLI tools)"
+          # Staple the notarization ticket to binary
+          xcrun stapler staple ${{ matrix.binary }} || echo "Stapling binary (may fail for CLI tools)"
 
           # Cleanup
-          rm -f ant-quic-notarize.zip ant-quic-test-notarize.zip
+          rm -f ant-quic-notarize.zip
           cd -
 
           echo "✅ Notarization complete"
@@ -368,14 +325,6 @@ jobs:
           cd -
           sha256sum ${{ matrix.archive }} > ${{ matrix.archive }}.sha256
 
-      - name: Package ant-quic-test (Unix)
-        if: matrix.os != 'windows-latest'
-        run: |
-          cd target/${{ matrix.target }}/release
-          tar czf ../../../${{ matrix.test_archive }} ${{ matrix.test_binary }}
-          cd -
-          sha256sum ${{ matrix.test_archive }} > ${{ matrix.test_archive }}.sha256
-
       - name: Package ant-quic (Windows)
         if: matrix.os == 'windows-latest'
         run: |
@@ -384,14 +333,6 @@ jobs:
           cd -
           certutil -hashfile ${{ matrix.archive }} SHA256 > ${{ matrix.archive }}.sha256
 
-      - name: Package ant-quic-test (Windows)
-        if: matrix.os == 'windows-latest'
-        run: |
-          cd target/${{ matrix.target }}/release
-          7z a ../../../${{ matrix.test_archive }} ${{ matrix.test_binary }}
-          cd -
-          certutil -hashfile ${{ matrix.test_archive }} SHA256 > ${{ matrix.test_archive }}.sha256
-
       - name: Upload ant-quic Artifact
         uses: actions/upload-artifact@v4
         with:
@@ -399,15 +340,6 @@ jobs:
           path: |
             ${{ matrix.archive }}
             ${{ matrix.archive }}.sha256
-          retention-days: 1
-
-      - name: Upload ant-quic-test Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.test_archive }}
-          path: |
-            ${{ matrix.test_archive }}
-            ${{ matrix.test_archive }}.sha256
           retention-days: 1
 
   build-docker:
@@ -518,11 +450,9 @@ jobs:
 
             ${{ needs.changelog.outputs.breaking_changes == 'true' && '⚠️ **This release contains breaking changes!**' || '' }}
 
-            ### Binaries
+            ### Overview
 
-            This release includes two binaries:
-            - **ant-quic** - Main QUIC P2P library binary
-            - **ant-quic-test** - Network test infrastructure with TUI and registry server
+            ant-quic is a QUIC transport protocol implementation with advanced NAT traversal capabilities, optimized for P2P networks and the Autonomi ecosystem.
 
             ### Installation
 
@@ -536,43 +466,20 @@ jobs:
 
             **Linux/macOS:**
             ```bash
-            # Main binary
             tar -xzf ant-quic-*.tar.gz
             chmod +x ant-quic
             ./ant-quic --help
-
-            # Test network binary
-            tar -xzf ant-quic-test-*.tar.gz
-            chmod +x ant-quic-test
-            ./ant-quic-test --help
             ```
 
             **Windows:**
             ```powershell
-            # Main binary
             Expand-Archive ant-quic-*.zip
             .\ant-quic.exe --help
-
-            # Test network binary
-            Expand-Archive ant-quic-test-*.zip
-            .\ant-quic-test.exe --help
             ```
 
             #### Docker
             ```bash
             docker pull ghcr.io/${{ github.repository }}:${{ needs.validate.outputs.version_number }}
-            ```
-
-            ### Test Network Usage
-
-            **Run as registry server (central coordination):**
-            ```bash
-            ant-quic-test --registry --port 8080
-            ```
-
-            **Run as test node (connect to network):**
-            ```bash
-            ant-quic-test --registry-url https://saorsa-1.saorsalabs.com
             ```
 
             ### What's Changed
