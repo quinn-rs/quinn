@@ -1511,10 +1511,21 @@ fn draw_connectivity_matrix_tab(frame: &mut Frame, app: &App, area: Rect) {
         ])
         .split(area);
 
-    // Summary header
+    // Summary header with NAT distribution
     let total_peers = app.connection_history.len();
     let connected = app.connected_peers.len();
-    let tested = app.connectivity_test.peer_results.len();
+
+    // Count peers by NAT difficulty (1=easy, 2=fair, 3=medium, 4=hard, 5=very hard)
+    let mut nat_easy = 0usize;
+    let mut nat_medium = 0usize;
+    let mut nat_hard = 0usize;
+    for entry in app.connection_history.values() {
+        match entry.nat_type.hole_punch_difficulty() {
+            1 | 2 => nat_easy += 1,
+            3 => nat_medium += 1,
+            _ => nat_hard += 1,
+        }
+    }
 
     let header_block = Block::default()
         .title(" CONNECTIVITY MATRIX ")
@@ -1522,18 +1533,31 @@ fn draw_connectivity_matrix_tab(frame: &mut Frame, app: &App, area: Rect) {
         .border_style(Style::default().fg(Color::Cyan));
 
     let header_line = Line::from(vec![
-        Span::raw("  Total Peers: "),
+        Span::raw("  Peers: "),
         Span::styled(
             format!("{}", total_peers),
             Style::default()
                 .fg(Color::White)
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::raw("  │  Connected: "),
-        Span::styled(format!("{}", connected), Style::default().fg(Color::Green)),
-        Span::raw("  │  Tested: "),
-        Span::styled(format!("{}", tested), Style::default().fg(Color::Yellow)),
-        Span::raw("  │  Press [T] to run connectivity test"),
+        Span::raw(" ("),
+        Span::styled(format!("{}✓", connected), Style::default().fg(Color::Green)),
+        Span::raw(")  │  NAT: "),
+        Span::styled(format!("{}E", nat_easy), Style::default().fg(Color::Green)),
+        Span::raw("/"),
+        Span::styled(format!("{}M", nat_medium), Style::default().fg(Color::Yellow)),
+        Span::raw("/"),
+        Span::styled(format!("{}H", nat_hard), Style::default().fg(Color::Red)),
+        Span::raw("  │  Local: "),
+        Span::styled(
+            app.local_node.nat_type.short_code(),
+            Style::default().fg(match app.local_node.nat_type.hole_punch_difficulty() {
+                1 | 2 => Color::Green,
+                3 => Color::Yellow,
+                _ => Color::Red,
+            }),
+        ),
+        Span::raw("  │  [T] Test"),
     ]);
 
     frame.render_widget(
@@ -1549,15 +1573,16 @@ fn draw_connectivity_matrix_tab(frame: &mut Frame, app: &App, area: Rect) {
 
     let header = Row::new(vec![
         Cell::from("Peer").style(Style::default().add_modifier(Modifier::BOLD)),
-        Cell::from("Status").style(Style::default().add_modifier(Modifier::BOLD)),
-        Cell::from("Out D4").style(Style::default().add_modifier(Modifier::BOLD)),
-        Cell::from("Out D6").style(Style::default().add_modifier(Modifier::BOLD)),
-        Cell::from("Out N").style(Style::default().add_modifier(Modifier::BOLD)),
-        Cell::from("Out R").style(Style::default().add_modifier(Modifier::BOLD)),
-        Cell::from("In D4").style(Style::default().add_modifier(Modifier::BOLD)),
-        Cell::from("In D6").style(Style::default().add_modifier(Modifier::BOLD)),
-        Cell::from("In N").style(Style::default().add_modifier(Modifier::BOLD)),
-        Cell::from("In R").style(Style::default().add_modifier(Modifier::BOLD)),
+        Cell::from("NAT").style(Style::default().add_modifier(Modifier::BOLD)),
+        Cell::from("St").style(Style::default().add_modifier(Modifier::BOLD)),
+        Cell::from("→D4").style(Style::default().add_modifier(Modifier::BOLD)),
+        Cell::from("→D6").style(Style::default().add_modifier(Modifier::BOLD)),
+        Cell::from("→N").style(Style::default().add_modifier(Modifier::BOLD)),
+        Cell::from("→R").style(Style::default().add_modifier(Modifier::BOLD)),
+        Cell::from("←D4").style(Style::default().add_modifier(Modifier::BOLD)),
+        Cell::from("←D6").style(Style::default().add_modifier(Modifier::BOLD)),
+        Cell::from("←N").style(Style::default().add_modifier(Modifier::BOLD)),
+        Cell::from("←R").style(Style::default().add_modifier(Modifier::BOLD)),
         Cell::from("RTT").style(Style::default().add_modifier(Modifier::BOLD)),
     ])
     .height(1)
@@ -1574,6 +1599,15 @@ fn draw_connectivity_matrix_tab(frame: &mut Frame, app: &App, area: Rect) {
                 crate::tui::types::ConnectionStatus::Coordinating => Color::Yellow,
             };
 
+            // NAT type color based on hole-punch difficulty (1=easy/green, 5=hard/red)
+            let nat_color = match entry.nat_type.hole_punch_difficulty() {
+                1 => Color::Green,      // Public/Full Cone - easy
+                2 => Color::LightGreen, // Address Restricted - fairly easy
+                3 => Color::Yellow,     // Port Restricted - medium
+                4 => Color::Rgb(255, 165, 0), // Symmetric/CGNAT - hard (orange)
+                _ => Color::Red,        // Double NAT/Mobile - very hard
+            };
+
             // Helper for outcome cell - accepts MethodOutcome by value (it's Copy)
             let outcome_cell = |outcome: crate::tui::types::MethodOutcome| -> Cell {
                 let (text, color) = match outcome {
@@ -1586,15 +1620,16 @@ fn draw_connectivity_matrix_tab(frame: &mut Frame, app: &App, area: Rect) {
 
             Row::new(vec![
                 Cell::from(entry.short_id.clone()).style(Style::default().fg(status_color)),
+                Cell::from(entry.nat_type.short_code()).style(Style::default().fg(nat_color)),
                 Cell::from(entry.status.emoji()).style(Style::default().fg(status_color)),
-                outcome_cell(entry.outbound.direct_ipv4), // Out D4
-                outcome_cell(entry.outbound.direct_ipv6), // Out D6
-                outcome_cell(entry.outbound.nat_best()),  // Out N (best of v4/v6)
-                outcome_cell(entry.outbound.relay_best()), // Out R (best of v4/v6)
-                outcome_cell(entry.inbound.direct_ipv4),  // In D4
-                outcome_cell(entry.inbound.direct_ipv6),  // In D6
-                outcome_cell(entry.inbound.nat_best()),   // In N (best of v4/v6)
-                outcome_cell(entry.inbound.relay_best()), // In R (best of v4/v6)
+                outcome_cell(entry.outbound.direct_ipv4), // →D4 (us → them)
+                outcome_cell(entry.outbound.direct_ipv6), // →D6
+                outcome_cell(entry.outbound.nat_best()),  // →N (best of v4/v6)
+                outcome_cell(entry.outbound.relay_best()), // →R (best of v4/v6)
+                outcome_cell(entry.inbound.direct_ipv4),  // ←D4 (them → us)
+                outcome_cell(entry.inbound.direct_ipv6),  // ←D6
+                outcome_cell(entry.inbound.nat_best()),   // ←N (best of v4/v6)
+                outcome_cell(entry.inbound.relay_best()), // ←R (best of v4/v6)
                 Cell::from(entry.rtt_string()).style(Style::default().fg(Color::Yellow)),
             ])
         })
@@ -1604,16 +1639,17 @@ fn draw_connectivity_matrix_tab(frame: &mut Frame, app: &App, area: Rect) {
         rows,
         [
             Constraint::Length(9), // Peer
-            Constraint::Length(6), // Status
-            Constraint::Length(6), // Out D4
-            Constraint::Length(6), // Out D6
-            Constraint::Length(6), // Out N
-            Constraint::Length(6), // Out R
-            Constraint::Length(6), // In D4
-            Constraint::Length(6), // In D6
-            Constraint::Length(6), // In N
-            Constraint::Length(6), // In R
-            Constraint::Min(6),    // RTT
+            Constraint::Length(4), // NAT
+            Constraint::Length(3), // Status
+            Constraint::Length(4), // →D4
+            Constraint::Length(4), // →D6
+            Constraint::Length(3), // →N
+            Constraint::Length(3), // →R
+            Constraint::Length(4), // ←D4
+            Constraint::Length(4), // ←D6
+            Constraint::Length(3), // ←N
+            Constraint::Length(3), // ←R
+            Constraint::Min(5),    // RTT
         ],
     )
     .header(header)

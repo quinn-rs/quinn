@@ -39,6 +39,8 @@ pub struct ConnectionHistoryEntry {
     pub connection_count: u32,
     /// Whether NAT traversal was verified
     pub nat_verified: bool,
+    /// Peer's NAT type (for connectivity matrix display)
+    pub nat_type: NatType,
 }
 
 /// Outcome for a connection method attempt.
@@ -256,6 +258,7 @@ impl ConnectionHistoryEntry {
             best_rtt: None,
             connection_count: 0,
             nat_verified: false,
+            nat_type: NatType::Unknown,
         }
     }
 
@@ -276,6 +279,7 @@ impl ConnectionHistoryEntry {
             best_rtt: peer.rtt,
             connection_count: 1,
             nat_verified: peer.is_nat_verified(),
+            nat_type: peer.nat_type,
         };
 
         entry.record_attempt(peer.direction, peer.method, true);
@@ -542,6 +546,8 @@ pub struct ConnectedPeer {
     pub data_rx: bool,
     /// NAT test state for connect-back verification
     pub nat_test_state: PeerNatTestState,
+    /// Peer's detected NAT type (from registry)
+    pub nat_type: NatType,
 }
 
 impl ConnectedPeer {
@@ -595,6 +601,7 @@ impl ConnectedPeer {
             data_tx: false,
             data_rx: false,
             nat_test_state: PeerNatTestState::Pending,
+            nat_type: NatType::Unknown,
         }
     }
 

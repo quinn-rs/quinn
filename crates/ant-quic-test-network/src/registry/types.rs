@@ -106,6 +106,25 @@ impl NatType {
         matches!(self, Self::Upnp | Self::NatPmp)
     }
 
+    /// Returns a short 2-4 character code for compact UI display.
+    #[must_use]
+    pub fn short_code(&self) -> &'static str {
+        match self {
+            Self::None => "PUB",
+            Self::FullCone => "FC",
+            Self::AddressRestricted => "AR",
+            Self::PortRestricted => "PR",
+            Self::Symmetric => "SYM",
+            Self::Unknown => "??",
+            Self::Cgnat => "CGN",
+            Self::DoubleNat => "2xN",
+            Self::HairpinNat => "HP",
+            Self::MobileCarrier => "MOB",
+            Self::Upnp => "UPN",
+            Self::NatPmp => "PMP",
+        }
+    }
+
     /// Returns the RFC 4787 mapping behavior for this NAT type.
     #[must_use]
     pub fn mapping_behavior(&self) -> MappingBehavior {
