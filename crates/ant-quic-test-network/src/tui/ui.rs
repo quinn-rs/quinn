@@ -1545,16 +1545,16 @@ fn draw_connectivity_matrix_tab(frame: &mut Frame, app: &App, area: Rect) {
         Span::raw(")  │  NAT: "),
         Span::styled(format!("{}E", nat_easy), Style::default().fg(Color::Green)),
         Span::raw("/"),
-        Span::styled(format!("{}M", nat_medium), Style::default().fg(Color::Yellow)),
+        Span::styled(format!("{}M", nat_medium), Style::default().fg(Color::Cyan)),
         Span::raw("/"),
-        Span::styled(format!("{}H", nat_hard), Style::default().fg(Color::Red)),
+        Span::styled(format!("{}H", nat_hard), Style::default().fg(Color::LightRed)),
         Span::raw("  │  Local: "),
         Span::styled(
             app.local_node.nat_type.short_code(),
             Style::default().fg(match app.local_node.nat_type.hole_punch_difficulty() {
                 1 | 2 => Color::Green,
-                3 => Color::Yellow,
-                _ => Color::Red,
+                3 => Color::Cyan,
+                _ => Color::LightRed,
             }),
         ),
         Span::raw("  │  [T] Test"),
@@ -1603,9 +1603,9 @@ fn draw_connectivity_matrix_tab(frame: &mut Frame, app: &App, area: Rect) {
             let nat_color = match entry.nat_type.hole_punch_difficulty() {
                 1 => Color::Green,      // Public/Full Cone - easy
                 2 => Color::LightGreen, // Address Restricted - fairly easy
-                3 => Color::Yellow,     // Port Restricted - medium
+                3 => Color::Cyan,       // Port Restricted - medium (cyan for visibility)
                 4 => Color::Rgb(255, 165, 0), // Symmetric/CGNAT - hard (orange)
-                _ => Color::Red,        // Double NAT/Mobile - very hard
+                _ => Color::LightRed,   // Double NAT/Mobile - very hard
             };
 
             // Helper for outcome cell - accepts MethodOutcome by value (it's Copy)
