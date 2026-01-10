@@ -335,6 +335,9 @@ impl TrackedPeer {
         peer.last_nat_test_time = self.last_nat_test_time;
         peer.last_connection_time = self.last_activity;
 
+        // Copy NAT type from registry peer info
+        peer.nat_type = self.info.nat_type;
+
         peer
     }
 }

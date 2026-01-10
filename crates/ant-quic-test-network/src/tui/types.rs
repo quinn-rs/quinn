@@ -306,6 +306,8 @@ impl ConnectionHistoryEntry {
         if peer.is_nat_verified() {
             self.nat_verified = true;
         }
+        // Update NAT type from peer (may have been discovered since last update)
+        self.nat_type = peer.nat_type;
     }
 
     pub fn record_attempt(
