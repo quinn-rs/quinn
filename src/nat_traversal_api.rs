@@ -3616,10 +3616,34 @@ impl NatTraversalEndpoint {
             }
         }
 
-        // Check active sessions for timeouts and state updates
-        // Use DashMap iteration for fine-grained concurrent access
+        // CRITICAL: Two-phase approach to prevent deadlocks
+        // Phase 1: Collect work to be done (hold DashMap entries briefly)
+        // Phase 2: Execute work (no DashMap entries held)
+        //
+        // This prevents deadlocks caused by calling blocking operations
+        // (like send_coordination_request which locks connections)
+        // while holding active_sessions entries.
+
+        // Deferred work items
+        struct DeferredCoordination {
+            peer_id: PeerId,
+            coordinator: SocketAddr,
+        }
+        struct DeferredHolePunch {
+            peer_id: PeerId,
+            candidates: Vec<CandidateAddress>,
+        }
+        struct DeferredValidation {
+            peer_id: PeerId,
+            address: SocketAddr,
+        }
+
+        let mut coordination_requests: Vec<DeferredCoordination> = Vec::new();
+        let mut hole_punch_requests: Vec<DeferredHolePunch> = Vec::new();
+        let mut validation_requests: Vec<DeferredValidation> = Vec::new();
+
+        // Phase 1: Collect work and update session states (brief DashMap access)
         for mut entry in self.active_sessions.iter_mut() {
-            let _peer_id = *entry.key();
             let session = entry.value_mut();
             let elapsed = now.duration_since(session.started_at);
 
@@ -3630,8 +3654,7 @@ impl NatTraversalEndpoint {
             if elapsed > timeout {
                 match session.phase {
                     TraversalPhase::Discovery => {
-                        // Get candidates from discovery manager
-                        // parking_lot::Mutex doesn't poison
+                        // Get candidates from discovery manager (safe - different lock)
                         let discovered_candidates = self
                             .discovery_manager
                             .lock()
@@ -3686,28 +3709,14 @@ impl NatTraversalEndpoint {
                         }
                     }
                     TraversalPhase::Coordination => {
-                        // Request coordination from bootstrap
+                        // DEFER: coordination request (accesses connections DashMap)
                         if let Some(coordinator) = self.select_coordinator() {
-                            match self.send_coordination_request(session.peer_id, coordinator) {
-                                Ok(_) => {
-                                    session.phase = TraversalPhase::Synchronization;
-                                    let event = NatTraversalEvent::CoordinationRequested {
-                                        peer_id: session.peer_id,
-                                        coordinator,
-                                    };
-                                    events.push(event.clone());
-                                    if let Some(ref callback) = self.event_callback {
-                                        callback(event);
-                                    }
-                                    info!(
-                                        "Coordination requested for peer {:?} via {}",
-                                        session.peer_id, coordinator
-                                    );
-                                }
-                                Err(e) => {
-                                    self.handle_phase_failure(session, now, &mut events, e);
-                                }
-                            }
+                            // Update phase now, execute request later
+                            session.phase = TraversalPhase::Synchronization;
+                            coordination_requests.push(DeferredCoordination {
+                                peer_id: session.peer_id,
+                                coordinator,
+                            });
                         } else {
                             self.handle_phase_failure(
                                 session,
@@ -3729,12 +3738,11 @@ impl NatTraversalEndpoint {
                             if let Some(ref callback) = self.event_callback {
                                 callback(event);
                             }
-                            // Initiate hole punching attempts
-                            if let Err(e) =
-                                self.initiate_hole_punching(session.peer_id, &session.candidates)
-                            {
-                                self.handle_phase_failure(session, now, &mut events, e);
-                            }
+                            // DEFER: hole punching (may access connections)
+                            hole_punch_requests.push(DeferredHolePunch {
+                                peer_id: session.peer_id,
+                                candidates: session.candidates.clone(),
+                            });
                         } else {
                             self.handle_phase_failure(
                                 session,
@@ -3759,10 +3767,11 @@ impl NatTraversalEndpoint {
                             if let Some(ref callback) = self.event_callback {
                                 callback(event);
                             }
-                            // Start path validation
-                            if let Err(e) = self.validate_path(session.peer_id, successful_path) {
-                                self.handle_phase_failure(session, now, &mut events, e);
-                            }
+                            // DEFER: path validation (may access connections)
+                            validation_requests.push(DeferredValidation {
+                                peer_id: session.peer_id,
+                                address: successful_path,
+                            });
                         } else {
                             self.handle_phase_failure(
                                 session,
@@ -3819,6 +3828,53 @@ impl NatTraversalEndpoint {
                     TraversalPhase::Failed => {
                         // Session has already failed, no action needed
                     }
+                }
+            }
+        }
+        // Phase 1 complete - all DashMap entries are now released
+
+        // Phase 2: Execute deferred work (no DashMap entries held)
+
+        // Execute coordination requests
+        for req in coordination_requests {
+            match self.send_coordination_request(req.peer_id, req.coordinator) {
+                Ok(_) => {
+                    let event = NatTraversalEvent::CoordinationRequested {
+                        peer_id: req.peer_id,
+                        coordinator: req.coordinator,
+                    };
+                    events.push(event.clone());
+                    if let Some(ref callback) = self.event_callback {
+                        callback(event);
+                    }
+                    info!(
+                        "Coordination requested for peer {:?} via {}",
+                        req.peer_id, req.coordinator
+                    );
+                }
+                Err(e) => {
+                    // Revert phase on failure
+                    if let Some(mut session) = self.active_sessions.get_mut(&req.peer_id) {
+                        self.handle_phase_failure(&mut session, now, &mut events, e);
+                    }
+                }
+            }
+        }
+
+        // Execute hole punch requests
+        for req in hole_punch_requests {
+            if let Err(e) = self.initiate_hole_punching(req.peer_id, &req.candidates) {
+                if let Some(mut session) = self.active_sessions.get_mut(&req.peer_id) {
+                    self.handle_phase_failure(&mut session, now, &mut events, e);
+                }
+            }
+        }
+
+        // Execute validation requests
+        for req in validation_requests {
+            if let Err(e) = self.validate_path(req.peer_id, req.address) {
+                if let Some(mut session) = self.active_sessions.get_mut(&req.peer_id) {
+                    self.handle_phase_failure(&mut session, now, &mut events, e);
                 }
             }
         }
@@ -4604,14 +4660,20 @@ impl NatTraversalEndpoint {
         .map_err(|_| NatTraversalError::Timeout)?
         .map_err(|e| NatTraversalError::ConnectionFailed(format!("Connection failed: {e}")))?;
 
-        // Store the established connection
-        self.connections.insert(peer_id, connection.clone());
-
-        // Update session state to completed
-        // DashMap provides lock-free .get_mut() that returns Option<RefMut<K, V>>
+        // CRITICAL: Lock ordering fix for deadlock prevention
+        // Always access active_sessions BEFORE connections to prevent A-B vs B-A deadlock.
+        // Pattern in poll(): active_sessions.iter_mut() -> connections access
+        // Pattern here must match: active_sessions access -> connections.insert()
+        //
+        // Step 1: Update session state first (acquires active_sessions lock)
         if let Some(mut session) = self.active_sessions.get_mut(&peer_id) {
             session.phase = TraversalPhase::Connected;
         }
+        // Step 2: Drop the active_sessions ref before accessing connections
+        // (ref is dropped when session goes out of scope at end of if block)
+
+        // Step 3: Now safe to insert into connections
+        self.connections.insert(peer_id, connection.clone());
 
         // Trigger success callback (we initiated connection attempt = Client side)
         if let Some(ref callback) = self.event_callback {

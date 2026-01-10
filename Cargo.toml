@@ -1,12 +1,11 @@
 [workspace]
 members = [
     ".",
-    "crates/ant-quic-test-network",
 ]
 
 [package]
 name = "ant-quic"
-version = "0.14.200"
+version = "0.14.201"
 edition = "2024"
 rust-version = "1.85.0"
 license = "MIT OR Apache-2.0"
