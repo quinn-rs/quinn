@@ -1298,13 +1298,6 @@ impl Connection {
         self.update_keys(None, false);
     }
 
-    // Compatibility wrapper for quinn < 0.11.7. Remove for 0.12.
-    #[doc(hidden)]
-    #[deprecated]
-    pub fn initiate_key_update(&mut self) {
-        self.force_key_update();
-    }
-
     /// Get a session reference
     pub fn crypto_session(&self) -> &dyn crypto::Session {
         &*self.crypto
