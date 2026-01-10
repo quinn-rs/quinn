@@ -1450,7 +1450,7 @@ impl EpidemicGossip {
         let mut groups_guard = self.groups_state.write().await;
         groups_guard
             .join_group(entity_name)
-            .map_err(|e| GossipError::Membership(e))
+            .map_err(GossipError::Membership)
     }
 
     /// Leave a group.

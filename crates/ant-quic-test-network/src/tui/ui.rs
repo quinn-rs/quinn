@@ -1569,8 +1569,8 @@ fn draw_connectivity_matrix_tab(frame: &mut Frame, app: &App, area: Rect) {
                 crate::tui::types::ConnectionStatus::Coordinating => Color::Yellow,
             };
 
-            // Helper for outcome cell
-            let outcome_cell = |outcome: &crate::tui::types::MethodOutcome| -> Cell {
+            // Helper for outcome cell - accepts MethodOutcome by value (it's Copy)
+            let outcome_cell = |outcome: crate::tui::types::MethodOutcome| -> Cell {
                 let (text, color) = match outcome {
                     crate::tui::types::MethodOutcome::Success => ("✓", Color::Green),
                     crate::tui::types::MethodOutcome::Failed => ("✗", Color::Red),
@@ -1582,14 +1582,14 @@ fn draw_connectivity_matrix_tab(frame: &mut Frame, app: &App, area: Rect) {
             Row::new(vec![
                 Cell::from(entry.short_id.clone()).style(Style::default().fg(status_color)),
                 Cell::from(entry.status.emoji()).style(Style::default().fg(status_color)),
-                outcome_cell(&entry.outbound.direct), // D4 (approx)
-                Cell::from("·").style(Style::default().fg(Color::DarkGray)), // D6
-                outcome_cell(&entry.outbound.nat),
-                outcome_cell(&entry.outbound.relay),
-                outcome_cell(&entry.inbound.direct),
-                Cell::from("·").style(Style::default().fg(Color::DarkGray)),
-                outcome_cell(&entry.inbound.nat),
-                outcome_cell(&entry.inbound.relay),
+                outcome_cell(entry.outbound.direct_ipv4),  // Out D4
+                outcome_cell(entry.outbound.direct_ipv6),  // Out D6
+                outcome_cell(entry.outbound.nat_best()),   // Out N (best of v4/v6)
+                outcome_cell(entry.outbound.relay_best()), // Out R (best of v4/v6)
+                outcome_cell(entry.inbound.direct_ipv4),   // In D4
+                outcome_cell(entry.inbound.direct_ipv6),   // In D6
+                outcome_cell(entry.inbound.nat_best()),    // In N (best of v4/v6)
+                outcome_cell(entry.inbound.relay_best()),  // In R (best of v4/v6)
                 Cell::from(entry.rtt_string()).style(Style::default().fg(Color::Yellow)),
             ])
         })

@@ -64,23 +64,49 @@ impl MethodOutcome {
     }
 }
 
-/// Per-direction connection outcomes.
+/// Per-direction connection outcomes with IPv4/IPv6 granularity.
+///
+/// Each connection method (direct, NAT traversal, relay) is tracked separately
+/// for IPv4 and IPv6, giving 6 distinct path outcomes.
 #[derive(Debug, Clone, Default)]
 pub struct DirectionalMethodStats {
     pub last_method: Option<ConnectionMethod>,
     pub attempts: u32,
     pub successes: u32,
     pub failures: u32,
-    pub direct: MethodOutcome,
-    pub nat: MethodOutcome,
-    pub relay: MethodOutcome,
-    pub used_ipv4: bool,
-    pub used_ipv6: bool,
+    /// Direct connection over IPv4
+    pub direct_ipv4: MethodOutcome,
+    /// Direct connection over IPv6
+    pub direct_ipv6: MethodOutcome,
+    /// NAT traversal (hole punching) over IPv4
+    pub nat_ipv4: MethodOutcome,
+    /// NAT traversal (hole punching) over IPv6
+    pub nat_ipv6: MethodOutcome,
+    /// Relayed connection over IPv4
+    pub relay_ipv4: MethodOutcome,
+    /// Relayed connection over IPv6
+    pub relay_ipv6: MethodOutcome,
 }
 
 impl DirectionalMethodStats {
-    /// Record an attempt outcome.
+    /// Record an attempt outcome with IP version.
+    ///
+    /// This is the primary method for recording connection outcomes.
+    /// It routes to the appropriate IPv4/IPv6 field based on the connection method.
     pub fn record(&mut self, method: ConnectionMethod, success: bool) {
+        // Default to IPv4 if IP version not specified
+        self.record_with_ip_version(method, success, false);
+    }
+
+    /// Record an attempt outcome with explicit IP version.
+    ///
+    /// Routes the outcome to the correct field based on (method, is_ipv6) combination.
+    pub fn record_with_ip_version(
+        &mut self,
+        method: ConnectionMethod,
+        success: bool,
+        is_ipv6: bool,
+    ) {
         self.attempts += 1;
         if success {
             self.successes += 1;
@@ -95,17 +121,17 @@ impl DirectionalMethodStats {
             MethodOutcome::Failed
         };
 
-        match method {
-            ConnectionMethod::Direct => {
-                Self::update_outcome(&mut self.direct, outcome);
-            }
-            ConnectionMethod::HolePunched => {
-                Self::update_outcome(&mut self.nat, outcome);
-            }
-            ConnectionMethod::Relayed => {
-                Self::update_outcome(&mut self.relay, outcome);
-            }
-        }
+        // Route to the correct field based on method and IP version
+        let slot = match (method, is_ipv6) {
+            (ConnectionMethod::Direct, false) => &mut self.direct_ipv4,
+            (ConnectionMethod::Direct, true) => &mut self.direct_ipv6,
+            (ConnectionMethod::HolePunched, false) => &mut self.nat_ipv4,
+            (ConnectionMethod::HolePunched, true) => &mut self.nat_ipv6,
+            (ConnectionMethod::Relayed, false) => &mut self.relay_ipv4,
+            (ConnectionMethod::Relayed, true) => &mut self.relay_ipv6,
+        };
+
+        Self::update_outcome(slot, outcome);
     }
 
     fn update_outcome(slot: &mut MethodOutcome, outcome: MethodOutcome) {
@@ -120,34 +146,53 @@ impl DirectionalMethodStats {
         }
     }
 
+    /// Compact summary showing all 6 path outcomes.
     pub fn summary_compact(&self) -> String {
         format!(
-            "D{}N{}R{}",
-            self.direct.symbol(),
-            self.nat.symbol(),
-            self.relay.symbol()
+            "D4{}D6{}N4{}N6{}R4{}R6{}",
+            self.direct_ipv4.symbol(),
+            self.direct_ipv6.symbol(),
+            self.nat_ipv4.symbol(),
+            self.nat_ipv6.symbol(),
+            self.relay_ipv4.symbol(),
+            self.relay_ipv6.symbol()
         )
     }
 
+    /// Check if any IPv4 path was tested.
     pub fn has_ipv4(&self) -> bool {
-        self.used_ipv4
+        self.direct_ipv4 != MethodOutcome::Unknown
+            || self.nat_ipv4 != MethodOutcome::Unknown
+            || self.relay_ipv4 != MethodOutcome::Unknown
     }
 
+    /// Check if any IPv6 path was tested.
     pub fn has_ipv6(&self) -> bool {
-        self.used_ipv6
+        self.direct_ipv6 != MethodOutcome::Unknown
+            || self.nat_ipv6 != MethodOutcome::Unknown
+            || self.relay_ipv6 != MethodOutcome::Unknown
     }
 
-    pub fn record_with_ip_version(
-        &mut self,
-        method: ConnectionMethod,
-        success: bool,
-        is_ipv6: bool,
-    ) {
-        self.record(method, success);
-        if is_ipv6 {
-            self.used_ipv6 = true;
-        } else {
-            self.used_ipv4 = true;
+    /// Get the best direct outcome (prefers success, then failure, then unknown).
+    pub fn direct_best(&self) -> MethodOutcome {
+        Self::best_of(self.direct_ipv4, self.direct_ipv6)
+    }
+
+    /// Get the best NAT outcome.
+    pub fn nat_best(&self) -> MethodOutcome {
+        Self::best_of(self.nat_ipv4, self.nat_ipv6)
+    }
+
+    /// Get the best relay outcome.
+    pub fn relay_best(&self) -> MethodOutcome {
+        Self::best_of(self.relay_ipv4, self.relay_ipv6)
+    }
+
+    fn best_of(a: MethodOutcome, b: MethodOutcome) -> MethodOutcome {
+        match (a, b) {
+            (MethodOutcome::Success, _) | (_, MethodOutcome::Success) => MethodOutcome::Success,
+            (MethodOutcome::Failed, _) | (_, MethodOutcome::Failed) => MethodOutcome::Failed,
+            _ => MethodOutcome::Unknown,
         }
     }
 }

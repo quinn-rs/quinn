@@ -1819,6 +1819,7 @@ impl TestNode {
         let connected_peers = Arc::clone(&self.connected_peers);
         let fully_tested_peers = Arc::clone(&self.fully_tested_peers);
         let max_peers = self.config.max_peers;
+        let epidemic_gossip = Arc::clone(&self.epidemic_gossip);
 
         tokio::spawn(async move {
             // Periodic cleanup and announcement ticker
@@ -1848,6 +1849,28 @@ impl TestNode {
                                             &announcement.addresses,
                                             announcement.is_public,
                                         );
+
+                                        // CRDT SYNC: Add to peer cache for distributed state sync
+                                        if let Ok(peer_bytes) = hex::decode(&announcement.peer_id) {
+                                            if peer_bytes.len() == 32 {
+                                                let mut peer_id_array = [0u8; 32];
+                                                peer_id_array.copy_from_slice(&peer_bytes);
+                                                let entry = crate::epidemic_gossip::PeerCacheEntry {
+                                                    peer_id: peer_id_array,
+                                                    addresses: announcement.addresses.clone(),
+                                                    last_seen: std::time::SystemTime::now()
+                                                        .duration_since(std::time::UNIX_EPOCH)
+                                                        .map(|d| d.as_millis() as u64)
+                                                        .unwrap_or(0),
+                                                    location: None,
+                                                };
+                                                epidemic_gossip.add_to_peer_cache(entry).await;
+                                                debug!(
+                                                    "Gossip: added peer {} to CRDT peer cache",
+                                                    peer_id_short
+                                                );
+                                            }
+                                        }
                                     }
 
                                     // Check if we should try to connect to this peer
@@ -1990,6 +2013,24 @@ impl TestNode {
                                             peer_info.is_public,
                                         );
 
+                                        // CRDT SYNC: Add to peer cache for distributed state sync
+                                        if let Ok(peer_bytes) = hex::decode(&peer_info.peer_id) {
+                                            if peer_bytes.len() == 32 {
+                                                let mut peer_id_array = [0u8; 32];
+                                                peer_id_array.copy_from_slice(&peer_bytes);
+                                                let entry = crate::epidemic_gossip::PeerCacheEntry {
+                                                    peer_id: peer_id_array,
+                                                    addresses: peer_info.addresses.clone(),
+                                                    last_seen: std::time::SystemTime::now()
+                                                        .duration_since(std::time::UNIX_EPOCH)
+                                                        .map(|d| d.as_millis() as u64)
+                                                        .unwrap_or(0),
+                                                    location: None,
+                                                };
+                                                epidemic_gossip.add_to_peer_cache(entry).await;
+                                            }
+                                        }
+
                                         // Check if already connected or at capacity for connection attempt
                                         let connected = connected_peers.read().await;
                                         let already_connected = connected.contains_key(&peer_info.peer_id);
@@ -2054,6 +2095,24 @@ impl TestNode {
                                             &peer_info.addresses,
                                             peer_info.is_public,
                                         );
+
+                                        // CRDT SYNC: Add to peer cache for distributed state sync
+                                        if let Ok(peer_bytes) = hex::decode(&peer_info.peer_id) {
+                                            if peer_bytes.len() == 32 {
+                                                let mut peer_id_array = [0u8; 32];
+                                                peer_id_array.copy_from_slice(&peer_bytes);
+                                                let entry = crate::epidemic_gossip::PeerCacheEntry {
+                                                    peer_id: peer_id_array,
+                                                    addresses: peer_info.addresses.clone(),
+                                                    last_seen: std::time::SystemTime::now()
+                                                        .duration_since(std::time::UNIX_EPOCH)
+                                                        .map(|d| d.as_millis() as u64)
+                                                        .unwrap_or(0),
+                                                    location: None,
+                                                };
+                                                epidemic_gossip.add_to_peer_cache(entry).await;
+                                            }
+                                        }
 
                                         // Check if we should attempt a connection
                                         let connected = connected_peers.read().await;
@@ -2410,6 +2469,10 @@ impl TestNode {
             let mut last_periodic = Instant::now();
             let periodic_interval = Duration::from_secs(30);
 
+            // CRDT sync and group publish interval: 5 minutes as user requested
+            let mut last_crdt_sync = Instant::now();
+            let crdt_sync_interval = Duration::from_secs(300);
+
             loop {
                 if shutdown.load(Ordering::SeqCst) {
                     break;
@@ -2431,6 +2494,49 @@ impl TestNode {
 
                                     // Add to gossip integration cache (addresses are already SocketAddr)
                                     gossip_integration.add_peer(&peer_id_hex, &addresses, true);
+
+                                    // PRESENCE: Add peer to CRDT and broadcast join to groups
+                                    {
+                                        let mut peer_id_array = [0u8; 32];
+                                        peer_id_array.copy_from_slice(peer_id.as_bytes());
+                                        let entry = crate::epidemic_gossip::PeerCacheEntry {
+                                            peer_id: peer_id_array,
+                                            addresses: addresses.clone(),
+                                            last_seen: std::time::SystemTime::now()
+                                                .duration_since(std::time::UNIX_EPOCH)
+                                                .map(|d| d.as_millis() as u64)
+                                                .unwrap_or(0),
+                                            location: None,
+                                        };
+                                        epidemic_gossip.add_to_peer_cache(entry).await;
+
+                                        // Publish presence event to "nat-events" group
+                                        #[derive(serde::Serialize)]
+                                        struct PresenceEvent {
+                                            event_type: String,
+                                            peer_id: String,
+                                            observer: String,
+                                            addresses: Vec<String>,
+                                            timestamp_ms: u64,
+                                        }
+                                        let presence = PresenceEvent {
+                                            event_type: "peer_joined".to_string(),
+                                            peer_id: peer_id_hex.clone(),
+                                            observer: our_peer_id_hex.clone(),
+                                            addresses: addresses.iter().map(|a| a.to_string()).collect(),
+                                            timestamp_ms: std::time::SystemTime::now()
+                                                .duration_since(std::time::UNIX_EPOCH)
+                                                .map(|d| d.as_millis() as u64)
+                                                .unwrap_or(0),
+                                        };
+                                        if let Ok(payload) = serde_json::to_vec(&presence) {
+                                            if let Ok(topic_id) = saorsa_gossip_types::TopicId::from_entity("nat-events") {
+                                                if epidemic_gossip.is_group_member(&topic_id).await {
+                                                    let _ = epidemic_gossip.group_publish(topic_id, payload).await;
+                                                }
+                                            }
+                                        }
+                                    }
 
                                     // Try to connect via QUIC if not already connected
                                     {
@@ -2461,7 +2567,33 @@ impl TestNode {
                                         "Epidemic: peer left (SWIM dead): {}",
                                         &peer_id_hex[..8.min(peer_id_hex.len())]
                                     );
-                                    // No record_failure method - just log the event
+
+                                    // PRESENCE: Publish leave event to "nat-events" group
+                                    {
+                                        #[derive(serde::Serialize)]
+                                        struct PresenceEvent {
+                                            event_type: String,
+                                            peer_id: String,
+                                            observer: String,
+                                            timestamp_ms: u64,
+                                        }
+                                        let presence = PresenceEvent {
+                                            event_type: "peer_left".to_string(),
+                                            peer_id: peer_id_hex.clone(),
+                                            observer: our_peer_id_hex.clone(),
+                                            timestamp_ms: std::time::SystemTime::now()
+                                                .duration_since(std::time::UNIX_EPOCH)
+                                                .map(|d| d.as_millis() as u64)
+                                                .unwrap_or(0),
+                                        };
+                                        if let Ok(payload) = serde_json::to_vec(&presence) {
+                                            if let Ok(topic_id) = saorsa_gossip_types::TopicId::from_entity("nat-events") {
+                                                if epidemic_gossip.is_group_member(&topic_id).await {
+                                                    let _ = epidemic_gossip.group_publish(topic_id, payload).await;
+                                                }
+                                            }
+                                        }
+                                    }
                                 }
                                 EpidemicEvent::PeerSuspect { peer_id } => {
                                     let peer_id_hex = hex::encode(peer_id.as_bytes());
@@ -2655,6 +2787,70 @@ impl TestNode {
                                     );
                                 }
                             }
+                        }
+                    }
+                }
+
+                // CRDT sync and group gossip: every 5 minutes
+                // This broadcasts our node state to gossip groups for distributed testing
+                if last_crdt_sync.elapsed() >= crdt_sync_interval {
+                    last_crdt_sync = Instant::now();
+
+                    if epidemic_gossip.is_running() {
+                        // Get our CRDT stats for broadcast
+                        let crdt_stats = epidemic_gossip.crdt_stats().await;
+                        let stats = epidemic_gossip.stats().await;
+
+                        // Build gossip health message with CRDT info
+                        #[derive(serde::Serialize)]
+                        struct GossipHealthBroadcast {
+                            peer_id: String,
+                            crdt_entries: usize,
+                            crdt_merges: u64,
+                            hyparview_active: usize,
+                            hyparview_passive: usize,
+                            swim_alive: usize,
+                            swim_suspect: usize,
+                            timestamp_ms: u64,
+                        }
+
+                        let health = GossipHealthBroadcast {
+                            peer_id: our_peer_id_hex.clone(),
+                            crdt_entries: crdt_stats.entries,
+                            crdt_merges: crdt_stats.merges,
+                            hyparview_active: stats.hyparview.active_view_size,
+                            hyparview_passive: stats.hyparview.passive_view_size,
+                            swim_alive: stats.swim.alive_count,
+                            swim_suspect: stats.swim.suspect_count,
+                            timestamp_ms: std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .map(|d| d.as_millis() as u64)
+                                .unwrap_or(0),
+                        };
+
+                        if let Ok(payload) = serde_json::to_vec(&health) {
+                            // Publish to "gossip-health" group if we're a member
+                            if let Ok(topic_id) = saorsa_gossip_types::TopicId::from_entity("gossip-health") {
+                                if epidemic_gossip.is_group_member(&topic_id).await {
+                                    if let Err(e) = epidemic_gossip.group_publish(topic_id, payload.clone()).await {
+                                        debug!("Failed to publish gossip-health: {}", e);
+                                    } else {
+                                        info!(
+                                            "CRDT sync: published gossip-health (entries={}, merges={}) to group",
+                                            crdt_stats.entries, crdt_stats.merges
+                                        );
+                                    }
+                                }
+                            }
+                        }
+
+                        // Also broadcast CRDT peer cache entries to peers
+                        let peer_entries = epidemic_gossip.get_peer_cache_entries().await;
+                        if !peer_entries.is_empty() {
+                            debug!(
+                                "CRDT sync: {} peer cache entries to share",
+                                peer_entries.len()
+                            );
                         }
                     }
                 }
