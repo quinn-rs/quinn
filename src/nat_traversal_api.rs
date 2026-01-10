@@ -4020,8 +4020,10 @@ impl NatTraversalEndpoint {
                     let external_addr = our_external_address;
 
                     tokio::spawn(async move {
-                        match connecting.await {
-                            Ok(connection) => {
+                        // Use 10-second timeout to prevent indefinite waiting if coordinator is frozen
+                        let connect_timeout = Duration::from_secs(10);
+                        match timeout(connect_timeout, connecting).await {
+                            Ok(Ok(connection)) => {
                                 info!("Connected to coordinator {}", coordinator);
 
                                 // Generate a peer ID for the bootstrap node
@@ -4053,8 +4055,14 @@ impl NatTraversalEndpoint {
                                     }
                                 }
                             }
-                            Err(e) => {
+                            Ok(Err(e)) => {
                                 warn!("Failed to connect to coordinator {}: {}", coordinator, e);
+                            }
+                            Err(_) => {
+                                warn!(
+                                    "Connection to coordinator {} timed out after {:?}",
+                                    coordinator, connect_timeout
+                                );
                             }
                         }
                     });
