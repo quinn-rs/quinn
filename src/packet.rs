@@ -966,7 +966,6 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "rustls-aws-lc-rs")]
     #[test]
     fn header_encoding() {
         use crate::Side;

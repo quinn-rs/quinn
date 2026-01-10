@@ -737,7 +737,7 @@ impl Clone for Node {
     }
 }
 
-#[cfg(all(test, feature = "runtime-tokio"))]
+#[cfg(test)]
 mod tests {
     use super::*;
 

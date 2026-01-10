@@ -27,18 +27,14 @@ use crate::{
 };
 
 /// Cryptography interface based on aws-lc-rs
-#[cfg(feature = "aws-lc-rs")]
 pub(crate) mod ring_like;
 /// TLS interface based on rustls
-#[cfg(feature = "rustls-aws-lc-rs")]
 pub mod rustls;
 
 /// Certificate management
-#[cfg(feature = "rustls-aws-lc-rs")]
 pub mod certificate_manager;
 
 /// RFC 7250 Raw Public Keys support (Pure PQC with ML-DSA-65)
-#[cfg(feature = "rustls-aws-lc-rs")]
 pub mod raw_public_keys;
 
 /// Post-Quantum Cryptography support - always available

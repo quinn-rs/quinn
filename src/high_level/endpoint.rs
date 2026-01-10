@@ -19,7 +19,7 @@ use std::{
     task::{Context, Poll, Waker},
 };
 
-#[cfg(all(not(wasm_browser), feature = "aws-lc-rs"))]
+#[cfg(not(wasm_browser))]
 use super::runtime::default_runtime;
 use super::{
     runtime::{AsyncUdpSocket, Runtime},
@@ -136,11 +136,7 @@ impl Endpoint {
     /// Platform defaults for dual-stack sockets vary. For example, any socket bound to a wildcard
     /// IPv6 address on Windows will not by default be able to communicate with IPv4
     /// addresses. This method explicitly enables dual-stack for IPv6 sockets.
-    #[cfg(all(
-        not(wasm_browser),
-        feature = "aws-lc-rs",
-        feature = "network-discovery"
-    ))]
+    #[cfg(all(not(wasm_browser), feature = "network-discovery"))]
     pub fn server(config: ServerConfig, addr: SocketAddr) -> io::Result<Self> {
         let socket = Socket::new(Domain::for_address(addr), Type::DGRAM, Some(Protocol::UDP))?;
 
@@ -177,11 +173,7 @@ impl Endpoint {
 
     /// Helper to construct an endpoint for use with both incoming and outgoing connections
     /// (fallback without network-discovery feature)
-    #[cfg(all(
-        not(wasm_browser),
-        feature = "aws-lc-rs",
-        not(feature = "network-discovery")
-    ))]
+    #[cfg(all(not(wasm_browser), not(feature = "network-discovery")))]
     pub fn server(config: ServerConfig, addr: SocketAddr) -> io::Result<Self> {
         let socket = std::net::UdpSocket::bind(addr)?;
         let runtime =

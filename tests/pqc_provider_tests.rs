@@ -9,7 +9,6 @@
 //! These tests verify that the CryptoProvider factory correctly creates
 //! providers that only use pure ML-KEM groups (0x0200, 0x0201, 0x0202).
 
-#![cfg(feature = "rustls-aws-lc-rs")]
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use ant_quic::crypto::pqc::{

@@ -12,17 +12,11 @@ use std::{
     sync::Arc,
 };
 
-#[cfg(feature = "rustls-aws-lc-rs")]
 use rustls::client::WebPkiServerVerifier;
-#[cfg(feature = "rustls-aws-lc-rs")]
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use thiserror::Error;
 
-#[cfg(feature = "bloom")]
 use crate::NoneTokenLog;
-#[cfg(not(feature = "bloom"))]
-use crate::NoneTokenLog;
-#[cfg(feature = "rustls-aws-lc-rs")]
 use crate::crypto::rustls::{QuicServerConfig, configured_provider};
 use crate::{
     DEFAULT_SUPPORTED_VERSIONS, Duration, MAX_CID_SIZE, RandomConnectionIdGenerator, SystemTime,
@@ -289,14 +283,11 @@ impl EndpointConfig {
     /// use ant_quic::config::{EndpointConfig, EndpointPortConfig, PortBinding};
     /// use std::sync::Arc;
     ///
-    /// # #[cfg(feature = "aws-lc-rs")]
-    /// # {
     /// let mut config = EndpointConfig::default();
     /// config.port_config(EndpointPortConfig {
     ///     port: PortBinding::Explicit(9000),
     ///     ..Default::default()
     /// });
-    /// # }
     /// ```
     pub fn port_config(&mut self, config: EndpointPortConfig) -> &mut Self {
         self.port_config = config;
@@ -331,7 +322,6 @@ impl fmt::Debug for EndpointConfig {
     }
 }
 
-#[cfg(feature = "aws-lc-rs")]
 impl Default for EndpointConfig {
     fn default() -> Self {
         use aws_lc_rs::hmac;
@@ -539,7 +529,6 @@ impl ServerConfig {
     }
 }
 
-#[cfg(feature = "rustls-aws-lc-rs")]
 impl ServerConfig {
     /// Create a server config with the given certificate chain to be presented to clients
     ///
@@ -552,10 +541,7 @@ impl ServerConfig {
             cert_chain, key,
         )?)))
     }
-}
 
-#[cfg(feature = "aws-lc-rs")]
-impl ServerConfig {
     /// Create a server config with the given [`crypto::ServerConfig`]
     ///
     /// Uses a randomized handshake token key.
@@ -690,7 +676,7 @@ impl Default for ValidationTokenConfig {
         Self {
             lifetime: Duration::from_secs(2 * 7 * 24 * 60 * 60),
             log,
-            sent: if cfg!(feature = "bloom") { 2 } else { 0 },
+            sent: 0,
         }
     }
 }
@@ -778,7 +764,6 @@ impl ClientConfig {
     }
 }
 
-#[cfg(feature = "rustls-aws-lc-rs")]
 impl ClientConfig {
     /// Create a client configuration that trusts the platform's native roots
     #[cfg(feature = "platform-verifier")]

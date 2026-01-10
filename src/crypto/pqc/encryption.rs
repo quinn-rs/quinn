@@ -393,7 +393,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "aws-lc-rs")]
     fn test_encryption_decryption_roundtrip() {
         let pke = HybridPublicKeyEncryption::new();
 
@@ -431,7 +430,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "aws-lc-rs")]
     fn test_different_associated_data_fails() {
         let pke = HybridPublicKeyEncryption::new();
         let (public_key, secret_key) = pke.ml_kem.generate_keypair().unwrap();
@@ -502,7 +500,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "aws-lc-rs")]
     fn test_empty_plaintext() {
         let pke = HybridPublicKeyEncryption::new();
         let (public_key, secret_key) = pke.ml_kem.generate_keypair().unwrap();
@@ -523,7 +520,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "aws-lc-rs")]
     fn test_large_plaintext() {
         let pke = HybridPublicKeyEncryption::new();
         let (public_key, secret_key) = pke.ml_kem.generate_keypair().unwrap();

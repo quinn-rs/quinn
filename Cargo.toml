@@ -5,7 +5,7 @@ members = [
 
 [package]
 name = "ant-quic"
-version = "0.14.201"
+version = "0.15.0"
 edition = "2024"
 rust-version = "1.85.0"
 license = "MIT OR Apache-2.0"
@@ -37,12 +37,8 @@ exclude = [
 
 [features]
 # Default features include essential functionality with 100% PQC support
-# v0.12.0: Removed rustls-ring, standardized on aws-lc-rs for PQC
-default = ["platform-verifier", "network-discovery", "runtime-tokio", "rustls-aws-lc-rs"]
-
-# Crypto provider - aws-lc-rs only (required for PQC)
-rustls-aws-lc-rs = ["dep:rustls", "rustls?/aws-lc-rs", "aws-lc-rs"]
-aws-lc-rs = ["dep:aws-lc-rs", "aws-lc-rs?/aws-lc-sys", "aws-lc-rs?/prebuilt-nasm"]
+# v0.15.0: Simplified feature flags - crypto is always enabled
+default = ["platform-verifier", "network-discovery"]
 
 # Platform-specific certificate verification
 platform-verifier = ["dep:rustls-platform-verifier"]
@@ -53,27 +49,18 @@ log = ["tracing/log"]
 # Enhanced network interface discovery
 network-discovery = ["dep:socket2", "dep:nix"]
 
-# Runtime features
-runtime-tokio = []
+# Alternative async runtime (default is tokio)
 runtime-smol = ["dep:smol", "dep:async-io"]
 
-# Additional features
+# Fuzzing/testing features
 arbitrary = ["dep:arbitrary"]
-__qlog = ["dep:qlog"]
-bloom = []
 
-# Post-Quantum Cryptography - always enabled in v0.12.0+
-# Note: saorsa-pqc and rustls-post-quantum are now required dependencies
+# Internal QUIC logging
+__qlog = ["dep:qlog"]
 
 # Zero-cost tracing system
 trace = []
 trace-full = ["trace"]
-
-# Test utilities
-test-utils = []
-
-# Memory optimization features
-low_memory = []
 
 # Metrics features
 # Note: prometheus feature is excluded from docs.rs builds due to compilation issues
@@ -86,7 +73,7 @@ web-dashboard = ["dep:rust-embed", "dep:tokio-tungstenite"]
 
 
 # Enhanced testing features
-property_testing = ["proptest", "proptest-derive"]
+property_testing = ["dep:proptest", "dep:proptest-derive"]
 fuzzing = ["arbitrary"]
 
 [dependencies]
@@ -119,9 +106,9 @@ dirs = "5.0"
 # Platform keychain/keyring for secure credential storage
 keyring = "3"
 
-# Crypto dependencies
-rustls = { version = "0.23.35", default-features = false, features = ["std"], optional = true }
-aws-lc-rs = { version = "1.12", default-features = false, features = ["unstable"], optional = true }
+# Crypto dependencies (required for PQC)
+rustls = { version = "0.23.35", default-features = false, features = ["std", "aws-lc-rs"] }
+aws-lc-rs = { version = "1.12", default-features = false, features = ["unstable", "aws-lc-sys", "prebuilt-nasm"] }
 rustls-platform-verifier = { version = "0.6", optional = true }
 # PQC crypto - required in v0.12.0+
 # v0.2: aws-lc-rs-unstable enables ML-DSA-65 signatures
@@ -232,7 +219,7 @@ proptest-derive = { version = "0.5" }
 # cargo-mutants is a CLI tool, not a library dependency
 # Install with: cargo install cargo-mutants
 [lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(fuzzing)', 'cfg(wasm_browser)', 'cfg(feature, values("arbitrary", "__qlog", "bloom", "low_memory", "prometheus", "runtime-smol"))'] }
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(fuzzing)', 'cfg(wasm_browser)', 'cfg(feature, values("arbitrary", "__qlog", "prometheus", "runtime-smol"))'] }
 
 # Main P2P binary with NAT traversal support
 [[bin]]
@@ -303,7 +290,7 @@ name = "property_tests"
 path = "tests/property_tests/main.rs"
 
 [package.metadata.docs.rs]
-features = ["rustls-aws-lc-rs", "platform-verifier", "log"]
+features = ["platform-verifier", "log"]
 # Note: "prometheus" feature is intentionally excluded to avoid docs.rs compilation issues
 
 # cargo-machete false positives: these are optional/feature-gated dependencies

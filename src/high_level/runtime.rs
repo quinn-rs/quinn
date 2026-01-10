@@ -123,7 +123,6 @@ impl<MakeFut, Fut> UdpPollHelper<MakeFut, Fut> {
     /// Construct a [`UdpPoller`] that calls `make_fut` to get the future to poll, storing it until
     /// it yields [`Poll::Ready`], then creating a new one on the next
     /// [`poll_writable`](UdpPoller::poll_writable)
-    #[cfg(any(feature = "runtime-smol", feature = "runtime-tokio"))]
     fn new(make_fut: MakeFut) -> Self {
         Self {
             make_fut,
@@ -170,16 +169,14 @@ impl<MakeFut, Fut> Debug for UdpPollHelper<MakeFut, Fut> {
 
 /// Automatically select an appropriate runtime from those enabled at compile time
 ///
-/// If `runtime-tokio` is enabled and this function is called from within a Tokio runtime context,
-/// then `TokioRuntime` is returned. Otherwise, if `runtime-smol` is enabled, `SmolRuntime`
-/// is returned. Otherwise, `None` is returned.
+/// This function is called from within a Tokio runtime context (tokio is always available),
+/// then `TokioRuntime` is returned. If `runtime-smol` is enabled and not in tokio context,
+/// `SmolRuntime` is returned. Otherwise, `None` is returned.
 #[allow(clippy::needless_return)] // Be sure we return the right thing
 pub fn default_runtime() -> Option<Arc<dyn Runtime>> {
-    #[cfg(feature = "runtime-tokio")]
-    {
-        if ::tokio::runtime::Handle::try_current().is_ok() {
-            return Some(Arc::new(TokioRuntime));
-        }
+    // Tokio is always available (required dependency)
+    if ::tokio::runtime::Handle::try_current().is_ok() {
+        return Some(Arc::new(TokioRuntime));
     }
 
     #[cfg(feature = "runtime-smol")]
@@ -191,14 +188,11 @@ pub fn default_runtime() -> Option<Arc<dyn Runtime>> {
     None
 }
 
-#[cfg(feature = "runtime-tokio")]
+// Tokio runtime (always available)
 mod tokio;
-// Due to MSRV, we must specify `self::` where there's crate/module ambiguity
-#[cfg(feature = "runtime-tokio")]
 pub use self::tokio::TokioRuntime;
 
 #[cfg(feature = "runtime-smol")]
 mod async_io;
-// Due to MSRV, we must specify `self::` where there's crate/module ambiguity
 #[cfg(feature = "runtime-smol")]
 pub use self::async_io::*;

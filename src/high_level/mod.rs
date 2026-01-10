@@ -36,7 +36,7 @@ pub use self::send_stream::{SendStream, StoppedError, WriteError};
 // Runtime-specific exports
 #[cfg(feature = "runtime-smol")]
 pub use self::runtime::SmolRuntime;
-#[cfg(feature = "runtime-tokio")]
+// TokioRuntime is always available (tokio is a required dependency)
 pub use self::runtime::TokioRuntime;
 
 // Connection event type used internally

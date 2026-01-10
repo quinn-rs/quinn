@@ -19,13 +19,6 @@ use tracing::{info, warn};
 
 // Ensure crypto provider is installed for tests
 fn ensure_crypto_provider() {
-    #[cfg(feature = "rustls-aws-lc-rs")]
-    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
-
-    #[cfg(feature = "rustls-aws-lc-rs")]
-    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
-
-    #[cfg(not(any(feature = "rustls-aws-lc-rs", feature = "rustls-aws-lc-rs")))]
     let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
 }
 

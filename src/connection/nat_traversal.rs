@@ -1276,23 +1276,6 @@ impl ResourceManagementConfig {
             aggressive_cleanup_threshold: 0.90,
         }
     }
-    /// Create configuration optimized for low-memory environments
-    #[cfg(feature = "low_memory")]
-    fn low_memory() -> Self {
-        Self {
-            max_active_validations: 25,
-            max_local_candidates: 10,
-            max_remote_candidates: 25,
-            max_candidate_pairs: 50,
-            max_coordination_history: 3,
-            cleanup_interval: Duration::from_secs(15),
-            candidate_timeout: Duration::from_secs(180), // 3 minutes
-            validation_timeout: Duration::from_secs(20),
-            coordination_timeout: Duration::from_secs(30),
-            memory_pressure_threshold: 0.60,
-            aggressive_cleanup_threshold: 0.80,
-        }
-    }
 }
 #[allow(dead_code)]
 impl ResourceCleanupCoordinator {
@@ -1300,17 +1283,6 @@ impl ResourceCleanupCoordinator {
     fn new() -> Self {
         Self {
             config: ResourceManagementConfig::new(),
-            stats: ResourceStats::default(),
-            last_cleanup: None,
-            cleanup_counter: 0,
-            shutdown_requested: false,
-        }
-    }
-    /// Create coordinator optimized for low-memory environments
-    #[cfg(feature = "low_memory")]
-    fn low_memory() -> Self {
-        Self {
-            config: ResourceManagementConfig::low_memory(),
             stats: ResourceStats::default(),
             last_cleanup: None,
             cleanup_counter: 0,

@@ -20,15 +20,8 @@ static INIT: Once = Once::new();
 
 fn init_crypto() {
     INIT.call_once(|| {
-        // Install default crypto provider (prefer aws-lc-rs if available, fallback to ring)
-        #[cfg(feature = "rustls-aws-lc-rs")]
-        {
-            let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
-        }
-        #[cfg(all(feature = "rustls-aws-lc-rs", not(feature = "rustls-aws-lc-rs")))]
-        {
-            let _ = rustls::crypto::ring::default_provider().install_default();
-        }
+        // Install default crypto provider (aws-lc-rs for PQC support)
+        let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
     });
 }
 

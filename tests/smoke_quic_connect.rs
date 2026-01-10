@@ -24,7 +24,6 @@ fn gen_self_signed_cert() -> (Vec<CertificateDer<'static>>, PrivateKeyDer<'stati
 async fn do_connect_classical_tls_loopback() {
     // Install a default crypto provider for rustls.
     // Use aws-lc-rs as the default provider (only one installation needed)
-    #[cfg(feature = "rustls-aws-lc-rs")]
     let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
 
     // Server config with a self-signed cert

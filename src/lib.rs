@@ -257,7 +257,6 @@ pub mod masque;
 pub mod trust;
 
 /// Address-validation tokens bound to (PeerId||CID||nonce)
-#[cfg(feature = "aws-lc-rs")]
 pub mod token_v2;
 
 // High-level async API modules (ported from quinn crate)

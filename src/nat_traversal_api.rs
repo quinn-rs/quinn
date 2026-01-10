@@ -98,12 +98,10 @@ use crate::{
     high_level::{Connection as InnerConnection, Endpoint as InnerEndpoint},
 };
 
-#[cfg(feature = "rustls-aws-lc-rs")]
 use crate::{crypto::rustls::QuicClientConfig, crypto::rustls::QuicServerConfig};
 
 use crate::config::validation::{ConfigValidator, ValidationResult};
 
-#[cfg(feature = "rustls-aws-lc-rs")]
 use crate::crypto::{pqc::PqcConfig, raw_public_keys::RawPublicKeyConfigBuilder};
 
 /// An active relay session for MASQUE CONNECT-UDP

@@ -30,10 +30,7 @@ fn transport_config_no_pqc() -> Arc<TransportConfig> {
 }
 
 async fn mk_server() -> (Endpoint, SocketAddr, Vec<CertificateDer<'static>>) {
-    #[cfg(feature = "rustls-aws-lc-rs")]
     let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
-    #[cfg(all(not(feature = "rustls-aws-lc-rs"), feature = "rustls-aws-lc-rs"))]
-    let _ = rustls::crypto::ring::default_provider().install_default();
 
     let (chain, key) = gen_self_signed_cert();
     let mut server_cfg = ServerConfig::with_single_cert(chain.clone(), key).expect("server cfg");

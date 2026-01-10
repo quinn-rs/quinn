@@ -4,7 +4,6 @@
 //! This test file validates the Pure PQC Raw Public Key functionality.
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
-#![cfg(feature = "rustls-aws-lc-rs")]
 
 use ant_quic::crypto::{
     certificate_negotiation::{CertificateNegotiationManager, NegotiationConfig},

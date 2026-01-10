@@ -63,7 +63,6 @@ async fn kem_only_handshake_is_active() {
 
 /// With aws-lc-rs provider available, we signal KEM-only intent through the
 /// debug flag; this is a diagnostic aid confirming configuration.
-#[cfg(feature = "rustls-aws-lc-rs")]
 #[tokio::test]
 async fn kem_group_is_restricted_with_provider() {
     let (chain, key) = gen_self_signed_cert();
