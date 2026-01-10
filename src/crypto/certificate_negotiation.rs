@@ -15,9 +15,11 @@
 use std::{
     collections::HashMap,
     hash::{Hash, Hasher},
-    sync::{Arc, Mutex, RwLock},
+    sync::Arc,
     time::{Duration, Instant},
 };
+
+use parking_lot::{Mutex, RwLock};
 
 use tracing::{Level, debug, info, span, warn};
 
@@ -245,14 +247,10 @@ impl CertificateNegotiationManager {
             our_preferences: preferences,
         };
 
-        let mut sessions = self.sessions.write().map_err(|e| {
-            TlsExtensionError::InvalidExtensionData(format!("Session lock poisoned: {}", e))
-        })?;
+        let mut sessions = self.sessions.write();
         sessions.insert(id, state);
 
-        let mut stats = self.stats.lock().map_err(|e| {
-            TlsExtensionError::InvalidExtensionData(format!("Stats lock poisoned: {}", e))
-        })?;
+        let mut stats = self.stats.lock();
         stats.total_attempts += 1;
 
         debug!("Started certificate type negotiation: {:?}", id);
@@ -268,9 +266,7 @@ impl CertificateNegotiationManager {
     ) -> Result<NegotiationResult, TlsExtensionError> {
         let _span = span!(Level::DEBUG, "complete_negotiation", id = id.as_u64()).entered();
 
-        let mut sessions = self.sessions.write().map_err(|e| {
-            TlsExtensionError::InvalidExtensionData(format!("Session lock poisoned: {}", e))
-        })?;
+        let mut sessions = self.sessions.write();
         let state = sessions.get(&id).ok_or_else(|| {
             TlsExtensionError::InvalidExtensionData(format!("Unknown negotiation ID: {id:?}"))
         })?;
@@ -294,19 +290,12 @@ impl CertificateNegotiationManager {
                 remote_server_types.as_ref(),
             );
 
-            let mut cache = self.cache.lock().map_err(|e| {
-                TlsExtensionError::InvalidExtensionData(format!("Cache lock poisoned: {}", e))
-            })?;
+            let mut cache = self.cache.lock();
             if let Some((cached_result, cached_at)) = cache.get(&cache_key) {
                 // Check if cache entry is still valid (not expired)
                 if cached_at.elapsed() < Duration::from_secs(300) {
                     // 5 minute cache
-                    let mut stats = self.stats.lock().map_err(|e| {
-                        TlsExtensionError::InvalidExtensionData(format!(
-                            "Stats lock poisoned: {}",
-                            e
-                        ))
-                    })?;
+                    let mut stats = self.stats.lock();
                     stats.cache_hits += 1;
 
                     // Update session state
@@ -326,9 +315,7 @@ impl CertificateNegotiationManager {
                 }
             }
 
-            let mut stats = self.stats.lock().map_err(|e| {
-                TlsExtensionError::InvalidExtensionData(format!("Stats lock poisoned: {}", e))
-            })?;
+            let mut stats = self.stats.lock();
             stats.cache_misses += 1;
         }
 
@@ -352,9 +339,7 @@ impl CertificateNegotiationManager {
                 );
 
                 // Update statistics
-                let mut stats = self.stats.lock().map_err(|e| {
-                    TlsExtensionError::InvalidExtensionData(format!("Stats lock poisoned: {}", e))
-                })?;
+                let mut stats = self.stats.lock();
                 stats.successful += 1;
 
                 // Update average negotiation time (simple moving average)
@@ -377,12 +362,7 @@ impl CertificateNegotiationManager {
                         remote_server_types.as_ref(),
                     );
 
-                    let mut cache = self.cache.lock().map_err(|e| {
-                        TlsExtensionError::InvalidExtensionData(format!(
-                            "Cache lock poisoned: {}",
-                            e
-                        ))
-                    })?;
+                    let mut cache = self.cache.lock();
 
                     // Evict old entries if cache is full
                     if cache.len() >= self.config.max_cache_size {
@@ -424,9 +404,7 @@ impl CertificateNegotiationManager {
                 );
 
                 // Update statistics
-                let mut stats = self.stats.lock().map_err(|e| {
-                    TlsExtensionError::InvalidExtensionData(format!("Stats lock poisoned: {}", e))
-                })?;
+                let mut stats = self.stats.lock();
                 stats.failed += 1;
 
                 warn!("Certificate type negotiation failed: {:?} -> {}", id, error);
@@ -436,12 +414,8 @@ impl CertificateNegotiationManager {
     }
 
     /// Fail a negotiation with an error
-    #[allow(clippy::unwrap_used, clippy::expect_used)]
     pub fn fail_negotiation(&self, id: NegotiationId, error: String) {
-        let mut sessions = self
-            .sessions
-            .write()
-            .expect("Mutex poisoning is unexpected in normal operation");
+        let mut sessions = self.sessions.write();
         sessions.insert(
             id,
             NegotiationState::Failed {
@@ -450,32 +424,21 @@ impl CertificateNegotiationManager {
             },
         );
 
-        let mut stats = self
-            .stats
-            .lock()
-            .expect("Mutex poisoning is unexpected in normal operation");
+        let mut stats = self.stats.lock();
         stats.failed += 1;
 
         warn!("Certificate type negotiation failed: {:?}", id);
     }
 
     /// Get the current state of a negotiation
-    #[allow(clippy::unwrap_used, clippy::expect_used)]
     pub fn get_negotiation_state(&self, id: NegotiationId) -> Option<NegotiationState> {
-        let sessions = self
-            .sessions
-            .read()
-            .expect("Mutex poisoning is unexpected in normal operation");
+        let sessions = self.sessions.read();
         sessions.get(&id).cloned()
     }
 
     /// Check for and handle timed out negotiations
-    #[allow(clippy::unwrap_used, clippy::expect_used)]
     pub fn handle_timeouts(&self) {
-        let mut sessions = self
-            .sessions
-            .write()
-            .expect("Mutex poisoning is unexpected in normal operation");
+        let mut sessions = self.sessions.write();
         let mut timed_out_ids = Vec::new();
 
         for (id, state) in sessions.iter() {
@@ -494,10 +457,7 @@ impl CertificateNegotiationManager {
                 },
             );
 
-            let mut stats = self
-                .stats
-                .lock()
-                .expect("Mutex poisoning is unexpected in normal operation");
+            let mut stats = self.stats.lock();
             stats.timed_out += 1;
 
             warn!("Certificate type negotiation timed out: {:?}", id);
@@ -505,12 +465,8 @@ impl CertificateNegotiationManager {
     }
 
     /// Clean up completed negotiations older than the specified duration
-    #[allow(clippy::unwrap_used, clippy::expect_used)]
     pub fn cleanup_old_sessions(&self, max_age: Duration) {
-        let mut sessions = self
-            .sessions
-            .write()
-            .expect("Mutex poisoning is unexpected in normal operation");
+        let mut sessions = self.sessions.write();
         let cutoff = Instant::now() - max_age;
 
         sessions.retain(|id, state| {
@@ -530,32 +486,20 @@ impl CertificateNegotiationManager {
     }
 
     /// Get current negotiation statistics
-    #[allow(clippy::unwrap_used, clippy::expect_used)]
     pub fn get_stats(&self) -> NegotiationStats {
-        self.stats
-            .lock()
-            .expect("Mutex poisoning is unexpected in normal operation")
-            .clone()
+        self.stats.lock().clone()
     }
 
     /// Clear all cached results
-    #[allow(clippy::unwrap_used, clippy::expect_used)]
     pub fn clear_cache(&self) {
-        let mut cache = self
-            .cache
-            .lock()
-            .expect("Mutex poisoning is unexpected in normal operation");
+        let mut cache = self.cache.lock();
         cache.clear();
         debug!("Cleared certificate type negotiation cache");
     }
 
     /// Get cache statistics
-    #[allow(clippy::unwrap_used, clippy::expect_used)]
     pub fn get_cache_stats(&self) -> (usize, usize) {
-        let cache = self
-            .cache
-            .lock()
-            .expect("Mutex poisoning is unexpected in normal operation");
+        let cache = self.cache.lock();
         (cache.len(), self.config.max_cache_size)
     }
 }

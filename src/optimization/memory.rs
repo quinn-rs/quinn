@@ -16,9 +16,11 @@
 use std::{
     collections::HashMap,
     net::SocketAddr,
-    sync::{Arc, Mutex, RwLock},
+    sync::Arc,
     time::{Duration, Instant},
 };
+
+use parking_lot::{Mutex, RwLock};
 
 use tracing::{debug, info};
 
@@ -402,7 +404,7 @@ impl ConnectionPool {
         peer_id: PeerId,
         remote_address: SocketAddr,
     ) -> Option<Arc<QuicConnection>> {
-        let mut connections = self.active_connections.write().unwrap();
+        let mut connections = self.active_connections.write();
 
         if let Some(pooled) = connections.get_mut(&peer_id) {
             if pooled.is_active && pooled.remote_address == remote_address {
@@ -431,7 +433,7 @@ impl ConnectionPool {
     ) -> Result<Arc<QuicConnection>, Box<dyn std::error::Error + Send + Sync>> {
         // Check pool size limit
         {
-            let connections = self.active_connections.read().unwrap();
+            let connections = self.active_connections.read();
             if connections.len() >= self.config.max_connections {
                 // Pool is full, need to evict least recently used
                 drop(connections);
@@ -472,13 +474,13 @@ impl ConnectionPool {
 
         // Add to pool
         {
-            let mut connections = self.active_connections.write().unwrap();
+            let mut connections = self.active_connections.write();
             connections.insert(peer_id, pooled);
         }
 
         // Update stats
         {
-            let mut stats = self.stats.lock().unwrap();
+            let mut stats = self.stats.lock();
             stats.connections_created += 1;
             stats.active_connections += 1;
         }
@@ -489,7 +491,7 @@ impl ConnectionPool {
 
     /// Evict least recently used connection
     async fn evict_lru_connection(&self) {
-        let mut connections = self.active_connections.write().unwrap();
+        let mut connections = self.active_connections.write();
 
         if let Some((lru_peer_id, _)) = connections
             .iter()
@@ -500,14 +502,14 @@ impl ConnectionPool {
             debug!("Evicted LRU connection for peer {:?}", lru_peer_id);
 
             // Update stats
-            let mut stats = self.stats.lock().unwrap();
+            let mut stats = self.stats.lock();
             stats.active_connections = stats.active_connections.saturating_sub(1);
         }
     }
 
     /// Update stats for cache hit
     async fn update_stats_hit(&self) {
-        let mut stats = self.stats.lock().unwrap();
+        let mut stats = self.stats.lock();
         stats.connections_reused += 1;
         let total_requests = stats.connections_created + stats.connections_reused;
         stats.hit_rate = stats.connections_reused as f64 / total_requests as f64;
@@ -515,11 +517,11 @@ impl ConnectionPool {
 
     /// Update stats for cache miss
     async fn update_stats_miss(&self) {
-        let stats = self.stats.lock().unwrap();
+        let stats = self.stats.lock();
         let total_requests = stats.connections_created + stats.connections_reused;
         drop(stats);
 
-        let mut stats = self.stats.lock().unwrap();
+        let mut stats = self.stats.lock();
         stats.hit_rate = stats.connections_reused as f64 / total_requests as f64;
     }
 
@@ -534,7 +536,7 @@ impl ConnectionPool {
 
         // Find expired connections
         {
-            let connections_read = connections.read().unwrap();
+            let connections_read = connections.read();
             for (peer_id, pooled) in connections_read.iter() {
                 let idle_time = now.duration_since(pooled.last_used);
                 let age = now.duration_since(pooled.created_at);
@@ -552,13 +554,13 @@ impl ConnectionPool {
 
         // Remove expired connections
         if !to_remove.is_empty() {
-            let mut connections_write = connections.write().unwrap();
+            let mut connections_write = connections.write();
             for peer_id in &to_remove {
                 connections_write.remove(peer_id);
             }
 
             // Update stats
-            let mut stats_guard = stats.lock().unwrap();
+            let mut stats_guard = stats.lock();
             stats_guard.connections_expired += to_remove.len() as u64;
             stats_guard.active_connections = connections_write.len();
 
@@ -568,7 +570,7 @@ impl ConnectionPool {
 
     /// Get connection pool statistics
     pub async fn get_stats(&self) -> ConnectionPoolStats {
-        self.stats.lock().unwrap().clone()
+        self.stats.lock().clone()
     }
 
     /// Shutdown the connection pool
@@ -579,7 +581,7 @@ impl ConnectionPool {
 
         // Close all connections
         {
-            let connections = self.active_connections.read().unwrap();
+            let connections = self.active_connections.read();
             for (_, pooled) in connections.iter() {
                 pooled.connection.close(VarInt::from_u32(0), b"shutdown");
             }
@@ -626,7 +628,7 @@ impl CandidateCache {
     /// Get cached candidates for a peer
     pub async fn get_candidates(&self, peer_id: PeerId) -> Option<Vec<CandidateAddress>> {
         let (is_valid, candidates) = {
-            let cache = self.cache.read().unwrap();
+            let cache = self.cache.read();
 
             if let Some(cached_set) = cache.get(&peer_id) {
                 let now = Instant::now();
@@ -673,7 +675,7 @@ impl CandidateCache {
 
         // Check cache size limit
         {
-            let cache = self.cache.read().unwrap();
+            let cache = self.cache.read();
             if cache.len() >= self.config.max_cache_size {
                 drop(cache);
                 self.evict_lru_entry().await;
@@ -692,13 +694,13 @@ impl CandidateCache {
 
         // Add to cache
         {
-            let mut cache = self.cache.write().unwrap();
+            let mut cache = self.cache.write();
             cache.insert(peer_id, cached_set);
         }
 
         // Update stats
         {
-            let mut stats = self.stats.lock().unwrap();
+            let mut stats = self.stats.lock();
             stats.current_size += 1;
         }
 
@@ -721,7 +723,7 @@ impl CandidateCache {
             return Ok(());
         }
 
-        let mut cache = self.cache.write().unwrap();
+        let mut cache = self.cache.write();
 
         if let Some(cached_set) = cache.get_mut(&peer_id) {
             let validation_entry = ValidationCacheEntry {
@@ -753,7 +755,7 @@ impl CandidateCache {
             return None;
         }
 
-        let cache = self.cache.read().unwrap();
+        let cache = self.cache.read();
 
         if let Some(cached_set) = cache.get(&peer_id) {
             if let Some(validation_entry) = cached_set.validation_results.get(&address) {
@@ -773,7 +775,7 @@ impl CandidateCache {
     async fn update_access_stats(&self, peer_id: PeerId, hit: bool) {
         // Update cache-level stats
         {
-            let mut stats = self.stats.lock().unwrap();
+            let mut stats = self.stats.lock();
             if hit {
                 stats.cache_hits += 1;
             } else {
@@ -786,7 +788,7 @@ impl CandidateCache {
 
         // Update entry-level stats
         if hit {
-            let mut cache = self.cache.write().unwrap();
+            let mut cache = self.cache.write();
             if let Some(cached_set) = cache.get_mut(&peer_id) {
                 cached_set.access_count += 1;
                 cached_set.last_accessed = Instant::now();
@@ -796,7 +798,7 @@ impl CandidateCache {
 
     /// Evict least recently used entry
     async fn evict_lru_entry(&self) {
-        let mut cache = self.cache.write().unwrap();
+        let mut cache = self.cache.write();
 
         if let Some((lru_peer_id, _)) = cache
             .iter()
@@ -807,7 +809,7 @@ impl CandidateCache {
             debug!("Evicted LRU cache entry for peer {:?}", lru_peer_id);
 
             // Update stats
-            let mut stats = self.stats.lock().unwrap();
+            let mut stats = self.stats.lock();
             stats.current_size = stats.current_size.saturating_sub(1);
         }
     }
@@ -823,7 +825,7 @@ impl CandidateCache {
 
         // Find expired entries
         {
-            let cache_read = cache.read().unwrap();
+            let cache_read = cache.read();
             for (peer_id, cached_set) in cache_read.iter() {
                 let age = now.duration_since(cached_set.cached_at);
                 if age > cached_set.ttl {
@@ -834,13 +836,13 @@ impl CandidateCache {
 
         // Remove expired entries
         if !to_remove.is_empty() {
-            let mut cache_write = cache.write().unwrap();
+            let mut cache_write = cache.write();
             for peer_id in &to_remove {
                 cache_write.remove(peer_id);
             }
 
             // Update stats
-            let mut stats_guard = stats.lock().unwrap();
+            let mut stats_guard = stats.lock();
             stats_guard.entries_expired += to_remove.len() as u64;
             stats_guard.current_size = cache_write.len();
 
@@ -849,7 +851,7 @@ impl CandidateCache {
 
         // Also cleanup expired validation results
         {
-            let mut cache_write = cache.write().unwrap();
+            let mut cache_write = cache.write();
             for cached_set in cache_write.values_mut() {
                 cached_set.validation_results.retain(|_, validation_entry| {
                     now.duration_since(validation_entry.cached_at) <= validation_entry.ttl
@@ -860,7 +862,7 @@ impl CandidateCache {
 
     /// Get cache statistics
     pub async fn get_stats(&self) -> CandidateCacheStats {
-        self.stats.lock().unwrap().clone()
+        self.stats.lock().clone()
     }
 
     /// Shutdown the candidate cache
@@ -871,7 +873,7 @@ impl CandidateCache {
 
         // Clear cache
         {
-            let mut cache = self.cache.write().unwrap();
+            let mut cache = self.cache.write();
             cache.clear();
         }
 
@@ -927,13 +929,13 @@ impl SessionCleanupCoordinator {
         };
 
         {
-            let mut sessions = self.active_sessions.write().unwrap();
+            let mut sessions = self.active_sessions.write();
             sessions.insert(peer_id, session_state);
         }
 
         // Update stats
         {
-            let mut stats = self.stats.lock().unwrap();
+            let mut stats = self.stats.lock();
             stats.active_sessions += 1;
         }
 
@@ -946,7 +948,7 @@ impl SessionCleanupCoordinator {
 
     /// Update session activity
     pub async fn update_session_activity(&self, peer_id: PeerId) {
-        let mut sessions = self.active_sessions.write().unwrap();
+        let mut sessions = self.active_sessions.write();
         if let Some(session) = sessions.get_mut(&peer_id) {
             session.last_activity = Instant::now();
         }
@@ -967,7 +969,7 @@ impl SessionCleanupCoordinator {
 
         // Find sessions to cleanup
         {
-            let sessions_read = sessions.read().unwrap();
+            let sessions_read = sessions.read();
             for (peer_id, session) in sessions_read.iter() {
                 let idle_time = now.duration_since(session.last_activity);
                 let age = now.duration_since(session.created_at);
@@ -993,13 +995,13 @@ impl SessionCleanupCoordinator {
 
         // Remove expired sessions
         if !to_remove.is_empty() {
-            let mut sessions_write = sessions.write().unwrap();
+            let mut sessions_write = sessions.write();
             for peer_id in &to_remove {
                 sessions_write.remove(peer_id);
             }
 
             // Update stats
-            let mut stats_guard = stats.lock().unwrap();
+            let mut stats_guard = stats.lock();
             stats_guard.sessions_cleaned += to_remove.len() as u64;
             stats_guard.memory_freed += memory_freed;
             stats_guard.active_sessions = sessions_write.len();
@@ -1032,7 +1034,7 @@ impl SessionCleanupCoordinator {
 
     /// Get session cleanup statistics
     pub async fn get_stats(&self) -> SessionCleanupStats {
-        self.stats.lock().unwrap().clone()
+        self.stats.lock().clone()
     }
 
     /// Shutdown the session cleanup coordinator
@@ -1043,7 +1045,7 @@ impl SessionCleanupCoordinator {
 
         // Clear sessions
         {
-            let mut sessions = self.active_sessions.write().unwrap();
+            let mut sessions = self.active_sessions.write();
             sessions.clear();
         }
 
@@ -1098,7 +1100,7 @@ impl FrameBatchingCoordinator {
             created_at: Instant::now(),
         };
 
-        let mut pending = self.pending_frames.lock().unwrap();
+        let mut pending = self.pending_frames.lock();
 
         // Check if we need to flush
         let (should_flush, frames_count, total_size) = {
@@ -1132,7 +1134,7 @@ impl FrameBatchingCoordinator {
 
                 // Update stats
                 {
-                    let mut stats = self.stats.lock().unwrap();
+                    let mut stats = self.stats.lock();
                     stats.batches_sent += 1;
                     stats.frames_batched += frames_count as u64;
                     stats.avg_batch_size = (stats.avg_batch_size * (stats.batches_sent - 1) as f64
@@ -1189,7 +1191,7 @@ impl FrameBatchingCoordinator {
 
         // Find expired batches
         {
-            let pending = pending_frames.lock().unwrap();
+            let pending = pending_frames.lock();
             for (destination, batch_set) in pending.iter() {
                 let age = now.duration_since(batch_set.created_at);
                 if age >= config.max_batch_delay {
@@ -1200,13 +1202,13 @@ impl FrameBatchingCoordinator {
 
         // Flush expired batches
         if !to_flush.is_empty() {
-            let mut pending = pending_frames.lock().unwrap();
+            let mut pending = pending_frames.lock();
             let flush_count = to_flush.len();
             for (destination, frame_count, total_size) in to_flush {
                 pending.remove(&destination);
 
                 // Update stats
-                let mut stats_guard = stats.lock().unwrap();
+                let mut stats_guard = stats.lock();
                 stats_guard.batches_sent += 1;
                 stats_guard.frames_batched += frame_count as u64;
                 stats_guard.avg_batch_size = (stats_guard.avg_batch_size
@@ -1221,7 +1223,7 @@ impl FrameBatchingCoordinator {
 
     /// Get batching statistics
     pub async fn get_stats(&self) -> FrameBatchingStats {
-        self.stats.lock().unwrap().clone()
+        self.stats.lock().clone()
     }
 
     /// Shutdown the frame batching coordinator
@@ -1232,7 +1234,7 @@ impl FrameBatchingCoordinator {
 
         // Flush all pending batches
         {
-            let mut pending = self.pending_frames.lock().unwrap();
+            let mut pending = self.pending_frames.lock();
             pending.clear();
         }
 

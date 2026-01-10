@@ -16,9 +16,11 @@
 use std::{
     collections::{HashMap, VecDeque},
     net::{IpAddr, SocketAddr},
-    sync::{Arc, Mutex, RwLock},
+    sync::Arc,
     time::{Duration, Instant},
 };
+
+use parking_lot::{Mutex, RwLock};
 
 use tokio::time::timeout;
 
@@ -542,13 +544,13 @@ impl ParallelDiscoveryCoordinator {
 
         // Add to active discoveries
         {
-            let mut discoveries = self.active_discoveries.write().unwrap();
+            let mut discoveries = self.active_discoveries.write();
             discoveries.insert(interface.name.clone(), task);
         }
 
         // Update stats
         {
-            let mut stats = self.stats.lock().unwrap();
+            let mut stats = self.stats.lock();
             stats.tasks_started += 1;
         }
 
@@ -579,7 +581,7 @@ impl ParallelDiscoveryCoordinator {
 
         // Update task status to running
         {
-            let mut discoveries = self.active_discoveries.write().unwrap();
+            let mut discoveries = self.active_discoveries.write();
             if let Some(task) = discoveries.get_mut(&interface_name) {
                 task.status = TaskStatus::Running;
             }
@@ -596,7 +598,7 @@ impl ParallelDiscoveryCoordinator {
             Ok(Ok(candidates)) => {
                 // Discovery successful
                 {
-                    let mut discoveries = self.active_discoveries.write().unwrap();
+                    let mut discoveries = self.active_discoveries.write();
                     if let Some(task) = discoveries.get_mut(&interface_name) {
                         task.status = TaskStatus::Completed;
                         task.discovered_candidates = candidates;
@@ -605,7 +607,7 @@ impl ParallelDiscoveryCoordinator {
 
                 // Update stats
                 {
-                    let mut stats = self.stats.lock().unwrap();
+                    let mut stats = self.stats.lock();
                     stats.tasks_completed += 1;
                 }
 
@@ -614,7 +616,7 @@ impl ParallelDiscoveryCoordinator {
             Ok(Err(_)) => {
                 // Discovery failed
                 {
-                    let mut discoveries = self.active_discoveries.write().unwrap();
+                    let mut discoveries = self.active_discoveries.write();
                     if let Some(task) = discoveries.get_mut(&interface_name) {
                         task.status = TaskStatus::Failed;
                     }
@@ -622,7 +624,7 @@ impl ParallelDiscoveryCoordinator {
 
                 // Update stats
                 {
-                    let mut stats = self.stats.lock().unwrap();
+                    let mut stats = self.stats.lock();
                     stats.tasks_failed += 1;
                 }
 
@@ -631,7 +633,7 @@ impl ParallelDiscoveryCoordinator {
             Err(_) => {
                 // Discovery timeout
                 {
-                    let mut discoveries = self.active_discoveries.write().unwrap();
+                    let mut discoveries = self.active_discoveries.write();
                     if let Some(task) = discoveries.get_mut(&interface_name) {
                         task.status = TaskStatus::Timeout;
                     }
@@ -639,7 +641,7 @@ impl ParallelDiscoveryCoordinator {
 
                 // Update stats
                 {
-                    let mut stats = self.stats.lock().unwrap();
+                    let mut stats = self.stats.lock();
                     stats.tasks_failed += 1;
                 }
 
@@ -741,7 +743,7 @@ impl ParallelDiscoveryCoordinator {
 
                 // Check if all discoveries are complete
                 let all_complete = {
-                    let discoveries_read = discoveries.read().unwrap();
+                    let discoveries_read = discoveries.read();
                     discoveries_read.values().all(|task| {
                         matches!(
                             task.status,
@@ -771,7 +773,7 @@ impl ParallelDiscoveryCoordinator {
         let mut total_discovery_time = Duration::ZERO;
 
         {
-            let discoveries_read = discoveries.read().unwrap();
+            let discoveries_read = discoveries.read();
             for task in discoveries_read.values() {
                 if task.status == TaskStatus::Completed {
                     total_candidates += task.discovered_candidates.len() as u64;
@@ -783,7 +785,7 @@ impl ParallelDiscoveryCoordinator {
 
         // Update stats
         {
-            let mut stats_guard = stats.lock().unwrap();
+            let mut stats_guard = stats.lock();
             stats_guard.total_candidates = total_candidates;
             stats_guard.tasks_completed = completed_tasks;
 
@@ -799,7 +801,7 @@ impl ParallelDiscoveryCoordinator {
     pub async fn get_all_candidates(&self) -> Vec<CandidateAddress> {
         let mut all_candidates = Vec::new();
 
-        let discoveries = self.active_discoveries.read().unwrap();
+        let discoveries = self.active_discoveries.read();
         for task in discoveries.values() {
             if task.status == TaskStatus::Completed {
                 all_candidates.extend(task.discovered_candidates.clone());
@@ -814,7 +816,7 @@ impl ParallelDiscoveryCoordinator {
 
     /// Get parallel discovery statistics
     pub async fn get_stats(&self) -> ParallelDiscoveryStats {
-        self.stats.lock().unwrap().clone()
+        self.stats.lock().clone()
     }
 
     /// Shutdown parallel discovery coordinator
@@ -825,7 +827,7 @@ impl ParallelDiscoveryCoordinator {
 
         // Clear active discoveries
         {
-            let mut discoveries = self.active_discoveries.write().unwrap();
+            let mut discoveries = self.active_discoveries.write();
             discoveries.clear();
         }
 
@@ -954,7 +956,7 @@ impl AdaptiveTimeoutManager {
                 congestion_factor: 0.3,
             });
 
-        let conditions = self.network_conditions.read().unwrap();
+        let conditions = self.network_conditions.read();
 
         // Calculate base timeout from RTT if available
         let rtt_based_timeout =
@@ -983,7 +985,7 @@ impl AdaptiveTimeoutManager {
 
         // Update stats
         {
-            let mut stats = self.stats.lock().unwrap();
+            let mut stats = self.stats.lock();
             stats.adjustments_made += 1;
             stats.avg_timeouts.insert(operation, final_timeout);
         }
@@ -1003,7 +1005,7 @@ impl AdaptiveTimeoutManager {
         packet_loss: bool,
         bandwidth: Option<u64>,
     ) {
-        let mut conditions = self.network_conditions.write().unwrap();
+        let mut conditions = self.network_conditions.write();
 
         // Add RTT sample
         conditions.rtt_samples.push_back(rtt);
@@ -1074,7 +1076,7 @@ impl AdaptiveTimeoutManager {
         // - Detect congestion patterns
         // - Adjust quality scores
 
-        let mut conditions = network_conditions.write().unwrap();
+        let mut conditions = network_conditions.write();
 
         // Age out old RTT samples (keep last 100 samples)
         while conditions.rtt_samples.len() > 100 {
@@ -1093,12 +1095,12 @@ impl AdaptiveTimeoutManager {
 
     /// Get current network conditions
     pub async fn get_network_conditions(&self) -> NetworkConditions {
-        self.network_conditions.read().unwrap().clone()
+        self.network_conditions.read().clone()
     }
 
     /// Get adaptive timeout statistics
     pub async fn get_stats(&self) -> AdaptiveTimeoutStats {
-        self.stats.lock().unwrap().clone()
+        self.stats.lock().clone()
     }
 
     /// Shutdown the adaptive timeout manager
@@ -1151,13 +1153,13 @@ impl BandwidthAwareValidator {
 
         // Add to active validations
         {
-            let mut validations = self.active_validations.write().unwrap();
+            let mut validations = self.active_validations.write();
             validations.insert(target_address, session);
         }
 
         // Update stats
         {
-            let mut stats = self.stats.lock().unwrap();
+            let mut stats = self.stats.lock();
             stats.validations_started += 1;
         }
 
@@ -1167,8 +1169,8 @@ impl BandwidthAwareValidator {
 
     /// Check if new validation can be started based on bandwidth constraints
     async fn can_start_validation(&self) -> bool {
-        let validations = self.active_validations.read().unwrap();
-        let bandwidth_monitor = self.bandwidth_monitor.lock().unwrap();
+        let validations = self.active_validations.read();
+        let bandwidth_monitor = self.bandwidth_monitor.lock();
 
         // Check concurrent validation limit
         if validations.len() >= self.config.max_concurrent_validations {
@@ -1200,7 +1202,7 @@ impl BandwidthAwareValidator {
         target_address: SocketAddr,
         packet_size: usize,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let mut validations = self.active_validations.write().unwrap();
+        let mut validations = self.active_validations.write();
 
         if let Some(session) = validations.get_mut(&target_address) {
             session.packets_sent += 1;
@@ -1220,7 +1222,7 @@ impl BandwidthAwareValidator {
         target_address: SocketAddr,
         rtt: Duration,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let mut validations = self.active_validations.write().unwrap();
+        let mut validations = self.active_validations.write();
 
         if let Some(session) = validations.get_mut(&target_address) {
             session.packets_received += 1;
@@ -1232,7 +1234,7 @@ impl BandwidthAwareValidator {
 
     /// Update bandwidth usage monitoring
     async fn update_bandwidth_usage(&self, bytes_used: u64) {
-        let mut monitor = self.bandwidth_monitor.lock().unwrap();
+        let mut monitor = self.bandwidth_monitor.lock();
 
         let now = Instant::now();
         let sample = BandwidthSample {
@@ -1275,7 +1277,7 @@ impl BandwidthAwareValidator {
         success: bool,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let session = {
-            let mut validations = self.active_validations.write().unwrap();
+            let mut validations = self.active_validations.write();
             validations.remove(&target_address)
         };
 
@@ -1284,7 +1286,7 @@ impl BandwidthAwareValidator {
 
             // Update stats
             {
-                let mut stats = self.stats.lock().unwrap();
+                let mut stats = self.stats.lock();
                 if success {
                     stats.validations_completed += 1;
                 }
@@ -1318,7 +1320,7 @@ impl BandwidthAwareValidator {
 
     /// Get bandwidth validation statistics
     pub async fn get_stats(&self) -> BandwidthValidationStats {
-        self.stats.lock().unwrap().clone()
+        self.stats.lock().clone()
     }
 }
 
@@ -1348,7 +1350,7 @@ impl CongestionControlIntegrator {
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         // Check if migration should be delayed due to congestion
         if self.config.enable_congestion_awareness {
-            let congestion_state = self.congestion_state.lock().unwrap();
+            let congestion_state = self.congestion_state.lock();
             if congestion_state.congestion_level > self.config.congestion_threshold {
                 return Err("Migration delayed due to high congestion".into());
             }
@@ -1361,7 +1363,7 @@ impl CongestionControlIntegrator {
             started_at: Instant::now(),
             migration_state: MigrationState::Initiated,
             congestion_window: {
-                let state = self.congestion_state.lock().unwrap();
+                let state = self.congestion_state.lock();
                 (state.congestion_window as f64 * self.config.cwnd_scaling_factor) as u32
             },
             rtt_estimate: Duration::from_millis(100), // Default RTT
@@ -1370,13 +1372,13 @@ impl CongestionControlIntegrator {
 
         // Add to active migrations
         {
-            let mut migrations = self.active_migrations.write().unwrap();
+            let mut migrations = self.active_migrations.write();
             migrations.insert(peer_id, session);
         }
 
         // Update stats
         {
-            let mut stats = self.stats.lock().unwrap();
+            let mut stats = self.stats.lock();
             stats.migrations_attempted += 1;
         }
 
@@ -1395,7 +1397,7 @@ impl CongestionControlIntegrator {
         rtt: Option<Duration>,
         bandwidth: Option<u64>,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let mut migrations = self.active_migrations.write().unwrap();
+        let mut migrations = self.active_migrations.write();
 
         if let Some(session) = migrations.get_mut(&peer_id) {
             session.migration_state = new_state;
@@ -1404,7 +1406,7 @@ impl CongestionControlIntegrator {
                 session.rtt_estimate = rtt;
 
                 // Update global congestion state
-                let mut congestion_state = self.congestion_state.lock().unwrap();
+                let mut congestion_state = self.congestion_state.lock();
                 congestion_state.rtt_measurements.push_back(rtt);
                 if congestion_state.rtt_measurements.len() > 50 {
                     congestion_state.rtt_measurements.pop_front();
@@ -1420,7 +1422,7 @@ impl CongestionControlIntegrator {
                 let duration = session.started_at.elapsed();
 
                 // Update stats
-                let mut stats = self.stats.lock().unwrap();
+                let mut stats = self.stats.lock();
                 stats.migrations_successful += 1;
                 stats.avg_migration_time = if stats.migrations_successful > 0 {
                     Duration::from_millis(
@@ -1451,7 +1453,7 @@ impl CongestionControlIntegrator {
             severity,
         };
 
-        let mut congestion_state = self.congestion_state.lock().unwrap();
+        let mut congestion_state = self.congestion_state.lock();
         congestion_state.congestion_events.push_back(event);
 
         // Keep only recent events
@@ -1498,7 +1500,7 @@ impl CongestionControlIntegrator {
 
     /// Get congestion control integration statistics
     pub async fn get_stats(&self) -> CongestionIntegrationStats {
-        self.stats.lock().unwrap().clone()
+        self.stats.lock().clone()
     }
 }
 
