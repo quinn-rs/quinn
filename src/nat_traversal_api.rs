@@ -912,34 +912,6 @@ impl NatTraversalEndpoint {
         event_callback: Option<Box<dyn Fn(NatTraversalEvent) + Send + Sync>>,
         token_store: Option<Arc<dyn crate::TokenStore>>,
     ) -> Result<Self, NatTraversalError> {
-        Self::new_impl(config, event_callback, token_store).await
-    }
-
-    /// Internal async implementation for production builds
-    async fn new_impl(
-        config: NatTraversalConfig,
-        event_callback: Option<Box<dyn Fn(NatTraversalEvent) + Send + Sync>>,
-        token_store: Option<Arc<dyn crate::TokenStore>>,
-    ) -> Result<Self, NatTraversalError> {
-        Self::new_common(config, event_callback, token_store).await
-    }
-
-    /// Common implementation for both async and sync versions
-    async fn new_common(
-        config: NatTraversalConfig,
-        event_callback: Option<Box<dyn Fn(NatTraversalEvent) + Send + Sync>>,
-        token_store: Option<Arc<dyn crate::TokenStore>>,
-    ) -> Result<Self, NatTraversalError> {
-        // Existing implementation with async support
-        Self::new_shared_logic(config, event_callback, token_store).await
-    }
-
-    /// Shared logic for endpoint creation (async version)
-    async fn new_shared_logic(
-        config: NatTraversalConfig,
-        event_callback: Option<Box<dyn Fn(NatTraversalEvent) + Send + Sync>>,
-        token_store: Option<Arc<dyn crate::TokenStore>>,
-    ) -> Result<Self, NatTraversalError> {
         // Wrap the callback in Arc so it can be shared with background tasks
         let event_callback: Option<Arc<dyn Fn(NatTraversalEvent) + Send + Sync>> =
             event_callback.map(|cb| Arc::from(cb) as Arc<dyn Fn(NatTraversalEvent) + Send + Sync>);
@@ -1132,6 +1104,23 @@ impl NatTraversalEndpoint {
     /// Get the event callback
     pub fn get_event_callback(&self) -> Option<&Arc<dyn Fn(NatTraversalEvent) + Send + Sync>> {
         self.event_callback.as_ref()
+    }
+
+    /// Emit an event to both the events vector and the callback (if present)
+    ///
+    /// This helper method eliminates the repeated pattern of:
+    /// ```ignore
+    /// if let Some(ref callback) = self.event_callback {
+    ///     callback(event.clone());
+    /// }
+    /// events.push(event);
+    /// ```
+    #[inline]
+    fn emit_event(&self, events: &mut Vec<NatTraversalEvent>, event: NatTraversalEvent) {
+        if let Some(ref callback) = self.event_callback {
+            callback(event.clone());
+        }
+        events.push(event);
     }
 
     /// Initiate NAT traversal to a peer (returns immediately, progress via events)
@@ -3533,34 +3522,17 @@ impl NatTraversalEndpoint {
         }
     }
 
-    /// Poll for NAT traversal progress and state machine updates
-    pub fn poll(
-        &self,
-        now: std::time::Instant,
-    ) -> Result<Vec<NatTraversalEvent>, NatTraversalError> {
-        let mut events = Vec::new();
-
-        // Drain any pending events emitted from async tasks
-        // parking_lot::Mutex doesn't poison
-        {
-            let mut event_rx = self.event_rx.lock();
-
-            loop {
-                match event_rx.try_recv() {
-                    Ok(event) => {
-                        if let Some(ref callback) = self.event_callback {
-                            callback(event.clone());
-                        }
-                        events.push(event);
-                    }
-                    Err(TryRecvError::Empty) => break,
-                    Err(TryRecvError::Disconnected) => break,
-                }
-            }
+    /// Drain any pending events from async tasks
+    #[inline]
+    fn drain_pending_events(&self, events: &mut Vec<NatTraversalEvent>) {
+        let mut event_rx = self.event_rx.lock();
+        while let Ok(event) = event_rx.try_recv() {
+            self.emit_event(events, event);
         }
+    }
 
-        // Detect closed connections and emit ConnectionLost events synchronously
-        // DashMap provides lock-free concurrent access
+    /// Detect closed connections and emit ConnectionLost events
+    fn poll_closed_connections(&self, events: &mut Vec<NatTraversalEvent>) {
         let closed_connections: Vec<_> = self
             .connections
             .iter()
@@ -3574,73 +3546,58 @@ impl NatTraversalEndpoint {
 
         for (peer_id, reason) in closed_connections {
             self.connections.remove(&peer_id);
-            let event = NatTraversalEvent::ConnectionLost {
-                peer_id,
-                reason: reason.to_string(),
-            };
-            if let Some(ref callback) = self.event_callback {
-                callback(event.clone());
-            }
-            events.push(event);
+            self.emit_event(
+                events,
+                NatTraversalEvent::ConnectionLost {
+                    peer_id,
+                    reason: reason.to_string(),
+                },
+            );
         }
+    }
+
+    /// Poll candidate discovery manager and convert events
+    fn poll_discovery_manager(
+        &self,
+        now: std::time::Instant,
+        events: &mut Vec<NatTraversalEvent>,
+    ) {
+        let mut discovery = self.discovery_manager.lock();
+        let discovery_events = discovery.poll(now);
+
+        for discovery_event in discovery_events {
+            if let Some(nat_event) = self.convert_discovery_event(discovery_event) {
+                self.emit_event(events, nat_event);
+            }
+        }
+    }
+
+    /// Poll for NAT traversal progress and state machine updates
+    pub fn poll(
+        &self,
+        now: std::time::Instant,
+    ) -> Result<Vec<NatTraversalEvent>, NatTraversalError> {
+        let mut events = Vec::new();
+
+        // Drain pending events from async tasks
+        self.drain_pending_events(&mut events);
+
+        // Handle closed connections
+        self.poll_closed_connections(&mut events);
 
         // Check connections for observed addresses
         self.check_connections_for_observed_addresses(&mut events)?;
 
-        // Poll candidate discovery manager
-        // parking_lot::Mutex doesn't poison
-        {
-            let mut discovery = self.discovery_manager.lock();
-            let discovery_events = discovery.poll(now);
-
-            // Convert discovery events to NAT traversal events
-            for discovery_event in discovery_events {
-                if let Some(nat_event) = self.convert_discovery_event(discovery_event) {
-                    events.push(nat_event.clone());
-
-                    // Emit via callback
-                    if let Some(ref callback) = self.event_callback {
-                        callback(nat_event.clone());
-                    }
-
-                    // Update session candidates when discovered
-                    if let NatTraversalEvent::CandidateDiscovered {
-                        peer_id: _,
-                        candidate: _,
-                    } = &nat_event
-                    {
-                        // Store candidate for the session (will be done after we release discovery lock)
-                        // For now, just note that we need to update the session
-                    }
-                }
-            }
-        }
+        // Poll candidate discovery
+        self.poll_discovery_manager(now, &mut events);
 
         // CRITICAL: Two-phase approach to prevent deadlocks
         // Phase 1: Collect work to be done (hold DashMap entries briefly)
         // Phase 2: Execute work (no DashMap entries held)
-        //
-        // This prevents deadlocks caused by calling blocking operations
-        // (like send_coordination_request which locks connections)
-        // while holding active_sessions entries.
 
-        // Deferred work items
-        struct DeferredCoordination {
-            peer_id: PeerId,
-            coordinator: SocketAddr,
-        }
-        struct DeferredHolePunch {
-            peer_id: PeerId,
-            candidates: Vec<CandidateAddress>,
-        }
-        struct DeferredValidation {
-            peer_id: PeerId,
-            address: SocketAddr,
-        }
-
-        let mut coordination_requests: Vec<DeferredCoordination> = Vec::new();
-        let mut hole_punch_requests: Vec<DeferredHolePunch> = Vec::new();
-        let mut validation_requests: Vec<DeferredValidation> = Vec::new();
+        let mut coordination_requests: Vec<(PeerId, SocketAddr)> = Vec::new();
+        let mut hole_punch_requests: Vec<(PeerId, Vec<CandidateAddress>)> = Vec::new();
+        let mut validation_requests: Vec<(PeerId, SocketAddr)> = Vec::new();
 
         // Phase 1: Collect work and update session states (brief DashMap access)
         for mut entry in self.active_sessions.iter_mut() {
@@ -3667,15 +3624,14 @@ impl NatTraversalEndpoint {
                         if !session.candidates.is_empty() {
                             // Advance to coordination phase
                             session.phase = TraversalPhase::Coordination;
-                            let event = NatTraversalEvent::PhaseTransition {
-                                peer_id: session.peer_id,
-                                from_phase: TraversalPhase::Discovery,
-                                to_phase: TraversalPhase::Coordination,
-                            };
-                            events.push(event.clone());
-                            if let Some(ref callback) = self.event_callback {
-                                callback(event);
-                            }
+                            self.emit_event(
+                                &mut events,
+                                NatTraversalEvent::PhaseTransition {
+                                    peer_id: session.peer_id,
+                                    from_phase: TraversalPhase::Discovery,
+                                    to_phase: TraversalPhase::Coordination,
+                                },
+                            );
                             info!(
                                 "Peer {:?} advanced from Discovery to Coordination with {} candidates",
                                 session.peer_id,
@@ -3693,15 +3649,14 @@ impl NatTraversalEndpoint {
                         } else {
                             // Max attempts reached, fail
                             session.phase = TraversalPhase::Failed;
-                            let event = NatTraversalEvent::TraversalFailed {
-                                peer_id: session.peer_id,
-                                error: NatTraversalError::NoCandidatesFound,
-                                fallback_available: self.config.enable_relay_fallback,
-                            };
-                            events.push(event.clone());
-                            if let Some(ref callback) = self.event_callback {
-                                callback(event);
-                            }
+                            self.emit_event(
+                                &mut events,
+                                NatTraversalEvent::TraversalFailed {
+                                    peer_id: session.peer_id,
+                                    error: NatTraversalError::NoCandidatesFound,
+                                    fallback_available: self.config.enable_relay_fallback,
+                                },
+                            );
                             error!(
                                 "NAT traversal failed for peer {:?}: no candidates found after {} attempts",
                                 session.peer_id, session.attempt
@@ -3713,10 +3668,7 @@ impl NatTraversalEndpoint {
                         if let Some(coordinator) = self.select_coordinator() {
                             // Update phase now, execute request later
                             session.phase = TraversalPhase::Synchronization;
-                            coordination_requests.push(DeferredCoordination {
-                                peer_id: session.peer_id,
-                                coordinator,
-                            });
+                            coordination_requests.push((session.peer_id, coordinator));
                         } else {
                             self.handle_phase_failure(
                                 session,
@@ -3730,19 +3682,15 @@ impl NatTraversalEndpoint {
                         // Check if peer is synchronized
                         if self.is_peer_synchronized(&session.peer_id) {
                             session.phase = TraversalPhase::Punching;
-                            let event = NatTraversalEvent::HolePunchingStarted {
-                                peer_id: session.peer_id,
-                                targets: session.candidates.iter().map(|c| c.address).collect(),
-                            };
-                            events.push(event.clone());
-                            if let Some(ref callback) = self.event_callback {
-                                callback(event);
-                            }
+                            self.emit_event(
+                                &mut events,
+                                NatTraversalEvent::HolePunchingStarted {
+                                    peer_id: session.peer_id,
+                                    targets: session.candidates.iter().map(|c| c.address).collect(),
+                                },
+                            );
                             // DEFER: hole punching (may access connections)
-                            hole_punch_requests.push(DeferredHolePunch {
-                                peer_id: session.peer_id,
-                                candidates: session.candidates.clone(),
-                            });
+                            hole_punch_requests.push((session.peer_id, session.candidates.clone()));
                         } else {
                             self.handle_phase_failure(
                                 session,
@@ -3758,20 +3706,16 @@ impl NatTraversalEndpoint {
                         // Check if any punch succeeded
                         if let Some(successful_path) = self.check_punch_results(&session.peer_id) {
                             session.phase = TraversalPhase::Validation;
-                            let event = NatTraversalEvent::PathValidated {
-                                peer_id: session.peer_id,
-                                address: successful_path,
-                                rtt: Duration::from_millis(50), // TODO: Get actual RTT
-                            };
-                            events.push(event.clone());
-                            if let Some(ref callback) = self.event_callback {
-                                callback(event);
-                            }
+                            self.emit_event(
+                                &mut events,
+                                NatTraversalEvent::PathValidated {
+                                    peer_id: session.peer_id,
+                                    address: successful_path,
+                                    rtt: Duration::from_millis(50), // TODO: Get actual RTT
+                                },
+                            );
                             // DEFER: path validation (may access connections)
-                            validation_requests.push(DeferredValidation {
-                                peer_id: session.peer_id,
-                                address: successful_path,
-                            });
+                            validation_requests.push((session.peer_id, successful_path));
                         } else {
                             self.handle_phase_failure(
                                 session,
@@ -3787,19 +3731,18 @@ impl NatTraversalEndpoint {
                         // Check if path is validated
                         if self.is_path_validated(&session.peer_id) {
                             session.phase = TraversalPhase::Connected;
-                            let event = NatTraversalEvent::TraversalSucceeded {
-                                peer_id: session.peer_id,
-                                final_address: session
-                                    .candidates
-                                    .first()
-                                    .map(|c| c.address)
-                                    .unwrap_or_else(create_random_port_bind_addr),
-                                total_time: elapsed,
-                            };
-                            events.push(event.clone());
-                            if let Some(ref callback) = self.event_callback {
-                                callback(event);
-                            }
+                            self.emit_event(
+                                &mut events,
+                                NatTraversalEvent::TraversalSucceeded {
+                                    peer_id: session.peer_id,
+                                    final_address: session
+                                        .candidates
+                                        .first()
+                                        .map(|c| c.address)
+                                        .unwrap_or_else(create_random_port_bind_addr),
+                                    total_time: elapsed,
+                                },
+                            );
                             info!(
                                 "NAT traversal succeeded for peer {:?} in {:?}",
                                 session.peer_id, elapsed
@@ -3836,25 +3779,20 @@ impl NatTraversalEndpoint {
         // Phase 2: Execute deferred work (no DashMap entries held)
 
         // Execute coordination requests
-        for req in coordination_requests {
-            match self.send_coordination_request(req.peer_id, req.coordinator) {
+        for (peer_id, coordinator) in coordination_requests {
+            match self.send_coordination_request(peer_id, coordinator) {
                 Ok(_) => {
-                    let event = NatTraversalEvent::CoordinationRequested {
-                        peer_id: req.peer_id,
-                        coordinator: req.coordinator,
-                    };
-                    events.push(event.clone());
-                    if let Some(ref callback) = self.event_callback {
-                        callback(event);
-                    }
-                    info!(
-                        "Coordination requested for peer {:?} via {}",
-                        req.peer_id, req.coordinator
+                    self.emit_event(
+                        &mut events,
+                        NatTraversalEvent::CoordinationRequested {
+                            peer_id,
+                            coordinator,
+                        },
                     );
+                    info!("Coordination requested for peer {:?} via {}", peer_id, coordinator);
                 }
                 Err(e) => {
-                    // Revert phase on failure
-                    if let Some(mut session) = self.active_sessions.get_mut(&req.peer_id) {
+                    if let Some(mut session) = self.active_sessions.get_mut(&peer_id) {
                         self.handle_phase_failure(&mut session, now, &mut events, e);
                     }
                 }
@@ -3862,18 +3800,18 @@ impl NatTraversalEndpoint {
         }
 
         // Execute hole punch requests
-        for req in hole_punch_requests {
-            if let Err(e) = self.initiate_hole_punching(req.peer_id, &req.candidates) {
-                if let Some(mut session) = self.active_sessions.get_mut(&req.peer_id) {
+        for (peer_id, candidates) in hole_punch_requests {
+            if let Err(e) = self.initiate_hole_punching(peer_id, &candidates) {
+                if let Some(mut session) = self.active_sessions.get_mut(&peer_id) {
                     self.handle_phase_failure(&mut session, now, &mut events, e);
                 }
             }
         }
 
         // Execute validation requests
-        for req in validation_requests {
-            if let Err(e) = self.validate_path(req.peer_id, req.address) {
-                if let Some(mut session) = self.active_sessions.get_mut(&req.peer_id) {
+        for (peer_id, address) in validation_requests {
+            if let Err(e) = self.validate_path(peer_id, address) {
+                if let Some(mut session) = self.active_sessions.get_mut(&peer_id) {
                     self.handle_phase_failure(&mut session, now, &mut events, e);
                 }
             }
@@ -3967,15 +3905,14 @@ impl NatTraversalEndpoint {
         } else {
             // Max attempts reached
             session.phase = TraversalPhase::Failed;
-            let event = NatTraversalEvent::TraversalFailed {
-                peer_id: session.peer_id,
-                error,
-                fallback_available: self.config.enable_relay_fallback,
-            };
-            events.push(event.clone());
-            if let Some(ref callback) = self.event_callback {
-                callback(event);
-            }
+            self.emit_event(
+                events,
+                NatTraversalEvent::TraversalFailed {
+                    peer_id: session.peer_id,
+                    error,
+                    fallback_available: self.config.enable_relay_fallback,
+                },
+            );
             error!(
                 "NAT traversal failed for peer {:?} after {} attempts",
                 session.peer_id, session.attempt

@@ -384,6 +384,23 @@ pub struct ValidatedCandidate {
 }
 
 impl ValidatedCandidate {
+    /// Create a ValidatedCandidate from a DiscoveryCandidate
+    ///
+    /// # Parameters
+    /// - `candidate`: The discovery candidate to convert
+    /// - `reliability_score`: Score between 0.0 and 1.0 (1.0 = fully reliable)
+    #[inline]
+    pub(crate) fn from_discovery(candidate: &DiscoveryCandidate, reliability_score: f64) -> Self {
+        Self {
+            id: CandidateId(rand::random()),
+            address: candidate.address,
+            source: candidate.source,
+            priority: candidate.priority,
+            rtt: None,
+            reliability_score,
+        }
+    }
+
     /// Convert to CandidateAddress with proper NAT traversal source type
     pub fn to_candidate_address(&self) -> CandidateAddress {
         CandidateAddress {
@@ -781,14 +798,7 @@ impl CandidateDiscoveryManager {
                             let final_candidates: Vec<ValidatedCandidate> = session
                                 .discovered_candidates
                                 .iter()
-                                .map(|dc| ValidatedCandidate {
-                                    id: CandidateId(rand::random()),
-                                    address: dc.address,
-                                    source: dc.source,
-                                    priority: dc.priority,
-                                    rtt: None,
-                                    reliability_score: 1.0,
-                                })
+                                .map(|dc| ValidatedCandidate::from_discovery(dc, 1.0))
                                 .collect();
 
                             let candidate_count = final_candidates.len();
@@ -825,14 +835,7 @@ impl CandidateDiscoveryManager {
                         let final_candidates: Vec<ValidatedCandidate> = session
                             .discovered_candidates
                             .iter()
-                            .map(|dc| ValidatedCandidate {
-                                id: CandidateId(rand::random()),
-                                address: dc.address,
-                                source: dc.source,
-                                priority: dc.priority,
-                                rtt: None,
-                                reliability_score: 1.0,
-                            })
+                            .map(|dc| ValidatedCandidate::from_discovery(dc, 1.0))
                             .collect();
 
                         let candidate_count = final_candidates.len();
@@ -952,19 +955,10 @@ impl CandidateDiscoveryManager {
                 }
                 DiscoveryPhase::Failed { .. } => {
                     // Include any partial results from failed sessions
-                    // Convert DiscoveryCandidate to ValidatedCandidate
                     let validated: Vec<ValidatedCandidate> = session
                         .discovered_candidates
                         .iter()
-                        .enumerate()
-                        .map(|(idx, dc)| ValidatedCandidate {
-                            id: CandidateId(idx as u64),
-                            address: dc.address,
-                            source: dc.source,
-                            priority: dc.priority,
-                            rtt: None,
-                            reliability_score: 0.5, // Default score for failed sessions
-                        })
+                        .map(|dc| ValidatedCandidate::from_discovery(dc, 0.5))
                         .collect();
                     all_candidates.extend(validated);
                 }
@@ -1621,14 +1615,7 @@ impl CandidateDiscoveryManager {
         let validated_candidates: Vec<ValidatedCandidate> = session
             .discovered_candidates
             .iter()
-            .map(|dc| ValidatedCandidate {
-                id: CandidateId(rand::random()),
-                address: dc.address,
-                source: dc.source,
-                priority: dc.priority,
-                rtt: None,
-                reliability_score: 1.0,
-            })
+            .map(|dc| ValidatedCandidate::from_discovery(dc, 1.0))
             .collect();
 
         events.push(DiscoveryEvent::DiscoveryCompleted {
