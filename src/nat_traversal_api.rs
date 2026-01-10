@@ -3557,11 +3557,7 @@ impl NatTraversalEndpoint {
     }
 
     /// Poll candidate discovery manager and convert events
-    fn poll_discovery_manager(
-        &self,
-        now: std::time::Instant,
-        events: &mut Vec<NatTraversalEvent>,
-    ) {
+    fn poll_discovery_manager(&self, now: std::time::Instant, events: &mut Vec<NatTraversalEvent>) {
         let mut discovery = self.discovery_manager.lock();
         let discovery_events = discovery.poll(now);
 
@@ -3789,7 +3785,10 @@ impl NatTraversalEndpoint {
                             coordinator,
                         },
                     );
-                    info!("Coordination requested for peer {:?} via {}", peer_id, coordinator);
+                    info!(
+                        "Coordination requested for peer {:?} via {}",
+                        peer_id, coordinator
+                    );
                 }
                 Err(e) => {
                     if let Some(mut session) = self.active_sessions.get_mut(&peer_id) {
