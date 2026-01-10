@@ -6,7 +6,9 @@
 //! automatic connections using REAL P2pEndpoint QUIC connections,
 //! and test traffic generation over actual QUIC streams.
 
-use crate::epidemic_gossip::{ConnectionType as GossipConnectionType, EpidemicConfig, EpidemicEvent, EpidemicGossip};
+use crate::epidemic_gossip::{
+    ConnectionType as GossipConnectionType, EpidemicConfig, EpidemicEvent, EpidemicGossip,
+};
 use crate::gossip::{
     GossipConfig, GossipEvent, GossipIntegration, PeerCapabilities as GossipCapabilities,
 };
@@ -1686,7 +1688,9 @@ impl TestNode {
                                     } else {
                                         GossipConnectionType::DirectIpv4
                                     };
-                                    epidemic_gossip.set_connection_type(gossip_peer_id, gossip_conn_type).await;
+                                    epidemic_gossip
+                                        .set_connection_type(gossip_peer_id, gossip_conn_type)
+                                        .await;
 
                                     // CRITICAL: Add inbound peer to HyParView membership
                                     // Without this, the stats loop won't see inbound connections
@@ -2830,9 +2834,14 @@ impl TestNode {
 
                         if let Ok(payload) = serde_json::to_vec(&health) {
                             // Publish to "gossip-health" group if we're a member
-                            if let Ok(topic_id) = saorsa_gossip_types::TopicId::from_entity("gossip-health") {
+                            if let Ok(topic_id) =
+                                saorsa_gossip_types::TopicId::from_entity("gossip-health")
+                            {
                                 if epidemic_gossip.is_group_member(&topic_id).await {
-                                    if let Err(e) = epidemic_gossip.group_publish(topic_id, payload.clone()).await {
+                                    if let Err(e) = epidemic_gossip
+                                        .group_publish(topic_id, payload.clone())
+                                        .await
+                                    {
                                         debug!("Failed to publish gossip-health: {}", e);
                                     } else {
                                         info!(
@@ -3969,7 +3978,7 @@ impl TestNode {
                     // Groups stats from saorsa-gossip-groups
                     groups_count: epidemic_stats.groups.groups_count,
                     groups_total_members: epidemic_stats.groups.total_members,
-                    groups_joins: 0, // Not tracked in current implementation
+                    groups_joins: 0,  // Not tracked in current implementation
                     groups_leaves: 0, // Not tracked in current implementation
 
                     // Rendezvous stats from saorsa-gossip-rendezvous
@@ -4114,7 +4123,8 @@ impl TestNode {
                         context: Some(format!("{} peers", total_connections)),
                     }));
                     // Send gossip stats to TUI for display
-                    let _ = event_tx.try_send(TuiEvent::UpdateGossipStats(gossip_stats_for_tui.clone()));
+                    let _ = event_tx
+                        .try_send(TuiEvent::UpdateGossipStats(gossip_stats_for_tui.clone()));
 
                     let cache_health = CacheHealth {
                         total_peers: gossip_integration.cache_size(),
@@ -4434,10 +4444,14 @@ impl TestNode {
                                                 GossipConnectionType::DirectIpv4
                                             }
                                         }
-                                        ConnectionMethod::HolePunched => GossipConnectionType::HolePunched,
+                                        ConnectionMethod::HolePunched => {
+                                            GossipConnectionType::HolePunched
+                                        }
                                         ConnectionMethod::Relayed => GossipConnectionType::Relayed,
                                     };
-                                    epidemic_gossip.set_connection_type(gossip_peer_id, gossip_conn_type).await;
+                                    epidemic_gossip
+                                        .set_connection_type(gossip_peer_id, gossip_conn_type)
+                                        .await;
                                 }
                             }
                             let connectivity_for_report = result.matrix.clone();
@@ -4561,7 +4575,12 @@ impl TestNode {
                                         let mut arr = [0u8; 32];
                                         arr.copy_from_slice(&peer_bytes);
                                         let gossip_peer_id = GossipPeerId::new(arr);
-                                        epidemic_gossip.set_connection_type(gossip_peer_id, GossipConnectionType::Relayed).await;
+                                        epidemic_gossip
+                                            .set_connection_type(
+                                                gossip_peer_id,
+                                                GossipConnectionType::Relayed,
+                                            )
+                                            .await;
                                     }
                                 }
 

@@ -39,9 +39,9 @@ use saorsa_gossip_coordinator::{AddrHint, CoordinatorAdvert, CoordinatorRoles, N
 use saorsa_gossip_crdt_sync::{OrSet, VectorClock};
 use saorsa_gossip_groups::GroupContext;
 use saorsa_gossip_identity::MlDsaKeyPair;
-use saorsa_gossip_rendezvous::{Capability, ProviderSummary};
 use saorsa_gossip_membership::{HyParViewMembership, Membership, PeerState};
 use saorsa_gossip_pubsub::{PlumtreePubSub, PubSub};
+use saorsa_gossip_rendezvous::{Capability, ProviderSummary};
 use saorsa_gossip_transport::{
     AntQuicTransport, AntQuicTransportConfig, GossipTransport, StreamType,
 };
@@ -544,10 +544,7 @@ impl RendezvousState {
             return;
         }
 
-        let providers = self
-            .discovered_providers
-            .entry(summary.target)
-            .or_default();
+        let providers = self.discovered_providers.entry(summary.target).or_default();
 
         // Update existing or add new
         if let Some(existing) = providers
@@ -771,7 +768,10 @@ impl EpidemicGossip {
             for group_name in DEFAULT_GROUPS {
                 match groups_guard.join_group(group_name) {
                     Ok(topic_id) => {
-                        info!("Joined default group '{}' (topic: {:?})", group_name, topic_id);
+                        info!(
+                            "Joined default group '{}' (topic: {:?})",
+                            group_name, topic_id
+                        );
                     }
                     Err(e) => {
                         warn!("Failed to join default group '{}': {}", group_name, e);
@@ -817,8 +817,7 @@ impl EpidemicGossip {
             stats_guard.rendezvous = rendezvous_stats;
             info!(
                 "Initial stats populated: groups={}, rendezvous={}",
-                stats_guard.groups.groups_count,
-                stats_guard.rendezvous.registrations
+                stats_guard.groups.groups_count, stats_guard.rendezvous.registrations
             );
         }
 
@@ -1153,7 +1152,9 @@ impl EpidemicGossip {
                     let transport = Arc::clone(&transport);
                     let addr = *addr;
                     async move {
-                        let result = tokio::time::timeout(DIAL_TIMEOUT, transport.dial_bootstrap(addr)).await;
+                        let result =
+                            tokio::time::timeout(DIAL_TIMEOUT, transport.dial_bootstrap(addr))
+                                .await;
                         (addr, result)
                     }
                 })
@@ -1178,7 +1179,11 @@ impl EpidemicGossip {
                         debug!("Failed to dial bootstrap peer {}: {}", addr, e);
                     }
                     Err(_) => {
-                        debug!("Timeout dialing bootstrap peer {} ({}s)", addr, DIAL_TIMEOUT.as_secs());
+                        debug!(
+                            "Timeout dialing bootstrap peer {} ({}s)",
+                            addr,
+                            DIAL_TIMEOUT.as_secs()
+                        );
                     }
                 }
             }
@@ -1283,7 +1288,12 @@ impl EpidemicGossip {
     /// Get all entries from the CRDT peer cache.
     pub async fn get_peer_cache_entries(&self) -> Vec<PeerCacheEntry> {
         let crdt_guard = self.crdt_state.read().await;
-        crdt_guard.peer_cache.elements().into_iter().cloned().collect()
+        crdt_guard
+            .peer_cache
+            .elements()
+            .into_iter()
+            .cloned()
+            .collect()
     }
 
     /// Get the number of entries in the CRDT peer cache.
@@ -1418,11 +1428,7 @@ impl EpidemicGossip {
 
     /// Get the number of known coordinators.
     pub async fn known_coordinators_count(&self) -> usize {
-        self.coordinator_state
-            .read()
-            .await
-            .known_coordinators
-            .len()
+        self.coordinator_state.read().await.known_coordinators.len()
     }
 
     /// Record a successful coordination operation.
@@ -1489,7 +1495,11 @@ impl EpidemicGossip {
     ///
     /// This publishes through the Plumtree pubsub layer to the specified topic.
     /// Only members of the group will receive the message.
-    pub async fn group_publish(&self, topic_id: TopicId, payload: Vec<u8>) -> Result<(), GossipError> {
+    pub async fn group_publish(
+        &self,
+        topic_id: TopicId,
+        payload: Vec<u8>,
+    ) -> Result<(), GossipError> {
         if !self.is_running() {
             return Err(GossipError::NotRunning);
         }
@@ -2921,7 +2931,9 @@ mod tests {
         let fake_topic = TopicId::from_entity("not-joined").unwrap();
 
         // Mark as running artificially to test membership check
-        gossip.running.store(true, std::sync::atomic::Ordering::SeqCst);
+        gossip
+            .running
+            .store(true, std::sync::atomic::Ordering::SeqCst);
 
         let result = gossip.group_publish(fake_topic, vec![1, 2, 3]).await;
 
@@ -2971,7 +2983,10 @@ mod tests {
         state.add_discovered(summary);
 
         assert_eq!(state.discoveries, 1);
-        assert_eq!(state.discovered_providers.get(&target).map(|v| v.len()), Some(1));
+        assert_eq!(
+            state.discovered_providers.get(&target).map(|v| v.len()),
+            Some(1)
+        );
     }
 
     #[tokio::test]
@@ -3035,7 +3050,9 @@ mod tests {
         let gossip = EpidemicGossip::new(test_peer_id(), config, tx);
 
         let target = [6u8; 32];
-        let shard = gossip.register_provider(target, vec![Capability::Site], 60_000).await;
+        let shard = gossip
+            .register_provider(target, vec![Capability::Site], 60_000)
+            .await;
 
         // Shard is a u16, valid in range [0, 65535]
         // Just verify we got a shard back by using it
@@ -3082,7 +3099,9 @@ mod tests {
         let gossip = EpidemicGossip::new(test_peer_id(), config, tx);
 
         let target = [9u8; 32];
-        gossip.register_provider(target, vec![Capability::Site], 60_000).await;
+        gossip
+            .register_provider(target, vec![Capability::Site], 60_000)
+            .await;
 
         let stats = gossip.rendezvous_stats().await;
         assert_eq!(stats.registrations, 1);

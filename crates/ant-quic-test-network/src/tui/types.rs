@@ -244,7 +244,7 @@ impl ConnectionHistoryEntry {
         Self {
             short_id,
             full_id: peer_id.to_string(),
-            location: "---".to_string(),  // Unknown location until geo lookup completes
+            location: "---".to_string(), // Unknown location until geo lookup completes
             method: None,
             direction: None,
             status: ConnectionStatus::Coordinating,

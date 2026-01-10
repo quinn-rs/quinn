@@ -518,8 +518,9 @@ impl DiscoverySession {
 impl CandidateDiscoveryManager {
     /// Create a new candidate discovery manager
     pub fn new(config: DiscoveryConfig) -> Self {
-        let interface_discovery =
-            Arc::new(parking_lot::Mutex::new(create_platform_interface_discovery()));
+        let interface_discovery = Arc::new(parking_lot::Mutex::new(
+            create_platform_interface_discovery(),
+        ));
         let cache = DiscoveryCache::new(&config);
         let local_cache_duration = config.interface_cache_ttl;
 

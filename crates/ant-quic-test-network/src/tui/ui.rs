@@ -585,10 +585,7 @@ fn draw_gossip_status(frame: &mut Frame, app: &App, area: Rect) {
 
             // Color-code the crate name based on status
             spans.push(Span::styled(icon, Style::default().fg(color)));
-            spans.push(Span::styled(
-                name.to_string(),
-                Style::default().fg(color),
-            ));
+            spans.push(Span::styled(name.to_string(), Style::default().fg(color)));
         }
 
         // Summary at the end
@@ -677,8 +674,16 @@ fn draw_peers(frame: &mut Frame, app: &mut App, area: Rect) {
         Cell::from("St").style(Style::default().add_modifier(Modifier::BOLD)),
         Cell::from("Peer ID").style(Style::default().add_modifier(Modifier::BOLD)),
         Cell::from("Loc").style(Style::default().add_modifier(Modifier::BOLD)),
-        Cell::from("→ D·N·R").style(Style::default().add_modifier(Modifier::BOLD).fg(Color::Cyan)),
-        Cell::from("← D·N·R").style(Style::default().add_modifier(Modifier::BOLD).fg(Color::Magenta)),
+        Cell::from("→ D·N·R").style(
+            Style::default()
+                .add_modifier(Modifier::BOLD)
+                .fg(Color::Cyan),
+        ),
+        Cell::from("← D·N·R").style(
+            Style::default()
+                .add_modifier(Modifier::BOLD)
+                .fg(Color::Magenta),
+        ),
         Cell::from("IPv").style(Style::default().add_modifier(Modifier::BOLD)),
         Cell::from("RTT").style(Style::default().add_modifier(Modifier::BOLD)),
         Cell::from("Seen").style(Style::default().add_modifier(Modifier::BOLD)),
@@ -713,7 +718,7 @@ fn draw_peers(frame: &mut Frame, app: &mut App, area: Rect) {
             let location = if entry.location.len() == 2 {
                 format!("{} {}", country_flag(&entry.location), entry.location)
             } else if entry.location == "---" || entry.location == "??" {
-                "🌍 ?".to_string()  // Globe icon for unknown location
+                "🌍 ?".to_string() // Globe icon for unknown location
             } else {
                 entry.location.clone()
             };
@@ -1582,14 +1587,14 @@ fn draw_connectivity_matrix_tab(frame: &mut Frame, app: &App, area: Rect) {
             Row::new(vec![
                 Cell::from(entry.short_id.clone()).style(Style::default().fg(status_color)),
                 Cell::from(entry.status.emoji()).style(Style::default().fg(status_color)),
-                outcome_cell(entry.outbound.direct_ipv4),  // Out D4
-                outcome_cell(entry.outbound.direct_ipv6),  // Out D6
-                outcome_cell(entry.outbound.nat_best()),   // Out N (best of v4/v6)
+                outcome_cell(entry.outbound.direct_ipv4), // Out D4
+                outcome_cell(entry.outbound.direct_ipv6), // Out D6
+                outcome_cell(entry.outbound.nat_best()),  // Out N (best of v4/v6)
                 outcome_cell(entry.outbound.relay_best()), // Out R (best of v4/v6)
-                outcome_cell(entry.inbound.direct_ipv4),   // In D4
-                outcome_cell(entry.inbound.direct_ipv6),   // In D6
-                outcome_cell(entry.inbound.nat_best()),    // In N (best of v4/v6)
-                outcome_cell(entry.inbound.relay_best()),  // In R (best of v4/v6)
+                outcome_cell(entry.inbound.direct_ipv4),  // In D4
+                outcome_cell(entry.inbound.direct_ipv6),  // In D6
+                outcome_cell(entry.inbound.nat_best()),   // In N (best of v4/v6)
+                outcome_cell(entry.inbound.relay_best()), // In R (best of v4/v6)
                 Cell::from(entry.rtt_string()).style(Style::default().fg(Color::Yellow)),
             ])
         })
