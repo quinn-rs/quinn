@@ -28,7 +28,7 @@ use ratatui::{
 
 /// Traffic light colors for connection methods
 const COLOR_DIRECT: Color = Color::Green; // Best: Direct connection
-const COLOR_HOLEPUNCHED: Color = Color::Yellow; // Great: NAT traversed
+const COLOR_HOLEPUNCHED: Color = Color::Rgb(255, 165, 0); // Great: NAT traversed (orange)
 const COLOR_RELAYED: Color = Color::Red; // Works: But slower
 
 /// Get color for connection method (traffic light approach)
@@ -63,7 +63,7 @@ fn format_connectivity_matrix(matrix: &crate::registry::ConnectivityMatrix) -> V
     } else {
         ("·", Color::DarkGray)
     };
-    spans.push(Span::styled("4", Style::default().fg(Color::Yellow)));
+    spans.push(Span::styled("4", Style::default().fg(Color::Cyan)));
     spans.push(Span::styled(
         v4_char.to_string(),
         Style::default().fg(v4_color),
@@ -177,7 +177,7 @@ fn draw_tab_bar(frame: &mut Frame, app: &App, area: Rect) {
         .style(Style::default().fg(Color::White))
         .highlight_style(
             Style::default()
-                .fg(Color::Yellow)
+                .fg(Color::Cyan)
                 .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
         )
         .divider(" │ ");
@@ -293,7 +293,7 @@ fn draw_network_stats(frame: &mut Frame, app: &App, area: Rect) {
         Span::raw(" "),
         Span::styled(format!("→{}", outbound), Style::default().fg(Color::Cyan)),
         Span::raw("  │  "),
-        Span::styled(format!("v4:{}", ipv4), Style::default().fg(Color::Yellow)),
+        Span::styled(format!("v4:{}", ipv4), Style::default().fg(Color::Cyan)),
         Span::raw(" "),
         Span::styled(format!("v6:{}", ipv6), Style::default().fg(Color::Magenta)),
         Span::raw("  │  "),
@@ -319,7 +319,7 @@ fn draw_network_stats(frame: &mut Frame, app: &App, area: Rect) {
     let hyparview_color = if hyparview_active >= 6 {
         Color::Green
     } else if hyparview_active >= 3 {
-        Color::Yellow
+        Color::Cyan
     } else {
         Color::Red
     };
@@ -342,7 +342,7 @@ fn draw_network_stats(frame: &mut Frame, app: &App, area: Rect) {
         Span::raw("/"),
         Span::styled(
             format!("{}", swim_suspect),
-            Style::default().fg(Color::Yellow),
+            Style::default().fg(Color::Cyan),
         ),
         Span::raw("/"),
         Span::styled(format!("{}", swim_dead), Style::default().fg(Color::Red)),
@@ -373,7 +373,7 @@ fn draw_network_stats(frame: &mut Frame, app: &App, area: Rect) {
     let success_color = if success_rate >= 90.0 {
         Color::Green
     } else if success_rate >= 70.0 {
-        Color::Yellow
+        Color::Cyan
     } else {
         Color::Red
     };
@@ -410,7 +410,7 @@ fn draw_network_stats(frame: &mut Frame, app: &App, area: Rect) {
         Span::raw("  │  REG: "),
         Span::styled(
             format!("{}", app.total_registered_nodes),
-            Style::default().fg(Color::Yellow),
+            Style::default().fg(Color::Cyan),
         ),
     ]);
 
@@ -437,7 +437,7 @@ fn connectivity_test_status_span(app: &App) -> Span<'static> {
             Span::styled(
                 format!("  🔄 TEST: Waiting {}s", countdown),
                 Style::default()
-                    .fg(Color::Yellow)
+                    .fg(Color::Cyan)
                     .add_modifier(Modifier::BOLD),
             )
         }
@@ -450,7 +450,7 @@ fn connectivity_test_status_span(app: &App) -> Span<'static> {
         ConnectivityTestPhase::TestingOutbound { tested, total } => Span::styled(
             format!("  🔄 Testing: {}/{}", tested, total),
             Style::default()
-                .fg(Color::Yellow)
+                .fg(Color::Cyan)
                 .add_modifier(Modifier::BOLD),
         ),
         ConnectivityTestPhase::Complete => {
@@ -458,7 +458,7 @@ fn connectivity_test_status_span(app: &App) -> Span<'static> {
             let color = if rate >= 80.0 {
                 Color::Green
             } else if rate >= 50.0 {
-                Color::Yellow
+                Color::Cyan
             } else {
                 Color::Red
             };
@@ -516,7 +516,7 @@ fn draw_node_info(frame: &mut Frame, app: &App, area: Rect) {
         Span::raw("  ID: "),
         Span::styled(peer_id_display, Style::default().fg(Color::White)),
         Span::raw("  NAT: "),
-        Span::styled(nat_type, Style::default().fg(Color::Yellow)),
+        Span::styled(nat_type, Style::default().fg(Color::Cyan)),
         Span::raw("  "),
         registration_icon,
     ]);
@@ -553,7 +553,7 @@ fn draw_gossip_status(frame: &mut Frame, app: &App, area: Rect) {
         spans.push(Span::styled(
             "🔄 Running tests...",
             Style::default()
-                .fg(Color::Yellow)
+                .fg(Color::Cyan)
                 .add_modifier(Modifier::BOLD),
         ));
     } else if let Some(ref results) = app.gossip_test_results {
@@ -578,7 +578,7 @@ fn draw_gossip_status(frame: &mut Frame, app: &App, area: Rect) {
             let (icon, color) = match result.status {
                 TestStatus::Passed => ("✓", Color::Green),
                 TestStatus::Failed => ("✗", Color::Red),
-                TestStatus::Running => ("◐", Color::Yellow),
+                TestStatus::Running => ("◐", Color::Cyan),
                 TestStatus::Skipped => ("−", Color::DarkGray),
                 TestStatus::Pending => ("·", Color::DarkGray),
             };
@@ -597,7 +597,7 @@ fn draw_gossip_status(frame: &mut Frame, app: &App, area: Rect) {
         let summary_color = if passed == total {
             Color::Green
         } else if passed >= 7 {
-            Color::Yellow
+            Color::Cyan
         } else {
             Color::Red
         };
@@ -617,7 +617,7 @@ fn draw_gossip_status(frame: &mut Frame, app: &App, area: Rect) {
         spans.push(Span::raw("  "));
         spans.push(Span::styled(
             "[not tested]",
-            Style::default().fg(Color::Yellow),
+            Style::default().fg(Color::Cyan),
         ));
     }
 
@@ -630,7 +630,7 @@ fn draw_peers(frame: &mut Frame, app: &mut App, area: Rect) {
     let auto_status = if app.auto_connecting {
         Span::styled("[Auto-connecting]", Style::default().fg(Color::Green))
     } else {
-        Span::styled("[Paused]", Style::default().fg(Color::Yellow))
+        Span::styled("[Paused]", Style::default().fg(Color::Cyan))
     };
 
     let scroll_hint = Span::styled(
@@ -650,7 +650,7 @@ fn draw_peers(frame: &mut Frame, app: &mut App, area: Rect) {
         Span::raw(" "),
         Span::styled("D", Style::default().fg(Color::Green)),
         Span::styled("irect/", Style::default().fg(Color::DarkGray)),
-        Span::styled("N", Style::default().fg(Color::Yellow)),
+        Span::styled("N", Style::default().fg(Color::Cyan)),
         Span::styled("AT/", Style::default().fg(Color::DarkGray)),
         Span::styled("R", Style::default().fg(Color::Red)),
         Span::styled("elay ", Style::default().fg(Color::DarkGray)),
@@ -700,7 +700,7 @@ fn draw_peers(frame: &mut Frame, app: &mut App, area: Rect) {
                 crate::tui::types::ConnectionStatus::Connected => Color::Green,
                 crate::tui::types::ConnectionStatus::Disconnected => Color::DarkGray,
                 crate::tui::types::ConnectionStatus::Failed => Color::Red,
-                crate::tui::types::ConnectionStatus::Coordinating => Color::Yellow,
+                crate::tui::types::ConnectionStatus::Coordinating => Color::Cyan,
             };
 
             let row_color = match entry.status {
@@ -711,7 +711,7 @@ fn draw_peers(frame: &mut Frame, app: &mut App, area: Rect) {
                     .unwrap_or(Color::Green),
                 crate::tui::types::ConnectionStatus::Disconnected => Color::DarkGray,
                 crate::tui::types::ConnectionStatus::Failed => Color::Red,
-                crate::tui::types::ConnectionStatus::Coordinating => Color::Yellow,
+                crate::tui::types::ConnectionStatus::Coordinating => Color::Cyan,
             };
 
             // Display location with country flag if available
@@ -733,7 +733,7 @@ fn draw_peers(frame: &mut Frame, app: &mut App, area: Rect) {
                 Cell::from(outbound_summary),
                 Cell::from(inbound_summary),
                 Cell::from(entry.ip_version_indicator()).style(Style::default().fg(Color::Cyan)),
-                Cell::from(entry.rtt_string()).style(Style::default().fg(Color::Yellow)),
+                Cell::from(entry.rtt_string()).style(Style::default().fg(Color::Cyan)),
                 Cell::from(entry.time_since_seen()).style(Style::default().fg(Color::DarkGray)),
             ])
         })
@@ -794,9 +794,9 @@ fn draw_footer(frame: &mut Frame, _app: &App, area: Rect) {
         .border_style(Style::default().fg(Color::DarkGray));
 
     let line = Line::from(vec![
-        Span::styled("  [Q]", Style::default().fg(Color::Yellow)),
+        Span::styled("  [Q]", Style::default().fg(Color::Cyan)),
         Span::raw(" Quit  "),
-        Span::styled("[T]", Style::default().fg(Color::Yellow)),
+        Span::styled("[T]", Style::default().fg(Color::Cyan)),
         Span::raw(" Test  "),
         Span::styled("[G]", Style::default().fg(Color::Magenta)),
         Span::raw(" Gossip    "),
@@ -808,7 +808,7 @@ fn draw_footer(frame: &mut Frame, _app: &App, area: Rect) {
         Span::styled(
             "\"We will be legion!!\"",
             Style::default()
-                .fg(Color::Yellow)
+                .fg(Color::Cyan)
                 .add_modifier(Modifier::BOLD),
         ),
     ]);
@@ -873,10 +873,10 @@ fn draw_activity_log(frame: &mut Frame, app: &App, area: Rect) {
             "CONNECTED" => Color::Green,
             "DISCONNECTED" => Color::Red,
             "DIRECT" | "Direct" => Color::Green,
-            "PUNCHED" | "HolePunched" => Color::Yellow,
+            "PUNCHED" | "HolePunched" => Color::Cyan,
             "RELAYED" | "Relayed" => Color::Magenta,
             "CONNECT" => Color::Cyan,
-            "NAT_TRAVERSE" => Color::Yellow,
+            "NAT_TRAVERSE" => Color::Cyan,
             _ => Color::White,
         };
 
@@ -921,7 +921,7 @@ fn draw_connectivity_results(frame: &mut Frame, app: &App, area: Rect) {
     let title_color = if success_rate >= 80.0 {
         Color::Green
     } else if success_rate >= 50.0 {
-        Color::Yellow
+        Color::Cyan
     } else {
         Color::Red
     };
@@ -1063,7 +1063,7 @@ fn draw_transport_identity_panel(frame: &mut Frame, app: &App, area: Rect) {
                 Span::raw("  Known Peers: "),
                 Span::styled(
                     format!("{}", stats.identity_known_peers),
-                    Style::default().fg(Color::Yellow),
+                    Style::default().fg(Color::Cyan),
                 ),
             ]),
             Line::from(vec![
@@ -1104,7 +1104,7 @@ fn draw_membership_panel(frame: &mut Frame, app: &App, area: Rect) {
         let active_color = if stats.hyparview_active >= 6 {
             Color::Green
         } else if stats.hyparview_active >= 3 {
-            Color::Yellow
+            Color::Cyan
         } else {
             Color::Red
         };
@@ -1143,7 +1143,7 @@ fn draw_membership_panel(frame: &mut Frame, app: &App, area: Rect) {
                 Span::raw("  Forward Joins: "),
                 Span::styled(
                     format!("{}", stats.hyparview_forward_joins),
-                    Style::default().fg(Color::Yellow),
+                    Style::default().fg(Color::Cyan),
                 ),
             ]),
         ]
@@ -1163,7 +1163,7 @@ fn draw_membership_panel(frame: &mut Frame, app: &App, area: Rect) {
     let swim_block = Block::default()
         .title(" SWIM Failure Detection ")
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Yellow));
+        .border_style(Style::default().fg(Color::Cyan));
 
     let swim_lines = if let Some(ref stats) = app.gossip_stats {
         vec![
@@ -1176,10 +1176,10 @@ fn draw_membership_panel(frame: &mut Frame, app: &App, area: Rect) {
                         .add_modifier(Modifier::BOLD),
                 ),
                 Span::raw("  "),
-                Span::styled("Suspect: ", Style::default().fg(Color::Yellow)),
+                Span::styled("Suspect: ", Style::default().fg(Color::Cyan)),
                 Span::styled(
                     format!("{}", stats.swim_suspect),
-                    Style::default().fg(Color::Yellow),
+                    Style::default().fg(Color::Cyan),
                 ),
                 Span::raw("  "),
                 Span::styled("Dead: ", Style::default().fg(Color::Red)),
@@ -1206,7 +1206,7 @@ fn draw_membership_panel(frame: &mut Frame, app: &App, area: Rect) {
                 Span::raw("  Ping-Req Sent: "),
                 Span::styled(
                     format!("{}", stats.swim_ping_req_sent),
-                    Style::default().fg(Color::Yellow),
+                    Style::default().fg(Color::Cyan),
                 ),
             ]),
             Line::from(vec![
@@ -1247,7 +1247,7 @@ fn draw_pubsub_panel(frame: &mut Frame, app: &App, area: Rect) {
                 Span::raw("    Lazy Peers: "),
                 Span::styled(
                     format!("{}", stats.plumtree_lazy),
-                    Style::default().fg(Color::Yellow),
+                    Style::default().fg(Color::Cyan),
                 ),
             ]),
             Line::from(vec![
@@ -1266,7 +1266,7 @@ fn draw_pubsub_panel(frame: &mut Frame, app: &App, area: Rect) {
                 Span::raw("  Broadcasts: "),
                 Span::styled(
                     format!("{}", stats.plumtree_broadcasts),
-                    Style::default().fg(Color::Yellow),
+                    Style::default().fg(Color::Cyan),
                 ),
             ]),
             Line::from(vec![
@@ -1328,7 +1328,7 @@ fn draw_extended_gossip_panel(frame: &mut Frame, app: &App, area: Rect) {
                 Span::raw(" Entries: "),
                 Span::styled(
                     format!("{}", stats.crdt_entries),
-                    Style::default().fg(Color::Yellow),
+                    Style::default().fg(Color::Cyan),
                 ),
             ]),
             Line::from(vec![
@@ -1366,7 +1366,7 @@ fn draw_extended_gossip_panel(frame: &mut Frame, app: &App, area: Rect) {
     let coord_block = Block::default()
         .title(" Coordinator ")
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Yellow));
+        .border_style(Style::default().fg(Color::Cyan));
 
     let coord_lines = if let Some(ref stats) = app.gossip_stats {
         vec![
@@ -1374,7 +1374,7 @@ fn draw_extended_gossip_panel(frame: &mut Frame, app: &App, area: Rect) {
                 Span::raw(" Active: "),
                 Span::styled(
                     format!("{}", stats.coordinator_active),
-                    Style::default().fg(Color::Yellow),
+                    Style::default().fg(Color::Cyan),
                 ),
             ]),
             Line::from(vec![
@@ -1427,7 +1427,7 @@ fn draw_extended_gossip_panel(frame: &mut Frame, app: &App, area: Rect) {
                 Span::raw(" Members: "),
                 Span::styled(
                     format!("{}", stats.groups_total_members),
-                    Style::default().fg(Color::Yellow),
+                    Style::default().fg(Color::Cyan),
                 ),
             ]),
             Line::from(vec![
@@ -1466,7 +1466,7 @@ fn draw_extended_gossip_panel(frame: &mut Frame, app: &App, area: Rect) {
                 Span::raw(" Points: "),
                 Span::styled(
                     format!("{}", stats.rendezvous_points),
-                    Style::default().fg(Color::Yellow),
+                    Style::default().fg(Color::Cyan),
                 ),
             ]),
             Line::from(vec![
@@ -1596,7 +1596,7 @@ fn draw_connectivity_matrix_tab(frame: &mut Frame, app: &App, area: Rect) {
                 crate::tui::types::ConnectionStatus::Connected => Color::Green,
                 crate::tui::types::ConnectionStatus::Disconnected => Color::DarkGray,
                 crate::tui::types::ConnectionStatus::Failed => Color::Red,
-                crate::tui::types::ConnectionStatus::Coordinating => Color::Yellow,
+                crate::tui::types::ConnectionStatus::Coordinating => Color::Cyan,
             };
 
             // NAT type color based on hole-punch difficulty (1=easy/green, 5=hard/red)
@@ -1630,7 +1630,7 @@ fn draw_connectivity_matrix_tab(frame: &mut Frame, app: &App, area: Rect) {
                 outcome_cell(entry.inbound.direct_ipv6),  // ←D6
                 outcome_cell(entry.inbound.nat_best()),   // ←N (best of v4/v6)
                 outcome_cell(entry.inbound.relay_best()), // ←R (best of v4/v6)
-                Cell::from(entry.rtt_string()).style(Style::default().fg(Color::Yellow)),
+                Cell::from(entry.rtt_string()).style(Style::default().fg(Color::Cyan)),
             ])
         })
         .collect();
@@ -1745,12 +1745,12 @@ fn draw_protocol_log_tab(frame: &mut Frame, app: &App, area: Rect) {
             "CONNECTED" => Color::Green,
             "DISCONNECTED" => Color::Red,
             "DIRECT" | "Direct" => Color::Green,
-            "PUNCHED" | "HolePunched" => Color::Yellow,
+            "PUNCHED" | "HolePunched" => Color::Cyan,
             "RELAYED" | "Relayed" => Color::Magenta,
             "CONNECT" => Color::Cyan,
-            "NAT_TRAVERSE" => Color::Yellow,
+            "NAT_TRAVERSE" => Color::Cyan,
             "ADD_ADDRESS" => Color::Blue,
-            "PUNCH_ME_NOW" => Color::Yellow,
+            "PUNCH_ME_NOW" => Color::Cyan,
             "OBSERVED_ADDRESS" => Color::Magenta,
             _ => Color::White,
         };
