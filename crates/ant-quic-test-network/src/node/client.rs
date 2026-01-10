@@ -4292,6 +4292,23 @@ impl TestNode {
                     peers.extend(gossip_peers);
                 }
 
+                // Update existing tracked peers with fresh registry data (especially NAT type)
+                {
+                    let mut connected = connected_peers.write().await;
+                    for registry_peer in &peers {
+                        if let Some(tracked) = connected.get_mut(&registry_peer.peer_id) {
+                            // Update NAT type from registry if known
+                            if registry_peer.nat_type != NatType::Unknown {
+                                tracked.info.nat_type = registry_peer.nat_type;
+                            }
+                            // Also update other registry info
+                            tracked.info.country_code = registry_peer.country_code.clone();
+                            tracked.info.version = registry_peer.version.clone();
+                            tracked.info.capabilities = registry_peer.capabilities.clone();
+                        }
+                    }
+                }
+
                 // Update TUI with total registered count (+1 to include ourselves)
                 // The registry.get_peers() returns all peers EXCEPT us (non-blocking)
                 let _ = event_tx.try_send(TuiEvent::UpdateRegisteredCount(peers.len() + 1));
