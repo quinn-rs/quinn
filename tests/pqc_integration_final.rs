@@ -380,11 +380,10 @@ async fn test_memory_safety() {
 
 #[test]
 fn test_feature_flags() {
-    // PQC is now always enabled in v0.13.0+
-    // Verify aws-lc-rs is available
-    #[cfg(not(feature = "aws-lc-rs"))]
-    panic!("aws-lc-rs feature must be enabled for PQC support");
-
+    // PQC is now always enabled in v0.15.0+ (crypto is mandatory)
+    // Just verify aws-lc-rs is available by using it
+    let mut buf = [0u8; 32];
+    aws_lc_rs::rand::fill(&mut buf).expect("aws-lc-rs must be available");
     println!("All required features enabled");
 }
 

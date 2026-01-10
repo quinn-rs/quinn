@@ -271,25 +271,11 @@ mod network_utils {
     }
 }
 
-// Platform-specific crypto tests using aws-lc-rs
-#[cfg(all(test, feature = "rustls-aws-lc-rs"))]
+// Platform-specific crypto tests using aws-lc-rs (always enabled in v0.15.0+)
+#[cfg(test)]
 mod crypto_platform_tests {
     #[test]
     fn test_crypto_available() {
-        use aws_lc_rs::rand;
-
-        let mut buf = [0u8; 32];
-        rand::fill(&mut buf).expect("Failed to generate random bytes");
-
-        // Verify randomness (very basic check)
-        assert!(!buf.iter().all(|&b| b == 0));
-    }
-}
-
-#[cfg(all(test, feature = "rustls-aws-lc-rs"))]
-mod crypto_aws_lc_tests {
-    #[test]
-    fn test_aws_lc_crypto_available() {
         use aws_lc_rs::rand;
 
         let mut buf = [0u8; 32];
