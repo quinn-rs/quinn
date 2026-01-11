@@ -172,7 +172,6 @@ pub async fn start_metrics_server(
 mod tests {
     use super::*;
     use crate::logging::metrics::MetricsCollector;
-    use std::time::Duration;
 
     #[tokio::test]
     async fn test_metrics_server_creation() {

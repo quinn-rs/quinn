@@ -12,8 +12,7 @@
 
 // Note: Future netlink implementation could use netlink-packet-route crates
 // For now, using libc netlink sockets directly in candidate_discovery/linux.rs
-use std::collections::HashMap;
-use std::net::{IpAddr, SocketAddr};
+use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
 use super::{DiscoveryError, NetworkDiscovery, NetworkInterface};

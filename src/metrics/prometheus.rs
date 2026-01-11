@@ -9,11 +9,9 @@
 //!
 //! This module provides functionality to export ant-quic metrics in Prometheus format.
 
-use prometheus::{
-    Counter, CounterVec, Gauge, GaugeVec, Histogram, HistogramOpts, HistogramVec, Opts, Registry,
-};
+use prometheus::{Counter, CounterVec, Gauge, Histogram, HistogramOpts, Opts, Registry};
 use std::sync::Arc;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info};
 
 use crate::logging::metrics::MetricsCollector;
 
