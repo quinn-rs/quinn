@@ -68,6 +68,33 @@ fn normalize_socket_addr(addr: SocketAddr) -> SocketAddr {
     }
 }
 
+/// Broadcast an ADD_ADDRESS frame to all connected peers.
+///
+/// This helper consolidates the duplicate broadcast logic throughout the codebase.
+/// It iterates over all connections and sends the NAT address advertisement frame
+/// to each peer, logging success or failure.
+fn broadcast_address_to_peers(
+    connections: &dashmap::DashMap<PeerId, InnerConnection>,
+    address: SocketAddr,
+    priority: u32,
+) {
+    for mut entry in connections.iter_mut() {
+        let peer_id = *entry.key();
+        let conn = entry.value_mut();
+        match conn.send_nat_address_advertisement(address, priority) {
+            Ok(seq) => {
+                info!(
+                    "Sent ADD_ADDRESS to peer {:?}: addr={}, seq={}",
+                    peer_id, address, seq
+                );
+            }
+            Err(e) => {
+                debug!("Failed to send ADD_ADDRESS to peer {:?}: {:?}", peer_id, e);
+            }
+        }
+    }
+}
+
 use tracing::{debug, error, info, trace, warn};
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -1998,24 +2025,8 @@ impl NatTraversalEndpoint {
 
             // 2. Send ADD_ADDRESS to all peers for newly discovered addresses
             // (Critical for CGNAT - peers need to know our external address to hole-punch back)
-            if !new_addresses.is_empty() {
-                for addr in &new_addresses {
-                    for mut entry in connections.iter_mut() {
-                        let peer_id = *entry.key();
-                        let conn = entry.value_mut();
-                        match conn.send_nat_address_advertisement(*addr, 100) {
-                            Ok(seq) => {
-                                info!(
-                                    "Sent ADD_ADDRESS to peer {:?}: addr={}, seq={}",
-                                    peer_id, addr, seq
-                                );
-                            }
-                            Err(e) => {
-                                debug!("Failed to send ADD_ADDRESS to peer {:?}: {:?}", peer_id, e);
-                            }
-                        }
-                    }
-                }
+            for addr in &new_addresses {
+                broadcast_address_to_peers(&connections, *addr, 100);
             }
 
             // 3. Poll the discovery manager
@@ -2023,150 +2034,45 @@ impl NatTraversalEndpoint {
             let events = discovery_manager.lock().poll(std::time::Instant::now());
 
             // Process discovery events
+            // Events that only need logging use the Display implementation.
+            // Events requiring action are handled explicitly.
             for event in events {
-                match event {
-                    DiscoveryEvent::DiscoveryStarted {
-                        peer_id,
-                        bootstrap_count,
-                    } => {
-                        debug!(
-                            "Discovery started for peer {:?} with {} bootstrap nodes",
-                            peer_id, bootstrap_count
-                        );
-                    }
-                    DiscoveryEvent::LocalScanningStarted => {
-                        debug!("Local interface scanning started");
-                    }
-                    DiscoveryEvent::LocalCandidateDiscovered { candidate } => {
-                        debug!("Discovered local candidate: {}", candidate.address);
-                        // Local candidates are stored in the discovery manager
-                        // They will be used when specific peers initiate NAT traversal
-                    }
-                    DiscoveryEvent::LocalScanningCompleted {
-                        candidate_count,
-                        duration,
-                    } => {
-                        debug!(
-                            "Local interface scanning completed: {} candidates in {:?}",
-                            candidate_count, duration
-                        );
-                    }
-                    DiscoveryEvent::ServerReflexiveDiscoveryStarted { bootstrap_count } => {
-                        debug!(
-                            "Server reflexive discovery started with {} bootstrap nodes",
-                            bootstrap_count
-                        );
-                    }
+                match &event {
                     DiscoveryEvent::ServerReflexiveCandidateDiscovered {
                         candidate,
                         bootstrap_node,
                     } => {
-                        debug!(
-                            "Discovered server-reflexive candidate {} via bootstrap {}",
-                            candidate.address, bootstrap_node
-                        );
+                        debug!("{}", event);
 
                         // Notify that our external address was discovered
                         let _ = event_tx.send(NatTraversalEvent::ExternalAddressDiscovered {
-                            reported_by: bootstrap_node,
+                            reported_by: *bootstrap_node,
                             address: candidate.address,
                         });
 
                         // Send ADD_ADDRESS frame to all connected peers so they know
                         // how to reach us (critical for CGNAT hole punching)
-                        // DashMap allows concurrent iteration without blocking
-                        for mut entry in connections.iter_mut() {
-                            let peer_id = *entry.key();
-                            let conn = entry.value_mut();
-                            match conn.send_nat_address_advertisement(
-                                candidate.address,
-                                candidate.priority,
-                            ) {
-                                Ok(seq) => {
-                                    info!(
-                                        "Sent ADD_ADDRESS to peer {:?}: addr={}, seq={}",
-                                        peer_id, candidate.address, seq
-                                    );
-                                }
-                                Err(e) => {
-                                    debug!(
-                                        "Failed to send ADD_ADDRESS to peer {:?}: {:?}",
-                                        peer_id, e
-                                    );
-                                }
-                            }
-                        }
-                    }
-                    DiscoveryEvent::BootstrapQueryFailed {
-                        bootstrap_node,
-                        error,
-                    } => {
-                        debug!("Bootstrap query failed for {}: {}", bootstrap_node, error);
-                    }
-                    // Prediction events removed in minimal flow
-                    DiscoveryEvent::PortAllocationDetected {
-                        port,
-                        source_address,
-                        bootstrap_node,
-                        timestamp,
-                    } => {
-                        debug!(
-                            "Port allocation detected: port {} from {} via bootstrap {:?} at {:?}",
-                            port, source_address, bootstrap_node, timestamp
+                        broadcast_address_to_peers(
+                            &connections,
+                            candidate.address,
+                            candidate.priority,
                         );
                     }
-                    DiscoveryEvent::DiscoveryCompleted {
-                        candidate_count,
-                        total_duration,
-                        success_rate,
-                    } => {
-                        info!(
-                            "Discovery completed with {} candidates in {:?} (success rate: {:.2}%)",
-                            candidate_count,
-                            total_duration,
-                            success_rate * 100.0
-                        );
-                        // Discovery completion is tracked internally in the discovery manager
-                        // The candidates will be used when NAT traversal is initiated for specific peers
+                    DiscoveryEvent::DiscoveryCompleted { .. } => {
+                        // Use info! level for successful completion
+                        info!("{}", event);
                     }
-                    DiscoveryEvent::DiscoveryFailed {
-                        error,
-                        partial_results,
-                    } => {
-                        warn!(
-                            "Discovery failed: {} (found {} partial candidates)",
-                            error,
-                            partial_results.len()
-                        );
-
-                        // We don't send a TraversalFailed event here because:
+                    DiscoveryEvent::DiscoveryFailed { .. } => {
+                        // Use warn! level for failures
+                        // Note: We don't send a TraversalFailed event here because:
                         // 1. This is general discovery, not for a specific peer
                         // 2. We might have partial results that are still usable
                         // 3. The actual NAT traversal attempt will handle failure if needed
+                        warn!("{}", event);
                     }
-                    DiscoveryEvent::PathValidationRequested {
-                        candidate_id,
-                        candidate_address,
-                        challenge_token,
-                    } => {
-                        debug!(
-                            "PATH_CHALLENGE requested for candidate {} at {} with token {:08x}",
-                            candidate_id.0, candidate_address, challenge_token
-                        );
-                        // This event is used to trigger sending PATH_CHALLENGE frames
-                        // The actual sending is handled by the QUIC connection layer
-                    }
-                    DiscoveryEvent::PathValidationResponse {
-                        candidate_id,
-                        candidate_address,
-                        challenge_token: _,
-                        rtt,
-                    } => {
-                        debug!(
-                            "PATH_RESPONSE received for candidate {} at {} with RTT {:?}",
-                            candidate_id.0, candidate_address, rtt
-                        );
-                        // Candidate has been validated with real QUIC path validation
+                    // All other events only need logging at debug level
+                    _ => {
+                        debug!("{}", event);
                     }
                 }
             }

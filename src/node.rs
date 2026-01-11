@@ -55,11 +55,9 @@ use tracing::info;
 use crate::host_identity::HostIdentity;
 use crate::nat_traversal_api::PeerId;
 use crate::node_config::NodeConfig;
-use crate::node_event::{DisconnectReason as NodeDisconnectReason, NodeEvent};
+use crate::node_event::NodeEvent;
 use crate::node_status::{NatType, NodeStatus};
-use crate::p2p_endpoint::{
-    DisconnectReason as P2pDisconnectReason, EndpointError, P2pEndpoint, P2pEvent, PeerConnection,
-};
+use crate::p2p_endpoint::{EndpointError, P2pEndpoint, P2pEvent, PeerConnection};
 use crate::unified_config::P2pConfig;
 use crate::unified_config::load_or_generate_endpoint_keypair;
 
@@ -322,51 +320,35 @@ impl Node {
     }
 
     /// Convert a P2pEvent to a NodeEvent
+    ///
+    /// Uses the From trait implementation for DisconnectReason conversion.
     fn convert_event(p2p_event: P2pEvent) -> Option<NodeEvent> {
         match p2p_event {
             P2pEvent::PeerConnected {
                 peer_id,
                 addr,
                 side: _,
-            } => {
-                Some(NodeEvent::PeerConnected {
-                    peer_id,
-                    addr,
-                    direct: true, // P2pEvent doesn't distinguish, assume direct
-                })
-            }
+            } => Some(NodeEvent::PeerConnected {
+                peer_id,
+                addr,
+                direct: true, // P2pEvent doesn't distinguish, assume direct
+            }),
             P2pEvent::PeerDisconnected { peer_id, reason } => Some(NodeEvent::PeerDisconnected {
                 peer_id,
-                reason: Self::convert_disconnect_reason(reason),
+                reason: reason.into(), // Use From trait
             }),
             P2pEvent::ExternalAddressDiscovered { addr } => {
                 Some(NodeEvent::ExternalAddressDiscovered { addr })
             }
-            P2pEvent::DataReceived { peer_id, bytes } => {
-                Some(NodeEvent::DataReceived {
-                    peer_id,
-                    stream_id: 0, // P2pEvent doesn't track stream IDs
-                    bytes,
-                })
-            }
+            P2pEvent::DataReceived { peer_id, bytes } => Some(NodeEvent::DataReceived {
+                peer_id,
+                stream_id: 0, // P2pEvent doesn't track stream IDs
+                bytes,
+            }),
             // Events without direct NodeEvent equivalents are ignored
-            P2pEvent::NatTraversalProgress { .. } => None,
-            P2pEvent::BootstrapStatus { .. } => None,
-            P2pEvent::PeerAuthenticated { .. } => None,
-        }
-    }
-
-    /// Convert P2pDisconnectReason to NodeDisconnectReason
-    fn convert_disconnect_reason(p2p_reason: P2pDisconnectReason) -> NodeDisconnectReason {
-        match p2p_reason {
-            P2pDisconnectReason::Normal => NodeDisconnectReason::Graceful,
-            P2pDisconnectReason::Timeout => NodeDisconnectReason::Timeout,
-            P2pDisconnectReason::ProtocolError(e) => NodeDisconnectReason::TransportError(e),
-            P2pDisconnectReason::AuthenticationFailed => {
-                NodeDisconnectReason::TransportError("authentication failed".to_string())
-            }
-            P2pDisconnectReason::ConnectionLost => NodeDisconnectReason::Reset,
-            P2pDisconnectReason::RemoteClosed => NodeDisconnectReason::ApplicationClose,
+            P2pEvent::NatTraversalProgress { .. }
+            | P2pEvent::BootstrapStatus { .. }
+            | P2pEvent::PeerAuthenticated { .. } => None,
         }
     }
 

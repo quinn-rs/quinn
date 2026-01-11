@@ -267,6 +267,28 @@ impl NodeEvent {
     }
 }
 
+// Import P2pDisconnectReason for the From implementation
+use crate::p2p_endpoint::DisconnectReason as P2pDisconnectReason;
+
+/// Convert P2pDisconnectReason to NodeDisconnectReason (DisconnectReason in node_event)
+///
+/// This provides an idiomatic conversion between the two disconnect reason types
+/// used at different API layers.
+impl From<P2pDisconnectReason> for DisconnectReason {
+    fn from(reason: P2pDisconnectReason) -> Self {
+        match reason {
+            P2pDisconnectReason::Normal => Self::Graceful,
+            P2pDisconnectReason::Timeout => Self::Timeout,
+            P2pDisconnectReason::ProtocolError(e) => Self::TransportError(e),
+            P2pDisconnectReason::AuthenticationFailed => {
+                Self::TransportError("authentication failed".to_string())
+            }
+            P2pDisconnectReason::ConnectionLost => Self::Reset,
+            P2pDisconnectReason::RemoteClosed => Self::ApplicationClose,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

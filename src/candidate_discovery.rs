@@ -81,6 +81,75 @@ pub enum DiscoverySourceType {
     Predicted,
 }
 
+/// IPv6 address type classification for priority calculation.
+///
+/// This enum classifies IPv6 addresses into types that affect their priority
+/// in NAT traversal candidate selection. Global unicast addresses are preferred
+/// for external connectivity, while link-local addresses are only usable within
+/// the local network segment.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Ipv6AddressType {
+    /// Global unicast addresses (2000::/3)
+    /// These are publicly routable and have the highest priority.
+    GlobalUnicast,
+    /// Unique local addresses (fc00::/7)
+    /// Similar to IPv4 private addresses, usable within organizations.
+    UniqueLocal,
+    /// Link-local addresses (fe80::/10)
+    /// Only valid within a single network segment.
+    LinkLocal,
+    /// Other IPv6 addresses (loopback, multicast, etc.)
+    Other,
+}
+
+impl Ipv6AddressType {
+    /// Classify an IPv6 address based on its prefix.
+    ///
+    /// Uses segment bit patterns to efficiently determine the address type
+    /// without string parsing or external dependencies.
+    pub fn classify(ipv6: &std::net::Ipv6Addr) -> Self {
+        let segments = ipv6.segments();
+        // Check address type based on prefix bits
+        if segments[0] & 0xE000 == 0x2000 {
+            // Global unicast (2000::/3)
+            Self::GlobalUnicast
+        } else if segments[0] & 0xFFC0 == 0xFE80 {
+            // Link-local (fe80::/10)
+            Self::LinkLocal
+        } else if segments[0] & 0xFE00 == 0xFC00 {
+            // Unique local (fc00::/7)
+            Self::UniqueLocal
+        } else {
+            Self::Other
+        }
+    }
+
+    /// Get the priority boost for this address type.
+    ///
+    /// Returns the priority value to add for local address priority calculation.
+    pub fn local_priority_boost(self) -> u32 {
+        match self {
+            Self::GlobalUnicast => 60,
+            Self::UniqueLocal => 40,
+            Self::LinkLocal => 20,
+            Self::Other => 30,
+        }
+    }
+
+    /// Get the priority penalty for QUIC-discovered addresses.
+    ///
+    /// Returns the priority value to subtract for server-reflexive address
+    /// priority calculation.
+    pub fn quic_discovered_penalty(self) -> u32 {
+        match self {
+            Self::GlobalUnicast => 0, // No penalty for global unicast
+            Self::UniqueLocal => 10,  // Slight penalty, similar to private IPv4
+            Self::LinkLocal => 30,    // Significant penalty
+            Self::Other => 0,         // Handled separately (loopback, multicast, etc.)
+        }
+    }
+}
+
 /// Internal candidate type used during discovery
 #[derive(Debug, Clone)]
 pub(crate) struct DiscoveryCandidate {
@@ -156,6 +225,37 @@ pub struct DiscoveryConfig {
     pub bound_address: Option<SocketAddr>,
     /// Minimum time to wait before completing discovery (allows time for OBSERVED_ADDRESS)
     pub min_discovery_time: Duration,
+}
+
+impl DiscoveryConfig {
+    /// Create a test configuration with sensible defaults for unit tests.
+    ///
+    /// This configuration is optimized for fast test execution with:
+    /// - Short timeouts
+    /// - No minimum discovery time
+    /// - Standard candidate limits
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// let manager = CandidateDiscoveryManager::new(DiscoveryConfig::test_default());
+    /// ```
+    #[cfg(test)]
+    pub fn test_default() -> Self {
+        Self {
+            total_timeout: Duration::from_secs(30),
+            local_scan_timeout: Duration::from_secs(5),
+            bootstrap_query_timeout: Duration::from_secs(10),
+            max_query_retries: 3,
+            max_candidates: 50,
+            enable_symmetric_prediction: true,
+            min_bootstrap_consensus: 2,
+            interface_cache_ttl: Duration::from_secs(300),
+            server_reflexive_cache_ttl: Duration::from_secs(600),
+            bound_address: None,
+            // For tests, allow immediate completion (no waiting for OBSERVED_ADDRESS)
+            min_discovery_time: Duration::ZERO,
+        }
+    }
 }
 
 /// Current phase of the discovery process
@@ -259,6 +359,114 @@ pub enum DiscoveryEvent {
         challenge_token: u64,
         rtt: Duration,
     },
+}
+
+impl std::fmt::Display for DiscoveryEvent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::DiscoveryStarted {
+                peer_id,
+                bootstrap_count,
+            } => {
+                write!(
+                    f,
+                    "Discovery started for peer {peer_id:?} with {bootstrap_count} bootstrap nodes"
+                )
+            }
+            Self::LocalScanningStarted => {
+                write!(f, "Local interface scanning started")
+            }
+            Self::LocalCandidateDiscovered { candidate } => {
+                write!(f, "Discovered local candidate: {}", candidate.address)
+            }
+            Self::LocalScanningCompleted {
+                candidate_count,
+                duration,
+            } => {
+                write!(
+                    f,
+                    "Local interface scanning completed: {candidate_count} candidates in {duration:?}"
+                )
+            }
+            Self::ServerReflexiveDiscoveryStarted { bootstrap_count } => {
+                write!(
+                    f,
+                    "Server reflexive discovery started with {bootstrap_count} bootstrap nodes"
+                )
+            }
+            Self::ServerReflexiveCandidateDiscovered {
+                candidate,
+                bootstrap_node,
+            } => {
+                write!(
+                    f,
+                    "Discovered server-reflexive candidate {} via bootstrap {}",
+                    candidate.address, bootstrap_node
+                )
+            }
+            Self::BootstrapQueryFailed {
+                bootstrap_node,
+                error,
+            } => {
+                write!(f, "Bootstrap query failed for {bootstrap_node}: {error}")
+            }
+            Self::PortAllocationDetected {
+                port,
+                source_address,
+                bootstrap_node,
+                timestamp,
+            } => {
+                write!(
+                    f,
+                    "Port allocation detected: port {port} from {source_address} via bootstrap {bootstrap_node:?} at {timestamp:?}"
+                )
+            }
+            Self::DiscoveryCompleted {
+                candidate_count,
+                total_duration,
+                success_rate,
+            } => {
+                write!(
+                    f,
+                    "Discovery completed with {candidate_count} candidates in {total_duration:?} (success rate: {:.2}%)",
+                    success_rate * 100.0
+                )
+            }
+            Self::DiscoveryFailed {
+                error,
+                partial_results,
+            } => {
+                write!(
+                    f,
+                    "Discovery failed: {error} (found {} partial candidates)",
+                    partial_results.len()
+                )
+            }
+            Self::PathValidationRequested {
+                candidate_id,
+                candidate_address,
+                challenge_token,
+            } => {
+                write!(
+                    f,
+                    "PATH_CHALLENGE requested for candidate {} at {candidate_address} with token {challenge_token:08x}",
+                    candidate_id.0
+                )
+            }
+            Self::PathValidationResponse {
+                candidate_id,
+                candidate_address,
+                rtt,
+                ..
+            } => {
+                write!(
+                    f,
+                    "PATH_RESPONSE received for candidate {} at {candidate_address} with RTT {rtt:?}",
+                    candidate_id.0
+                )
+            }
+        }
+    }
 }
 
 /// Unique identifier for bootstrap nodes
@@ -1036,23 +1244,9 @@ impl CandidateDiscoveryManager {
                 }
             }
             IpAddr::V6(ipv6) => {
-                // IPv6 priority based on address type
-                // Global unicast: 2000::/3 (not link-local, not unique local)
+                // IPv6 priority based on address type using classifier
                 if !ipv6.is_loopback() && !ipv6.is_multicast() && !ipv6.is_unspecified() {
-                    let segments = ipv6.segments();
-                    if segments[0] & 0xE000 == 0x2000 {
-                        // Global unicast IPv6 (2000::/3)
-                        priority += 60;
-                    } else if segments[0] & 0xFFC0 == 0xFE80 {
-                        // Link-local IPv6 (fe80::/10)
-                        priority += 20;
-                    } else if segments[0] & 0xFE00 == 0xFC00 {
-                        // Unique local IPv6 (fc00::/7)
-                        priority += 40;
-                    } else {
-                        // Other IPv6 addresses
-                        priority += 30;
-                    }
+                    priority += Ipv6AddressType::classify(&ipv6).local_priority_boost();
                 }
 
                 // Prefer IPv6 for better NAT traversal potential
@@ -1140,16 +1334,8 @@ impl CandidateDiscoveryManager {
                 } else if ipv6.is_unspecified() {
                     priority -= 50; // Unspecified should not be used
                 } else {
-                    // Check for specific IPv6 types
-                    let segments = ipv6.segments();
-                    if segments[0] & 0xFFC0 == 0xFE80 {
-                        // Link-local IPv6 (fe80::/10)
-                        priority -= 30; // Significant penalty
-                    } else if segments[0] & 0xFE00 == 0xFC00 {
-                        // Unique local IPv6 (fc00::/7)
-                        priority -= 10; // Slight penalty, similar to private IPv4
-                    }
-                    // Global unicast IPv6 (2000::/3) keeps the boost
+                    // Use classifier for address type penalty
+                    priority -= Ipv6AddressType::classify(&ipv6).quic_discovered_penalty();
                 }
             }
         }
@@ -1338,23 +1524,9 @@ pub mod test_utils {
                 }
             }
             IpAddr::V6(ipv6) => {
-                // IPv6 priority based on address type
-                // Global unicast: 2000::/3 (not link-local, not unique local)
+                // IPv6 priority based on address type using classifier
                 if !ipv6.is_loopback() && !ipv6.is_multicast() && !ipv6.is_unspecified() {
-                    let segments = ipv6.segments();
-                    if segments[0] & 0xE000 == 0x2000 {
-                        // Global unicast IPv6 (2000::/3)
-                        priority += 60;
-                    } else if segments[0] & 0xFFC0 == 0xFE80 {
-                        // Link-local IPv6 (fe80::/10)
-                        priority += 20;
-                    } else if segments[0] & 0xFE00 == 0xFC00 {
-                        // Unique local IPv6 (fc00::/7)
-                        priority += 40;
-                    } else {
-                        // Other IPv6 addresses
-                        priority += 30;
-                    }
+                    priority += Ipv6AddressType::classify(ipv6).local_priority_boost();
                 }
 
                 // Prefer IPv6 for better NAT traversal potential
@@ -1378,21 +1550,7 @@ mod tests {
     use super::*;
 
     fn create_test_manager() -> CandidateDiscoveryManager {
-        let config = DiscoveryConfig {
-            total_timeout: Duration::from_secs(30),
-            local_scan_timeout: Duration::from_secs(5),
-            bootstrap_query_timeout: Duration::from_secs(10),
-            max_query_retries: 3,
-            max_candidates: 50,
-            enable_symmetric_prediction: true,
-            min_bootstrap_consensus: 2,
-            interface_cache_ttl: Duration::from_secs(300),
-            server_reflexive_cache_ttl: Duration::from_secs(600),
-            bound_address: None,
-            // For tests, allow immediate completion (no waiting for OBSERVED_ADDRESS)
-            min_discovery_time: Duration::ZERO,
-        };
-        CandidateDiscoveryManager::new(config)
+        CandidateDiscoveryManager::new(DiscoveryConfig::test_default())
     }
 
     #[test]
