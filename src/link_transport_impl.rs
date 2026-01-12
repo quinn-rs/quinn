@@ -51,6 +51,7 @@ use crate::high_level::{
 use crate::link_transport::{
     BoxFuture, BoxStream, Capabilities, ConnectionStats, DisconnectReason, Incoming, LinkConn,
     LinkError, LinkEvent, LinkRecvStream, LinkResult, LinkSendStream, LinkTransport, ProtocolId,
+    StreamFilter, StreamType,
 };
 use crate::nat_traversal_api::PeerId;
 use crate::p2p_endpoint::{P2pEndpoint, P2pEvent};
@@ -164,6 +165,155 @@ impl LinkConn for P2pLinkConn {
             streams_opened: 0, // Would need to track this separately
             packets_lost: quic_stats.path.lost_packets,
         }
+    }
+
+    fn open_uni_typed(
+        &self,
+        stream_type: StreamType,
+    ) -> BoxFuture<'_, LinkResult<Box<dyn LinkSendStream>>> {
+        Box::pin(async move {
+            let mut stream = self
+                .inner
+                .open_uni()
+                .await
+                .map_err(|e| LinkError::ConnectionFailed(e.to_string()))?;
+
+            // Write the stream type byte first
+            stream
+                .write_all(&[stream_type.as_byte()])
+                .await
+                .map_err(|e| LinkError::Io(e.to_string()))?;
+
+            Ok(Box::new(P2pSendStream::new(stream)) as Box<dyn LinkSendStream>)
+        })
+    }
+
+    fn open_bi_typed(
+        &self,
+        stream_type: StreamType,
+    ) -> BoxFuture<'_, LinkResult<(Box<dyn LinkSendStream>, Box<dyn LinkRecvStream>)>> {
+        Box::pin(async move {
+            let (mut send, recv) = self
+                .inner
+                .open_bi()
+                .await
+                .map_err(|e| LinkError::ConnectionFailed(e.to_string()))?;
+
+            // Write the stream type byte first
+            send.write_all(&[stream_type.as_byte()])
+                .await
+                .map_err(|e| LinkError::Io(e.to_string()))?;
+
+            Ok((
+                Box::new(P2pSendStream::new(send)) as Box<dyn LinkSendStream>,
+                Box::new(P2pRecvStream::new(recv)) as Box<dyn LinkRecvStream>,
+            ))
+        })
+    }
+
+    fn accept_uni_typed(
+        &self,
+        filter: StreamFilter,
+    ) -> BoxStream<'_, LinkResult<(StreamType, Box<dyn LinkRecvStream>)>> {
+        let conn = self.inner.clone();
+        Box::pin(futures_util::stream::unfold(
+            (conn, filter),
+            |(conn, filter): (HighLevelConnection, StreamFilter)| async move {
+                loop {
+                    // Accept incoming unidirectional stream
+                    let mut recv: HighLevelRecvStream = match conn.accept_uni().await {
+                        Ok(r) => r,
+                        Err(_) => return None,
+                    };
+
+                    // Read the first byte to determine stream type
+                    let mut type_buf = [0u8; 1];
+                    if recv.read_exact(&mut type_buf).await.is_err() {
+                        // Failed to read type byte, skip this stream
+                        continue;
+                    }
+
+                    // Parse stream type
+                    let stream_type = match StreamType::from_byte(type_buf[0]) {
+                        Some(st) => st,
+                        None => {
+                            // Unknown stream type, return error
+                            return Some((
+                                Err(LinkError::InvalidStreamType(type_buf[0])),
+                                (conn, filter),
+                            ));
+                        }
+                    };
+
+                    // Check if filter accepts this type
+                    if !filter.accepts(stream_type) {
+                        // Not accepted, skip
+                        continue;
+                    }
+
+                    // Return the typed stream
+                    let recv_stream = Box::new(P2pRecvStream::new(recv)) as Box<dyn LinkRecvStream>;
+                    return Some((Ok((stream_type, recv_stream)), (conn, filter)));
+                }
+            },
+        ))
+    }
+
+    fn accept_bi_typed(
+        &self,
+        filter: StreamFilter,
+    ) -> BoxStream<
+        '_,
+        LinkResult<(
+            StreamType,
+            Box<dyn LinkSendStream>,
+            Box<dyn LinkRecvStream>,
+        )>,
+    > {
+        let conn = self.inner.clone();
+        Box::pin(futures_util::stream::unfold(
+            (conn, filter),
+            |(conn, filter): (HighLevelConnection, StreamFilter)| async move {
+                loop {
+                    // Accept incoming bidirectional stream
+                    let (send, mut recv): (HighLevelSendStream, HighLevelRecvStream) =
+                        match conn.accept_bi().await {
+                            Ok((s, r)) => (s, r),
+                            Err(_) => return None,
+                        };
+
+                    // Read the first byte to determine stream type
+                    let mut type_buf = [0u8; 1];
+                    if recv.read_exact(&mut type_buf).await.is_err() {
+                        // Failed to read type byte, skip this stream
+                        continue;
+                    }
+
+                    // Parse stream type
+                    let stream_type = match StreamType::from_byte(type_buf[0]) {
+                        Some(st) => st,
+                        None => {
+                            // Unknown stream type, return error
+                            return Some((
+                                Err(LinkError::InvalidStreamType(type_buf[0])),
+                                (conn, filter),
+                            ));
+                        }
+                    };
+
+                    // Check if filter accepts this type
+                    if !filter.accepts(stream_type) {
+                        // Not accepted, skip
+                        continue;
+                    }
+
+                    // Return the typed streams
+                    let send_stream = Box::new(P2pSendStream::new(send)) as Box<dyn LinkSendStream>;
+                    let recv_stream = Box::new(P2pRecvStream::new(recv)) as Box<dyn LinkRecvStream>;
+                    return Some((Ok((stream_type, send_stream, recv_stream)), (conn, filter)));
+                }
+            },
+        ))
     }
 }
 

@@ -271,6 +271,7 @@ pub use link_transport::{
     BoxFuture, BoxStream, Capabilities, ConnectionStats as LinkConnectionStats,
     DisconnectReason as LinkDisconnectReason, Incoming as LinkIncoming, LinkConn, LinkError,
     LinkEvent, LinkRecvStream, LinkResult, LinkSendStream, LinkTransport, NatHint, ProtocolId,
+    StreamFilter, StreamType, StreamTypeFamily,
 };
 pub use link_transport_impl::{P2pLinkConn, P2pLinkTransport, P2pRecvStream, P2pSendStream};
 

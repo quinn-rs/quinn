@@ -149,6 +149,7 @@
 //! }
 //! ```
 
+use std::collections::HashSet;
 use std::fmt;
 use std::future::Future;
 use std::net::SocketAddr;
@@ -156,10 +157,336 @@ use std::pin::Pin;
 use std::time::{Duration, SystemTime};
 
 use bytes::Bytes;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tokio::sync::broadcast;
 
 use crate::nat_traversal_api::PeerId;
+
+// ============================================================================
+// Stream Type Registry (Protocol Multiplexing)
+// ============================================================================
+
+/// Stream type identifier - the first byte of each QUIC stream.
+///
+/// This enum provides a hardcoded registry of protocol types for multiplexing
+/// multiple protocols over a single QUIC connection. Each stream's first byte
+/// identifies its protocol type.
+///
+/// # Protocol Ranges
+///
+/// | Range | Protocol Family | Types |
+/// |-------|-----------------|-------|
+/// | 0x00-0x0F | Gossip | Membership, PubSub, Bulk |
+/// | 0x10-0x1F | DHT | Query, Store, Witness, Replication |
+/// | 0x20-0x2F | WebRTC | Signal, Media, Data |
+/// | 0xF0-0xFF | Reserved | Future use |
+///
+/// # Example
+///
+/// ```rust
+/// use ant_quic::link_transport::StreamType;
+///
+/// // Check if a byte is a valid stream type
+/// let stream_type = StreamType::from_byte(0x10);
+/// assert_eq!(stream_type, Some(StreamType::DhtQuery));
+///
+/// // Get all gossip types
+/// for st in StreamType::gossip_types() {
+///     println!("Gossip type: {}", st);
+/// }
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[repr(u8)]
+pub enum StreamType {
+    // =========================================================================
+    // Gossip Protocols (0x00-0x0F)
+    // =========================================================================
+    /// Membership protocol messages (HyParView, SWIM).
+    Membership = 0x00,
+
+    /// PubSub protocol messages (Plumtree).
+    PubSub = 0x01,
+
+    /// Bulk gossip data transfer (CRDT deltas, large payloads).
+    GossipBulk = 0x02,
+
+    // =========================================================================
+    // DHT Protocols (0x10-0x1F)
+    // =========================================================================
+    /// DHT query operations (GET, FIND_NODE, FIND_VALUE).
+    DhtQuery = 0x10,
+
+    /// DHT store operations (PUT, STORE).
+    DhtStore = 0x11,
+
+    /// DHT witness operations (Byzantine fault tolerance).
+    DhtWitness = 0x12,
+
+    /// DHT replication operations (background repair).
+    DhtReplication = 0x13,
+
+    // =========================================================================
+    // WebRTC Protocols (0x20-0x2F)
+    // =========================================================================
+    /// WebRTC signaling (SDP, ICE candidates via QUIC).
+    WebRtcSignal = 0x20,
+
+    /// WebRTC media streams (audio/video RTP).
+    WebRtcMedia = 0x21,
+
+    /// WebRTC data channels.
+    WebRtcData = 0x22,
+
+    // =========================================================================
+    // Reserved (0xF0-0xFF)
+    // =========================================================================
+    /// Reserved for future protocols.
+    Reserved = 0xF0,
+}
+
+impl StreamType {
+    /// Parse a stream type from its byte value.
+    ///
+    /// Returns `None` for unknown/unassigned values.
+    #[inline]
+    pub fn from_byte(byte: u8) -> Option<Self> {
+        match byte {
+            0x00 => Some(Self::Membership),
+            0x01 => Some(Self::PubSub),
+            0x02 => Some(Self::GossipBulk),
+            0x10 => Some(Self::DhtQuery),
+            0x11 => Some(Self::DhtStore),
+            0x12 => Some(Self::DhtWitness),
+            0x13 => Some(Self::DhtReplication),
+            0x20 => Some(Self::WebRtcSignal),
+            0x21 => Some(Self::WebRtcMedia),
+            0x22 => Some(Self::WebRtcData),
+            0xF0 => Some(Self::Reserved),
+            _ => None,
+        }
+    }
+
+    /// Get the byte value for this stream type.
+    #[inline]
+    pub const fn as_byte(self) -> u8 {
+        self as u8
+    }
+
+    /// Get the protocol family for this stream type.
+    #[inline]
+    pub const fn family(self) -> StreamTypeFamily {
+        match self as u8 {
+            0x00..=0x0F => StreamTypeFamily::Gossip,
+            0x10..=0x1F => StreamTypeFamily::Dht,
+            0x20..=0x2F => StreamTypeFamily::WebRtc,
+            _ => StreamTypeFamily::Reserved,
+        }
+    }
+
+    /// Check if this is a gossip protocol type.
+    #[inline]
+    pub const fn is_gossip(self) -> bool {
+        matches!(self.family(), StreamTypeFamily::Gossip)
+    }
+
+    /// Check if this is a DHT protocol type.
+    #[inline]
+    pub const fn is_dht(self) -> bool {
+        matches!(self.family(), StreamTypeFamily::Dht)
+    }
+
+    /// Check if this is a WebRTC protocol type.
+    #[inline]
+    pub const fn is_webrtc(self) -> bool {
+        matches!(self.family(), StreamTypeFamily::WebRtc)
+    }
+
+    /// Get all gossip stream types.
+    pub const fn gossip_types() -> &'static [StreamType] {
+        &[Self::Membership, Self::PubSub, Self::GossipBulk]
+    }
+
+    /// Get all DHT stream types.
+    pub const fn dht_types() -> &'static [StreamType] {
+        &[
+            Self::DhtQuery,
+            Self::DhtStore,
+            Self::DhtWitness,
+            Self::DhtReplication,
+        ]
+    }
+
+    /// Get all WebRTC stream types.
+    pub const fn webrtc_types() -> &'static [StreamType] {
+        &[Self::WebRtcSignal, Self::WebRtcMedia, Self::WebRtcData]
+    }
+
+    /// Get all defined stream types.
+    pub const fn all_types() -> &'static [StreamType] {
+        &[
+            Self::Membership,
+            Self::PubSub,
+            Self::GossipBulk,
+            Self::DhtQuery,
+            Self::DhtStore,
+            Self::DhtWitness,
+            Self::DhtReplication,
+            Self::WebRtcSignal,
+            Self::WebRtcMedia,
+            Self::WebRtcData,
+            Self::Reserved,
+        ]
+    }
+}
+
+impl fmt::Display for StreamType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Membership => write!(f, "Membership"),
+            Self::PubSub => write!(f, "PubSub"),
+            Self::GossipBulk => write!(f, "GossipBulk"),
+            Self::DhtQuery => write!(f, "DhtQuery"),
+            Self::DhtStore => write!(f, "DhtStore"),
+            Self::DhtWitness => write!(f, "DhtWitness"),
+            Self::DhtReplication => write!(f, "DhtReplication"),
+            Self::WebRtcSignal => write!(f, "WebRtcSignal"),
+            Self::WebRtcMedia => write!(f, "WebRtcMedia"),
+            Self::WebRtcData => write!(f, "WebRtcData"),
+            Self::Reserved => write!(f, "Reserved"),
+        }
+    }
+}
+
+impl From<StreamType> for u8 {
+    fn from(st: StreamType) -> Self {
+        st as u8
+    }
+}
+
+impl TryFrom<u8> for StreamType {
+    type Error = LinkError;
+
+    fn try_from(byte: u8) -> Result<Self, Self::Error> {
+        Self::from_byte(byte).ok_or(LinkError::InvalidStreamType(byte))
+    }
+}
+
+/// Protocol family for stream types.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum StreamTypeFamily {
+    /// Gossip protocols (0x00-0x0F).
+    Gossip,
+    /// DHT protocols (0x10-0x1F).
+    Dht,
+    /// WebRTC protocols (0x20-0x2F).
+    WebRtc,
+    /// Reserved (0xF0-0xFF).
+    Reserved,
+}
+
+impl StreamTypeFamily {
+    /// Get the byte range for this protocol family.
+    pub const fn byte_range(self) -> (u8, u8) {
+        match self {
+            Self::Gossip => (0x00, 0x0F),
+            Self::Dht => (0x10, 0x1F),
+            Self::WebRtc => (0x20, 0x2F),
+            Self::Reserved => (0xF0, 0xFF),
+        }
+    }
+
+    /// Check if a byte is in this family's range.
+    pub const fn contains(self, byte: u8) -> bool {
+        let (start, end) = self.byte_range();
+        byte >= start && byte <= end
+    }
+}
+
+/// A filter for accepting specific stream types.
+///
+/// Use this with `accept_bi_typed` and `accept_uni_typed` to filter
+/// incoming streams by protocol type.
+///
+/// # Example
+///
+/// ```rust
+/// use ant_quic::link_transport::{StreamFilter, StreamType};
+///
+/// // Accept only DHT streams
+/// let filter = StreamFilter::new()
+///     .with_types(StreamType::dht_types());
+///
+/// // Accept gossip and DHT
+/// let filter = StreamFilter::new()
+///     .with_type(StreamType::Membership)
+///     .with_type(StreamType::DhtQuery);
+/// ```
+#[derive(Debug, Clone, Default)]
+pub struct StreamFilter {
+    /// Allowed stream types. Empty means accept all.
+    allowed: HashSet<StreamType>,
+}
+
+impl StreamFilter {
+    /// Create a new empty filter (accepts all types).
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Create a filter that accepts all stream types.
+    pub fn accept_all() -> Self {
+        let mut filter = Self::new();
+        for st in StreamType::all_types() {
+            filter.allowed.insert(*st);
+        }
+        filter
+    }
+
+    /// Create a filter for gossip streams only.
+    pub fn gossip_only() -> Self {
+        Self::new().with_types(StreamType::gossip_types())
+    }
+
+    /// Create a filter for DHT streams only.
+    pub fn dht_only() -> Self {
+        Self::new().with_types(StreamType::dht_types())
+    }
+
+    /// Create a filter for WebRTC streams only.
+    pub fn webrtc_only() -> Self {
+        Self::new().with_types(StreamType::webrtc_types())
+    }
+
+    /// Add a single stream type to the filter.
+    pub fn with_type(mut self, stream_type: StreamType) -> Self {
+        self.allowed.insert(stream_type);
+        self
+    }
+
+    /// Add multiple stream types to the filter.
+    pub fn with_types(mut self, stream_types: &[StreamType]) -> Self {
+        for st in stream_types {
+            self.allowed.insert(*st);
+        }
+        self
+    }
+
+    /// Check if a stream type is accepted by this filter.
+    pub fn accepts(&self, stream_type: StreamType) -> bool {
+        self.allowed.is_empty() || self.allowed.contains(&stream_type)
+    }
+
+    /// Check if this filter accepts any type (is empty).
+    pub fn accepts_all(&self) -> bool {
+        self.allowed.is_empty()
+    }
+
+    /// Get the set of allowed types.
+    pub fn allowed_types(&self) -> &HashSet<StreamType> {
+        &self.allowed
+    }
+}
 
 // ============================================================================
 // Protocol Identifier
@@ -547,6 +874,14 @@ pub enum LinkError {
     /// Internal error.
     #[error("internal error: {0}")]
     Internal(String),
+
+    /// Invalid stream type byte.
+    #[error("invalid stream type byte: 0x{0:02x}")]
+    InvalidStreamType(u8),
+
+    /// Stream type not accepted by filter.
+    #[error("stream type {0} not accepted")]
+    StreamTypeFiltered(StreamType),
 }
 
 impl From<std::io::Error> for LinkError {
@@ -628,6 +963,84 @@ pub trait LinkConn: Send + Sync {
     fn open_bi(
         &self,
     ) -> BoxFuture<'_, LinkResult<(Box<dyn LinkSendStream>, Box<dyn LinkRecvStream>)>>;
+
+    /// Open a typed unidirectional stream.
+    ///
+    /// The stream type byte is automatically prepended to the stream.
+    /// The remote peer should use `accept_uni_typed` to receive.
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// let mut stream = conn.open_uni_typed(StreamType::Membership).await?;
+    /// stream.write_all(b"membership update").await?;
+    /// stream.finish()?;
+    /// ```
+    fn open_uni_typed(
+        &self,
+        stream_type: StreamType,
+    ) -> BoxFuture<'_, LinkResult<Box<dyn LinkSendStream>>>;
+
+    /// Open a typed bidirectional stream.
+    ///
+    /// The stream type byte is automatically prepended to the stream.
+    /// The remote peer should use `accept_bi_typed` to receive.
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// let (mut send, mut recv) = conn.open_bi_typed(StreamType::DhtQuery).await?;
+    /// send.write_all(b"query request").await?;
+    /// send.finish()?;
+    /// let response = recv.read_to_end(4096).await?;
+    /// ```
+    fn open_bi_typed(
+        &self,
+        stream_type: StreamType,
+    ) -> BoxFuture<'_, LinkResult<(Box<dyn LinkSendStream>, Box<dyn LinkRecvStream>)>>;
+
+    /// Accept incoming unidirectional streams with type filtering.
+    ///
+    /// Returns a stream of (type, recv_stream) pairs for streams
+    /// matching the filter. Use `StreamFilter::new()` to accept all types.
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// let filter = StreamFilter::gossip_only();
+    /// let mut incoming = conn.accept_uni_typed(filter);
+    /// while let Some(result) = incoming.next().await {
+    ///     let (stream_type, recv) = result?;
+    ///     println!("Got {} stream", stream_type);
+    /// }
+    /// ```
+    fn accept_uni_typed(
+        &self,
+        filter: StreamFilter,
+    ) -> BoxStream<'_, LinkResult<(StreamType, Box<dyn LinkRecvStream>)>>;
+
+    /// Accept incoming bidirectional streams with type filtering.
+    ///
+    /// Returns a stream of (type, send_stream, recv_stream) tuples for
+    /// streams matching the filter. Use `StreamFilter::new()` to accept all types.
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// let filter = StreamFilter::dht_only();
+    /// let mut incoming = conn.accept_bi_typed(filter);
+    /// while let Some(result) = incoming.next().await {
+    ///     let (stream_type, send, recv) = result?;
+    ///     // Handle DHT request/response
+    /// }
+    /// ```
+    fn accept_bi_typed(
+        &self,
+        filter: StreamFilter,
+    ) -> BoxStream<
+        '_,
+        LinkResult<(
+            StreamType,
+            Box<dyn LinkSendStream>,
+            Box<dyn LinkRecvStream>,
+        )>,
+    >;
 
     /// Send an unreliable datagram to the peer.
     ///
@@ -972,5 +1385,112 @@ mod tests {
 
         assert!(caps.supports_protocol(&dht));
         assert!(!caps.supports_protocol(&gossip));
+    }
+
+    // =========================================================================
+    // Stream Type Tests
+    // =========================================================================
+
+    #[test]
+    fn test_stream_type_bytes() {
+        assert_eq!(StreamType::Membership.as_byte(), 0x00);
+        assert_eq!(StreamType::PubSub.as_byte(), 0x01);
+        assert_eq!(StreamType::GossipBulk.as_byte(), 0x02);
+        assert_eq!(StreamType::DhtQuery.as_byte(), 0x10);
+        assert_eq!(StreamType::DhtStore.as_byte(), 0x11);
+        assert_eq!(StreamType::DhtWitness.as_byte(), 0x12);
+        assert_eq!(StreamType::DhtReplication.as_byte(), 0x13);
+        assert_eq!(StreamType::WebRtcSignal.as_byte(), 0x20);
+        assert_eq!(StreamType::WebRtcMedia.as_byte(), 0x21);
+        assert_eq!(StreamType::WebRtcData.as_byte(), 0x22);
+        assert_eq!(StreamType::Reserved.as_byte(), 0xF0);
+    }
+
+    #[test]
+    fn test_stream_type_from_byte() {
+        assert_eq!(StreamType::from_byte(0x00), Some(StreamType::Membership));
+        assert_eq!(StreamType::from_byte(0x10), Some(StreamType::DhtQuery));
+        assert_eq!(StreamType::from_byte(0x20), Some(StreamType::WebRtcSignal));
+        assert_eq!(StreamType::from_byte(0xF0), Some(StreamType::Reserved));
+        assert_eq!(StreamType::from_byte(0x99), None); // Unassigned
+        assert_eq!(StreamType::from_byte(0xFF), None); // Unassigned
+    }
+
+    #[test]
+    fn test_stream_type_families() {
+        assert!(StreamType::Membership.is_gossip());
+        assert!(StreamType::PubSub.is_gossip());
+        assert!(StreamType::GossipBulk.is_gossip());
+
+        assert!(StreamType::DhtQuery.is_dht());
+        assert!(StreamType::DhtStore.is_dht());
+        assert!(StreamType::DhtWitness.is_dht());
+        assert!(StreamType::DhtReplication.is_dht());
+
+        assert!(StreamType::WebRtcSignal.is_webrtc());
+        assert!(StreamType::WebRtcMedia.is_webrtc());
+        assert!(StreamType::WebRtcData.is_webrtc());
+    }
+
+    #[test]
+    fn test_stream_type_family_ranges() {
+        assert!(StreamTypeFamily::Gossip.contains(0x00));
+        assert!(StreamTypeFamily::Gossip.contains(0x0F));
+        assert!(!StreamTypeFamily::Gossip.contains(0x10));
+
+        assert!(StreamTypeFamily::Dht.contains(0x10));
+        assert!(StreamTypeFamily::Dht.contains(0x1F));
+        assert!(!StreamTypeFamily::Dht.contains(0x20));
+
+        assert!(StreamTypeFamily::WebRtc.contains(0x20));
+        assert!(StreamTypeFamily::WebRtc.contains(0x2F));
+        assert!(!StreamTypeFamily::WebRtc.contains(0x30));
+    }
+
+    #[test]
+    fn test_stream_filter_accepts() {
+        let filter = StreamFilter::new()
+            .with_type(StreamType::Membership)
+            .with_type(StreamType::DhtQuery);
+
+        assert!(filter.accepts(StreamType::Membership));
+        assert!(filter.accepts(StreamType::DhtQuery));
+        assert!(!filter.accepts(StreamType::PubSub));
+        assert!(!filter.accepts(StreamType::WebRtcMedia));
+    }
+
+    #[test]
+    fn test_stream_filter_empty_accepts_all() {
+        let filter = StreamFilter::new();
+        assert!(filter.accepts_all());
+        assert!(filter.accepts(StreamType::Membership));
+        assert!(filter.accepts(StreamType::DhtQuery));
+        assert!(filter.accepts(StreamType::WebRtcMedia));
+    }
+
+    #[test]
+    fn test_stream_filter_presets() {
+        let gossip = StreamFilter::gossip_only();
+        assert!(gossip.accepts(StreamType::Membership));
+        assert!(gossip.accepts(StreamType::PubSub));
+        assert!(gossip.accepts(StreamType::GossipBulk));
+        assert!(!gossip.accepts(StreamType::DhtQuery));
+
+        let dht = StreamFilter::dht_only();
+        assert!(dht.accepts(StreamType::DhtQuery));
+        assert!(dht.accepts(StreamType::DhtStore));
+        assert!(!dht.accepts(StreamType::Membership));
+
+        let webrtc = StreamFilter::webrtc_only();
+        assert!(webrtc.accepts(StreamType::WebRtcSignal));
+        assert!(webrtc.accepts(StreamType::WebRtcMedia));
+        assert!(!webrtc.accepts(StreamType::DhtQuery));
+    }
+
+    #[test]
+    fn test_stream_type_display() {
+        assert_eq!(format!("{}", StreamType::Membership), "Membership");
+        assert_eq!(format!("{}", StreamType::DhtQuery), "DhtQuery");
+        assert_eq!(format!("{}", StreamType::WebRtcMedia), "WebRtcMedia");
     }
 }
