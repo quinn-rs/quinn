@@ -262,14 +262,8 @@ impl LinkConn for P2pLinkConn {
     fn accept_bi_typed(
         &self,
         filter: StreamFilter,
-    ) -> BoxStream<
-        '_,
-        LinkResult<(
-            StreamType,
-            Box<dyn LinkSendStream>,
-            Box<dyn LinkRecvStream>,
-        )>,
-    > {
+    ) -> BoxStream<'_, LinkResult<(StreamType, Box<dyn LinkSendStream>, Box<dyn LinkRecvStream>)>>
+    {
         let conn = self.inner.clone();
         Box::pin(futures_util::stream::unfold(
             (conn, filter),

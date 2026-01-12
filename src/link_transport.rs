@@ -1033,14 +1033,7 @@ pub trait LinkConn: Send + Sync {
     fn accept_bi_typed(
         &self,
         filter: StreamFilter,
-    ) -> BoxStream<
-        '_,
-        LinkResult<(
-            StreamType,
-            Box<dyn LinkSendStream>,
-            Box<dyn LinkRecvStream>,
-        )>,
-    >;
+    ) -> BoxStream<'_, LinkResult<(StreamType, Box<dyn LinkSendStream>, Box<dyn LinkRecvStream>)>>;
 
     /// Send an unreliable datagram to the peer.
     ///
