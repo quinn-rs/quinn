@@ -927,18 +927,18 @@ impl Clone for ConnectionRef {
 
 impl Drop for ConnectionRef {
     fn drop(&mut self) {
-        let ref_count = self.shared.ref_count.fetch_sub(1, Ordering::Relaxed);
+        if self.shared.ref_count.fetch_sub(1, Ordering::Relaxed) > 0 {
+            return;
+        }
 
-        if ref_count == 0 {
-            let conn = &mut *self.state.lock("drop");
+        let conn = &mut *self.state.lock("drop");
 
-            if !conn.inner.is_closed() {
-                // If the driver is alive, it's just it and us, so we'd better shut it down. If it's
-                // not, we can't do any harm. If there were any streams being opened, then either
-                // the connection will be closed for an unrelated reason or a fresh reference will
-                // be constructed for the newly opened stream.
-                conn.implicit_close(&self.shared);
-            }
+        if !conn.inner.is_closed() {
+            // If the driver is alive, it's just it and us, so we'd better shut it down. If it's
+            // not, we can't do any harm. If there were any streams being opened, then either
+            // the connection will be closed for an unrelated reason or a fresh reference will
+            // be constructed for the newly opened stream.
+            conn.implicit_close(&self.shared);
         }
     }
 }
