@@ -4627,31 +4627,6 @@ impl Connection {
         peer_id
     }
 
-    /// Normalize a socket address by converting IPv4-mapped IPv6 addresses to pure IPv4.
-    ///
-    /// This is critical for nodes bound to IPv4-only sockets (0.0.0.0:port) that receive
-    /// addresses in IPv4-mapped IPv6 format (::ffff:a.b.c.d). Without normalization,
-    /// attempting to connect to an IPv4-mapped address from an IPv4-only socket fails
-    /// with "Address family not supported by protocol" (EAFNOSUPPORT, error 97).
-    fn normalize_socket_addr(addr: SocketAddr) -> SocketAddr {
-        match addr {
-            SocketAddr::V6(v6_addr) => {
-                // Check if this is an IPv4-mapped IPv6 address (::ffff:a.b.c.d)
-                if let Some(ipv4) = v6_addr.ip().to_ipv4_mapped() {
-                    let normalized = SocketAddr::new(IpAddr::V4(ipv4), v6_addr.port());
-                    debug!(
-                        "Normalized IPv4-mapped IPv6 address {} to {}",
-                        addr, normalized
-                    );
-                    normalized
-                } else {
-                    addr
-                }
-            }
-            SocketAddr::V4(_) => addr,
-        }
-    }
-
     /// Handle AddAddress frame from peer
     fn handle_add_address(
         &mut self,
@@ -4664,7 +4639,7 @@ impl Connection {
 
         // Normalize the address to handle IPv4-mapped IPv6 addresses
         // This is critical for nodes bound to IPv4-only sockets
-        let normalized_addr = Self::normalize_socket_addr(add_address.address);
+        let normalized_addr = crate::shared::normalize_socket_addr(add_address.address);
 
         info!(
             "handle_add_address: RECEIVED ADD_ADDRESS from peer addr={} (normalized={}) seq={} priority={}",
@@ -4891,7 +4866,7 @@ impl Connection {
 
         // Normalize the address to handle IPv4-mapped IPv6 addresses
         // This ensures consistent address format for later ADD_ADDRESS advertisements
-        let normalized_addr = Self::normalize_socket_addr(observed_address.address);
+        let normalized_addr = crate::shared::normalize_socket_addr(observed_address.address);
 
         // Process the observed address
         state.handle_observed_address(normalized_addr, path_id, now);
@@ -5336,7 +5311,7 @@ impl Connection {
     ) -> Result<u64, ConnectionError> {
         // Normalize the address to handle IPv4-mapped IPv6 addresses
         // This ensures consistent address format across all peers
-        let normalized_addr = Self::normalize_socket_addr(address);
+        let normalized_addr = crate::shared::normalize_socket_addr(address);
 
         // Verify NAT traversal is enabled
         let nat_state = self.nat_traversal.as_mut().ok_or_else(|| {

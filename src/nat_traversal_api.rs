@@ -49,24 +49,8 @@ fn extract_ml_dsa_from_spki(spki: &[u8]) -> Option<crate::crypto::pqc::types::Ml
     crate::crypto::raw_public_keys::pqc::extract_public_key_from_spki(spki).ok()
 }
 
-/// Normalize a socket address by converting IPv4-mapped IPv6 addresses to plain IPv4.
-///
-/// This is critical for address comparison when connections may use either format.
-/// For example, `[::ffff:192.168.1.1]:9000` normalizes to `192.168.1.1:9000`.
-fn normalize_socket_addr(addr: SocketAddr) -> SocketAddr {
-    use std::net::IpAddr;
-    match addr {
-        SocketAddr::V6(v6_addr) => {
-            // Check if this is an IPv4-mapped IPv6 address (::ffff:a.b.c.d)
-            if let Some(ipv4) = v6_addr.ip().to_ipv4_mapped() {
-                SocketAddr::new(IpAddr::V4(ipv4), v6_addr.port())
-            } else {
-                addr
-            }
-        }
-        SocketAddr::V4(_) => addr,
-    }
-}
+// Import shared normalize_socket_addr utility
+use crate::shared::normalize_socket_addr;
 
 /// Broadcast an ADD_ADDRESS frame to all connected peers.
 ///

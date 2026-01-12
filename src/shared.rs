@@ -5,7 +5,10 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
-use std::{fmt, net::SocketAddr};
+use std::{
+    fmt,
+    net::{IpAddr, SocketAddr},
+};
 
 use bytes::{Buf, BufMut, BytesMut};
 
@@ -205,4 +208,27 @@ pub(crate) struct IssuedCid {
     pub(crate) sequence: u64,
     pub(crate) id: ConnectionId,
     pub(crate) reset_token: ResetToken,
+}
+
+/// Normalize a socket address by converting IPv4-mapped IPv6 addresses to pure IPv4.
+///
+/// This is critical for address comparison when connections may use either format.
+/// For example, `[::ffff:192.168.1.1]:9000` normalizes to `192.168.1.1:9000`.
+///
+/// This normalization is essential for nodes bound to IPv4-only sockets (0.0.0.0:port)
+/// that receive addresses in IPv4-mapped IPv6 format (::ffff:a.b.c.d). Without
+/// normalization, attempting to connect to an IPv4-mapped address from an IPv4-only
+/// socket fails with "Address family not supported by protocol" (EAFNOSUPPORT).
+pub fn normalize_socket_addr(addr: SocketAddr) -> SocketAddr {
+    match addr {
+        SocketAddr::V6(v6_addr) => {
+            // Check if this is an IPv4-mapped IPv6 address (::ffff:a.b.c.d)
+            if let Some(ipv4) = v6_addr.ip().to_ipv4_mapped() {
+                SocketAddr::new(IpAddr::V4(ipv4), v6_addr.port())
+            } else {
+                addr
+            }
+        }
+        SocketAddr::V4(_) => addr,
+    }
 }

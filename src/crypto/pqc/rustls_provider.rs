@@ -16,9 +16,13 @@ use rustls::crypto::CryptoProvider;
 
 use crate::crypto::pqc::types::PqcError;
 
-/// Configuration for PQC support
+/// Configuration for PQC support in the rustls crypto provider.
+///
+/// This is distinct from [`crate::crypto::pqc::PqcConfig`] which provides
+/// the main public API for PQC configuration. This struct is internal to
+/// the rustls provider and has different fields focused on provider-level settings.
 #[derive(Debug, Clone)]
-pub struct PqcConfig {
+pub struct RustlsPqcConfig {
     /// Enable ML-KEM key exchange
     pub enable_ml_kem: bool,
     /// Enable ML-DSA signatures
@@ -29,7 +33,7 @@ pub struct PqcConfig {
     pub allow_downgrade: bool,
 }
 
-impl Default for PqcConfig {
+impl Default for RustlsPqcConfig {
     fn default() -> Self {
         Self {
             enable_ml_kem: true,
@@ -47,7 +51,7 @@ pub struct PqcCryptoProvider {
     base_provider: Arc<CryptoProvider>,
     /// PQC configuration
     #[allow(dead_code)]
-    config: PqcConfig,
+    config: RustlsPqcConfig,
     /// Hybrid cipher suites (placeholder)
     #[allow(dead_code)]
     cipher_suites: Vec<rustls::CipherSuite>,
@@ -56,11 +60,11 @@ pub struct PqcCryptoProvider {
 impl PqcCryptoProvider {
     /// Create a new PQC crypto provider with default config
     pub fn new() -> Result<Self, PqcError> {
-        Self::with_config(Some(PqcConfig::default()))
+        Self::with_config(Some(RustlsPqcConfig::default()))
     }
 
     /// Create with specific configuration
-    pub fn with_config(config: Option<PqcConfig>) -> Result<Self, PqcError> {
+    pub fn with_config(config: Option<RustlsPqcConfig>) -> Result<Self, PqcError> {
         let config =
             config.ok_or_else(|| PqcError::CryptoError("PQC config is required".to_string()))?;
 
@@ -102,7 +106,7 @@ impl PqcCryptoProvider {
 }
 
 /// Validate PQC configuration
-pub fn validate_config(config: &PqcConfig) -> Result<(), PqcError> {
+pub fn validate_config(config: &RustlsPqcConfig) -> Result<(), PqcError> {
     if !config.enable_ml_kem && !config.enable_ml_dsa {
         return Err(PqcError::CryptoError(
             "At least one PQC algorithm must be enabled".to_string(),
@@ -233,7 +237,7 @@ mod tests {
 
     #[test]
     fn test_pqc_config_default() {
-        let config = PqcConfig::default();
+        let config = RustlsPqcConfig::default();
         assert!(config.enable_ml_kem);
         assert!(config.enable_ml_dsa);
         assert!(config.prefer_pqc);
@@ -243,11 +247,11 @@ mod tests {
     #[test]
     fn test_config_validation() {
         // Valid config
-        let valid = PqcConfig::default();
+        let valid = RustlsPqcConfig::default();
         assert!(validate_config(&valid).is_ok());
 
         // Invalid - no algorithms
-        let invalid = PqcConfig {
+        let invalid = RustlsPqcConfig {
             enable_ml_kem: false,
             enable_ml_dsa: false,
             prefer_pqc: false,

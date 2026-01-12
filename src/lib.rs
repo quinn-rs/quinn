@@ -185,9 +185,6 @@ pub mod candidate_discovery;
 /// Connection ID generation strategies
 pub mod cid_generator;
 mod congestion;
-mod protocol_violations;
-#[cfg(test)]
-mod protocol_violations_tests;
 
 // Zero-cost tracing system
 /// High-level NAT traversal API
@@ -211,8 +208,6 @@ pub mod transport;
 // v0.2: auth module removed - TLS handles peer authentication via ML-DSA-65
 /// Secure chat protocol implementation
 pub mod chat;
-// Performance optimization utilities are deprecated; remove module to eliminate dead code
-// pub mod optimization;
 
 // ============================================================================
 // P2P API
