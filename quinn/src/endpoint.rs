@@ -770,15 +770,15 @@ impl Clone for EndpointRef {
 
 impl Drop for EndpointRef {
     fn drop(&mut self) {
-        let ref_count = self.shared.ref_count.fetch_sub(1, Ordering::Relaxed);
+        if self.shared.ref_count.fetch_sub(1, Ordering::Relaxed) > 0 {
+            return;
+        }
 
-        if ref_count == 0 {
-            let endpoint = &mut *self.0.state.lock().unwrap();
-            // If the driver is about to be on its own, ensure it can shut down if the last
-            // connection is gone.
-            if let Some(task) = endpoint.driver.take() {
-                task.wake();
-            }
+        let endpoint = &mut *self.0.state.lock().unwrap();
+        // If the driver is about to be on its own, ensure it can shut down if the last
+        // connection is gone.
+        if let Some(task) = endpoint.driver.take() {
+            task.wake();
         }
     }
 }
