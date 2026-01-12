@@ -21,7 +21,7 @@ log = ["dep:log"]
 fast-apple-datapath = []
 
 [dependencies]
-libc = "0.2.175"
+libc = "0.2.180"
 log = { workspace = true, optional = true }
 tracing = { workspace = true, optional = true }
 
