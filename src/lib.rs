@@ -268,12 +268,14 @@ mod link_transport_impl;
 
 // Re-export link transport types
 pub use link_transport::{
-    BoxFuture, BoxStream, Capabilities, ConnectionStats as LinkConnectionStats,
+    BoxFuture, BoxStream, BoxedHandler, Capabilities, ConnectionStats as LinkConnectionStats,
     DisconnectReason as LinkDisconnectReason, Incoming as LinkIncoming, LinkConn, LinkError,
-    LinkEvent, LinkRecvStream, LinkResult, LinkSendStream, LinkTransport, NatHint, ProtocolId,
-    StreamFilter, StreamType, StreamTypeFamily,
+    LinkEvent, LinkRecvStream, LinkResult, LinkSendStream, LinkTransport, NatHint, ProtocolHandler,
+    ProtocolHandlerExt, ProtocolId, StreamFilter, StreamType, StreamTypeFamily,
 };
-pub use link_transport_impl::{P2pLinkConn, P2pLinkTransport, P2pRecvStream, P2pSendStream};
+pub use link_transport_impl::{
+    P2pLinkConn, P2pLinkTransport, P2pRecvStream, P2pSendStream, SharedTransport,
+};
 
 // Bootstrap cache for peer persistence and quality-based selection
 pub mod bootstrap_cache;

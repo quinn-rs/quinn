@@ -5,7 +5,7 @@ members = [
 
 [package]
 name = "ant-quic"
-version = "0.16.0"
+version = "0.17.0"
 edition = "2024"
 rust-version = "1.85.0"
 license = "MIT OR Apache-2.0"
@@ -78,6 +78,7 @@ fuzzing = ["arbitrary"]
 
 [dependencies]
 # Core dependencies
+async-trait = "0.1"
 bytes = "1"
 rustc-hash = "2"
 rand = "0.8"

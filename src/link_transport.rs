@@ -156,6 +156,7 @@ use std::net::SocketAddr;
 use std::pin::Pin;
 use std::time::{Duration, SystemTime};
 
+use async_trait::async_trait;
 use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -829,6 +830,107 @@ pub enum LinkEvent {
 }
 
 // ============================================================================
+// Protocol Handler Abstraction
+// ============================================================================
+
+/// Handler for specific protocol stream types.
+///
+/// Implement this trait to handle incoming streams by protocol type.
+/// Each handler declares which [`StreamType`]s it processes and receives
+/// matching streams via [`Self::handle_stream`].
+///
+/// # Example
+///
+/// ```rust,ignore
+/// use ant_quic::link_transport::{ProtocolHandler, StreamType, LinkResult, PeerId};
+/// use async_trait::async_trait;
+/// use bytes::Bytes;
+///
+/// struct GossipHandler;
+///
+/// #[async_trait]
+/// impl ProtocolHandler for GossipHandler {
+///     fn stream_types(&self) -> &[StreamType] {
+///         StreamType::gossip_types()
+///     }
+///
+///     async fn handle_stream(
+///         &self,
+///         peer: PeerId,
+///         stream_type: StreamType,
+///         data: Bytes,
+///     ) -> LinkResult<Option<Bytes>> {
+///         // Process incoming gossip message, optionally return response
+///         Ok(None)
+///     }
+/// }
+/// ```
+#[async_trait]
+pub trait ProtocolHandler: Send + Sync {
+    /// Get the stream types this handler processes.
+    fn stream_types(&self) -> &[StreamType];
+
+    /// Handle an incoming stream.
+    ///
+    /// # Arguments
+    ///
+    /// * `peer` - The peer that sent the stream
+    /// * `stream_type` - The type of stream received
+    /// * `data` - The stream payload data
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(Some(response))` - Send response back to the peer
+    /// * `Ok(None)` - No response (close stream gracefully)
+    /// * `Err(e)` - Handler error (stream closed with error)
+    async fn handle_stream(
+        &self,
+        peer: PeerId,
+        stream_type: StreamType,
+        data: Bytes,
+    ) -> LinkResult<Option<Bytes>>;
+
+    /// Handle an incoming datagram.
+    ///
+    /// Default implementation does nothing. Override for unreliable messaging.
+    async fn handle_datagram(
+        &self,
+        _peer: PeerId,
+        _stream_type: StreamType,
+        _data: Bytes,
+    ) -> LinkResult<()> {
+        Ok(())
+    }
+
+    /// Called when the handler is being shut down.
+    ///
+    /// Default implementation does nothing. Override for cleanup.
+    async fn shutdown(&self) -> LinkResult<()> {
+        Ok(())
+    }
+
+    /// Get a human-readable name for this handler.
+    ///
+    /// Used in logging and debugging.
+    fn name(&self) -> &str {
+        "ProtocolHandler"
+    }
+}
+
+/// A boxed protocol handler for dynamic dispatch.
+pub type BoxedHandler = Box<dyn ProtocolHandler>;
+
+/// Extension trait for creating boxed handlers.
+pub trait ProtocolHandlerExt: ProtocolHandler + Sized + 'static {
+    /// Box this handler for use with [`crate::SharedTransport`].
+    fn boxed(self) -> BoxedHandler {
+        Box::new(self)
+    }
+}
+
+impl<T: ProtocolHandler + 'static> ProtocolHandlerExt for T {}
+
+// ============================================================================
 // Link Transport Errors
 // ============================================================================
 
@@ -882,6 +984,22 @@ pub enum LinkError {
     /// Stream type not accepted by filter.
     #[error("stream type {0} not accepted")]
     StreamTypeFiltered(StreamType),
+
+    /// Handler already registered for stream type.
+    #[error("handler already exists for stream type: {0}")]
+    HandlerExists(StreamType),
+
+    /// No handler registered for stream type.
+    #[error("no handler for stream type: {0}")]
+    NoHandler(StreamType),
+
+    /// Transport not running.
+    #[error("transport not running")]
+    NotRunning,
+
+    /// Transport already running.
+    #[error("transport already running")]
+    AlreadyRunning,
 }
 
 impl From<std::io::Error> for LinkError {
@@ -1485,5 +1603,207 @@ mod tests {
         assert_eq!(format!("{}", StreamType::Membership), "Membership");
         assert_eq!(format!("{}", StreamType::DhtQuery), "DhtQuery");
         assert_eq!(format!("{}", StreamType::WebRtcMedia), "WebRtcMedia");
+    }
+
+    // =========================================================================
+    // Phase 1: ProtocolHandler Tests (TDD RED)
+    // =========================================================================
+
+    mod protocol_handler_tests {
+        use super::*;
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        /// Test handler implementation for testing
+        struct TestHandler {
+            types: Vec<StreamType>,
+            call_count: Arc<AtomicUsize>,
+        }
+
+        impl TestHandler {
+            fn new(types: Vec<StreamType>) -> Self {
+                Self {
+                    types,
+                    call_count: Arc::new(AtomicUsize::new(0)),
+                }
+            }
+
+            fn with_counter(types: Vec<StreamType>, counter: Arc<AtomicUsize>) -> Self {
+                Self {
+                    types,
+                    call_count: counter,
+                }
+            }
+        }
+
+        #[async_trait]
+        impl ProtocolHandler for TestHandler {
+            fn stream_types(&self) -> &[StreamType] {
+                &self.types
+            }
+
+            async fn handle_stream(
+                &self,
+                _peer: PeerId,
+                _stream_type: StreamType,
+                data: Bytes,
+            ) -> LinkResult<Option<Bytes>> {
+                self.call_count.fetch_add(1, Ordering::SeqCst);
+                Ok(Some(data)) // Echo back
+            }
+
+            fn name(&self) -> &str {
+                "TestHandler"
+            }
+        }
+
+        #[test]
+        fn test_handler_stream_types() {
+            let handler = TestHandler::new(vec![StreamType::Membership, StreamType::PubSub]);
+            assert_eq!(handler.stream_types().len(), 2);
+            assert!(handler.stream_types().contains(&StreamType::Membership));
+            assert!(handler.stream_types().contains(&StreamType::PubSub));
+        }
+
+        #[tokio::test]
+        async fn test_handler_returns_response() {
+            let handler = TestHandler::new(vec![StreamType::DhtQuery]);
+            let peer = PeerId::from([0u8; 32]);
+
+            let result = handler
+                .handle_stream(peer, StreamType::DhtQuery, Bytes::from_static(b"test"))
+                .await;
+
+            assert!(result.is_ok());
+            assert_eq!(result.unwrap(), Some(Bytes::from_static(b"test")));
+        }
+
+        #[tokio::test]
+        async fn test_handler_no_response() {
+            struct SinkHandler;
+
+            #[async_trait]
+            impl ProtocolHandler for SinkHandler {
+                fn stream_types(&self) -> &[StreamType] {
+                    &[StreamType::GossipBulk]
+                }
+
+                async fn handle_stream(
+                    &self,
+                    _peer: PeerId,
+                    _stream_type: StreamType,
+                    _data: Bytes,
+                ) -> LinkResult<Option<Bytes>> {
+                    Ok(None)
+                }
+            }
+
+            let handler = SinkHandler;
+            let peer = PeerId::from([0u8; 32]);
+
+            let result = handler
+                .handle_stream(peer, StreamType::GossipBulk, Bytes::from_static(b"data"))
+                .await;
+
+            assert!(result.is_ok());
+            assert!(result.unwrap().is_none());
+        }
+
+        #[tokio::test]
+        async fn test_handler_tracks_calls() {
+            let count = Arc::new(AtomicUsize::new(0));
+            let handler = TestHandler::with_counter(vec![StreamType::Membership], count.clone());
+            let peer = PeerId::from([0u8; 32]);
+
+            assert_eq!(handler.name(), "TestHandler");
+            assert_eq!(count.load(Ordering::SeqCst), 0);
+
+            let _ = handler
+                .handle_stream(peer, StreamType::Membership, Bytes::new())
+                .await;
+            assert_eq!(count.load(Ordering::SeqCst), 1);
+
+            let _ = handler
+                .handle_stream(peer, StreamType::Membership, Bytes::new())
+                .await;
+            assert_eq!(count.load(Ordering::SeqCst), 2);
+        }
+
+        #[test]
+        fn test_boxed_handler() {
+            let handler: BoxedHandler = TestHandler::new(vec![StreamType::DhtStore]).boxed();
+            assert_eq!(handler.stream_types(), &[StreamType::DhtStore]);
+            assert_eq!(handler.name(), "TestHandler");
+        }
+
+        #[tokio::test]
+        async fn test_default_datagram_handler() {
+            let handler = TestHandler::new(vec![StreamType::Membership]);
+            let peer = PeerId::from([0u8; 32]);
+
+            // Default implementation should succeed silently
+            let result = handler
+                .handle_datagram(peer, StreamType::Membership, Bytes::from_static(b"dgram"))
+                .await;
+            assert!(result.is_ok());
+        }
+
+        #[tokio::test]
+        async fn test_default_shutdown() {
+            let handler = TestHandler::new(vec![StreamType::Membership]);
+
+            // Default shutdown implementation should succeed
+            let result = handler.shutdown().await;
+            assert!(result.is_ok());
+        }
+    }
+
+    // =========================================================================
+    // Phase 2: Handler Error Tests (TDD RED)
+    // =========================================================================
+
+    mod handler_error_tests {
+        use super::*;
+
+        #[test]
+        fn test_handler_exists_error() {
+            let err = LinkError::HandlerExists(StreamType::Membership);
+            let msg = err.to_string();
+            assert!(msg.contains("Membership"), "Error message: {}", msg);
+            assert!(
+                msg.to_lowercase().contains("handler"),
+                "Error message: {}",
+                msg
+            );
+        }
+
+        #[test]
+        fn test_no_handler_error() {
+            let err = LinkError::NoHandler(StreamType::DhtQuery);
+            let msg = err.to_string();
+            assert!(msg.contains("DhtQuery"), "Error message: {}", msg);
+        }
+
+        #[test]
+        fn test_not_running_error() {
+            let err = LinkError::NotRunning;
+            let msg = err.to_string();
+            assert!(
+                msg.to_lowercase().contains("not running"),
+                "Error message: {}",
+                msg
+            );
+        }
+
+        #[test]
+        fn test_already_running_error() {
+            let err = LinkError::AlreadyRunning;
+            let msg = err.to_string();
+            assert!(
+                msg.to_lowercase().contains("already running"),
+                "Error message: {}",
+                msg
+            );
+        }
     }
 }

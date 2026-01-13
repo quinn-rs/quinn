@@ -41,8 +41,9 @@ use std::net::SocketAddr;
 use std::sync::{Arc, RwLock};
 
 use bytes::Bytes;
-use tokio::sync::broadcast;
-use tracing::{debug, warn};
+use futures_util::StreamExt;
+use tokio::sync::{RwLock as TokioRwLock, broadcast};
+use tracing::{debug, error, info, warn};
 
 use crate::high_level::{
     Connection as HighLevelConnection, RecvStream as HighLevelRecvStream,
@@ -747,6 +748,607 @@ impl LinkTransport for P2pLinkTransport {
 }
 
 // ============================================================================
+// SharedTransport - Protocol Multiplexer
+// ============================================================================
+
+/// Transport state machine.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TransportState {
+    /// Transport created but not started.
+    Created,
+    /// Transport is running and accepting connections.
+    Running,
+    /// Transport is shutting down.
+    ShuttingDown,
+    /// Transport has stopped.
+    Stopped,
+}
+
+/// Peer connection state tracking.
+#[allow(dead_code)]
+struct PeerState {
+    /// Remote socket address.
+    remote_addr: Option<SocketAddr>,
+    /// When the peer connected.
+    connected_at: std::time::Instant,
+    /// Messages sent to this peer.
+    messages_sent: u64,
+    /// Messages received from this peer.
+    messages_received: u64,
+    /// Last activity time.
+    last_activity: std::time::Instant,
+}
+
+#[allow(dead_code)]
+impl PeerState {
+    fn new() -> Self {
+        let now = std::time::Instant::now();
+        Self {
+            remote_addr: None,
+            connected_at: now,
+            messages_sent: 0,
+            messages_received: 0,
+            last_activity: now,
+        }
+    }
+
+    fn with_addr(addr: SocketAddr) -> Self {
+        let mut state = Self::new();
+        state.remote_addr = Some(addr);
+        state
+    }
+}
+
+use crate::link_transport::BoxedHandler;
+
+/// Shared transport that multiplexes protocols over a single connection per peer.
+///
+/// [`SharedTransport`] wraps any [`LinkTransport`] implementation and provides:
+/// - Handler registration for different [`StreamType`]s
+/// - Automatic stream routing to appropriate handlers
+/// - Connection lifecycle management
+/// - Peer state tracking
+///
+/// # Example
+///
+/// ```rust,ignore
+/// use ant_quic::{SharedTransport, P2pLinkTransport, ProtocolHandler, StreamType};
+///
+/// let quic_transport = P2pLinkTransport::new(config).await?;
+/// let transport = SharedTransport::new(quic_transport);
+///
+/// transport.register_handler(my_gossip_handler.boxed()).await?;
+/// transport.register_handler(my_dht_handler.boxed()).await?;
+///
+/// transport.run().await?;
+/// ```
+pub struct SharedTransport<T: LinkTransport> {
+    /// The underlying link transport.
+    transport: Arc<T>,
+    /// Registered protocol handlers, keyed by stream type.
+    handlers: Arc<TokioRwLock<HashMap<StreamType, Arc<BoxedHandler>>>>,
+    /// Connected peers with their connections.
+    connections: Arc<TokioRwLock<HashMap<PeerId, Arc<T::Conn>>>>,
+    /// Peer state tracking.
+    peers: Arc<TokioRwLock<HashMap<PeerId, PeerState>>>,
+    /// Transport state machine.
+    state: TokioRwLock<TransportState>,
+    /// Shutdown signal sender.
+    shutdown_tx: broadcast::Sender<()>,
+}
+
+impl<T: LinkTransport> SharedTransport<T>
+where
+    T::Conn: Send + Sync + 'static,
+{
+    /// Create a new shared transport.
+    pub fn new(transport: T) -> Self {
+        let (shutdown_tx, _) = broadcast::channel(16);
+        Self {
+            transport: Arc::new(transport),
+            handlers: Arc::new(TokioRwLock::new(HashMap::new())),
+            connections: Arc::new(TokioRwLock::new(HashMap::new())),
+            peers: Arc::new(TokioRwLock::new(HashMap::new())),
+            state: TokioRwLock::new(TransportState::Created),
+            shutdown_tx,
+        }
+    }
+
+    /// Create from an existing Arc-wrapped transport.
+    #[allow(dead_code)]
+    pub fn from_arc(transport: Arc<T>) -> Self {
+        let (shutdown_tx, _) = broadcast::channel(16);
+        Self {
+            transport,
+            handlers: Arc::new(TokioRwLock::new(HashMap::new())),
+            connections: Arc::new(TokioRwLock::new(HashMap::new())),
+            peers: Arc::new(TokioRwLock::new(HashMap::new())),
+            state: TokioRwLock::new(TransportState::Created),
+            shutdown_tx,
+        }
+    }
+
+    /// Get the local peer ID.
+    pub fn local_peer(&self) -> PeerId {
+        self.transport.local_peer()
+    }
+
+    /// Get the underlying transport.
+    #[allow(dead_code)]
+    pub fn transport(&self) -> &Arc<T> {
+        &self.transport
+    }
+
+    /// Register a protocol handler.
+    ///
+    /// Each handler declares which stream types it handles. When streams arrive
+    /// matching those types, they are dispatched to the handler.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LinkError::HandlerExists`] if a handler is already registered
+    /// for any of the stream types.
+    pub async fn register_handler(&self, handler: BoxedHandler) -> LinkResult<()> {
+        let mut handlers = self.handlers.write().await;
+        let handler = Arc::new(handler);
+
+        // Check for conflicts first
+        for &stream_type in handler.stream_types() {
+            if handlers.contains_key(&stream_type) {
+                return Err(LinkError::HandlerExists(stream_type));
+            }
+        }
+
+        // Register for all stream types
+        for &stream_type in handler.stream_types() {
+            handlers.insert(stream_type, Arc::clone(&handler));
+        }
+
+        debug!(
+            handler = %handler.name(),
+            types = ?handler.stream_types(),
+            "Registered protocol handler"
+        );
+
+        Ok(())
+    }
+
+    /// Unregister handler by stream types.
+    ///
+    /// Removes the handler registered for the given stream types.
+    /// If this was the last reference to the handler, calls `shutdown()` on it.
+    pub async fn unregister_handler(&self, stream_types: &[StreamType]) -> LinkResult<()> {
+        let mut handlers = self.handlers.write().await;
+        let mut seen_handlers = std::collections::HashSet::new();
+
+        for &stream_type in stream_types {
+            if let Some(handler) = handlers.remove(&stream_type) {
+                let ptr = Arc::as_ptr(&handler) as usize;
+                // Remove all stream types for this handler
+                if seen_handlers.insert(ptr) {
+                    // Remove other stream types registered by same handler
+                    let handler_types: Vec<_> = handler.stream_types().to_vec();
+                    for &ht in &handler_types {
+                        handlers.remove(&ht);
+                    }
+
+                    // If this was the last reference, call shutdown
+                    if Arc::strong_count(&handler) == 1 {
+                        debug!(handler = %handler.name(), "Shutting down handler");
+                        let _ = handler.shutdown().await;
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Check if a handler is registered for a stream type.
+    pub async fn has_handler(&self, stream_type: StreamType) -> bool {
+        self.handlers.read().await.contains_key(&stream_type)
+    }
+
+    /// Get the handler for a stream type.
+    pub async fn get_handler(&self, stream_type: StreamType) -> Option<Arc<BoxedHandler>> {
+        self.handlers.read().await.get(&stream_type).cloned()
+    }
+
+    /// Get all registered stream types.
+    pub async fn registered_types(&self) -> Vec<StreamType> {
+        self.handlers.read().await.keys().copied().collect()
+    }
+
+    /// Build a stream filter from all registered handler types.
+    pub async fn build_stream_filter(&self) -> StreamFilter {
+        let handlers = self.handlers.read().await;
+        let mut filter = StreamFilter::new();
+        for &stream_type in handlers.keys() {
+            filter = filter.with_type(stream_type);
+        }
+        filter
+    }
+
+    /// Check if transport is running.
+    pub async fn is_running(&self) -> bool {
+        *self.state.read().await == TransportState::Running
+    }
+
+    /// Start the transport.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LinkError::AlreadyRunning`] if the transport is already running.
+    pub async fn start(&self) -> LinkResult<()> {
+        let mut state = self.state.write().await;
+        match *state {
+            TransportState::Created | TransportState::Stopped => {
+                *state = TransportState::Running;
+                info!("SharedTransport started");
+                Ok(())
+            }
+            TransportState::Running => Err(LinkError::AlreadyRunning),
+            TransportState::ShuttingDown => Err(LinkError::NotRunning),
+        }
+    }
+
+    /// Stop the transport gracefully.
+    ///
+    /// Shuts down all handlers and closes all connections.
+    pub async fn stop(&self) -> LinkResult<()> {
+        let mut state = self.state.write().await;
+        if *state == TransportState::Stopped {
+            return Ok(());
+        }
+
+        *state = TransportState::ShuttingDown;
+        info!("SharedTransport shutting down");
+
+        // Broadcast shutdown signal to all loops
+        let _ = self.shutdown_tx.send(());
+
+        // Shutdown handlers (avoid duplicates)
+        {
+            let handlers = self.handlers.read().await;
+            let mut seen = std::collections::HashSet::new();
+
+            for (stream_type, handler) in handlers.iter() {
+                let ptr = Arc::as_ptr(handler) as usize;
+                if seen.insert(ptr) {
+                    if let Err(e) = handler.shutdown().await {
+                        error!(
+                            handler = %handler.name(),
+                            stream_type = %stream_type,
+                            error = %e,
+                            "Handler shutdown error"
+                        );
+                    }
+                }
+            }
+        }
+
+        // Close all connections
+        {
+            let connections = self.connections.read().await;
+            for (peer, conn) in connections.iter() {
+                conn.close(0, "transport shutdown");
+                debug!(peer = ?peer, "Closed connection");
+            }
+        }
+
+        self.connections.write().await.clear();
+        self.peers.write().await.clear();
+
+        self.transport.shutdown().await;
+
+        *state = TransportState::Stopped;
+        info!("SharedTransport stopped");
+
+        Ok(())
+    }
+
+    /// Get number of connected peers.
+    pub async fn peer_count(&self) -> usize {
+        self.peers.read().await.len()
+    }
+
+    /// Get all connected peer IDs.
+    pub async fn connected_peers(&self) -> Vec<PeerId> {
+        self.peers.read().await.keys().copied().collect()
+    }
+
+    /// Check if a peer is connected.
+    #[allow(dead_code)]
+    pub async fn is_peer_connected(&self, peer: &PeerId) -> bool {
+        self.peers.read().await.contains_key(peer)
+    }
+
+    /// Add a connection (for incoming connections).
+    #[allow(dead_code)]
+    pub async fn add_connection(&self, peer: PeerId, conn: T::Conn, addr: SocketAddr) {
+        {
+            let mut connections = self.connections.write().await;
+            connections.insert(peer, Arc::new(conn));
+        }
+        {
+            let mut peers = self.peers.write().await;
+            peers.insert(peer, PeerState::with_addr(addr));
+        }
+        debug!(peer = ?peer, addr = %addr, "Added connection");
+    }
+
+    /// Remove a peer connection.
+    #[allow(dead_code)]
+    pub async fn remove_peer(&self, peer: &PeerId) {
+        self.connections.write().await.remove(peer);
+        self.peers.write().await.remove(peer);
+        debug!(peer = ?peer, "Removed peer");
+    }
+
+    /// Connect to a peer by address.
+    #[allow(dead_code)]
+    pub async fn connect(&self, addr: SocketAddr) -> LinkResult<PeerId> {
+        let conn = self.transport.dial_addr(addr, ProtocolId::DEFAULT).await?;
+        let peer = conn.peer();
+        self.add_connection(peer, conn, addr).await;
+        Ok(peer)
+    }
+
+    /// Send data to a peer on a bidirectional stream, receive response.
+    #[allow(dead_code)]
+    pub async fn send(
+        &self,
+        peer: PeerId,
+        stream_type: StreamType,
+        data: Bytes,
+    ) -> LinkResult<Option<Bytes>> {
+        let conn = {
+            let connections = self.connections.read().await;
+            connections.get(&peer).cloned()
+        };
+
+        let conn = conn.ok_or_else(|| LinkError::PeerNotFound(format!("{:?}", peer)))?;
+
+        let (mut send, mut recv) = conn.open_bi_typed(stream_type).await?;
+        send.write_all(&data).await?;
+        send.finish()?;
+
+        // Update stats
+        {
+            let mut peers = self.peers.write().await;
+            if let Some(state) = peers.get_mut(&peer) {
+                state.messages_sent += 1;
+                state.last_activity = std::time::Instant::now();
+            }
+        }
+
+        // Read response
+        let response = recv.read_to_end(1024 * 1024).await?;
+        if response.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(Bytes::from(response)))
+        }
+    }
+
+    /// Send data on a unidirectional stream.
+    #[allow(dead_code)]
+    pub async fn send_uni(
+        &self,
+        peer: PeerId,
+        stream_type: StreamType,
+        data: Bytes,
+    ) -> LinkResult<()> {
+        let conn = {
+            let connections = self.connections.read().await;
+            connections.get(&peer).cloned()
+        };
+
+        let conn = conn.ok_or_else(|| LinkError::PeerNotFound(format!("{:?}", peer)))?;
+
+        let mut send = conn.open_uni_typed(stream_type).await?;
+        send.write_all(&data).await?;
+        send.finish()?;
+
+        // Update stats
+        {
+            let mut peers = self.peers.write().await;
+            if let Some(state) = peers.get_mut(&peer) {
+                state.messages_sent += 1;
+                state.last_activity = std::time::Instant::now();
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Run the transport, accepting incoming connections.
+    ///
+    /// This method blocks until the transport is stopped.
+    #[allow(dead_code)]
+    pub async fn run(&self) -> LinkResult<()> {
+        self.start().await?;
+
+        let mut incoming = self.transport.accept(ProtocolId::DEFAULT);
+        let mut shutdown_rx = self.shutdown_tx.subscribe();
+
+        loop {
+            tokio::select! {
+                _ = shutdown_rx.recv() => {
+                    info!("SharedTransport received shutdown signal");
+                    break;
+                }
+                result = incoming.next() => {
+                    match result {
+                        Some(Ok(conn)) => {
+                            let peer = conn.peer();
+                            let remote_addr = conn.remote_addr();
+
+                            info!(peer = ?peer, addr = %remote_addr, "Accepted connection");
+                            self.add_connection(peer, conn, remote_addr).await;
+
+                            // Spawn connection handler loop
+                            let handlers = Arc::clone(&self.handlers);
+                            let peers = Arc::clone(&self.peers);
+                            let connections = Arc::clone(&self.connections);
+                            let conn_shutdown_rx = self.shutdown_tx.subscribe();
+
+                            tokio::spawn(async move {
+                                Self::run_connection_accept(
+                                    peer,
+                                    handlers,
+                                    peers,
+                                    connections,
+                                    conn_shutdown_rx,
+                                ).await;
+                            });
+                        }
+                        Some(Err(e)) => {
+                            warn!(error = %e, "Error accepting connection");
+                        }
+                        None => {
+                            debug!("Incoming connection stream ended");
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        self.stop().await
+    }
+
+    /// Run the accept loop for a single connection.
+    #[allow(dead_code)]
+    async fn run_connection_accept(
+        peer: PeerId,
+        handlers: Arc<TokioRwLock<HashMap<StreamType, Arc<BoxedHandler>>>>,
+        peers: Arc<TokioRwLock<HashMap<PeerId, PeerState>>>,
+        connections: Arc<TokioRwLock<HashMap<PeerId, Arc<T::Conn>>>>,
+        mut shutdown_rx: broadcast::Receiver<()>,
+    ) {
+        let conn = {
+            let connections = connections.read().await;
+            connections.get(&peer).cloned()
+        };
+
+        let conn = match conn {
+            Some(c) => c,
+            None => {
+                warn!(peer = ?peer, "Connection not found for accept loop");
+                return;
+            }
+        };
+
+        // Build filter from registered handlers
+        let filter = {
+            let handlers = handlers.read().await;
+            let mut filter = StreamFilter::new();
+            for &st in handlers.keys() {
+                filter = filter.with_type(st);
+            }
+            filter
+        };
+
+        let mut stream = conn.accept_bi_typed(filter);
+
+        loop {
+            tokio::select! {
+                _ = shutdown_rx.recv() => {
+                    debug!(peer = ?peer, "Connection accept loop shutting down");
+                    break;
+                }
+                result = stream.next() => {
+                    match result {
+                        Some(Ok((stream_type, send, recv))) => {
+                            let handlers_clone = Arc::clone(&handlers);
+                            let peers_clone = Arc::clone(&peers);
+                            tokio::spawn(async move {
+                                Self::handle_bi_stream(
+                                    handlers_clone,
+                                    peers_clone,
+                                    peer,
+                                    stream_type,
+                                    send,
+                                    recv,
+                                ).await;
+                            });
+                        }
+                        Some(Err(e)) => {
+                            warn!(peer = ?peer, error = %e, "Error accepting stream");
+                        }
+                        None => {
+                            debug!(peer = ?peer, "Connection closed");
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Handle an incoming bidirectional stream.
+    #[allow(dead_code)]
+    async fn handle_bi_stream(
+        handlers: Arc<TokioRwLock<HashMap<StreamType, Arc<BoxedHandler>>>>,
+        peers: Arc<TokioRwLock<HashMap<PeerId, PeerState>>>,
+        peer: PeerId,
+        stream_type: StreamType,
+        mut send: Box<dyn LinkSendStream>,
+        mut recv: Box<dyn LinkRecvStream>,
+    ) {
+        // Update peer stats
+        {
+            let mut peers_guard = peers.write().await;
+            if let Some(state) = peers_guard.get_mut(&peer) {
+                state.messages_received += 1;
+                state.last_activity = std::time::Instant::now();
+            }
+        }
+
+        // Read incoming data
+        let data = match recv.read_to_end(1024 * 1024).await {
+            Ok(data) => Bytes::from(data),
+            Err(e) => {
+                warn!(peer = ?peer, error = %e, "Failed to read stream");
+                return;
+            }
+        };
+
+        // Lookup handler
+        let handler = {
+            let handlers_guard = handlers.read().await;
+            handlers_guard.get(&stream_type).cloned()
+        };
+
+        let handler = match handler {
+            Some(h) => h,
+            None => {
+                warn!(peer = ?peer, stream_type = %stream_type, "No handler for stream type");
+                return;
+            }
+        };
+
+        // Dispatch to handler
+        match handler.handle_stream(peer, stream_type, data).await {
+            Ok(Some(response)) => {
+                if let Err(e) = send.write_all(&response).await {
+                    warn!(peer = ?peer, error = %e, "Failed to send response");
+                }
+                let _ = send.finish();
+            }
+            Ok(None) => {
+                let _ = send.finish();
+            }
+            Err(e) => {
+                error!(peer = ?peer, error = %e, "Handler error");
+                let _ = send.finish();
+            }
+        }
+    }
+}
+
+// ============================================================================
 // Tests
 // ============================================================================
 
@@ -784,5 +1386,316 @@ mod tests {
         assert_eq!(state.protocols.len(), 1);
         assert_eq!(state.protocols[0], ProtocolId::DEFAULT);
         assert!(state.capabilities.is_empty());
+    }
+
+    // =========================================================================
+    // Phase 3: SharedTransport Tests
+    // =========================================================================
+
+    mod shared_transport_tests {
+        use super::*;
+        use crate::link_transport::ProtocolHandlerExt;
+        use async_trait::async_trait;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        // === Mock Infrastructure ===
+
+        struct MockConn {
+            peer: PeerId,
+            addr: SocketAddr,
+        }
+
+        impl LinkConn for MockConn {
+            fn peer(&self) -> PeerId {
+                self.peer
+            }
+            fn remote_addr(&self) -> SocketAddr {
+                self.addr
+            }
+            fn open_uni(&self) -> BoxFuture<'_, LinkResult<Box<dyn LinkSendStream>>> {
+                Box::pin(async { Err(LinkError::ConnectionClosed) })
+            }
+            fn open_bi(
+                &self,
+            ) -> BoxFuture<'_, LinkResult<(Box<dyn LinkSendStream>, Box<dyn LinkRecvStream>)>>
+            {
+                Box::pin(async { Err(LinkError::ConnectionClosed) })
+            }
+            fn send_datagram(&self, _: Bytes) -> LinkResult<()> {
+                Ok(())
+            }
+            fn recv_datagrams(&self) -> BoxStream<'_, Bytes> {
+                Box::pin(futures_util::stream::empty())
+            }
+            fn close(&self, _: u64, _: &str) {}
+            fn is_open(&self) -> bool {
+                true
+            }
+            fn stats(&self) -> ConnectionStats {
+                ConnectionStats::default()
+            }
+            fn open_uni_typed(
+                &self,
+                _: StreamType,
+            ) -> BoxFuture<'_, LinkResult<Box<dyn LinkSendStream>>> {
+                Box::pin(async { Err(LinkError::ConnectionClosed) })
+            }
+            fn open_bi_typed(
+                &self,
+                _: StreamType,
+            ) -> BoxFuture<'_, LinkResult<(Box<dyn LinkSendStream>, Box<dyn LinkRecvStream>)>>
+            {
+                Box::pin(async { Err(LinkError::ConnectionClosed) })
+            }
+            fn accept_uni_typed(
+                &self,
+                _: StreamFilter,
+            ) -> BoxStream<'_, LinkResult<(StreamType, Box<dyn LinkRecvStream>)>> {
+                Box::pin(futures_util::stream::empty())
+            }
+            fn accept_bi_typed(
+                &self,
+                _: StreamFilter,
+            ) -> BoxStream<
+                '_,
+                LinkResult<(StreamType, Box<dyn LinkSendStream>, Box<dyn LinkRecvStream>)>,
+            > {
+                Box::pin(futures_util::stream::empty())
+            }
+        }
+
+        struct MockTransport {
+            local: PeerId,
+        }
+
+        impl LinkTransport for MockTransport {
+            type Conn = MockConn;
+
+            fn local_peer(&self) -> PeerId {
+                self.local
+            }
+            fn external_address(&self) -> Option<SocketAddr> {
+                None
+            }
+            fn peer_table(&self) -> Vec<(PeerId, Capabilities)> {
+                vec![]
+            }
+            fn peer_capabilities(&self, _: &PeerId) -> Option<Capabilities> {
+                None
+            }
+            fn subscribe(&self) -> broadcast::Receiver<LinkEvent> {
+                let (tx, rx) = broadcast::channel(1);
+                drop(tx);
+                rx
+            }
+            fn accept(&self, _: ProtocolId) -> Incoming<Self::Conn> {
+                Box::pin(futures_util::stream::empty())
+            }
+            fn dial(&self, _: PeerId, _: ProtocolId) -> BoxFuture<'_, LinkResult<Self::Conn>> {
+                Box::pin(async { Err(LinkError::PeerNotFound("mock".into())) })
+            }
+            fn dial_addr(
+                &self,
+                addr: SocketAddr,
+                _: ProtocolId,
+            ) -> BoxFuture<'_, LinkResult<Self::Conn>> {
+                let local = self.local;
+                Box::pin(async move { Ok(MockConn { peer: local, addr }) })
+            }
+            fn supported_protocols(&self) -> Vec<ProtocolId> {
+                vec![ProtocolId::DEFAULT]
+            }
+            fn register_protocol(&self, _: ProtocolId) {}
+            fn unregister_protocol(&self, _: ProtocolId) {}
+            fn is_connected(&self, _: &PeerId) -> bool {
+                false
+            }
+            fn active_connections(&self) -> usize {
+                0
+            }
+            fn shutdown(&self) -> BoxFuture<'_, ()> {
+                Box::pin(async {})
+            }
+        }
+
+        struct MockHandler {
+            types: Vec<StreamType>,
+            call_count: Arc<AtomicUsize>,
+        }
+
+        impl MockHandler {
+            fn new(types: Vec<StreamType>) -> Self {
+                Self {
+                    types,
+                    call_count: Arc::new(AtomicUsize::new(0)),
+                }
+            }
+        }
+
+        #[async_trait]
+        impl crate::link_transport::ProtocolHandler for MockHandler {
+            fn stream_types(&self) -> &[StreamType] {
+                &self.types
+            }
+
+            async fn handle_stream(
+                &self,
+                _: PeerId,
+                _: StreamType,
+                _: Bytes,
+            ) -> LinkResult<Option<Bytes>> {
+                self.call_count.fetch_add(1, Ordering::SeqCst);
+                Ok(Some(Bytes::from_static(b"response")))
+            }
+
+            fn name(&self) -> &str {
+                "MockHandler"
+            }
+        }
+
+        // === Tests ===
+
+        #[test]
+        fn test_shared_transport_creation() {
+            let transport = SharedTransport::new(MockTransport {
+                local: PeerId::from([1u8; 32]),
+            });
+            assert_eq!(transport.local_peer(), PeerId::from([1u8; 32]));
+        }
+
+        #[tokio::test]
+        async fn test_register_handler() {
+            let transport = SharedTransport::new(MockTransport {
+                local: PeerId::from([1u8; 32]),
+            });
+            let handler = MockHandler::new(vec![StreamType::Membership, StreamType::PubSub]);
+
+            transport.register_handler(handler.boxed()).await.unwrap();
+
+            assert!(transport.has_handler(StreamType::Membership).await);
+            assert!(transport.has_handler(StreamType::PubSub).await);
+            assert!(!transport.has_handler(StreamType::DhtQuery).await);
+        }
+
+        #[tokio::test]
+        async fn test_duplicate_handler_error() {
+            let transport = SharedTransport::new(MockTransport {
+                local: PeerId::from([1u8; 32]),
+            });
+
+            let handler1 = MockHandler::new(vec![StreamType::Membership]);
+            let handler2 = MockHandler::new(vec![StreamType::Membership]);
+
+            transport.register_handler(handler1.boxed()).await.unwrap();
+            let result = transport.register_handler(handler2.boxed()).await;
+
+            assert!(matches!(
+                result,
+                Err(LinkError::HandlerExists(StreamType::Membership))
+            ));
+        }
+
+        #[tokio::test]
+        async fn test_transport_lifecycle() {
+            let transport = SharedTransport::new(MockTransport {
+                local: PeerId::from([1u8; 32]),
+            });
+
+            assert!(!transport.is_running().await);
+
+            transport.start().await.unwrap();
+            assert!(transport.is_running().await);
+
+            // Double start should error
+            assert!(matches!(
+                transport.start().await,
+                Err(LinkError::AlreadyRunning)
+            ));
+
+            transport.stop().await.unwrap();
+            assert!(!transport.is_running().await);
+        }
+
+        #[tokio::test]
+        async fn test_build_stream_filter() {
+            let transport = SharedTransport::new(MockTransport {
+                local: PeerId::from([1u8; 32]),
+            });
+
+            let handler1 = MockHandler::new(vec![StreamType::Membership, StreamType::PubSub]);
+            let handler2 = MockHandler::new(vec![StreamType::DhtQuery]);
+
+            transport.register_handler(handler1.boxed()).await.unwrap();
+            transport.register_handler(handler2.boxed()).await.unwrap();
+
+            let filter = transport.build_stream_filter().await;
+            assert!(filter.accepts(StreamType::Membership));
+            assert!(filter.accepts(StreamType::PubSub));
+            assert!(filter.accepts(StreamType::DhtQuery));
+            assert!(!filter.accepts(StreamType::WebRtcSignal));
+        }
+
+        #[tokio::test]
+        async fn test_registered_types() {
+            let transport = SharedTransport::new(MockTransport {
+                local: PeerId::from([1u8; 32]),
+            });
+
+            let handler = MockHandler::new(vec![StreamType::Membership, StreamType::DhtQuery]);
+            transport.register_handler(handler.boxed()).await.unwrap();
+
+            let types = transport.registered_types().await;
+            assert_eq!(types.len(), 2);
+            assert!(types.contains(&StreamType::Membership));
+            assert!(types.contains(&StreamType::DhtQuery));
+        }
+
+        #[tokio::test]
+        async fn test_get_handler() {
+            let transport = SharedTransport::new(MockTransport {
+                local: PeerId::from([1u8; 32]),
+            });
+            let handler = MockHandler::new(vec![StreamType::DhtStore]);
+
+            transport.register_handler(handler.boxed()).await.unwrap();
+
+            let h = transport.get_handler(StreamType::DhtStore).await;
+            assert!(h.is_some());
+            assert_eq!(h.unwrap().name(), "MockHandler");
+
+            let h2 = transport.get_handler(StreamType::WebRtcSignal).await;
+            assert!(h2.is_none());
+        }
+
+        #[tokio::test]
+        async fn test_peer_count() {
+            let transport = SharedTransport::new(MockTransport {
+                local: PeerId::from([1u8; 32]),
+            });
+            transport.start().await.unwrap();
+
+            assert_eq!(transport.peer_count().await, 0);
+            assert!(transport.connected_peers().await.is_empty());
+        }
+
+        #[tokio::test]
+        async fn test_unregister_handler() {
+            let transport = SharedTransport::new(MockTransport {
+                local: PeerId::from([1u8; 32]),
+            });
+            let handler = MockHandler::new(vec![StreamType::Membership, StreamType::PubSub]);
+
+            transport.register_handler(handler.boxed()).await.unwrap();
+            assert!(transport.has_handler(StreamType::Membership).await);
+            assert!(transport.has_handler(StreamType::PubSub).await);
+
+            transport
+                .unregister_handler(&[StreamType::Membership])
+                .await
+                .unwrap();
+            // Both should be gone since they were from the same handler
+            assert!(!transport.has_handler(StreamType::Membership).await);
+            assert!(!transport.has_handler(StreamType::PubSub).await);
+        }
     }
 }
