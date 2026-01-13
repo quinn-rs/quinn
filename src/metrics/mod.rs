@@ -5,46 +5,20 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
-//! Metrics collection and export system
+//! Metrics collection system
 //!
-//! This module provides metrics collection and export capabilities for ant-quic.
-//! It includes both internal metrics collection (always available) and optional
-//! Prometheus export functionality.
-//!
-//! ## Feature Gates
-//!
-//! - **Basic metrics**: Always available (no feature flag required)
-//! - **Prometheus export**: Requires the `prometheus` feature flag
+//! This module provides internal metrics collection capabilities for ant-quic.
 //!
 //! ## Example
 //!
 //! ```rust
 //! use ant_quic::metrics::MetricsConfig;
 //!
-//! // Basic metrics config (always available)
 //! let config = MetricsConfig::default();
 //! assert!(!config.enabled);
-//!
-//! #[cfg(feature = "prometheus")]
-//! {
-//!     // Prometheus-specific functionality only available with feature flag
-//!     use ant_quic::metrics::{PrometheusExporter, MetricsServer};
-//! }
 //! ```
 
 pub use crate::logging::metrics::*;
-
-#[cfg(feature = "prometheus")]
-pub mod prometheus;
-
-#[cfg(feature = "prometheus")]
-pub mod http_server;
-
-#[cfg(feature = "prometheus")]
-pub use self::prometheus::PrometheusExporter;
-
-#[cfg(feature = "prometheus")]
-pub use self::http_server::MetricsServer;
 
 /// Configuration for metrics collection and export
 #[derive(Debug, Clone)]

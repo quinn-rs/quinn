@@ -172,27 +172,15 @@ impl<MakeFut, Fut> Debug for UdpPollHelper<MakeFut, Fut> {
 /// This function is called from within a Tokio runtime context (tokio is always available),
 /// then `TokioRuntime` is returned. If `runtime-smol` is enabled and not in tokio context,
 /// `SmolRuntime` is returned. Otherwise, `None` is returned.
-#[allow(clippy::needless_return)] // Be sure we return the right thing
+/// Returns the default runtime (Tokio) if available.
 pub fn default_runtime() -> Option<Arc<dyn Runtime>> {
     // Tokio is always available (required dependency)
     if ::tokio::runtime::Handle::try_current().is_ok() {
         return Some(Arc::new(TokioRuntime));
     }
-
-    #[cfg(feature = "runtime-smol")]
-    {
-        return Some(Arc::new(SmolRuntime));
-    }
-
-    #[cfg(not(feature = "runtime-smol"))]
     None
 }
 
 // Tokio runtime (always available)
 mod tokio;
 pub use self::tokio::TokioRuntime;
-
-#[cfg(feature = "runtime-smol")]
-mod async_io;
-#[cfg(feature = "runtime-smol")]
-pub use self::async_io::*;

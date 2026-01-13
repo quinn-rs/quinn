@@ -33,9 +33,6 @@ pub use self::recv_stream::{ReadError, ReadExactError, ReadToEndError, RecvStrea
 pub use self::runtime::{AsyncTimer, AsyncUdpSocket, Runtime, UdpPoller, default_runtime};
 pub use self::send_stream::{SendStream, StoppedError, WriteError};
 
-// Runtime-specific exports
-#[cfg(feature = "runtime-smol")]
-pub use self::runtime::SmolRuntime;
 // TokioRuntime is always available (tokio is a required dependency)
 pub use self::runtime::TokioRuntime;
 
