@@ -1901,6 +1901,7 @@ name = "quinn"
 version = "0.12.0"
 dependencies = [
  "anyhow",
+ "async-channel",
  "async-io",
  "bencher",
  "bytes",
@@ -1908,6 +1909,7 @@ dependencies = [
  "clap",
  "crc",
  "directories-next",
+ "event-listener",
  "futures-io",
  "pin-project-lite",
  "quinn-proto",

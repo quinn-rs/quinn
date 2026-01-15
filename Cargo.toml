@@ -14,6 +14,7 @@ categories = ["network-programming", "asynchronous"]
 [workspace.dependencies]
 anyhow = "1.0.22"
 arbitrary = { version = "1.0.1", features = ["derive"] }
+async-channel = "2"
 async-io = "2"
 assert_matches = "1.1"
 aws-lc-rs = { version = "1.9", default-features = false }
@@ -22,6 +23,7 @@ bytes = "1"
 clap = { version = "4", features = ["derive"] }
 crc = "3"
 directories-next = "2"
+event-listener = "5"
 fastbloom = "0.14"
 futures-io = "0.3.19"
 getrandom = { version = "0.3", default-features = false }

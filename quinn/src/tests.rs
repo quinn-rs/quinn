@@ -704,9 +704,9 @@ async fn rebind_recv() {
 
     const MSG: &[u8; 5] = b"hello";
 
-    let write_send = Arc::new(tokio::sync::Notify::new());
+    let write_send = Arc::new(crate::sync::Notify::new());
     let write_recv = write_send.clone();
-    let connected_send = Arc::new(tokio::sync::Notify::new());
+    let connected_send = Arc::new(crate::sync::Notify::new());
     let connected_recv = connected_send.clone();
     let server = tokio::spawn(async move {
         let connection = server.accept().await.unwrap().await.unwrap();
@@ -788,7 +788,7 @@ async fn two_datagram_readers() {
     let client = client.unwrap();
     let server = server.unwrap();
 
-    let done = tokio::sync::Notify::new();
+    let done = crate::sync::Notify::new();
     let (a, b, ()) = tokio::join!(
         async {
             let x = client.read_datagram().await.unwrap();

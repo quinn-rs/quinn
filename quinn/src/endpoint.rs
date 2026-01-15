@@ -35,13 +35,16 @@ use rustc_hash::FxHashMap;
     any(feature = "aws-lc-rs", feature = "ring"),
 ))]
 use socket2::{Domain, Protocol, Socket, Type};
-use tokio::sync::{Notify, futures::Notified, mpsc};
 use tracing::{Instrument, Span};
 use udp::{BATCH_SIZE, RecvMeta};
 
 use crate::{
     ConnectionEvent, EndpointConfig, IO_LOOP_BOUND, RECV_TIME_BOUND, VarInt,
-    connection::Connecting, incoming::Incoming, work_limiter::WorkLimiter,
+    connection::Connecting,
+    incoming::Incoming,
+    mpsc,
+    sync::{Notified, Notify},
+    work_limiter::WorkLimiter,
 };
 
 /// A QUIC endpoint.

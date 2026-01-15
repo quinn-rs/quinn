@@ -41,6 +41,10 @@
 
 use std::pin::Pin;
 
+mod abstraction;
+pub use abstraction::io::ReadBuf;
+use abstraction::{io, mpsc, oneshot, sync};
+
 mod connection;
 mod endpoint;
 mod incoming;

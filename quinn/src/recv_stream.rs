@@ -8,9 +8,8 @@ use std::{
 use bytes::Bytes;
 use proto::{Chunk, Chunks, ClosedStream, ConnectionError, ReadableError, StreamId};
 use thiserror::Error;
-use tokio::io::ReadBuf;
 
-use crate::{VarInt, connection::ConnectionRef};
+use crate::{VarInt, connection::ConnectionRef, io::ReadBuf};
 
 /// A stream that can only be used to receive data
 ///
@@ -492,13 +491,18 @@ impl futures_io::AsyncRead for RecvStream {
     }
 }
 
+#[cfg(feature = "runtime-tokio")]
 impl tokio::io::AsyncRead for RecvStream {
     fn poll_read(
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
-        buf: &mut ReadBuf<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
     ) -> Poll<io::Result<()>> {
-        ready!(Self::poll_read_buf(self.get_mut(), cx, buf))?;
+        ready!(Self::poll_read_buf(
+            self.get_mut(),
+            cx,
+            &mut ReadBuf::from(buf)
+        ))?;
         Poll::Ready(Ok(()))
     }
 }

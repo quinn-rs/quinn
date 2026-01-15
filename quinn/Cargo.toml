@@ -36,7 +36,7 @@ rustls-ring = ["dep:rustls", "ring", "proto/rustls-ring", "proto/ring"]
 # Outside wasm*-unknown-unknown targets, this enables `Endpoint::client` and `Endpoint::server` conveniences.
 ring = ["proto/ring"]
 runtime-tokio = ["tokio/time", "tokio/rt", "tokio/net"]
-runtime-smol = ["dep:async-io", "dep:smol"]
+runtime-smol = ["dep:async-channel", "dep:async-io", "dep:event-listener", "dep:smol", "futures-io"]
 
 # Configure `tracing` to log events via `log` if no `tracing` subscriber exists.
 tracing-log = ["tracing/log", "proto/tracing-log", "udp/tracing-log"]
@@ -51,8 +51,10 @@ qlog = ["proto/qlog"]
 __rustls-post-quantum-test =  ["rustls/prefer-post-quantum", "rustls-aws-lc-rs", "proto/__rustls-post-quantum-test"]
 
 [dependencies]
+async-channel = { workspace = true, optional = true }
 async-io = { workspace = true, optional = true }
 bytes = { workspace = true }
+event-listener = { workspace = true, optional = true }
 # Enables futures::io::{AsyncRead, AsyncWrite} support for streams
 futures-io = { workspace = true, optional = true }
 rustc-hash = { workspace = true }
@@ -62,7 +64,7 @@ rustls = { workspace = true, optional = true }
 smol = { workspace = true, optional = true }
 thiserror = { workspace = true }
 tracing =  { workspace = true }
-tokio = { workspace = true }
+tokio = { workspace = true, optional = true }
 udp = { package = "quinn-udp", path = "../quinn-udp", version = "0.6", default-features = false, features = ["tracing"] }
 
 [target.'cfg(not(all(target_family = "wasm", target_os = "unknown")))'.dependencies]

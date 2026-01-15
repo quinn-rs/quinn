@@ -13,15 +13,16 @@ use bytes::Bytes;
 use pin_project_lite::pin_project;
 use rustc_hash::FxHashMap;
 use thiserror::Error;
-use tokio::sync::{Notify, futures::Notified, mpsc, oneshot};
 use tracing::{Instrument, Span, debug_span};
 
 use crate::{
-    ConnectionEvent, Duration, Instant, VarInt,
+    ConnectionEvent, Duration, Instant, VarInt, mpsc,
     mutex::Mutex,
+    oneshot,
     recv_stream::RecvStream,
     runtime::{AsyncTimer, Runtime, UdpSender},
     send_stream::SendStream,
+    sync::{Notified, Notify},
     udp_transmit,
 };
 use proto::{
