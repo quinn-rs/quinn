@@ -72,6 +72,13 @@ pub struct UdpSocketState {
     /// In particular, we do not use IP_TOS cmsg_type in this case,
     /// which is not supported on Linux <3.13 and results in not sending the UDP packet at all.
     sendmsg_einval: AtomicBool,
+
+    /// Whether to use Apple's fast `sendmsg_x`/`recvmsg_x` APIs.
+    ///
+    /// These private APIs provide better performance but may not be available on all
+    /// Apple OS versions. Callers must verify availability before enabling.
+    #[cfg(apple_fast)]
+    apple_fast_path: AtomicBool,
 }
 
 impl UdpSocketState {
@@ -191,6 +198,8 @@ impl UdpSocketState {
             gro_segments: gro::gro_segments(),
             may_fragment,
             sendmsg_einval: AtomicBool::new(false),
+            #[cfg(apple_fast)]
+            apple_fast_path: AtomicBool::new(false),
         })
     }
 
@@ -231,7 +240,7 @@ impl UdpSocketState {
         bufs: &mut [IoSliceMut<'_>],
         meta: &mut [RecvMeta],
     ) -> io::Result<usize> {
-        recv(socket.0, bufs, meta)
+        recv(self, socket.0, bufs, meta)
     }
 
     /// The maximum amount of segments which can be transmitted if a platform
@@ -294,6 +303,25 @@ impl UdpSocketState {
     #[cfg(not(any(apple, target_os = "openbsd", target_os = "netbsd")))]
     fn set_sendmsg_einval(&self) {
         self.sendmsg_einval.store(true, Ordering::Relaxed)
+    }
+
+    /// Enables Apple's fast UDP datapath using private `sendmsg_x`/`recvmsg_x` APIs.
+    ///
+    /// These APIs may crash on unsupported OS versions, so callers must verify
+    /// availability before enabling. Once enabled, this also updates [`max_gso_segments`]
+    /// to allow batched sends.
+    ///
+    /// [`max_gso_segments`]: Self::max_gso_segments
+    #[cfg(apple_fast)]
+    pub fn enable_apple_fast_path(&self) {
+        self.apple_fast_path.store(true, Ordering::Relaxed);
+        self.max_gso_segments.store(BATCH_SIZE, Ordering::Relaxed);
+    }
+
+    /// Returns whether Apple's fast UDP datapath is enabled for this socket.
+    #[cfg(apple_fast)]
+    pub fn is_apple_fast_path_enabled(&self) -> bool {
+        self.apple_fast_path.load(Ordering::Relaxed)
     }
 }
 
@@ -384,7 +412,7 @@ fn send(
 
 #[cfg(apple_fast)]
 fn send(state: &UdpSocketState, io: SockRef<'_>, transmit: &Transmit<'_>) -> io::Result<()> {
-    if probe::is_fast_path_available() {
+    if state.is_apple_fast_path_enabled() {
         send_via_sendmsg_x(state, io, transmit)
     } else {
         send_single(state, io, transmit)
@@ -488,7 +516,12 @@ fn send_single(state: &UdpSocketState, io: SockRef<'_>, transmit: &Transmit<'_>)
     target_os = "dragonfly",
     solarish
 )))]
-fn recv(io: SockRef<'_>, bufs: &mut [IoSliceMut<'_>], meta: &mut [RecvMeta]) -> io::Result<usize> {
+fn recv(
+    _state: &UdpSocketState,
+    io: SockRef<'_>,
+    bufs: &mut [IoSliceMut<'_>],
+    meta: &mut [RecvMeta],
+) -> io::Result<usize> {
     let mut names = [MaybeUninit::<libc::sockaddr_storage>::uninit(); BATCH_SIZE];
     let mut ctrls = [cmsg::Aligned(MaybeUninit::<[u8; CMSG_LEN]>::uninit()); BATCH_SIZE];
     let mut hdrs = unsafe { mem::zeroed::<[libc::mmsghdr; BATCH_SIZE]>() };
@@ -530,8 +563,13 @@ fn recv(io: SockRef<'_>, bufs: &mut [IoSliceMut<'_>], meta: &mut [RecvMeta]) -> 
 }
 
 #[cfg(apple_fast)]
-fn recv(io: SockRef<'_>, bufs: &mut [IoSliceMut<'_>], meta: &mut [RecvMeta]) -> io::Result<usize> {
-    if probe::is_fast_path_available() {
+fn recv(
+    state: &UdpSocketState,
+    io: SockRef<'_>,
+    bufs: &mut [IoSliceMut<'_>],
+    meta: &mut [RecvMeta],
+) -> io::Result<usize> {
+    if state.is_apple_fast_path_enabled() {
         recv_via_recvmsg_x(io, bufs, meta)
     } else {
         recv_single(io, bufs, meta)
@@ -585,7 +623,12 @@ fn recv_via_recvmsg_x(
     solarish,
     apple_slow
 ))]
-fn recv(io: SockRef<'_>, bufs: &mut [IoSliceMut<'_>], meta: &mut [RecvMeta]) -> io::Result<usize> {
+fn recv(
+    _state: &UdpSocketState,
+    io: SockRef<'_>,
+    bufs: &mut [IoSliceMut<'_>],
+    meta: &mut [RecvMeta],
+) -> io::Result<usize> {
     recv_single(io, bufs, meta)
 }
 
@@ -1098,23 +1141,14 @@ mod gso {
 // On Apple platforms using the `sendmsg_x` call, UDP datagram segmentation is not
 // offloaded to the NIC or even the kernel, but instead done here in user space in
 // [`send`]) and then passed to the OS as individual `iovec`s (up to `BATCH_SIZE`).
+// The initial value is 1 (no batching); callers can enable batching via
+// `UdpSocketState::enable_apple_fast_path()` which updates `max_gso_segments`.
 #[cfg(not(any(target_os = "linux", target_os = "android")))]
 mod gso {
     use super::*;
 
     pub(super) fn max_gso_segments() -> usize {
-        #[cfg(apple_fast)]
-        {
-            if probe::is_fast_path_available() {
-                BATCH_SIZE
-            } else {
-                1
-            }
-        }
-        #[cfg(not(apple_fast))]
-        {
-            1
-        }
+        1
     }
 
     pub(super) fn set_segment_size(
@@ -1196,37 +1230,4 @@ mod gro {
     pub(super) fn gro_segments() -> usize {
         1
     }
-}
-
-/// Fast path availability for Apple's private `sendmsg_x`/`recvmsg_x` APIs.
-#[cfg(apple_fast)]
-mod probe {
-    use std::sync::OnceLock;
-
-    /// Fast path availability flag. Defaults to `false` (disabled).
-    static FAST_PATH_AVAILABLE: OnceLock<bool> = OnceLock::new();
-
-    /// Returns `true` if the fast path has been enabled.
-    pub(super) fn is_fast_path_available() -> bool {
-        *FAST_PATH_AVAILABLE.get_or_init(|| false)
-    }
-
-    /// Sets the fast path availability flag (can only be set once).
-    pub(super) fn set_fast_path_available(available: bool) -> bool {
-        let _ = FAST_PATH_AVAILABLE.set(available);
-        is_fast_path_available()
-    }
-}
-
-/// Sets whether Apple's fast UDP datapath should be used.
-///
-/// On Apple platforms, quinn-udp can use private `sendmsg_x`/`recvmsg_x` APIs
-/// for better performance. These APIs may crash on unsupported OS versions,
-/// so callers must verify availability before enabling.
-///
-/// This can only be set once; subsequent calls have no effect. Returns the
-/// effective value after the call.
-#[cfg(apple_fast)]
-pub fn set_apple_fast_path_available(available: bool) -> bool {
-    probe::set_fast_path_available(available)
 }

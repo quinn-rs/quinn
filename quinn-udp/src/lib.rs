@@ -258,25 +258,60 @@ impl EcnCodepoint {
     }
 }
 
-/// Pre-sets Apple fast path availability from external code.
+/// Enables Apple's fast UDP datapath on a [`UdpSocketState`].
 ///
-/// Must be called before any socket operations that would trigger the internal
-/// probe. Returns the effective value after the set attempt: if already
-/// initialized, returns the existing value; otherwise returns the newly set value.
+/// This C ABI function allows FFI callers to enable the fast datapath using
+/// private `sendmsg_x`/`recvmsg_x` APIs. These APIs may crash on unsupported
+/// OS versions, so callers must verify availability before enabling.
+///
+/// # Safety
+///
+/// The `state` pointer must be valid and point to an initialized `UdpSocketState`.
 ///
 /// # Example
 ///
 /// ```c
-/// // In C++ code:
-/// extern "C" bool quinn_udp_set_apple_fast_path_available(bool available);
+/// // In C/C++ code:
+/// extern "C" void quinn_udp_socket_state_enable_apple_fast_path(void* state);
 ///
-/// bool probeResult = PerformAppleFastDatapathProbe();
-/// bool effective = quinn_udp_set_apple_fast_path_available(probeResult);
+/// // After probing for fast datapath availability:
+/// if (apple_fast_datapath_available) {
+///     quinn_udp_socket_state_enable_apple_fast_path(socket_state);
+/// }
 /// ```
 #[cfg(apple_fast)]
 #[no_mangle]
-pub extern "C" fn quinn_udp_set_apple_fast_path_available(available: bool) -> bool {
-    imp::set_apple_fast_path_available(available)
+pub unsafe extern "C" fn quinn_udp_socket_state_enable_apple_fast_path(state: *const UdpSocketState) {
+    if let Some(state) = state.as_ref() {
+        state.enable_apple_fast_path();
+    }
+}
+
+/// Returns whether Apple's fast UDP datapath is enabled on a [`UdpSocketState`].
+///
+/// # Safety
+///
+/// The `state` pointer must be valid and point to an initialized `UdpSocketState`.
+///
+/// # Example
+///
+/// ```c
+/// // In C/C++ code:
+/// extern "C" bool quinn_udp_socket_state_is_apple_fast_path_enabled(void* state);
+///
+/// if (quinn_udp_socket_state_is_apple_fast_path_enabled(socket_state)) {
+///     // Fast datapath is enabled
+/// }
+/// ```
+#[cfg(apple_fast)]
+#[no_mangle]
+pub unsafe extern "C" fn quinn_udp_socket_state_is_apple_fast_path_enabled(
+    state: *const UdpSocketState,
+) -> bool {
+    state
+        .as_ref()
+        .map(|s| s.is_apple_fast_path_enabled())
+        .unwrap_or(false)
 }
 
 #[cfg(test)]
