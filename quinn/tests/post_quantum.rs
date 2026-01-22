@@ -89,7 +89,7 @@ fn make_client_endpoint(
 
     let client_cfg =
         quinn::ClientConfig::new(Arc::new(QuicClientConfig::try_from(rustls_config).unwrap()));
-    let mut endpoint = Endpoint::client(bind_addr)?;
+    let endpoint = Endpoint::client(bind_addr)?;
     endpoint.set_default_client_config(client_cfg);
     Ok(endpoint)
 }
