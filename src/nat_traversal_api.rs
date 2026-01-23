@@ -4704,6 +4704,83 @@ mod tests {
         assert!(Arc::ptr_eq(&config_registry, &registry));
     }
 
+    /// Test that TransportRegistry::get_udp_local_addr() returns None when empty
+    #[test]
+    fn test_registry_get_udp_local_addr_empty() {
+        use crate::transport::TransportRegistry;
+
+        let registry = TransportRegistry::new();
+        assert!(
+            registry.get_udp_local_addr().is_none(),
+            "Empty registry should return None for UDP address"
+        );
+    }
+
+    /// Test that TransportRegistry::get_udp_socket() returns None when empty
+    #[test]
+    fn test_registry_get_udp_socket_empty() {
+        use crate::transport::TransportRegistry;
+
+        let registry = TransportRegistry::new();
+        assert!(
+            registry.get_udp_socket().is_none(),
+            "Empty registry should return None for UDP socket"
+        );
+    }
+
+    /// Test that NatTraversalEndpoint stores and exposes transport_registry
+    #[tokio::test]
+    async fn test_endpoint_stores_transport_registry() {
+        use crate::transport::TransportRegistry;
+
+        // Create a registry
+        let registry = Arc::new(TransportRegistry::new());
+
+        // Create config with registry
+        let config = NatTraversalConfig {
+            transport_registry: Some(Arc::clone(&registry)),
+            bind_addr: Some("127.0.0.1:0".parse().unwrap()),
+            ..Default::default()
+        };
+
+        // Create endpoint
+        let endpoint = NatTraversalEndpoint::new(config, None, None)
+            .await
+            .expect("Endpoint creation should succeed");
+
+        // Verify registry is accessible
+        let stored_registry = endpoint.transport_registry();
+        assert!(
+            stored_registry.is_some(),
+            "Endpoint should have transport_registry"
+        );
+        assert!(
+            Arc::ptr_eq(stored_registry.unwrap(), &registry),
+            "Stored registry should be the same Arc as provided"
+        );
+    }
+
+    /// Test endpoint creation without registry (backward compatibility)
+    #[tokio::test]
+    async fn test_endpoint_without_transport_registry() {
+        let config = NatTraversalConfig {
+            transport_registry: None,
+            bind_addr: Some("127.0.0.1:0".parse().unwrap()),
+            ..Default::default()
+        };
+
+        // Create endpoint - should succeed without registry
+        let endpoint = NatTraversalEndpoint::new(config, None, None)
+            .await
+            .expect("Endpoint creation without registry should succeed");
+
+        // Verify registry is None
+        assert!(
+            endpoint.transport_registry().is_none(),
+            "Endpoint without registry config should have None"
+        );
+    }
+
     #[test]
     fn test_peer_id_display() {
         let peer_id = PeerId([
