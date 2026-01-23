@@ -169,6 +169,11 @@ impl UdpTransport {
     pub fn socket(&self) -> &Arc<UdpSocket> {
         &self.socket
     }
+
+    /// Get the local address this transport is bound to
+    pub fn local_address(&self) -> SocketAddr {
+        self.local_addr
+    }
 }
 
 #[async_trait]

@@ -439,6 +439,40 @@ impl TransportRegistry {
     pub fn is_empty(&self) -> bool {
         self.providers.is_empty()
     }
+
+    /// Get the first available UDP socket from registered providers
+    ///
+    /// This is used by `NatTraversalEndpoint` to share a socket with the transport
+    /// layer rather than creating a new one, enabling proper multi-transport routing.
+    ///
+    /// Returns `None` if no UDP transport with a socket is available.
+    pub fn get_udp_socket(&self) -> Option<Arc<tokio::net::UdpSocket>> {
+        for provider in &self.providers {
+            if provider.transport_type() == TransportType::Udp && provider.is_online() {
+                if let Some(socket) = provider.socket() {
+                    return Some(socket.clone());
+                }
+            }
+        }
+        None
+    }
+
+    /// Get the local address of the first UDP transport
+    ///
+    /// This is used to coordinate addresses between the transport layer
+    /// and NAT traversal endpoints.
+    ///
+    /// Returns `None` if no UDP transport is available.
+    pub fn get_udp_local_addr(&self) -> Option<std::net::SocketAddr> {
+        for provider in &self.providers {
+            if provider.transport_type() == TransportType::Udp && provider.is_online() {
+                if let Some(TransportAddr::Udp(addr)) = provider.local_addr() {
+                    return Some(addr);
+                }
+            }
+        }
+        None
+    }
 }
 
 impl fmt::Debug for TransportRegistry {

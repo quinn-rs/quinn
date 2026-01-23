@@ -1701,15 +1701,32 @@ impl NatTraversalEndpoint {
             client_config
         };
 
-        // Create UDP socket
-        let bind_addr = config
-            .bind_addr
-            .unwrap_or_else(create_random_port_bind_addr);
+        // Determine bind address, using registry information if available
+        // If transport_registry is provided with a UDP transport, prefer its address
+        // This enables address coordination between transport layer and NAT traversal
+        let bind_addr = if let Some(ref registry) = config.transport_registry {
+            if let Some(registry_addr) = registry.get_udp_local_addr() {
+                info!("Transport registry has UDP transport at {}", registry_addr);
+                // For now, we create a new socket but at a different port to avoid conflicts
+                // TODO: Phase 2 will implement proper socket sharing via fd duplication
+                // Use the same IP but let OS pick a port to avoid conflict
+                let ip = registry_addr.ip();
+                let new_addr = std::net::SocketAddr::new(ip, 0);
+                info!("Using address {} for NAT traversal (same interface as registry)", new_addr);
+                new_addr
+            } else {
+                // Registry exists but no UDP transport - use config or random
+                config.bind_addr.unwrap_or_else(create_random_port_bind_addr)
+            }
+        } else {
+            // No registry - use config or random (default behavior)
+            config.bind_addr.unwrap_or_else(create_random_port_bind_addr)
+        };
+
+        info!("Binding endpoint to {}", bind_addr);
         let socket = UdpSocket::bind(bind_addr).await.map_err(|e| {
             NatTraversalError::NetworkError(format!("Failed to bind UDP socket: {e}"))
         })?;
-
-        info!("Binding endpoint to {}", bind_addr);
 
         // Convert tokio socket to std socket
         let std_socket = socket.into_std().map_err(|e| {
