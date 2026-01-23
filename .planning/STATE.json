@@ -16,7 +16,7 @@
     "completed_tasks": 1,
     "current_task": null
   },
-  "status": "reviewing",
+  "status": "awaiting_user",
   "previous_phase": {
     "number": "1.1",
     "name": "Node → P2pEndpoint Wiring",

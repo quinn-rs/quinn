@@ -34,6 +34,7 @@ fn test_peer_config() -> NatTraversalConfig {
         relay_nodes: vec![],
         enable_relay_service: true,
         allow_ipv4_mapped: true,
+        transport_registry: None,
     }
 }
 
@@ -55,6 +56,7 @@ fn test_server_config() -> NatTraversalConfig {
         relay_nodes: vec![],
         enable_relay_service: true,
         allow_ipv4_mapped: true,
+        transport_registry: None,
     }
 }
 
@@ -99,6 +101,7 @@ async fn test_error_handling_no_panic() {
         relay_nodes: vec![],
         enable_relay_service: true,
         allow_ipv4_mapped: true,
+        transport_registry: None,
     };
 
     let result1 = NatTraversalEndpoint::new(config1, None, None).await;
@@ -124,6 +127,7 @@ async fn test_error_handling_no_panic() {
         relay_nodes: vec![],
         enable_relay_service: true,
         allow_ipv4_mapped: true,
+        transport_registry: None,
     };
 
     let result2 = NatTraversalEndpoint::new(config2, None, None).await;
@@ -212,6 +216,7 @@ async fn test_malformed_config_handling() {
         relay_nodes: vec![],
         enable_relay_service: true,
         allow_ipv4_mapped: true,
+        transport_registry: None,
     };
 
     let result = NatTraversalEndpoint::new(no_peers_config, None, None).await;
@@ -238,6 +243,7 @@ async fn test_malformed_config_handling() {
         relay_nodes: vec![],
         enable_relay_service: true,
         allow_ipv4_mapped: true,
+        transport_registry: None,
     };
 
     let result2 = NatTraversalEndpoint::new(extreme_config, None, None).await;
@@ -271,6 +277,7 @@ async fn test_input_sanitization() {
         relay_nodes: vec![],
         enable_relay_service: true,
         allow_ipv4_mapped: true,
+        transport_registry: None,
     };
 
     // This should either work or fail gracefully, not exhaust memory or panic
@@ -339,6 +346,7 @@ mod specific_regression_tests {
             relay_nodes: vec![],
             enable_relay_service: true,
             allow_ipv4_mapped: true,
+            transport_registry: None,
         };
 
         // Should not panic and should handle random port selection
@@ -387,6 +395,7 @@ mod specific_regression_tests {
             relay_nodes: vec![],
             enable_relay_service: true,
             allow_ipv4_mapped: true,
+            transport_registry: None,
         };
 
         // Should not panic, even if configuration is inconsistent

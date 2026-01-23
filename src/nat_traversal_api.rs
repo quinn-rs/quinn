@@ -4649,6 +4649,30 @@ mod tests {
     }
 
     #[test]
+    fn test_nat_config_default_has_no_transport_registry() {
+        let config = NatTraversalConfig::default();
+        assert!(
+            config.transport_registry.is_none(),
+            "Default NatTraversalConfig should have no transport_registry"
+        );
+    }
+
+    #[test]
+    fn test_nat_config_can_set_transport_registry() {
+        use crate::transport::TransportRegistry;
+
+        let registry = Arc::new(TransportRegistry::new());
+        let config = NatTraversalConfig {
+            transport_registry: Some(Arc::clone(&registry)),
+            ..Default::default()
+        };
+
+        assert!(config.transport_registry.is_some());
+        let config_registry = config.transport_registry.unwrap();
+        assert!(Arc::ptr_eq(&config_registry, &registry));
+    }
+
+    #[test]
     fn test_peer_id_display() {
         let peer_id = PeerId([
             0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef, 0x00, 0x11, 0x22, 0x33, 0x44, 0x55,
