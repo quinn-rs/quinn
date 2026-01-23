@@ -196,6 +196,9 @@ pub struct NatTraversalEndpoint {
     /// Maps peer ID to the remote address that successfully responded
     /// Uses DashMap for fine-grained concurrent access without blocking workers
     successful_candidates: Arc<dashmap::DashMap<PeerId, SocketAddr>>,
+    /// Transport registry for multi-transport support
+    /// When present, allows using transport-provided sockets instead of creating new ones
+    transport_registry: Option<Arc<TransportRegistry>>,
 }
 
 /// Configuration for NAT traversal behavior
@@ -1031,6 +1034,9 @@ impl NatTraversalEndpoint {
         // Clone the callback for background tasks before moving into endpoint
         let event_callback_for_poll = event_callback.clone();
 
+        // Store transport registry from config for multi-transport support
+        let transport_registry = config.transport_registry.clone();
+
         let endpoint = Self {
             inner_endpoint: Some(inner_endpoint.clone()),
             config: config.clone(),
@@ -1049,6 +1055,7 @@ impl NatTraversalEndpoint {
             relay_sessions: Arc::new(dashmap::DashMap::new()),
             relay_server,
             successful_candidates: Arc::new(dashmap::DashMap::new()),
+            transport_registry,
         };
 
         // v0.13.0+: All nodes are symmetric P2P nodes - always start accepting connections
@@ -1126,6 +1133,14 @@ impl NatTraversalEndpoint {
     /// Get the event callback
     pub fn get_event_callback(&self) -> Option<&Arc<dyn Fn(NatTraversalEvent) + Send + Sync>> {
         self.event_callback.as_ref()
+    }
+
+    /// Get the transport registry if configured
+    ///
+    /// Returns the transport registry that was provided at construction time,
+    /// enabling multi-transport support and shared socket management.
+    pub fn transport_registry(&self) -> Option<&Arc<TransportRegistry>> {
+        self.transport_registry.as_ref()
     }
 
     /// Emit an event to both the events vector and the callback (if present)
