@@ -267,6 +267,7 @@ impl P2pConfig {
             timeouts: self.timeouts.clone(),
             identity_key: None,
             allow_ipv4_mapped: true, // Required for dual-stack socket support
+            transport_registry: Some(Arc::new(self.transport_registry.clone())),
         }
     }
 

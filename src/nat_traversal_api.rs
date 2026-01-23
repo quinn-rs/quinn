@@ -14,6 +14,8 @@
 
 use std::{fmt, net::SocketAddr, sync::Arc, time::Duration};
 
+use crate::transport::TransportRegistry;
+
 /// Creates a bind address that allows the OS to select a random available port
 ///
 /// This provides protocol obfuscation by preventing port fingerprinting, which improves
@@ -306,6 +308,16 @@ pub struct NatTraversalConfig {
     ///
     /// Default: true (required for dual-stack socket support)
     pub allow_ipv4_mapped: bool,
+
+    /// Transport registry containing available transport providers.
+    ///
+    /// When provided, NatTraversalEndpoint uses registered transports
+    /// for socket binding instead of hardcoded UDP. This enables
+    /// multi-transport support (UDP, BLE, etc.).
+    ///
+    /// Default: None (uses traditional UdpSocket::bind directly)
+    #[serde(skip)]
+    pub transport_registry: Option<Arc<TransportRegistry>>,
 }
 
 // v0.13.0: EndpointRole enum has been removed.
@@ -866,8 +878,9 @@ impl Default for NatTraversalConfig {
             // This ensures non-PQC handshakes cannot happen
             pqc: Some(crate::crypto::pqc::PqcConfig::default()),
             timeouts: crate::config::nat_timeouts::TimeoutConfig::default(),
-            identity_key: None,      // Generate random key if not provided
-            allow_ipv4_mapped: true, // Required for dual-stack socket support
+            identity_key: None,       // Generate random key if not provided
+            allow_ipv4_mapped: true,  // Required for dual-stack socket support
+            transport_registry: None, // Use direct UDP binding by default
         }
     }
 }
