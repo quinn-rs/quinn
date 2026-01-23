@@ -24,6 +24,7 @@
 //! ```
 
 use std::net::SocketAddr;
+use std::sync::Arc;
 use std::time::Duration;
 
 // v0.2: AuthConfig removed - TLS handles peer authentication via ML-DSA-65
@@ -32,6 +33,7 @@ use crate::config::nat_timeouts::TimeoutConfig;
 use crate::crypto::pqc::PqcConfig;
 use crate::crypto::pqc::types::{MlDsaPublicKey, MlDsaSecretKey};
 use crate::host_identity::HostIdentity;
+use crate::transport::{TransportProvider, TransportRegistry};
 
 /// Configuration for ant-quic P2P endpoints
 ///
@@ -80,6 +82,13 @@ pub struct P2pConfig {
 
     /// Bootstrap cache configuration
     pub bootstrap_cache: BootstrapCacheConfig,
+
+    /// Transport registry for multi-transport support
+    ///
+    /// Contains all registered transport providers (UDP, BLE, etc.) that this
+    /// endpoint can use for connectivity. If empty, a default UDP transport
+    /// is created automatically.
+    pub transport_registry: TransportRegistry,
 }
 // v0.13.0: enable_coordinator removed - all nodes are coordinators
 
@@ -230,6 +239,7 @@ impl Default for P2pConfig {
             stats_interval: Duration::from_secs(30),
             keypair: None,
             bootstrap_cache: BootstrapCacheConfig::default(),
+            transport_registry: TransportRegistry::new(),
         }
     }
 }
@@ -289,6 +299,7 @@ pub struct P2pConfigBuilder {
     stats_interval: Option<Duration>,
     keypair: Option<(MlDsaPublicKey, MlDsaSecretKey)>,
     bootstrap_cache: Option<BootstrapCacheConfig>,
+    transport_registry: Option<TransportRegistry>,
 }
 
 /// Error type for configuration validation
@@ -464,6 +475,51 @@ impl P2pConfigBuilder {
         self
     }
 
+    /// Add a single transport provider to the registry
+    ///
+    /// This method can be called multiple times to add multiple providers.
+    /// Providers are stored in the transport registry and used for multi-transport
+    /// connectivity (UDP, BLE, etc.).
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// use ant_quic::{P2pConfig, transport::UdpTransport};
+    /// use std::sync::Arc;
+    ///
+    /// let udp = UdpTransport::bind("0.0.0.0:0".parse()?).await?;
+    /// let config = P2pConfig::builder()
+    ///     .transport_provider(Arc::new(udp))
+    ///     .build()?;
+    /// ```
+    pub fn transport_provider(mut self, provider: Arc<dyn TransportProvider>) -> Self {
+        let registry = self
+            .transport_registry
+            .get_or_insert_with(TransportRegistry::new);
+        registry.register(provider);
+        self
+    }
+
+    /// Set the entire transport registry
+    ///
+    /// This replaces any previously registered providers. Use this when you have
+    /// a pre-configured registry with multiple providers.
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// use ant_quic::{P2pConfig, transport::{TransportRegistry, UdpTransport}};
+    /// use std::sync::Arc;
+    ///
+    /// let mut registry = TransportRegistry::new();
+    /// registry.register(Arc::new(UdpTransport::bind("0.0.0.0:0".parse()?).await?));
+    /// let config = P2pConfig::builder()
+    ///     .transport_registry(registry)
+    ///     .build()?;
+    /// ```
+    pub fn transport_registry(mut self, registry: TransportRegistry) -> Self {
+        self.transport_registry = Some(registry);
+        self
+    }
+
     /// Build the configuration with validation
     pub fn build(self) -> Result<P2pConfig, ConfigError> {
         // Validate max_connections
@@ -487,6 +543,7 @@ impl P2pConfigBuilder {
             stats_interval: self.stats_interval.unwrap_or(Duration::from_secs(30)),
             keypair: self.keypair,
             bootstrap_cache: self.bootstrap_cache.unwrap_or_default(),
+            transport_registry: self.transport_registry.unwrap_or_default(),
         })
     }
 }
@@ -808,5 +865,129 @@ mod tests {
         let config = P2pConfig::default();
         assert_eq!(config.mtu.initial_mtu, 1200);
         assert!(config.mtu.discovery_enabled);
+    }
+
+    // ==========================================================================
+    // Transport Registry Tests (Phase 1.1 Task 3)
+    // ==========================================================================
+
+    #[tokio::test]
+    async fn test_p2p_config_builder_transport_provider() {
+        use crate::transport::{TransportType, UdpTransport};
+        use std::sync::Arc;
+
+        // Create a real UdpTransport provider
+        let addr: std::net::SocketAddr = "127.0.0.1:0".parse().expect("valid addr");
+        let transport = UdpTransport::bind(addr)
+            .await
+            .expect("Failed to bind UdpTransport");
+        let provider: Arc<dyn crate::transport::TransportProvider> = Arc::new(transport);
+
+        // Build config with single transport_provider() call
+        let config = P2pConfig::builder()
+            .transport_provider(provider)
+            .build()
+            .expect("Failed to build config");
+
+        // Verify registry has exactly 1 provider
+        assert_eq!(config.transport_registry.len(), 1);
+        assert!(!config.transport_registry.is_empty());
+
+        // Verify it's a UDP provider
+        let udp_providers = config
+            .transport_registry
+            .providers_by_type(TransportType::Udp);
+        assert_eq!(udp_providers.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_p2p_config_builder_multiple_providers() {
+        use crate::transport::{TransportType, UdpTransport};
+        use std::sync::Arc;
+
+        // Create two UDP transports on different ports
+        let addr1: std::net::SocketAddr = "127.0.0.1:0".parse().expect("valid addr");
+        let addr2: std::net::SocketAddr = "127.0.0.1:0".parse().expect("valid addr");
+
+        let transport1 = UdpTransport::bind(addr1)
+            .await
+            .expect("Failed to bind transport 1");
+        let transport2 = UdpTransport::bind(addr2)
+            .await
+            .expect("Failed to bind transport 2");
+
+        let provider1: Arc<dyn crate::transport::TransportProvider> = Arc::new(transport1);
+        let provider2: Arc<dyn crate::transport::TransportProvider> = Arc::new(transport2);
+
+        // Build config with multiple transport_provider() calls
+        let config = P2pConfig::builder()
+            .transport_provider(provider1)
+            .transport_provider(provider2)
+            .build()
+            .expect("Failed to build config");
+
+        // Verify registry has both providers
+        assert_eq!(config.transport_registry.len(), 2);
+        assert_eq!(
+            config
+                .transport_registry
+                .providers_by_type(TransportType::Udp)
+                .len(),
+            2
+        );
+    }
+
+    #[tokio::test]
+    async fn test_p2p_config_builder_transport_registry() {
+        use crate::transport::{TransportRegistry, TransportType, UdpTransport};
+        use std::sync::Arc;
+
+        // Create a registry and add multiple providers
+        let mut registry = TransportRegistry::new();
+
+        let addr1: std::net::SocketAddr = "127.0.0.1:0".parse().expect("valid addr");
+        let addr2: std::net::SocketAddr = "127.0.0.1:0".parse().expect("valid addr");
+
+        let transport1 = UdpTransport::bind(addr1)
+            .await
+            .expect("Failed to bind transport 1");
+        let transport2 = UdpTransport::bind(addr2)
+            .await
+            .expect("Failed to bind transport 2");
+
+        registry.register(Arc::new(transport1));
+        registry.register(Arc::new(transport2));
+
+        // Build config with transport_registry() method
+        let config = P2pConfig::builder()
+            .transport_registry(registry)
+            .build()
+            .expect("Failed to build config");
+
+        // Verify all providers present
+        assert_eq!(config.transport_registry.len(), 2);
+        assert_eq!(
+            config
+                .transport_registry
+                .providers_by_type(TransportType::Udp)
+                .len(),
+            2
+        );
+    }
+
+    #[test]
+    fn test_p2p_config_default_has_empty_registry() {
+        let config = P2pConfig::default();
+        assert!(config.transport_registry.is_empty());
+        assert_eq!(config.transport_registry.len(), 0);
+    }
+
+    #[test]
+    fn test_p2p_config_builder_default_has_empty_registry() {
+        let config = P2pConfig::builder()
+            .build()
+            .expect("Failed to build config");
+        assert!(config.transport_registry.is_empty());
+        assert_eq!(config.transport_registry.len(), 0);
     }
 }

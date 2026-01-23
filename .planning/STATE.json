@@ -1,14 +1,51 @@
 {
   "version": 1,
-  "project": "ant-quic",
-  "active": false,
-  "milestone": "multi-transport-core",
-  "phase": "completed",
+  "project": "multi-transport-wiring",
+  "active": true,
+  "milestone": {
+    "number": 1,
+    "name": "Registry Wiring"
+  },
+  "phase": {
+    "number": "1.1",
+    "name": "Node → P2pEndpoint Wiring",
+    "plan": "PLAN-011"
+  },
   "progress": {
-    "total_tasks": 11,
-    "completed_tasks": 11,
+    "total_tasks": 6,
+    "completed_tasks": 6,
     "current_task": null
   },
   "status": "completed",
-  "last_updated": "2026-01-23T00:00:00Z"
+  "interview_decisions": {
+    "problem": "Missing functionality - BLE/LoRa/etc unusable despite abstraction existing",
+    "success_criteria": "Production ready - full multi-transport with tested BLE, constrained engine, docs",
+    "integration": "Modify existing layers - wire through Node → P2pEndpoint → NatTraversalEndpoint",
+    "dependencies": [
+      "Node + NodeConfig",
+      "P2pEndpoint + P2pConfig",
+      "NatTraversalEndpoint",
+      "Address types throughout"
+    ],
+    "error_handling": "Dedicated error types with transport-specific context",
+    "async_model": "Fully async (tokio) - concurrent receive on multiple transports",
+    "testing": [
+      "Unit tests",
+      "Integration tests",
+      "Property-based tests"
+    ],
+    "documentation": "Full public API docs with implementation guides",
+    "priority": "Core wiring first, then addresses, then BLE, then constrained engine",
+    "risks": [
+      "Platform-specific BLE",
+      "QUIC endpoint limitation",
+      "Performance sensitive"
+    ]
+  },
+  "implementation_guidance": {
+    "step1": "Pass TransportRegistry through Node → P2pEndpoint constructors and store it in P2pEndpoint",
+    "step2": "Update send/receive path to use registry: loop over registry.online_providers() to bind/listen, select providers based on ProtocolEngine/capabilities when dialing",
+    "step3": "Teach NatTraversalEndpoint and peer adverts to include TransportAddr + capability summaries"
+  },
+  "last_updated": "2026-01-23T19:30:00Z"
 }

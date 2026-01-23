@@ -264,6 +264,9 @@ impl Node {
         // Convert NodeConfig to P2pConfig
         let mut p2p_config = P2pConfig::default();
 
+        // Build transport registry first (before any partial moves)
+        p2p_config.transport_registry = config.build_transport_registry();
+
         if let Some(bind_addr) = config.bind_addr {
             p2p_config.bind_addr = Some(bind_addr);
         }
@@ -385,6 +388,14 @@ impl Node {
     /// Get access to the underlying P2pEndpoint for advanced operations.
     pub fn inner_endpoint(&self) -> &Arc<P2pEndpoint> {
         &self.inner
+    }
+
+    /// Get the transport registry for this node
+    ///
+    /// The transport registry contains all registered transport providers (UDP, BLE, etc.)
+    /// that this node can use for connectivity.
+    pub fn transport_registry(&self) -> &crate::transport::TransportRegistry {
+        self.inner.transport_registry()
     }
 
     // === Connections ===

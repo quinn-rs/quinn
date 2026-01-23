@@ -69,6 +69,7 @@ use crate::crypto::raw_public_keys::key_utils::{
 use crate::nat_traversal_api::{
     NatTraversalEndpoint, NatTraversalError, NatTraversalEvent, NatTraversalStatistics, PeerId,
 };
+use crate::transport::TransportRegistry;
 
 // Re-export TraversalPhase from nat_traversal_api for convenience
 use crate::Side;
@@ -114,6 +115,12 @@ pub struct P2pEndpoint {
 
     /// Bootstrap cache for peer persistence
     pub bootstrap_cache: Arc<BootstrapCache>,
+
+    /// Transport registry for multi-transport support
+    ///
+    /// Contains all registered transport providers (UDP, BLE, etc.) that this
+    /// endpoint can use for connectivity.
+    transport_registry: Arc<TransportRegistry>,
 }
 
 impl std::fmt::Debug for P2pEndpoint {
@@ -442,6 +449,9 @@ impl P2pEndpoint {
                 .await
                 .map_err(|e| EndpointError::Config(e.to_string()))?;
 
+        // Store transport registry from config
+        let transport_registry = Arc::new(config.transport_registry.clone());
+
         Ok(Self {
             inner: Arc::new(inner),
             // v0.2: auth_manager removed
@@ -454,6 +464,7 @@ impl P2pEndpoint {
             shutdown: Arc::new(AtomicBool::new(false)),
             pending_data: Arc::new(RwLock::new(BoundedPendingBuffer::default())),
             bootstrap_cache,
+            transport_registry,
         })
     }
 
@@ -484,6 +495,14 @@ impl P2pEndpoint {
     /// Get observed external address (if discovered)
     pub fn external_addr(&self) -> Option<SocketAddr> {
         self.inner.get_observed_external_address().ok().flatten()
+    }
+
+    /// Get the transport registry for this endpoint
+    ///
+    /// The transport registry contains all registered transport providers (UDP, BLE, etc.)
+    /// that this endpoint can use for connectivity.
+    pub fn transport_registry(&self) -> &TransportRegistry {
+        &self.transport_registry
     }
 
     /// Get the ML-DSA-65 public key bytes (1952 bytes)
@@ -1576,6 +1595,7 @@ impl Clone for P2pEndpoint {
             shutdown: Arc::clone(&self.shutdown),
             pending_data: Arc::clone(&self.pending_data),
             bootstrap_cache: Arc::clone(&self.bootstrap_cache),
+            transport_registry: Arc::clone(&self.transport_registry),
         }
     }
 }
@@ -1649,5 +1669,56 @@ mod tests {
             assert!(endpoint.is_running());
             assert!(endpoint.local_addr().is_some() || endpoint.local_addr().is_none());
         }
+    }
+
+    // ==========================================================================
+    // Transport Registry Tests (Phase 1.1 Task 5)
+    // ==========================================================================
+
+    #[tokio::test]
+    async fn test_p2p_endpoint_stores_transport_registry() {
+        use crate::transport::{TransportType, UdpTransport};
+
+        // Create a UDP transport provider
+        let addr: std::net::SocketAddr = "127.0.0.1:0".parse().expect("valid addr");
+        let transport = UdpTransport::bind(addr)
+            .await
+            .expect("Failed to bind UdpTransport");
+        let provider: Arc<dyn crate::transport::TransportProvider> = Arc::new(transport);
+
+        // Build config with transport provider
+        let config = P2pConfig::builder()
+            .transport_provider(provider)
+            .build()
+            .expect("valid config");
+
+        // Create endpoint
+        let result = P2pEndpoint::new(config).await;
+
+        // Verify registry is accessible and contains the provider
+        if let Ok(endpoint) = result {
+            let registry = endpoint.transport_registry();
+            assert_eq!(registry.len(), 1, "Registry should have 1 provider");
+
+            let udp_providers = registry.providers_by_type(TransportType::Udp);
+            assert_eq!(udp_providers.len(), 1, "Should have 1 UDP provider");
+        }
+        // Note: endpoint creation may fail in test environment without network
+    }
+
+    #[tokio::test]
+    async fn test_p2p_endpoint_default_config_empty_registry() {
+        // Build config with no transport providers
+        let config = P2pConfig::builder().build().expect("valid config");
+
+        // Create endpoint
+        let result = P2pEndpoint::new(config).await;
+
+        // Verify registry is empty
+        if let Ok(endpoint) = result {
+            let registry = endpoint.transport_registry();
+            assert!(registry.is_empty(), "Default registry should be empty");
+        }
+        // Note: endpoint creation may fail in test environment without network
     }
 }

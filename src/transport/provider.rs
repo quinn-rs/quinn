@@ -354,7 +354,7 @@ impl TransportDiagnostics {
 }
 
 /// A collection of transport providers with registry functionality
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct TransportRegistry {
     providers: Vec<Arc<dyn TransportProvider>>,
 }
