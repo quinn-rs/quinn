@@ -171,7 +171,7 @@ pub enum DatagramResult {
 ///
 /// # Dual-Stack Support
 ///
-/// The relay server can be created with dual-stack support using [`new_dual_stack`],
+/// The relay server can be created with dual-stack support using [`Self::new_dual_stack`],
 /// which allows bridging traffic between IPv4 and IPv6 networks. This enables
 /// nodes that only have one IP version to communicate with nodes on the other version.
 #[derive(Debug)]

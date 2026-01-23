@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "project": "ant-quic",
+  "active": false,
+  "milestone": "multi-transport-core",
+  "phase": "completed",
+  "progress": {
+    "total_tasks": 11,
+    "completed_tasks": 11,
+    "current_task": null
+  },
+  "status": "completed",
+  "last_updated": "2026-01-23T00:00:00Z"
+}

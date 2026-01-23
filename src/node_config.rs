@@ -34,9 +34,11 @@
 
 use std::net::SocketAddr;
 use std::path::Path;
+use std::sync::Arc;
 
 use crate::crypto::pqc::types::{MlDsaPublicKey, MlDsaSecretKey};
 use crate::host_identity::HostIdentity;
+use crate::transport::{TransportProvider, TransportRegistry};
 use crate::unified_config::load_or_generate_endpoint_keypair;
 
 /// Minimal configuration for P2P nodes
@@ -45,6 +47,7 @@ use crate::unified_config::load_or_generate_endpoint_keypair;
 /// - `bind_addr`: Defaults to `0.0.0.0:0` (random port)
 /// - `known_peers`: Defaults to empty (node can still accept connections)
 /// - `keypair`: Defaults to fresh generated keypair
+/// - `transport_providers`: Defaults to UDP transport only
 ///
 /// # Example
 ///
@@ -55,6 +58,12 @@ use crate::unified_config::load_or_generate_endpoint_keypair;
 /// // Or with known peers
 /// let config = NodeConfig::builder()
 ///     .known_peer("peer1.example.com:9000".parse()?)
+///     .build();
+///
+/// // Or with additional transport providers
+/// #[cfg(feature = "ble")]
+/// let config = NodeConfig::builder()
+///     .transport_provider(Arc::new(BleTransport::new().await?))
 ///     .build();
 /// ```
 #[derive(Clone, Default)]
@@ -69,6 +78,15 @@ pub struct NodeConfig {
     /// Identity keypair (ML-DSA-65). Default: fresh generated
     /// Provide for persistent identity across restarts.
     pub keypair: Option<(MlDsaPublicKey, MlDsaSecretKey)>,
+
+    /// Additional transport providers beyond the default UDP transport.
+    ///
+    /// The UDP transport is always included by default. Use this to add
+    /// additional transports like BLE, LoRa, serial, etc.
+    ///
+    /// Transport capabilities are propagated to peer advertisements and
+    /// used for routing decisions.
+    pub transport_providers: Vec<Arc<dyn TransportProvider>>,
 }
 
 impl std::fmt::Debug for NodeConfig {
@@ -77,6 +95,7 @@ impl std::fmt::Debug for NodeConfig {
             .field("bind_addr", &self.bind_addr)
             .field("known_peers", &self.known_peers)
             .field("keypair", &self.keypair.as_ref().map(|_| "[REDACTED]"))
+            .field("transport_providers", &self.transport_providers.len())
             .finish()
     }
 }
@@ -123,6 +142,7 @@ pub struct NodeConfigBuilder {
     bind_addr: Option<SocketAddr>,
     known_peers: Vec<SocketAddr>,
     keypair: Option<(MlDsaPublicKey, MlDsaSecretKey)>,
+    transport_providers: Vec<Arc<dyn TransportProvider>>,
 }
 
 impl NodeConfigBuilder {
@@ -177,13 +197,64 @@ impl NodeConfigBuilder {
         Ok(self)
     }
 
+    /// Add a transport provider
+    ///
+    /// Transport providers are used for multi-transport P2P networking.
+    /// The UDP transport is always included by default.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// #[cfg(feature = "ble")]
+    /// let config = NodeConfig::builder()
+    ///     .transport_provider(Arc::new(BleTransport::new().await?))
+    ///     .build();
+    /// ```
+    pub fn transport_provider(mut self, provider: Arc<dyn TransportProvider>) -> Self {
+        self.transport_providers.push(provider);
+        self
+    }
+
+    /// Add multiple transport providers
+    pub fn transport_providers(
+        mut self,
+        providers: impl IntoIterator<Item = Arc<dyn TransportProvider>>,
+    ) -> Self {
+        self.transport_providers.extend(providers);
+        self
+    }
+
     /// Build the configuration
     pub fn build(self) -> NodeConfig {
         NodeConfig {
             bind_addr: self.bind_addr,
             known_peers: self.known_peers,
             keypair: self.keypair,
+            transport_providers: self.transport_providers,
         }
+    }
+}
+
+impl NodeConfig {
+    /// Build a transport registry from this configuration
+    ///
+    /// Creates a registry containing all configured transport providers.
+    /// If no providers are configured, returns an empty registry (UDP
+    /// should be added by the caller based on bind_addr).
+    pub fn build_transport_registry(&self) -> TransportRegistry {
+        let mut registry = TransportRegistry::new();
+        for provider in &self.transport_providers {
+            registry.register(provider.clone());
+        }
+        registry
+    }
+
+    /// Check if this configuration has any non-UDP transport providers
+    pub fn has_constrained_transports(&self) -> bool {
+        use crate::transport::TransportType;
+        self.transport_providers
+            .iter()
+            .any(|p| p.transport_type() != TransportType::Udp)
     }
 }
 
@@ -197,6 +268,7 @@ mod tests {
         assert!(config.bind_addr.is_none());
         assert!(config.known_peers.is_empty());
         assert!(config.keypair.is_none());
+        assert!(config.transport_providers.is_empty());
     }
 
     #[test]
@@ -275,5 +347,25 @@ mod tests {
         let cloned = config.clone();
         assert_eq!(config.bind_addr, cloned.bind_addr);
         assert_eq!(config.known_peers, cloned.known_peers);
+    }
+
+    #[test]
+    fn test_build_transport_registry() {
+        let config = NodeConfig::default();
+        let registry = config.build_transport_registry();
+        assert!(registry.is_empty());
+    }
+
+    #[test]
+    fn test_has_constrained_transports_default() {
+        let config = NodeConfig::default();
+        assert!(!config.has_constrained_transports());
+    }
+
+    #[test]
+    fn test_debug_shows_transport_count() {
+        let config = NodeConfig::default();
+        let debug_str = format!("{:?}", config);
+        assert!(debug_str.contains("transport_providers: 0"));
     }
 }

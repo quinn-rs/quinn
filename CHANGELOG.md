@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-01-23
+
+### Added
+
+- **Multi-Transport Abstraction Layer**: New `src/transport/` module with unified addressing and provider trait
+  - `TransportAddr` enum supporting UDP, BLE, LoRa, Serial, AX.25, I2P, and Yggdrasil transports
+  - `TransportCapabilities` with bandwidth profiles and QUIC support detection
+  - `TransportProvider` trait for pluggable transport implementations
+  - `TransportRegistry` for multi-transport management
+  - `ProtocolEngine` selector (QUIC vs Constrained engine) based on transport capabilities
+- **BLE Transport Provider**: Cross-platform Bluetooth Low Energy support via btleplug
+  - Linux (BlueZ), macOS (Core Bluetooth), and Windows (WinRT) support
+  - PQC mitigations: 24-hour session caching and 32-byte resume tokens
+  - Feature-gated with `ble` Cargo feature
+- **UDP Transport Provider**: Reference implementation of `TransportProvider` for standard QUIC
+- **NodeConfig Extensions**: `transport_providers` field and registry builder methods
+- **Transport Diagnostics**: RTT, bandwidth class, and protocol engine reporting
+
+### Changed
+
+- Rust Edition updated to 2024
+- Minimum Rust version bumped to 1.85.0
+
 ## [0.14.9] - 2025-12-23
 
 ### Bug Fixes

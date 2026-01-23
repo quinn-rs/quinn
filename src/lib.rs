@@ -375,6 +375,16 @@ pub use relay::{
 pub use shared::{ConnectionId, EcnCodepoint, EndpointEvent};
 pub use transport_error::{Code as TransportErrorCode, Error as TransportError};
 
+// Re-export transport abstraction types
+pub use transport::{
+    BandwidthClass, InboundDatagram, LinkQuality, LoRaParams, ProtocolEngine, ProviderError,
+    TransportAddr, TransportCapabilities, TransportCapabilitiesBuilder, TransportDiagnostics,
+    TransportProvider, TransportRegistry, TransportStats, TransportType, UdpTransport,
+};
+
+#[cfg(feature = "ble")]
+pub use transport::BleTransport;
+
 // #[cfg(fuzzing)]
 // pub mod fuzzing; // Module not implemented yet
 
