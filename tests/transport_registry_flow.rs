@@ -152,3 +152,53 @@ async fn test_default_config_empty_registry() {
     let registry = config.build_transport_registry();
     assert!(registry.is_empty(), "Default registry should be empty");
 }
+
+// ============================================================================
+// Phase 1.2 Integration Tests - P2pEndpoint → NatTraversalEndpoint Wiring
+// ============================================================================
+
+/// Test that transport registry flows from Node through to NatTraversalEndpoint.
+/// This test defines acceptance criteria for Phase 1.2.
+///
+/// Once implemented, this test will verify:
+/// - TransportRegistry flows from P2pEndpoint to NatTraversalEndpoint
+/// - NatTraversalEndpoint exposes transport_registry() accessor
+/// - The registry is the same instance (via Arc) as in P2pEndpoint
+#[tokio::test]
+#[ignore = "Phase 1.2 not yet implemented - NatTraversalEndpoint needs transport_registry accessor"]
+async fn test_transport_registry_flows_to_nat_traversal_endpoint() {
+    // Create a registry with a provider
+    let addr: SocketAddr = "127.0.0.1:0".parse().unwrap();
+    let transport = UdpTransport::bind(addr)
+        .await
+        .expect("Failed to bind UdpTransport");
+    let provider: Arc<dyn TransportProvider> = Arc::new(transport);
+
+    // Create NodeConfig with the provider
+    let config = NodeConfig::builder()
+        .transport_provider(provider.clone())
+        .build();
+
+    // Build Node
+    let node = Node::with_config(config)
+        .await
+        .expect("Node::with_config should succeed");
+
+    // Verify registry is accessible from Node (Phase 1.1 - already working)
+    let registry = node.transport_registry();
+    assert!(!registry.is_empty(), "Registry should not be empty");
+
+    // Phase 1.2 requirement: Access registry through NatTraversalEndpoint
+    // This requires:
+    // - NatTraversalConfig to have transport_registry field
+    // - NatTraversalEndpoint to store and expose the registry
+    // - P2pEndpoint to pass registry through when creating NatTraversalEndpoint
+
+    // TODO: Uncomment when Phase 1.2 implementation is complete:
+    // let nat_endpoint = node.inner().inner_nat_traversal_endpoint();
+    // let nat_registry = nat_endpoint.transport_registry();
+    // assert!(nat_registry.is_some(), "NatTraversalEndpoint should have registry");
+    // assert!(!nat_registry.unwrap().is_empty(), "NAT registry should have providers");
+
+    node.shutdown().await;
+}

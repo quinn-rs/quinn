@@ -7,16 +7,21 @@
     "name": "Registry Wiring"
   },
   "phase": {
-    "number": "1.1",
-    "name": "Node → P2pEndpoint Wiring",
-    "plan": "PLAN-011"
+    "number": "1.2",
+    "name": "P2pEndpoint → NatTraversalEndpoint Wiring",
+    "plan": "PLAN-012"
   },
   "progress": {
-    "total_tasks": 6,
-    "completed_tasks": 6,
+    "total_tasks": 8,
+    "completed_tasks": 1,
     "current_task": null
   },
-  "status": "completed",
+  "status": "reviewing",
+  "previous_phase": {
+    "number": "1.1",
+    "name": "Node → P2pEndpoint Wiring",
+    "commit": "be9e0472"
+  },
   "interview_decisions": {
     "problem": "Missing functionality - BLE/LoRa/etc unusable despite abstraction existing",
     "success_criteria": "Production ready - full multi-transport with tested BLE, constrained engine, docs",
