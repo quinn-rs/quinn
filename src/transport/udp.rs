@@ -277,6 +277,10 @@ impl TransportProvider for UdpTransport {
             current_rtt: None,
         }
     }
+
+    fn socket(&self) -> Option<&Arc<UdpSocket>> {
+        Some(&self.socket)
+    }
 }
 
 #[cfg(test)]
@@ -365,5 +369,22 @@ mod tests {
         assert!(caps.broadcast);
         assert!(!caps.metered);
         assert!(!caps.power_constrained);
+    }
+
+    #[tokio::test]
+    async fn test_udp_transport_socket_accessor() {
+        let transport = UdpTransport::bind("127.0.0.1:0".parse().unwrap())
+            .await
+            .unwrap();
+
+        // Test the inherent socket() method
+        let socket_ref = transport.socket();
+        assert!(socket_ref.local_addr().is_ok());
+
+        // Test the trait method via TransportProvider
+        let provider: &dyn TransportProvider = &transport;
+        let socket_opt = provider.socket();
+        assert!(socket_opt.is_some());
+        assert!(socket_opt.unwrap().local_addr().is_ok());
     }
 }

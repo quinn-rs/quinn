@@ -306,6 +306,16 @@ pub trait TransportProvider: Send + Sync + 'static {
     fn protocol_engine(&self) -> ProtocolEngine {
         ProtocolEngine::for_transport(self.capabilities())
     }
+
+    /// Returns the underlying UDP socket if this transport uses one.
+    ///
+    /// For UDP transports, this provides access to the tokio UdpSocket.
+    /// For transports without traditional sockets (BLE, etc.), returns None.
+    ///
+    /// This is used by NatTraversalEndpoint to extract the socket for Quinn.
+    fn socket(&self) -> Option<&Arc<tokio::net::UdpSocket>> {
+        None // Default implementation for non-socket transports
+    }
 }
 
 /// Transport diagnostics for path selection and monitoring
