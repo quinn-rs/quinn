@@ -206,6 +206,9 @@ pub mod transport;
 /// Constrained protocol engine for low-bandwidth transports (BLE, LoRa)
 pub mod constrained;
 
+/// Connection router for automatic protocol engine selection (QUIC vs Constrained)
+pub mod connection_router;
+
 // Additional modules
 // v0.2: auth module removed - TLS handles peer authentication via ML-DSA-65
 /// Secure chat protocol implementation
@@ -386,6 +389,9 @@ pub use transport::{
 
 #[cfg(feature = "ble")]
 pub use transport::BleTransport;
+
+// Re-export connection router types for automatic protocol engine selection
+pub use connection_router::{ConnectionRouter, RoutedConnection, RouterConfig, RouterError, RouterStats};
 
 // #[cfg(fuzzing)]
 // pub mod fuzzing; // Module not implemented yet

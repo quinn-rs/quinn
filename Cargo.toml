@@ -255,6 +255,14 @@ harness = false
 name = "nat_traversal_performance"
 harness = false
 
+[[bench]]
+name = "connection_router"
+harness = false
+
+[[bench]]
+name = "pqc_memory_pool_bench"
+harness = false
+
 
 # Test categorization
 [[test]]

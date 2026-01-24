@@ -68,10 +68,11 @@ use crate::connection_strategy::{
 use crate::crypto::raw_public_keys::key_utils::{
     derive_peer_id_from_public_key, generate_ml_dsa_keypair,
 };
+use crate::connection_router::{ConnectionRouter, RouterConfig};
 use crate::nat_traversal_api::{
     NatTraversalEndpoint, NatTraversalError, NatTraversalEvent, NatTraversalStatistics, PeerId,
 };
-use crate::transport::TransportRegistry;
+use crate::transport::{ProtocolEngine, TransportRegistry};
 
 // Re-export TraversalPhase from nat_traversal_api for convenience
 use crate::Side;
@@ -123,6 +124,12 @@ pub struct P2pEndpoint {
     /// Contains all registered transport providers (UDP, BLE, etc.) that this
     /// endpoint can use for connectivity.
     transport_registry: Arc<TransportRegistry>,
+
+    /// Connection router for automatic protocol engine selection
+    ///
+    /// Routes connections through either QUIC (for broadband) or Constrained
+    /// engine (for BLE/LoRa) based on transport capabilities.
+    router: Arc<RwLock<ConnectionRouter>>,
 }
 
 impl std::fmt::Debug for P2pEndpoint {
@@ -514,8 +521,25 @@ impl P2pEndpoint {
         // Store transport registry from config
         let transport_registry = Arc::new(config.transport_registry.clone());
 
+        // Create connection router for automatic protocol engine selection
+        let inner_arc = Arc::new(inner);
+        let router_config = RouterConfig {
+            constrained_config: crate::constrained::ConstrainedTransportConfig::default(),
+            prefer_quic: true, // Default to QUIC for broadband transports
+            enable_metrics: true,
+            max_connections: 256,
+        };
+        let mut router = ConnectionRouter::with_full_config(
+            router_config,
+            Arc::clone(&transport_registry),
+            Arc::clone(&inner_arc),
+        );
+
+        // Set QUIC endpoint on the router
+        router.set_quic_endpoint(Arc::clone(&inner_arc));
+
         Ok(Self {
-            inner: Arc::new(inner),
+            inner: inner_arc,
             // v0.2: auth_manager removed
             connected_peers: Arc::new(RwLock::new(HashMap::new())),
             stats,
@@ -527,6 +551,7 @@ impl P2pEndpoint {
             pending_data: Arc::new(RwLock::new(BoundedPendingBuffer::default())),
             bootstrap_cache,
             transport_registry,
+            router: Arc::new(RwLock::new(router)),
         })
     }
 
@@ -647,6 +672,131 @@ impl P2pEndpoint {
         });
 
         Ok(peer_conn)
+    }
+
+    /// Connect to a peer using any transport address
+    ///
+    /// This method uses the connection router to automatically select the appropriate
+    /// protocol engine (QUIC or Constrained) based on the transport capabilities.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// use ant_quic::transport::TransportAddr;
+    ///
+    /// // Connect via UDP (uses QUIC)
+    /// let udp_addr = TransportAddr::Udp("192.168.1.100:9000".parse()?);
+    /// let conn = endpoint.connect_transport(&udp_addr, None).await?;
+    ///
+    /// // Connect via BLE (uses Constrained engine)
+    /// let ble_addr = TransportAddr::Ble {
+    ///     device_id: [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF],
+    ///     service_uuid: None,
+    /// };
+    /// let conn = endpoint.connect_transport(&ble_addr, None).await?;
+    /// ```
+    pub async fn connect_transport(
+        &self,
+        addr: &TransportAddr,
+        peer_id: Option<PeerId>,
+    ) -> Result<PeerConnection, EndpointError> {
+        if self.shutdown.load(Ordering::SeqCst) {
+            return Err(EndpointError::ShuttingDown);
+        }
+
+        // Use the router to determine the appropriate engine
+        let mut router = self.router.write().await;
+        let engine = router.select_engine_for_addr(addr);
+
+        info!(
+            "Connecting to {} via {:?} engine (peer_id: {:?})",
+            addr, engine, peer_id
+        );
+
+        match engine {
+            ProtocolEngine::Quic => {
+                // For QUIC, extract socket address and use existing connect path
+                let socket_addr = addr.as_socket_addr().ok_or_else(|| {
+                    EndpointError::Connection(format!(
+                        "Cannot extract socket address from {} for QUIC",
+                        addr
+                    ))
+                })?;
+                drop(router); // Release lock before async operation
+                self.connect(socket_addr).await
+            }
+            ProtocolEngine::Constrained => {
+                // For constrained transports, use the router's constrained connection
+                let _routed = router.connect(addr).map_err(|e| {
+                    EndpointError::Connection(format!("Constrained connection failed: {}", e))
+                })?;
+
+                // Create a synthetic peer ID for constrained connections if not provided
+                let actual_peer_id = peer_id.unwrap_or_else(|| {
+                    self.derive_peer_id_from_transport_addr(addr)
+                });
+
+                let peer_conn = PeerConnection {
+                    peer_id: actual_peer_id,
+                    remote_addr: addr.clone(),
+                    authenticated: false, // Constrained connections don't have TLS auth yet
+                    connected_at: Instant::now(),
+                    last_activity: Instant::now(),
+                };
+
+                // Store peer
+                drop(router); // Release lock before acquiring connected_peers lock
+                self.connected_peers
+                    .write()
+                    .await
+                    .insert(actual_peer_id, peer_conn.clone());
+
+                // Update stats
+                {
+                    let mut stats = self.stats.write().await;
+                    stats.active_connections += 1;
+                    stats.successful_connections += 1;
+                }
+
+                // Broadcast event
+                let _ = self.event_tx.send(P2pEvent::PeerConnected {
+                    peer_id: actual_peer_id,
+                    addr: addr.clone(),
+                    side: Side::Client,
+                });
+
+                Ok(peer_conn)
+            }
+        }
+    }
+
+    /// Get the connection router for advanced routing control
+    ///
+    /// Returns a reference to the connection router which can be used to:
+    /// - Query engine selection for addresses
+    /// - Get routing statistics
+    /// - Configure routing behavior
+    pub async fn router(&self) -> tokio::sync::RwLockReadGuard<'_, ConnectionRouter> {
+        self.router.read().await
+    }
+
+    /// Get routing statistics
+    pub async fn routing_stats(&self) -> crate::connection_router::RouterStats {
+        self.router.read().await.stats().clone()
+    }
+
+    /// Derive a peer ID from a transport address (for constrained connections)
+    fn derive_peer_id_from_transport_addr(&self, addr: &TransportAddr) -> PeerId {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        format!("{}", addr).hash(&mut hasher);
+        let hash = hasher.finish();
+
+        let mut id = [0u8; 32];
+        id[..8].copy_from_slice(&hash.to_le_bytes());
+        // Fill rest with a distinguishable pattern
+        id[8..16].copy_from_slice(&hash.to_be_bytes());
+        PeerId(id)
     }
 
     /// Connect to a peer using dual-stack strategy (tries both IPv4 and IPv6 in parallel)
@@ -1672,20 +1822,22 @@ impl P2pEndpoint {
     // === Known Peers ===
 
     /// Connect to configured known peers
+    ///
+    /// This method now uses the connection router to automatically select
+    /// the appropriate protocol engine for each peer address.
     pub async fn connect_known_peers(&self) -> Result<usize, EndpointError> {
         let mut connected = 0;
         let known_peers = self.config.known_peers.clone();
 
         for addr in &known_peers {
-            if let Some(socket_addr) = addr.as_socket_addr() {
-                match self.connect(socket_addr).await {
-                    Ok(_) => {
-                        connected += 1;
-                        info!("Connected to known peer {}", addr);
-                    }
-                    Err(e) => {
-                        warn!("Failed to connect to known peer {}: {}", addr, e);
-                    }
+            // Use connect_transport for all address types
+            match self.connect_transport(addr, None).await {
+                Ok(_) => {
+                    connected += 1;
+                    info!("Connected to known peer {}", addr);
+                }
+                Err(e) => {
+                    warn!("Failed to connect to known peer {}: {}", addr, e);
                 }
             }
         }
@@ -1791,6 +1943,7 @@ impl Clone for P2pEndpoint {
             pending_data: Arc::clone(&self.pending_data),
             bootstrap_cache: Arc::clone(&self.bootstrap_cache),
             transport_registry: Arc::clone(&self.transport_registry),
+            router: Arc::clone(&self.router),
         }
     }
 }

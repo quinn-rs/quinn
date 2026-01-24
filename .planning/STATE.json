@@ -7,35 +7,27 @@
     "name": "Constrained Protocol Engine"
   },
   "phase": {
-    "number": "4.2",
-    "name": "Constrained Transport Integration",
-    "plan": ".planning/plans/PLAN-022.md"
+    "number": "4.3",
+    "name": "Protocol Engine Selection",
+    "plan": ".planning/plans/PLAN-023.md"
   },
   "progress": {
     "total_tasks": 7,
     "completed_tasks": 7,
     "current_task": 7
   },
-  "status": "completed",
+  "status": "in_progress",
   "previous_phase": {
-    "number": "4.1",
-    "name": "Constrained Engine Design",
-    "commit": "0d872dd7",
+    "number": "4.2",
+    "name": "Constrained Transport Integration",
+    "commit": "73d94cc9",
     "review": {
-      "date": "2026-01-24T20:30:00Z",
+      "date": "2026-01-24T21:00:00Z",
       "verdict": "approved",
       "quality_score": 9.0,
-      "report": ".planning/reviews/phase-4.1-review-20260124.md",
-      "note": "Constrained engine design complete. 73 tests passing."
+      "report": ".planning/reviews/phase-4.2-review-20260124.md",
+      "note": "Constrained transport integration complete. 96 tests passing."
     }
-  },
-  "current_phase_review": {
-    "date": "2026-01-24T21:00:00Z",
-    "verdict": "approved",
-    "quality_score": 9.0,
-    "report": ".planning/reviews/phase-4.2-review-20260124.md",
-    "commit": "73d94cc9",
-    "note": "Constrained transport integration complete. 96 tests passing (88 unit + 8 integration)."
   },
   "completed_milestones": [
     {
@@ -80,5 +72,5 @@
       "Performance sensitive"
     ]
   },
-  "last_updated": "2026-01-24T21:00:00Z"
+  "last_updated": "2026-01-24T22:00:00Z"
 }
