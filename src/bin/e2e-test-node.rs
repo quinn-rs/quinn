@@ -28,6 +28,7 @@
 #![allow(clippy::unwrap_used)] // Test binary - panics are acceptable
 #![allow(clippy::expect_used)] // Test binary - panics are acceptable
 
+use ant_quic::transport::TransportAddr;
 use ant_quic::{
     MtuConfig,
     P2pConfig,
@@ -205,7 +206,7 @@ struct RuntimeStats {
 #[derive(Debug, Clone)]
 struct PeerState {
     peer_id: PeerId,
-    remote_addr: SocketAddr,
+    remote_addr: TransportAddr,
     connected_at: Instant,
     bytes_sent: u64,
     bytes_received: u64,
@@ -333,7 +334,7 @@ async fn main() -> anyhow::Result<()> {
     let shutdown_clone = shutdown.clone();
     let stats = Arc::new(RuntimeStats::default());
     let peers: Arc<RwLock<HashMap<PeerId, PeerState>>> = Arc::new(RwLock::new(HashMap::new()));
-    let external_addrs: Arc<RwLock<Vec<SocketAddr>>> = Arc::new(RwLock::new(Vec::new()));
+    let external_addrs: Arc<RwLock<Vec<TransportAddr>>> = Arc::new(RwLock::new(Vec::new()));
     let start_time = Instant::now();
 
     // Shutdown signal handler
@@ -527,7 +528,7 @@ async fn main() -> anyhow::Result<()> {
                         peer.peer_id,
                         PeerState {
                             peer_id: peer.peer_id,
-                            remote_addr: *peer_addr,
+                            remote_addr: TransportAddr::Udp(*peer_addr),
                             connected_at: Instant::now(),
                             bytes_sent: 0,
                             bytes_received: 0,
@@ -726,7 +727,7 @@ async fn handle_event(
     event: &P2pEvent,
     stats: &RuntimeStats,
     peers: &RwLock<HashMap<PeerId, PeerState>>,
-    external_addrs: &RwLock<Vec<SocketAddr>>,
+    external_addrs: &RwLock<Vec<TransportAddr>>,
     json: bool,
 ) {
     match event {
@@ -776,7 +777,7 @@ async fn handle_event(
             stats
                 .external_addresses_discovered
                 .fetch_add(1, Ordering::SeqCst);
-            external_addrs.write().await.push(*addr);
+            external_addrs.write().await.push(addr.clone());
             if json {
                 println!(
                     r#"{{"event":"external_address_discovered","addr":"{}"}}"#,
@@ -834,7 +835,7 @@ async fn build_metrics_report(
     endpoint: &P2pEndpoint,
     stats: &RuntimeStats,
     peers: &RwLock<HashMap<PeerId, PeerState>>,
-    external_addrs: &RwLock<Vec<SocketAddr>>,
+    external_addrs: &RwLock<Vec<TransportAddr>>,
     start_time: Instant,
 ) -> NodeMetricsReport {
     let uptime = start_time.elapsed();

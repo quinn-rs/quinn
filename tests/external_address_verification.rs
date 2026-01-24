@@ -62,7 +62,7 @@ async fn test_external_address_discovery() -> anyhow::Result<()> {
         tokio::spawn(async move { client_node.connect_known_peers().await })
     };
 
-    let mut discovered_addr = None;
+    let mut discovered_addr: Option<ant_quic::transport::TransportAddr> = None;
     let mut events = client_node.subscribe();
     println!("Waiting for external address discovery...");
 
@@ -75,7 +75,7 @@ async fn test_external_address_discovery() -> anyhow::Result<()> {
     while start.elapsed() < timeout {
         if let Some(addr) = client_node.external_addr() {
             println!("Successfully discovered external address: {}", addr);
-            discovered_addr = Some(addr);
+            discovered_addr = Some(ant_quic::transport::TransportAddr::Udp(addr));
             break;
         }
 
@@ -84,7 +84,7 @@ async fn test_external_address_discovery() -> anyhow::Result<()> {
             tokio::time::timeout(Duration::from_millis(100), events.recv()).await
         {
             println!("Event: Discovered external address: {}", addr);
-            discovered_addr = Some(addr);
+            discovered_addr = Some(addr.clone());
             break;
         }
     }
@@ -99,7 +99,9 @@ async fn test_external_address_discovery() -> anyhow::Result<()> {
     if let Some(addr) = discovered_addr {
         println!("Verification passed: External address {} discovered.", addr);
         // On localhost, the observed address should be 127.0.0.1:xxx
-        assert_eq!(addr.ip(), IpAddr::V4(Ipv4Addr::LOCALHOST));
+        if let Some(socket_addr) = addr.as_socket_addr() {
+            assert_eq!(socket_addr.ip(), IpAddr::V4(Ipv4Addr::LOCALHOST));
+        }
         Ok(())
     } else {
         println!("No external address discovered on localhost; skipping assertion.");

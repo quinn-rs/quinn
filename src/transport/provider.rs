@@ -406,13 +406,20 @@ impl TransportRegistry {
             .cloned()
     }
 
-    /// Get all online providers
-    pub fn online_providers(&self) -> Vec<Arc<dyn TransportProvider>> {
-        self.providers
-            .iter()
-            .filter(|p| p.is_online())
-            .cloned()
-            .collect()
+    /// Get an iterator over all online providers
+    ///
+    /// Returns an iterator that yields only those providers where `is_online() == true`.
+    /// This is the foundation for multi-transport iteration throughout the stack.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// for provider in registry.online_providers() {
+    ///     println!("Online: {} ({})", provider.name(), provider.transport_type());
+    /// }
+    /// ```
+    pub fn online_providers(&self) -> impl Iterator<Item = Arc<dyn TransportProvider>> + '_ {
+        self.providers.iter().filter(|p| p.is_online()).cloned()
     }
 
     /// Get diagnostics for all transports
@@ -479,7 +486,7 @@ impl fmt::Debug for TransportRegistry {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("TransportRegistry")
             .field("providers", &self.providers.len())
-            .field("online", &self.online_providers().len())
+            .field("online", &self.online_providers().count())
             .finish()
     }
 }
@@ -757,5 +764,101 @@ mod tests {
         assert!(quality.snr.is_none());
         assert!(quality.hop_count.is_none());
         assert!(quality.rtt.is_none());
+    }
+
+    #[test]
+    fn test_online_providers_filters_offline() {
+        // Register 3 providers: 2 online, 1 offline
+        let mut registry = TransportRegistry::new();
+
+        let udp_online = Arc::new(MockTransport::new_udp());
+        let ble_online = Arc::new(MockTransport::new_ble());
+        let udp_offline = Arc::new(MockTransport::new_udp());
+
+        // Take the third provider offline
+        udp_offline.online.store(false, Ordering::SeqCst);
+
+        registry.register(udp_online.clone());
+        registry.register(ble_online.clone());
+        registry.register(udp_offline);
+
+        assert_eq!(registry.len(), 3);
+
+        // Collect online providers
+        let online: Vec<_> = registry.online_providers().collect();
+
+        // Should only return 2 online providers
+        assert_eq!(online.len(), 2);
+
+        // Verify they're the right ones
+        let online_types: Vec<_> = online.iter().map(|p| p.transport_type()).collect();
+        assert!(online_types.contains(&TransportType::Udp));
+        assert!(online_types.contains(&TransportType::Ble));
+    }
+
+    #[test]
+    fn test_online_providers_empty_when_all_offline() {
+        let mut registry = TransportRegistry::new();
+
+        let udp_provider = Arc::new(MockTransport::new_udp());
+        let ble_provider = Arc::new(MockTransport::new_ble());
+
+        // Take both providers offline
+        udp_provider.online.store(false, Ordering::SeqCst);
+        ble_provider.online.store(false, Ordering::SeqCst);
+
+        registry.register(udp_provider);
+        registry.register(ble_provider);
+
+        assert_eq!(registry.len(), 2);
+
+        // Iterator should be empty
+        let online: Vec<_> = registry.online_providers().collect();
+        assert_eq!(online.len(), 0);
+    }
+
+    #[test]
+    fn test_get_provider_by_type() {
+        let mut registry = TransportRegistry::new();
+
+        registry.register(Arc::new(MockTransport::new_udp()));
+        registry.register(Arc::new(MockTransport::new_ble()));
+
+        // Get UDP providers
+        let udp_providers = registry.providers_by_type(TransportType::Udp);
+        assert_eq!(udp_providers.len(), 1);
+        assert_eq!(udp_providers[0].transport_type(), TransportType::Udp);
+        assert_eq!(udp_providers[0].name(), "MockUDP");
+
+        // Get BLE providers
+        let ble_providers = registry.providers_by_type(TransportType::Ble);
+        assert_eq!(ble_providers.len(), 1);
+        assert_eq!(ble_providers[0].transport_type(), TransportType::Ble);
+        assert_eq!(ble_providers[0].name(), "MockBLE");
+
+        // Get LoRa providers (none registered)
+        let lora_providers = registry.providers_by_type(TransportType::LoRa);
+        assert_eq!(lora_providers.len(), 0);
+    }
+
+    #[test]
+    fn test_registry_default_includes_udp() {
+        // This test verifies that we can create a registry with UDP
+        let mut registry = TransportRegistry::new();
+
+        // Register a UDP provider
+        registry.register(Arc::new(MockTransport::new_udp()));
+
+        // Verify UDP provider is present
+        assert_eq!(registry.len(), 1);
+
+        let udp_providers = registry.providers_by_type(TransportType::Udp);
+        assert_eq!(udp_providers.len(), 1);
+
+        // Verify it's online and has capabilities
+        let provider = &udp_providers[0];
+        assert!(provider.is_online());
+        assert_eq!(provider.transport_type(), TransportType::Udp);
+        assert!(provider.capabilities().supports_full_quic());
     }
 }

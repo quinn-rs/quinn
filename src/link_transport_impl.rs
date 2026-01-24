@@ -488,7 +488,12 @@ impl P2pLinkTransport {
                             addr,
                             side: _,
                         } => {
-                            let caps = Capabilities::new_connected(addr);
+                            // Extract SocketAddr for Capabilities (currently UDP-only)
+                            let socket_addr = addr.as_socket_addr().unwrap_or_else(|| {
+                                // Fallback for non-UDP transports - use unspecified address
+                                SocketAddr::from(([0, 0, 0, 0], 0))
+                            });
+                            let caps = Capabilities::new_connected(socket_addr);
                             // Update capabilities cache
                             if let Ok(mut state) = state.write() {
                                 state.capabilities.insert(peer_id, caps.clone());
@@ -619,8 +624,12 @@ impl LinkTransport for P2pLinkTransport {
                         .ok()
                         .flatten()
                     {
-                        let link_conn =
-                            P2pLinkConn::new(conn, peer_conn.peer_id, peer_conn.remote_addr);
+                        // Extract SocketAddr from TransportAddr for LinkConn trait compatibility
+                        let socket_addr = peer_conn
+                            .remote_addr
+                            .as_socket_addr()
+                            .unwrap_or_else(|| conn.remote_address());
+                        let link_conn = P2pLinkConn::new(conn, peer_conn.peer_id, socket_addr);
                         Some((Ok(link_conn), endpoint))
                     } else {
                         // Connection not found, try again

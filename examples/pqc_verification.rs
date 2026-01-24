@@ -15,7 +15,7 @@ async fn main() -> anyhow::Result<()> {
 
     // v0.13.0+: No role needed - all nodes are symmetric P2P nodes
     let config = P2pConfig::builder()
-        .known_peer("127.0.0.1:9000".parse()?)
+        .known_peer("127.0.0.1:9000".parse::<std::net::SocketAddr>()?)
         .pqc(pqc_config)
         .build()?;
 

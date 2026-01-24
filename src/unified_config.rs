@@ -23,7 +23,6 @@
 //!     .build()?;
 //! ```
 
-use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -33,7 +32,7 @@ use crate::config::nat_timeouts::TimeoutConfig;
 use crate::crypto::pqc::PqcConfig;
 use crate::crypto::pqc::types::{MlDsaPublicKey, MlDsaSecretKey};
 use crate::host_identity::HostIdentity;
-use crate::transport::{TransportProvider, TransportRegistry};
+use crate::transport::{TransportAddr, TransportProvider, TransportRegistry};
 
 /// Configuration for ant-quic P2P endpoints
 ///
@@ -50,11 +49,11 @@ use crate::transport::{TransportProvider, TransportRegistry};
 pub struct P2pConfig {
     /// Local address to bind to. If `None`, an ephemeral port is auto-assigned
     /// with enhanced security through port randomization.
-    pub bind_addr: Option<SocketAddr>,
+    pub bind_addr: Option<TransportAddr>,
 
     /// Known peers for initial discovery and NAT traversal coordination
     /// These can be any nodes in the network - all nodes are symmetric.
-    pub known_peers: Vec<SocketAddr>,
+    pub known_peers: Vec<TransportAddr>,
 
     /// Maximum number of concurrent connections
     pub max_connections: usize,
@@ -253,7 +252,11 @@ impl P2pConfig {
     /// Convert to `NatTraversalConfig` for internal use
     pub fn to_nat_config(&self) -> crate::nat_traversal_api::NatTraversalConfig {
         crate::nat_traversal_api::NatTraversalConfig {
-            known_peers: self.known_peers.clone(),
+            known_peers: self
+                .known_peers
+                .iter()
+                .filter_map(|addr| addr.as_socket_addr())
+                .collect(),
             max_candidates: self.nat.max_candidates,
             coordination_timeout: self.timeouts.nat_traversal.coordination_timeout,
             enable_symmetric_nat: self.nat.enable_symmetric_nat,
@@ -261,7 +264,10 @@ impl P2pConfig {
             enable_relay_service: self.nat.enable_relay_service,
             relay_nodes: self.nat.relay_nodes.clone(),
             max_concurrent_attempts: self.nat.max_concurrent_attempts,
-            bind_addr: self.bind_addr,
+            bind_addr: self
+                .bind_addr
+                .as_ref()
+                .and_then(|addr| addr.as_socket_addr()),
             prefer_rfc_nat_traversal: self.nat.prefer_rfc_nat_traversal,
             pqc: Some(self.pqc.clone()),
             timeouts: self.timeouts.clone(),
@@ -289,8 +295,8 @@ impl P2pConfig {
 /// Builder for `P2pConfig`
 #[derive(Debug, Clone, Default)]
 pub struct P2pConfigBuilder {
-    bind_addr: Option<SocketAddr>,
-    known_peers: Vec<SocketAddr>,
+    bind_addr: Option<TransportAddr>,
+    known_peers: Vec<TransportAddr>,
     max_connections: Option<usize>,
     // v0.2: auth removed
     nat: Option<NatConfig>,
@@ -324,29 +330,112 @@ pub enum ConfigError {
 }
 
 impl P2pConfigBuilder {
-    /// Set the bind address
-    pub fn bind_addr(mut self, addr: SocketAddr) -> Self {
-        self.bind_addr = Some(addr);
+    /// Set the local address to bind to
+    ///
+    /// Accepts any type implementing `Into<TransportAddr>`, including:
+    /// - `SocketAddr` - Automatically converted to `TransportAddr::Udp`
+    /// - `TransportAddr` - Used directly for multi-transport support
+    ///
+    /// If not set, the endpoint binds to `0.0.0.0:0` (random ephemeral port).
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// use ant_quic::P2pConfig;
+    /// use std::net::SocketAddr;
+    ///
+    /// // Backward compatible: SocketAddr auto-converts
+    /// let config = P2pConfig::builder()
+    ///     .bind_addr("0.0.0.0:9000".parse::<SocketAddr>().unwrap())
+    ///     .build()?;
+    ///
+    /// // Multi-transport: Explicit TransportAddr
+    /// use ant_quic::transport::TransportAddr;
+    /// let config = P2pConfig::builder()
+    ///     .bind_addr(TransportAddr::Udp("0.0.0.0:9000".parse().unwrap()))
+    ///     .build()?;
+    /// ```
+    pub fn bind_addr(mut self, addr: impl Into<TransportAddr>) -> Self {
+        self.bind_addr = Some(addr.into());
         self
     }
 
     /// Add a known peer for initial discovery
-    /// In v0.13.0+ all nodes are symmetric - these are just starting points
-    pub fn known_peer(mut self, addr: SocketAddr) -> Self {
-        self.known_peers.push(addr);
+    ///
+    /// In v0.13.0+ all nodes are symmetric - these are just starting points for
+    /// network connectivity. The node will discover additional peers through gossip.
+    ///
+    /// Accepts any type implementing `Into<TransportAddr>`:
+    /// - `SocketAddr` - Auto-converts to `TransportAddr::Udp`
+    /// - `TransportAddr` - Enables multi-transport (BLE, LoRa, etc.)
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// use ant_quic::P2pConfig;
+    /// use std::net::SocketAddr;
+    ///
+    /// // Backward compatible: SocketAddr
+    /// let config = P2pConfig::builder()
+    ///     .known_peer("peer1.example.com:9000".parse::<SocketAddr>().unwrap())
+    ///     .known_peer("peer2.example.com:9000".parse::<SocketAddr>().unwrap())
+    ///     .build()?;
+    ///
+    /// // Multi-transport: Mix UDP and BLE
+    /// use ant_quic::transport::TransportAddr;
+    /// let config = P2pConfig::builder()
+    ///     .known_peer(TransportAddr::Udp("192.168.1.1:9000".parse().unwrap()))
+    ///     .known_peer(TransportAddr::ble([0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF], None))
+    ///     .build()?;
+    /// ```
+    pub fn known_peer(mut self, addr: impl Into<TransportAddr>) -> Self {
+        self.known_peers.push(addr.into());
         self
     }
 
-    /// Add multiple known peers
-    pub fn known_peers(mut self, addrs: impl IntoIterator<Item = SocketAddr>) -> Self {
-        self.known_peers.extend(addrs);
+    /// Add multiple known peers at once
+    ///
+    /// Convenient method to add a collection of peers in one call.
+    /// Each item in the iterator is converted via `Into<TransportAddr>`.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// use ant_quic::P2pConfig;
+    /// use std::net::SocketAddr;
+    ///
+    /// // Backward compatible: Vec<SocketAddr>
+    /// let peers: Vec<SocketAddr> = vec![
+    ///     "peer1.example.com:9000".parse().unwrap(),
+    ///     "peer2.example.com:9000".parse().unwrap(),
+    ///     "peer3.example.com:9000".parse().unwrap(),
+    /// ];
+    /// let config = P2pConfig::builder()
+    ///     .known_peers(peers)
+    ///     .build()?;
+    ///
+    /// // Multi-transport: Mixed types
+    /// use ant_quic::transport::TransportAddr;
+    /// let mixed_peers = vec![
+    ///     TransportAddr::Udp("192.168.1.1:9000".parse().unwrap()),
+    ///     TransportAddr::ble([0x11, 0x22, 0x33, 0x44, 0x55, 0x66], None),
+    /// ];
+    /// let config = P2pConfig::builder()
+    ///     .known_peers(mixed_peers)
+    ///     .build()?;
+    /// ```
+    pub fn known_peers(
+        mut self,
+        addrs: impl IntoIterator<Item = impl Into<TransportAddr>>,
+    ) -> Self {
+        self.known_peers.extend(addrs.into_iter().map(|a| a.into()));
         self
     }
 
     /// Add a bootstrap node (alias for known_peer for backwards compatibility)
     #[doc(hidden)]
-    pub fn bootstrap(mut self, addr: SocketAddr) -> Self {
-        self.known_peers.push(addr);
+    pub fn bootstrap(mut self, addr: impl Into<TransportAddr>) -> Self {
+        self.known_peers.push(addr.into());
         self
     }
 
@@ -705,6 +794,7 @@ fn deserialize_keypair(data: &[u8]) -> Result<(MlDsaPublicKey, MlDsaSecretKey), 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::net::SocketAddr;
 
     #[test]
     fn test_default_config() {
@@ -750,7 +840,7 @@ mod tests {
     #[test]
     fn test_to_nat_config() {
         let config = P2pConfig::builder()
-            .known_peer("127.0.0.1:9000".parse().expect("valid addr"))
+            .known_peer("127.0.0.1:9000".parse::<SocketAddr>().expect("valid addr"))
             .nat(NatConfig {
                 max_candidates: 20,
                 enable_symmetric_nat: false,
@@ -990,5 +1080,153 @@ mod tests {
             .expect("Failed to build config");
         assert!(config.transport_registry.is_empty());
         assert_eq!(config.transport_registry.len(), 0);
+    }
+
+    // ==========================================================================
+    // TransportAddr Field Tests (Phase 1.2)
+    // ==========================================================================
+
+    #[test]
+    fn test_p2p_config_with_transport_addr() {
+        use crate::transport::TransportAddr;
+
+        // Create config with TransportAddr::Udp bind address
+        let bind_addr: std::net::SocketAddr = "0.0.0.0:9000".parse().expect("valid addr");
+        let peer1: std::net::SocketAddr = "192.168.1.100:9000".parse().expect("valid addr");
+        let peer2: std::net::SocketAddr = "192.168.1.101:9000".parse().expect("valid addr");
+
+        let config = P2pConfig::builder()
+            .bind_addr(TransportAddr::Udp(bind_addr))
+            .known_peer(TransportAddr::Udp(peer1))
+            .known_peer(TransportAddr::Udp(peer2))
+            .build()
+            .expect("Failed to build config");
+
+        // Verify bind_addr is set correctly
+        assert!(config.bind_addr.is_some());
+        assert_eq!(
+            config.bind_addr.as_ref().unwrap().as_socket_addr(),
+            Some(bind_addr)
+        );
+
+        // Verify known_peers are set correctly
+        assert_eq!(config.known_peers.len(), 2);
+        assert_eq!(config.known_peers[0].as_socket_addr(), Some(peer1));
+        assert_eq!(config.known_peers[1].as_socket_addr(), Some(peer2));
+    }
+
+    #[test]
+    fn test_p2p_config_builder_socket_addr_compat() {
+        // Test backward compatibility: SocketAddr should work via Into conversion
+        let bind_addr: std::net::SocketAddr = "127.0.0.1:8080".parse().expect("valid addr");
+        let peer_addr: std::net::SocketAddr = "127.0.0.1:8081".parse().expect("valid addr");
+
+        let config = P2pConfig::builder()
+            .bind_addr(bind_addr) // Uses Into<TransportAddr> conversion
+            .known_peer(peer_addr) // Uses Into<TransportAddr> conversion
+            .build()
+            .expect("Failed to build config");
+
+        // Verify fields were set correctly via From trait
+        assert!(config.bind_addr.is_some());
+        assert_eq!(
+            config.bind_addr.as_ref().unwrap().as_socket_addr(),
+            Some(bind_addr)
+        );
+        assert_eq!(config.known_peers.len(), 1);
+        assert_eq!(config.known_peers[0].as_socket_addr(), Some(peer_addr));
+    }
+
+    #[test]
+    fn test_p2p_config_mixed_transport_types() {
+        use crate::transport::TransportAddr;
+
+        // Add both UDP and BLE addresses to known_peers
+        let udp_peer: std::net::SocketAddr = "192.168.1.1:9000".parse().expect("valid addr");
+        let ble_device_id = [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF];
+
+        let config = P2pConfig::builder()
+            .known_peer(TransportAddr::Udp(udp_peer))
+            .known_peer(TransportAddr::ble(ble_device_id, None))
+            .build()
+            .expect("Failed to build config");
+
+        // Verify heterogeneous transport list works
+        assert_eq!(config.known_peers.len(), 2);
+
+        // First peer is UDP
+        assert_eq!(config.known_peers[0].as_socket_addr(), Some(udp_peer));
+
+        // Second peer is BLE (no socket addr)
+        assert!(config.known_peers[1].as_socket_addr().is_none());
+        assert_eq!(
+            config.known_peers[1].transport_type(),
+            crate::transport::TransportType::Ble
+        );
+    }
+
+    #[test]
+    fn test_p2p_config_default_empty() {
+        let config = P2pConfig::default();
+
+        // Verify default config has empty known_peers
+        assert!(config.known_peers.is_empty());
+
+        // Verify None bind_addr
+        assert!(config.bind_addr.is_none());
+    }
+
+    #[test]
+    fn test_p2p_config_builder_known_peers_iterator() {
+        // Test known_peers() method with iterator
+        let peers: Vec<std::net::SocketAddr> = vec![
+            "192.168.1.1:9000".parse().expect("valid addr"),
+            "192.168.1.2:9000".parse().expect("valid addr"),
+            "192.168.1.3:9000".parse().expect("valid addr"),
+        ];
+
+        let config = P2pConfig::builder()
+            .known_peers(peers.clone())
+            .build()
+            .expect("Failed to build config");
+
+        // Verify all peers were added
+        assert_eq!(config.known_peers.len(), 3);
+        for (i, peer) in peers.iter().enumerate() {
+            assert_eq!(config.known_peers[i].as_socket_addr(), Some(*peer));
+        }
+    }
+
+    #[test]
+    fn test_p2p_config_ipv6_bind_and_peers() {
+        use crate::transport::TransportAddr;
+
+        // Test IPv6 addresses in bind_addr and known_peers
+        let bind_addr: std::net::SocketAddr = "[::]:9000".parse().expect("valid addr");
+        let peer_addr: std::net::SocketAddr = "[::1]:9000".parse().expect("valid addr");
+
+        let config = P2pConfig::builder()
+            .bind_addr(TransportAddr::Udp(bind_addr))
+            .known_peer(TransportAddr::Udp(peer_addr))
+            .build()
+            .expect("Failed to build config");
+
+        // Verify IPv6 addresses work correctly
+        assert!(config.bind_addr.is_some());
+        assert_eq!(
+            config.bind_addr.as_ref().unwrap().as_socket_addr(),
+            Some(bind_addr)
+        );
+        assert_eq!(config.known_peers[0].as_socket_addr(), Some(peer_addr));
+
+        // Verify they're actually IPv6
+        match bind_addr {
+            std::net::SocketAddr::V6(_) => {} // Expected
+            std::net::SocketAddr::V4(_) => panic!("Expected IPv6 bind address"),
+        }
+        match peer_addr {
+            std::net::SocketAddr::V6(_) => {} // Expected
+            std::net::SocketAddr::V4(_) => panic!("Expected IPv6 peer address"),
+        }
     }
 }

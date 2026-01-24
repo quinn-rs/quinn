@@ -55,6 +55,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
+use crate::transport::TransportAddr;
+
 use tokio::sync::{RwLock, broadcast};
 use tracing::{debug, error, info, warn};
 
@@ -138,8 +140,8 @@ pub struct PeerConnection {
     /// Remote peer's ID
     pub peer_id: PeerId,
 
-    /// Remote address
-    pub remote_addr: SocketAddr,
+    /// Remote address (supports all transport types)
+    pub remote_addr: TransportAddr,
 
     /// Whether peer is authenticated
     pub authenticated: bool,
@@ -225,39 +227,98 @@ impl Default for EndpointStats {
     }
 }
 
-/// P2P event for connection and network state changes
+/// P2P event for connection and network state changes.
+///
+/// Events use [`TransportAddr`] to support multi-transport connectivity.
+/// Use `addr.as_socket_addr()` for backward compatibility with UDP-only code.
+///
+/// # Examples
+///
+/// ## Handling events with transport awareness
+///
+/// ```rust,ignore
+/// use ant_quic::{P2pEvent, transport::TransportAddr};
+///
+/// while let Ok(event) = events.recv().await {
+///     match event {
+///         P2pEvent::PeerConnected { peer_id, addr, side } => {
+///             // Handle different transport types
+///             match addr {
+///                 TransportAddr::Udp(socket_addr) => {
+///                     println!("UDP connection from {socket_addr}");
+///                 },
+///                 TransportAddr::Ble { device_id, .. } => {
+///                     println!("BLE connection from {:?}", device_id);
+///                 },
+///                 _ => println!("Other transport: {addr}"),
+///             }
+///         }
+///         P2pEvent::ExternalAddressDiscovered { addr } => {
+///             // Our external address was discovered
+///             if let Some(socket_addr) = addr.as_socket_addr() {
+///                 println!("External UDP address: {socket_addr}");
+///             }
+///         }
+///         _ => {}
+///     }
+/// }
+/// ```
+///
+/// ## Backward-compatible event handling
+///
+/// For code that only needs UDP support:
+///
+/// ```rust,ignore
+/// match event {
+///     P2pEvent::PeerConnected { peer_id, addr, .. } => {
+///         if let Some(socket_addr) = addr.as_socket_addr() {
+///             // Works as before with SocketAddr
+///             println!("Peer {} connected from {}", peer_id, socket_addr);
+///         }
+///     }
+///     _ => {}
+/// }
+/// ```
 #[derive(Debug, Clone)]
 pub enum P2pEvent {
-    /// New peer connected
+    /// A new peer has connected.
+    ///
+    /// The `addr` field contains a [`TransportAddr`] which can represent different
+    /// transport types (UDP, BLE, LoRa, etc.). Use `addr.as_socket_addr()` to extract
+    /// the [`SocketAddr`] for UDP connections, or pattern match for specific transports.
     PeerConnected {
-        /// Peer's ID
+        /// The unique identifier of the connected peer
         peer_id: PeerId,
-        /// Remote address
-        addr: SocketAddr,
+        /// Remote transport address (supports UDP, BLE, LoRa, and other transports)
+        addr: TransportAddr,
         /// Who initiated the connection (Client = we connected, Server = they connected)
         side: Side,
     },
 
-    /// Peer disconnected
+    /// A peer has disconnected.
     PeerDisconnected {
-        /// Peer's ID
+        /// The unique identifier of the disconnected peer
         peer_id: PeerId,
-        /// Reason for disconnection
+        /// Reason for the disconnection
         reason: DisconnectReason,
     },
 
-    /// NAT traversal progress
+    /// NAT traversal progress update.
     NatTraversalProgress {
-        /// Target peer ID
+        /// Target peer ID for the NAT traversal
         peer_id: PeerId,
-        /// Current phase
+        /// Current phase of NAT traversal
         phase: TraversalPhase,
     },
 
-    /// External address discovered
+    /// An external address was discovered for this node.
+    ///
+    /// The `addr` field contains a [`TransportAddr`] representing our externally
+    /// visible address. For UDP connections, use `addr.as_socket_addr()` to get
+    /// the [`SocketAddr`].
     ExternalAddressDiscovered {
-        /// Discovered external address
-        addr: SocketAddr,
+        /// Discovered external transport address (typically TransportAddr::Udp for NAT traversal)
+        addr: TransportAddr,
     },
 
     /// Bootstrap connection status
@@ -400,7 +461,7 @@ impl P2pEndpoint {
                         // Broadcast event with connection direction
                         let _ = event_tx.send(P2pEvent::PeerConnected {
                             peer_id: *peer_id,
-                            addr: *remote_address,
+                            addr: TransportAddr::Udp(*remote_address),
                             side: *side,
                         });
                     }
@@ -421,8 +482,9 @@ impl P2pEndpoint {
                     }
                     NatTraversalEvent::ExternalAddressDiscovered { address, .. } => {
                         info!("External address discovered: {}", address);
-                        let _ =
-                            event_tx.send(P2pEvent::ExternalAddressDiscovered { addr: *address });
+                        let _ = event_tx.send(P2pEvent::ExternalAddressDiscovered {
+                            addr: TransportAddr::Udp(*address),
+                        });
                     }
                     _ => {}
                 }
@@ -557,7 +619,7 @@ impl P2pEndpoint {
         // v0.2: Peer is authenticated via TLS (ML-DSA-65) during handshake
         let peer_conn = PeerConnection {
             peer_id,
-            remote_addr: addr,
+            remote_addr: TransportAddr::Udp(addr),
             authenticated: true, // TLS handles authentication
             connected_at: Instant::now(),
             last_activity: Instant::now(),
@@ -580,7 +642,7 @@ impl P2pEndpoint {
         // Broadcast event (we initiated the connection = Client side)
         let _ = self.event_tx.send(P2pEvent::PeerConnected {
             peer_id,
-            addr,
+            addr: TransportAddr::Udp(addr),
             side: Side::Client,
         });
 
@@ -790,7 +852,12 @@ impl P2pEndpoint {
         }
 
         let coord_addr = coordinator
-            .or_else(|| self.config.known_peers.first().copied())
+            .or_else(|| {
+                self.config
+                    .known_peers
+                    .first()
+                    .and_then(|addr| addr.as_socket_addr())
+            })
             .ok_or_else(|| EndpointError::Config("No coordinator available".to_string()))?;
 
         info!(
@@ -837,7 +904,7 @@ impl P2pEndpoint {
                         // v0.2: Peer is authenticated via TLS (ML-DSA-65) during handshake
                         let peer_conn = PeerConnection {
                             peer_id,
-                            remote_addr: remote_address,
+                            remote_addr: TransportAddr::Udp(remote_address),
                             authenticated: true, // TLS handles authentication
                             connected_at: Instant::now(),
                             last_activity: Instant::now(),
@@ -920,7 +987,11 @@ impl P2pEndpoint {
         // Build strategy config with coordinator and relay from our config
         let mut config = strategy_config.unwrap_or_default();
         if config.coordinator.is_none() {
-            config.coordinator = self.config.known_peers.first().copied();
+            config.coordinator = self
+                .config
+                .known_peers
+                .first()
+                .and_then(|addr| addr.as_socket_addr());
         }
         if config.relay_addr.is_none() {
             // Optimization: Try to find a high-quality relay from our cache first
@@ -1144,7 +1215,7 @@ impl P2pEndpoint {
                     } if evt_peer == peer_id || remote_address == target => {
                         let peer_conn = PeerConnection {
                             peer_id: evt_peer,
-                            remote_addr: remote_address,
+                            remote_addr: TransportAddr::Udp(remote_address),
                             authenticated: true,
                             connected_at: Instant::now(),
                             last_activity: Instant::now(),
@@ -1207,8 +1278,9 @@ impl P2pEndpoint {
 
     /// Check if we're connected to a specific address
     async fn is_connected_to_addr(&self, addr: SocketAddr) -> bool {
+        let transport_addr = TransportAddr::Udp(addr);
         let peers = self.connected_peers.read().await;
-        peers.values().any(|p| p.remote_addr == addr)
+        peers.values().any(|p| p.remote_addr == transport_addr)
     }
 
     /// Accept incoming connections
@@ -1248,7 +1320,7 @@ impl P2pEndpoint {
                 // v0.2: Peer is authenticated via TLS (ML-DSA-65) during handshake
                 let peer_conn = PeerConnection {
                     peer_id: resolved_peer_id,
-                    remote_addr,
+                    remote_addr: TransportAddr::Udp(remote_addr),
                     authenticated: true, // TLS handles authentication
                     connected_at: Instant::now(),
                     last_activity: Instant::now(),
@@ -1268,7 +1340,7 @@ impl P2pEndpoint {
                 // They initiated the connection to us = Server side
                 let _ = self.event_tx.send(P2pEvent::PeerConnected {
                     peer_id: resolved_peer_id,
-                    addr: remote_addr,
+                    addr: TransportAddr::Udp(remote_addr),
                     side: Side::Server,
                 });
 
@@ -1309,11 +1381,86 @@ impl P2pEndpoint {
     // === Messaging ===
 
     /// Send data to a peer
+    ///
+    /// # Transport Selection
+    ///
+    /// This method selects the appropriate transport provider based on the destination
+    /// peer's address type and the capabilities advertised in the transport registry.
+    ///
+    /// ## Current Behavior (Phase 2.1)
+    ///
+    /// All connections currently use UDP/QUIC via the existing `connection.open_uni()`
+    /// path. This ensures backward compatibility with existing peers.
+    ///
+    /// ## Future Behavior (Phase 2.3)
+    ///
+    /// Transport selection will be based on:
+    /// - Peer's advertised transport addresses (from connection metadata)
+    /// - Transport provider capabilities (from `transport_registry`)
+    /// - Protocol engine requirements (QUIC vs Constrained)
+    ///
+    /// Selection priority:
+    /// 1. **UDP/QUIC**: Default for broadband, full QUIC support
+    /// 2. **BLE**: For nearby devices, constrained engine
+    /// 3. **LoRa**: For long-range, low-bandwidth scenarios
+    /// 4. **Overlay**: For I2P/Yggdrasil privacy-preserving routing
+    ///
+    /// # Arguments
+    ///
+    /// - `peer_id`: The target peer's identifier
+    /// - `data`: The payload to send
+    ///
+    /// # Errors
+    ///
+    /// Returns `EndpointError` if:
+    /// - The endpoint is shutting down
+    /// - The peer is not connected
+    /// - No suitable transport provider is available
+    /// - The send operation fails
     pub async fn send(&self, peer_id: &PeerId, data: &[u8]) -> Result<(), EndpointError> {
         if self.shutdown.load(Ordering::SeqCst) {
             return Err(EndpointError::ShuttingDown);
         }
 
+        // TODO(Phase 2.3): Select transport provider based on peer's advertised address type
+        //
+        // Future implementation will:
+        // 1. Query connected_peers metadata for peer's transport addresses
+        // 2. Match addresses with available transport providers in transport_registry
+        // 3. Select provider based on:
+        //    - Transport type (UDP, BLE, LoRa, etc.)
+        //    - Protocol engine requirements (Quic vs Constrained)
+        //    - Link quality and availability
+        //
+        // For now, use the default UDP/QUIC connection path for all peers.
+        //
+        // Example future code structure:
+        // ```
+        // let peer_info = self.connected_peers.read().await
+        //     .get(peer_id)
+        //     .ok_or(EndpointError::PeerNotFound(*peer_id))?;
+        //
+        // // Get peer's preferred transport address
+        // let transport_addr = peer_info.transport_addr.clone(); // Future field
+        //
+        // // Find suitable transport provider
+        // if let Some(provider) = self.transport_registry.provider_for_addr(&transport_addr) {
+        //     // Use provider's protocol engine
+        //     match provider.protocol_engine() {
+        //         ProtocolEngine::Quic => {
+        //             // Use QUIC connection (current path)
+        //         }
+        //         ProtocolEngine::Constrained => {
+        //             // Use constrained protocol via provider.send()
+        //             provider.send(data, &transport_addr).await
+        //                 .map_err(|e| EndpointError::Connection(e.to_string()))?;
+        //             return Ok(());
+        //         }
+        //     }
+        // }
+        // ```
+
+        // Current implementation: Use existing QUIC connection (UDP transport)
         let connection = self
             .inner
             .get_connection(peer_id)
@@ -1345,9 +1492,37 @@ impl P2pEndpoint {
 
     /// Receive data from any peer (with timeout)
     ///
+    /// Receives data from any connected peer, regardless of transport type.
+    /// The inner `NatTraversalEndpoint` aggregates all transport inbound channels,
+    /// so this method automatically handles datagrams arriving via:
+    /// - UDP (primary QUIC transport)
+    /// - BLE (Bluetooth Low Energy)
+    /// - LoRa (long-range radio)
+    /// - Any other registered transport provider
+    ///
+    /// # Multi-Transport Receive Flow
+    ///
+    /// 1. Transport listeners (spawned in `NatTraversalEndpoint::new`) receive datagrams
+    ///    from each transport's inbound channel
+    /// 2. The inner QUIC endpoint (`endpoint.accept()`) aggregates connections from all transports
+    /// 3. `get_connection(peer_id)` returns the connection regardless of which transport it uses
+    /// 4. `connection.accept_uni()` receives streams from any transport
+    ///
+    /// This design ensures complete transport abstraction - the application layer doesn't
+    /// need to know which transport a message arrived on.
+    ///
+    /// # Operation
+    ///
     /// This function first checks the pending data buffer for data that was
     /// buffered during authentication, then polls streams from connected peers.
     /// The timeout is properly distributed across all peers to avoid O(n*timeout) delays.
+    ///
+    /// # Errors
+    ///
+    /// Returns `EndpointError` if:
+    /// - The endpoint is shutting down
+    /// - No connected peers are available
+    /// - The timeout expires before receiving data
     pub async fn recv(&self, timeout: Duration) -> Result<(PeerId, Vec<u8>), EndpointError> {
         if self.shutdown.load(Ordering::SeqCst) {
             return Err(EndpointError::ShuttingDown);
@@ -1360,6 +1535,13 @@ impl P2pEndpoint {
             pending.cleanup_expired();
 
             if let Some((peer_id, data)) = pending.pop_any() {
+                // Phase 1.2: Log received data from pending buffer
+                tracing::trace!(
+                    "Received {} bytes from peer {:?} (from pending buffer)",
+                    data.len(),
+                    peer_id
+                );
+
                 if let Some(peer_conn) = self.connected_peers.write().await.get_mut(&peer_id) {
                     peer_conn.last_activity = Instant::now();
                 }
@@ -1406,6 +1588,17 @@ impl P2pEndpoint {
                     {
                         if let Ok(data) = recv_stream.read_to_end(1024 * 1024).await {
                             if !data.is_empty() {
+                                // Phase 1.2: Log received data (transport type identification comes in Phase 2.3)
+                                // Currently all data arrives via UDP/QUIC, but the architecture supports
+                                // receiving from any transport through the inner endpoint event system.
+                                let remote_addr = connection.remote_address();
+                                tracing::trace!(
+                                    "Received {} bytes from peer {:?} at {}",
+                                    data.len(),
+                                    peer_id,
+                                    remote_addr
+                                );
+
                                 if let Some(peer_conn) =
                                     self.connected_peers.write().await.get_mut(peer_id)
                                 {
@@ -1484,13 +1677,15 @@ impl P2pEndpoint {
         let known_peers = self.config.known_peers.clone();
 
         for addr in &known_peers {
-            match self.connect(*addr).await {
-                Ok(_) => {
-                    connected += 1;
-                    info!("Connected to known peer {}", addr);
-                }
-                Err(e) => {
-                    warn!("Failed to connect to known peer {}: {}", addr, e);
+            if let Some(socket_addr) = addr.as_socket_addr() {
+                match self.connect(socket_addr).await {
+                    Ok(_) => {
+                        connected += 1;
+                        info!("Connected to known peer {}", addr);
+                    }
+                    Err(e) => {
+                        warn!("Failed to connect to known peer {}: {}", addr, e);
+                    }
                 }
             }
         }
@@ -1623,9 +1818,10 @@ mod tests {
 
     #[test]
     fn test_peer_connection_debug() {
+        let socket_addr: SocketAddr = "127.0.0.1:8080".parse().expect("valid addr");
         let conn = PeerConnection {
             peer_id: PeerId([0u8; 32]),
-            remote_addr: "127.0.0.1:8080".parse().expect("valid addr"),
+            remote_addr: TransportAddr::Udp(socket_addr),
             authenticated: false,
             connected_at: Instant::now(),
             last_activity: Instant::now(),
@@ -1720,5 +1916,347 @@ mod tests {
             assert!(registry.is_empty(), "Default registry should be empty");
         }
         // Note: endpoint creation may fail in test environment without network
+    }
+
+    // ==========================================================================
+    // Event Address Migration Tests (Phase 2.2 Task 7)
+    // ==========================================================================
+
+    #[test]
+    fn test_peer_connected_event_with_udp() {
+        let socket_addr: SocketAddr = "192.168.1.100:8080".parse().expect("valid addr");
+        let event = P2pEvent::PeerConnected {
+            peer_id: PeerId([0xab; 32]),
+            addr: TransportAddr::Udp(socket_addr),
+            side: Side::Client,
+        };
+
+        // Verify event fields
+        if let P2pEvent::PeerConnected {
+            peer_id,
+            addr,
+            side,
+        } = event
+        {
+            assert_eq!(peer_id.0, [0xab; 32]);
+            assert_eq!(addr, TransportAddr::Udp(socket_addr));
+            assert!(side.is_client());
+
+            // Verify as_socket_addr() works
+            let extracted = addr.as_socket_addr();
+            assert_eq!(extracted, Some(socket_addr));
+        } else {
+            panic!("Expected PeerConnected event");
+        }
+    }
+
+    #[test]
+    fn test_peer_connected_event_with_ble() {
+        // BLE MAC address (6 bytes)
+        let device_id = [0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc];
+        let event = P2pEvent::PeerConnected {
+            peer_id: PeerId([0xcd; 32]),
+            addr: TransportAddr::Ble {
+                device_id,
+                service_uuid: None,
+            },
+            side: Side::Server,
+        };
+
+        // Verify event fields
+        if let P2pEvent::PeerConnected {
+            peer_id,
+            addr,
+            side,
+        } = event
+        {
+            assert_eq!(peer_id.0, [0xcd; 32]);
+            assert!(side.is_server());
+
+            // Verify as_socket_addr() returns None for BLE
+            assert!(addr.as_socket_addr().is_none());
+
+            // Verify we can match on BLE variant
+            if let TransportAddr::Ble {
+                device_id: mac,
+                service_uuid,
+            } = addr
+            {
+                assert_eq!(mac, device_id);
+                assert!(service_uuid.is_none());
+            } else {
+                panic!("Expected BLE address");
+            }
+        }
+    }
+
+    #[test]
+    fn test_external_address_discovered_udp() {
+        let socket_addr: SocketAddr = "203.0.113.1:12345".parse().expect("valid addr");
+        let event = P2pEvent::ExternalAddressDiscovered {
+            addr: TransportAddr::Udp(socket_addr),
+        };
+
+        if let P2pEvent::ExternalAddressDiscovered { addr } = event {
+            assert_eq!(addr, TransportAddr::Udp(socket_addr));
+            assert_eq!(addr.as_socket_addr(), Some(socket_addr));
+        } else {
+            panic!("Expected ExternalAddressDiscovered event");
+        }
+    }
+
+    #[test]
+    fn test_event_clone() {
+        let socket_addr: SocketAddr = "10.0.0.1:9000".parse().expect("valid addr");
+        let event = P2pEvent::PeerConnected {
+            peer_id: PeerId([0x11; 32]),
+            addr: TransportAddr::Udp(socket_addr),
+            side: Side::Client,
+        };
+
+        // Verify events are Clone
+        let cloned = event.clone();
+        if let (
+            P2pEvent::PeerConnected {
+                peer_id: p1,
+                addr: a1,
+                ..
+            },
+            P2pEvent::PeerConnected {
+                peer_id: p2,
+                addr: a2,
+                ..
+            },
+        ) = (&event, &cloned)
+        {
+            assert_eq!(p1.0, p2.0);
+            assert_eq!(a1, a2);
+        }
+    }
+
+    #[test]
+    fn test_peer_connection_with_transport_addr() {
+        // Test with UDP
+        let udp_addr: SocketAddr = "127.0.0.1:8080".parse().expect("valid addr");
+        let udp_conn = PeerConnection {
+            peer_id: PeerId([0u8; 32]),
+            remote_addr: TransportAddr::Udp(udp_addr),
+            authenticated: true,
+            connected_at: Instant::now(),
+            last_activity: Instant::now(),
+        };
+        assert_eq!(
+            udp_conn.remote_addr.as_socket_addr(),
+            Some(udp_addr),
+            "UDP connection should have extractable socket address"
+        );
+
+        // Test with BLE
+        let device_id = [0x11, 0x22, 0x33, 0x44, 0x55, 0x66];
+        let ble_conn = PeerConnection {
+            peer_id: PeerId([1u8; 32]),
+            remote_addr: TransportAddr::Ble {
+                device_id,
+                service_uuid: None,
+            },
+            authenticated: true,
+            connected_at: Instant::now(),
+            last_activity: Instant::now(),
+        };
+        assert!(
+            ble_conn.remote_addr.as_socket_addr().is_none(),
+            "BLE connection should not have socket address"
+        );
+    }
+
+    #[test]
+    fn test_transport_addr_display_in_events() {
+        let socket_addr: SocketAddr = "192.168.1.1:9001".parse().expect("valid addr");
+        let event = P2pEvent::PeerConnected {
+            peer_id: PeerId([0xff; 32]),
+            addr: TransportAddr::Udp(socket_addr),
+            side: Side::Client,
+        };
+
+        // Verify display formatting works for logging
+        let debug_str = format!("{:?}", event);
+        assert!(
+            debug_str.contains("192.168.1.1"),
+            "Event debug should contain IP address"
+        );
+        assert!(
+            debug_str.contains("9001"),
+            "Event debug should contain port"
+        );
+    }
+
+    // ==========================================================================
+    // Connection Tracking Tests (Phase 2.2 Task 8)
+    // ==========================================================================
+
+    #[test]
+    fn test_connection_tracking_udp() {
+        use std::collections::HashMap;
+
+        // Simulate connection tracking with TransportAddr::Udp
+        let mut connections: HashMap<PeerId, PeerConnection> = HashMap::new();
+
+        let socket_addr: SocketAddr = "10.0.0.1:8080".parse().expect("valid addr");
+        let peer_id = PeerId([0x01; 32]);
+        let conn = PeerConnection {
+            peer_id,
+            remote_addr: TransportAddr::Udp(socket_addr),
+            authenticated: true,
+            connected_at: Instant::now(),
+            last_activity: Instant::now(),
+        };
+
+        connections.insert(peer_id, conn.clone());
+
+        // Verify connection is tracked
+        assert!(connections.contains_key(&peer_id));
+        let retrieved = connections.get(&peer_id).expect("connection exists");
+        assert_eq!(retrieved.remote_addr, TransportAddr::Udp(socket_addr));
+        assert!(retrieved.authenticated);
+    }
+
+    #[test]
+    fn test_connection_tracking_multi_transport() {
+        use std::collections::HashMap;
+
+        // Simulate multiple connections on different transports
+        let mut connections: HashMap<PeerId, PeerConnection> = HashMap::new();
+
+        // UDP connection
+        let udp_addr: SocketAddr = "192.168.1.100:9000".parse().expect("valid addr");
+        let peer1 = PeerId([0x01; 32]);
+        connections.insert(
+            peer1,
+            PeerConnection {
+                peer_id: peer1,
+                remote_addr: TransportAddr::Udp(udp_addr),
+                authenticated: true,
+                connected_at: Instant::now(),
+                last_activity: Instant::now(),
+            },
+        );
+
+        // BLE connection (different peer)
+        let peer2 = PeerId([0x02; 32]);
+        let ble_device = [0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff];
+        connections.insert(
+            peer2,
+            PeerConnection {
+                peer_id: peer2,
+                remote_addr: TransportAddr::Ble {
+                    device_id: ble_device,
+                    service_uuid: None,
+                },
+                authenticated: true,
+                connected_at: Instant::now(),
+                last_activity: Instant::now(),
+            },
+        );
+
+        // Verify each tracked independently
+        assert_eq!(connections.len(), 2);
+        assert!(
+            connections
+                .get(&peer1)
+                .unwrap()
+                .remote_addr
+                .as_socket_addr()
+                .is_some()
+        );
+        assert!(
+            connections
+                .get(&peer2)
+                .unwrap()
+                .remote_addr
+                .as_socket_addr()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn test_connection_lookup_by_transport_addr() {
+        use std::collections::HashMap;
+
+        let mut connections: HashMap<PeerId, PeerConnection> = HashMap::new();
+
+        // Add multiple connections
+        let addrs = [
+            ("10.0.0.1:8080", [0x01; 32]),
+            ("10.0.0.2:8080", [0x02; 32]),
+            ("10.0.0.3:8080", [0x03; 32]),
+        ];
+
+        for (addr_str, peer_bytes) in addrs {
+            let socket_addr: SocketAddr = addr_str.parse().expect("valid addr");
+            let peer_id = PeerId(peer_bytes);
+            connections.insert(
+                peer_id,
+                PeerConnection {
+                    peer_id,
+                    remote_addr: TransportAddr::Udp(socket_addr),
+                    authenticated: true,
+                    connected_at: Instant::now(),
+                    last_activity: Instant::now(),
+                },
+            );
+        }
+
+        // Look up connection by transport address
+        let target: SocketAddr = "10.0.0.2:8080".parse().expect("valid addr");
+        let target_addr = TransportAddr::Udp(target);
+        let found = connections.values().find(|c| c.remote_addr == target_addr);
+
+        assert!(found.is_some());
+        assert_eq!(found.unwrap().peer_id.0, [0x02; 32]);
+    }
+
+    #[test]
+    fn test_transport_addr_equality_in_tracking() {
+        // Verify TransportAddr equality works correctly for tracking
+        let addr1: SocketAddr = "192.168.1.1:8080".parse().expect("valid addr");
+        let addr2: SocketAddr = "192.168.1.1:8080".parse().expect("valid addr");
+        let addr3: SocketAddr = "192.168.1.1:8081".parse().expect("valid addr");
+
+        let t1 = TransportAddr::Udp(addr1);
+        let t2 = TransportAddr::Udp(addr2);
+        let t3 = TransportAddr::Udp(addr3);
+
+        // Same address should be equal
+        assert_eq!(t1, t2);
+
+        // Different port should not be equal
+        assert_ne!(t1, t3);
+
+        // Different transport type should not be equal
+        let ble = TransportAddr::Ble {
+            device_id: [0; 6],
+            service_uuid: None,
+        };
+        assert_ne!(t1, ble);
+    }
+
+    #[test]
+    fn test_peer_connection_update_preserves_transport_addr() {
+        let socket_addr: SocketAddr = "172.16.0.1:5000".parse().expect("valid addr");
+        let mut conn = PeerConnection {
+            peer_id: PeerId([0xaa; 32]),
+            remote_addr: TransportAddr::Udp(socket_addr),
+            authenticated: false,
+            connected_at: Instant::now(),
+            last_activity: Instant::now(),
+        };
+
+        // Simulate updating the connection (e.g., after authentication)
+        conn.authenticated = true;
+        conn.last_activity = Instant::now();
+
+        // Verify transport address is preserved
+        assert_eq!(conn.remote_addr, TransportAddr::Udp(socket_addr));
+        assert!(conn.authenticated);
     }
 }

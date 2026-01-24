@@ -14,6 +14,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use ant_quic::crypto::raw_public_keys::pqc::generate_ml_dsa_keypair;
+use ant_quic::transport::TransportAddr;
 use ant_quic::{NatType, Node, NodeConfig, NodeStatus};
 use std::collections::HashSet;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
@@ -478,7 +479,7 @@ mod config_tests {
         let addr: SocketAddr = "127.0.0.1:9000".parse().unwrap();
         let config = NodeConfig::builder().bind_addr(addr).build();
 
-        assert_eq!(config.bind_addr, Some(addr));
+        assert_eq!(config.bind_addr, Some(TransportAddr::from(addr)));
     }
 
     #[test]
@@ -492,8 +493,8 @@ mod config_tests {
             .build();
 
         assert_eq!(config.known_peers.len(), 2);
-        assert!(config.known_peers.contains(&peer1));
-        assert!(config.known_peers.contains(&peer2));
+        assert!(config.known_peers.contains(&TransportAddr::from(peer1)));
+        assert!(config.known_peers.contains(&TransportAddr::from(peer2)));
     }
 
     #[test]
@@ -508,7 +509,7 @@ mod config_tests {
             .keypair(public_key, secret_key)
             .build();
 
-        assert_eq!(config.bind_addr, Some(addr));
+        assert_eq!(config.bind_addr, Some(TransportAddr::from(addr)));
         assert_eq!(config.known_peers.len(), 1);
         assert!(config.keypair.is_some());
     }
@@ -517,14 +518,20 @@ mod config_tests {
     fn test_config_with_constructors() {
         let addr: SocketAddr = "127.0.0.1:9000".parse().unwrap();
         let config1 = NodeConfig::with_bind_addr(addr);
-        assert_eq!(config1.bind_addr, Some(addr));
+        assert_eq!(config1.bind_addr, Some(TransportAddr::from(addr)));
 
-        let peers = vec![
+        let peers: Vec<SocketAddr> = vec![
             "127.0.0.1:9000".parse().unwrap(),
             "127.0.0.1:9001".parse().unwrap(),
         ];
         let config2 = NodeConfig::with_known_peers(peers.clone());
-        assert_eq!(config2.known_peers, peers);
+        assert_eq!(
+            config2.known_peers,
+            peers
+                .into_iter()
+                .map(TransportAddr::from)
+                .collect::<Vec<_>>()
+        );
     }
 }
 
@@ -591,9 +598,8 @@ async fn test_simple_api_integration_summary() {
 
     // 4. Config builder
     println!("\n4. Config builder...");
-    let config = NodeConfig::builder()
-        .known_peer("127.0.0.1:9000".parse().unwrap())
-        .build();
+    let peer_addr: SocketAddr = "127.0.0.1:9000".parse().unwrap();
+    let config = NodeConfig::builder().known_peer(peer_addr).build();
     println!(
         "   Built config with {} known peers",
         config.known_peers.len()

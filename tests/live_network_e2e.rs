@@ -10,6 +10,7 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
+use ant_quic::transport::TransportAddr;
 use ant_quic::{P2pConfig, P2pEndpoint, P2pEvent};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::time::Duration;
@@ -84,13 +85,13 @@ async fn test_external_address_discovery_live() -> anyhow::Result<()> {
     let start = std::time::Instant::now();
 
     let mut connected = false;
-    let mut external_addr = None;
+    let mut external_addr: Option<TransportAddr> = None;
 
     while start.elapsed() < timeout {
         // Check for external address
         if let Some(addr) = node.external_addr() {
             println!("Discovered external address: {}", addr);
-            external_addr = Some(addr);
+            external_addr = Some(TransportAddr::Udp(addr));
             break;
         }
 
@@ -102,7 +103,7 @@ async fn test_external_address_discovery_live() -> anyhow::Result<()> {
             }
             Ok(Ok(P2pEvent::ExternalAddressDiscovered { addr })) => {
                 println!("Event: External address discovered: {}", addr);
-                external_addr = Some(addr);
+                external_addr = Some(addr.clone());
                 break;
             }
             Ok(Ok(event)) => {
@@ -124,7 +125,12 @@ async fn test_external_address_discovery_live() -> anyhow::Result<()> {
     if let Some(addr) = external_addr {
         println!("External address verified: {}", addr);
         // On a real network, we should get our public IP
-        assert!(!addr.ip().is_loopback(), "Should not be loopback address");
+        if let Some(socket_addr) = addr.as_socket_addr() {
+            assert!(
+                !socket_addr.ip().is_loopback(),
+                "Should not be loopback address"
+            );
+        }
     }
 
     Ok(())

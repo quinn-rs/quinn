@@ -268,10 +268,10 @@ impl Node {
         p2p_config.transport_registry = config.build_transport_registry();
 
         if let Some(bind_addr) = config.bind_addr {
-            p2p_config.bind_addr = Some(bind_addr);
+            p2p_config.bind_addr = Some(bind_addr.into());
         }
 
-        p2p_config.known_peers = config.known_peers;
+        p2p_config.known_peers = config.known_peers.into_iter().map(Into::into).collect();
         p2p_config.keypair = config.keypair;
 
         // Create event channel
@@ -772,9 +772,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_node_with_config() {
-        let config = NodeConfig::builder()
-            .bind_addr("127.0.0.1:0".parse().unwrap())
-            .build();
+        let addr: SocketAddr = "127.0.0.1:0".parse().unwrap();
+        let config = NodeConfig::builder().bind_addr(addr).build();
 
         let node = Node::with_config(config).await;
         assert!(node.is_ok(), "Node::with_config() should succeed");

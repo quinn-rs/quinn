@@ -221,6 +221,26 @@ impl TransportAddr {
     }
 
     /// Get the UDP socket address if this is a UDP address
+    ///
+    /// # Returns
+    ///
+    /// - `Some(SocketAddr)` if this is a `TransportAddr::Udp`
+    /// - `None` for all other transport types
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use ant_quic::transport::TransportAddr;
+    /// use std::net::SocketAddr;
+    ///
+    /// let socket_addr: SocketAddr = "127.0.0.1:8080".parse().unwrap();
+    /// let transport_addr = TransportAddr::from(socket_addr);
+    ///
+    /// assert_eq!(transport_addr.as_socket_addr(), Some(socket_addr));
+    ///
+    /// let ble_addr = TransportAddr::ble([0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC], None);
+    /// assert_eq!(ble_addr.as_socket_addr(), None);
+    /// ```
     pub fn as_socket_addr(&self) -> Option<SocketAddr> {
         match self {
             Self::Udp(addr) => Some(*addr),
@@ -332,6 +352,25 @@ impl fmt::Display for TransportAddr {
     }
 }
 
+/// Convert a `SocketAddr` into a `TransportAddr::Udp`
+///
+/// This enables seamless migration from `SocketAddr` to `TransportAddr` in existing code.
+///
+/// # Example
+///
+/// ```rust
+/// use ant_quic::transport::TransportAddr;
+/// use std::net::SocketAddr;
+///
+/// // Direct conversion
+/// let socket_addr: SocketAddr = "192.168.1.1:9000".parse().unwrap();
+/// let transport_addr = TransportAddr::from(socket_addr);
+/// assert_eq!(transport_addr.as_socket_addr(), Some(socket_addr));
+///
+/// // Using Into trait
+/// let transport_addr: TransportAddr = "127.0.0.1:8080".parse::<SocketAddr>().unwrap().into();
+/// assert!(transport_addr.as_socket_addr().is_some());
+/// ```
 impl From<SocketAddr> for TransportAddr {
     fn from(addr: SocketAddr) -> Self {
         Self::Udp(addr)
@@ -437,6 +476,49 @@ mod tests {
         let transport_addr: TransportAddr = socket_addr.into();
 
         assert_eq!(transport_addr, TransportAddr::Udp(socket_addr));
+    }
+
+    #[test]
+    fn test_from_socket_addr_ipv6() {
+        // Test IPv6 socket address conversion
+        let socket_addr: SocketAddr = "[::1]:9000".parse().unwrap();
+        let transport_addr = TransportAddr::from(socket_addr);
+
+        // Verify it's a UDP variant
+        assert_eq!(transport_addr.transport_type(), TransportType::Udp);
+
+        // Verify roundtrip conversion preserves IPv6 address
+        assert_eq!(transport_addr.as_socket_addr(), Some(socket_addr));
+
+        // Verify it's actually an IPv6 address
+        match transport_addr.as_socket_addr().unwrap() {
+            SocketAddr::V6(_) => {} // Expected
+            SocketAddr::V4(_) => panic!("Expected IPv6 address, got IPv4"),
+        }
+    }
+
+    #[test]
+    fn test_socket_addr_conversion_pattern() {
+        // Test the conversion pattern for seamless migration
+        let socket_addr: SocketAddr = "192.168.1.100:5000".parse().unwrap();
+
+        // From conversion
+        let transport_addr = TransportAddr::from(socket_addr);
+        assert_eq!(transport_addr.transport_type(), TransportType::Udp);
+
+        // Round-trip conversion
+        assert_eq!(transport_addr.as_socket_addr(), Some(socket_addr));
+
+        // Into conversion
+        let transport_addr2: TransportAddr = socket_addr.into();
+        assert_eq!(transport_addr, transport_addr2);
+
+        // Non-UDP addresses return None
+        let ble = TransportAddr::ble([0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF], None);
+        assert_eq!(ble.as_socket_addr(), None);
+
+        let serial = TransportAddr::serial("/dev/ttyUSB0");
+        assert_eq!(serial.as_socket_addr(), None);
     }
 
     #[test]

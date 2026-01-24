@@ -38,6 +38,7 @@ use std::net::SocketAddr;
 
 use crate::nat_traversal_api::PeerId;
 use crate::node_status::NatType;
+use crate::transport::TransportAddr;
 
 /// Reason for peer disconnection
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -83,8 +84,8 @@ pub enum NodeEvent {
     PeerConnected {
         /// The connected peer's ID
         peer_id: PeerId,
-        /// The peer's address
-        addr: SocketAddr,
+        /// The peer's address (supports all transport types)
+        addr: TransportAddr,
         /// Whether this is a direct connection (vs relayed)
         direct: bool,
     },
@@ -110,8 +111,8 @@ pub enum NodeEvent {
     ///
     /// This is the address as seen by other peers.
     ExternalAddressDiscovered {
-        /// The discovered external address
-        addr: SocketAddr,
+        /// The discovered external address (supports all transport types)
+        addr: TransportAddr,
     },
 
     /// NAT type detected
@@ -305,7 +306,7 @@ mod tests {
     fn test_peer_connected_event() {
         let event = NodeEvent::PeerConnected {
             peer_id: test_peer_id(),
-            addr: test_addr(),
+            addr: TransportAddr::Udp(test_addr()),
             direct: true,
         };
 
@@ -419,7 +420,7 @@ mod tests {
     fn test_events_are_clone() {
         let event = NodeEvent::PeerConnected {
             peer_id: test_peer_id(),
-            addr: test_addr(),
+            addr: TransportAddr::Udp(test_addr()),
             direct: true,
         };
 
@@ -452,7 +453,7 @@ mod tests {
     #[test]
     fn test_external_address_discovered() {
         let event = NodeEvent::ExternalAddressDiscovered {
-            addr: "1.2.3.4:9000".parse().unwrap(),
+            addr: TransportAddr::Udp("1.2.3.4:9000".parse().unwrap()),
         };
 
         assert!(event.is_nat_event());

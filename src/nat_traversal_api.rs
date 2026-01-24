@@ -199,6 +199,9 @@ pub struct NatTraversalEndpoint {
     /// Transport registry for multi-transport support
     /// When present, allows using transport-provided sockets instead of creating new ones
     transport_registry: Option<Arc<TransportRegistry>>,
+    /// Task handles for transport listener tasks
+    /// Used for cleanup on shutdown
+    transport_listener_handles: Arc<ParkingMutex<Vec<tokio::task::JoinHandle<()>>>>,
 }
 
 /// Configuration for NAT traversal behavior
@@ -979,8 +982,15 @@ impl NatTraversalEndpoint {
         )));
 
         // Create QUIC endpoint with NAT traversal enabled
+        // If transport_registry is provided in config, use it; otherwise create empty registry
+        let empty_registry = crate::transport::TransportRegistry::new();
+        let registry_ref = config
+            .transport_registry
+            .as_ref()
+            .map(|arc| arc.as_ref())
+            .unwrap_or(&empty_registry);
         let (inner_endpoint, event_tx, event_rx, local_addr) =
-            Self::create_inner_endpoint(&config, token_store).await?;
+            Self::create_inner_endpoint(&config, token_store, registry_ref).await?;
 
         // Update discovery manager with the actual bound address
         {
@@ -1056,7 +1066,106 @@ impl NatTraversalEndpoint {
             relay_server,
             successful_candidates: Arc::new(dashmap::DashMap::new()),
             transport_registry,
+            transport_listener_handles: Arc::new(ParkingMutex::new(Vec::new())),
         };
+
+        // Multi-transport listening: Spawn receive tasks for all online transports
+        // Phase 1.2: Listen on all transports, log for now (full routing in Phase 2.3)
+        if let Some(registry) = &endpoint.transport_registry {
+            let online_providers: Vec<_> = registry.online_providers().collect();
+            let transport_count = online_providers.len();
+
+            if transport_count > 0 {
+                let transport_names: Vec<_> = online_providers
+                    .iter()
+                    .map(|p| format!("{}({})", p.name(), p.transport_type()))
+                    .collect();
+
+                debug!(
+                    "Listening on {} transports: {}",
+                    transport_count,
+                    transport_names.join(", ")
+                );
+
+                let mut handles = Vec::new();
+
+                for provider in online_providers {
+                    let transport_type = provider.transport_type();
+                    let transport_name = provider.name().to_string();
+
+                    // Skip UDP transports since they're already handled by the QUIC endpoint
+                    if transport_type == crate::transport::TransportType::Udp {
+                        debug!(
+                            "Skipping UDP transport '{}' (already handled by QUIC endpoint)",
+                            transport_name
+                        );
+                        continue;
+                    }
+
+                    // Spawn task to receive from this transport's inbound channel
+                    let mut inbound_rx = provider.inbound();
+                    let shutdown_clone = endpoint.shutdown.clone();
+
+                    let handle = tokio::spawn(async move {
+                        debug!("Started listening on transport '{}'", transport_name);
+
+                        loop {
+                            tokio::select! {
+                                // Check shutdown signal
+                                _ = async {
+                                    while !shutdown_clone.load(std::sync::atomic::Ordering::Relaxed) {
+                                        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                                    }
+                                } => {
+                                    debug!("Shutting down transport listener for '{}'", transport_name);
+                                    break;
+                                }
+
+                                // Receive inbound datagrams
+                                datagram = inbound_rx.recv() => {
+                                    match datagram {
+                                        Some(datagram) => {
+                                            // Phase 1.2: Log received datagrams for now
+                                            // Full routing to QUIC endpoint will be added in Phase 2.3
+                                            debug!(
+                                                "Received {} bytes from {} on transport '{}' ({})",
+                                                datagram.data.len(),
+                                                datagram.source,
+                                                transport_name,
+                                                transport_type
+                                            );
+
+                                            // TODO(Phase 2.3): Route to QUIC endpoint for processing
+                                            // Will require address migration and multi-transport packet handling
+                                        }
+                                        None => {
+                                            debug!("Transport '{}' inbound channel closed", transport_name);
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        debug!("Transport listener for '{}' terminated", transport_name);
+                    });
+
+                    handles.push(handle);
+                }
+
+                // Store handles for cleanup on shutdown
+                if !handles.is_empty() {
+                    let mut listener_handles = endpoint.transport_listener_handles.lock();
+                    listener_handles.extend(handles);
+                    info!(
+                        "Started {} transport listener tasks (excluding UDP)",
+                        listener_handles.len()
+                    );
+                }
+            } else {
+                debug!("No online transports found in registry");
+            }
+        }
 
         // v0.13.0+: All nodes are symmetric P2P nodes - always start accepting connections
         {
@@ -1562,6 +1671,7 @@ impl NatTraversalEndpoint {
     async fn create_inner_endpoint(
         config: &NatTraversalConfig,
         token_store: Option<Arc<dyn crate::TokenStore>>,
+        transport_registry: &crate::transport::TransportRegistry,
     ) -> Result<
         (
             InnerEndpoint,
@@ -1701,37 +1811,66 @@ impl NatTraversalEndpoint {
             client_config
         };
 
-        // Determine bind address, using registry information if available
-        // If transport_registry is provided with a UDP transport, prefer its address
-        // This enables address coordination between transport layer and NAT traversal
-        let bind_addr = if let Some(ref registry) = config.transport_registry {
-            if let Some(registry_addr) = registry.get_udp_local_addr() {
-                info!("Transport registry has UDP transport at {}", registry_addr);
-                // For now, we create a new socket but at a different port to avoid conflicts
-                // TODO: Phase 2 will implement proper socket sharing via fd duplication
-                // Use the same IP but let OS pick a port to avoid conflict
-                let ip = registry_addr.ip();
-                let new_addr = std::net::SocketAddr::new(ip, 0);
-                info!("Using address {} for NAT traversal (same interface as registry)", new_addr);
-                new_addr
-            } else {
-                // Registry exists but no UDP transport - use config or random
-                config.bind_addr.unwrap_or_else(create_random_port_bind_addr)
+        // Extract UDP socket from transport registry if available, otherwise create new one
+        // This enables socket sharing between transport layer and NAT traversal
+        let std_socket = if let Some(udp_socket) = transport_registry.get_udp_socket() {
+            let socket_addr = udp_socket
+                .local_addr()
+                .map(|addr| addr.to_string())
+                .unwrap_or_else(|_| "unknown".to_string());
+            info!(
+                "Using UDP socket from transport registry at {}",
+                socket_addr
+            );
+            // Try to extract std socket from Arc<UdpSocket>
+            // This requires converting tokio socket to std socket
+            match Arc::try_unwrap(udp_socket) {
+                Ok(tokio_socket) => {
+                    // We have ownership - can convert directly
+                    tokio_socket.into_std().map_err(|e| {
+                        NatTraversalError::NetworkError(format!(
+                            "Failed to convert tokio socket to std: {e}"
+                        ))
+                    })?
+                }
+                Err(arc_socket) => {
+                    // Socket is still shared - need to duplicate or create new
+                    // For backward compatibility, fall back to creating new socket on same interface
+                    let registry_addr = arc_socket.local_addr().map_err(|e| {
+                        NatTraversalError::NetworkError(format!(
+                            "Failed to get socket address: {e}"
+                        ))
+                    })?;
+                    info!(
+                        "Transport registry socket is shared (Arc count > 1), creating new socket on same interface"
+                    );
+                    let ip = registry_addr.ip();
+                    let new_addr = std::net::SocketAddr::new(ip, 0);
+                    let socket = UdpSocket::bind(new_addr).await.map_err(|e| {
+                        NatTraversalError::NetworkError(format!("Failed to bind UDP socket: {e}"))
+                    })?;
+                    socket.into_std().map_err(|e| {
+                        NatTraversalError::NetworkError(format!("Failed to convert socket: {e}"))
+                    })?
+                }
             }
         } else {
-            // No registry - use config or random (default behavior)
-            config.bind_addr.unwrap_or_else(create_random_port_bind_addr)
+            // No UDP transport in registry - fall back to creating new socket
+            // Use config.bind_addr if provided, otherwise random port
+            let bind_addr = config
+                .bind_addr
+                .unwrap_or_else(create_random_port_bind_addr);
+            info!(
+                "No UDP transport in registry, binding new endpoint to {}",
+                bind_addr
+            );
+            let socket = UdpSocket::bind(bind_addr).await.map_err(|e| {
+                NatTraversalError::NetworkError(format!("Failed to bind UDP socket: {e}"))
+            })?;
+            socket.into_std().map_err(|e| {
+                NatTraversalError::NetworkError(format!("Failed to convert socket: {e}"))
+            })?
         };
-
-        info!("Binding endpoint to {}", bind_addr);
-        let socket = UdpSocket::bind(bind_addr).await.map_err(|e| {
-            NatTraversalError::NetworkError(format!("Failed to bind UDP socket: {e}"))
-        })?;
-
-        // Convert tokio socket to std socket
-        let std_socket = socket.into_std().map_err(|e| {
-            NatTraversalError::NetworkError(format!("Failed to convert socket: {e}"))
-        })?;
 
         // Create QUIC endpoint
         let runtime = default_runtime().ok_or_else(|| {
@@ -2840,6 +2979,25 @@ impl NatTraversalEndpoint {
         // Wait for connection to be closed
         if let Some(ref endpoint) = self.inner_endpoint {
             endpoint.wait_idle().await;
+        }
+
+        // Wait for transport listener tasks to complete
+        let handles = {
+            let mut listener_handles = self.transport_listener_handles.lock();
+            std::mem::take(&mut *listener_handles)
+        };
+
+        if !handles.is_empty() {
+            debug!(
+                "Waiting for {} transport listener tasks to complete",
+                handles.len()
+            );
+            for handle in handles {
+                if let Err(e) = handle.await {
+                    warn!("Transport listener task failed during shutdown: {}", e);
+                }
+            }
+            debug!("All transport listener tasks completed");
         }
 
         info!("NAT traversal endpoint shutdown completed");
@@ -5035,5 +5193,59 @@ mod tests {
         // Removed state - zero priority
         candidate.state = CandidateState::Removed;
         assert_eq!(candidate.effective_priority(), 0);
+    }
+
+    /// Test that transport listener handles field is properly initialized
+    /// This verifies Phase 1.2 infrastructure: field exists and is empty by default
+    #[tokio::test]
+    async fn test_transport_listener_handles_initialized() {
+        // Create config without transport registry
+        let config = NatTraversalConfig {
+            transport_registry: None,
+            bind_addr: Some("127.0.0.1:0".parse().unwrap()),
+            ..Default::default()
+        };
+
+        // Create endpoint without registry
+        let endpoint = NatTraversalEndpoint::new(config, None, None)
+            .await
+            .expect("Endpoint creation should succeed");
+
+        // Verify handles field exists and is empty when no registry provided
+        let handles = endpoint.transport_listener_handles.lock();
+        assert!(
+            handles.is_empty(),
+            "Should have no listener tasks when no transport registry provided"
+        );
+
+        drop(handles);
+        endpoint.shutdown().await.expect("Shutdown should succeed");
+    }
+
+    /// Test that shutdown properly handles empty transport listener handles
+    #[tokio::test]
+    async fn test_shutdown_with_no_transport_listeners() {
+        let config = NatTraversalConfig {
+            transport_registry: None,
+            bind_addr: Some("127.0.0.1:0".parse().unwrap()),
+            ..Default::default()
+        };
+
+        let endpoint = NatTraversalEndpoint::new(config, None, None)
+            .await
+            .expect("Endpoint creation should succeed");
+
+        // Shutdown should succeed even with no transport listeners
+        endpoint
+            .shutdown()
+            .await
+            .expect("Shutdown should succeed with no listeners");
+
+        // Verify handles remain empty after shutdown
+        let handles = endpoint.transport_listener_handles.lock();
+        assert!(
+            handles.is_empty(),
+            "Handles should remain empty after shutdown"
+        );
     }
 }

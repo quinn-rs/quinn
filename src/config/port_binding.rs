@@ -116,7 +116,7 @@ mod socket2_impl {
     /// * `opts` - Socket options to apply
     ///
     /// # Returns
-    /// A UDP socket bound to [::]:port with dual-stack enabled
+    /// A UDP socket bound to `[::]`:port with dual-stack enabled
     pub fn create_dual_stack_socket(
         port: u16,
         opts: &SocketOptions,

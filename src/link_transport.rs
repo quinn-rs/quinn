@@ -163,6 +163,7 @@ use thiserror::Error;
 use tokio::sync::broadcast;
 
 use crate::nat_traversal_api::PeerId;
+use crate::transport::TransportAddr;
 
 // ============================================================================
 // Stream Type Registry (Protocol Multiplexing)
@@ -790,8 +791,8 @@ pub enum LinkEvent {
 
     /// Our observed external address has been updated.
     ExternalAddressUpdated {
-        /// The new external address.
-        addr: SocketAddr,
+        /// The new external address (supports all transport types).
+        addr: TransportAddr,
     },
 
     /// A peer's capabilities have been updated.

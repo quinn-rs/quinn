@@ -29,6 +29,7 @@
 //! ```
 
 use ant_quic::host_identity::{HostIdentity, auto_storage};
+use ant_quic::transport::TransportAddr;
 use ant_quic::{
     ConnectionMethod, MtuConfig, P2pConfig, P2pEndpoint, P2pEvent, PeerId, TraversalPhase,
 };
@@ -303,7 +304,7 @@ pub struct NodeMetricsReport {
 #[allow(dead_code)] // Fields tracked for future use in detailed metrics
 struct PeerState {
     peer_id: PeerId,
-    remote_addr: SocketAddr,
+    remote_addr: TransportAddr,
     connected_at: Instant,
     bytes_sent: u64,
     bytes_received: u64,
@@ -415,7 +416,7 @@ async fn main() -> anyhow::Result<()> {
         Arc::new(RwLock::new(HashMap::new()));
 
     // Track discovered external addresses
-    let external_addrs: Arc<RwLock<Vec<SocketAddr>>> = Arc::new(RwLock::new(Vec::new()));
+    let external_addrs: Arc<RwLock<Vec<TransportAddr>>> = Arc::new(RwLock::new(Vec::new()));
 
     // Event handler
     let endpoint_clone = endpoint.clone();
@@ -788,7 +789,7 @@ async fn handle_event_with_state(
     event: &P2pEvent,
     stats: &RuntimeStats,
     peer_states: &RwLock<HashMap<PeerId, PeerState>>,
-    external_addrs: &RwLock<Vec<SocketAddr>>,
+    external_addrs: &RwLock<Vec<TransportAddr>>,
     json: bool,
 ) {
     match event {
@@ -805,7 +806,7 @@ async fn handle_event_with_state(
             };
             let state = PeerState {
                 peer_id: *peer_id,
-                remote_addr: *addr,
+                remote_addr: addr.clone(),
                 connected_at: Instant::now(),
                 bytes_sent: 0,
                 bytes_received: 0,
@@ -851,7 +852,7 @@ async fn handle_event_with_state(
             // Track the discovered address
             let mut addrs = external_addrs.write().await;
             if !addrs.contains(addr) {
-                addrs.push(*addr);
+                addrs.push(addr.clone());
             }
 
             if json {
@@ -1146,7 +1147,7 @@ async fn build_metrics_report(
     endpoint: &P2pEndpoint,
     stats: &RuntimeStats,
     peer_states: &RwLock<HashMap<PeerId, PeerState>>,
-    external_addrs: &RwLock<Vec<SocketAddr>>,
+    external_addrs: &RwLock<Vec<TransportAddr>>,
     prev_bytes: &mut u64,
     prev_time: &mut Instant,
 ) -> NodeMetricsReport {
