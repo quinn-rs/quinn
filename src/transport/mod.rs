@@ -113,7 +113,12 @@ pub use udp::UdpTransport;
 
 // Re-export BLE transport provider when feature is enabled
 #[cfg(feature = "ble")]
-pub use ble::BleTransport;
+pub use ble::{
+    ANT_QUIC_SERVICE_UUID, BleConfig, BleConnection, BleConnectionState, BleTransport,
+    CCCD_DISABLE, CCCD_ENABLE_INDICATION, CCCD_ENABLE_NOTIFICATION, CCCD_UUID,
+    CharacteristicHandle, ConnectionPoolStats, DiscoveredDevice, RX_CHARACTERISTIC_UUID,
+    ResumeToken, ScanEvent, ScanState, TX_CHARACTERISTIC_UUID,
+};
 
 /// Create a default transport registry with UDP support
 ///
