@@ -203,6 +203,8 @@ pub mod discovery;
 pub mod nat_traversal;
 /// Transport-level protocol implementation
 pub mod transport;
+/// Constrained protocol engine for low-bandwidth transports (BLE, LoRa)
+pub mod constrained;
 
 // Additional modules
 // v0.2: auth module removed - TLS handles peer authentication via ML-DSA-65
