@@ -7,26 +7,26 @@
     "name": "Constrained Protocol Engine"
   },
   "phase": {
-    "number": "4.1",
-    "name": "Constrained Engine Design",
-    "plan": ".planning/plans/PLAN-021.md"
+    "number": "4.2",
+    "name": "Constrained Transport Integration",
+    "plan": ".planning/plans/PLAN-022.md"
   },
   "progress": {
-    "total_tasks": 7,
-    "completed_tasks": 7,
-    "current_task": 7
+    "total_tasks": 0,
+    "completed_tasks": 0,
+    "current_task": 0
   },
-  "status": "review_needed",
+  "status": "planning_needed",
   "previous_phase": {
-    "number": "3.3",
-    "name": "BLE Session Caching",
-    "commit": "2c44e52d",
+    "number": "4.1",
+    "name": "Constrained Engine Design",
+    "commit": "0d872dd7",
     "review": {
-      "date": "2026-01-24T16:00:00Z",
+      "date": "2026-01-24T20:30:00Z",
       "verdict": "approved",
       "quality_score": 9.0,
-      "report": ".planning/reviews/phase-3.3-review-20260124.md",
-      "note": "BLE session caching complete. Milestone 3 finished."
+      "report": ".planning/reviews/phase-4.1-review-20260124.md",
+      "note": "Constrained engine design complete. 73 tests passing."
     }
   },
   "completed_milestones": [
@@ -46,7 +46,7 @@
       "phases": ["3.1", "3.1b", "3.2", "3.3"]
     }
   ],
-  "completed_phases_in_milestone": [],
+  "completed_phases_in_milestone": ["4.1"],
   "interview_decisions": {
     "problem": "Missing functionality - BLE/LoRa/etc unusable despite abstraction existing",
     "success_criteria": "Production ready - full multi-transport with tested BLE, constrained engine, docs",
@@ -72,5 +72,5 @@
       "Performance sensitive"
     ]
   },
-  "last_updated": "2026-01-24T20:00:00Z"
+  "last_updated": "2026-01-24T20:30:00Z"
 }
