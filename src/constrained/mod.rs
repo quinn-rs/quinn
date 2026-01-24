@@ -11,6 +11,44 @@
 //! transports like BLE and LoRa that cannot run full QUIC. Unlike QUIC's 20+ byte
 //! headers, the constrained protocol uses minimal 4-5 byte headers.
 //!
+//! # Architecture
+//!
+//! The constrained engine is organized into layers:
+//!
+//! ```text
+//! ┌─────────────────────────────────────────────────────────────┐
+//! │                   Application Layer                         │
+//! ├─────────────────────────────────────────────────────────────┤
+//! │  ConstrainedTransport / ConstrainedHandle (transport.rs)    │
+//! │  - Thread-safe wrapper with handle pattern                  │
+//! │  - Async channel-based packet I/O                           │
+//! ├─────────────────────────────────────────────────────────────┤
+//! │  ConstrainedEngineAdapter (adapter.rs)                      │
+//! │  - TransportAddr ↔ SocketAddr mapping                       │
+//! │  - Synthetic addresses for BLE/LoRa                         │
+//! ├─────────────────────────────────────────────────────────────┤
+//! │  ConstrainedEngine (engine.rs)                              │
+//! │  - Multi-connection management                              │
+//! │  - Packet routing and event generation                      │
+//! ├─────────────────────────────────────────────────────────────┤
+//! │  ConstrainedConnection (connection.rs)                      │
+//! │  - Per-connection state and buffers                         │
+//! │  - Send/receive with reliability                            │
+//! ├─────────────────────────────────────────────────────────────┤
+//! │  ARQ Layer (arq.rs)                                         │
+//! │  - SendWindow / ReceiveWindow                               │
+//! │  - Retransmission and timeout handling                      │
+//! ├─────────────────────────────────────────────────────────────┤
+//! │  StateMachine (state.rs)                                    │
+//! │  - Connection lifecycle states                              │
+//! │  - Valid transition enforcement                             │
+//! ├─────────────────────────────────────────────────────────────┤
+//! │  Header/Types (header.rs, types.rs)                         │
+//! │  - 5-byte packet header format                              │
+//! │  - Core type definitions                                    │
+//! └─────────────────────────────────────────────────────────────┘
+//! ```
+//!
 //! # Design Goals
 //!
 //! - **Minimal overhead**: 4-5 byte headers vs QUIC's 20+ bytes
@@ -18,6 +56,7 @@
 //! - **No congestion control**: Link layer handles congestion
 //! - **Session resumption**: Integrates with BLE session cache
 //! - **Low memory footprint**: Small window sizes (8-16 packets)
+//! - **Transport agnostic**: Works with any `TransportAddr` type
 //!
 //! # Header Format
 //!
@@ -35,8 +74,8 @@
 //!
 //! # Protocol Engine Selection
 //!
-//! The [`ProtocolEngine`](crate::transport::ProtocolEngine) enum determines
-//! whether to use QUIC or the constrained engine based on transport capabilities:
+//! Use [`ConstrainedTransport::should_use_constrained`] to determine whether
+//! to use the constrained engine based on transport capabilities:
 //!
 //! | Capability | QUIC | Constrained |
 //! |------------|------|-------------|
@@ -54,35 +93,48 @@
 //!               └─────── RST ─────────┘
 //! ```
 //!
-//! # Example
+//! # Example: Using with TransportAddr
 //!
 //! ```rust,ignore
-//! use ant_quic::constrained::{ConstrainedEngine, ConstrainedConfig};
-//! use ant_quic::transport::BleTransport;
+//! use ant_quic::constrained::{ConstrainedTransport, ConstrainedHandle};
+//! use ant_quic::transport::TransportAddr;
 //!
-//! // Create engine with BLE transport
-//! let transport = BleTransport::new().await?;
-//! let config = ConstrainedConfig::default();
-//! let engine = ConstrainedEngine::new(transport, config);
+//! // Create transport for BLE
+//! let transport = ConstrainedTransport::for_ble();
+//! let handle = transport.handle();
 //!
-//! // Open a connection
-//! let conn_id = engine.connect(device_addr).await?;
+//! // Connect to a BLE device
+//! let ble_addr = TransportAddr::Ble {
+//!     device_id: [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF],
+//!     service_uuid: None,
+//! };
+//! let conn_id = handle.connect(&ble_addr)?;
 //!
 //! // Send data
-//! engine.send(conn_id, b"Hello, BLE!").await?;
+//! handle.send(conn_id, b"Hello, BLE!")?;
 //!
-//! // Receive data
-//! let data = engine.receive(conn_id).await?;
+//! // Process incoming packets and check for events
+//! handle.process_incoming(&ble_addr, &received_data)?;
+//! while let Some(event) = handle.next_event() {
+//!     match event {
+//!         AdapterEvent::DataReceived { connection_id, data } => {
+//!             println!("Received: {:?}", data);
+//!         }
+//!         _ => {}
+//!     }
+//! }
 //! ```
 //!
-//! # Modules
+//! # Module Organization
 //!
-//! - [`types`] - Core types: ConnectionId, SequenceNumber, PacketFlags, ConstrainedError
-//! - [`header`] - Packet header format and serialization
-//! - [`state`] - Connection state machine
-//! - [`arq`] - ARQ reliability layer
-//! - [`connection`] - Connection management
-//! - [`engine`] - Main protocol engine
+//! - `types` - Core types: ConnectionId, SequenceNumber, PacketFlags, ConstrainedError, ConstrainedAddr
+//! - `header` - Packet header format and serialization
+//! - `state` - Connection state machine
+//! - `arq` - ARQ reliability layer (SendWindow, ReceiveWindow)
+//! - `connection` - Connection management
+//! - `engine` - Main protocol engine
+//! - `adapter` - TransportAddr integration layer
+//! - `transport` - Thread-safe transport wrapper
 
 // Sub-modules
 mod adapter;
