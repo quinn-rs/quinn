@@ -56,11 +56,7 @@ impl ConnectionState {
     pub const fn is_open(&self) -> bool {
         matches!(
             self,
-            Self::SynSent
-                | Self::SynReceived
-                | Self::Established
-                | Self::FinWait
-                | Self::Closing
+            Self::SynSent | Self::SynReceived | Self::Established | Self::FinWait | Self::Closing
         )
     }
 
@@ -79,11 +75,11 @@ impl ConnectionState {
     /// Returns how long to wait in this state before timing out.
     pub fn timeout(&self) -> Duration {
         match self {
-            Self::Closed => Duration::MAX, // No timeout for closed
+            Self::Closed => Duration::MAX,           // No timeout for closed
             Self::SynSent => Duration::from_secs(5), // Connection setup timeout
             Self::SynReceived => Duration::from_secs(5),
             Self::Established => Duration::from_secs(300), // 5 minute idle timeout
-            Self::FinWait => Duration::from_secs(30), // Wait for FIN-ACK
+            Self::FinWait => Duration::from_secs(30),      // Wait for FIN-ACK
             Self::Closing => Duration::from_secs(30),
             Self::TimeWait => Duration::from_secs(4), // 2*MSL equivalent for constrained
         }
@@ -326,7 +322,10 @@ mod tests {
         let mut sm = StateMachine::new();
 
         // Initiator side: CLOSED -> SYN_SENT -> ESTABLISHED
-        assert_eq!(sm.transition(StateEvent::Open).unwrap(), ConnectionState::SynSent);
+        assert_eq!(
+            sm.transition(StateEvent::Open).unwrap(),
+            ConnectionState::SynSent
+        );
         assert_eq!(
             sm.transition(StateEvent::RecvSynAck).unwrap(),
             ConnectionState::Established

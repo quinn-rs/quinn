@@ -26,8 +26,8 @@
 use ant_quic::transport::{
     ANT_QUIC_SERVICE_UUID, BleConfig, BleConnection, BleConnectionState, BleTransport,
     CCCD_DISABLE, CCCD_ENABLE_INDICATION, CCCD_ENABLE_NOTIFICATION, CCCD_UUID,
-    CharacteristicHandle, ConnectionPoolStats, DiscoveredDevice, ResumeToken, RX_CHARACTERISTIC_UUID,
-    ScanState, TX_CHARACTERISTIC_UUID, TransportCapabilities, TransportProvider,
+    CharacteristicHandle, ConnectionPoolStats, DiscoveredDevice, RX_CHARACTERISTIC_UUID,
+    ResumeToken, ScanState, TX_CHARACTERISTIC_UUID, TransportCapabilities, TransportProvider,
     TransportType,
 };
 use std::time::Duration;
@@ -50,8 +50,7 @@ fn test_service_uuid_format() {
 
     // Verify it ends with 0x01 (service marker)
     assert_eq!(
-        ANT_QUIC_SERVICE_UUID[15],
-        0x01,
+        ANT_QUIC_SERVICE_UUID[15], 0x01,
         "Service UUID should end with 0x01"
     );
 }
@@ -72,8 +71,14 @@ fn test_characteristic_uuids_are_distinct() {
     );
 
     // TX ends with 0x02, RX ends with 0x03
-    assert_eq!(TX_CHARACTERISTIC_UUID[15], 0x02, "TX UUID should end with 0x02");
-    assert_eq!(RX_CHARACTERISTIC_UUID[15], 0x03, "RX UUID should end with 0x03");
+    assert_eq!(
+        TX_CHARACTERISTIC_UUID[15], 0x02,
+        "TX UUID should end with 0x02"
+    );
+    assert_eq!(
+        RX_CHARACTERISTIC_UUID[15], 0x03,
+        "RX UUID should end with 0x03"
+    );
 }
 
 #[test]
@@ -90,8 +95,16 @@ fn test_cccd_uuid_is_bluetooth_sig_standard() {
 #[test]
 fn test_cccd_values() {
     // Verify CCCD enable/disable values per Bluetooth spec
-    assert_eq!(CCCD_ENABLE_NOTIFICATION, [0x01, 0x00], "Enable notification = 0x0001");
-    assert_eq!(CCCD_ENABLE_INDICATION, [0x02, 0x00], "Enable indication = 0x0002");
+    assert_eq!(
+        CCCD_ENABLE_NOTIFICATION,
+        [0x01, 0x00],
+        "Enable notification = 0x0001"
+    );
+    assert_eq!(
+        CCCD_ENABLE_INDICATION,
+        [0x02, 0x00],
+        "Enable indication = 0x0002"
+    );
     assert_eq!(CCCD_DISABLE, [0x00, 0x00], "Disable = 0x0000");
 }
 
@@ -175,8 +188,14 @@ fn test_ble_connection_state_display() {
     assert_eq!(format!("{}", BleConnectionState::Discovered), "discovered");
     assert_eq!(format!("{}", BleConnectionState::Connecting), "connecting");
     assert_eq!(format!("{}", BleConnectionState::Connected), "connected");
-    assert_eq!(format!("{}", BleConnectionState::Disconnecting), "disconnecting");
-    assert_eq!(format!("{}", BleConnectionState::Disconnected), "disconnected");
+    assert_eq!(
+        format!("{}", BleConnectionState::Disconnecting),
+        "disconnecting"
+    );
+    assert_eq!(
+        format!("{}", BleConnectionState::Disconnected),
+        "disconnected"
+    );
 }
 
 // ============================================================================
@@ -188,7 +207,10 @@ fn test_characteristic_handle_tx() {
     let tx = CharacteristicHandle::tx();
 
     assert_eq!(tx.uuid, TX_CHARACTERISTIC_UUID);
-    assert!(tx.write_without_response, "TX should support write without response");
+    assert!(
+        tx.write_without_response,
+        "TX should support write without response"
+    );
     assert!(!tx.notify, "TX should not support notify");
     assert!(!tx.indicate, "TX should not support indicate");
 }
@@ -212,7 +234,10 @@ fn test_ble_config_default() {
     let config = BleConfig::default();
 
     assert_eq!(config.service_uuid, ANT_QUIC_SERVICE_UUID);
-    assert_eq!(config.session_cache_duration, Duration::from_secs(24 * 60 * 60));
+    assert_eq!(
+        config.session_cache_duration,
+        Duration::from_secs(24 * 60 * 60)
+    );
     assert_eq!(config.max_connections, 5);
     assert_eq!(config.scan_interval, Duration::from_secs(10));
     assert_eq!(config.connection_timeout, Duration::from_secs(30));
@@ -226,7 +251,9 @@ fn test_ble_config_default() {
 fn test_resume_token_serialization() {
     let token = ResumeToken {
         peer_id_hash: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
-        session_hash: [17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32],
+        session_hash: [
+            17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32,
+        ],
     };
 
     let bytes = token.to_bytes();
@@ -488,7 +515,10 @@ async fn test_ble_transport_connection() {
     assert_eq!(stats.active, 1);
 
     // Disconnect
-    transport.disconnect_from_device(&target.device_id).await.ok();
+    transport
+        .disconnect_from_device(&target.device_id)
+        .await
+        .ok();
 }
 
 /// Test send/receive data over BLE
@@ -595,7 +625,10 @@ fn test_ble_address_format() {
     assert_eq!(addr.transport_type(), TransportType::Ble);
 
     // With service UUID
-    let service_uuid = [0xa0, 0x3d, 0x7e, 0x9f, 0x0b, 0xca, 0x12, 0xfe, 0xa6, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01];
+    let service_uuid = [
+        0xa0, 0x3d, 0x7e, 0x9f, 0x0b, 0xca, 0x12, 0xfe, 0xa6, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x01,
+    ];
     let addr_with_service = TransportAddr::ble(device_id, Some(service_uuid));
     assert_eq!(addr_with_service.transport_type(), TransportType::Ble);
 }

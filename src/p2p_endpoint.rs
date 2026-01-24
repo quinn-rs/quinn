@@ -63,13 +63,13 @@ use tracing::{debug, error, info, warn};
 
 // v0.2: auth module removed - TLS handles peer authentication via ML-DSA-65
 use crate::bounded_pending_buffer::BoundedPendingBuffer;
+use crate::connection_router::{ConnectionRouter, RouterConfig};
 use crate::connection_strategy::{
     ConnectionMethod, ConnectionStage, ConnectionStrategy, StrategyConfig,
 };
 use crate::crypto::raw_public_keys::key_utils::{
     derive_peer_id_from_public_key, generate_ml_dsa_keypair,
 };
-use crate::connection_router::{ConnectionRouter, RouterConfig};
 use crate::nat_traversal_api::{
     NatTraversalEndpoint, NatTraversalError, NatTraversalEvent, NatTraversalStatistics, PeerId,
 };
@@ -543,18 +543,17 @@ impl P2pEndpoint {
 
         // Phase 5.3 Deliverable 3: Socket sharing in default constructor
         // Bind a single UDP socket and share it between transport registry and Quinn
-        let default_addr: std::net::SocketAddr = std::net::SocketAddr::new(
-            std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED),
-            0,
-        );
+        let default_addr: std::net::SocketAddr =
+            std::net::SocketAddr::new(std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED), 0);
         let bind_addr = config
             .bind_addr
             .as_ref()
             .and_then(|addr| addr.as_socket_addr())
             .unwrap_or(default_addr);
-        let (udp_transport, quinn_socket) = crate::transport::UdpTransport::bind_for_quinn(bind_addr)
-            .await
-            .map_err(|e| EndpointError::Config(format!("Failed to bind UDP socket: {e}")))?;
+        let (udp_transport, quinn_socket) =
+            crate::transport::UdpTransport::bind_for_quinn(bind_addr)
+                .await
+                .map_err(|e| EndpointError::Config(format!("Failed to bind UDP socket: {e}")))?;
 
         let actual_bind_addr = quinn_socket
             .local_addr()
@@ -797,9 +796,8 @@ impl P2pEndpoint {
                 })?;
 
                 // Create a synthetic peer ID for constrained connections if not provided
-                let actual_peer_id = peer_id.unwrap_or_else(|| {
-                    self.derive_peer_id_from_transport_addr(addr)
-                });
+                let actual_peer_id =
+                    peer_id.unwrap_or_else(|| self.derive_peer_id_from_transport_addr(addr));
 
                 let peer_conn = PeerConnection {
                     peer_id: actual_peer_id,
@@ -868,7 +866,11 @@ impl P2pEndpoint {
         peer_id: PeerId,
         conn_id: ConstrainedConnectionId,
     ) -> Option<ConstrainedConnectionId> {
-        let old = self.constrained_connections.write().await.insert(peer_id, conn_id);
+        let old = self
+            .constrained_connections
+            .write()
+            .await
+            .insert(peer_id, conn_id);
         debug!(
             "Registered constrained connection for peer {:?}: conn_id={:?}",
             peer_id, conn_id
@@ -896,7 +898,10 @@ impl P2pEndpoint {
 
     /// Check if a peer has a constrained connection
     pub async fn has_constrained_connection(&self, peer_id: &PeerId) -> bool {
-        self.constrained_connections.read().await.contains_key(peer_id)
+        self.constrained_connections
+            .read()
+            .await
+            .contains_key(peer_id)
     }
 
     /// Get the ConnectionId for a peer's constrained connection
@@ -904,7 +909,11 @@ impl P2pEndpoint {
         &self,
         peer_id: &PeerId,
     ) -> Option<ConstrainedConnectionId> {
-        self.constrained_connections.read().await.get(peer_id).copied()
+        self.constrained_connections
+            .read()
+            .await
+            .get(peer_id)
+            .copied()
     }
 
     /// Get the number of active constrained connections
@@ -925,28 +934,42 @@ impl P2pEndpoint {
         let peer_id = self.derive_peer_id_from_transport_addr(addr);
 
         // Register in both directions
-        self.constrained_connections.write().await.insert(peer_id, conn_id);
-        self.constrained_peer_addrs.write().await.insert(conn_id, (peer_id, addr.clone()));
+        self.constrained_connections
+            .write()
+            .await
+            .insert(peer_id, conn_id);
+        self.constrained_peer_addrs
+            .write()
+            .await
+            .insert(conn_id, (peer_id, addr.clone()));
 
         // Also register in connected_peers for unified peer management
-        self.connected_peers.write().await.insert(peer_id, PeerConnection {
+        self.connected_peers.write().await.insert(
             peer_id,
-            remote_addr: addr.clone(),
-            authenticated: false, // Constrained connections may not have full auth yet
-            connected_at: Instant::now(),
-            last_activity: Instant::now(),
-        });
+            PeerConnection {
+                peer_id,
+                remote_addr: addr.clone(),
+                authenticated: false, // Constrained connections may not have full auth yet
+                connected_at: Instant::now(),
+                last_activity: Instant::now(),
+            },
+        );
 
         debug!(
             "Registered constrained peer {:?} at {} (conn_id={})",
-            peer_id, addr, conn_id.value()
+            peer_id,
+            addr,
+            conn_id.value()
         );
 
         peer_id
     }
 
     /// Unregister a constrained peer (called on ConnectionClosed)
-    async fn unregister_constrained_peer(&self, conn_id: ConstrainedConnectionId) -> Option<PeerId> {
+    async fn unregister_constrained_peer(
+        &self,
+        conn_id: ConstrainedConnectionId,
+    ) -> Option<PeerId> {
         // Look up the peer info
         let peer_info = self.constrained_peer_addrs.write().await.remove(&conn_id);
 
@@ -957,7 +980,9 @@ impl P2pEndpoint {
 
             debug!(
                 "Unregistered constrained peer {:?} at {} (conn_id={})",
-                peer_id, addr, conn_id.value()
+                peer_id,
+                addr,
+                conn_id.value()
             );
 
             // Emit disconnect event
@@ -1812,7 +1837,12 @@ impl P2pEndpoint {
             }
             crate::transport::ProtocolEngine::Constrained => {
                 // Check if we have an established constrained connection for this peer
-                let maybe_conn_id = self.constrained_connections.read().await.get(peer_id).copied();
+                let maybe_conn_id = self
+                    .constrained_connections
+                    .read()
+                    .await
+                    .get(peer_id)
+                    .copied();
 
                 if let Some(conn_id) = maybe_conn_id {
                     // Use ConstrainedEngine for reliable delivery
@@ -1943,12 +1973,17 @@ impl P2pEndpoint {
             if let Some(constrained_event) = self.inner.try_recv_constrained_event() {
                 use crate::constrained::EngineEvent;
                 match constrained_event.event {
-                    EngineEvent::DataReceived { connection_id, data } => {
+                    EngineEvent::DataReceived {
+                        connection_id,
+                        data,
+                    } => {
                         // Look up registered PeerId, or derive from address if not yet registered
                         let peer_id = self
                             .peer_id_from_constrained_conn(connection_id)
                             .await
-                            .unwrap_or_else(|| self.addr_to_peer_id(&constrained_event.remote_addr));
+                            .unwrap_or_else(|| {
+                                self.addr_to_peer_id(&constrained_event.remote_addr)
+                            });
 
                         tracing::trace!(
                             "Received {} bytes from constrained transport {} (conn_id={}, peer_id={:?})",
@@ -1959,7 +1994,9 @@ impl P2pEndpoint {
                         );
 
                         // Update last activity for the peer
-                        if let Some(peer_conn) = self.connected_peers.write().await.get_mut(&peer_id) {
+                        if let Some(peer_conn) =
+                            self.connected_peers.write().await.get_mut(&peer_id)
+                        {
                             peer_conn.last_activity = Instant::now();
                         }
 
@@ -1971,10 +2008,16 @@ impl P2pEndpoint {
 
                         return Ok((peer_id, data));
                     }
-                    EngineEvent::ConnectionAccepted { connection_id, remote_addr: _ } => {
+                    EngineEvent::ConnectionAccepted {
+                        connection_id,
+                        remote_addr: _,
+                    } => {
                         // Register the constrained peer with the TransportAddr from the wrapper
                         let peer_id = self
-                            .register_constrained_peer(connection_id, &constrained_event.remote_addr)
+                            .register_constrained_peer(
+                                connection_id,
+                                &constrained_event.remote_addr,
+                            )
                             .await;
 
                         tracing::debug!(
@@ -1994,9 +2037,16 @@ impl P2pEndpoint {
                     EngineEvent::ConnectionEstablished { connection_id } => {
                         // For outbound connections, we should already have registered via connect()
                         // If not, register now with the transport address from the wrapper
-                        if self.peer_id_from_constrained_conn(connection_id).await.is_none() {
+                        if self
+                            .peer_id_from_constrained_conn(connection_id)
+                            .await
+                            .is_none()
+                        {
                             let peer_id = self
-                                .register_constrained_peer(connection_id, &constrained_event.remote_addr)
+                                .register_constrained_peer(
+                                    connection_id,
+                                    &constrained_event.remote_addr,
+                                )
                                 .await;
 
                             tracing::debug!(
@@ -2027,7 +2077,10 @@ impl P2pEndpoint {
                             peer_id
                         );
                     }
-                    EngineEvent::ConnectionError { connection_id, error } => {
+                    EngineEvent::ConnectionError {
+                        connection_id,
+                        error,
+                    } => {
                         tracing::warn!(
                             "Constrained connection error: conn_id={}, error={}",
                             connection_id.value(),
@@ -2372,9 +2425,7 @@ mod tests {
 
         // Build config with default transport providers
         // Phase 5.3: P2pEndpoint::new() always adds a shared UDP transport
-        let config = P2pConfig::builder()
-            .build()
-            .expect("valid config");
+        let config = P2pConfig::builder().build().expect("valid config");
 
         // Create endpoint
         let result = P2pEndpoint::new(config).await;
@@ -2383,7 +2434,10 @@ mod tests {
         if let Ok(endpoint) = result {
             let registry = endpoint.transport_registry();
             // Phase 5.3: Registry now always has at least 1 UDP provider (socket sharing)
-            assert!(registry.len() >= 1, "Registry should have at least 1 provider");
+            assert!(
+                !registry.is_empty(),
+                "Registry should have at least 1 provider"
+            );
 
             let udp_providers = registry.providers_by_type(TransportType::Udp);
             assert_eq!(udp_providers.len(), 1, "Should have 1 UDP provider");
@@ -2403,7 +2457,10 @@ mod tests {
         // This is required for socket sharing with Quinn
         if let Ok(endpoint) = result {
             let registry = endpoint.transport_registry();
-            assert!(!registry.is_empty(), "Default registry should have UDP for socket sharing");
+            assert!(
+                !registry.is_empty(),
+                "Default registry should have UDP for socket sharing"
+            );
             assert!(
                 registry.has_quic_capable_transport(),
                 "Default registry should have QUIC-capable transport"

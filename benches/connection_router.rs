@@ -7,7 +7,7 @@
 
 use std::sync::Arc;
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput};
+use criterion::{Criterion, Throughput, black_box, criterion_group, criterion_main};
 
 use ant_quic::{
     connection_router::{ConnectionRouter, RouterConfig},
@@ -110,8 +110,8 @@ fn bench_fallback_selection(c: &mut Criterion) {
         b.iter(|| {
             let result = router.select_engine_with_fallback(
                 black_box(&broadband_caps),
-                black_box(true),  // QUIC available
-                black_box(true),  // Constrained available
+                black_box(true), // QUIC available
+                black_box(true), // Constrained available
             );
             black_box(result)
         });

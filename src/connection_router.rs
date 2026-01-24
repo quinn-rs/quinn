@@ -412,7 +412,11 @@ impl RoutedConnection {
     /// For QUIC connections, the reason code is passed to the QUIC close frame.
     /// For constrained connections, the reason code is logged but not transmitted
     /// (constrained protocol has simpler close handling).
-    pub fn close_with_reason(&self, reason_code: u32, reason_text: &[u8]) -> Result<(), RouterError> {
+    pub fn close_with_reason(
+        &self,
+        reason_code: u32,
+        reason_text: &[u8],
+    ) -> Result<(), RouterError> {
         match self {
             Self::Quic { connection, .. } => {
                 connection.close(crate::VarInt::from_u32(reason_code), reason_text);
@@ -443,22 +447,23 @@ impl RoutedConnection {
         match self {
             Self::Quic { connection, .. } => {
                 // Open a unidirectional stream and send data
-                let mut send_stream = connection.open_uni().await.map_err(|e| {
-                    RouterError::SendFailed {
-                        reason: format!("failed to open QUIC stream: {e}"),
-                    }
-                })?;
+                let mut send_stream =
+                    connection
+                        .open_uni()
+                        .await
+                        .map_err(|e| RouterError::SendFailed {
+                            reason: format!("failed to open QUIC stream: {e}"),
+                        })?;
 
-                send_stream.write_all(data).await.map_err(|e| {
-                    RouterError::SendFailed {
+                send_stream
+                    .write_all(data)
+                    .await
+                    .map_err(|e| RouterError::SendFailed {
                         reason: format!("failed to write to QUIC stream: {e}"),
-                    }
-                })?;
+                    })?;
 
-                send_stream.finish().map_err(|e| {
-                    RouterError::SendFailed {
-                        reason: format!("failed to finish QUIC stream: {e}"),
-                    }
+                send_stream.finish().map_err(|e| RouterError::SendFailed {
+                    reason: format!("failed to finish QUIC stream: {e}"),
                 })?;
 
                 Ok(())
@@ -487,11 +492,13 @@ impl RoutedConnection {
         match self {
             Self::Quic { connection, .. } => {
                 // Accept an incoming unidirectional stream
-                let mut recv_stream = connection.accept_uni().await.map_err(|e| {
-                    RouterError::ReceiveFailed {
-                        reason: format!("failed to accept QUIC stream: {e}"),
-                    }
-                })?;
+                let mut recv_stream =
+                    connection
+                        .accept_uni()
+                        .await
+                        .map_err(|e| RouterError::ReceiveFailed {
+                            reason: format!("failed to accept QUIC stream: {e}"),
+                        })?;
 
                 // Read all data from the stream
                 let data = recv_stream.read_to_end(64 * 1024).await.map_err(|e| {
@@ -510,11 +517,12 @@ impl RoutedConnection {
                 // Constrained recv is sync - poll until data is available
                 // This is a simple implementation; a production version might use
                 // tokio::time::interval for periodic polling
-                let data = handle.recv(*connection_id)?.ok_or_else(|| {
-                    RouterError::ReceiveFailed {
-                        reason: "no data available from constrained connection".into(),
-                    }
-                })?;
+                let data =
+                    handle
+                        .recv(*connection_id)?
+                        .ok_or_else(|| RouterError::ReceiveFailed {
+                            reason: "no data available from constrained connection".into(),
+                        })?;
                 Ok(data)
             }
         }
@@ -626,7 +634,9 @@ impl fmt::Display for SelectionReason {
             Self::SupportsQuic => write!(f, "transport supports full QUIC"),
             Self::TooConstrained => write!(f, "transport too constrained for QUIC"),
             Self::QuicUnavailableFallback => write!(f, "QUIC unavailable, using constrained"),
-            Self::ConstrainedUnavailableFallback => write!(f, "constrained unavailable, using QUIC"),
+            Self::ConstrainedUnavailableFallback => {
+                write!(f, "constrained unavailable, using QUIC")
+            }
             Self::UserPreference => write!(f, "user preference"),
             Self::AddressTypeMapping => write!(f, "address type mapping"),
         }
@@ -1019,9 +1029,11 @@ impl ConnectionRouter {
                     "no suitable engine available"
                 );
                 return Err(RouterError::NoTransportAvailable {
-                    addr: TransportAddr::Udp("0.0.0.0:0".parse().unwrap_or_else(|_| {
-                        std::net::SocketAddr::from(([0, 0, 0, 0], 0))
-                    })),
+                    addr: TransportAddr::Udp(
+                        "0.0.0.0:0"
+                            .parse()
+                            .unwrap_or_else(|_| std::net::SocketAddr::from(([0, 0, 0, 0], 0))),
+                    ),
                 });
             }
         };
@@ -1199,12 +1211,12 @@ impl ConnectionRouter {
             self.constrained_transport = Some(transport);
         }
 
-        let transport = self
-            .constrained_transport
-            .as_ref()
-            .ok_or(RouterError::NoTransportAvailable {
-                addr: remote.clone(),
-            })?;
+        let transport =
+            self.constrained_transport
+                .as_ref()
+                .ok_or(RouterError::NoTransportAvailable {
+                    addr: remote.clone(),
+                })?;
 
         let handle = transport.handle();
         let connection_id = handle.connect(remote)?;
@@ -1686,7 +1698,10 @@ mod tests {
             .unwrap();
         assert_eq!(result.engine, ProtocolEngine::Quic);
         assert!(result.is_fallback);
-        assert_eq!(result.reason, SelectionReason::ConstrainedUnavailableFallback);
+        assert_eq!(
+            result.reason,
+            SelectionReason::ConstrainedUnavailableFallback
+        );
     }
 
     #[test]

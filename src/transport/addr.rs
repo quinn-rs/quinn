@@ -380,14 +380,7 @@ impl TransportAddr {
                     TransportType::Yggdrasil => 6,
                 };
                 let addr = Ipv6Addr::new(
-                    0x2001,
-                    0x0db8,
-                    type_code,
-                    0xFFFF,
-                    0xFFFF,
-                    0xFFFF,
-                    0xFFFF,
-                    0xFFFF,
+                    0x2001, 0x0db8, type_code, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF,
                 );
                 SocketAddr::new(IpAddr::V6(addr), 0)
             }

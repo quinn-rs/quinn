@@ -511,11 +511,11 @@ impl TransportRegistry {
     /// registry.send(b"hello", &ble_addr).await?;
     /// ```
     pub async fn send(&self, data: &[u8], dest: &TransportAddr) -> Result<(), TransportError> {
-        let provider = self
-            .provider_for_addr(dest)
-            .ok_or(TransportError::NoProviderForAddress {
-                addr_type: dest.transport_type(),
-            })?;
+        let provider =
+            self.provider_for_addr(dest)
+                .ok_or(TransportError::NoProviderForAddress {
+                    addr_type: dest.transport_type(),
+                })?;
 
         provider.send(data, dest).await
     }

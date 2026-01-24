@@ -60,7 +60,7 @@
 use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 use tokio::sync::{RwLock, mpsc};
 
@@ -1172,8 +1172,14 @@ impl SessionCacheFile {
 
             // Established timestamp
             let established_unix = u64::from_le_bytes([
-                bytes[offset], bytes[offset + 1], bytes[offset + 2], bytes[offset + 3],
-                bytes[offset + 4], bytes[offset + 5], bytes[offset + 6], bytes[offset + 7],
+                bytes[offset],
+                bytes[offset + 1],
+                bytes[offset + 2],
+                bytes[offset + 3],
+                bytes[offset + 4],
+                bytes[offset + 5],
+                bytes[offset + 6],
+                bytes[offset + 7],
             ]);
             offset += 8;
 
@@ -1593,11 +1599,7 @@ impl BleTransport {
     ///
     /// This is a convenience wrapper around `cache_session` that generates
     /// a session ID automatically.
-    pub async fn cache_connection_session(
-        &self,
-        device_id: [u8; 6],
-        session_key: [u8; 32],
-    ) {
+    pub async fn cache_connection_session(&self, device_id: [u8; 6], session_key: [u8; 32]) {
         // Generate session ID from hash of device_id and timestamp
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         std::hash::Hash::hash(&device_id, &mut hasher);
@@ -1745,7 +1747,11 @@ impl BleTransport {
 
         // Read file
         let bytes = std::fs::read(&path).map_err(|e| TransportError::Other {
-            message: format!("Failed to read session cache from {}: {}", path.display(), e),
+            message: format!(
+                "Failed to read session cache from {}: {}",
+                path.display(),
+                e
+            ),
         })?;
 
         // Parse file
@@ -1948,15 +1954,12 @@ impl BleTransport {
                                 let rssi = props.rssi;
 
                                 // Check if it's advertising our service
-                                let has_service = props
-                                    .services
-                                    .iter()
-                                    .any(|s| *s == service_uuid());
+                                let has_service =
+                                    props.services.iter().any(|s| *s == service_uuid());
 
                                 // Generate device ID from peripheral address if available
                                 let btleplug_id_str = id.to_string();
-                                let device_id =
-                                    Self::peripheral_id_to_device_id(&btleplug_id_str);
+                                let device_id = Self::peripheral_id_to_device_id(&btleplug_id_str);
 
                                 let mut device =
                                     DiscoveredDevice::with_btleplug_id(device_id, btleplug_id_str);
@@ -1998,10 +2001,8 @@ impl BleTransport {
                                     if props.local_name.is_some() {
                                         device.local_name = props.local_name.clone();
                                     }
-                                    let has_service = props
-                                        .services
-                                        .iter()
-                                        .any(|s| *s == service_uuid());
+                                    let has_service =
+                                        props.services.iter().any(|s| *s == service_uuid());
                                     if has_service {
                                         device.has_service = true;
                                     }
@@ -2208,12 +2209,17 @@ impl BleTransport {
         // Verify device was discovered and get btleplug ID
         let btleplug_id_str = {
             let discovered = self.discovered_devices.read().await;
-            let device = discovered.get(&device_id).ok_or_else(|| TransportError::Other {
-                message: format!("Device not discovered: {:02x?}", device_id),
-            })?;
-            device.btleplug_id.clone().ok_or_else(|| TransportError::Other {
-                message: format!("Device {:02x?} has no btleplug ID", device_id),
-            })?
+            let device = discovered
+                .get(&device_id)
+                .ok_or_else(|| TransportError::Other {
+                    message: format!("Device not discovered: {:02x?}", device_id),
+                })?;
+            device
+                .btleplug_id
+                .clone()
+                .ok_or_else(|| TransportError::Other {
+                    message: format!("Device {:02x?} has no btleplug ID", device_id),
+                })?
         };
 
         // Check for cached session (for potential PQC handshake optimization)
@@ -2255,9 +2261,12 @@ impl BleTransport {
             })?;
 
         // Connect to the peripheral
-        peripheral.connect().await.map_err(|e| TransportError::Other {
-            message: format!("Failed to connect: {e}"),
-        })?;
+        peripheral
+            .connect()
+            .await
+            .map_err(|e| TransportError::Other {
+                message: format!("Failed to connect: {e}"),
+            })?;
 
         // Discover services
         peripheral
@@ -2273,10 +2282,7 @@ impl BleTransport {
             .iter()
             .find(|s| s.uuid == service_uuid())
             .ok_or_else(|| TransportError::Other {
-                message: format!(
-                    "ant-quic service not found on device {:02x?}",
-                    device_id
-                ),
+                message: format!("ant-quic service not found on device {:02x?}", device_id),
             })?;
 
         // Find TX characteristic (write without response)
@@ -3834,7 +3840,9 @@ mod tests {
             assert_eq!(transport.discovered_device_count().await, 2);
 
             // Prune devices older than 50ms - should remove the first one but keep the recent one
-            let pruned = transport.prune_stale_devices(Duration::from_millis(50)).await;
+            let pruned = transport
+                .prune_stale_devices(Duration::from_millis(50))
+                .await;
             assert_eq!(pruned, 1);
             assert_eq!(transport.discovered_device_count().await, 1);
         }
@@ -3855,7 +3863,10 @@ mod tests {
             assert!(!transport.is_connected_to(&device_id).await);
 
             // Connect to device (simulated for tests)
-            let conn = transport.connect_to_device_simulated(device_id).await.unwrap();
+            let conn = transport
+                .connect_to_device_simulated(device_id)
+                .await
+                .unwrap();
             assert!(conn.read().await.is_connected().await);
             assert_eq!(transport.active_connection_count().await, 1);
             assert!(transport.is_connected_to(&device_id).await);
@@ -3889,7 +3900,10 @@ mod tests {
             // Add device and connect
             let device = DiscoveredDevice::new(device_id);
             transport.add_discovered_device(device).await;
-            transport.connect_to_device_simulated(device_id).await.unwrap();
+            transport
+                .connect_to_device_simulated(device_id)
+                .await
+                .unwrap();
 
             // Cannot connect again while already connected
             let result = transport.connect_to_device_simulated(device_id).await;
@@ -3929,7 +3943,9 @@ mod tests {
                 .unwrap();
 
             // Third should fail
-            let result = transport.connect_to_device_simulated([2, 2, 2, 2, 2, 2]).await;
+            let result = transport
+                .connect_to_device_simulated([2, 2, 2, 2, 2, 2])
+                .await;
             assert!(result.is_err());
             assert!(format!("{:?}", result).contains("limit"));
 
@@ -3985,7 +4001,10 @@ mod tests {
             // Add device and connect
             let device = DiscoveredDevice::new(device_id);
             transport.add_discovered_device(device).await;
-            transport.connect_to_device_simulated(device_id).await.unwrap();
+            transport
+                .connect_to_device_simulated(device_id)
+                .await
+                .unwrap();
 
             // Send with connection should succeed
             let result = transport.send(data, &dest).await;
@@ -4008,7 +4027,10 @@ mod tests {
             // Add device and connect
             let device = DiscoveredDevice::new(device_id);
             transport.add_discovered_device(device).await;
-            transport.connect_to_device_simulated(device_id).await.unwrap();
+            transport
+                .connect_to_device_simulated(device_id)
+                .await
+                .unwrap();
 
             // Small data should succeed (single fragment)
             let small_data = vec![0u8; 100];
@@ -4038,7 +4060,10 @@ mod tests {
             let device_id = [0x11, 0x22, 0x33, 0x44, 0x55, 0x66];
             let device = DiscoveredDevice::new(device_id);
             transport.add_discovered_device(device).await;
-            transport.connect_to_device_simulated(device_id).await.unwrap();
+            transport
+                .connect_to_device_simulated(device_id)
+                .await
+                .unwrap();
 
             // Try to send to UDP address on BLE transport
             let udp_addr = TransportAddr::Udp("192.168.1.1:9000".parse().unwrap());
@@ -4074,7 +4099,10 @@ mod tests {
             // Add device and connect
             let device = DiscoveredDevice::new(device_id);
             transport.add_discovered_device(device).await;
-            transport.connect_to_device_simulated(device_id).await.unwrap();
+            transport
+                .connect_to_device_simulated(device_id)
+                .await
+                .unwrap();
 
             // Take the receiver
             let mut rx = transport.take_inbound_receiver().await.unwrap();
@@ -4131,7 +4159,10 @@ mod tests {
             // Add device and connect
             let device = DiscoveredDevice::new(device_id);
             transport.add_discovered_device(device).await;
-            transport.connect_to_device_simulated(device_id).await.unwrap();
+            transport
+                .connect_to_device_simulated(device_id)
+                .await
+                .unwrap();
 
             // Take the receiver
             let mut rx = transport.take_inbound_receiver().await.unwrap();
@@ -4293,7 +4324,9 @@ mod tests {
             assert_eq!(transport.active_connection_count().await, 2);
 
             // Connect with eviction should work (evicts oldest)
-            let result = transport.connect_with_eviction_simulated([2, 2, 2, 2, 2, 2]).await;
+            let result = transport
+                .connect_with_eviction_simulated([2, 2, 2, 2, 2, 2])
+                .await;
             assert!(result.is_ok());
             assert_eq!(transport.active_connection_count().await, 2);
 
@@ -4456,9 +4489,11 @@ mod tests {
         let fragments = fragmenter.fragment(&data, 5);
 
         assert_eq!(fragments.len(), 1);
-        assert!(FragmentHeader::from_bytes(&fragments[0])
-            .unwrap()
-            .is_single());
+        assert!(
+            FragmentHeader::from_bytes(&fragments[0])
+                .unwrap()
+                .is_single()
+        );
     }
 
     #[test]
@@ -4693,9 +4728,15 @@ mod tests {
         let config = BleConfig::default();
 
         // Session caching configuration
-        assert_eq!(config.session_cache_duration, Duration::from_secs(24 * 60 * 60));
+        assert_eq!(
+            config.session_cache_duration,
+            Duration::from_secs(24 * 60 * 60)
+        );
         assert_eq!(config.max_cached_sessions, 100);
-        assert_eq!(config.session_cleanup_interval, Some(Duration::from_secs(600)));
+        assert_eq!(
+            config.session_cleanup_interval,
+            Some(Duration::from_secs(600))
+        );
         assert!(config.session_persist_path.is_none());
     }
 

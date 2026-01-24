@@ -1073,13 +1073,14 @@ impl NatTraversalEndpoint {
         use crate::transport::UdpTransport;
 
         // Bind UDP socket for both transport registry and Quinn
-        let (udp_transport, quinn_socket) = UdpTransport::bind_for_quinn(bind_addr)
-            .await
-            .map_err(|e| NatTraversalError::NetworkError(format!("Failed to bind UDP socket: {e}")))?;
+        let (udp_transport, quinn_socket) =
+            UdpTransport::bind_for_quinn(bind_addr).await.map_err(|e| {
+                NatTraversalError::NetworkError(format!("Failed to bind UDP socket: {e}"))
+            })?;
 
-        let local_addr = quinn_socket
-            .local_addr()
-            .map_err(|e| NatTraversalError::NetworkError(format!("Failed to get local address: {e}")))?;
+        let local_addr = quinn_socket.local_addr().map_err(|e| {
+            NatTraversalError::NetworkError(format!("Failed to get local address: {e}"))
+        })?;
 
         info!("Bound shared UDP socket at {}", local_addr);
 
@@ -1216,7 +1217,9 @@ impl NatTraversalEndpoint {
         let transport_registry = config.transport_registry.clone();
 
         // Create constrained protocol engine for BLE/LoRa/Serial transports
-        let constrained_engine = Arc::new(ParkingMutex::new(ConstrainedEngine::new(EngineConfig::default())));
+        let constrained_engine = Arc::new(ParkingMutex::new(ConstrainedEngine::new(
+            EngineConfig::default(),
+        )));
 
         // Create channel for forwarding constrained engine events to P2pEndpoint
         let (constrained_event_tx, constrained_event_rx) = mpsc::unbounded_channel();
@@ -1608,7 +1611,9 @@ impl NatTraversalEndpoint {
         let transport_registry = config.transport_registry.clone();
 
         // Create constrained protocol engine for BLE/LoRa/Serial transports
-        let constrained_engine = Arc::new(ParkingMutex::new(ConstrainedEngine::new(EngineConfig::default())));
+        let constrained_engine = Arc::new(ParkingMutex::new(ConstrainedEngine::new(
+            EngineConfig::default(),
+        )));
 
         // Create channel for forwarding constrained engine events to P2pEndpoint
         let (constrained_event_tx, constrained_event_rx) = mpsc::unbounded_channel();
@@ -2476,10 +2481,7 @@ impl NatTraversalEndpoint {
                 .local_addr()
                 .map(|addr| addr.to_string())
                 .unwrap_or_else(|_| "unknown".to_string());
-            info!(
-                "Using pre-bound UDP socket at {}",
-                socket_addr
-            );
+            info!("Using pre-bound UDP socket at {}", socket_addr);
             socket
         } else if let Some(registry_addr) = transport_registry.get_udp_local_addr() {
             // Transport registry has UDP - bind new socket on same interface

@@ -195,6 +195,8 @@ mod token_memory_cache;
 pub mod tracing;
 
 // Public modules with new structure
+/// Constrained protocol engine for low-bandwidth transports (BLE, LoRa)
+pub mod constrained;
 /// Cryptographic operations and raw public key support
 pub mod crypto;
 /// Platform-specific network interface discovery
@@ -203,8 +205,6 @@ pub mod discovery;
 pub mod nat_traversal;
 /// Transport-level protocol implementation
 pub mod transport;
-/// Constrained protocol engine for low-bandwidth transports (BLE, LoRa)
-pub mod constrained;
 
 /// Connection router for automatic protocol engine selection (QUIC vs Constrained)
 pub mod connection_router;
@@ -391,7 +391,9 @@ pub use transport::{
 pub use transport::BleTransport;
 
 // Re-export connection router types for automatic protocol engine selection
-pub use connection_router::{ConnectionRouter, RoutedConnection, RouterConfig, RouterError, RouterStats};
+pub use connection_router::{
+    ConnectionRouter, RoutedConnection, RouterConfig, RouterError, RouterStats,
+};
 
 // #[cfg(fuzzing)]
 // pub mod fuzzing; // Module not implemented yet

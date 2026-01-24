@@ -406,7 +406,9 @@ impl ReceiveWindow {
                 let pos = self
                     .out_of_order
                     .iter()
-                    .position(|(s, _)| self.next_expected.distance_to(*s) > self.next_expected.distance_to(seq))
+                    .position(|(s, _)| {
+                        self.next_expected.distance_to(*s) > self.next_expected.distance_to(seq)
+                    })
                     .unwrap_or(self.out_of_order.len());
                 self.out_of_order.insert(pos, (seq, data));
             }

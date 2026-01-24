@@ -80,7 +80,10 @@ fn test_handshake_simulation() {
     let syn_ack_packets = server
         .process_incoming(&client_addr, &syn_packets[0].data)
         .unwrap();
-    assert!(!syn_ack_packets.is_empty(), "Server should respond with SYN-ACK");
+    assert!(
+        !syn_ack_packets.is_empty(),
+        "Server should respond with SYN-ACK"
+    );
 
     // Client receives SYN-ACK and sends ACK
     let ack_packets = client
@@ -91,7 +94,10 @@ fn test_handshake_simulation() {
     // (We can check events for ConnectionEstablished)
     let mut _client_established = false;
     while let Some(event) = client.next_event() {
-        if matches!(event, ant_quic::constrained::AdapterEvent::ConnectionEstablished { .. }) {
+        if matches!(
+            event,
+            ant_quic::constrained::AdapterEvent::ConnectionEstablished { .. }
+        ) {
             _client_established = true;
         }
     }
@@ -205,7 +211,9 @@ fn test_data_transfer() {
     // Complete handshake
     let (conn_id, syn) = client.connect(&server_addr).unwrap();
     let syn_ack = server.process_incoming(&client_addr, &syn[0].data).unwrap();
-    let ack = client.process_incoming(&server_addr, &syn_ack[0].data).unwrap();
+    let ack = client
+        .process_incoming(&server_addr, &syn_ack[0].data)
+        .unwrap();
     if !ack.is_empty() {
         let _ = server.process_incoming(&client_addr, &ack[0].data);
     }
@@ -378,7 +386,10 @@ fn test_synthetic_addr_uniqueness() {
     let syn3 = lora.to_synthetic_socket_addr();
 
     // All should be unique
-    assert_ne!(syn1, syn2, "Different BLE devices should have different addrs");
+    assert_ne!(
+        syn1, syn2,
+        "Different BLE devices should have different addrs"
+    );
     assert_ne!(syn1, syn3, "BLE and LoRa should have different addrs");
     assert_ne!(syn2, syn3, "Different devices should have different addrs");
 }
@@ -454,7 +465,11 @@ fn test_constrained_event_with_addr() {
     assert_eq!(event_with_addr.remote_addr, ble_addr);
 
     // Verify the event data
-    if let EngineEvent::DataReceived { connection_id, data: event_data } = event_with_addr.event {
+    if let EngineEvent::DataReceived {
+        connection_id,
+        data: event_data,
+    } = event_with_addr.event
+    {
         assert_eq!(connection_id.value(), 42);
         assert_eq!(event_data, data);
     } else {
@@ -493,7 +508,11 @@ async fn test_constrained_event_channel() {
     let received = rx.recv().await.expect("Should receive event");
     assert_eq!(received.remote_addr, ble_addr);
 
-    if let EngineEvent::DataReceived { connection_id, data } = received.event {
+    if let EngineEvent::DataReceived {
+        connection_id,
+        data,
+    } = received.event
+    {
         assert_eq!(connection_id.value(), 99);
         assert_eq!(data, test_data);
     } else {
@@ -519,7 +538,10 @@ fn test_all_engine_event_types() {
         },
         remote_addr: lora_addr.clone(),
     };
-    assert!(matches!(event1.event, EngineEvent::ConnectionAccepted { .. }));
+    assert!(matches!(
+        event1.event,
+        EngineEvent::ConnectionAccepted { .. }
+    ));
 
     // Test ConnectionEstablished
     let event2 = ConstrainedEventWithAddr {
@@ -528,7 +550,10 @@ fn test_all_engine_event_types() {
         },
         remote_addr: lora_addr.clone(),
     };
-    assert!(matches!(event2.event, EngineEvent::ConnectionEstablished { .. }));
+    assert!(matches!(
+        event2.event,
+        EngineEvent::ConnectionEstablished { .. }
+    ));
 
     // Test ConnectionClosed
     let event3 = ConstrainedEventWithAddr {
@@ -569,7 +594,11 @@ fn test_p2p_event_constrained_data_received() {
     };
 
     match event {
-        P2pEvent::ConstrainedDataReceived { remote_addr, connection_id, data } => {
+        P2pEvent::ConstrainedDataReceived {
+            remote_addr,
+            connection_id,
+            data,
+        } => {
             assert_eq!(remote_addr, ble_addr);
             assert_eq!(connection_id, 123);
             assert_eq!(data, test_data);
@@ -630,7 +659,8 @@ fn test_constrained_connection_bidirectional_lookup() {
     constrained_connections.insert(peer_id, conn_id);
 
     // Reverse map: ConnectionId → (PeerId, TransportAddr)
-    let mut constrained_peer_addrs: HashMap<ConnectionId, (ant_quic::PeerId, TransportAddr)> = HashMap::new();
+    let mut constrained_peer_addrs: HashMap<ConnectionId, (ant_quic::PeerId, TransportAddr)> =
+        HashMap::new();
     constrained_peer_addrs.insert(conn_id, (peer_id, addr.clone()));
 
     // Test forward lookup: PeerId → ConnectionId
@@ -656,7 +686,10 @@ fn test_unified_data_received_event() {
     };
 
     match quic_event {
-        P2pEvent::DataReceived { peer_id: p, bytes: b } => {
+        P2pEvent::DataReceived {
+            peer_id: p,
+            bytes: b,
+        } => {
             assert_eq!(p, peer_id);
             assert_eq!(b, 1024);
         }
@@ -671,7 +704,10 @@ fn test_unified_data_received_event() {
     };
 
     match constrained_event {
-        P2pEvent::DataReceived { peer_id: p, bytes: b } => {
+        P2pEvent::DataReceived {
+            peer_id: p,
+            bytes: b,
+        } => {
             assert_eq!(p, peer_id);
             assert_eq!(b, 512);
         }
@@ -682,7 +718,7 @@ fn test_unified_data_received_event() {
 /// Test that UdpTransport::bind_for_quinn creates shared socket
 #[tokio::test]
 async fn test_udp_transport_bind_for_quinn() {
-    use ant_quic::transport::{UdpTransport, TransportProvider};
+    use ant_quic::transport::{TransportProvider, UdpTransport};
 
     // Bind a socket for Quinn sharing
     let result = UdpTransport::bind_for_quinn("127.0.0.1:0".parse().unwrap()).await;
@@ -693,10 +729,16 @@ async fn test_udp_transport_bind_for_quinn() {
     // Both should have the same local address
     let transport_addr = transport.local_address();
     let std_addr = std_socket.local_addr().unwrap();
-    assert_eq!(transport_addr, std_addr, "Transport and socket should share address");
+    assert_eq!(
+        transport_addr, std_addr,
+        "Transport and socket should share address"
+    );
 
     // Transport should be marked as delegated to Quinn
-    assert!(transport.is_delegated_to_quinn(), "Transport should be delegated to Quinn");
+    assert!(
+        transport.is_delegated_to_quinn(),
+        "Transport should be delegated to Quinn"
+    );
     // Use TransportProvider::is_online since UdpTransport implements the trait
     let provider: &dyn TransportProvider = &transport;
     assert!(provider.is_online(), "Transport should be online");
@@ -719,7 +761,10 @@ fn test_peer_connection_transport_addr() {
         last_activity: Instant::now(),
     };
     assert_eq!(peer_conn_udp.remote_addr, udp_addr);
-    assert_eq!(peer_conn_udp.remote_addr.transport_type(), TransportType::Udp);
+    assert_eq!(
+        peer_conn_udp.remote_addr.transport_type(),
+        TransportType::Udp
+    );
 
     // Test with BLE address
     let ble_addr = TransportAddr::Ble {
@@ -734,5 +779,8 @@ fn test_peer_connection_transport_addr() {
         last_activity: Instant::now(),
     };
     assert_eq!(peer_conn_ble.remote_addr, ble_addr);
-    assert_eq!(peer_conn_ble.remote_addr.transport_type(), TransportType::Ble);
+    assert_eq!(
+        peer_conn_ble.remote_addr.transport_type(),
+        TransportType::Ble
+    );
 }

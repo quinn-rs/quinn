@@ -168,7 +168,10 @@ impl ConstrainedEngine {
     /// Initiate a connection to a remote address
     ///
     /// Returns the connection ID and a SYN packet to transmit.
-    pub fn connect(&mut self, remote_addr: SocketAddr) -> Result<(ConnectionId, Vec<u8>), ConstrainedError> {
+    pub fn connect(
+        &mut self,
+        remote_addr: SocketAddr,
+    ) -> Result<(ConnectionId, Vec<u8>), ConstrainedError> {
         if !self.can_accept_connection() {
             return Err(ConstrainedError::SendBufferFull);
         }
@@ -176,7 +179,10 @@ impl ConstrainedEngine {
         // Check if we already have a connection to this address
         if self.addr_to_conn.contains_key(&remote_addr) {
             return Err(ConstrainedError::ConnectionExists(
-                *self.addr_to_conn.get(&remote_addr).unwrap_or(&ConnectionId::new(0)),
+                *self
+                    .addr_to_conn
+                    .get(&remote_addr)
+                    .unwrap_or(&ConnectionId::new(0)),
             ));
         }
 
@@ -199,7 +205,11 @@ impl ConstrainedEngine {
     /// Process an incoming packet
     ///
     /// Returns any response packets that need to be transmitted.
-    pub fn process_incoming(&mut self, remote_addr: SocketAddr, data: &[u8]) -> Result<Vec<(SocketAddr, Vec<u8>)>, ConstrainedError> {
+    pub fn process_incoming(
+        &mut self,
+        remote_addr: SocketAddr,
+        data: &[u8],
+    ) -> Result<Vec<(SocketAddr, Vec<u8>)>, ConstrainedError> {
         let packet = ConstrainedPacket::from_bytes(data)?;
         let header = &packet.header;
         let mut responses = Vec::new();
@@ -251,7 +261,10 @@ impl ConstrainedEngine {
             if !self.can_accept_connection() {
                 // Send RST
                 let rst = super::header::ConstrainedHeader::reset(header.connection_id);
-                responses.push((remote_addr, super::header::ConstrainedPacket::control(rst).to_bytes()));
+                responses.push((
+                    remote_addr,
+                    super::header::ConstrainedPacket::control(rst).to_bytes(),
+                ));
                 return Ok(responses);
             }
 
@@ -278,8 +291,14 @@ impl ConstrainedEngine {
     }
 
     /// Send data on a connection
-    pub fn send(&mut self, connection_id: ConnectionId, data: &[u8]) -> Result<Vec<(SocketAddr, Vec<u8>)>, ConstrainedError> {
-        let conn = self.connections.get_mut(&connection_id)
+    pub fn send(
+        &mut self,
+        connection_id: ConnectionId,
+        data: &[u8],
+    ) -> Result<Vec<(SocketAddr, Vec<u8>)>, ConstrainedError> {
+        let conn = self
+            .connections
+            .get_mut(&connection_id)
             .ok_or(ConstrainedError::ConnectionNotFound(connection_id))?;
 
         conn.send(data)?;
@@ -287,7 +306,10 @@ impl ConstrainedEngine {
         let remote_addr = conn.remote_addr();
         let packets = conn.poll();
 
-        Ok(packets.into_iter().map(|p| (remote_addr, p.to_bytes())).collect())
+        Ok(packets
+            .into_iter()
+            .map(|p| (remote_addr, p.to_bytes()))
+            .collect())
     }
 
     /// Receive data from a connection
@@ -296,8 +318,13 @@ impl ConstrainedEngine {
     }
 
     /// Close a connection gracefully
-    pub fn close(&mut self, connection_id: ConnectionId) -> Result<Vec<(SocketAddr, Vec<u8>)>, ConstrainedError> {
-        let conn = self.connections.get_mut(&connection_id)
+    pub fn close(
+        &mut self,
+        connection_id: ConnectionId,
+    ) -> Result<Vec<(SocketAddr, Vec<u8>)>, ConstrainedError> {
+        let conn = self
+            .connections
+            .get_mut(&connection_id)
             .ok_or(ConstrainedError::ConnectionNotFound(connection_id))?;
 
         let fin = conn.close()?;
@@ -307,8 +334,13 @@ impl ConstrainedEngine {
     }
 
     /// Reset a connection immediately
-    pub fn reset(&mut self, connection_id: ConnectionId) -> Result<Vec<(SocketAddr, Vec<u8>)>, ConstrainedError> {
-        let conn = self.connections.get_mut(&connection_id)
+    pub fn reset(
+        &mut self,
+        connection_id: ConnectionId,
+    ) -> Result<Vec<(SocketAddr, Vec<u8>)>, ConstrainedError> {
+        let conn = self
+            .connections
+            .get_mut(&connection_id)
             .ok_or(ConstrainedError::ConnectionNotFound(connection_id))?;
 
         let rst = conn.reset();
@@ -472,11 +504,12 @@ mod tests {
         let mut engine = ConstrainedEngine::with_defaults();
 
         // Create a SYN packet
-        let syn = ConstrainedPacket::control(
-            super::super::header::ConstrainedHeader::syn(ConnectionId::new(0x1234)),
-        );
+        let syn = ConstrainedPacket::control(super::super::header::ConstrainedHeader::syn(
+            ConnectionId::new(0x1234),
+        ));
 
-        let responses = engine.process_incoming(test_addr(8080), &syn.to_bytes())
+        let responses = engine
+            .process_incoming(test_addr(8080), &syn.to_bytes())
             .expect("process SYN");
 
         // Should have a SYN-ACK response
@@ -486,7 +519,10 @@ mod tests {
 
         // Check event
         let event = engine.next_event();
-        assert!(matches!(event, Some(EngineEvent::ConnectionAccepted { .. })));
+        assert!(matches!(
+            event,
+            Some(EngineEvent::ConnectionAccepted { .. })
+        ));
     }
 
     #[test]
@@ -501,12 +537,14 @@ mod tests {
         let (conn_id, syn_packet) = initiator.connect(responder_addr).expect("connect");
 
         // Responder receives SYN, sends SYN-ACK
-        let responses = responder.process_incoming(initiator_addr, &syn_packet)
+        let responses = responder
+            .process_incoming(initiator_addr, &syn_packet)
             .expect("process SYN");
         assert_eq!(responses.len(), 1);
 
         // Initiator receives SYN-ACK
-        let responses = initiator.process_incoming(responder_addr, &responses[0].1)
+        let responses = initiator
+            .process_incoming(responder_addr, &responses[0].1)
             .expect("process SYN-ACK");
 
         // Should have ACK response (from poll)
@@ -514,7 +552,9 @@ mod tests {
 
         // Check initiator got connected event
         let event = initiator.next_event();
-        assert!(matches!(event, Some(EngineEvent::ConnectionEstablished { connection_id }) if connection_id == conn_id));
+        assert!(
+            matches!(event, Some(EngineEvent::ConnectionEstablished { connection_id }) if connection_id == conn_id)
+        );
     }
 
     #[test]

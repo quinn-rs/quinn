@@ -92,7 +92,10 @@ impl ConstrainedEngineAdapter {
             ((self.next_synthetic >> 8) & 0xFF) as u8,
             (self.next_synthetic & 0xFF) as u8,
         );
-        let socket_addr = SocketAddr::new(std::net::IpAddr::V4(ip), (self.next_synthetic % 65535) as u16);
+        let socket_addr = SocketAddr::new(
+            std::net::IpAddr::V4(ip),
+            (self.next_synthetic % 65535) as u16,
+        );
         self.next_synthetic += 1;
 
         self.addr_map.insert(addr.clone(), socket_addr);
@@ -110,7 +113,10 @@ impl ConstrainedEngineAdapter {
     }
 
     /// Initiate a connection to a remote address
-    pub fn connect(&mut self, remote: &TransportAddr) -> Result<(ConnectionId, Vec<EngineOutput>), ConstrainedError> {
+    pub fn connect(
+        &mut self,
+        remote: &TransportAddr,
+    ) -> Result<(ConnectionId, Vec<EngineOutput>), ConstrainedError> {
         let socket_addr = self.get_or_create_socket_addr(remote);
         let (conn_id, packet) = self.engine.connect(socket_addr)?;
         let output = EngineOutput::new(remote.clone(), packet);
@@ -158,7 +164,10 @@ impl ConstrainedEngineAdapter {
     }
 
     /// Close a connection
-    pub fn close(&mut self, connection_id: ConnectionId) -> Result<Vec<EngineOutput>, ConstrainedError> {
+    pub fn close(
+        &mut self,
+        connection_id: ConnectionId,
+    ) -> Result<Vec<EngineOutput>, ConstrainedError> {
         let responses = self.engine.close(connection_id)?;
 
         Ok(responses
@@ -186,7 +195,10 @@ impl ConstrainedEngineAdapter {
     /// Get the next event from the engine
     pub fn next_event(&mut self) -> Option<AdapterEvent> {
         self.engine.next_event().map(|event| match event {
-            EngineEvent::ConnectionAccepted { connection_id, remote_addr } => {
+            EngineEvent::ConnectionAccepted {
+                connection_id,
+                remote_addr,
+            } => {
                 let addr = self.socket_to_transport(&remote_addr);
                 AdapterEvent::ConnectionAccepted {
                     connection_id,
@@ -196,16 +208,27 @@ impl ConstrainedEngineAdapter {
             EngineEvent::ConnectionEstablished { connection_id } => {
                 AdapterEvent::ConnectionEstablished { connection_id }
             }
-            EngineEvent::DataReceived { connection_id, data } => {
-                AdapterEvent::DataReceived { connection_id, data }
-            }
+            EngineEvent::DataReceived {
+                connection_id,
+                data,
+            } => AdapterEvent::DataReceived {
+                connection_id,
+                data,
+            },
             EngineEvent::ConnectionClosed { connection_id } => {
                 AdapterEvent::ConnectionClosed { connection_id }
             }
-            EngineEvent::ConnectionError { connection_id, error } => {
-                AdapterEvent::ConnectionError { connection_id, error }
-            }
-            EngineEvent::Transmit { remote_addr, packet } => {
+            EngineEvent::ConnectionError {
+                connection_id,
+                error,
+            } => AdapterEvent::ConnectionError {
+                connection_id,
+                error,
+            },
+            EngineEvent::Transmit {
+                remote_addr,
+                packet,
+            } => {
                 let addr = self.socket_to_transport(&remote_addr);
                 AdapterEvent::Transmit {
                     destination: addr,

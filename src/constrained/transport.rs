@@ -71,9 +71,10 @@ pub struct ConstrainedHandle {
 impl ConstrainedHandle {
     /// Initiate a connection to a remote address
     pub fn connect(&self, remote: &TransportAddr) -> Result<ConnectionId, ConstrainedError> {
-        let mut adapter = self.adapter.lock().map_err(|_| {
-            ConstrainedError::Transport("adapter lock poisoned".into())
-        })?;
+        let mut adapter = self
+            .adapter
+            .lock()
+            .map_err(|_| ConstrainedError::Transport("adapter lock poisoned".into()))?;
 
         let (conn_id, outputs) = adapter.connect(remote)?;
 
@@ -87,9 +88,10 @@ impl ConstrainedHandle {
 
     /// Send data on an established connection
     pub fn send(&self, connection_id: ConnectionId, data: &[u8]) -> Result<(), ConstrainedError> {
-        let mut adapter = self.adapter.lock().map_err(|_| {
-            ConstrainedError::Transport("adapter lock poisoned".into())
-        })?;
+        let mut adapter = self
+            .adapter
+            .lock()
+            .map_err(|_| ConstrainedError::Transport("adapter lock poisoned".into()))?;
 
         let outputs = adapter.send(connection_id, data)?;
 
@@ -102,18 +104,20 @@ impl ConstrainedHandle {
 
     /// Receive data from a connection
     pub fn recv(&self, connection_id: ConnectionId) -> Result<Option<Vec<u8>>, ConstrainedError> {
-        let mut adapter = self.adapter.lock().map_err(|_| {
-            ConstrainedError::Transport("adapter lock poisoned".into())
-        })?;
+        let mut adapter = self
+            .adapter
+            .lock()
+            .map_err(|_| ConstrainedError::Transport("adapter lock poisoned".into()))?;
 
         Ok(adapter.recv(connection_id))
     }
 
     /// Close a connection
     pub fn close(&self, connection_id: ConnectionId) -> Result<(), ConstrainedError> {
-        let mut adapter = self.adapter.lock().map_err(|_| {
-            ConstrainedError::Transport("adapter lock poisoned".into())
-        })?;
+        let mut adapter = self
+            .adapter
+            .lock()
+            .map_err(|_| ConstrainedError::Transport("adapter lock poisoned".into()))?;
 
         let outputs = adapter.close(connection_id)?;
 
@@ -126,14 +130,22 @@ impl ConstrainedHandle {
 
     /// Get the number of active connections
     pub fn connection_count(&self) -> usize {
-        self.adapter.lock().map(|a| a.connection_count()).unwrap_or(0)
+        self.adapter
+            .lock()
+            .map(|a| a.connection_count())
+            .unwrap_or(0)
     }
 
     /// Process an incoming packet
-    pub fn process_incoming(&self, source: &TransportAddr, data: &[u8]) -> Result<(), ConstrainedError> {
-        let mut adapter = self.adapter.lock().map_err(|_| {
-            ConstrainedError::Transport("adapter lock poisoned".into())
-        })?;
+    pub fn process_incoming(
+        &self,
+        source: &TransportAddr,
+        data: &[u8],
+    ) -> Result<(), ConstrainedError> {
+        let mut adapter = self
+            .adapter
+            .lock()
+            .map_err(|_| ConstrainedError::Transport("adapter lock poisoned".into()))?;
 
         let outputs = adapter.process_incoming(source, data)?;
 
@@ -239,10 +251,15 @@ impl ConstrainedTransport {
     }
 
     /// Process an incoming packet
-    pub fn process_incoming(&self, source: &TransportAddr, data: &[u8]) -> Result<(), ConstrainedError> {
-        let mut adapter = self.adapter.lock().map_err(|_| {
-            ConstrainedError::Transport("adapter lock poisoned".into())
-        })?;
+    pub fn process_incoming(
+        &self,
+        source: &TransportAddr,
+        data: &[u8],
+    ) -> Result<(), ConstrainedError> {
+        let mut adapter = self
+            .adapter
+            .lock()
+            .map_err(|_| ConstrainedError::Transport("adapter lock poisoned".into()))?;
 
         let outputs = adapter.process_incoming(source, data)?;
 
@@ -273,7 +290,14 @@ impl std::fmt::Debug for ConstrainedTransport {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ConstrainedTransport")
             .field("config", &self.config)
-            .field("connection_count", &self.adapter.lock().map(|a| a.connection_count()).unwrap_or(0))
+            .field(
+                "connection_count",
+                &self
+                    .adapter
+                    .lock()
+                    .map(|a| a.connection_count())
+                    .unwrap_or(0),
+            )
             .finish()
     }
 }
@@ -327,7 +351,9 @@ mod tests {
 
         // Broadband (UDP-like) should NOT use constrained
         let broadband_caps = TransportCapabilities::broadband();
-        assert!(!ConstrainedTransport::should_use_constrained(&broadband_caps));
+        assert!(!ConstrainedTransport::should_use_constrained(
+            &broadband_caps
+        ));
     }
 
     #[tokio::test]

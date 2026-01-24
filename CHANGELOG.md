@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.20.0] - 2026-01-24
+
+### Added
+
+- **Transport-Agnostic Endpoint API**: Higher layers (saorsa-gossip/Communitas) now see a single, unified endpoint
+  - Socket sharing in default constructors: `P2pEndpoint::new()` binds single UDP socket shared with Quinn
+  - Constrained peer registration: Automatic PeerId mapping on `ConnectionAccepted/Established` events
+  - Bidirectional lookup: Both `PeerId → ConnectionId` and `ConnectionId → (PeerId, TransportAddr)`
+  - Unified receive path: `P2pEvent::DataReceived` emitted for ALL transport types (QUIC and constrained)
+
+- **Phase 5 Data Path Completion** (Milestones 5.1, 5.2, 5.3):
+  - Phase 5.1: Multi-Transport Data Path Remediation
+  - Phase 5.2: Constrained event forwarding and socket sharing constructors
+  - Phase 5.3: Transport-agnostic endpoint with unified send/recv paths
+
+- **Constrained Protocol Engine Integration**:
+  - `ConstrainedEventWithAddr` wrapper for events with transport context
+  - Event channel from transport listeners to P2pEndpoint
+  - Activity tracking for constrained connections
+
+### Changed
+
+- `P2pEndpoint::new()` now automatically registers a UDP transport in the registry
+- Default registry is no longer empty - includes socket-sharing UDP transport
+- Constrained data no longer requires special-case handling in higher layers
+
 ## [0.19.0] - 2026-01-23
 
 ### Added

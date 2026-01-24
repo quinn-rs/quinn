@@ -348,7 +348,11 @@ impl Node {
                 stream_id: 0, // P2pEvent doesn't track stream IDs
                 bytes,
             }),
-            P2pEvent::ConstrainedDataReceived { remote_addr, connection_id, data } => {
+            P2pEvent::ConstrainedDataReceived {
+                remote_addr,
+                connection_id,
+                data,
+            } => {
                 // For constrained data, derive a synthetic peer ID from the transport address
                 let synthetic_peer_id = {
                     use std::collections::hash_map::DefaultHasher;

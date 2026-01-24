@@ -64,8 +64,8 @@ fn main() {
 
 #[cfg(feature = "ble")]
 use ant_quic::transport::{
-    BleConfig, BleTransport, DiscoveredDevice, TransportAddr, TransportProvider,
-    ANT_QUIC_SERVICE_UUID,
+    ANT_QUIC_SERVICE_UUID, BleConfig, BleTransport, DiscoveredDevice, TransportAddr,
+    TransportProvider,
 };
 #[cfg(feature = "ble")]
 use std::io::{self, BufRead, Write};
@@ -99,8 +99,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("================");
         println!();
         println!("Usage:");
-        println!("  {} --peripheral    Start as BLE peripheral (advertise)", args[0]);
-        println!("  {} --central       Start as BLE central (scan and connect)", args[0]);
+        println!(
+            "  {} --peripheral    Start as BLE peripheral (advertise)",
+            args[0]
+        );
+        println!(
+            "  {} --central       Start as BLE central (scan and connect)",
+            args[0]
+        );
         println!();
         println!("Requirements:");
         println!("  - BLE hardware (Bluetooth 4.0+ adapter)");
@@ -200,7 +206,8 @@ async fn run_central(transport: BleTransport) -> Result<(), Box<dyn std::error::
     let devices = transport.discovered_devices().await;
     println!("\nDiscovered {} device(s):", devices.len());
 
-    let ant_quic_devices: Vec<&DiscoveredDevice> = devices.iter().filter(|d| d.has_service).collect();
+    let ant_quic_devices: Vec<&DiscoveredDevice> =
+        devices.iter().filter(|d| d.has_service).collect();
 
     if ant_quic_devices.is_empty() {
         println!("\nNo ant-quic BLE peers found nearby.");

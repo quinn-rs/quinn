@@ -68,7 +68,7 @@ impl ConnectionConfig {
     pub fn for_lora() -> Self {
         Self {
             arq: ArqConfig::for_lora(),
-            mss: 50,  // LoRa has very small packets
+            mss: 50, // LoRa has very small packets
             mtu: 55,
             keepalive_interval: Duration::from_secs(60),
             idle_timeout: Duration::from_secs(600),
@@ -133,7 +133,12 @@ pub struct ConstrainedConnection {
 impl ConstrainedConnection {
     /// Create a new outbound connection (initiator)
     pub fn new_outbound(connection_id: ConnectionId, remote_addr: SocketAddr) -> Self {
-        Self::new(connection_id, remote_addr, ConnectionConfig::default(), true)
+        Self::new(
+            connection_id,
+            remote_addr,
+            ConnectionConfig::default(),
+            true,
+        )
     }
 
     /// Create a new outbound connection with config
@@ -147,7 +152,12 @@ impl ConstrainedConnection {
 
     /// Create a new inbound connection (responder)
     pub fn new_inbound(connection_id: ConnectionId, remote_addr: SocketAddr) -> Self {
-        Self::new(connection_id, remote_addr, ConnectionConfig::default(), false)
+        Self::new(
+            connection_id,
+            remote_addr,
+            ConnectionConfig::default(),
+            false,
+        )
     }
 
     /// Create a new inbound connection with config
@@ -235,7 +245,10 @@ impl ConstrainedConnection {
     /// Accept a connection (for inbound connections after receiving SYN)
     ///
     /// Returns a SYN-ACK packet to transmit.
-    pub fn accept(&mut self, syn_seq: SequenceNumber) -> Result<ConstrainedPacket, ConstrainedError> {
+    pub fn accept(
+        &mut self,
+        syn_seq: SequenceNumber,
+    ) -> Result<ConstrainedPacket, ConstrainedError> {
         if self.is_initiator {
             return Err(ConstrainedError::InvalidStateTransition {
                 from: "outbound".to_string(),
@@ -245,9 +258,10 @@ impl ConstrainedConnection {
 
         self.state.transition(StateEvent::RecvSyn)?;
 
-        let syn_ack = ConstrainedPacket::control(
-            ConstrainedHeader::syn_ack(self.connection_id, syn_seq.next()),
-        );
+        let syn_ack = ConstrainedPacket::control(ConstrainedHeader::syn_ack(
+            self.connection_id,
+            syn_seq.next(),
+        ));
 
         self.last_activity = Instant::now();
         Ok(syn_ack)
@@ -367,7 +381,10 @@ impl ConstrainedConnection {
 
                 // Process DATA
                 if header.is_data() && !packet.payload.is_empty() {
-                    if let Some(deliverable) = self.receive_window.receive(header.seq, packet.payload.clone()) {
+                    if let Some(deliverable) = self
+                        .receive_window
+                        .receive(header.seq, packet.payload.clone())
+                    {
                         for (_, data) in deliverable {
                             self.inbound.push_back(data);
                             self.events.push_back(ConnectionEvent::DataReceived(vec![]));
@@ -397,9 +414,10 @@ impl ConstrainedConnection {
 
                 // Process PING
                 if header.is_ping() {
-                    let pong = ConstrainedPacket::control(
-                        ConstrainedHeader::pong(self.connection_id, header.seq),
-                    );
+                    let pong = ConstrainedPacket::control(ConstrainedHeader::pong(
+                        self.connection_id,
+                        header.seq,
+                    ));
                     self.outbound.push_back(pong);
                 }
             }
@@ -437,14 +455,16 @@ impl ConstrainedConnection {
         // Check for state timeout
         if self.state.is_timed_out() {
             let _ = self.state.transition(StateEvent::Timeout);
-            self.events.push_back(ConnectionEvent::Error("Connection timed out".to_string()));
+            self.events
+                .push_back(ConnectionEvent::Error("Connection timed out".to_string()));
             return packets;
         }
 
         // Check for idle timeout
         if self.last_activity.elapsed() > self.config.idle_timeout {
             let _ = self.state.transition(StateEvent::Timeout);
-            self.events.push_back(ConnectionEvent::Error("Idle timeout".to_string()));
+            self.events
+                .push_back(ConnectionEvent::Error("Idle timeout".to_string()));
             return packets;
         }
 
@@ -479,9 +499,10 @@ impl ConstrainedConnection {
             };
 
             if should_ping {
-                let ping = ConstrainedPacket::control(
-                    ConstrainedHeader::ping(self.connection_id, self.local_seq),
-                );
+                let ping = ConstrainedPacket::control(ConstrainedHeader::ping(
+                    self.connection_id,
+                    self.local_seq,
+                ));
                 packets.push(ping);
                 self.last_keepalive = Some(Instant::now());
             }
@@ -573,11 +594,13 @@ mod tests {
     #[test]
     fn test_connection_handshake() {
         // Initiator side
-        let mut initiator = ConstrainedConnection::new_outbound(ConnectionId::new(0x1234), test_addr());
+        let mut initiator =
+            ConstrainedConnection::new_outbound(ConnectionId::new(0x1234), test_addr());
         let syn = initiator.initiate().expect("initiate");
 
         // Responder side
-        let mut responder = ConstrainedConnection::new_inbound(ConnectionId::new(0x1234), test_addr());
+        let mut responder =
+            ConstrainedConnection::new_inbound(ConnectionId::new(0x1234), test_addr());
         let syn_ack = responder.accept(syn.header.seq).expect("accept");
 
         // Process SYN-ACK at initiator
@@ -598,10 +621,12 @@ mod tests {
     #[test]
     fn test_connection_data_transfer() {
         // Set up connected pair
-        let mut sender = ConstrainedConnection::new_outbound(ConnectionId::new(0x1234), test_addr());
+        let mut sender =
+            ConstrainedConnection::new_outbound(ConnectionId::new(0x1234), test_addr());
         sender.initiate().expect("initiate");
 
-        let mut receiver = ConstrainedConnection::new_inbound(ConnectionId::new(0x1234), test_addr());
+        let mut receiver =
+            ConstrainedConnection::new_inbound(ConnectionId::new(0x1234), test_addr());
         let syn_ack = receiver.accept(SequenceNumber::new(0)).expect("accept");
 
         sender.process_packet(&syn_ack).expect("syn-ack");
@@ -638,7 +663,9 @@ mod tests {
         conn.initiate().expect("initiate");
 
         // Simulate established state
-        conn.state.transition(StateEvent::RecvSynAck).expect("established");
+        conn.state
+            .transition(StateEvent::RecvSynAck)
+            .expect("established");
 
         // Send data larger than MSS
         let data = b"Hello, this is a longer message!";
@@ -653,7 +680,9 @@ mod tests {
     fn test_connection_close() {
         let mut conn = ConstrainedConnection::new_outbound(ConnectionId::new(0x1234), test_addr());
         conn.initiate().expect("initiate");
-        conn.state.transition(StateEvent::RecvSynAck).expect("established");
+        conn.state
+            .transition(StateEvent::RecvSynAck)
+            .expect("established");
 
         let fin = conn.close().expect("close");
         assert!(fin.header.is_fin());
@@ -701,11 +730,14 @@ mod tests {
     fn test_process_ping_pong() {
         let mut conn = ConstrainedConnection::new_outbound(ConnectionId::new(0x1234), test_addr());
         conn.initiate().expect("initiate");
-        conn.state.transition(StateEvent::RecvSynAck).expect("established");
+        conn.state
+            .transition(StateEvent::RecvSynAck)
+            .expect("established");
 
-        let ping = ConstrainedPacket::control(
-            ConstrainedHeader::ping(ConnectionId::new(0x1234), SequenceNumber::new(5)),
-        );
+        let ping = ConstrainedPacket::control(ConstrainedHeader::ping(
+            ConnectionId::new(0x1234),
+            SequenceNumber::new(5),
+        ));
 
         conn.process_packet(&ping).expect("process ping");
 

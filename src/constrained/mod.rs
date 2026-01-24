@@ -148,8 +148,7 @@ mod types;
 
 // Re-exports
 pub use adapter::{AdapterEvent, ConstrainedEngineAdapter, EngineOutput};
-pub use transport::{ConstrainedHandle, ConstrainedTransport, ConstrainedTransportConfig};
-pub use arq::{ArqConfig, ReceiveWindow, SendWindow, DEFAULT_WINDOW_SIZE};
+pub use arq::{ArqConfig, DEFAULT_WINDOW_SIZE, ReceiveWindow, SendWindow};
 pub use connection::{
     ConnectionConfig, ConnectionEvent, ConnectionStats, ConstrainedConnection, DEFAULT_MSS,
     DEFAULT_MTU,
@@ -157,6 +156,7 @@ pub use connection::{
 pub use engine::{ConstrainedEngine, EngineConfig, EngineEvent};
 pub use header::{ConstrainedHeader, ConstrainedPacket, HEADER_SIZE};
 pub use state::{ConnectionState, StateEvent, StateMachine};
+pub use transport::{ConstrainedHandle, ConstrainedTransport, ConstrainedTransportConfig};
 pub use types::{
     ConnectionId, ConstrainedAddr, ConstrainedError, PacketFlags, PacketType, SequenceNumber,
 };
