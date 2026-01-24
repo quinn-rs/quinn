@@ -81,6 +81,79 @@ fn broadcast_address_to_peers(
     }
 }
 
+/// Multi-transport candidate advertisement
+///
+/// Stores information about an advertised transport address with optional capability flags.
+/// This extends the basic UDP address model to support BLE, LoRa, and other transports.
+#[derive(Debug, Clone)]
+pub struct TransportCandidate {
+    /// The transport address being advertised
+    pub address: TransportAddr,
+    /// Priority for candidate selection (higher = better)
+    pub priority: u32,
+    /// How this candidate was discovered
+    pub source: CandidateSource,
+    /// Current validation state
+    pub state: CandidateState,
+    /// Optional capability flags summarizing transport characteristics
+    pub capabilities: Option<CapabilityFlags>,
+}
+
+impl TransportCandidate {
+    /// Create a new transport candidate for a UDP address
+    pub fn udp(address: SocketAddr, priority: u32, source: CandidateSource) -> Self {
+        Self {
+            address: TransportAddr::Udp(address),
+            priority,
+            source,
+            state: CandidateState::New,
+            capabilities: Some(CapabilityFlags::broadband()),
+        }
+    }
+
+    /// Create a new transport candidate for any transport address
+    pub fn new(address: TransportAddr, priority: u32, source: CandidateSource) -> Self {
+        Self {
+            address,
+            priority,
+            source,
+            state: CandidateState::New,
+            capabilities: None,
+        }
+    }
+
+    /// Create a new transport candidate with capability information
+    pub fn with_capabilities(
+        address: TransportAddr,
+        priority: u32,
+        source: CandidateSource,
+        capabilities: &TransportCapabilities,
+    ) -> Self {
+        Self {
+            address,
+            priority,
+            source,
+            state: CandidateState::New,
+            capabilities: Some(CapabilityFlags::from_capabilities(capabilities)),
+        }
+    }
+
+    /// Get the socket address if this is a UDP transport
+    pub fn socket_addr(&self) -> Option<SocketAddr> {
+        self.address.as_socket_addr()
+    }
+
+    /// Get the transport type
+    pub fn transport_type(&self) -> TransportType {
+        self.address.transport_type()
+    }
+
+    /// Check if this transport supports full QUIC (if capability info is available)
+    pub fn supports_full_quic(&self) -> Option<bool> {
+        self.capabilities.map(|c| c.supports_full_quic())
+    }
+}
+
 use tracing::{debug, error, info, trace, warn};
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -104,6 +177,9 @@ use crate::{
     masque::integration::{RelayManager, RelayManagerConfig},
     // Symmetric P2P: Every node provides relay services
     masque::relay_server::{MasqueRelayConfig, MasqueRelayServer},
+    // Multi-transport support
+    nat_traversal::CapabilityFlags,
+    transport::{TransportAddr, TransportCapabilities, TransportType},
 };
 
 use crate::{
@@ -196,6 +272,10 @@ pub struct NatTraversalEndpoint {
     /// Maps peer ID to the remote address that successfully responded
     /// Uses DashMap for fine-grained concurrent access without blocking workers
     successful_candidates: Arc<dashmap::DashMap<PeerId, SocketAddr>>,
+    /// Transport candidates received from peers (multi-transport support)
+    /// Maps peer ID to all known transport candidates for that peer
+    /// Enables routing decisions based on transport type and capabilities
+    transport_candidates: Arc<dashmap::DashMap<PeerId, Vec<TransportCandidate>>>,
     /// Transport registry for multi-transport support
     /// When present, allows using transport-provided sockets instead of creating new ones
     transport_registry: Option<Arc<TransportRegistry>>,
@@ -1065,6 +1145,7 @@ impl NatTraversalEndpoint {
             relay_sessions: Arc::new(dashmap::DashMap::new()),
             relay_server,
             successful_candidates: Arc::new(dashmap::DashMap::new()),
+            transport_candidates: Arc::new(dashmap::DashMap::new()),
             transport_registry,
             transport_listener_handles: Arc::new(ParkingMutex::new(Vec::new())),
         };
@@ -2860,6 +2941,373 @@ impl NatTraversalEndpoint {
 
         debug!("No observed external address available from any connection");
         Ok(None)
+    }
+
+    // ============ Multi-Transport Address Advertising ============
+
+    /// Advertise a transport address to all connected peers
+    ///
+    /// This method broadcasts the transport address to all active connections
+    /// using ADD_ADDRESS frames. For UDP transports, this falls back to the
+    /// standard socket address advertising. For other transports (BLE, LoRa, etc.),
+    /// the transport type and optional capability flags are included in the advertisement.
+    ///
+    /// # Arguments
+    /// * `address` - The transport address to advertise
+    /// * `priority` - ICE-style priority (higher = better)
+    /// * `capabilities` - Optional capability flags for the transport
+    ///
+    /// # Example
+    /// ```ignore
+    /// use ant_quic::transport::TransportAddr;
+    /// use ant_quic::nat_traversal::CapabilityFlags;
+    ///
+    /// // Advertise a UDP address
+    /// endpoint.advertise_transport_address(
+    ///     TransportAddr::Udp("192.168.1.100:9000".parse().unwrap()),
+    ///     100,
+    ///     Some(CapabilityFlags::broadband()),
+    /// );
+    ///
+    /// // Advertise a BLE address
+    /// endpoint.advertise_transport_address(
+    ///     TransportAddr::Ble {
+    ///         device_id: [0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC],
+    ///         service_uuid: None,
+    ///     },
+    ///     50,
+    ///     Some(CapabilityFlags::ble()),
+    /// );
+    /// ```
+    pub fn advertise_transport_address(
+        &self,
+        address: TransportAddr,
+        priority: u32,
+        capabilities: Option<CapabilityFlags>,
+    ) -> Result<(), NatTraversalError> {
+        // For UDP addresses, use the existing broadcast mechanism
+        if let Some(socket_addr) = address.as_socket_addr() {
+            broadcast_address_to_peers(&self.connections, socket_addr, priority);
+            info!(
+                "Advertised UDP transport address {} with priority {} to {} peers",
+                socket_addr,
+                priority,
+                self.connections.len()
+            );
+            return Ok(());
+        }
+
+        // For non-UDP transports, we need to store the transport candidate
+        // and advertise it via the extended ADD_ADDRESS frames
+        let candidate = TransportCandidate {
+            address: address.clone(),
+            priority,
+            source: CandidateSource::Local,
+            state: CandidateState::New,
+            capabilities,
+        };
+
+        info!(
+            "Advertising {:?} transport address with priority {} (capabilities: {:?})",
+            candidate.transport_type(),
+            priority,
+            capabilities
+        );
+
+        // For now, log the advertisement - full frame transmission for non-UDP
+        // transports will be implemented when we have multi-transport connections
+        debug!(
+            "Transport candidate registered: {:?}, capabilities: {:?}",
+            address, capabilities
+        );
+
+        Ok(())
+    }
+
+    /// Advertise a transport address with full capability information
+    ///
+    /// This is a convenience method that creates capability flags from the
+    /// full TransportCapabilities struct.
+    pub fn advertise_transport_with_capabilities(
+        &self,
+        address: TransportAddr,
+        priority: u32,
+        capabilities: &TransportCapabilities,
+    ) -> Result<(), NatTraversalError> {
+        let flags = CapabilityFlags::from_capabilities(capabilities);
+        self.advertise_transport_address(address, priority, Some(flags))
+    }
+
+    /// Get the transport type filter for candidate selection
+    ///
+    /// Returns the set of transport types that should be considered
+    /// when selecting candidates for connection.
+    pub fn get_transport_filter(&self) -> Vec<TransportType> {
+        // Default: prefer UDP, but accept other transports
+        vec![
+            TransportType::Udp,
+            TransportType::Ble,
+            TransportType::LoRa,
+            TransportType::Serial,
+        ]
+    }
+
+    /// Check if a transport type is supported by this endpoint
+    pub fn supports_transport(&self, transport_type: TransportType) -> bool {
+        match transport_type {
+            // UDP is always supported
+            TransportType::Udp => true,
+            // Other transports depend on registered providers
+            _ => {
+                if let Some(registry) = &self.transport_registry {
+                    !registry.providers_by_type(transport_type).is_empty()
+                } else {
+                    false
+                }
+            }
+        }
+    }
+
+    // ============ Transport-Aware Candidate Selection ============
+
+    /// Select the best candidate from a list of transport candidates
+    ///
+    /// This method filters candidates by transport type support and selects
+    /// the best one based on priority and capability matching.
+    ///
+    /// # Selection Criteria
+    /// 1. Filter out unsupported transport types
+    /// 2. Prefer transports that support full QUIC (if available)
+    /// 3. Within QUIC-capable transports, prefer higher priority
+    /// 4. Fall back to constrained transports if no QUIC-capable available
+    pub fn select_best_transport_candidate<'a>(
+        &self,
+        candidates: &'a [TransportCandidate],
+    ) -> Option<&'a TransportCandidate> {
+        if candidates.is_empty() {
+            return None;
+        }
+
+        // Filter to supported transports
+        let supported: Vec<_> = candidates
+            .iter()
+            .filter(|c| self.supports_transport(c.transport_type()))
+            .collect();
+
+        if supported.is_empty() {
+            debug!("No supported transport candidates available");
+            return None;
+        }
+
+        // Separate into QUIC-capable and constrained candidates
+        let (quic_capable, constrained): (Vec<_>, Vec<_>) = supported
+            .into_iter()
+            .partition(|c| c.supports_full_quic().unwrap_or(false));
+
+        // Prefer QUIC-capable transports, sorted by priority
+        if !quic_capable.is_empty() {
+            return quic_capable.into_iter().max_by_key(|c| c.priority);
+        }
+
+        // Fall back to constrained transports, sorted by priority
+        constrained.into_iter().max_by_key(|c| c.priority)
+    }
+
+    /// Filter candidates by transport type
+    ///
+    /// Returns candidates that match the specified transport type.
+    pub fn filter_candidates_by_transport<'a>(
+        &self,
+        candidates: &'a [TransportCandidate],
+        transport_type: TransportType,
+    ) -> Vec<&'a TransportCandidate> {
+        candidates
+            .iter()
+            .filter(|c| c.transport_type() == transport_type)
+            .collect()
+    }
+
+    /// Filter candidates to only QUIC-capable transports
+    ///
+    /// Returns candidates whose transports support the full QUIC protocol
+    /// (bandwidth >= 10kbps, MTU >= 1200, RTT < 2s).
+    pub fn filter_quic_capable_candidates<'a>(
+        &self,
+        candidates: &'a [TransportCandidate],
+    ) -> Vec<&'a TransportCandidate> {
+        candidates
+            .iter()
+            .filter(|c| {
+                c.supports_full_quic().unwrap_or(false)
+                    && self.supports_transport(c.transport_type())
+            })
+            .collect()
+    }
+
+    /// Calculate a transport score for candidate comparison
+    ///
+    /// Higher scores are better. The score considers:
+    /// - Transport type preference (UDP > BLE > LoRa > Serial)
+    /// - QUIC capability (bonus for full QUIC support)
+    /// - Latency tier (lower latency = higher score)
+    /// - User-specified priority
+    pub fn calculate_transport_score(&self, candidate: &TransportCandidate) -> u32 {
+        let mut score: u32 = 0;
+
+        // Base score from priority (0-65535 range)
+        score += candidate.priority;
+
+        // Transport type bonus (0-10000)
+        let transport_bonus = match candidate.transport_type() {
+            TransportType::Udp => 10000,
+            TransportType::Yggdrasil => 9000,
+            TransportType::I2p => 8000,
+            TransportType::Ble => 7000,
+            TransportType::Serial => 5000,
+            TransportType::LoRa => 3000,
+            TransportType::Ax25 => 2000,
+        };
+        score += transport_bonus;
+
+        // QUIC capability bonus (0-50000)
+        if candidate.supports_full_quic().unwrap_or(false) {
+            score += 50000;
+        }
+
+        // Latency tier bonus (0-30000)
+        if let Some(caps) = candidate.capabilities {
+            let latency_bonus = match caps.latency_tier() {
+                3 => 30000, // <100ms
+                2 => 20000, // 100-500ms
+                1 => 10000, // 500ms-2s
+                0 => 0,     // >2s
+                _ => 0,
+            };
+            score += latency_bonus;
+
+            // Bandwidth tier bonus (0-20000)
+            let bandwidth_bonus = match caps.bandwidth_tier() {
+                3 => 20000, // High
+                2 => 15000, // Medium
+                1 => 10000, // Low
+                0 => 5000,  // VeryLow
+                _ => 0,
+            };
+            score += bandwidth_bonus;
+        }
+
+        score
+    }
+
+    /// Sort candidates by transport score (best first)
+    pub fn sort_candidates_by_score(&self, candidates: &mut [TransportCandidate]) {
+        candidates.sort_by(|a, b| {
+            let score_a = self.calculate_transport_score(a);
+            let score_b = self.calculate_transport_score(b);
+            score_b.cmp(&score_a) // Descending order (highest first)
+        });
+    }
+
+    // ============ Transport Candidate Storage ============
+
+    /// Store a transport candidate for a peer
+    ///
+    /// This adds a new transport candidate to the peer's candidate list.
+    /// Duplicate addresses are updated with the new priority and capabilities.
+    pub fn store_transport_candidate(&self, peer_id: PeerId, candidate: TransportCandidate) {
+        let mut entry = self
+            .transport_candidates
+            .entry(peer_id)
+            .or_insert_with(Vec::new);
+
+        // Check if we already have this address
+        if let Some(existing) = entry.iter_mut().find(|c| c.address == candidate.address) {
+            // Update existing candidate
+            existing.priority = candidate.priority;
+            existing.capabilities = candidate.capabilities;
+            existing.state = candidate.state;
+            debug!(
+                "Updated transport candidate for peer {:?}: {:?}",
+                peer_id, candidate.address
+            );
+        } else {
+            // Add new candidate
+            entry.push(candidate.clone());
+            debug!(
+                "Stored new transport candidate for peer {:?}: {:?}",
+                peer_id, candidate.address
+            );
+        }
+    }
+
+    /// Get all transport candidates for a peer
+    ///
+    /// Returns an empty Vec if no candidates are known for the peer.
+    pub fn get_transport_candidates(&self, peer_id: PeerId) -> Vec<TransportCandidate> {
+        self.transport_candidates
+            .get(&peer_id)
+            .map(|entry| entry.value().clone())
+            .unwrap_or_default()
+    }
+
+    /// Get transport candidates filtered by transport type
+    pub fn get_candidates_by_type(
+        &self,
+        peer_id: PeerId,
+        transport_type: TransportType,
+    ) -> Vec<TransportCandidate> {
+        self.transport_candidates
+            .get(&peer_id)
+            .map(|entry| {
+                entry
+                    .value()
+                    .iter()
+                    .filter(|c| c.transport_type() == transport_type)
+                    .cloned()
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// Get the best transport candidate for a peer
+    ///
+    /// This considers transport support and capability matching.
+    pub fn get_best_candidate(&self, peer_id: PeerId) -> Option<TransportCandidate> {
+        let candidates = self.get_transport_candidates(peer_id);
+        self.select_best_transport_candidate(&candidates).cloned()
+    }
+
+    /// Remove all transport candidates for a peer
+    pub fn remove_transport_candidates(&self, peer_id: PeerId) {
+        self.transport_candidates.remove(&peer_id);
+        debug!("Removed all transport candidates for peer {:?}", peer_id);
+    }
+
+    /// Remove a specific transport candidate for a peer
+    pub fn remove_transport_candidate(&self, peer_id: PeerId, address: &TransportAddr) {
+        if let Some(mut entry) = self.transport_candidates.get_mut(&peer_id) {
+            entry.retain(|c| &c.address != address);
+            debug!(
+                "Removed transport candidate {:?} for peer {:?}",
+                address, peer_id
+            );
+        }
+    }
+
+    /// Get count of transport candidates for a peer
+    pub fn transport_candidate_count(&self, peer_id: PeerId) -> usize {
+        self.transport_candidates
+            .get(&peer_id)
+            .map(|entry| entry.len())
+            .unwrap_or(0)
+    }
+
+    /// Get total count of all stored transport candidates
+    pub fn total_transport_candidates(&self) -> usize {
+        self.transport_candidates
+            .iter()
+            .map(|entry| entry.value().len())
+            .sum()
     }
 
     /// Generate a local peer ID

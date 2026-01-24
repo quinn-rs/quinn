@@ -15,7 +15,7 @@
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use bytes::{Buf, BufMut};
 
-use crate::coding::{self, Codec, BufExt, BufMutExt};
+use crate::coding::{self, BufExt, BufMutExt};
 use crate::VarInt;
 
 /// ADD_ADDRESS frame for advertising candidate addresses (RFC-compliant)

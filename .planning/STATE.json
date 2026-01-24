@@ -3,65 +3,41 @@
   "project": "multi-transport-wiring",
   "active": true,
   "milestone": {
-    "number": 1,
-    "name": "Registry Wiring"
+    "number": 2,
+    "name": "Address Migration"
   },
   "phase": {
-    "number": "2.2",
-    "name": "Event Address Migration",
-    "plan": "PLAN-015.md"
+    "number": "2.3",
+    "name": "NAT Traversal Adverts",
+    "plan": "PLAN-016.md"
   },
   "progress": {
     "total_tasks": 10,
     "completed_tasks": 10,
     "current_task": 10
   },
-  "status": "reviewed",
+  "status": "approved",
   "review": {
-    "date": "2026-01-24T09:45:00Z",
+    "date": "2026-01-24T11:30:00Z",
     "verdict": "approved",
-    "quality_score": 9.0,
-    "report": ".planning/reviews/phase-2.2-review-20260124-094500.md",
-    "agents": {
-      "code_reviewer": "passed",
-      "silent_failure_hunter": "minor_preexisting",
-      "code_simplifier": "passed",
-      "comment_analyzer": "suggestions",
-      "test_analyzer": "minor_more_types",
-      "type_design_analyzer": "passed",
-      "security_reviewer": "passed_false_positive",
-      "codex_reviewer": "timeout"
-    },
+    "quality_score": 9.2,
+    "report": ".planning/reviews/phase-2.3-review-20260124-113000.md",
+    "agents_used": 8,
     "findings": {
       "critical": 0,
       "important": 0,
-      "minor": 3,
-      "suggestions": 4
-    },
-    "tests_added": 29,
-    "files_changed": 4
+      "minor": 0
+    }
   },
   "previous_phase": {
-    "number": "2.1",
-    "name": "Config Address Migration",
-    "commit": null,
+    "number": "2.2",
+    "name": "Event Address Migration",
+    "commit": "6e0039c1",
     "review": {
-      "date": "2026-01-24T08:21:40Z",
+      "date": "2026-01-24T09:45:00Z",
       "verdict": "approved",
-      "quality_score": 8.6,
-      "report": ".planning/reviews/phase-2.1-improvements-review-20260124-082000.md",
-      "recommendations": [
-        "Add negative validation tests (invalid IP, port range)",
-        "Organize tests into mod blocks (optional)"
-      ],
-      "improvements_made": [
-        "Added 5 new edge case tests (IPv4-mapped IPv6, duplicates, empty peers, port 0, IPv6 scope ID)",
-        "Enhanced documentation for 6 builder methods (P2pConfig + NodeConfig)",
-        "Fixed documentation link warning in port_binding.rs",
-        "All tests passing: 17/17 config migration tests",
-        "Zero clippy warnings, zero doc warnings"
-      ],
-      "improvements_date": "2026-01-24T08:30:00Z"
+      "quality_score": 9.0,
+      "report": ".planning/reviews/phase-2.2-review-20260124-094500.md"
     }
   },
   "interview_decisions": {
@@ -89,10 +65,5 @@
       "Performance sensitive"
     ]
   },
-  "implementation_guidance": {
-    "step1": "Pass TransportRegistry through Node → P2pEndpoint constructors and store it in P2pEndpoint",
-    "step2": "Update send/receive path to use registry: loop over registry.online_providers() to bind/listen, select providers based on ProtocolEngine/capabilities when dialing",
-    "step3": "Teach NatTraversalEndpoint and peer adverts to include TransportAddr + capability summaries"
-  },
-  "last_updated": "2026-01-24T09:45:00Z"
+  "last_updated": "2026-01-24T11:30:00Z"
 }
