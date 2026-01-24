@@ -247,6 +247,152 @@ impl TransportAddr {
             _ => None,
         }
     }
+
+    /// Convert this transport address to a synthetic SocketAddr for internal tracking
+    ///
+    /// For UDP addresses, returns the actual socket address.
+    /// For non-UDP addresses (BLE, LoRa, Serial, etc.), creates a synthetic IPv6 address
+    /// in the documentation range (2001:db8::/32) that uniquely identifies the transport
+    /// endpoint for use with the constrained protocol engine.
+    ///
+    /// The synthetic address encodes:
+    /// - Transport type in the first octet
+    /// - Transport-specific identifier in the remaining bytes
+    /// - Port 0 (since non-UDP transports don't use ports)
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use ant_quic::transport::TransportAddr;
+    ///
+    /// let ble_addr = TransportAddr::ble([0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC], None);
+    /// let synthetic = ble_addr.to_synthetic_socket_addr();
+    /// // Returns a unique IPv6 address encoding the BLE device ID
+    /// ```
+    pub fn to_synthetic_socket_addr(&self) -> SocketAddr {
+        use std::net::{IpAddr, Ipv6Addr};
+
+        match self {
+            Self::Udp(addr) => *addr,
+            Self::Ble { device_id, .. } => {
+                // Create synthetic IPv6 in documentation range: 2001:db8:ble:XXXX:XXXX:XXXX::
+                // Encodes 6-byte MAC address in last 6 bytes of IPv6
+                let addr = Ipv6Addr::new(
+                    0x2001,
+                    0x0db8,
+                    0x0001, // Transport type 1 = BLE
+                    ((device_id[0] as u16) << 8) | (device_id[1] as u16),
+                    ((device_id[2] as u16) << 8) | (device_id[3] as u16),
+                    ((device_id[4] as u16) << 8) | (device_id[5] as u16),
+                    0,
+                    0,
+                );
+                SocketAddr::new(IpAddr::V6(addr), 0)
+            }
+            Self::LoRa { device_addr, .. } => {
+                // Create synthetic IPv6: 2001:db8:lora:XXXX::
+                let addr = Ipv6Addr::new(
+                    0x2001,
+                    0x0db8,
+                    0x0002, // Transport type 2 = LoRa
+                    ((device_addr[0] as u16) << 8) | (device_addr[1] as u16),
+                    ((device_addr[2] as u16) << 8) | (device_addr[3] as u16),
+                    0,
+                    0,
+                    0,
+                );
+                SocketAddr::new(IpAddr::V6(addr), 0)
+            }
+            Self::Serial { port } => {
+                // Hash the port name to create a unique address
+                use std::hash::{Hash, Hasher};
+                let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                port.hash(&mut hasher);
+                let hash = hasher.finish();
+                let addr = Ipv6Addr::new(
+                    0x2001,
+                    0x0db8,
+                    0x0003, // Transport type 3 = Serial
+                    (hash >> 48) as u16,
+                    (hash >> 32) as u16,
+                    (hash >> 16) as u16,
+                    hash as u16,
+                    0,
+                );
+                SocketAddr::new(IpAddr::V6(addr), 0)
+            }
+            Self::Ax25 { callsign, ssid } => {
+                // Hash callsign+ssid
+                use std::hash::{Hash, Hasher};
+                let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                callsign.hash(&mut hasher);
+                ssid.hash(&mut hasher);
+                let hash = hasher.finish();
+                let addr = Ipv6Addr::new(
+                    0x2001,
+                    0x0db8,
+                    0x0004, // Transport type 4 = AX.25
+                    (hash >> 48) as u16,
+                    (hash >> 32) as u16,
+                    (hash >> 16) as u16,
+                    hash as u16,
+                    0,
+                );
+                SocketAddr::new(IpAddr::V6(addr), 0)
+            }
+            Self::I2p { destination } => {
+                // Use first 8 bytes of destination as identifier
+                let addr = Ipv6Addr::new(
+                    0x2001,
+                    0x0db8,
+                    0x0005, // Transport type 5 = I2P
+                    ((destination[0] as u16) << 8) | (destination[1] as u16),
+                    ((destination[2] as u16) << 8) | (destination[3] as u16),
+                    ((destination[4] as u16) << 8) | (destination[5] as u16),
+                    ((destination[6] as u16) << 8) | (destination[7] as u16),
+                    0,
+                );
+                SocketAddr::new(IpAddr::V6(addr), 0)
+            }
+            Self::Yggdrasil { address } => {
+                // Yggdrasil already has 128-bit address, use directly with marker
+                let addr = Ipv6Addr::new(
+                    0x2001,
+                    0x0db8,
+                    0x0006, // Transport type 6 = Yggdrasil
+                    ((address[0] as u16) << 8) | (address[1] as u16),
+                    ((address[2] as u16) << 8) | (address[3] as u16),
+                    ((address[4] as u16) << 8) | (address[5] as u16),
+                    ((address[6] as u16) << 8) | (address[7] as u16),
+                    0,
+                );
+                SocketAddr::new(IpAddr::V6(addr), 0)
+            }
+            Self::Broadcast { transport_type } => {
+                // Use all-ones for broadcast
+                let type_code = match transport_type {
+                    TransportType::Udp => 0,
+                    TransportType::Ble => 1,
+                    TransportType::LoRa => 2,
+                    TransportType::Serial => 3,
+                    TransportType::Ax25 => 4,
+                    TransportType::I2p => 5,
+                    TransportType::Yggdrasil => 6,
+                };
+                let addr = Ipv6Addr::new(
+                    0x2001,
+                    0x0db8,
+                    type_code,
+                    0xFFFF,
+                    0xFFFF,
+                    0xFFFF,
+                    0xFFFF,
+                    0xFFFF,
+                );
+                SocketAddr::new(IpAddr::V6(addr), 0)
+            }
+        }
+    }
 }
 
 impl fmt::Debug for TransportAddr {

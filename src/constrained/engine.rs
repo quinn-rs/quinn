@@ -13,6 +13,7 @@
 
 use super::connection::{ConnectionConfig, ConnectionEvent, ConstrainedConnection};
 use super::header::ConstrainedPacket;
+use super::state::ConnectionState;
 use super::types::{ConnectionId, ConstrainedError};
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -400,6 +401,11 @@ impl ConstrainedEngine {
     /// Get list of active connection IDs
     pub fn active_connections(&self) -> Vec<ConnectionId> {
         self.connections.keys().copied().collect()
+    }
+
+    /// Get the state of a specific connection
+    pub fn connection_state(&self, connection_id: ConnectionId) -> Option<ConnectionState> {
+        self.connections.get(&connection_id).map(|c| c.state())
     }
 }
 

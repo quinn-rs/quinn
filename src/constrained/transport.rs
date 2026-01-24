@@ -60,7 +60,7 @@ impl ConstrainedTransportConfig {
 }
 
 /// Handle for sending data through the constrained transport
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct ConstrainedHandle {
     /// Shared adapter
     adapter: Arc<Mutex<ConstrainedEngineAdapter>>,
@@ -157,6 +157,26 @@ impl ConstrainedHandle {
     /// Get the next event from the engine
     pub fn next_event(&self) -> Option<AdapterEvent> {
         self.adapter.lock().ok().and_then(|mut a| a.next_event())
+    }
+
+    /// Get the state of a specific connection
+    pub fn connection_state(
+        &self,
+        connection_id: ConnectionId,
+    ) -> Option<crate::constrained::ConnectionState> {
+        self.adapter
+            .lock()
+            .ok()
+            .and_then(|a| a.connection_state(connection_id))
+    }
+
+    /// Get all active connection IDs
+    pub fn active_connections(&self) -> Vec<ConnectionId> {
+        self.adapter
+            .lock()
+            .ok()
+            .map(|a| a.active_connections())
+            .unwrap_or_default()
     }
 }
 

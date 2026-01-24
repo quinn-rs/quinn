@@ -11,6 +11,7 @@
 //! to transport providers. It abstracts the engine interface for easy integration.
 
 use super::engine::{ConstrainedEngine, EngineConfig, EngineEvent};
+use super::state::ConnectionState;
 use super::types::{ConnectionId, ConstrainedAddr, ConstrainedError};
 use crate::transport::TransportAddr;
 use std::net::SocketAddr;
@@ -227,6 +228,16 @@ impl ConstrainedEngineAdapter {
     /// Get mutable access to the underlying engine
     pub fn engine_mut(&mut self) -> &mut ConstrainedEngine {
         &mut self.engine
+    }
+
+    /// Get the state of a specific connection
+    pub fn connection_state(&self, connection_id: ConnectionId) -> Option<ConnectionState> {
+        self.engine.connection_state(connection_id)
+    }
+
+    /// Get all active connection IDs
+    pub fn active_connections(&self) -> Vec<ConnectionId> {
+        self.engine.active_connections()
     }
 }
 

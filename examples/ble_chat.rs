@@ -54,22 +54,33 @@
 //! - Session resumption tokens (32 bytes vs ~8KB handshake)
 //! - Efficient reconnection via cached keys
 
-#![cfg(feature = "ble")]
+// Stub main for when BLE feature is disabled
+#[cfg(not(feature = "ble"))]
+fn main() {
+    eprintln!("This example requires the 'ble' feature.");
+    eprintln!("Run with: cargo run --example ble_chat --features ble");
+    std::process::exit(1);
+}
 
+#[cfg(feature = "ble")]
 use ant_quic::transport::{
     BleConfig, BleTransport, DiscoveredDevice, TransportAddr, TransportProvider,
     ANT_QUIC_SERVICE_UUID,
 };
+#[cfg(feature = "ble")]
 use std::io::{self, BufRead, Write};
+#[cfg(feature = "ble")]
 use std::time::Duration;
 
 /// Mode of operation
+#[cfg(feature = "ble")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Mode {
     Central,
     Peripheral,
 }
 
+#[cfg(feature = "ble")]
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize logging
@@ -129,6 +140,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 /// Run as BLE peripheral (advertise and accept connections)
+#[cfg(feature = "ble")]
 async fn run_peripheral(transport: BleTransport) -> Result<(), Box<dyn std::error::Error>> {
     println!("\n=== BLE Chat - Peripheral Mode ===");
     println!("Advertising ant-quic service...");
@@ -168,6 +180,7 @@ async fn run_peripheral(transport: BleTransport) -> Result<(), Box<dyn std::erro
 }
 
 /// Run as BLE central (scan for and connect to peripherals)
+#[cfg(feature = "ble")]
 async fn run_central(transport: BleTransport) -> Result<(), Box<dyn std::error::Error>> {
     println!("\n=== BLE Chat - Central Mode ===");
     println!("Scanning for ant-quic BLE peers...");
@@ -271,6 +284,7 @@ async fn run_central(transport: BleTransport) -> Result<(), Box<dyn std::error::
 }
 
 /// Run an interactive chat session with a connected peer
+#[cfg(feature = "ble")]
 async fn run_chat_session(
     transport: &BleTransport,
     device_id: [u8; 6],

@@ -55,6 +55,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
+use crate::constrained::ConnectionId as ConstrainedConnectionId;
 use crate::transport::TransportAddr;
 
 use tokio::sync::{RwLock, broadcast};
@@ -130,6 +131,13 @@ pub struct P2pEndpoint {
     /// Routes connections through either QUIC (for broadband) or Constrained
     /// engine (for BLE/LoRa) based on transport capabilities.
     router: Arc<RwLock<ConnectionRouter>>,
+
+    /// Mapping from PeerId to ConnectionId for constrained connections
+    ///
+    /// When a peer is connected via a constrained transport (BLE, LoRa, etc.),
+    /// this map stores the ConstrainedEngine's ConnectionId for that peer.
+    /// UDP/QUIC peers are NOT in this map - they use the standard QUIC connection.
+    constrained_connections: Arc<RwLock<HashMap<PeerId, ConstrainedConnectionId>>>,
 }
 
 impl std::fmt::Debug for P2pEndpoint {
@@ -552,6 +560,7 @@ impl P2pEndpoint {
             bootstrap_cache,
             transport_registry,
             router: Arc::new(RwLock::new(router)),
+            constrained_connections: Arc::new(RwLock::new(HashMap::new())),
         })
     }
 
@@ -783,6 +792,68 @@ impl P2pEndpoint {
     /// Get routing statistics
     pub async fn routing_stats(&self) -> crate::connection_router::RouterStats {
         self.router.read().await.stats().clone()
+    }
+
+    /// Register a constrained connection for a peer
+    ///
+    /// This associates a PeerId with a ConstrainedEngine ConnectionId, enabling
+    /// send() to use the proper constrained protocol for reliable delivery.
+    ///
+    /// # Arguments
+    ///
+    /// * `peer_id` - The peer's identity
+    /// * `conn_id` - The ConnectionId from the ConstrainedEngine
+    ///
+    /// # Returns
+    ///
+    /// The previous ConnectionId if one was already registered for this peer.
+    pub async fn register_constrained_connection(
+        &self,
+        peer_id: PeerId,
+        conn_id: ConstrainedConnectionId,
+    ) -> Option<ConstrainedConnectionId> {
+        let old = self.constrained_connections.write().await.insert(peer_id, conn_id);
+        debug!(
+            "Registered constrained connection for peer {:?}: conn_id={:?}",
+            peer_id, conn_id
+        );
+        old
+    }
+
+    /// Unregister a constrained connection for a peer
+    ///
+    /// Call this when a constrained connection is closed or reset.
+    ///
+    /// # Returns
+    ///
+    /// The ConnectionId if one was registered for this peer.
+    pub async fn unregister_constrained_connection(
+        &self,
+        peer_id: &PeerId,
+    ) -> Option<ConstrainedConnectionId> {
+        let removed = self.constrained_connections.write().await.remove(peer_id);
+        if removed.is_some() {
+            debug!("Unregistered constrained connection for peer {:?}", peer_id);
+        }
+        removed
+    }
+
+    /// Check if a peer has a constrained connection
+    pub async fn has_constrained_connection(&self, peer_id: &PeerId) -> bool {
+        self.constrained_connections.read().await.contains_key(peer_id)
+    }
+
+    /// Get the ConnectionId for a peer's constrained connection
+    pub async fn get_constrained_connection_id(
+        &self,
+        peer_id: &PeerId,
+    ) -> Option<ConstrainedConnectionId> {
+        self.constrained_connections.read().await.get(peer_id).copied()
+    }
+
+    /// Get the number of active constrained connections
+    pub async fn constrained_connection_count(&self) -> usize {
+        self.constrained_connections.read().await.len()
     }
 
     /// Derive a peer ID from a transport address (for constrained connections)
@@ -1572,71 +1643,96 @@ impl P2pEndpoint {
             return Err(EndpointError::ShuttingDown);
         }
 
-        // TODO(Phase 2.3): Select transport provider based on peer's advertised address type
-        //
-        // Future implementation will:
-        // 1. Query connected_peers metadata for peer's transport addresses
-        // 2. Match addresses with available transport providers in transport_registry
-        // 3. Select provider based on:
-        //    - Transport type (UDP, BLE, LoRa, etc.)
-        //    - Protocol engine requirements (Quic vs Constrained)
-        //    - Link quality and availability
-        //
-        // For now, use the default UDP/QUIC connection path for all peers.
-        //
-        // Example future code structure:
-        // ```
-        // let peer_info = self.connected_peers.read().await
-        //     .get(peer_id)
-        //     .ok_or(EndpointError::PeerNotFound(*peer_id))?;
-        //
-        // // Get peer's preferred transport address
-        // let transport_addr = peer_info.transport_addr.clone(); // Future field
-        //
-        // // Find suitable transport provider
-        // if let Some(provider) = self.transport_registry.provider_for_addr(&transport_addr) {
-        //     // Use provider's protocol engine
-        //     match provider.protocol_engine() {
-        //         ProtocolEngine::Quic => {
-        //             // Use QUIC connection (current path)
-        //         }
-        //         ProtocolEngine::Constrained => {
-        //             // Use constrained protocol via provider.send()
-        //             provider.send(data, &transport_addr).await
-        //                 .map_err(|e| EndpointError::Connection(e.to_string()))?;
-        //             return Ok(());
-        //         }
-        //     }
-        // }
-        // ```
-
-        // Current implementation: Use existing QUIC connection (UDP transport)
-        let connection = self
-            .inner
-            .get_connection(peer_id)
-            .map_err(EndpointError::NatTraversal)?
+        // Get peer's transport address to determine which engine/transport to use
+        let peer_info = self.connected_peers.read().await;
+        let transport_addr = peer_info
+            .get(peer_id)
+            .map(|conn| conn.remote_addr.clone())
             .ok_or(EndpointError::PeerNotFound(*peer_id))?;
+        drop(peer_info); // Release read lock before async operations
 
-        let mut send_stream = connection
-            .open_uni()
-            .await
-            .map_err(|e| EndpointError::Connection(e.to_string()))?;
+        // Select protocol engine based on transport address
+        let engine = {
+            let mut router = self.router.write().await;
+            router.select_engine_for_addr(&transport_addr)
+        };
 
-        send_stream
-            .write_all(data)
-            .await
-            .map_err(|e| EndpointError::Connection(e.to_string()))?;
+        match engine {
+            crate::transport::ProtocolEngine::Quic => {
+                // Use existing QUIC connection (UDP transport)
+                let connection = self
+                    .inner
+                    .get_connection(peer_id)
+                    .map_err(EndpointError::NatTraversal)?
+                    .ok_or(EndpointError::PeerNotFound(*peer_id))?;
 
-        send_stream
-            .finish()
-            .map_err(|e| EndpointError::Connection(e.to_string()))?;
+                let mut send_stream = connection
+                    .open_uni()
+                    .await
+                    .map_err(|e| EndpointError::Connection(e.to_string()))?;
+
+                send_stream
+                    .write_all(data)
+                    .await
+                    .map_err(|e| EndpointError::Connection(e.to_string()))?;
+
+                send_stream
+                    .finish()
+                    .map_err(|e| EndpointError::Connection(e.to_string()))?;
+
+                debug!("Sent {} bytes to peer {:?} via QUIC", data.len(), peer_id);
+            }
+            crate::transport::ProtocolEngine::Constrained => {
+                // Check if we have an established constrained connection for this peer
+                let maybe_conn_id = self.constrained_connections.read().await.get(peer_id).copied();
+
+                if let Some(conn_id) = maybe_conn_id {
+                    // Use ConstrainedEngine for reliable delivery
+                    let engine = self.inner.constrained_engine();
+                    let responses = {
+                        let mut engine = engine.lock();
+                        engine
+                            .send(conn_id, data)
+                            .map_err(|e| EndpointError::Connection(e.to_string()))?
+                    };
+
+                    // Send any packets generated by the constrained engine
+                    for (_dest_addr, packet_data) in responses {
+                        self.transport_registry
+                            .send(&packet_data, &transport_addr)
+                            .await
+                            .map_err(|e| EndpointError::Connection(e.to_string()))?;
+                    }
+
+                    debug!(
+                        "Sent {} bytes to peer {:?} via constrained engine ({})",
+                        data.len(),
+                        peer_id,
+                        transport_addr.transport_type()
+                    );
+                } else {
+                    // No established connection - send directly via transport
+                    // This path is used for initial connection or connectionless messages
+                    self.transport_registry
+                        .send(data, &transport_addr)
+                        .await
+                        .map_err(|e| EndpointError::Connection(e.to_string()))?;
+
+                    debug!(
+                        "Sent {} bytes to peer {:?} via constrained transport (direct, {})",
+                        data.len(),
+                        peer_id,
+                        transport_addr.transport_type()
+                    );
+                }
+            }
+        }
 
         // Update last activity
         if let Some(peer_conn) = self.connected_peers.write().await.get_mut(peer_id) {
             peer_conn.last_activity = Instant::now();
         }
 
-        debug!("Sent {} bytes to peer {:?}", data.len(), peer_id);
         Ok(())
     }
 
@@ -1944,6 +2040,7 @@ impl Clone for P2pEndpoint {
             bootstrap_cache: Arc::clone(&self.bootstrap_cache),
             transport_registry: Arc::clone(&self.transport_registry),
             router: Arc::clone(&self.router),
+            constrained_connections: Arc::clone(&self.constrained_connections),
         }
     }
 }

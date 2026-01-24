@@ -321,7 +321,7 @@ impl fmt::Display for ConstrainedAddr {
 }
 
 /// Errors that can occur in the constrained protocol
-#[derive(Debug, Error)]
+#[derive(Debug, Clone, Error)]
 pub enum ConstrainedError {
     /// Packet too small to contain header
     #[error("packet too small: expected at least {expected} bytes, got {actual}")]

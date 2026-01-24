@@ -40,6 +40,8 @@ pub struct UdpTransport {
     capabilities: TransportCapabilities,
     local_addr: SocketAddr,
     online: AtomicBool,
+    /// Whether the socket has been delegated to Quinn (recv handled externally)
+    delegated_to_quinn: AtomicBool,
     stats: UdpTransportStats,
     inbound_tx: mpsc::Sender<InboundDatagram>,
     shutdown_tx: mpsc::Sender<()>,
@@ -90,6 +92,7 @@ impl UdpTransport {
             capabilities: TransportCapabilities::broadband(),
             local_addr,
             online: AtomicBool::new(true),
+            delegated_to_quinn: AtomicBool::new(false),
             stats: UdpTransportStats::default(),
             inbound_tx,
             shutdown_tx,
@@ -101,9 +104,61 @@ impl UdpTransport {
         Ok(transport)
     }
 
+    /// Bind a new UDP transport for use with Quinn (no recv loop)
+    ///
+    /// This creates a transport where the socket will be shared with Quinn's
+    /// QUIC endpoint. The transport can still send, but receiving is handled
+    /// by Quinn's internal polling.
+    ///
+    /// # Arguments
+    ///
+    /// * `addr` - The socket address to bind to. Use `0.0.0.0:0` for automatic port selection.
+    ///
+    /// # Returns
+    ///
+    /// Returns a tuple of:
+    /// - The `UdpTransport` for use in the transport registry
+    /// - The `std::net::UdpSocket` for Quinn's endpoint
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the socket cannot be bound.
+    pub async fn bind_for_quinn(addr: SocketAddr) -> io::Result<(Self, std::net::UdpSocket)> {
+        let socket = UdpSocket::bind(addr).await?;
+        let local_addr = socket.local_addr()?;
+
+        // Convert to std socket for Quinn
+        let std_socket = socket.into_std()?;
+
+        // Recreate tokio socket from the std socket (they share the underlying fd)
+        let std_socket_for_transport = std_socket.try_clone()?;
+        let tokio_socket = UdpSocket::from_std(std_socket_for_transport)?;
+        let socket_arc = Arc::new(tokio_socket);
+
+        let (inbound_tx, _) = mpsc::channel(1024);
+        let (shutdown_tx, _shutdown_rx) = mpsc::channel(1);
+
+        let transport = Self {
+            socket: socket_arc,
+            capabilities: TransportCapabilities::broadband(),
+            local_addr,
+            online: AtomicBool::new(true),
+            delegated_to_quinn: AtomicBool::new(true), // Quinn handles recv
+            stats: UdpTransportStats::default(),
+            inbound_tx,
+            shutdown_tx,
+        };
+
+        // Do NOT spawn recv loop - Quinn will handle packet reception
+
+        Ok((transport, std_socket))
+    }
+
     /// Create a UDP transport from an existing socket
     ///
     /// This is useful when you want to share a socket with other components.
+    /// Note: This spawns a recv loop, so don't use this if Quinn will handle recv.
+    /// Use `bind_for_quinn()` instead for Quinn integration.
     pub fn from_socket(socket: Arc<UdpSocket>, local_addr: SocketAddr) -> Self {
         let (inbound_tx, _) = mpsc::channel(1024);
         let (shutdown_tx, shutdown_rx) = mpsc::channel(1);
@@ -113,6 +168,7 @@ impl UdpTransport {
             capabilities: TransportCapabilities::broadband(),
             local_addr,
             online: AtomicBool::new(true),
+            delegated_to_quinn: AtomicBool::new(false),
             stats: UdpTransportStats::default(),
             inbound_tx,
             shutdown_tx,
@@ -120,6 +176,14 @@ impl UdpTransport {
 
         transport.spawn_recv_loop(socket, shutdown_rx);
         transport
+    }
+
+    /// Check if this transport's recv is delegated to Quinn
+    ///
+    /// When true, the socket is shared with Quinn's QUIC endpoint and
+    /// packet reception is handled by Quinn, not this transport.
+    pub fn is_delegated_to_quinn(&self) -> bool {
+        self.delegated_to_quinn.load(Ordering::SeqCst)
     }
 
     fn spawn_recv_loop(&self, socket: Arc<UdpSocket>, mut shutdown_rx: mpsc::Receiver<()>) {

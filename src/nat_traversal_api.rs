@@ -14,6 +14,7 @@
 
 use std::{fmt, net::SocketAddr, sync::Arc, time::Duration};
 
+use crate::constrained::{ConstrainedEngine, EngineConfig};
 use crate::transport::TransportRegistry;
 
 /// Creates a bind address that allows the OS to select a random available port
@@ -282,6 +283,9 @@ pub struct NatTraversalEndpoint {
     /// Task handles for transport listener tasks
     /// Used for cleanup on shutdown
     transport_listener_handles: Arc<ParkingMutex<Vec<tokio::task::JoinHandle<()>>>>,
+    /// Constrained protocol engine for BLE/LoRa/Serial transports
+    /// Handles the constrained protocol for non-UDP transports
+    constrained_engine: Arc<ParkingMutex<ConstrainedEngine>>,
 }
 
 /// Configuration for NAT traversal behavior
@@ -1070,7 +1074,7 @@ impl NatTraversalEndpoint {
             .map(|arc| arc.as_ref())
             .unwrap_or(&empty_registry);
         let (inner_endpoint, event_tx, event_rx, local_addr) =
-            Self::create_inner_endpoint(&config, token_store, registry_ref).await?;
+            Self::create_inner_endpoint(&config, token_store, registry_ref, None).await?;
 
         // Update discovery manager with the actual bound address
         {
@@ -1127,6 +1131,9 @@ impl NatTraversalEndpoint {
         // Store transport registry from config for multi-transport support
         let transport_registry = config.transport_registry.clone();
 
+        // Create constrained protocol engine for BLE/LoRa/Serial transports
+        let constrained_engine = Arc::new(ParkingMutex::new(ConstrainedEngine::new(EngineConfig::default())));
+
         let endpoint = Self {
             inner_endpoint: Some(inner_endpoint.clone()),
             config: config.clone(),
@@ -1148,6 +1155,7 @@ impl NatTraversalEndpoint {
             transport_candidates: Arc::new(dashmap::DashMap::new()),
             transport_registry,
             transport_listener_handles: Arc::new(ParkingMutex::new(Vec::new())),
+            constrained_engine,
         };
 
         // Multi-transport listening: Spawn receive tasks for all online transports
@@ -1186,6 +1194,8 @@ impl NatTraversalEndpoint {
                     // Spawn task to receive from this transport's inbound channel
                     let mut inbound_rx = provider.inbound();
                     let shutdown_clone = endpoint.shutdown.clone();
+                    let engine_clone = endpoint.constrained_engine.clone();
+                    let registry_clone = endpoint.transport_registry.clone();
 
                     let handle = tokio::spawn(async move {
                         debug!("Started listening on transport '{}'", transport_name);
@@ -1206,8 +1216,6 @@ impl NatTraversalEndpoint {
                                 datagram = inbound_rx.recv() => {
                                     match datagram {
                                         Some(datagram) => {
-                                            // Phase 1.2: Log received datagrams for now
-                                            // Full routing to QUIC endpoint will be added in Phase 2.3
                                             debug!(
                                                 "Received {} bytes from {} on transport '{}' ({})",
                                                 datagram.data.len(),
@@ -1216,8 +1224,425 @@ impl NatTraversalEndpoint {
                                                 transport_type
                                             );
 
-                                            // TODO(Phase 2.3): Route to QUIC endpoint for processing
-                                            // Will require address migration and multi-transport packet handling
+                                            // Convert TransportAddr to SocketAddr for constrained engine
+                                            // The constrained engine uses SocketAddr internally for connection tracking
+                                            let remote_addr = datagram.source.to_synthetic_socket_addr();
+
+                                            // Route to constrained engine for processing
+                                            let responses = {
+                                                let mut engine = engine_clone.lock();
+                                                match engine.process_incoming(remote_addr, &datagram.data) {
+                                                    Ok(responses) => responses,
+                                                    Err(e) => {
+                                                        debug!(
+                                                            "Constrained engine error processing packet from {}: {:?}",
+                                                            datagram.source, e
+                                                        );
+                                                        Vec::new()
+                                                    }
+                                                }
+                                            };
+
+                                            // Send any response packets back through the transport
+                                            if !responses.is_empty() {
+                                                if let Some(registry) = &registry_clone {
+                                                    for (_dest_addr, response_data) in responses {
+                                                        // Send response back to the source transport address
+                                                        if let Err(e) = registry.send(&response_data, &datagram.source).await {
+                                                            debug!(
+                                                                "Failed to send constrained response to {}: {:?}",
+                                                                datagram.source, e
+                                                            );
+                                                        }
+                                                    }
+                                                }
+                                            }
+
+                                            // Process events from the constrained engine
+                                            {
+                                                let mut engine = engine_clone.lock();
+                                                while let Some(event) = engine.next_event() {
+                                                    debug!("Constrained engine event: {:?}", event);
+                                                    // Events will be forwarded to P2pEndpoint in Task 4
+                                                }
+                                            }
+                                        }
+                                        None => {
+                                            debug!("Transport '{}' inbound channel closed", transport_name);
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        debug!("Transport listener for '{}' terminated", transport_name);
+                    });
+
+                    handles.push(handle);
+                }
+
+                // Store handles for cleanup on shutdown
+                if !handles.is_empty() {
+                    let mut listener_handles = endpoint.transport_listener_handles.lock();
+                    listener_handles.extend(handles);
+                    info!(
+                        "Started {} transport listener tasks (excluding UDP)",
+                        listener_handles.len()
+                    );
+                }
+            } else {
+                debug!("No online transports found in registry");
+            }
+        }
+
+        // v0.13.0+: All nodes are symmetric P2P nodes - always start accepting connections
+        {
+            let endpoint_clone = inner_endpoint.clone();
+            let shutdown_clone = endpoint.shutdown.clone();
+            let event_tx_clone = event_tx.clone();
+            let connections_clone = endpoint.connections.clone();
+            let emitted_events_clone = emitted_established_events.clone();
+            let relay_server_clone = endpoint.relay_server.clone();
+
+            tokio::spawn(async move {
+                Self::accept_connections(
+                    endpoint_clone,
+                    shutdown_clone,
+                    event_tx_clone,
+                    connections_clone,
+                    emitted_events_clone,
+                    relay_server_clone,
+                )
+                .await;
+            });
+
+            info!("Started accepting connections (symmetric P2P node)");
+        }
+
+        // Start background discovery polling task
+        let discovery_manager_clone = endpoint.discovery_manager.clone();
+        let shutdown_clone = endpoint.shutdown.clone();
+        let event_tx_clone = event_tx;
+        let connections_clone = endpoint.connections.clone();
+
+        let local_peer_id_for_poll = endpoint.local_peer_id;
+        tokio::spawn(async move {
+            Self::poll_discovery(
+                discovery_manager_clone,
+                shutdown_clone,
+                event_tx_clone,
+                connections_clone,
+                event_callback_for_poll,
+                local_peer_id_for_poll,
+            )
+            .await;
+        });
+
+        info!("Started discovery polling task");
+
+        // Start local candidate discovery for our own address
+        {
+            // parking_lot locks don't poison - no need for map_err
+            let mut discovery = endpoint.discovery_manager.lock();
+
+            // Start discovery for our own peer ID to discover local candidates
+            let local_peer_id = endpoint.local_peer_id;
+            let bootstrap_nodes = endpoint.bootstrap_nodes.read().clone();
+
+            discovery
+                .start_discovery(local_peer_id, bootstrap_nodes)
+                .map_err(|e| NatTraversalError::CandidateDiscoveryFailed(e.to_string()))?;
+
+            info!(
+                "Started local candidate discovery for peer {:?}",
+                local_peer_id
+            );
+        }
+
+        Ok(endpoint)
+    }
+
+    /// Create a new NAT traversal endpoint with a pre-bound socket for Quinn sharing
+    ///
+    /// This variant allows passing a pre-bound `std::net::UdpSocket` that will be
+    /// shared between the transport registry and Quinn's QUIC endpoint. Use this
+    /// with `UdpTransport::bind_for_quinn()` for proper socket sharing.
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - NAT traversal configuration
+    /// * `event_callback` - Optional callback for NAT traversal events
+    /// * `token_store` - Optional token store for authentication
+    /// * `quinn_socket` - Pre-bound socket from `UdpTransport::bind_for_quinn()`
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use ant_quic::transport::udp::UdpTransport;
+    ///
+    /// // Bind transport and get socket for Quinn
+    /// let (udp_transport, quinn_socket) = UdpTransport::bind_for_quinn(addr).await?;
+    ///
+    /// // Register transport
+    /// registry.register(Arc::new(udp_transport))?;
+    ///
+    /// // Create endpoint with shared socket
+    /// let endpoint = NatTraversalEndpoint::new_with_socket(
+    ///     config,
+    ///     None,
+    ///     None,
+    ///     Some(quinn_socket),
+    /// ).await?;
+    /// ```
+    pub async fn new_with_socket(
+        config: NatTraversalConfig,
+        event_callback: Option<Box<dyn Fn(NatTraversalEvent) + Send + Sync>>,
+        token_store: Option<Arc<dyn crate::TokenStore>>,
+        quinn_socket: Option<std::net::UdpSocket>,
+    ) -> Result<Self, NatTraversalError> {
+        // Wrap the callback in Arc so it can be shared with background tasks
+        let event_callback: Option<Arc<dyn Fn(NatTraversalEvent) + Send + Sync>> =
+            event_callback.map(|cb| Arc::from(cb) as Arc<dyn Fn(NatTraversalEvent) + Send + Sync>);
+
+        // Validate configuration
+        config
+            .validate()
+            .map_err(|e| NatTraversalError::ConfigError(e.to_string()))?;
+
+        // Initialize known peers for discovery and coordination
+        // Uses parking_lot::RwLock for faster, non-poisoning access
+        let bootstrap_nodes = Arc::new(ParkingRwLock::new(
+            config
+                .known_peers
+                .iter()
+                .map(|&address| BootstrapNode {
+                    address,
+                    last_seen: std::time::Instant::now(),
+                    can_coordinate: true, // All nodes can coordinate in v0.13.0+
+                    rtt: None,
+                    coordination_count: 0,
+                })
+                .collect(),
+        ));
+
+        // Create candidate discovery manager
+        let discovery_config = DiscoveryConfig {
+            total_timeout: config.coordination_timeout,
+            max_candidates: config.max_candidates,
+            enable_symmetric_prediction: config.enable_symmetric_nat,
+            bound_address: config.bind_addr, // Will be updated with actual address after binding
+            ..DiscoveryConfig::default()
+        };
+
+        // v0.13.0+: All nodes are symmetric P2P nodes - no role parameter needed
+
+        // Uses parking_lot::Mutex for faster, non-poisoning access
+        let discovery_manager = Arc::new(ParkingMutex::new(CandidateDiscoveryManager::new(
+            discovery_config,
+        )));
+
+        // Create QUIC endpoint with NAT traversal enabled
+        // If transport_registry is provided in config, use it; otherwise create empty registry
+        let empty_registry = crate::transport::TransportRegistry::new();
+        let registry_ref = config
+            .transport_registry
+            .as_ref()
+            .map(|arc| arc.as_ref())
+            .unwrap_or(&empty_registry);
+        let (inner_endpoint, event_tx, event_rx, local_addr) =
+            Self::create_inner_endpoint(&config, token_store, registry_ref, quinn_socket).await?;
+
+        // Update discovery manager with the actual bound address
+        {
+            // parking_lot::Mutex doesn't poison - no need for map_err
+            let mut discovery = discovery_manager.lock();
+            discovery.set_bound_address(local_addr);
+            info!(
+                "Updated discovery manager with bound address: {}",
+                local_addr
+            );
+        }
+
+        let emitted_established_events = Arc::new(dashmap::DashSet::new());
+
+        // Create MASQUE relay manager if relay fallback is enabled
+        let relay_manager = if config.enable_relay_fallback && !config.relay_nodes.is_empty() {
+            let relay_config = RelayManagerConfig {
+                max_relays: config.relay_nodes.len().min(5), // Cap at 5 relays
+                connect_timeout: config.coordination_timeout,
+                ..RelayManagerConfig::default()
+            };
+            let manager = RelayManager::new(relay_config);
+            // Add configured relay nodes
+            for relay_addr in &config.relay_nodes {
+                manager.add_relay_node(*relay_addr).await;
+            }
+            Some(Arc::new(manager))
+        } else {
+            None
+        };
+
+        // Symmetric P2P: Create MASQUE relay server so this node can provide relay services
+        // Per ADR-004: All nodes are equal and participate in relaying with resource budgets
+        let relay_server = if config.enable_relay_service {
+            let relay_config = MasqueRelayConfig {
+                max_sessions: 100, // Reasonable limit for resource budget
+                require_authentication: true,
+                ..MasqueRelayConfig::default()
+            };
+            // Use the local address as the public address (will be updated when external address is discovered)
+            let server = MasqueRelayServer::new(relay_config, local_addr);
+            info!(
+                "Created MASQUE relay server on {} (symmetric P2P node)",
+                local_addr
+            );
+            Some(Arc::new(server))
+        } else {
+            None
+        };
+
+        // Clone the callback for background tasks before moving into endpoint
+        let event_callback_for_poll = event_callback.clone();
+
+        // Store transport registry from config for multi-transport support
+        let transport_registry = config.transport_registry.clone();
+
+        // Create constrained protocol engine for BLE/LoRa/Serial transports
+        let constrained_engine = Arc::new(ParkingMutex::new(ConstrainedEngine::new(EngineConfig::default())));
+
+        let endpoint = Self {
+            inner_endpoint: Some(inner_endpoint.clone()),
+            config: config.clone(),
+            bootstrap_nodes,
+            active_sessions: Arc::new(dashmap::DashMap::new()),
+            discovery_manager,
+            event_callback,
+            shutdown: Arc::new(AtomicBool::new(false)),
+            event_tx: Some(event_tx.clone()),
+            event_rx: ParkingMutex::new(event_rx),
+            connections: Arc::new(dashmap::DashMap::new()),
+            local_peer_id: Self::generate_local_peer_id(),
+            timeout_config: config.timeouts.clone(),
+            emitted_established_events: emitted_established_events.clone(),
+            relay_manager,
+            relay_sessions: Arc::new(dashmap::DashMap::new()),
+            relay_server,
+            successful_candidates: Arc::new(dashmap::DashMap::new()),
+            transport_candidates: Arc::new(dashmap::DashMap::new()),
+            transport_registry,
+            transport_listener_handles: Arc::new(ParkingMutex::new(Vec::new())),
+            constrained_engine,
+        };
+
+        // Multi-transport listening: Spawn receive tasks for all online transports
+        // Phase 1.2: Listen on all transports, log for now (full routing in Phase 2.3)
+        if let Some(registry) = &endpoint.transport_registry {
+            let online_providers: Vec<_> = registry.online_providers().collect();
+            let transport_count = online_providers.len();
+
+            if transport_count > 0 {
+                let transport_names: Vec<_> = online_providers
+                    .iter()
+                    .map(|p| format!("{}({})", p.name(), p.transport_type()))
+                    .collect();
+
+                debug!(
+                    "Listening on {} transports: {}",
+                    transport_count,
+                    transport_names.join(", ")
+                );
+
+                let mut handles = Vec::new();
+
+                for provider in online_providers {
+                    let transport_type = provider.transport_type();
+                    let transport_name = provider.name().to_string();
+
+                    // Skip UDP transports since they're already handled by the QUIC endpoint
+                    if transport_type == crate::transport::TransportType::Udp {
+                        debug!(
+                            "Skipping UDP transport '{}' (already handled by QUIC endpoint)",
+                            transport_name
+                        );
+                        continue;
+                    }
+
+                    // Spawn task to receive from this transport's inbound channel
+                    let mut inbound_rx = provider.inbound();
+                    let shutdown_clone = endpoint.shutdown.clone();
+                    let engine_clone = endpoint.constrained_engine.clone();
+                    let registry_clone = endpoint.transport_registry.clone();
+
+                    let handle = tokio::spawn(async move {
+                        debug!("Started listening on transport '{}'", transport_name);
+
+                        loop {
+                            tokio::select! {
+                                // Check shutdown signal
+                                _ = async {
+                                    while !shutdown_clone.load(std::sync::atomic::Ordering::Relaxed) {
+                                        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                                    }
+                                } => {
+                                    debug!("Shutting down transport listener for '{}'", transport_name);
+                                    break;
+                                }
+
+                                // Receive inbound datagrams
+                                datagram = inbound_rx.recv() => {
+                                    match datagram {
+                                        Some(datagram) => {
+                                            debug!(
+                                                "Received {} bytes from {} on transport '{}' ({})",
+                                                datagram.data.len(),
+                                                datagram.source,
+                                                transport_name,
+                                                transport_type
+                                            );
+
+                                            // Convert TransportAddr to SocketAddr for constrained engine
+                                            // The constrained engine uses SocketAddr internally for connection tracking
+                                            let remote_addr = datagram.source.to_synthetic_socket_addr();
+
+                                            // Route to constrained engine for processing
+                                            let responses = {
+                                                let mut engine = engine_clone.lock();
+                                                match engine.process_incoming(remote_addr, &datagram.data) {
+                                                    Ok(responses) => responses,
+                                                    Err(e) => {
+                                                        debug!(
+                                                            "Constrained engine error processing packet from {}: {:?}",
+                                                            datagram.source, e
+                                                        );
+                                                        Vec::new()
+                                                    }
+                                                }
+                                            };
+
+                                            // Send any response packets back through the transport
+                                            if !responses.is_empty() {
+                                                if let Some(registry) = &registry_clone {
+                                                    for (_dest_addr, response_data) in responses {
+                                                        // Send response back to the source transport address
+                                                        if let Err(e) = registry.send(&response_data, &datagram.source).await {
+                                                            debug!(
+                                                                "Failed to send constrained response to {}: {:?}",
+                                                                datagram.source, e
+                                                            );
+                                                        }
+                                                    }
+                                                }
+                                            }
+
+                                            // Process events from the constrained engine
+                                            {
+                                                let mut engine = engine_clone.lock();
+                                                while let Some(event) = engine.next_event() {
+                                                    debug!("Constrained engine event: {:?}", event);
+                                                    // Events will be forwarded to P2pEndpoint in Task 4
+                                                }
+                                            }
                                         }
                                         None => {
                                             debug!("Transport '{}' inbound channel closed", transport_name);
@@ -1331,6 +1756,22 @@ impl NatTraversalEndpoint {
     /// enabling multi-transport support and shared socket management.
     pub fn transport_registry(&self) -> Option<&Arc<TransportRegistry>> {
         self.transport_registry.as_ref()
+    }
+
+    /// Get a reference to the constrained protocol engine
+    ///
+    /// The constrained engine handles connections over non-QUIC transports
+    /// (BLE, LoRa, Serial, etc.). Use this for:
+    /// - Initiating constrained connections
+    /// - Sending/receiving data on constrained connections
+    /// - Processing constrained connection events
+    ///
+    /// # Thread Safety
+    ///
+    /// The returned `Arc<ParkingMutex<ConstrainedEngine>>` is thread-safe and can
+    /// be shared across async tasks.
+    pub fn constrained_engine(&self) -> &Arc<ParkingMutex<ConstrainedEngine>> {
+        &self.constrained_engine
     }
 
     /// Emit an event to both the events vector and the callback (if present)
@@ -1753,6 +2194,7 @@ impl NatTraversalEndpoint {
         config: &NatTraversalConfig,
         token_store: Option<Arc<dyn crate::TokenStore>>,
         transport_registry: &crate::transport::TransportRegistry,
+        quinn_socket: Option<std::net::UdpSocket>,
     ) -> Result<
         (
             InnerEndpoint,
@@ -1892,51 +2334,38 @@ impl NatTraversalEndpoint {
             client_config
         };
 
-        // Extract UDP socket from transport registry if available, otherwise create new one
-        // This enables socket sharing between transport layer and NAT traversal
-        let std_socket = if let Some(udp_socket) = transport_registry.get_udp_socket() {
-            let socket_addr = udp_socket
+        // Get UDP socket for Quinn endpoint
+        // Priority: 1) quinn_socket parameter, 2) transport registry address, 3) create new
+        let std_socket = if let Some(socket) = quinn_socket {
+            // Use pre-bound socket (preferred for socket sharing with transport registry)
+            let socket_addr = socket
                 .local_addr()
                 .map(|addr| addr.to_string())
                 .unwrap_or_else(|_| "unknown".to_string());
             info!(
-                "Using UDP socket from transport registry at {}",
+                "Using pre-bound UDP socket at {}",
                 socket_addr
             );
-            // Try to extract std socket from Arc<UdpSocket>
-            // This requires converting tokio socket to std socket
-            match Arc::try_unwrap(udp_socket) {
-                Ok(tokio_socket) => {
-                    // We have ownership - can convert directly
-                    tokio_socket.into_std().map_err(|e| {
-                        NatTraversalError::NetworkError(format!(
-                            "Failed to convert tokio socket to std: {e}"
-                        ))
-                    })?
-                }
-                Err(arc_socket) => {
-                    // Socket is still shared - need to duplicate or create new
-                    // For backward compatibility, fall back to creating new socket on same interface
-                    let registry_addr = arc_socket.local_addr().map_err(|e| {
-                        NatTraversalError::NetworkError(format!(
-                            "Failed to get socket address: {e}"
-                        ))
-                    })?;
-                    info!(
-                        "Transport registry socket is shared (Arc count > 1), creating new socket on same interface"
-                    );
-                    let ip = registry_addr.ip();
-                    let new_addr = std::net::SocketAddr::new(ip, 0);
-                    let socket = UdpSocket::bind(new_addr).await.map_err(|e| {
-                        NatTraversalError::NetworkError(format!("Failed to bind UDP socket: {e}"))
-                    })?;
-                    socket.into_std().map_err(|e| {
-                        NatTraversalError::NetworkError(format!("Failed to convert socket: {e}"))
-                    })?
-                }
-            }
+            socket
+        } else if let Some(registry_addr) = transport_registry.get_udp_local_addr() {
+            // Transport registry has UDP - bind new socket on same interface
+            // Note: We can't share the registry's socket directly because:
+            // 1. It's wrapped in Arc<UdpSocket> which we can't unwrap
+            // 2. Both Quinn and transport would try to recv, causing races
+            // Instead, bind to same IP with random port for consistency
+            info!(
+                "Transport registry has UDP at {}, creating Quinn socket on same interface",
+                registry_addr
+            );
+            let new_addr = std::net::SocketAddr::new(registry_addr.ip(), 0);
+            let socket = UdpSocket::bind(new_addr).await.map_err(|e| {
+                NatTraversalError::NetworkError(format!("Failed to bind UDP socket: {e}"))
+            })?;
+            socket.into_std().map_err(|e| {
+                NatTraversalError::NetworkError(format!("Failed to convert socket: {e}"))
+            })?
         } else {
-            // No UDP transport in registry - fall back to creating new socket
+            // No transport registry UDP - create new socket
             // Use config.bind_addr if provided, otherwise random port
             let bind_addr = config
                 .bind_addr

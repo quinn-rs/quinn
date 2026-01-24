@@ -78,6 +78,12 @@ pub enum TransportError {
     /// Broadcast not supported by this transport
     BroadcastNotSupported,
 
+    /// No provider registered for the address type
+    NoProviderForAddress {
+        /// The address type that has no provider
+        addr_type: TransportType,
+    },
+
     /// Transport-specific error
     Other {
         /// Error message
@@ -102,6 +108,9 @@ impl fmt::Display for TransportError {
             Self::SendFailed { reason } => write!(f, "send failed: {reason}"),
             Self::ReceiveFailed { reason } => write!(f, "receive failed: {reason}"),
             Self::BroadcastNotSupported => write!(f, "broadcast not supported"),
+            Self::NoProviderForAddress { addr_type } => {
+                write!(f, "no provider registered for address type: {addr_type}")
+            }
             Self::Other { message } => write!(f, "{message}"),
         }
     }
@@ -479,6 +488,36 @@ impl TransportRegistry {
             }
         }
         None
+    }
+
+    /// Send data to a destination address via the appropriate transport provider
+    ///
+    /// This is a convenience method that looks up the correct provider for the
+    /// destination address type and sends the data through it.
+    ///
+    /// # Arguments
+    ///
+    /// * `data` - The data to send
+    /// * `dest` - The destination transport address
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if no suitable provider is found or if the send fails.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// let ble_addr = TransportAddr::ble([0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC], None);
+    /// registry.send(b"hello", &ble_addr).await?;
+    /// ```
+    pub async fn send(&self, data: &[u8], dest: &TransportAddr) -> Result<(), TransportError> {
+        let provider = self
+            .provider_for_addr(dest)
+            .ok_or(TransportError::NoProviderForAddress {
+                addr_type: dest.transport_type(),
+            })?;
+
+        provider.send(data, dest).await
     }
 }
 
