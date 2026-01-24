@@ -85,14 +85,18 @@
 //! - [`engine`] - Main protocol engine
 
 // Sub-modules
+mod adapter;
 mod arq;
 mod connection;
 mod engine;
 mod header;
 mod state;
+mod transport;
 mod types;
 
 // Re-exports
+pub use adapter::{AdapterEvent, ConstrainedEngineAdapter, EngineOutput};
+pub use transport::{ConstrainedHandle, ConstrainedTransport, ConstrainedTransportConfig};
 pub use arq::{ArqConfig, ReceiveWindow, SendWindow, DEFAULT_WINDOW_SIZE};
 pub use connection::{
     ConnectionConfig, ConnectionEvent, ConnectionStats, ConstrainedConnection, DEFAULT_MSS,
@@ -101,4 +105,6 @@ pub use connection::{
 pub use engine::{ConstrainedEngine, EngineConfig, EngineEvent};
 pub use header::{ConstrainedHeader, ConstrainedPacket, HEADER_SIZE};
 pub use state::{ConnectionState, StateEvent, StateMachine};
-pub use types::{ConnectionId, ConstrainedError, PacketFlags, PacketType, SequenceNumber};
+pub use types::{
+    ConnectionId, ConstrainedAddr, ConstrainedError, PacketFlags, PacketType, SequenceNumber,
+};

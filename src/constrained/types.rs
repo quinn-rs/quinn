@@ -14,7 +14,10 @@
 //! - [`ConstrainedError`] - Error handling
 
 use std::fmt;
+use std::net::SocketAddr;
 use thiserror::Error;
+
+use crate::transport::TransportAddr;
 
 /// Connection identifier for the constrained protocol
 ///
@@ -256,6 +259,67 @@ impl fmt::Display for PacketFlags {
     }
 }
 
+/// Address wrapper for constrained protocol connections
+///
+/// This wraps `TransportAddr` to provide constrained-specific functionality
+/// while maintaining compatibility with the transport system.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ConstrainedAddr(TransportAddr);
+
+impl ConstrainedAddr {
+    /// Create a new constrained address from a transport address
+    pub fn new(addr: TransportAddr) -> Self {
+        Self(addr)
+    }
+
+    /// Get the underlying transport address
+    pub fn transport_addr(&self) -> &TransportAddr {
+        &self.0
+    }
+
+    /// Consume self and return the underlying transport address
+    pub fn into_transport_addr(self) -> TransportAddr {
+        self.0
+    }
+
+    /// Check if this address supports the constrained protocol
+    ///
+    /// Constrained protocol is used for bandwidth-limited transports like BLE and LoRa.
+    pub fn is_constrained_transport(&self) -> bool {
+        matches!(
+            self.0,
+            TransportAddr::Ble { .. }
+                | TransportAddr::LoRa { .. }
+                | TransportAddr::Serial { .. }
+                | TransportAddr::Ax25 { .. }
+        )
+    }
+}
+
+impl From<TransportAddr> for ConstrainedAddr {
+    fn from(addr: TransportAddr) -> Self {
+        Self(addr)
+    }
+}
+
+impl From<ConstrainedAddr> for TransportAddr {
+    fn from(addr: ConstrainedAddr) -> Self {
+        addr.0
+    }
+}
+
+impl From<SocketAddr> for ConstrainedAddr {
+    fn from(addr: SocketAddr) -> Self {
+        Self(TransportAddr::Udp(addr))
+    }
+}
+
+impl fmt::Display for ConstrainedAddr {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
 /// Errors that can occur in the constrained protocol
 #[derive(Debug, Error)]
 pub enum ConstrainedError {
@@ -335,6 +399,60 @@ pub enum ConstrainedError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_constrained_addr_from_transport() {
+        let ble_addr = TransportAddr::Ble {
+            device_id: [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF],
+            service_uuid: None,
+        };
+        let constrained = ConstrainedAddr::from(ble_addr.clone());
+        assert!(constrained.is_constrained_transport());
+        assert_eq!(*constrained.transport_addr(), ble_addr);
+    }
+
+    #[test]
+    fn test_constrained_addr_from_socket() {
+        let socket: SocketAddr = "127.0.0.1:8080".parse().unwrap();
+        let constrained = ConstrainedAddr::from(socket);
+        assert!(!constrained.is_constrained_transport());
+        assert_eq!(
+            *constrained.transport_addr(),
+            TransportAddr::Udp("127.0.0.1:8080".parse().unwrap())
+        );
+    }
+
+    #[test]
+    fn test_constrained_addr_into_transport() {
+        let ble_addr = TransportAddr::Ble {
+            device_id: [0x11, 0x22, 0x33, 0x44, 0x55, 0x66],
+            service_uuid: None,
+        };
+        let constrained = ConstrainedAddr::new(ble_addr.clone());
+        let back: TransportAddr = constrained.into();
+        assert_eq!(back, ble_addr);
+    }
+
+    #[test]
+    fn test_constrained_addr_transport_detection() {
+        // BLE is constrained
+        let ble = ConstrainedAddr::new(TransportAddr::Ble {
+            device_id: [0; 6],
+            service_uuid: None,
+        });
+        assert!(ble.is_constrained_transport());
+
+        // LoRa is constrained
+        let lora = ConstrainedAddr::new(TransportAddr::LoRa {
+            device_addr: [0; 4],
+            params: crate::transport::LoRaParams::default(),
+        });
+        assert!(lora.is_constrained_transport());
+
+        // UDP is not constrained (uses QUIC)
+        let udp = ConstrainedAddr::new(TransportAddr::Udp("0.0.0.0:0".parse().unwrap()));
+        assert!(!udp.is_constrained_transport());
+    }
 
     #[test]
     fn test_connection_id() {
