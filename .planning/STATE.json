@@ -7,29 +7,22 @@
     "name": "Data Path Completion"
   },
   "phase": {
-    "number": "5.1",
-    "name": "Multi-Transport Data Path Remediation",
-    "plan": ".planning/plans/PLAN-024.md"
+    "number": "5.2",
+    "name": "Multi-Transport Data Path Completion",
+    "plan": ".planning/plans/PLAN-025.md"
   },
   "progress": {
-    "total_tasks": 5,
-    "completed_tasks": 5,
-    "current_task": 5
+    "total_tasks": 4,
+    "completed_tasks": 4,
+    "current_task": 4
   },
   "status": "completed",
   "previous_phase": {
-    "number": "4.3",
-    "name": "Protocol Engine Selection",
-    "commit": "e6159b1e",
-    "review": {
-      "date": "2026-01-24T23:00:00Z",
-      "verdict": "approved",
-      "quality_score": 9.0,
-      "report": ".planning/reviews/phase-4.3-review-20260124.md",
-      "note": "Protocol engine selection complete. 55 new tests, ~3ns selection overhead."
-    }
+    "number": "5.1",
+    "name": "Multi-Transport Data Path Remediation",
+    "commit": "ecc99f49"
   },
-  "remediation_reason": "External review found three critical gaps: (1) send path ignores transport providers, (2) inbound datagrams are dropped, (3) socket sharing broken due to Arc::try_unwrap",
+  "remediation_reason": "External review: (1) inbound constrained traffic dead-ends at TODO, (2) Quinn ignores registry socket, (3) P2pEndpoint can't receive constrained data",
   "completed_milestones": [
     {
       "number": 1,
@@ -52,7 +45,7 @@
       "phases": ["4.1", "4.2", "4.3"]
     }
   ],
-  "completed_phases_in_milestone": ["5.1"],
+  "completed_phases_in_milestone": ["5.1", "5.2"],
   "interview_decisions": {
     "problem": "Missing functionality - BLE/LoRa/etc unusable despite abstraction existing",
     "success_criteria": "Production ready - full multi-transport with tested BLE, constrained engine, docs",
@@ -78,5 +71,5 @@
       "Performance sensitive"
     ]
   },
-  "last_updated": "2026-01-25T01:30:00Z"
+  "last_updated": "2026-01-25T02:30:00Z"
 }

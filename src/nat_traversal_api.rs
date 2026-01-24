@@ -14,7 +14,7 @@
 
 use std::{fmt, net::SocketAddr, sync::Arc, time::Duration};
 
-use crate::constrained::{ConstrainedEngine, EngineConfig};
+use crate::constrained::{ConstrainedEngine, EngineConfig, EngineEvent};
 use crate::transport::TransportRegistry;
 
 /// Creates a bind address that allows the OS to select a random available port
@@ -223,6 +223,18 @@ impl RelaySession {
     }
 }
 
+/// Event from the constrained engine with transport address context
+///
+/// This wrapper adds the transport address to engine events so that P2pEndpoint
+/// can properly route and track data from constrained transports (BLE/LoRa).
+#[derive(Debug, Clone)]
+pub struct ConstrainedEventWithAddr {
+    /// The engine event (DataReceived, ConnectionAccepted, etc.)
+    pub event: EngineEvent,
+    /// The transport address of the remote peer
+    pub remote_addr: crate::transport::TransportAddr,
+}
+
 /// High-level NAT traversal endpoint for Autonomi P2P networks
 pub struct NatTraversalEndpoint {
     /// Underlying QUIC endpoint
@@ -286,6 +298,12 @@ pub struct NatTraversalEndpoint {
     /// Constrained protocol engine for BLE/LoRa/Serial transports
     /// Handles the constrained protocol for non-UDP transports
     constrained_engine: Arc<ParkingMutex<ConstrainedEngine>>,
+    /// Channel for forwarding constrained engine events to P2pEndpoint
+    /// Events like DataReceived from BLE/LoRa transports are sent through this channel
+    constrained_event_tx: mpsc::UnboundedSender<ConstrainedEventWithAddr>,
+    /// Receiver for constrained engine events
+    /// P2pEndpoint polls this to receive data from constrained transports
+    constrained_event_rx: ParkingMutex<mpsc::UnboundedReceiver<ConstrainedEventWithAddr>>,
 }
 
 /// Configuration for NAT traversal behavior
@@ -1018,7 +1036,73 @@ impl ConfigValidator for NatTraversalConfig {
 }
 
 impl NatTraversalEndpoint {
+    /// Create a new NAT traversal endpoint with proper UDP socket sharing
+    ///
+    /// This is the recommended constructor for most use cases. It:
+    /// 1. Binds a UDP socket at the specified address
+    /// 2. Creates a transport registry with the UDP transport (delegated to Quinn)
+    /// 3. Passes the same socket to Quinn's QUIC endpoint
+    ///
+    /// This ensures that the transport registry and Quinn share the same UDP socket,
+    /// enabling proper multi-transport routing.
+    ///
+    /// # Arguments
+    ///
+    /// * `bind_addr` - Address to bind the UDP socket (use `0.0.0.0:0` for random port)
+    /// * `config` - NAT traversal configuration (transport_registry field is ignored)
+    /// * `event_callback` - Optional callback for NAT traversal events
+    /// * `token_store` - Optional token store for connection resumption
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// let config = NatTraversalConfig::default();
+    /// let endpoint = NatTraversalEndpoint::new_with_shared_socket(
+    ///     "0.0.0.0:9000".parse().unwrap(),
+    ///     config,
+    ///     None,
+    ///     None,
+    /// ).await?;
+    /// ```
+    pub async fn new_with_shared_socket(
+        bind_addr: std::net::SocketAddr,
+        mut config: NatTraversalConfig,
+        event_callback: Option<Box<dyn Fn(NatTraversalEvent) + Send + Sync>>,
+        token_store: Option<Arc<dyn crate::TokenStore>>,
+    ) -> Result<Self, NatTraversalError> {
+        use crate::transport::UdpTransport;
+
+        // Bind UDP socket for both transport registry and Quinn
+        let (udp_transport, quinn_socket) = UdpTransport::bind_for_quinn(bind_addr)
+            .await
+            .map_err(|e| NatTraversalError::NetworkError(format!("Failed to bind UDP socket: {e}")))?;
+
+        let local_addr = quinn_socket
+            .local_addr()
+            .map_err(|e| NatTraversalError::NetworkError(format!("Failed to get local address: {e}")))?;
+
+        info!("Bound shared UDP socket at {}", local_addr);
+
+        // Create transport registry with the UDP transport
+        let mut registry = TransportRegistry::new();
+        registry.register(Arc::new(udp_transport));
+
+        // Override config with our registry and bind address
+        config.transport_registry = Some(Arc::new(registry));
+        config.bind_addr = Some(local_addr);
+
+        // Use new_with_socket to create the endpoint with the shared socket
+        Self::new_with_socket(config, event_callback, token_store, Some(quinn_socket)).await
+    }
+
     /// Create a new NAT traversal endpoint with optional event callback and token store
+    ///
+    /// **Note:** For proper multi-transport socket sharing, consider using
+    /// [`new_with_shared_socket`](Self::new_with_shared_socket) instead.
+    ///
+    /// This constructor creates a separate UDP socket for Quinn if the transport_registry
+    /// in config already has a UDP provider. Use `new_with_socket` if you need to provide
+    /// a pre-bound socket for socket sharing.
     pub async fn new(
         config: NatTraversalConfig,
         event_callback: Option<Box<dyn Fn(NatTraversalEvent) + Send + Sync>>,
@@ -1134,6 +1218,9 @@ impl NatTraversalEndpoint {
         // Create constrained protocol engine for BLE/LoRa/Serial transports
         let constrained_engine = Arc::new(ParkingMutex::new(ConstrainedEngine::new(EngineConfig::default())));
 
+        // Create channel for forwarding constrained engine events to P2pEndpoint
+        let (constrained_event_tx, constrained_event_rx) = mpsc::unbounded_channel();
+
         let endpoint = Self {
             inner_endpoint: Some(inner_endpoint.clone()),
             config: config.clone(),
@@ -1156,6 +1243,8 @@ impl NatTraversalEndpoint {
             transport_registry,
             transport_listener_handles: Arc::new(ParkingMutex::new(Vec::new())),
             constrained_engine,
+            constrained_event_tx: constrained_event_tx.clone(),
+            constrained_event_rx: ParkingMutex::new(constrained_event_rx),
         };
 
         // Multi-transport listening: Spawn receive tasks for all online transports
@@ -1196,6 +1285,7 @@ impl NatTraversalEndpoint {
                     let shutdown_clone = endpoint.shutdown.clone();
                     let engine_clone = endpoint.constrained_engine.clone();
                     let registry_clone = endpoint.transport_registry.clone();
+                    let event_tx_clone = endpoint.constrained_event_tx.clone();
 
                     let handle = tokio::spawn(async move {
                         debug!("Started listening on transport '{}'", transport_name);
@@ -1258,12 +1348,21 @@ impl NatTraversalEndpoint {
                                                 }
                                             }
 
-                                            // Process events from the constrained engine
+                                            // Process events from the constrained engine and forward to P2pEndpoint
+                                            // Save the source address before processing events
+                                            let source_addr = datagram.source.clone();
                                             {
                                                 let mut engine = engine_clone.lock();
                                                 while let Some(event) = engine.next_event() {
                                                     debug!("Constrained engine event: {:?}", event);
-                                                    // Events will be forwarded to P2pEndpoint in Task 4
+                                                    // Forward event to P2pEndpoint via channel
+                                                    let event_with_addr = ConstrainedEventWithAddr {
+                                                        event,
+                                                        remote_addr: source_addr.clone(),
+                                                    };
+                                                    if let Err(e) = event_tx_clone.send(event_with_addr) {
+                                                        debug!("Failed to forward constrained event: {}", e);
+                                                    }
                                                 }
                                             }
                                         }
@@ -1511,6 +1610,9 @@ impl NatTraversalEndpoint {
         // Create constrained protocol engine for BLE/LoRa/Serial transports
         let constrained_engine = Arc::new(ParkingMutex::new(ConstrainedEngine::new(EngineConfig::default())));
 
+        // Create channel for forwarding constrained engine events to P2pEndpoint
+        let (constrained_event_tx, constrained_event_rx) = mpsc::unbounded_channel();
+
         let endpoint = Self {
             inner_endpoint: Some(inner_endpoint.clone()),
             config: config.clone(),
@@ -1533,6 +1635,8 @@ impl NatTraversalEndpoint {
             transport_registry,
             transport_listener_handles: Arc::new(ParkingMutex::new(Vec::new())),
             constrained_engine,
+            constrained_event_tx: constrained_event_tx.clone(),
+            constrained_event_rx: ParkingMutex::new(constrained_event_rx),
         };
 
         // Multi-transport listening: Spawn receive tasks for all online transports
@@ -1573,6 +1677,7 @@ impl NatTraversalEndpoint {
                     let shutdown_clone = endpoint.shutdown.clone();
                     let engine_clone = endpoint.constrained_engine.clone();
                     let registry_clone = endpoint.transport_registry.clone();
+                    let event_tx_clone = endpoint.constrained_event_tx.clone();
 
                     let handle = tokio::spawn(async move {
                         debug!("Started listening on transport '{}'", transport_name);
@@ -1635,12 +1740,21 @@ impl NatTraversalEndpoint {
                                                 }
                                             }
 
-                                            // Process events from the constrained engine
+                                            // Process events from the constrained engine and forward to P2pEndpoint
+                                            // Save the source address before processing events
+                                            let source_addr = datagram.source.clone();
                                             {
                                                 let mut engine = engine_clone.lock();
                                                 while let Some(event) = engine.next_event() {
                                                     debug!("Constrained engine event: {:?}", event);
-                                                    // Events will be forwarded to P2pEndpoint in Task 4
+                                                    // Forward event to P2pEndpoint via channel
+                                                    let event_with_addr = ConstrainedEventWithAddr {
+                                                        event,
+                                                        remote_addr: source_addr.clone(),
+                                                    };
+                                                    if let Err(e) = event_tx_clone.send(event_with_addr) {
+                                                        debug!("Failed to forward constrained event: {}", e);
+                                                    }
                                                 }
                                             }
                                         }
@@ -1772,6 +1886,26 @@ impl NatTraversalEndpoint {
     /// be shared across async tasks.
     pub fn constrained_engine(&self) -> &Arc<ParkingMutex<ConstrainedEngine>> {
         &self.constrained_engine
+    }
+
+    /// Try to receive a constrained engine event without blocking
+    ///
+    /// Returns the next event from constrained transports (BLE/LoRa) if available.
+    /// This allows P2pEndpoint to poll for data received on non-UDP transports.
+    ///
+    /// # Returns
+    ///
+    /// - `Some(event)` - An event with the data and source transport address
+    /// - `None` - No events currently available
+    pub fn try_recv_constrained_event(&self) -> Option<ConstrainedEventWithAddr> {
+        self.constrained_event_rx.lock().try_recv().ok()
+    }
+
+    /// Get a reference to the constrained event sender for testing
+    ///
+    /// This is primarily used for testing to inject events.
+    pub fn constrained_event_tx(&self) -> &mpsc::UnboundedSender<ConstrainedEventWithAddr> {
+        &self.constrained_event_tx
     }
 
     /// Emit an event to both the events vector and the callback (if present)

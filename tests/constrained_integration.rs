@@ -420,3 +420,160 @@ async fn test_constrained_connection_registration() {
     assert!(map.contains_key(&peer_id));
     assert_eq!(map.get(&peer_id), Some(&conn_id));
 }
+
+// ============================================================================
+// Phase 5.2 Constrained Event Forwarding Tests
+// ============================================================================
+// These tests verify the event channel and P2pEvent integration from Phase 5.2
+
+use ant_quic::constrained::EngineEvent;
+use ant_quic::nat_traversal_api::ConstrainedEventWithAddr;
+
+/// Test that ConstrainedEventWithAddr can be created and contains correct data
+#[test]
+fn test_constrained_event_with_addr() {
+    let ble_addr = TransportAddr::Ble {
+        device_id: [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF],
+        service_uuid: None,
+    };
+
+    let conn_id = ant_quic::constrained::ConnectionId::new(42);
+    let data = vec![1, 2, 3, 4, 5];
+
+    let event = EngineEvent::DataReceived {
+        connection_id: conn_id,
+        data: data.clone(),
+    };
+
+    let event_with_addr = ConstrainedEventWithAddr {
+        event: event.clone(),
+        remote_addr: ble_addr.clone(),
+    };
+
+    // Verify the wrapper preserves the event and address
+    assert_eq!(event_with_addr.remote_addr, ble_addr);
+
+    // Verify the event data
+    if let EngineEvent::DataReceived { connection_id, data: event_data } = event_with_addr.event {
+        assert_eq!(connection_id.value(), 42);
+        assert_eq!(event_data, data);
+    } else {
+        panic!("Expected DataReceived event");
+    }
+}
+
+/// Test event channel creation and basic sending/receiving
+#[tokio::test]
+async fn test_constrained_event_channel() {
+    use tokio::sync::mpsc;
+
+    // Create channel similar to what NatTraversalEndpoint uses
+    let (tx, mut rx) = mpsc::unbounded_channel::<ConstrainedEventWithAddr>();
+
+    let ble_addr = TransportAddr::Ble {
+        device_id: [0x11, 0x22, 0x33, 0x44, 0x55, 0x66],
+        service_uuid: None,
+    };
+
+    let conn_id = ant_quic::constrained::ConnectionId::new(99);
+    let test_data = b"Hello from BLE!".to_vec();
+
+    // Send an event
+    let event = ConstrainedEventWithAddr {
+        event: EngineEvent::DataReceived {
+            connection_id: conn_id,
+            data: test_data.clone(),
+        },
+        remote_addr: ble_addr.clone(),
+    };
+
+    tx.send(event).expect("Channel should accept event");
+
+    // Receive and verify
+    let received = rx.recv().await.expect("Should receive event");
+    assert_eq!(received.remote_addr, ble_addr);
+
+    if let EngineEvent::DataReceived { connection_id, data } = received.event {
+        assert_eq!(connection_id.value(), 99);
+        assert_eq!(data, test_data);
+    } else {
+        panic!("Expected DataReceived event");
+    }
+}
+
+/// Test that different event types are properly wrapped
+#[test]
+fn test_all_engine_event_types() {
+    let lora_addr = TransportAddr::LoRa {
+        device_addr: [0xDE, 0xAD, 0xBE, 0xEF],
+        params: ant_quic::transport::LoRaParams::default(),
+    };
+
+    let conn_id = ant_quic::constrained::ConnectionId::new(1);
+
+    // Test ConnectionAccepted
+    let event1 = ConstrainedEventWithAddr {
+        event: EngineEvent::ConnectionAccepted {
+            connection_id: conn_id,
+            remote_addr: "192.168.1.1:8080".parse().unwrap(),
+        },
+        remote_addr: lora_addr.clone(),
+    };
+    assert!(matches!(event1.event, EngineEvent::ConnectionAccepted { .. }));
+
+    // Test ConnectionEstablished
+    let event2 = ConstrainedEventWithAddr {
+        event: EngineEvent::ConnectionEstablished {
+            connection_id: conn_id,
+        },
+        remote_addr: lora_addr.clone(),
+    };
+    assert!(matches!(event2.event, EngineEvent::ConnectionEstablished { .. }));
+
+    // Test ConnectionClosed
+    let event3 = ConstrainedEventWithAddr {
+        event: EngineEvent::ConnectionClosed {
+            connection_id: conn_id,
+        },
+        remote_addr: lora_addr.clone(),
+    };
+    assert!(matches!(event3.event, EngineEvent::ConnectionClosed { .. }));
+
+    // Test ConnectionError
+    let event4 = ConstrainedEventWithAddr {
+        event: EngineEvent::ConnectionError {
+            connection_id: conn_id,
+            error: "Test error".to_string(),
+        },
+        remote_addr: lora_addr.clone(),
+    };
+    assert!(matches!(event4.event, EngineEvent::ConnectionError { .. }));
+}
+
+/// Test P2pEvent::ConstrainedDataReceived creation
+#[test]
+fn test_p2p_event_constrained_data_received() {
+    use ant_quic::p2p_endpoint::P2pEvent;
+
+    let ble_addr = TransportAddr::Ble {
+        device_id: [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF],
+        service_uuid: None,
+    };
+
+    let test_data = vec![0xDE, 0xAD, 0xBE, 0xEF];
+
+    let event = P2pEvent::ConstrainedDataReceived {
+        remote_addr: ble_addr.clone(),
+        connection_id: 123,
+        data: test_data.clone(),
+    };
+
+    match event {
+        P2pEvent::ConstrainedDataReceived { remote_addr, connection_id, data } => {
+            assert_eq!(remote_addr, ble_addr);
+            assert_eq!(connection_id, 123);
+            assert_eq!(data, test_data);
+        }
+        _ => panic!("Expected ConstrainedDataReceived event"),
+    }
+}

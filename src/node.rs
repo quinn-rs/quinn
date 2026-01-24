@@ -348,6 +348,25 @@ impl Node {
                 stream_id: 0, // P2pEvent doesn't track stream IDs
                 bytes,
             }),
+            P2pEvent::ConstrainedDataReceived { remote_addr, connection_id, data } => {
+                // For constrained data, derive a synthetic peer ID from the transport address
+                let synthetic_peer_id = {
+                    use std::collections::hash_map::DefaultHasher;
+                    use std::hash::{Hash, Hasher};
+                    let synthetic_addr = remote_addr.to_synthetic_socket_addr();
+                    let mut hasher = DefaultHasher::new();
+                    synthetic_addr.hash(&mut hasher);
+                    let hash = hasher.finish();
+                    let mut peer_id_bytes = [0u8; 32];
+                    peer_id_bytes[..8].copy_from_slice(&hash.to_le_bytes());
+                    PeerId(peer_id_bytes)
+                };
+                Some(NodeEvent::DataReceived {
+                    peer_id: synthetic_peer_id,
+                    stream_id: connection_id as u64,
+                    bytes: data.len(),
+                })
+            }
             // Events without direct NodeEvent equivalents are ignored
             P2pEvent::NatTraversalProgress { .. }
             | P2pEvent::BootstrapStatus { .. }
