@@ -53,6 +53,8 @@ pub struct TransportConfig {
 
     pub(crate) congestion_controller_factory: Arc<dyn congestion::ControllerFactory + Send + Sync>,
 
+    pub(crate) pacing: PacingConfig,
+
     pub(crate) enable_segmentation_offload: bool,
 
     pub(crate) qlog_sink: QlogSink,
@@ -327,6 +329,24 @@ impl TransportConfig {
         self
     }
 
+    /// Pacing configuration
+    ///
+    /// Controls how packet transmission rates are calculated to avoid bursts.
+    ///
+    /// # Example
+    /// ```
+    /// # use quinn_proto::*;
+    /// let mut config = TransportConfig::default();
+    /// config.pacing(PacingConfig {
+    ///     rate_mode: PacingRateMode::RttDependentWithFloor(10_000_000), // 10 MB/s floor
+    ///     ..Default::default()
+    /// });
+    /// ```
+    pub fn pacing(&mut self, config: PacingConfig) -> &mut Self {
+        self.pacing = config;
+        self
+    }
+
     /// Whether to use "Generic Segmentation Offload" to accelerate transmits, when supported by the
     /// environment
     ///
@@ -388,6 +408,8 @@ impl Default for TransportConfig {
 
             congestion_controller_factory: Arc::new(congestion::CubicConfig::default()),
 
+            pacing: PacingConfig::default(),
+
             enable_segmentation_offload: true,
 
             qlog_sink: QlogSink::default(),
@@ -422,6 +444,7 @@ impl fmt::Debug for TransportConfig {
             #[cfg(test)]
                 deterministic_packet_numbers: _,
             congestion_controller_factory: _,
+            pacing,
             enable_segmentation_offload,
             qlog_sink,
         } = self;
@@ -452,6 +475,7 @@ impl fmt::Debug for TransportConfig {
             .field("datagram_receive_buffer_size", datagram_receive_buffer_size)
             .field("datagram_send_buffer_size", datagram_send_buffer_size)
             // congestion_controller_factory not debug
+            .field("pacing", pacing)
             .field("enable_segmentation_offload", enable_segmentation_offload);
         if cfg!(feature = "qlog") {
             s.field("qlog_stream", &qlog_sink.is_enabled());
@@ -762,6 +786,59 @@ impl Default for MtuDiscoveryConfig {
 /// ```
 #[derive(Default, Copy, Clone, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct IdleTimeout(VarInt);
+
+/// Controls how the pacing rate is calculated
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum PacingRateMode {
+    /// The pacing rate scales with the congestion window and inversely with RTT.
+    RttDependent,
+
+    /// Fixed rate in bytes per second. Useful for latency-sensitive applications.
+    Fixed(u64),
+
+    /// Rate = max(floor, RttDependent)
+    /// Like `RttDependent`, but with a minimum rate floor (in bytes per second).
+    RttDependentWithFloor(u64),
+}
+
+impl Default for PacingRateMode {
+    fn default() -> Self {
+        Self::RttDependent
+    }
+}
+
+/// Configuration for packet pacing
+#[derive(Debug, Clone)]
+pub struct PacingConfig {
+    /// Controls how the pacing rate is calculated
+    pub rate_mode: PacingRateMode,
+
+    /// Period of traffic to batch together on a reasonably fast connection
+    pub target_burst_interval: Duration,
+
+    /// Maximum period of traffic to batch together on a slow connection.
+    /// Takes precedence over `min_burst_size`.
+    pub max_burst_interval: Duration,
+
+    /// Minimum number of datagrams to batch together, so long as we won't have
+    /// to wait for more than `max_burst_interval`
+    pub min_burst_size: u64,
+
+    /// Maximum number of datagrams to batch together
+    pub max_burst_size: u64,
+}
+
+impl Default for PacingConfig {
+    fn default() -> Self {
+        Self {
+            rate_mode: PacingRateMode::default(),
+            target_burst_interval: Duration::from_millis(2),
+            max_burst_interval: Duration::from_millis(10),
+            min_burst_size: 10,
+            max_burst_size: 256,
+        }
+    }
+}
 
 impl From<VarInt> for IdleTimeout {
     fn from(inner: VarInt) -> Self {
