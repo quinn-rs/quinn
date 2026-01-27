@@ -57,6 +57,7 @@ slab = { workspace = true }
 thiserror = { workspace = true }
 tinyvec = { workspace = true, features = ["alloc"] }
 tracing = { workspace = true }
+rand_pcg = "0.9"
 
 # Feature flags & dependencies for wasm
 # wasm-bindgen is assumed for a wasm*-*-unknown target
@@ -69,7 +70,6 @@ web-time = { workspace = true }
 [dev-dependencies]
 assert_matches = { workspace = true }
 hex-literal = { workspace = true  }
-rand_pcg = "0.9"
 rcgen = { workspace = true }
 tracing-subscriber = { workspace = true }
 wasm-bindgen-test = { workspace = true }

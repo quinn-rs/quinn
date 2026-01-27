@@ -5,11 +5,11 @@ use crate::connection::RttEstimator;
 use std::any::Any;
 use std::sync::Arc;
 
-mod bbr;
+mod bbr3;
 mod cubic;
 mod new_reno;
 
-pub use bbr::{Bbr, BbrConfig};
+pub use bbr3::{Bbr3, Bbr3Config};
 pub use cubic::{Cubic, CubicConfig};
 pub use new_reno::{NewReno, NewRenoConfig};
 
@@ -18,6 +18,10 @@ pub trait Controller: Send + Sync {
     /// One or more packets were just sent
     #[allow(unused_variables)]
     fn on_sent(&mut self, now: Instant, bytes: u64, last_packet_number: u64) {}
+
+    /// One packet was just sent
+    #[allow(unused_variables)]
+    fn on_packet_sent(&mut self, now: Instant, bytes: u16, packet_number: u64) {}
 
     /// Packet deliveries were confirmed
     ///
@@ -29,6 +33,7 @@ pub trait Controller: Send + Sync {
         now: Instant,
         sent: Instant,
         bytes: u64,
+        pn: u64,
         app_limited: bool,
         rtt: &RttEstimator,
     ) {
@@ -51,6 +56,8 @@ pub trait Controller: Send + Sync {
     /// congestion threshold period ending when the most recent packet in this batch was sent were
     /// lost.
     /// `lost_bytes` indicates how many bytes were lost. This value will be 0 for ECN triggers.
+    /// `largest_lost` indicates the packet number of the packet with the highest packet number
+    /// in the congestion event.
     fn on_congestion_event(
         &mut self,
         now: Instant,
@@ -58,7 +65,12 @@ pub trait Controller: Send + Sync {
         is_persistent_congestion: bool,
         is_ecn: bool,
         lost_bytes: u64,
+        largest_lost: u64,
     );
+
+    /// One packet was just lost
+    #[allow(unused_variables)]
+    fn on_packet_lost(&mut self, lost_bytes: u16, packet_number: u64, now: Instant) {}
 
     /// Packets were incorrectly deemed lost
     ///
@@ -73,11 +85,14 @@ pub trait Controller: Send + Sync {
     fn window(&self) -> u64;
 
     /// Retrieve implementation-specific metrics used to populate `qlog` traces when they are enabled
+    /// This is also used to alter the pacing of the connection with
+    /// `pacing_rate` and `send_quantum`
     fn metrics(&self) -> ControllerMetrics {
         ControllerMetrics {
             congestion_window: self.window(),
             ssthresh: None,
             pacing_rate: None,
+            send_quantum: None,
         }
     }
 
@@ -91,7 +106,9 @@ pub trait Controller: Send + Sync {
     fn into_any(self: Box<Self>) -> Box<dyn Any>;
 }
 
-/// Common congestion controller metrics
+/// Common congestion controller metrics used both for logging purposes
+/// but also to alter the pacing of the connection with
+/// `pacing_rate` and `send_quantum`
 #[derive(Default)]
 #[non_exhaustive]
 pub struct ControllerMetrics {
@@ -99,8 +116,10 @@ pub struct ControllerMetrics {
     pub congestion_window: u64,
     /// Slow start threshold (bytes)
     pub ssthresh: Option<u64>,
-    /// Pacing rate (bits/s)
+    /// Pacing rate (bytes/s)
     pub pacing_rate: Option<u64>,
+    /// Send Quantum (bytes) used to control the size of packet bursts
+    pub send_quantum: Option<u64>,
 }
 
 /// Constructs controllers on demand
