@@ -1936,6 +1936,16 @@ impl NatTraversalEndpoint {
         peer_id: PeerId,
         coordinator: SocketAddr,
     ) -> Result<(), NatTraversalError> {
+        // CRITICAL: Check for existing connection FIRST - no NAT traversal needed if already connected.
+        // This prevents wasting resources on hole punching when we already have a direct connection.
+        if self.connections.contains_key(&peer_id) {
+            debug!(
+                "Direct connection already exists for peer {:?}, skipping NAT traversal",
+                peer_id
+            );
+            return Ok(()); // Already connected, not an error
+        }
+
         // CRITICAL: Check for existing active session FIRST to prevent race conditions.
         // Multiple concurrent calls for the same peer would otherwise:
         // 1. Each create a new session
@@ -4427,6 +4437,15 @@ impl NatTraversalEndpoint {
         peer_id: PeerId,
         candidate: &CandidateAddress,
     ) -> Result<(), NatTraversalError> {
+        // Check if connection already exists - another candidate may have succeeded
+        if self.connections.contains_key(&peer_id) {
+            debug!(
+                "Connection already exists for peer {:?}, skipping candidate {}",
+                peer_id, candidate.address
+            );
+            return Ok(());
+        }
+
         {
             let endpoint = self.inner_endpoint.as_ref().ok_or_else(|| {
                 NatTraversalError::ConfigError("QUIC endpoint not initialized".to_string())
@@ -4458,6 +4477,18 @@ impl NatTraversalEndpoint {
                         tokio::spawn(async move {
                             match connecting.await {
                                 Ok(connection) => {
+                                    // Check if another task already inserted a connection for this peer
+                                    // This prevents race conditions when multiple candidates succeed
+                                    if connections.contains_key(&peer_id_clone) {
+                                        debug!(
+                                            "Connection already exists for peer {:?}, discarding duplicate from {}",
+                                            peer_id_clone, address
+                                        );
+                                        // Close the duplicate connection to free resources
+                                        connection.close(0u32.into(), b"duplicate connection");
+                                        return;
+                                    }
+
                                     info!(
                                         "Successfully connected to {} for peer {:?}",
                                         address, peer_id_clone
@@ -4756,6 +4787,15 @@ impl NatTraversalEndpoint {
 
         // Execute coordination requests
         for (peer_id, coordinator) in coordination_requests {
+            // Re-check for existing connection before executing deferred coordination
+            // A connection may have been established during the gap between phase collection and execution
+            if self.connections.contains_key(&peer_id) {
+                debug!(
+                    "Connection established for peer {:?} before coordination execution, skipping",
+                    peer_id
+                );
+                continue;
+            }
             match self.send_coordination_request(peer_id, coordinator) {
                 Ok(_) => {
                     self.emit_event(
@@ -4780,6 +4820,15 @@ impl NatTraversalEndpoint {
 
         // Execute hole punch requests
         for (peer_id, candidates) in hole_punch_requests {
+            // Re-check for existing connection before executing deferred hole punch
+            // A connection may have been established during the gap between phase collection and execution
+            if self.connections.contains_key(&peer_id) {
+                debug!(
+                    "Connection established for peer {:?} before hole punch execution, skipping",
+                    peer_id
+                );
+                continue;
+            }
             if let Err(e) = self.initiate_hole_punching(peer_id, &candidates) {
                 if let Some(mut session) = self.active_sessions.get_mut(&peer_id) {
                     self.handle_phase_failure(&mut session, now, &mut events, e);
@@ -5016,6 +5065,17 @@ impl NatTraversalEndpoint {
                                 let bootstrap_peer_id =
                                     Self::generate_peer_id_from_address(coordinator);
 
+                                // Check if another task already established a coordinator connection
+                                if connections.contains_key(&bootstrap_peer_id) {
+                                    debug!(
+                                        "Coordinator connection already exists for {}, discarding duplicate",
+                                        coordinator
+                                    );
+                                    // Close the duplicate connection to free resources
+                                    connection.close(0u32.into(), b"duplicate coordinator");
+                                    return;
+                                }
+
                                 // Store the connection
                                 // DashMap provides lock-free .insert()
                                 connections.insert(bootstrap_peer_id, connection.clone());
@@ -5129,6 +5189,15 @@ impl NatTraversalEndpoint {
     ) -> Result<(), NatTraversalError> {
         if candidates.is_empty() {
             return Err(NatTraversalError::NoCandidatesFound);
+        }
+
+        // Check if connection already exists - no hole punching needed
+        if self.connections.contains_key(&peer_id) {
+            info!(
+                "Connection already exists for peer {:?}, skipping hole punching",
+                peer_id
+            );
+            return Ok(());
         }
 
         info!(
