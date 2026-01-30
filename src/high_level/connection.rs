@@ -7,6 +7,7 @@
 
 use std::{
     any::Any,
+    collections::VecDeque,
     fmt,
     future::Future,
     io,
@@ -32,8 +33,8 @@ use super::{
     udp_transmit,
 };
 use crate::{
-    ConnectionError, ConnectionHandle, ConnectionStats, Dir, Duration, EndpointEvent, Instant,
-    Side, StreamEvent, StreamId, VarInt, congestion::Controller,
+    ConnectionError, ConnectionHandle, ConnectionStats, DatagramDropStats, Dir, Duration,
+    EndpointEvent, Instant, Side, StreamEvent, StreamId, VarInt, congestion::Controller,
 };
 
 /// In-progress connection attempt future
@@ -582,6 +583,24 @@ impl Connection {
             .send_buffer_space()
     }
 
+    /// Total number of application datagrams that have been dropped due to receive buffer overflow
+    pub fn datagram_drop_stats(&self) -> DatagramDropStats {
+        self.0
+            .state
+            .lock("datagram_drop_stats")
+            .inner
+            .stats()
+            .datagram_drops
+    }
+
+    /// Wait for the next datagram drop notification
+    pub fn on_datagram_drop(&self) -> DatagramDrop<'_> {
+        DatagramDrop {
+            conn: &self.0,
+            notify: self.0.shared.datagram_dropped.notified(),
+        }
+    }
+
     /// Queue an ADD_ADDRESS NAT traversal frame via the underlying connection
     pub fn send_nat_address_advertisement(
         &self,
@@ -988,6 +1007,39 @@ impl Future for ReadDatagram<'_> {
 }
 
 pin_project! {
+    /// Future produced by [`Connection::on_datagram_drop`]
+    pub struct DatagramDrop<'a> {
+        conn: &'a ConnectionRef,
+        #[pin]
+        notify: Notified<'a>,
+    }
+}
+
+impl Future for DatagramDrop<'_> {
+    type Output = Result<DatagramDropStats, ConnectionError>;
+
+    fn poll(self: Pin<&mut Self>, ctx: &mut Context<'_>) -> Poll<Self::Output> {
+        let mut this = self.project();
+        let mut state = this.conn.state.lock("DatagramDrop::poll");
+        if let Some(drop) = state.datagram_drop_events.pop_front() {
+            return Poll::Ready(Ok(drop));
+        }
+        if let Some(ref e) = state.error {
+            return Poll::Ready(Err(e.clone()));
+        }
+        loop {
+            match this.notify.as_mut().poll(ctx) {
+                // `state` lock ensures we didn't race with readiness
+                Poll::Pending => return Poll::Pending,
+                Poll::Ready(()) => this
+                    .notify
+                    .set(this.conn.shared.datagram_dropped.notified()),
+            }
+        }
+    }
+}
+
+pin_project! {
     /// Future produced by [`Connection::send_datagram_wait`]
     pub struct SendDatagram<'a> {
         conn: &'a ConnectionRef,
@@ -1070,6 +1122,7 @@ impl ConnectionRef {
                 stopped: FxHashMap::default(),
                 error: None,
                 ref_count: 0,
+                datagram_drop_events: VecDeque::new(),
                 io_poller: socket.clone().create_io_poller(),
                 socket,
                 runtime,
@@ -1131,6 +1184,7 @@ pub(crate) struct Shared {
     stream_incoming: [Notify; 2],
     datagram_received: Notify,
     datagrams_unblocked: Notify,
+    datagram_dropped: Notify,
     closed: Notify,
 }
 
@@ -1152,6 +1206,7 @@ pub(crate) struct State {
     pub(crate) error: Option<ConnectionError>,
     /// Number of live handles that can be used to initiate or handle I/O; excludes the driver
     ref_count: usize,
+    datagram_drop_events: VecDeque<DatagramDropStats>,
     socket: Arc<dyn AsyncUdpSocket>,
     io_poller: Pin<Box<dyn UdpPoller>>,
     runtime: Arc<dyn Runtime>,
@@ -1310,6 +1365,16 @@ impl State {
                 DatagramsUnblocked => {
                     shared.datagrams_unblocked.notify_waiters();
                 }
+                DatagramDropped(drop) => {
+                    // Buffer overflow - surface to application via dedicated queue and notify
+                    tracing::debug!(
+                        datagrams = drop.datagrams,
+                        bytes = drop.bytes,
+                        "datagrams dropped due to receive buffer overflow"
+                    );
+                    self.datagram_drop_events.push_back(drop);
+                    shared.datagram_dropped.notify_waiters();
+                }
                 Stream(StreamEvent::Readable { id }) => wake_stream(id, &mut self.blocked_readers),
                 Stream(StreamEvent::Available { dir }) => {
                     // Might mean any number of streams are ready, so we wake up everyone
@@ -1397,6 +1462,7 @@ impl State {
         shared.stream_incoming[Dir::Bi as usize].notify_waiters();
         shared.datagram_received.notify_waiters();
         shared.datagrams_unblocked.notify_waiters();
+        shared.datagram_dropped.notify_waiters();
         if let Some(x) = self.on_connected.take() {
             let _ = x.send(false);
         }

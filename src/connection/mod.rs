@@ -93,7 +93,7 @@ use spaces::Retransmits;
 use spaces::{PacketNumberFilter, PacketSpace, SendableFrames, SentPacket, ThinRetransmits};
 
 mod stats;
-pub use stats::{ConnectionStats, FrameStats, PathStats, UdpStats};
+pub use stats::{ConnectionStats, DatagramDropStats, FrameStats, PathStats, UdpStats};
 
 mod streams;
 #[cfg(fuzzing)]
@@ -3495,11 +3495,21 @@ impl Connection {
                     token_store.insert(server_name, token);
                 }
                 Frame::Datagram(datagram) => {
-                    if self
+                    let result = self
                         .datagrams
-                        .received(datagram, &self.config.datagram_receive_buffer_size)?
-                    {
+                        .received(datagram, &self.config.datagram_receive_buffer_size)?;
+                    if result.was_empty {
                         self.events.push_back(Event::DatagramReceived);
+                    }
+                    if result.dropped_count > 0 {
+                        let drop_counts = DatagramDropStats {
+                            datagrams: result.dropped_count as u64,
+                            bytes: result.dropped_bytes as u64,
+                        };
+                        self.stats
+                            .datagram_drops
+                            .record(drop_counts.datagrams, drop_counts.bytes);
+                        self.events.push_back(Event::DatagramDropped(drop_counts));
                     }
                 }
                 Frame::AckFrequency(ack_frequency) => {
@@ -6116,6 +6126,12 @@ pub enum Event {
     DatagramReceived,
     /// One or more application datagrams have been sent after blocking
     DatagramsUnblocked,
+    /// One or more application datagrams were dropped due to buffer overflow
+    ///
+    /// This occurs when the receive buffer is full and the application isn't
+    /// reading datagrams fast enough. The oldest buffered datagrams are dropped
+    /// to make room for new ones.
+    DatagramDropped(DatagramDropStats),
 }
 
 fn instant_saturating_sub(x: Instant, y: Instant) -> Duration {

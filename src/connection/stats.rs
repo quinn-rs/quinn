@@ -192,4 +192,23 @@ pub struct ConnectionStats {
     pub frame_rx: FrameStats,
     /// Statistics related to the current transmission path
     pub path: PathStats,
+    /// Statistics about application datagrams dropped due to receive buffer overflow
+    pub datagram_drops: DatagramDropStats,
+}
+
+/// Aggregated statistics about dropped application datagrams
+#[derive(Debug, Default, Copy, Clone, Eq, PartialEq)]
+#[non_exhaustive]
+pub struct DatagramDropStats {
+    /// Number of datagrams dropped
+    pub datagrams: u64,
+    /// Total bytes dropped
+    pub bytes: u64,
+}
+
+impl DatagramDropStats {
+    pub(crate) fn record(&mut self, datagrams: u64, bytes: u64) {
+        self.datagrams = self.datagrams.saturating_add(datagrams);
+        self.bytes = self.bytes.saturating_add(bytes);
+    }
 }

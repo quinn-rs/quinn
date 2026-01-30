@@ -309,9 +309,9 @@ pub use candidate_discovery::{
 // v0.13.0: NatTraversalRole removed - all nodes are symmetric P2P nodes
 pub use connection::nat_traversal::{CandidateSource, CandidateState};
 pub use connection::{
-    Chunk, Chunks, ClosedStream, Connection, ConnectionError, ConnectionStats, Datagrams, Event,
-    FinishError, ReadError, ReadableError, RecvStream, SendDatagramError, SendStream, StreamEvent,
-    Streams, WriteError, Written,
+    Chunk, Chunks, ClosedStream, Connection, ConnectionError, ConnectionStats, DatagramDropStats,
+    Datagrams, Event, FinishError, ReadError, ReadableError, RecvStream, SendDatagramError,
+    SendStream, StreamEvent, Streams, WriteError, Written,
 };
 pub use endpoint::{
     AcceptError, ConnectError, ConnectionHandle, DatagramEvent, Endpoint as LowLevelEndpoint,

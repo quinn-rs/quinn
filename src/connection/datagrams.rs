@@ -9,7 +9,7 @@ use std::collections::VecDeque;
 
 use bytes::Bytes;
 use thiserror::Error;
-use tracing::{trace, warn};
+use tracing::{debug, trace};
 
 use super::Connection;
 use crate::{
@@ -50,7 +50,10 @@ impl Datagrams<'_> {
                     .outgoing
                     .pop_front()
                     .expect("datagrams.outgoing_total desynchronized");
-                warn!(len = prev.data.len(), "dropping outgoing datagram (send buffer full)");
+                debug!(
+                    len = prev.data.len(),
+                    "dropping outgoing datagram (send buffer full)"
+                );
                 self.conn.datagrams.outgoing_total -= prev.data.len();
             }
         } else if self.conn.datagrams.outgoing_total + data.len()
@@ -106,6 +109,17 @@ impl Datagrams<'_> {
     }
 }
 
+/// Result of receiving a datagram, including any drops that occurred
+#[derive(Debug, Clone, Copy, Default)]
+pub struct DatagramReceivedResult {
+    /// Whether the receive buffer was empty before this datagram
+    pub was_empty: bool,
+    /// Number of old datagrams that were dropped to make room
+    pub dropped_count: usize,
+    /// Total bytes of dropped datagrams
+    pub dropped_bytes: usize,
+}
+
 #[derive(Default)]
 pub(super) struct DatagramState {
     /// Number of bytes of datagrams that have been received by the local transport but not
@@ -122,7 +136,7 @@ impl DatagramState {
         &mut self,
         datagram: Datagram,
         window: &Option<usize>,
-    ) -> Result<bool, TransportError> {
+    ) -> Result<DatagramReceivedResult, TransportError> {
         let window = match window {
             None => {
                 return Err(TransportError::PROTOCOL_VIOLATION(
@@ -137,19 +151,34 @@ impl DatagramState {
         }
 
         let was_empty = self.recv_buffered == 0;
+        let mut dropped_count = 0;
+        let mut dropped_bytes = 0;
+
         while datagram.data.len() + self.recv_buffered > window {
-            warn!(
-                "dropping stale datagram (buffer full: {} + {} > {} bytes) - application not reading fast enough",
-                self.recv_buffered,
-                datagram.data.len(),
-                window
-            );
-            self.recv();
+            if let Some(dropped) = self.recv() {
+                dropped_count += 1;
+                dropped_bytes += dropped.len();
+                debug!(
+                    dropped_count,
+                    dropped_bytes,
+                    recv_buffered = self.recv_buffered,
+                    incoming_len = datagram.data.len(),
+                    window,
+                    "dropping stale datagram (buffer full) - application not reading fast enough"
+                );
+            } else {
+                // Buffer is empty but still can't fit - shouldn't happen with valid window
+                break;
+            }
         }
 
         self.recv_buffered += datagram.data.len();
         self.incoming.push_back(datagram);
-        Ok(was_empty)
+        Ok(DatagramReceivedResult {
+            was_empty,
+            dropped_count,
+            dropped_bytes,
+        })
     }
 
     /// Discard outgoing datagrams with a payload larger than `max_payload` bytes
@@ -220,4 +249,112 @@ pub enum SendDatagramError {
     /// Send would block
     #[error("datagram send blocked")]
     Blocked(Bytes),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_datagram_received_no_drop() {
+        let mut state = DatagramState::default();
+        let window = Some(1024);
+
+        // Add a small datagram that fits
+        let datagram = Datagram {
+            data: Bytes::from(vec![0u8; 100]),
+        };
+        let result = state.received(datagram, &window).unwrap();
+
+        assert!(result.was_empty);
+        assert_eq!(result.dropped_count, 0);
+        assert_eq!(result.dropped_bytes, 0);
+        assert_eq!(state.recv_buffered, 100);
+    }
+
+    #[test]
+    fn test_datagram_received_with_drop() {
+        let mut state = DatagramState::default();
+        let window = Some(1024);
+
+        // Fill the buffer with a datagram
+        let datagram1 = Datagram {
+            data: Bytes::from(vec![0u8; 800]),
+        };
+        let result1 = state.received(datagram1, &window).unwrap();
+        assert!(result1.was_empty);
+        assert_eq!(result1.dropped_count, 0);
+
+        // Add another datagram that would exceed the window
+        let datagram2 = Datagram {
+            data: Bytes::from(vec![1u8; 500]),
+        };
+        let result2 = state.received(datagram2, &window).unwrap();
+
+        // Should have dropped the first datagram to make room
+        assert!(!result2.was_empty);
+        assert_eq!(result2.dropped_count, 1);
+        assert_eq!(result2.dropped_bytes, 800);
+
+        // Buffer should now contain only the second datagram
+        assert_eq!(state.recv_buffered, 500);
+        assert_eq!(state.incoming.len(), 1);
+    }
+
+    #[test]
+    fn test_datagram_received_multiple_drops() {
+        let mut state = DatagramState::default();
+        let window = Some(1024);
+
+        // Fill with multiple small datagrams
+        for i in 0..5 {
+            let datagram = Datagram {
+                data: Bytes::from(vec![i as u8; 200]),
+            };
+            state.received(datagram, &window).unwrap();
+        }
+
+        // Buffer should have 1000 bytes (5 x 200)
+        assert_eq!(state.recv_buffered, 1000);
+        assert_eq!(state.incoming.len(), 5);
+
+        // Add a large datagram that requires dropping multiple old ones
+        let large_datagram = Datagram {
+            data: Bytes::from(vec![99u8; 900]),
+        };
+        let result = state.received(large_datagram, &window).unwrap();
+
+        // Should have dropped 5 datagrams (1000 bytes) to fit 900 bytes
+        assert_eq!(result.dropped_count, 5);
+        assert_eq!(result.dropped_bytes, 1000);
+        assert_eq!(state.recv_buffered, 900);
+        assert_eq!(state.incoming.len(), 1);
+    }
+
+    #[test]
+    fn test_datagram_received_disabled() {
+        let mut state = DatagramState::default();
+        let window = None; // Datagrams disabled
+
+        let datagram = Datagram {
+            data: Bytes::from(vec![0u8; 100]),
+        };
+        let result = state.received(datagram, &window);
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_datagram_received_oversized() {
+        let mut state = DatagramState::default();
+        let window = Some(100);
+
+        // Datagram larger than window
+        let datagram = Datagram {
+            data: Bytes::from(vec![0u8; 200]),
+        };
+        let result = state.received(datagram, &window);
+
+        assert!(result.is_err());
+    }
 }
