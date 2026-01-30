@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.20.2] - 2026-01-30
+
+### Added
+
+- **Multi-Client Mixed Traffic Tests** ([#128](https://github.com/saorsa-labs/ant-quic/issues/128)): Comprehensive integration tests validating stream reliability under concurrent load
+  - `multi_client_mixed_traffic_no_datagram_loss`: Multiple clients exchanging datagrams and bi-streams simultaneously
+  - `multi_client_select_loop_integrity`: Tests `tokio::select!` pattern with biased polling between `accept_bi()` and `read_datagram()`
+  - `accept_bi_cancellation_is_safe`: Verifies rapid cancellation/re-polling of `accept_bi()` doesn't corrupt stream state
+  - Confirms QUIC stream reliability guarantees - any stream data loss is a library bug, not protocol behavior
+
+### Documentation
+
+- Added TROUBLESHOOTING.md FAQ clarifying that QUIC streams are fully reliable and ordered - data loss indicates a bug
+
 ## [0.20.1] - 2026-01-30
 
 ### Fixed
