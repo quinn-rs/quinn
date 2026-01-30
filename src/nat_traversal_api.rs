@@ -1938,7 +1938,7 @@ impl NatTraversalEndpoint {
     ) -> Result<(), NatTraversalError> {
         // CRITICAL: Check for existing connection FIRST - no NAT traversal needed if already connected.
         // This prevents wasting resources on hole punching when we already have a direct connection.
-        if self.connections.contains_key(&peer_id) {
+        if self.has_existing_connection(&peer_id) {
             debug!(
                 "Direct connection already exists for peer {:?}, skipping NAT traversal",
                 peer_id
@@ -4438,7 +4438,7 @@ impl NatTraversalEndpoint {
         candidate: &CandidateAddress,
     ) -> Result<(), NatTraversalError> {
         // Check if connection already exists - another candidate may have succeeded
-        if self.connections.contains_key(&peer_id) {
+        if self.has_existing_connection(&peer_id) {
             debug!(
                 "Connection already exists for peer {:?}, skipping candidate {}",
                 peer_id, candidate.address
@@ -4789,7 +4789,7 @@ impl NatTraversalEndpoint {
         for (peer_id, coordinator) in coordination_requests {
             // Re-check for existing connection before executing deferred coordination
             // A connection may have been established during the gap between phase collection and execution
-            if self.connections.contains_key(&peer_id) {
+            if self.has_existing_connection(&peer_id) {
                 debug!(
                     "Connection established for peer {:?} before coordination execution, skipping",
                     peer_id
@@ -4822,7 +4822,7 @@ impl NatTraversalEndpoint {
         for (peer_id, candidates) in hole_punch_requests {
             // Re-check for existing connection before executing deferred hole punch
             // A connection may have been established during the gap between phase collection and execution
-            if self.connections.contains_key(&peer_id) {
+            if self.has_existing_connection(&peer_id) {
                 debug!(
                     "Connection established for peer {:?} before hole punch execution, skipping",
                     peer_id
@@ -5192,7 +5192,7 @@ impl NatTraversalEndpoint {
         }
 
         // Check if connection already exists - no hole punching needed
-        if self.connections.contains_key(&peer_id) {
+        if self.has_existing_connection(&peer_id) {
             info!(
                 "Connection already exists for peer {:?}, skipping hole punching",
                 peer_id
@@ -5329,13 +5329,22 @@ impl NatTraversalEndpoint {
         )))
     }
 
+    /// Check if a connection already exists for the given peer.
+    ///
+    /// This is used to skip unnecessary NAT traversal when a direct connection
+    /// has already been established. Checking this at multiple points prevents
+    /// wasted resources on hole punching attempts.
+    #[inline]
+    fn has_existing_connection(&self, peer_id: &PeerId) -> bool {
+        self.connections.contains_key(peer_id)
+    }
+
     /// Check if path validation succeeded
     fn is_path_validated(&self, peer_id: &PeerId) -> bool {
         debug!("Checking path validation for peer {:?}", peer_id);
 
         // Check if we have an active connection
-        // DashMap provides lock-free .contains_key()
-        if self.connections.contains_key(peer_id) {
+        if self.has_existing_connection(peer_id) {
             info!("Path validated: connection exists for peer {:?}", peer_id);
             return true;
         }
