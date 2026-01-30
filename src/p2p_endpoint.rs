@@ -2155,6 +2155,219 @@ impl P2pEndpoint {
         Err(EndpointError::Timeout)
     }
 
+    /// Receive data from any connected peer — event-driven, no polling.
+    ///
+    /// Unlike [`recv`](Self::recv), this method does not poll on a timeout. It blocks
+    /// until data actually arrives on any connected peer's QUIC stream, using the
+    /// underlying `Notify`-based `accept_uni()` futures for instant wakeup.
+    ///
+    /// Constrained transport events (BLE, LoRa) are checked non-blockingly at
+    /// the start of each iteration.
+    ///
+    /// # Cancel safety
+    ///
+    /// This method is **cancel-safe** at the top level: dropping the returned future
+    /// will not lose any data that has already been fully read. Partially-accepted
+    /// streams that haven't been read yet remain available on the connection for the
+    /// next call.
+    ///
+    /// # Errors
+    ///
+    /// Returns `EndpointError` if:
+    /// - The endpoint is shutting down
+    /// - No connected peers are available (caller should retry after peer connects)
+    pub async fn recv_async(&self) -> Result<(PeerId, Vec<u8>), EndpointError> {
+        if self.shutdown.load(Ordering::SeqCst) {
+            return Err(EndpointError::ShuttingDown);
+        }
+
+        // 1. Check pending data buffer (data buffered during authentication)
+        {
+            let mut pending = self.pending_data.write().await;
+            pending.cleanup_expired();
+
+            if let Some((peer_id, data)) = pending.pop_any() {
+                tracing::trace!(
+                    "recv_async: {} bytes from peer {:?} (pending buffer)",
+                    data.len(),
+                    peer_id
+                );
+                if let Some(peer_conn) = self.connected_peers.write().await.get_mut(&peer_id) {
+                    peer_conn.last_activity = Instant::now();
+                }
+                let _ = self.event_tx.send(P2pEvent::DataReceived {
+                    peer_id,
+                    bytes: data.len(),
+                });
+                return Ok((peer_id, data));
+            }
+        }
+
+        // 2. Check constrained transport events (non-blocking)
+        if let Some(constrained_result) = self.try_recv_constrained_data().await {
+            return constrained_result;
+        }
+
+        // 3. Snapshot all QUIC connections and race accept_uni across them
+        let peers: Vec<(PeerId, _)> = self
+            .inner
+            .list_connections()
+            .map_err(|e| EndpointError::Connection(e.to_string()))?
+            .into_iter()
+            .filter_map(|(peer_id, _addr)| {
+                self.inner
+                    .get_connection(&peer_id)
+                    .ok()
+                    .flatten()
+                    .map(|conn| (peer_id, conn))
+            })
+            .collect();
+
+        if peers.is_empty() {
+            return Err(EndpointError::Connection("No connected peers".to_string()));
+        }
+
+        // Build a future per connection: accept_uni → read_to_end
+        // Each future resolves to (peer_id, Result<Vec<u8>>)
+        use futures_util::future::select_all;
+
+        let futures: Vec<_> = peers
+            .iter()
+            .map(|(peer_id, conn)| {
+                let pid = *peer_id;
+                Box::pin(async move {
+                    let mut recv_stream = conn.accept_uni().await.map_err(|e| {
+                        EndpointError::Connection(format!("accept_uni failed: {e}"))
+                    })?;
+                    let data = recv_stream.read_to_end(1024 * 1024).await.map_err(|e| {
+                        EndpointError::Connection(format!("read_to_end failed: {e}"))
+                    })?;
+                    Ok::<(PeerId, Vec<u8>), EndpointError>((pid, data))
+                })
+            })
+            .collect();
+
+        let (result, _index, _remaining) = select_all(futures).await;
+
+        match result {
+            Ok((peer_id, data)) if !data.is_empty() => {
+                tracing::trace!(
+                    "recv_async: {} bytes from peer {:?}",
+                    data.len(),
+                    peer_id
+                );
+                if let Some(peer_conn) = self.connected_peers.write().await.get_mut(&peer_id) {
+                    peer_conn.last_activity = Instant::now();
+                }
+                let _ = self.event_tx.send(P2pEvent::DataReceived {
+                    peer_id,
+                    bytes: data.len(),
+                });
+                Ok((peer_id, data))
+            }
+            Ok((_, _)) => {
+                // Empty data — treat as no data available
+                Err(EndpointError::Connection("Received empty data".to_string()))
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Try to receive data from constrained transports (non-blocking).
+    ///
+    /// Returns `Some(Ok(...))` if data was received, `Some(Err(...))` on error,
+    /// or `None` if no constrained events are pending.
+    async fn try_recv_constrained_data(
+        &self,
+    ) -> Option<Result<(PeerId, Vec<u8>), EndpointError>> {
+        let event = self.inner.try_recv_constrained_event()?;
+
+        use crate::constrained::EngineEvent;
+        match event.event {
+            EngineEvent::DataReceived {
+                connection_id,
+                data,
+            } => {
+                let peer_id = self
+                    .peer_id_from_constrained_conn(connection_id)
+                    .await
+                    .unwrap_or_else(|| self.addr_to_peer_id(&event.remote_addr));
+
+                tracing::trace!(
+                    "recv_async: {} bytes from constrained transport {} (peer {:?})",
+                    data.len(),
+                    event.remote_addr,
+                    peer_id
+                );
+
+                if let Some(peer_conn) = self.connected_peers.write().await.get_mut(&peer_id) {
+                    peer_conn.last_activity = Instant::now();
+                }
+                let _ = self.event_tx.send(P2pEvent::DataReceived {
+                    peer_id,
+                    bytes: data.len(),
+                });
+
+                Some(Ok((peer_id, data)))
+            }
+            EngineEvent::ConnectionAccepted {
+                connection_id,
+                remote_addr: _,
+            } => {
+                let peer_id = self
+                    .register_constrained_peer(connection_id, &event.remote_addr)
+                    .await;
+
+                tracing::debug!(
+                    "recv_async: constrained connection accepted: conn_id={}, peer={:?}",
+                    connection_id.value(),
+                    peer_id
+                );
+
+                let _ = self.event_tx.send(P2pEvent::PeerConnected {
+                    peer_id,
+                    addr: event.remote_addr,
+                    side: Side::Server,
+                });
+
+                None // Not data — caller should retry
+            }
+            EngineEvent::ConnectionEstablished { connection_id } => {
+                if self
+                    .peer_id_from_constrained_conn(connection_id)
+                    .await
+                    .is_none()
+                {
+                    let peer_id = self
+                        .register_constrained_peer(connection_id, &event.remote_addr)
+                        .await;
+                    let _ = self.event_tx.send(P2pEvent::PeerConnected {
+                        peer_id,
+                        addr: event.remote_addr,
+                        side: Side::Client,
+                    });
+                }
+                None
+            }
+            EngineEvent::ConnectionClosed { connection_id } => {
+                let _peer_id = self.unregister_constrained_peer(connection_id).await;
+                None
+            }
+            EngineEvent::ConnectionError {
+                connection_id,
+                error,
+            } => {
+                tracing::warn!(
+                    "recv_async: constrained error: conn_id={}, error={}",
+                    connection_id.value(),
+                    error
+                );
+                None
+            }
+            EngineEvent::Transmit { .. } => None,
+        }
+    }
+
     // === Events ===
 
     /// Subscribe to endpoint events
