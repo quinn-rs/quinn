@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.20.1] - 2026-01-30
+
+### Fixed
+
+- **Datagram Drop Notifications** ([#128](https://github.com/saorsa-labs/ant-quic/issues/128)): Silent datagram dropping when receive buffer is full now surfaces explicit notifications to applications
+  - Added `DatagramDropStats` struct to track dropped datagrams count and bytes
+  - Added `Event::DatagramDropped` variant to the connection event loop
+  - Added `Connection::on_datagram_drop()` async method for event-driven notification
+  - Added `Connection::datagram_drop_stats()` for polling cumulative drop statistics
+  - Added `datagram_drops` field to `ConnectionStats` for aggregate tracking
+  - Applications can now detect and react to buffer pressure instead of experiencing silent data loss
+
 ## [0.20.0] - 2026-01-24
 
 ### Added
