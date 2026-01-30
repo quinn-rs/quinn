@@ -9,7 +9,7 @@ use std::collections::VecDeque;
 
 use bytes::Bytes;
 use thiserror::Error;
-use tracing::{debug, trace};
+use tracing::{trace, warn};
 
 use super::Connection;
 use crate::{
@@ -50,7 +50,7 @@ impl Datagrams<'_> {
                     .outgoing
                     .pop_front()
                     .expect("datagrams.outgoing_total desynchronized");
-                trace!(len = prev.data.len(), "dropping outgoing datagram");
+                warn!(len = prev.data.len(), "dropping outgoing datagram (send buffer full)");
                 self.conn.datagrams.outgoing_total -= prev.data.len();
             }
         } else if self.conn.datagrams.outgoing_total + data.len()
@@ -138,7 +138,12 @@ impl DatagramState {
 
         let was_empty = self.recv_buffered == 0;
         while datagram.data.len() + self.recv_buffered > window {
-            debug!("dropping stale datagram");
+            warn!(
+                "dropping stale datagram (buffer full: {} + {} > {} bytes) - application not reading fast enough",
+                self.recv_buffered,
+                datagram.data.len(),
+                window
+            );
             self.recv();
         }
 
