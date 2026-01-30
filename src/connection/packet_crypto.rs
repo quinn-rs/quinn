@@ -178,3 +178,278 @@ pub(super) struct ZeroRttCrypto {
     pub(super) header: Box<dyn HeaderKey>,
     pub(super) packet: Box<dyn PacketKey>,
 }
+
+// =============================================================================
+// Tests
+// =============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bytes::{Bytes, BytesMut};
+
+    use crate::crypto::{CryptoError, Keys};
+    use crate::packet::{FixedLengthConnectionIdParser, Header, PacketNumber, SpaceId};
+    use crate::transport_error::Code;
+    use crate::{ConnectionId, Instant};
+
+    /// Realistic sample size for AES-GCM header protection (16 bytes)
+    const REALISTIC_SAMPLE_SIZE: usize = 16;
+
+    struct TestHeaderKey;
+
+    impl HeaderKey for TestHeaderKey {
+        fn decrypt(&self, _pn_offset: usize, _packet: &mut [u8]) {}
+
+        fn encrypt(&self, _pn_offset: usize, _packet: &mut [u8]) {}
+
+        fn sample_size(&self) -> usize {
+            REALISTIC_SAMPLE_SIZE
+        }
+    }
+
+    struct TestPacketKey;
+
+    impl PacketKey for TestPacketKey {
+        fn encrypt(&self, _packet: u64, _buf: &mut [u8], _header_len: usize) {}
+
+        fn decrypt(
+            &self,
+            _packet: u64,
+            _header: &[u8],
+            _payload: &mut BytesMut,
+        ) -> Result<(), CryptoError> {
+            Ok(())
+        }
+
+        fn tag_len(&self) -> usize {
+            0
+        }
+
+        fn confidentiality_limit(&self) -> u64 {
+            u64::MAX
+        }
+
+        fn integrity_limit(&self) -> u64 {
+            u64::MAX
+        }
+    }
+
+    fn test_packet_keys() -> KeyPair<Box<dyn PacketKey>> {
+        KeyPair {
+            local: Box::new(TestPacketKey),
+            remote: Box::new(TestPacketKey),
+        }
+    }
+
+    fn test_keys() -> Keys {
+        Keys {
+            header: KeyPair {
+                local: Box::new(TestHeaderKey),
+                remote: Box::new(TestHeaderKey),
+            },
+            packet: test_packet_keys(),
+        }
+    }
+
+    fn spaces_with_crypto() -> [PacketSpace; 3] {
+        let now = Instant::now();
+        let mut spaces = [
+            PacketSpace::new(now),
+            PacketSpace::new(now),
+            PacketSpace::new(now),
+        ];
+        spaces[SpaceId::Data].crypto = Some(test_keys());
+        spaces
+    }
+
+    /// Build short packet bytes with sufficient padding for header protection.
+    /// Header protection requires at least sample_size (16) bytes after pn_offset + 4.
+    fn short_packet_bytes(first_byte: u8, packet_number: u8, payload: &[u8]) -> BytesMut {
+        let mut bytes = Vec::with_capacity(2 + payload.len());
+        bytes.push(first_byte);
+        bytes.push(packet_number);
+        bytes.extend_from_slice(payload);
+        // Ensure minimum size for header protection sampling
+        // pn_offset is 1 (after first byte), need 4 + sample_size bytes after that
+        let min_size = 1 + 4 + REALISTIC_SAMPLE_SIZE;
+        while bytes.len() < min_size {
+            bytes.push(0x00);
+        }
+        BytesMut::from(bytes.as_slice())
+    }
+
+    fn decode_short_packet(bytes: BytesMut) -> PartialDecode {
+        let supported_versions = crate::DEFAULT_SUPPORTED_VERSIONS.to_vec();
+        PartialDecode::new(
+            bytes,
+            &FixedLengthConnectionIdParser::new(0),
+            &supported_versions,
+            false,
+        )
+        .unwrap()
+        .0
+    }
+
+    fn short_packet(packet_number: u8, key_phase: bool, first_byte: u8) -> Packet {
+        Packet {
+            header: Header::Short {
+                spin: false,
+                key_phase,
+                dst_cid: ConnectionId::new(&[]),
+                number: PacketNumber::U8(packet_number),
+            },
+            header_data: Bytes::from(vec![first_byte]),
+            payload: BytesMut::from(&[0u8; 8][..]),
+        }
+    }
+
+    #[test]
+    fn unprotect_header_sets_stateless_reset_for_matching_token() {
+        let token_bytes = [0xAB; RESET_TOKEN_SIZE];
+        let stateless_reset_token = Some(ResetToken::from(token_bytes));
+
+        let mut payload = vec![0u8; 3];
+        payload.extend_from_slice(&token_bytes);
+
+        let bytes = short_packet_bytes(0x40, 0x01, &payload);
+        let partial = decode_short_packet(bytes);
+        let spaces = spaces_with_crypto();
+
+        let result = unprotect_header(partial, &spaces, None, stateless_reset_token)
+            .expect("packet should be decoded");
+
+        assert!(result.packet.is_some());
+        assert!(result.stateless_reset);
+    }
+
+    #[test]
+    fn unprotect_header_ignores_non_matching_token() {
+        let token_bytes = [0xAB; RESET_TOKEN_SIZE];
+        let stateless_reset_token = Some(ResetToken::from([0xCD; RESET_TOKEN_SIZE]));
+
+        let mut payload = vec![0u8; 3];
+        payload.extend_from_slice(&token_bytes);
+
+        let bytes = short_packet_bytes(0x40, 0x01, &payload);
+        let partial = decode_short_packet(bytes);
+        let spaces = spaces_with_crypto();
+
+        let result = unprotect_header(partial, &spaces, None, stateless_reset_token)
+            .expect("packet should be decoded");
+
+        assert!(result.packet.is_some());
+        assert!(!result.stateless_reset);
+    }
+
+    #[test]
+    fn decrypt_packet_body_rejects_reserved_bits() {
+        let mut spaces = spaces_with_crypto();
+        spaces[SpaceId::Data].rx_packet = 0;
+
+        let mut packet = short_packet(1, false, 0x58);
+
+        let result = decrypt_packet_body(&mut packet, &spaces, None, false, None, None);
+
+        let err = result
+            .err()
+            .expect("should be error")
+            .expect("should have transport error");
+        assert_eq!(err.code, Code::PROTOCOL_VIOLATION);
+    }
+
+    #[test]
+    fn decrypt_packet_body_reports_key_update_errors() {
+        // Test case 1: packet number <= rx_packet triggers KEY_UPDATE_ERROR
+        let mut spaces = spaces_with_crypto();
+        spaces[SpaceId::Data].rx_packet = 10;
+
+        let mut packet = short_packet(10, true, 0x44);
+        let next_crypto = test_packet_keys();
+
+        let result =
+            decrypt_packet_body(&mut packet, &spaces, None, false, None, Some(&next_crypto));
+
+        let err = result
+            .err()
+            .expect("should be error")
+            .expect("should have transport error");
+        assert_eq!(err.code, Code::KEY_UPDATE_ERROR);
+
+        // Test case 2: prev_crypto.update_unacked triggers KEY_UPDATE_ERROR
+        let mut spaces = spaces_with_crypto();
+        spaces[SpaceId::Data].rx_packet = 0;
+
+        let mut packet = short_packet(1, true, 0x44);
+        let prev_crypto = PrevCrypto {
+            crypto: test_packet_keys(),
+            end_packet: Some((0, Instant::now())),
+            update_unacked: true,
+        };
+        let next_crypto = test_packet_keys();
+
+        let result = decrypt_packet_body(
+            &mut packet,
+            &spaces,
+            None,
+            false,
+            Some(&prev_crypto),
+            Some(&next_crypto),
+        );
+
+        let err = result
+            .err()
+            .expect("should be error")
+            .expect("should have transport error");
+        assert_eq!(err.code, Code::KEY_UPDATE_ERROR);
+    }
+
+    #[test]
+    fn decrypt_packet_body_returns_result_for_valid_packet() {
+        let mut spaces = spaces_with_crypto();
+        spaces[SpaceId::Data].rx_packet = 0;
+
+        let mut packet = short_packet(1, false, 0x40);
+
+        let result = decrypt_packet_body(&mut packet, &spaces, None, false, None, None)
+            .expect("decryption should succeed")
+            .expect("protected packet should return result");
+
+        assert_eq!(result.number, 1);
+        assert!(!result.outgoing_key_update_acked);
+        assert!(!result.incoming_key_update);
+    }
+
+    #[test]
+    fn unprotect_header_rejects_too_short_packet() {
+        // Test that packets too short for header protection sampling are rejected.
+        // With REALISTIC_SAMPLE_SIZE = 16, need at least pn_offset + 4 + 16 = 21 bytes
+        // for a packet with 1-byte pn_offset (short header, no DCID).
+        let spaces = spaces_with_crypto();
+
+        // Create a packet that's too short (only 10 bytes)
+        // This is shorter than pn_offset (1) + 4 + sample_size (16) = 21 bytes
+        let too_short =
+            BytesMut::from(&[0x40, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00][..]);
+
+        let supported_versions = crate::DEFAULT_SUPPORTED_VERSIONS.to_vec();
+        let partial_result = PartialDecode::new(
+            too_short,
+            &FixedLengthConnectionIdParser::new(0),
+            &supported_versions,
+            false,
+        );
+
+        // PartialDecode::new may succeed (it just parses the header structure)
+        // The sample_size check happens in finish() when header protection is applied
+        if let Ok((partial, _)) = partial_result {
+            // Now try to unprotect - this should fail due to insufficient bytes for sampling
+            let result = unprotect_header(partial, &spaces, None, None);
+            assert!(
+                result.is_none(),
+                "Packet too short for header protection should be rejected during unprotect"
+            );
+        }
+        // If PartialDecode::new itself fails, that's also acceptable
+    }
+}
