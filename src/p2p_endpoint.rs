@@ -52,7 +52,6 @@
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use crate::constrained::ConnectionId as ConstrainedConnectionId;
@@ -62,6 +61,7 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
 use tokio::sync::{RwLock, broadcast, mpsc};
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
 use crate::constrained::EngineEvent;
@@ -153,8 +153,8 @@ pub struct P2pEndpoint {
     /// Our ML-DSA-65 public key bytes (for identity sharing) - 1952 bytes
     public_key: Vec<u8>,
 
-    /// Shutdown flag
-    shutdown: Arc<AtomicBool>,
+    /// Shutdown token for cooperative cancellation
+    shutdown: CancellationToken,
 
     /// Bounded pending data buffer for message ordering
     pending_data: Arc<RwLock<BoundedPendingBuffer>>,
@@ -193,8 +193,11 @@ pub struct P2pEndpoint {
     /// Channel receiver for data received from QUIC reader tasks and constrained poller
     data_rx: Arc<tokio::sync::Mutex<mpsc::Receiver<(PeerId, Vec<u8>)>>>,
 
-    /// Background reader task handles per QUIC peer (for cleanup on disconnect/shutdown)
-    reader_tasks: Arc<RwLock<HashMap<PeerId, tokio::task::JoinHandle<()>>>>,
+    /// JoinSet tracking background reader tasks (each returns PeerId on exit)
+    reader_tasks: Arc<tokio::sync::Mutex<tokio::task::JoinSet<PeerId>>>,
+
+    /// Per-peer abort handles for targeted reader task cancellation
+    reader_handles: Arc<RwLock<HashMap<PeerId, tokio::task::AbortHandle>>>,
 }
 
 impl std::fmt::Debug for P2pEndpoint {
@@ -653,7 +656,8 @@ impl P2pEndpoint {
 
         // Create channel for data received from background reader tasks
         let (data_tx, data_rx) = mpsc::channel(DATA_CHANNEL_CAPACITY);
-        let reader_tasks = Arc::new(RwLock::new(HashMap::new()));
+        let reader_tasks = Arc::new(tokio::sync::Mutex::new(tokio::task::JoinSet::new()));
+        let reader_handles = Arc::new(RwLock::new(HashMap::new()));
 
         let endpoint = Self {
             inner: inner_arc,
@@ -664,7 +668,7 @@ impl P2pEndpoint {
             event_tx,
             peer_id,
             public_key: public_key_bytes,
-            shutdown: Arc::new(AtomicBool::new(false)),
+            shutdown: CancellationToken::new(),
             pending_data: Arc::new(RwLock::new(BoundedPendingBuffer::default())),
             bootstrap_cache,
             transport_registry,
@@ -674,6 +678,7 @@ impl P2pEndpoint {
             data_tx,
             data_rx: Arc::new(tokio::sync::Mutex::new(data_rx)),
             reader_tasks,
+            reader_handles,
         };
 
         // Spawn background constrained poller task
@@ -731,7 +736,7 @@ impl P2pEndpoint {
     /// Uses Raw Public Key authentication - the peer's identity is verified via their
     /// ML-DSA-65 public key, not via SNI/certificates.
     pub async fn connect(&self, addr: SocketAddr) -> Result<PeerConnection, EndpointError> {
-        if self.shutdown.load(Ordering::SeqCst) {
+        if self.shutdown.is_cancelled() {
             return Err(EndpointError::ShuttingDown);
         }
 
@@ -832,7 +837,7 @@ impl P2pEndpoint {
         addr: &TransportAddr,
         peer_id: Option<PeerId>,
     ) -> Result<PeerConnection, EndpointError> {
-        if self.shutdown.load(Ordering::SeqCst) {
+        if self.shutdown.is_cancelled() {
             return Err(EndpointError::ShuttingDown);
         }
 
@@ -1045,7 +1050,7 @@ impl P2pEndpoint {
     ) -> Result<PeerConnection, EndpointError> {
         use std::net::IpAddr;
 
-        if self.shutdown.load(Ordering::SeqCst) {
+        if self.shutdown.is_cancelled() {
             return Err(EndpointError::ShuttingDown);
         }
 
@@ -1171,7 +1176,7 @@ impl P2pEndpoint {
     /// using its known addresses. It leverages `connect_dual_stack` with the `PeerId`
     /// to enable token-based 0-RTT/Fast Reconnect.
     pub async fn connect_cached(&self, peer_id: PeerId) -> Result<PeerConnection, EndpointError> {
-        if self.shutdown.load(Ordering::SeqCst) {
+        if self.shutdown.is_cancelled() {
             return Err(EndpointError::ShuttingDown);
         }
 
@@ -1204,7 +1209,7 @@ impl P2pEndpoint {
         peer_id: PeerId,
         coordinator: Option<SocketAddr>,
     ) -> Result<PeerConnection, EndpointError> {
-        if self.shutdown.load(Ordering::SeqCst) {
+        if self.shutdown.is_cancelled() {
             return Err(EndpointError::ShuttingDown);
         }
 
@@ -1242,7 +1247,7 @@ impl P2pEndpoint {
             .connection_establishment_timeout;
 
         while start.elapsed() < timeout {
-            if self.shutdown.load(Ordering::SeqCst) {
+            if self.shutdown.is_cancelled() {
                 return Err(EndpointError::ShuttingDown);
             }
 
@@ -1342,7 +1347,7 @@ impl P2pEndpoint {
     ) -> Result<(PeerConnection, ConnectionMethod), EndpointError> {
         use tokio::time::timeout;
 
-        if self.shutdown.load(Ordering::SeqCst) {
+        if self.shutdown.is_cancelled() {
             return Err(EndpointError::ShuttingDown);
         }
 
@@ -1559,7 +1564,7 @@ impl P2pEndpoint {
         let timeout_duration = Duration::from_secs(15);
 
         while start.elapsed() < timeout_duration {
-            if self.shutdown.load(Ordering::SeqCst) {
+            if self.shutdown.is_cancelled() {
                 return Err(EndpointError::ShuttingDown);
             }
 
@@ -1652,7 +1657,7 @@ impl P2pEndpoint {
 
     /// Accept incoming connections
     pub async fn accept(&self) -> Option<PeerConnection> {
-        if self.shutdown.load(Ordering::SeqCst) {
+        if self.shutdown.is_cancelled() {
             return None;
         }
 
@@ -1731,7 +1736,7 @@ impl P2pEndpoint {
             let _ = self.inner.remove_connection(peer_id);
 
             // Abort the background reader task for this peer
-            if let Some(handle) = self.reader_tasks.write().await.remove(peer_id) {
+            if let Some(handle) = self.reader_handles.write().await.remove(peer_id) {
                 handle.abort();
             }
 
@@ -1795,7 +1800,7 @@ impl P2pEndpoint {
     /// - No suitable transport provider is available
     /// - The send operation fails
     pub async fn send(&self, peer_id: &PeerId, data: &[u8]) -> Result<(), EndpointError> {
-        if self.shutdown.load(Ordering::SeqCst) {
+        if self.shutdown.is_cancelled() {
             return Err(EndpointError::ShuttingDown);
         }
 
@@ -1907,7 +1912,7 @@ impl P2pEndpoint {
     ///
     /// Returns `EndpointError::ShuttingDown` if the endpoint is shutting down.
     pub async fn recv(&self) -> Result<(PeerId, Vec<u8>), EndpointError> {
-        if self.shutdown.load(Ordering::SeqCst) {
+        if self.shutdown.is_cancelled() {
             return Err(EndpointError::ShuttingDown);
         }
 
@@ -2051,14 +2056,11 @@ impl P2pEndpoint {
     /// Shutdown the endpoint gracefully
     pub async fn shutdown(&self) {
         info!("Shutting down P2P endpoint");
-        self.shutdown.store(true, Ordering::SeqCst);
+        self.shutdown.cancel();
 
         // Abort all background reader tasks
-        let tasks: HashMap<PeerId, tokio::task::JoinHandle<()>> =
-            std::mem::take(&mut *self.reader_tasks.write().await);
-        for (_peer_id, handle) in tasks {
-            handle.abort();
-        }
+        self.reader_tasks.lock().await.abort_all();
+        self.reader_handles.write().await.clear();
 
         // Disconnect all peers
         let peers: Vec<PeerId> = self.connected_peers.read().await.keys().copied().collect();
@@ -2071,7 +2073,12 @@ impl P2pEndpoint {
 
     /// Check if endpoint is running
     pub fn is_running(&self) -> bool {
-        !self.shutdown.load(Ordering::SeqCst)
+        !self.shutdown.is_cancelled()
+    }
+
+    /// Get a clone of the shutdown token (for external cancellation listening)
+    pub fn shutdown_token(&self) -> CancellationToken {
+        self.shutdown.clone()
     }
 
     // === Internal helpers ===
@@ -2088,66 +2095,65 @@ impl P2pEndpoint {
         let data_tx = self.data_tx.clone();
         let connected_peers = Arc::clone(&self.connected_peers);
         let event_tx = self.event_tx.clone();
+        let reader_handles = Arc::clone(&self.reader_handles);
         let reader_tasks = Arc::clone(&self.reader_tasks);
 
-        let handle = tokio::spawn(async move {
-            loop {
-                // Accept the next unidirectional stream
-                let mut recv_stream = match connection.accept_uni().await {
-                    Ok(stream) => stream,
-                    Err(e) => {
-                        debug!(
-                            "Reader task for peer {:?} ending: accept_uni error: {}",
-                            peer_id, e
-                        );
-                        break;
-                    }
-                };
-
-                let data = match recv_stream.read_to_end(MAX_UNI_STREAM_READ_BYTES).await {
-                    Ok(data) if data.is_empty() => continue,
-                    Ok(data) => data,
-                    Err(e) => {
-                        debug!(
-                            "Reader task for peer {:?}: read_to_end error: {}",
-                            peer_id, e
-                        );
-                        break;
-                    }
-                };
-
-                let data_len = data.len();
-                tracing::trace!("Reader task: {} bytes from peer {:?}", data_len, peer_id);
-
-                // Update last_activity
-                if let Some(peer_conn) = connected_peers.write().await.get_mut(&peer_id) {
-                    peer_conn.last_activity = Instant::now();
-                }
-
-                // Emit DataReceived event
-                let _ = event_tx.send(P2pEvent::DataReceived {
-                    peer_id,
-                    bytes: data_len,
-                });
-
-                // Send through channel; if the receiver is dropped, exit
-                if data_tx.send((peer_id, data)).await.is_err() {
-                    debug!(
-                        "Reader task for peer {:?}: channel closed, exiting",
-                        peer_id
-                    );
-                    break;
-                }
-            }
-
-            // Clean up our entry from reader_tasks
-            reader_tasks.write().await.remove(&peer_id);
-        });
-
-        // Store the handle (fire-and-forget storage; blocking is fine since we just created it)
-        let reader_tasks = Arc::clone(&self.reader_tasks);
+        // Spawn into the JoinSet via a secondary task (JoinSet::spawn requires &mut)
         tokio::spawn(async move {
-            reader_tasks.write().await.insert(peer_id, handle);
+            let abort_handle = reader_tasks.lock().await.spawn(async move {
+                loop {
+                    // Accept the next unidirectional stream
+                    let mut recv_stream = match connection.accept_uni().await {
+                        Ok(stream) => stream,
+                        Err(e) => {
+                            debug!(
+                                "Reader task for peer {:?} ending: accept_uni error: {}",
+                                peer_id, e
+                            );
+                            break;
+                        }
+                    };
+
+                    let data = match recv_stream.read_to_end(MAX_UNI_STREAM_READ_BYTES).await {
+                        Ok(data) if data.is_empty() => continue,
+                        Ok(data) => data,
+                        Err(e) => {
+                            debug!(
+                                "Reader task for peer {:?}: read_to_end error: {}",
+                                peer_id, e
+                            );
+                            break;
+                        }
+                    };
+
+                    let data_len = data.len();
+                    tracing::trace!("Reader task: {} bytes from peer {:?}", data_len, peer_id);
+
+                    // Update last_activity
+                    if let Some(peer_conn) = connected_peers.write().await.get_mut(&peer_id) {
+                        peer_conn.last_activity = Instant::now();
+                    }
+
+                    // Emit DataReceived event
+                    let _ = event_tx.send(P2pEvent::DataReceived {
+                        peer_id,
+                        bytes: data_len,
+                    });
+
+                    // Send through channel; if the receiver is dropped, exit
+                    if data_tx.send((peer_id, data)).await.is_err() {
+                        debug!(
+                            "Reader task for peer {:?}: channel closed, exiting",
+                            peer_id
+                        );
+                        break;
+                    }
+                }
+
+                peer_id
+            });
+
+            reader_handles.write().await.insert(peer_id, abort_handle);
         });
     }
 
@@ -2163,7 +2169,7 @@ impl P2pEndpoint {
         let event_tx = self.event_tx.clone();
         let constrained_peer_addrs = Arc::clone(&self.constrained_peer_addrs);
         let constrained_connections = Arc::clone(&self.constrained_connections);
-        let shutdown = Arc::clone(&self.shutdown);
+        let shutdown = self.shutdown.clone();
 
         /// Register a new constrained peer in all lookup maps and emit a connect event.
         async fn register_peer(
@@ -2205,13 +2211,14 @@ impl P2pEndpoint {
 
         tokio::spawn(async move {
             loop {
-                if shutdown.load(Ordering::SeqCst) {
-                    break;
-                }
-
-                let Some(wrapper) = inner.try_recv_constrained_event() else {
-                    tokio::time::sleep(Duration::from_millis(CONSTRAINED_POLL_INTERVAL_MS)).await;
-                    continue;
+                let wrapper = tokio::select! {
+                    _ = shutdown.cancelled() => break,
+                    _ = tokio::time::sleep(Duration::from_millis(CONSTRAINED_POLL_INTERVAL_MS)) => {
+                        match inner.try_recv_constrained_event() {
+                            Some(w) => w,
+                            None => continue,
+                        }
+                    }
                 };
 
                 match wrapper.event {
@@ -2333,7 +2340,7 @@ impl Clone for P2pEndpoint {
             event_tx: self.event_tx.clone(),
             peer_id: self.peer_id,
             public_key: self.public_key.clone(),
-            shutdown: Arc::clone(&self.shutdown),
+            shutdown: self.shutdown.clone(),
             pending_data: Arc::clone(&self.pending_data),
             bootstrap_cache: Arc::clone(&self.bootstrap_cache),
             transport_registry: Arc::clone(&self.transport_registry),
@@ -2343,6 +2350,7 @@ impl Clone for P2pEndpoint {
             data_tx: self.data_tx.clone(),
             data_rx: Arc::clone(&self.data_rx),
             reader_tasks: Arc::clone(&self.reader_tasks),
+            reader_handles: Arc::clone(&self.reader_handles),
         }
     }
 }

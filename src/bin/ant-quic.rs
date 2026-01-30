@@ -39,13 +39,11 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::RwLock;
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
-
-/// Interval between shutdown flag checks in async select! branches (ms)
-const SHUTDOWN_POLL_INTERVAL_MS: u64 = 50;
 
 /// Default bootstrap nodes operated by Saorsa Labs
 ///
@@ -399,7 +397,7 @@ async fn main() -> anyhow::Result<()> {
     info!("═══════════════════════════════════════════════════════════════");
 
     // Setup shutdown signal
-    let shutdown = Arc::new(AtomicBool::new(false));
+    let shutdown = CancellationToken::new();
     let shutdown_clone = shutdown.clone();
 
     tokio::spawn(async move {
@@ -407,7 +405,7 @@ async fn main() -> anyhow::Result<()> {
             error!("Failed to listen for ctrl-c: {}", e);
         }
         info!("Shutdown signal received");
-        shutdown_clone.store(true, Ordering::SeqCst);
+        shutdown_clone.cancel();
     });
 
     // Setup statistics
@@ -430,7 +428,7 @@ async fn main() -> anyhow::Result<()> {
 
     let event_handle = tokio::spawn(async move {
         let mut events = endpoint_clone.subscribe();
-        while !shutdown_events.load(Ordering::SeqCst) {
+        while !shutdown_events.is_cancelled() {
             match tokio::time::timeout(Duration::from_millis(100), events.recv()).await {
                 Ok(Ok(event)) => {
                     handle_event_with_state(
@@ -458,7 +456,7 @@ async fn main() -> anyhow::Result<()> {
 
         Some(tokio::spawn(async move {
             let mut interval_timer = tokio::time::interval(Duration::from_secs(interval));
-            while !shutdown_stats.load(Ordering::SeqCst) {
+            while !shutdown_stats.is_cancelled() {
                 interval_timer.tick().await;
                 print_stats(&endpoint_stats, &stats_clone2, json).await;
             }
@@ -498,7 +496,7 @@ async fn main() -> anyhow::Result<()> {
             let mut prev_bytes: u64 = 0;
             let mut prev_time = Instant::now();
 
-            while !shutdown_metrics.load(Ordering::SeqCst) {
+            while !shutdown_metrics.is_cancelled() {
                 interval.tick().await;
 
                 let report = build_metrics_report(
@@ -549,7 +547,7 @@ async fn main() -> anyhow::Result<()> {
             let mut counter: u64 = 0;
             let mut interval = tokio::time::interval(Duration::from_millis(interval_ms));
 
-            while !shutdown_counter.load(Ordering::SeqCst) {
+            while !shutdown_counter.is_cancelled() {
                 interval.tick().await;
                 counter += 1;
 
@@ -599,11 +597,7 @@ async fn main() -> anyhow::Result<()> {
             loop {
                 let result = tokio::select! {
                     r = endpoint_echo.recv() => r,
-                    _ = async {
-                        while !shutdown_echo.load(Ordering::SeqCst) {
-                            tokio::time::sleep(Duration::from_millis(SHUTDOWN_POLL_INTERVAL_MS)).await;
-                        }
-                    } => break,
+                    _ = shutdown_echo.cancelled() => break,
                 };
                 match result {
                     Ok((peer_id, data)) => {
@@ -746,7 +740,7 @@ async fn main() -> anyhow::Result<()> {
     info!("Ready. Press Ctrl+C to shutdown.");
 
     // All nodes are symmetric - accept connections while running
-    while !shutdown.load(Ordering::SeqCst) {
+    while !shutdown.is_cancelled() {
         if let Some(max_duration) = duration {
             if start_time.elapsed() > max_duration {
                 info!("Duration limit reached");
@@ -774,7 +768,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Shutdown
     info!("Shutting down...");
-    shutdown.store(true, Ordering::SeqCst);
+    shutdown.cancel();
 
     endpoint.shutdown().await;
     event_handle.abort();
