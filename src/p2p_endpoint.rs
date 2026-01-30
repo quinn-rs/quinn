@@ -58,8 +58,13 @@ use std::time::{Duration, Instant};
 use crate::constrained::ConnectionId as ConstrainedConnectionId;
 use crate::transport::TransportAddr;
 
-use tokio::sync::{RwLock, broadcast};
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
+
+use tokio::sync::{RwLock, broadcast, mpsc};
 use tracing::{debug, error, info, warn};
+
+use crate::constrained::EngineEvent;
 
 // v0.2: auth module removed - TLS handles peer authentication via ML-DSA-65
 use crate::bounded_pending_buffer::BoundedPendingBuffer;
@@ -83,6 +88,43 @@ use crate::unified_config::P2pConfig;
 
 /// Event channel capacity
 const EVENT_CHANNEL_CAPACITY: usize = 256;
+
+/// Capacity of the data channel shared between background reader tasks and recv()
+const DATA_CHANNEL_CAPACITY: usize = 256;
+
+/// Maximum payload size for a single uni stream read (1 MB)
+const MAX_UNI_STREAM_READ_BYTES: usize = 1024 * 1024;
+
+/// Sleep interval for the constrained transport poller when idle (ms)
+const CONSTRAINED_POLL_INTERVAL_MS: u64 = 1;
+
+/// Derive a synthetic PeerId by hashing a `TransportAddr` display string.
+///
+/// Used for constrained connections (BLE, LoRa) where no TLS-based identity exists.
+fn peer_id_from_transport_addr(addr: &TransportAddr) -> PeerId {
+    let mut hasher = DefaultHasher::new();
+    format!("{}", addr).hash(&mut hasher);
+    let hash = hasher.finish();
+
+    let mut id = [0u8; 32];
+    id[..8].copy_from_slice(&hash.to_le_bytes());
+    id[8..16].copy_from_slice(&hash.to_be_bytes());
+    PeerId(id)
+}
+
+/// Derive a synthetic PeerId by hashing a `SocketAddr`.
+///
+/// Used when the peer's real identity (ML-DSA-65 key) is not yet known.
+fn peer_id_from_socket_addr(addr: SocketAddr) -> PeerId {
+    let mut hasher = DefaultHasher::new();
+    addr.hash(&mut hasher);
+    let hash = hasher.finish();
+
+    let mut id = [0u8; 32];
+    id[..8].copy_from_slice(&hash.to_le_bytes());
+    id[8..10].copy_from_slice(&addr.port().to_le_bytes());
+    PeerId(id)
+}
 
 /// P2P endpoint - the primary API for ant-quic
 ///
@@ -144,6 +186,15 @@ pub struct P2pEndpoint {
     /// This enables mapping incoming constrained data back to the correct PeerId.
     /// Registered when ConnectionAccepted/Established fires for constrained transports.
     constrained_peer_addrs: Arc<RwLock<HashMap<ConstrainedConnectionId, (PeerId, TransportAddr)>>>,
+
+    /// Channel sender for data received from QUIC reader tasks and constrained poller
+    data_tx: mpsc::Sender<(PeerId, Vec<u8>)>,
+
+    /// Channel receiver for data received from QUIC reader tasks and constrained poller
+    data_rx: Arc<tokio::sync::Mutex<mpsc::Receiver<(PeerId, Vec<u8>)>>>,
+
+    /// Background reader task handles per QUIC peer (for cleanup on disconnect/shutdown)
+    reader_tasks: Arc<RwLock<HashMap<PeerId, tokio::task::JoinHandle<()>>>>,
 }
 
 impl std::fmt::Debug for P2pEndpoint {
@@ -600,7 +651,11 @@ impl P2pEndpoint {
         // Set QUIC endpoint on the router
         router.set_quic_endpoint(Arc::clone(&inner_arc));
 
-        Ok(Self {
+        // Create channel for data received from background reader tasks
+        let (data_tx, data_rx) = mpsc::channel(DATA_CHANNEL_CAPACITY);
+        let reader_tasks = Arc::new(RwLock::new(HashMap::new()));
+
+        let endpoint = Self {
             inner: inner_arc,
             // v0.2: auth_manager removed
             connected_peers: Arc::new(RwLock::new(HashMap::new())),
@@ -616,7 +671,15 @@ impl P2pEndpoint {
             router: Arc::new(RwLock::new(router)),
             constrained_connections: Arc::new(RwLock::new(HashMap::new())),
             constrained_peer_addrs: Arc::new(RwLock::new(HashMap::new())),
-        })
+            data_tx,
+            data_rx: Arc::new(tokio::sync::Mutex::new(data_rx)),
+            reader_tasks,
+        };
+
+        // Spawn background constrained poller task
+        endpoint.spawn_constrained_poller();
+
+        Ok(endpoint)
     }
 
     /// Get the local peer ID
@@ -719,6 +782,11 @@ impl P2pEndpoint {
             .write()
             .await
             .insert(peer_id, peer_conn.clone());
+
+        // Spawn background reader task for this QUIC connection
+        if let Ok(Some(conn)) = self.inner.get_connection(&peer_id) {
+            self.spawn_reader_task(peer_id, conn);
+        }
 
         // Update stats
         {
@@ -921,82 +989,6 @@ impl P2pEndpoint {
         self.constrained_connections.read().await.len()
     }
 
-    /// Register a constrained peer with both forward and reverse lookups
-    ///
-    /// Called when ConnectionAccepted/Established fires for constrained transports.
-    /// This enables mapping incoming data back to the correct PeerId.
-    async fn register_constrained_peer(
-        &self,
-        conn_id: ConstrainedConnectionId,
-        addr: &TransportAddr,
-    ) -> PeerId {
-        // Derive or lookup PeerId from address
-        let peer_id = self.derive_peer_id_from_transport_addr(addr);
-
-        // Register in both directions
-        self.constrained_connections
-            .write()
-            .await
-            .insert(peer_id, conn_id);
-        self.constrained_peer_addrs
-            .write()
-            .await
-            .insert(conn_id, (peer_id, addr.clone()));
-
-        // Also register in connected_peers for unified peer management
-        self.connected_peers.write().await.insert(
-            peer_id,
-            PeerConnection {
-                peer_id,
-                remote_addr: addr.clone(),
-                authenticated: false, // Constrained connections may not have full auth yet
-                connected_at: Instant::now(),
-                last_activity: Instant::now(),
-            },
-        );
-
-        debug!(
-            "Registered constrained peer {:?} at {} (conn_id={})",
-            peer_id,
-            addr,
-            conn_id.value()
-        );
-
-        peer_id
-    }
-
-    /// Unregister a constrained peer (called on ConnectionClosed)
-    async fn unregister_constrained_peer(
-        &self,
-        conn_id: ConstrainedConnectionId,
-    ) -> Option<PeerId> {
-        // Look up the peer info
-        let peer_info = self.constrained_peer_addrs.write().await.remove(&conn_id);
-
-        if let Some((peer_id, addr)) = peer_info {
-            // Remove from all maps
-            self.constrained_connections.write().await.remove(&peer_id);
-            self.connected_peers.write().await.remove(&peer_id);
-
-            debug!(
-                "Unregistered constrained peer {:?} at {} (conn_id={})",
-                peer_id,
-                addr,
-                conn_id.value()
-            );
-
-            // Emit disconnect event
-            let _ = self.event_tx.send(P2pEvent::PeerDisconnected {
-                peer_id,
-                reason: DisconnectReason::RemoteClosed,
-            });
-
-            Some(peer_id)
-        } else {
-            None
-        }
-    }
-
     /// Look up PeerId from constrained ConnectionId
     pub async fn peer_id_from_constrained_conn(
         &self,
@@ -1011,16 +1003,7 @@ impl P2pEndpoint {
 
     /// Derive a peer ID from a transport address (for constrained connections)
     fn derive_peer_id_from_transport_addr(&self, addr: &TransportAddr) -> PeerId {
-        use std::hash::{Hash, Hasher};
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        format!("{}", addr).hash(&mut hasher);
-        let hash = hasher.finish();
-
-        let mut id = [0u8; 32];
-        id[..8].copy_from_slice(&hash.to_le_bytes());
-        // Fill rest with a distinguishable pattern
-        id[8..16].copy_from_slice(&hash.to_be_bytes());
-        PeerId(id)
+        peer_id_from_transport_addr(addr)
     }
 
     /// Connect to a peer using dual-stack strategy (tries both IPv4 and IPv6 in parallel)
@@ -1288,6 +1271,11 @@ impl P2pEndpoint {
                             .write()
                             .await
                             .insert(peer_id, peer_conn.clone());
+
+                        // Spawn background reader task for this QUIC connection
+                        if let Ok(Some(conn)) = self.inner.get_connection(&peer_id) {
+                            self.spawn_reader_task(peer_id, conn);
+                        }
 
                         return Ok(peer_conn);
                     }
@@ -1600,6 +1588,11 @@ impl P2pEndpoint {
                             .await
                             .insert(evt_peer, peer_conn.clone());
 
+                        // Spawn background reader task for this QUIC connection
+                        if let Ok(Some(conn)) = self.inner.get_connection(&evt_peer) {
+                            self.spawn_reader_task(evt_peer, conn);
+                        }
+
                         return Ok(peer_conn);
                     }
                     NatTraversalEvent::TraversalFailed {
@@ -1705,6 +1698,11 @@ impl P2pEndpoint {
                     .await
                     .insert(resolved_peer_id, peer_conn.clone());
 
+                // Spawn background reader task for this QUIC connection
+                if let Ok(Some(conn)) = self.inner.get_connection(&resolved_peer_id) {
+                    self.spawn_reader_task(resolved_peer_id, conn);
+                }
+
                 {
                     let mut stats = self.stats.write().await;
                     stats.active_connections += 1;
@@ -1731,6 +1729,11 @@ impl P2pEndpoint {
     pub async fn disconnect(&self, peer_id: &PeerId) -> Result<(), EndpointError> {
         if let Some(peer_conn) = self.connected_peers.write().await.remove(peer_id) {
             let _ = self.inner.remove_connection(peer_id);
+
+            // Abort the background reader task for this peer
+            if let Some(handle) = self.reader_tasks.write().await.remove(peer_id) {
+                handle.abort();
+            }
 
             {
                 let mut stats = self.stats.write().await;
@@ -1894,477 +1897,40 @@ impl P2pEndpoint {
         Ok(())
     }
 
-    /// Receive data from any peer (with timeout)
+    /// Receive data from any connected peer.
     ///
-    /// Receives data from any connected peer, regardless of transport type.
-    /// The inner `NatTraversalEndpoint` aggregates all transport inbound channels,
-    /// so this method automatically handles datagrams arriving via:
-    /// - UDP (primary QUIC transport)
-    /// - BLE (Bluetooth Low Energy)
-    /// - LoRa (long-range radio)
-    /// - Any other registered transport provider
-    ///
-    /// # Multi-Transport Receive Flow
-    ///
-    /// 1. Transport listeners (spawned in `NatTraversalEndpoint::new`) receive datagrams
-    ///    from each transport's inbound channel
-    /// 2. The inner QUIC endpoint (`endpoint.accept()`) aggregates connections from all transports
-    /// 3. `get_connection(peer_id)` returns the connection regardless of which transport it uses
-    /// 4. `connection.accept_uni()` receives streams from any transport
-    ///
-    /// This design ensures complete transport abstraction - the application layer doesn't
-    /// need to know which transport a message arrived on.
-    ///
-    /// # Operation
-    ///
-    /// This function first checks the pending data buffer for data that was
-    /// buffered during authentication, then polls streams from connected peers.
-    /// The timeout is properly distributed across all peers to avoid O(n*timeout) delays.
+    /// Blocks until data arrives from any transport (UDP/QUIC, BLE, LoRa, etc.)
+    /// or the endpoint shuts down. Background reader tasks feed a shared channel,
+    /// so this wakes instantly when data is available.
     ///
     /// # Errors
     ///
-    /// Returns `EndpointError` if:
-    /// - The endpoint is shutting down
-    /// - No connected peers are available
-    /// - The timeout expires before receiving data
-    pub async fn recv(&self, timeout: Duration) -> Result<(PeerId, Vec<u8>), EndpointError> {
+    /// Returns `EndpointError::ShuttingDown` if the endpoint is shutting down.
+    pub async fn recv(&self) -> Result<(PeerId, Vec<u8>), EndpointError> {
         if self.shutdown.load(Ordering::SeqCst) {
             return Err(EndpointError::ShuttingDown);
         }
 
-        // First, check pending data buffer (data buffered during authentication)
+        // Fast path: check pending data buffer (data buffered during authentication)
         {
             let mut pending = self.pending_data.write().await;
-            // Run periodic cleanup of expired entries
             pending.cleanup_expired();
 
             if let Some((peer_id, data)) = pending.pop_any() {
-                // Phase 1.2: Log received data from pending buffer
                 tracing::trace!(
                     "Received {} bytes from peer {:?} (from pending buffer)",
                     data.len(),
                     peer_id
                 );
-
-                if let Some(peer_conn) = self.connected_peers.write().await.get_mut(&peer_id) {
-                    peer_conn.last_activity = Instant::now();
-                }
-                let _ = self.event_tx.send(P2pEvent::DataReceived {
-                    peer_id,
-                    bytes: data.len(),
-                });
                 return Ok((peer_id, data));
             }
         }
 
-        let peers = self.connected_peers.read().await.clone();
-
-        if peers.is_empty() {
-            return Err(EndpointError::Connection("No connected peers".to_string()));
-        }
-
-        let start = Instant::now();
-        let peer_count = peers.len().max(1);
-
-        while start.elapsed() < timeout {
-            // First, check for constrained transport events (BLE, LoRa, etc.)
-            // These events are generated by the transport listener tasks and forwarded
-            // through the constrained_event channel
-            if let Some(constrained_event) = self.inner.try_recv_constrained_event() {
-                use crate::constrained::EngineEvent;
-                match constrained_event.event {
-                    EngineEvent::DataReceived {
-                        connection_id,
-                        data,
-                    } => {
-                        // Look up registered PeerId, or derive from address if not yet registered
-                        let peer_id = self
-                            .peer_id_from_constrained_conn(connection_id)
-                            .await
-                            .unwrap_or_else(|| {
-                                self.addr_to_peer_id(&constrained_event.remote_addr)
-                            });
-
-                        tracing::trace!(
-                            "Received {} bytes from constrained transport {} (conn_id={}, peer_id={:?})",
-                            data.len(),
-                            constrained_event.remote_addr,
-                            connection_id.value(),
-                            peer_id
-                        );
-
-                        // Update last activity for the peer
-                        if let Some(peer_conn) =
-                            self.connected_peers.write().await.get_mut(&peer_id)
-                        {
-                            peer_conn.last_activity = Instant::now();
-                        }
-
-                        // Emit unified DataReceived event (same as QUIC)
-                        let _ = self.event_tx.send(P2pEvent::DataReceived {
-                            peer_id,
-                            bytes: data.len(),
-                        });
-
-                        return Ok((peer_id, data));
-                    }
-                    EngineEvent::ConnectionAccepted {
-                        connection_id,
-                        remote_addr: _,
-                    } => {
-                        // Register the constrained peer with the TransportAddr from the wrapper
-                        let peer_id = self
-                            .register_constrained_peer(
-                                connection_id,
-                                &constrained_event.remote_addr,
-                            )
-                            .await;
-
-                        tracing::debug!(
-                            "Constrained connection accepted: conn_id={}, addr={}, peer_id={:?}",
-                            connection_id.value(),
-                            constrained_event.remote_addr,
-                            peer_id
-                        );
-
-                        // Emit connected event
-                        let _ = self.event_tx.send(P2pEvent::PeerConnected {
-                            peer_id,
-                            addr: constrained_event.remote_addr.clone(),
-                            side: Side::Server, // Accepted means we're the server
-                        });
-                    }
-                    EngineEvent::ConnectionEstablished { connection_id } => {
-                        // For outbound connections, we should already have registered via connect()
-                        // If not, register now with the transport address from the wrapper
-                        if self
-                            .peer_id_from_constrained_conn(connection_id)
-                            .await
-                            .is_none()
-                        {
-                            let peer_id = self
-                                .register_constrained_peer(
-                                    connection_id,
-                                    &constrained_event.remote_addr,
-                                )
-                                .await;
-
-                            tracing::debug!(
-                                "Constrained connection established: conn_id={}, peer_id={:?}",
-                                connection_id.value(),
-                                peer_id
-                            );
-
-                            // Emit connected event
-                            let _ = self.event_tx.send(P2pEvent::PeerConnected {
-                                peer_id,
-                                addr: constrained_event.remote_addr.clone(),
-                                side: Side::Client, // Established means we initiated
-                            });
-                        } else {
-                            tracing::debug!(
-                                "Constrained connection established: conn_id={}",
-                                connection_id.value()
-                            );
-                        }
-                    }
-                    EngineEvent::ConnectionClosed { connection_id } => {
-                        // Unregister the peer
-                        let peer_id = self.unregister_constrained_peer(connection_id).await;
-                        tracing::debug!(
-                            "Constrained connection closed: conn_id={}, peer_id={:?}",
-                            connection_id.value(),
-                            peer_id
-                        );
-                    }
-                    EngineEvent::ConnectionError {
-                        connection_id,
-                        error,
-                    } => {
-                        tracing::warn!(
-                            "Constrained connection error: conn_id={}, error={}",
-                            connection_id.value(),
-                            error
-                        );
-                    }
-                    EngineEvent::Transmit { .. } => {
-                        // Transmit events are handled by the transport listener, not here
-                    }
-                }
-            }
-
-            // Calculate per-peer timeout based on remaining time
-            let remaining = timeout.saturating_sub(start.elapsed());
-            if remaining.is_zero() {
-                break;
-            }
-
-            // Distribute remaining time across peers with minimum 5ms per peer
-            let per_peer_timeout = remaining
-                .checked_div(peer_count as u32)
-                .unwrap_or(Duration::from_millis(5))
-                .max(Duration::from_millis(5));
-
-            for (peer_id, _) in peers.iter() {
-                // Check if we've exceeded total timeout
-                if start.elapsed() >= timeout {
-                    break;
-                }
-
-                if let Ok(Some(connection)) = self.inner.get_connection(peer_id) {
-                    // Try unidirectional stream with calculated per-peer timeout
-                    if let Ok(Ok(mut recv_stream)) =
-                        tokio::time::timeout(per_peer_timeout, connection.accept_uni()).await
-                    {
-                        if let Ok(data) = recv_stream.read_to_end(1024 * 1024).await {
-                            if !data.is_empty() {
-                                // Phase 1.2: Log received data (transport type identification comes in Phase 2.3)
-                                // Currently all data arrives via UDP/QUIC, but the architecture supports
-                                // receiving from any transport through the inner endpoint event system.
-                                let remote_addr = connection.remote_address();
-                                tracing::trace!(
-                                    "Received {} bytes from peer {:?} at {}",
-                                    data.len(),
-                                    peer_id,
-                                    remote_addr
-                                );
-
-                                if let Some(peer_conn) =
-                                    self.connected_peers.write().await.get_mut(peer_id)
-                                {
-                                    peer_conn.last_activity = Instant::now();
-                                }
-
-                                let _ = self.event_tx.send(P2pEvent::DataReceived {
-                                    peer_id: *peer_id,
-                                    bytes: data.len(),
-                                });
-                                return Ok((*peer_id, data));
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Short sleep between iterations, but only if we have time left
-            if start.elapsed() < timeout {
-                tokio::time::sleep(Duration::from_millis(5)).await;
-            }
-        }
-
-        Err(EndpointError::Timeout)
-    }
-
-    /// Receive data from any connected peer — event-driven, no polling.
-    ///
-    /// Unlike [`recv`](Self::recv), this method does not poll on a timeout. It blocks
-    /// until data actually arrives on any connected peer's QUIC stream, using the
-    /// underlying `Notify`-based `accept_uni()` futures for instant wakeup.
-    ///
-    /// Constrained transport events (BLE, LoRa) are checked non-blockingly at
-    /// the start of each iteration.
-    ///
-    /// # Cancel safety
-    ///
-    /// This method is **cancel-safe** at the top level: dropping the returned future
-    /// will not lose any data that has already been fully read. Partially-accepted
-    /// streams that haven't been read yet remain available on the connection for the
-    /// next call.
-    ///
-    /// # Errors
-    ///
-    /// Returns `EndpointError` if:
-    /// - The endpoint is shutting down
-    /// - No connected peers are available (caller should retry after peer connects)
-    pub async fn recv_async(&self) -> Result<(PeerId, Vec<u8>), EndpointError> {
-        if self.shutdown.load(Ordering::SeqCst) {
-            return Err(EndpointError::ShuttingDown);
-        }
-
-        // 1. Check pending data buffer (data buffered during authentication)
-        {
-            let mut pending = self.pending_data.write().await;
-            pending.cleanup_expired();
-
-            if let Some((peer_id, data)) = pending.pop_any() {
-                tracing::trace!(
-                    "recv_async: {} bytes from peer {:?} (pending buffer)",
-                    data.len(),
-                    peer_id
-                );
-                if let Some(peer_conn) = self.connected_peers.write().await.get_mut(&peer_id) {
-                    peer_conn.last_activity = Instant::now();
-                }
-                let _ = self.event_tx.send(P2pEvent::DataReceived {
-                    peer_id,
-                    bytes: data.len(),
-                });
-                return Ok((peer_id, data));
-            }
-        }
-
-        // 2. Check constrained transport events (non-blocking)
-        if let Some(constrained_result) = self.try_recv_constrained_data().await {
-            return constrained_result;
-        }
-
-        // 3. Snapshot all QUIC connections and race accept_uni across them
-        let peers: Vec<(PeerId, _)> = self
-            .inner
-            .list_connections()
-            .map_err(|e| EndpointError::Connection(e.to_string()))?
-            .into_iter()
-            .filter_map(|(peer_id, _addr)| {
-                self.inner
-                    .get_connection(&peer_id)
-                    .ok()
-                    .flatten()
-                    .map(|conn| (peer_id, conn))
-            })
-            .collect();
-
-        if peers.is_empty() {
-            return Err(EndpointError::Connection("No connected peers".to_string()));
-        }
-
-        // Build a future per connection: accept_uni → read_to_end
-        // Each future resolves to (peer_id, Result<Vec<u8>>)
-        use futures_util::future::select_all;
-
-        let futures: Vec<_> = peers
-            .iter()
-            .map(|(peer_id, conn)| {
-                let pid = *peer_id;
-                Box::pin(async move {
-                    let mut recv_stream = conn.accept_uni().await.map_err(|e| {
-                        EndpointError::Connection(format!("accept_uni failed: {e}"))
-                    })?;
-                    let data = recv_stream.read_to_end(1024 * 1024).await.map_err(|e| {
-                        EndpointError::Connection(format!("read_to_end failed: {e}"))
-                    })?;
-                    Ok::<(PeerId, Vec<u8>), EndpointError>((pid, data))
-                })
-            })
-            .collect();
-
-        let (result, _index, _remaining) = select_all(futures).await;
-
-        match result {
-            Ok((peer_id, data)) if !data.is_empty() => {
-                tracing::trace!(
-                    "recv_async: {} bytes from peer {:?}",
-                    data.len(),
-                    peer_id
-                );
-                if let Some(peer_conn) = self.connected_peers.write().await.get_mut(&peer_id) {
-                    peer_conn.last_activity = Instant::now();
-                }
-                let _ = self.event_tx.send(P2pEvent::DataReceived {
-                    peer_id,
-                    bytes: data.len(),
-                });
-                Ok((peer_id, data))
-            }
-            Ok((_, _)) => {
-                // Empty data — treat as no data available
-                Err(EndpointError::Connection("Received empty data".to_string()))
-            }
-            Err(e) => Err(e),
-        }
-    }
-
-    /// Try to receive data from constrained transports (non-blocking).
-    ///
-    /// Returns `Some(Ok(...))` if data was received, `Some(Err(...))` on error,
-    /// or `None` if no constrained events are pending.
-    async fn try_recv_constrained_data(
-        &self,
-    ) -> Option<Result<(PeerId, Vec<u8>), EndpointError>> {
-        let event = self.inner.try_recv_constrained_event()?;
-
-        use crate::constrained::EngineEvent;
-        match event.event {
-            EngineEvent::DataReceived {
-                connection_id,
-                data,
-            } => {
-                let peer_id = self
-                    .peer_id_from_constrained_conn(connection_id)
-                    .await
-                    .unwrap_or_else(|| self.addr_to_peer_id(&event.remote_addr));
-
-                tracing::trace!(
-                    "recv_async: {} bytes from constrained transport {} (peer {:?})",
-                    data.len(),
-                    event.remote_addr,
-                    peer_id
-                );
-
-                if let Some(peer_conn) = self.connected_peers.write().await.get_mut(&peer_id) {
-                    peer_conn.last_activity = Instant::now();
-                }
-                let _ = self.event_tx.send(P2pEvent::DataReceived {
-                    peer_id,
-                    bytes: data.len(),
-                });
-
-                Some(Ok((peer_id, data)))
-            }
-            EngineEvent::ConnectionAccepted {
-                connection_id,
-                remote_addr: _,
-            } => {
-                let peer_id = self
-                    .register_constrained_peer(connection_id, &event.remote_addr)
-                    .await;
-
-                tracing::debug!(
-                    "recv_async: constrained connection accepted: conn_id={}, peer={:?}",
-                    connection_id.value(),
-                    peer_id
-                );
-
-                let _ = self.event_tx.send(P2pEvent::PeerConnected {
-                    peer_id,
-                    addr: event.remote_addr,
-                    side: Side::Server,
-                });
-
-                None // Not data — caller should retry
-            }
-            EngineEvent::ConnectionEstablished { connection_id } => {
-                if self
-                    .peer_id_from_constrained_conn(connection_id)
-                    .await
-                    .is_none()
-                {
-                    let peer_id = self
-                        .register_constrained_peer(connection_id, &event.remote_addr)
-                        .await;
-                    let _ = self.event_tx.send(P2pEvent::PeerConnected {
-                        peer_id,
-                        addr: event.remote_addr,
-                        side: Side::Client,
-                    });
-                }
-                None
-            }
-            EngineEvent::ConnectionClosed { connection_id } => {
-                let _peer_id = self.unregister_constrained_peer(connection_id).await;
-                None
-            }
-            EngineEvent::ConnectionError {
-                connection_id,
-                error,
-            } => {
-                tracing::warn!(
-                    "recv_async: constrained error: conn_id={}, error={}",
-                    connection_id.value(),
-                    error
-                );
-                None
-            }
-            EngineEvent::Transmit { .. } => None,
+        // Wait for data from the shared channel (fed by background reader tasks)
+        let mut rx = self.data_rx.lock().await;
+        match rx.recv().await {
+            Some(msg) => Ok(msg),
+            None => Err(EndpointError::ShuttingDown),
         }
     }
 
@@ -2487,6 +2053,13 @@ impl P2pEndpoint {
         info!("Shutting down P2P endpoint");
         self.shutdown.store(true, Ordering::SeqCst);
 
+        // Abort all background reader tasks
+        let tasks: HashMap<PeerId, tokio::task::JoinHandle<()>> =
+            std::mem::take(&mut *self.reader_tasks.write().await);
+        for (_peer_id, handle) in tasks {
+            handle.abort();
+        }
+
         // Disconnect all peers
         let peers: Vec<PeerId> = self.connected_peers.read().await.keys().copied().collect();
         for peer_id in peers {
@@ -2504,31 +2077,246 @@ impl P2pEndpoint {
     // === Internal helpers ===
 
     fn derive_peer_id_from_address(&self, addr: SocketAddr) -> PeerId {
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
-
-        let mut hasher = DefaultHasher::new();
-        addr.hash(&mut hasher);
-        let hash = hasher.finish();
-
-        let mut peer_id_bytes = [0u8; 32];
-        peer_id_bytes[..8].copy_from_slice(&hash.to_le_bytes());
-        peer_id_bytes[8..10].copy_from_slice(&addr.port().to_le_bytes());
-
-        PeerId(peer_id_bytes)
+        peer_id_from_socket_addr(addr)
     }
 
-    /// Convert a transport address to a PeerId
+    /// Spawn a background tokio task that reads uni streams from a QUIC connection
+    /// and forwards received data into the shared `data_tx` channel.
     ///
-    /// For constrained transports (BLE, LoRa), we derive a synthetic PeerId from
-    /// the transport address if no registered mapping exists. This allows the
-    /// application layer to track data sources even before full authentication.
-    fn addr_to_peer_id(&self, addr: &TransportAddr) -> PeerId {
-        // First, check if we have a registered peer for this address
-        // (Would need to iterate constrained_connections or add reverse lookup)
-        // For now, derive a synthetic PeerId from the address
-        let synthetic_addr = addr.to_synthetic_socket_addr();
-        self.derive_peer_id_from_address(synthetic_addr)
+    /// The task exits naturally when the connection is closed or the channel is dropped.
+    fn spawn_reader_task(&self, peer_id: PeerId, connection: crate::high_level::Connection) {
+        let data_tx = self.data_tx.clone();
+        let connected_peers = Arc::clone(&self.connected_peers);
+        let event_tx = self.event_tx.clone();
+        let reader_tasks = Arc::clone(&self.reader_tasks);
+
+        let handle = tokio::spawn(async move {
+            loop {
+                // Accept the next unidirectional stream
+                let mut recv_stream = match connection.accept_uni().await {
+                    Ok(stream) => stream,
+                    Err(e) => {
+                        debug!(
+                            "Reader task for peer {:?} ending: accept_uni error: {}",
+                            peer_id, e
+                        );
+                        break;
+                    }
+                };
+
+                let data = match recv_stream.read_to_end(MAX_UNI_STREAM_READ_BYTES).await {
+                    Ok(data) if data.is_empty() => continue,
+                    Ok(data) => data,
+                    Err(e) => {
+                        debug!(
+                            "Reader task for peer {:?}: read_to_end error: {}",
+                            peer_id, e
+                        );
+                        break;
+                    }
+                };
+
+                let data_len = data.len();
+                tracing::trace!("Reader task: {} bytes from peer {:?}", data_len, peer_id);
+
+                // Update last_activity
+                if let Some(peer_conn) = connected_peers.write().await.get_mut(&peer_id) {
+                    peer_conn.last_activity = Instant::now();
+                }
+
+                // Emit DataReceived event
+                let _ = event_tx.send(P2pEvent::DataReceived {
+                    peer_id,
+                    bytes: data_len,
+                });
+
+                // Send through channel; if the receiver is dropped, exit
+                if data_tx.send((peer_id, data)).await.is_err() {
+                    debug!(
+                        "Reader task for peer {:?}: channel closed, exiting",
+                        peer_id
+                    );
+                    break;
+                }
+            }
+
+            // Clean up our entry from reader_tasks
+            reader_tasks.write().await.remove(&peer_id);
+        });
+
+        // Store the handle (fire-and-forget storage; blocking is fine since we just created it)
+        let reader_tasks = Arc::clone(&self.reader_tasks);
+        tokio::spawn(async move {
+            reader_tasks.write().await.insert(peer_id, handle);
+        });
+    }
+
+    /// Spawn a single background task that polls constrained transport events
+    /// and forwards `DataReceived` payloads into the shared `data_tx` channel.
+    ///
+    /// Lifecycle events (ConnectionAccepted, ConnectionClosed, etc.) are handled
+    /// inline within this task.
+    fn spawn_constrained_poller(&self) {
+        let inner = Arc::clone(&self.inner);
+        let data_tx = self.data_tx.clone();
+        let connected_peers = Arc::clone(&self.connected_peers);
+        let event_tx = self.event_tx.clone();
+        let constrained_peer_addrs = Arc::clone(&self.constrained_peer_addrs);
+        let constrained_connections = Arc::clone(&self.constrained_connections);
+        let shutdown = Arc::clone(&self.shutdown);
+
+        /// Register a new constrained peer in all lookup maps and emit a connect event.
+        async fn register_peer(
+            peer_id: PeerId,
+            connection_id: ConstrainedConnectionId,
+            addr: &TransportAddr,
+            side: Side,
+            constrained_connections: &RwLock<HashMap<PeerId, ConstrainedConnectionId>>,
+            constrained_peer_addrs: &RwLock<
+                HashMap<ConstrainedConnectionId, (PeerId, TransportAddr)>,
+            >,
+            connected_peers: &RwLock<HashMap<PeerId, PeerConnection>>,
+            event_tx: &broadcast::Sender<P2pEvent>,
+        ) {
+            constrained_connections
+                .write()
+                .await
+                .insert(peer_id, connection_id);
+            constrained_peer_addrs
+                .write()
+                .await
+                .insert(connection_id, (peer_id, addr.clone()));
+            connected_peers.write().await.insert(
+                peer_id,
+                PeerConnection {
+                    peer_id,
+                    remote_addr: addr.clone(),
+                    authenticated: false,
+                    connected_at: Instant::now(),
+                    last_activity: Instant::now(),
+                },
+            );
+            let _ = event_tx.send(P2pEvent::PeerConnected {
+                peer_id,
+                addr: addr.clone(),
+                side,
+            });
+        }
+
+        tokio::spawn(async move {
+            loop {
+                if shutdown.load(Ordering::SeqCst) {
+                    break;
+                }
+
+                let Some(wrapper) = inner.try_recv_constrained_event() else {
+                    tokio::time::sleep(Duration::from_millis(CONSTRAINED_POLL_INTERVAL_MS)).await;
+                    continue;
+                };
+
+                match wrapper.event {
+                    EngineEvent::DataReceived {
+                        connection_id,
+                        data,
+                    } => {
+                        let peer_id = constrained_peer_addrs
+                            .read()
+                            .await
+                            .get(&connection_id)
+                            .map(|(pid, _)| *pid)
+                            .unwrap_or_else(|| {
+                                peer_id_from_socket_addr(
+                                    wrapper.remote_addr.to_synthetic_socket_addr(),
+                                )
+                            });
+
+                        let data_len = data.len();
+                        tracing::trace!(
+                            "Constrained poller: {} bytes from peer {:?}",
+                            data_len,
+                            peer_id
+                        );
+
+                        if let Some(peer_conn) = connected_peers.write().await.get_mut(&peer_id) {
+                            peer_conn.last_activity = Instant::now();
+                        }
+                        let _ = event_tx.send(P2pEvent::DataReceived {
+                            peer_id,
+                            bytes: data_len,
+                        });
+
+                        if data_tx.send((peer_id, data)).await.is_err() {
+                            debug!("Constrained poller: channel closed, exiting");
+                            break;
+                        }
+                    }
+                    EngineEvent::ConnectionAccepted {
+                        connection_id,
+                        remote_addr: _,
+                    } => {
+                        let peer_id = peer_id_from_transport_addr(&wrapper.remote_addr);
+                        register_peer(
+                            peer_id,
+                            connection_id,
+                            &wrapper.remote_addr,
+                            Side::Server,
+                            &constrained_connections,
+                            &constrained_peer_addrs,
+                            &connected_peers,
+                            &event_tx,
+                        )
+                        .await;
+                    }
+                    EngineEvent::ConnectionEstablished { connection_id } => {
+                        if constrained_peer_addrs
+                            .read()
+                            .await
+                            .get(&connection_id)
+                            .is_none()
+                        {
+                            let peer_id = peer_id_from_transport_addr(&wrapper.remote_addr);
+                            register_peer(
+                                peer_id,
+                                connection_id,
+                                &wrapper.remote_addr,
+                                Side::Client,
+                                &constrained_connections,
+                                &constrained_peer_addrs,
+                                &connected_peers,
+                                &event_tx,
+                            )
+                            .await;
+                        }
+                    }
+                    EngineEvent::ConnectionClosed { connection_id } => {
+                        let peer_info = constrained_peer_addrs.write().await.remove(&connection_id);
+                        if let Some((peer_id, addr)) = peer_info {
+                            constrained_connections.write().await.remove(&peer_id);
+                            connected_peers.write().await.remove(&peer_id);
+                            let _ = event_tx.send(P2pEvent::PeerDisconnected {
+                                peer_id,
+                                reason: DisconnectReason::RemoteClosed,
+                            });
+                            debug!(
+                                "Constrained poller: peer {:?} at {} disconnected",
+                                peer_id, addr
+                            );
+                        }
+                    }
+                    EngineEvent::ConnectionError {
+                        connection_id,
+                        error,
+                    } => {
+                        warn!(
+                            "Constrained poller: conn_id={}, error={}",
+                            connection_id.value(),
+                            error
+                        );
+                    }
+                    EngineEvent::Transmit { .. } => {}
+                }
+            }
+        });
     }
 
     // v0.2: authenticate_peer removed - TLS handles peer authentication via ML-DSA-65
@@ -2552,6 +2340,9 @@ impl Clone for P2pEndpoint {
             router: Arc::clone(&self.router),
             constrained_connections: Arc::clone(&self.constrained_connections),
             constrained_peer_addrs: Arc::clone(&self.constrained_peer_addrs),
+            data_tx: self.data_tx.clone(),
+            data_rx: Arc::clone(&self.data_rx),
+            reader_tasks: Arc::clone(&self.reader_tasks),
         }
     }
 }

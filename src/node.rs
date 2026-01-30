@@ -519,8 +519,8 @@ impl Node {
     }
 
     /// Receive data from any peer
-    pub async fn recv(&self, timeout: Duration) -> Result<(PeerId, Vec<u8>), NodeError> {
-        self.inner.recv(timeout).await.map_err(NodeError::Endpoint)
+    pub async fn recv(&self) -> Result<(PeerId, Vec<u8>), NodeError> {
+        self.inner.recv().await.map_err(NodeError::Endpoint)
     }
 
     // === Observability ===

@@ -44,6 +44,9 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
 
+/// Interval between shutdown flag checks in async select! branches (ms)
+const SHUTDOWN_POLL_INTERVAL_MS: u64 = 50;
+
 /// Default bootstrap nodes operated by Saorsa Labs
 ///
 /// These nodes are available for initial network discovery. They run the same
@@ -593,8 +596,16 @@ async fn main() -> anyhow::Result<()> {
         let json = args.json;
 
         tokio::spawn(async move {
-            while !shutdown_echo.load(Ordering::SeqCst) {
-                match endpoint_echo.recv(Duration::from_millis(100)).await {
+            loop {
+                let result = tokio::select! {
+                    r = endpoint_echo.recv() => r,
+                    _ = async {
+                        while !shutdown_echo.load(Ordering::SeqCst) {
+                            tokio::time::sleep(Duration::from_millis(SHUTDOWN_POLL_INTERVAL_MS)).await;
+                        }
+                    } => break,
+                };
+                match result {
                     Ok((peer_id, data)) => {
                         stats_echo
                             .bytes_received

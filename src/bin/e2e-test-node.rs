@@ -49,6 +49,9 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
 
+/// Interval between shutdown flag checks in async select! branches (ms)
+const SHUTDOWN_POLL_INTERVAL_MS: u64 = 50;
+
 /// E2E Test Node - Enhanced P2P node for comprehensive testing
 #[derive(Parser, Debug)]
 #[command(name = "e2e-test-node")]
@@ -436,8 +439,16 @@ async fn main() -> anyhow::Result<()> {
     let json = args.json;
 
     let recv_handle = tokio::spawn(async move {
-        while !shutdown_recv.load(Ordering::SeqCst) {
-            match endpoint_recv.recv(Duration::from_millis(100)).await {
+        loop {
+            let result = tokio::select! {
+                r = endpoint_recv.recv() => r,
+                _ = async {
+                    while !shutdown_recv.load(Ordering::SeqCst) {
+                        tokio::time::sleep(Duration::from_millis(SHUTDOWN_POLL_INTERVAL_MS)).await;
+                    }
+                } => break,
+            };
+            match result {
                 Ok((peer_id, data)) => {
                     stats_recv
                         .bytes_received
