@@ -92,14 +92,15 @@ const MAX_UNI_STREAM_READ_BYTES: usize = 1024 * 1024;
 /// Sleep interval for the constrained transport poller when idle (ms)
 const CONSTRAINED_POLL_INTERVAL_MS: u64 = 1;
 
-/// Maximum time to wait for graceful shutdown of the inner endpoint.
-///
-/// Shared with `SHUTDOWN_DRAIN_TIMEOUT_SECS` in `nat_traversal_api` — keep in sync.
-const SHUTDOWN_TIMEOUT_SECS: u64 = 5;
+use crate::SHUTDOWN_DRAIN_TIMEOUT;
 
 /// Derive a synthetic PeerId by hashing a `TransportAddr` display string.
 ///
 /// Used for constrained connections (BLE, LoRa) where no TLS-based identity exists.
+///
+/// **Note:** Uses `DefaultHasher`, whose output is not stable across Rust versions.
+/// These IDs are ephemeral within a single process and must not be persisted or
+/// compared across builds.
 fn peer_id_from_transport_addr(addr: &TransportAddr) -> PeerId {
     let mut hasher = DefaultHasher::new();
     format!("{}", addr).hash(&mut hasher);
@@ -114,6 +115,10 @@ fn peer_id_from_transport_addr(addr: &TransportAddr) -> PeerId {
 /// Derive a synthetic PeerId by hashing a `SocketAddr`.
 ///
 /// Used when the peer's real identity (ML-DSA-65 key) is not yet known.
+///
+/// **Note:** Uses `DefaultHasher`, whose output is not stable across Rust versions.
+/// These IDs are ephemeral within a single process and must not be persisted or
+/// compared across builds.
 fn peer_id_from_socket_addr(addr: SocketAddr) -> PeerId {
     let mut hasher = DefaultHasher::new();
     addr.hash(&mut hasher);
@@ -2065,12 +2070,7 @@ impl P2pEndpoint {
         }
 
         // Bounded timeout prevents blocking when the remote peer is unresponsive.
-        match timeout(
-            Duration::from_secs(SHUTDOWN_TIMEOUT_SECS),
-            self.inner.shutdown(),
-        )
-        .await
-        {
+        match timeout(SHUTDOWN_DRAIN_TIMEOUT, self.inner.shutdown()).await {
             Err(_) => warn!("Inner endpoint shutdown timed out, proceeding"),
             Ok(Err(e)) => warn!("Inner endpoint shutdown error: {e}"),
             Ok(Ok(())) => {}
