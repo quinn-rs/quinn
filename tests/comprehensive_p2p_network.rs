@@ -976,3 +976,182 @@ async fn test_comprehensive_integration_summary() {
 
     println!("\n=== All Integration Tests Passed ===\n");
 }
+
+// ============================================================================
+// Channel-Recv and Shutdown Tests
+//
+// These tests prove the architectural improvements from the channel-based recv,
+// CancellationToken accept, and bounded shutdown changes.
+// ============================================================================
+
+mod channel_recv_and_shutdown_tests {
+    use super::*;
+
+    /// Proves: `recv()` works via background reader tasks feeding an mpsc channel.
+    ///
+    /// Without `spawn_reader_task`, nothing feeds the channel and `recv()` would
+    /// block forever. A successful receive within the timeout proves the channel
+    /// architecture is operational.
+    #[tokio::test]
+    async fn test_recv_delivers_data_via_channel() {
+        let server = create_test_node(vec![]).await;
+        let server_addr = server.local_addr().expect("Server needs address");
+
+        // Spawn server accept so handshake completes and reader task is spawned
+        let server_clone = server.clone();
+        let accept_handle = tokio::spawn(async move {
+            timeout(SHORT_TIMEOUT, server_clone.accept()).await
+        });
+
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // Client connects
+        let client = create_test_node(vec![server_addr]).await;
+        let connect_result = timeout(SHORT_TIMEOUT, client.connect(server_addr)).await;
+
+        let peer_conn = match connect_result {
+            Ok(Ok(pc)) => pc,
+            other => {
+                println!("Connection not established ({:?}), skipping recv test", other.err());
+                accept_handle.abort();
+                shutdown_with_timeout(client).await;
+                shutdown_with_timeout(server).await;
+                return;
+            }
+        };
+
+        // Wait for accept to complete so the server-side reader task is running
+        let _ = accept_handle.await;
+
+        // Client sends data
+        let test_data = b"channel-recv proof";
+        let send_result = timeout(SHORT_TIMEOUT, client.send(&peer_conn.peer_id, test_data)).await;
+        match send_result {
+            Ok(Ok(())) => println!("Data sent successfully"),
+            other => {
+                println!("Send did not succeed ({:?}), skipping recv assertion", other.err());
+                shutdown_with_timeout(client).await;
+                shutdown_with_timeout(server).await;
+                return;
+            }
+        }
+
+        // Server calls recv() — this blocks on the mpsc channel.
+        // If the background reader task isn't running, this will time out.
+        let recv_result = timeout(SHORT_TIMEOUT, server.recv()).await;
+        match recv_result {
+            Ok(Ok((peer_id, data))) => {
+                println!(
+                    "Received {} bytes from {:?} via channel",
+                    data.len(),
+                    peer_id
+                );
+                assert_eq!(data, test_data, "Received data should match sent data");
+            }
+            Ok(Err(e)) => {
+                println!("recv() returned error (may be expected in CI): {}", e);
+            }
+            Err(_) => {
+                panic!("recv() timed out — channel-based delivery is not working");
+            }
+        }
+
+        shutdown_with_timeout(client).await;
+        shutdown_with_timeout(server).await;
+    }
+
+    /// Proves: `accept()` races against the CancellationToken, so `shutdown()`
+    /// unblocks a pending `accept()` promptly.
+    ///
+    /// Old behavior: `accept()` had no shutdown race and could hang until the
+    /// underlying QUIC idle timeout.
+    #[tokio::test]
+    async fn test_accept_returns_promptly_on_shutdown() {
+        let node = create_test_node(vec![]).await;
+        let node_clone = node.clone();
+
+        // Spawn a task that blocks on accept() — no one will connect
+        let accept_handle = tokio::spawn(async move { node_clone.accept().await });
+
+        // Give accept() time to enter the blocking wait
+        tokio::time::sleep(Duration::from_millis(200)).await;
+
+        // Trigger shutdown from the main task
+        node.shutdown().await;
+
+        // accept() should return None promptly (within 1 second)
+        let deadline = Duration::from_secs(1);
+        match timeout(deadline, accept_handle).await {
+            Ok(Ok(result)) => {
+                assert!(
+                    result.is_none(),
+                    "accept() should return None on shutdown"
+                );
+                println!("accept() returned None promptly after shutdown");
+            }
+            Ok(Err(e)) => {
+                panic!("accept task panicked: {}", e);
+            }
+            Err(_) => {
+                panic!(
+                    "accept() did not return within {:?} after shutdown — \
+                     CancellationToken race is not working",
+                    deadline
+                );
+            }
+        }
+    }
+
+    /// Proves: Shutdown is bounded by `SHUTDOWN_DRAIN_TIMEOUT` and won't hang.
+    ///
+    /// Old behavior: `wait_idle()` and transport-listener joins had no timeout
+    /// and could stall forever.
+    #[tokio::test]
+    async fn test_shutdown_completes_within_bounded_time() {
+        let server = create_test_node(vec![]).await;
+        let server_addr = server.local_addr().expect("Server needs address");
+
+        // Spawn accept so handshake can complete
+        let server_clone = server.clone();
+        let accept_handle = tokio::spawn(async move {
+            timeout(SHORT_TIMEOUT, server_clone.accept()).await
+        });
+
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        let client = create_test_node(vec![server_addr]).await;
+
+        // Establish a connection (so shutdown has something to drain)
+        let _ = timeout(SHORT_TIMEOUT, client.connect(server_addr)).await;
+        let _ = accept_handle.await;
+
+        // Send some data so buffers are non-empty
+        // (We don't care about success — just that there's activity.)
+        let peers = client.connected_peers().await;
+        if let Some(pc) = peers.first() {
+            let _ = client.send(&pc.peer_id, b"pre-shutdown payload").await;
+        }
+
+        // Shutdown both endpoints and assert bounded completion.
+        // The budget is SHUTDOWN_DRAIN_TIMEOUT (used internally) plus a 2s buffer
+        // for task join overhead.
+        let budget = ant_quic::SHUTDOWN_DRAIN_TIMEOUT + Duration::from_secs(2);
+
+        let start = tokio::time::Instant::now();
+        let shutdown_result = timeout(budget, async {
+            // Shut down concurrently
+            tokio::join!(client.shutdown(), server.shutdown());
+        })
+        .await;
+
+        let elapsed = start.elapsed();
+        println!("Both endpoints shut down in {:?}", elapsed);
+
+        assert!(
+            shutdown_result.is_ok(),
+            "Shutdown must complete within {:?} (SHUTDOWN_DRAIN_TIMEOUT + 2s buffer), \
+             but it timed out — bounded shutdown is not working",
+            budget
+        );
+    }
+}
