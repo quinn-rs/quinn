@@ -1923,6 +1923,19 @@ impl NatTraversalEndpoint {
         self.constrained_event_rx.lock().try_recv().ok()
     }
 
+    /// Receive a constrained engine event asynchronously
+    ///
+    /// Waits for the next event from constrained transports (BLE/LoRa) without polling.
+    /// This eliminates the need for polling loops with sleep intervals.
+    ///
+    /// # Returns
+    ///
+    /// - `Some(event)` - An event with the data and source transport address
+    /// - `None` - The channel has been closed
+    pub async fn recv_constrained_event(&self) -> Option<ConstrainedEventWithAddr> {
+        self.constrained_event_rx.lock().recv().await
+    }
+
     /// Get a reference to the constrained event sender for testing
     ///
     /// This is primarily used for testing to inject events.

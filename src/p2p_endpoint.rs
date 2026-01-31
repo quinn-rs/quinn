@@ -1920,11 +1920,24 @@ impl P2pEndpoint {
             pending.cleanup_expired();
 
             if let Some((peer_id, data)) = pending.pop_any() {
+                let data_len = data.len();
                 tracing::trace!(
                     "Received {} bytes from peer {:?} (from pending buffer)",
-                    data.len(),
+                    data_len,
                     peer_id
                 );
+
+                // Update last_activity for the peer
+                if let Some(peer_conn) = self.connected_peers.write().await.get_mut(&peer_id) {
+                    peer_conn.last_activity = Instant::now();
+                }
+
+                // Emit DataReceived event
+                let _ = self.event_tx.send(P2pEvent::DataReceived {
+                    peer_id,
+                    bytes: data_len,
+                });
+
                 return Ok((peer_id, data));
             }
         }
@@ -2214,10 +2227,13 @@ impl P2pEndpoint {
             loop {
                 let wrapper = tokio::select! {
                     _ = shutdown.cancelled() => break,
-                    _ = tokio::time::sleep(Duration::from_millis(CONSTRAINED_POLL_INTERVAL_MS)) => {
-                        match inner.try_recv_constrained_event() {
+                    event = inner.recv_constrained_event() => {
+                        match event {
                             Some(w) => w,
-                            None => continue,
+                            None => {
+                                debug!("Constrained event channel closed, exiting poller");
+                                break;
+                            }
                         }
                     }
                 };
