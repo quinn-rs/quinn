@@ -50,40 +50,34 @@
 //! ```
 
 use std::collections::HashMap;
-use std::net::SocketAddr;
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
+use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use crate::constrained::ConnectionId as ConstrainedConnectionId;
-use crate::transport::TransportAddr;
-
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
-
 use tokio::sync::{RwLock, broadcast, mpsc};
+use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
-use crate::constrained::EngineEvent;
-
-// v0.2: auth module removed - TLS handles peer authentication via ML-DSA-65
+use crate::Side;
+use crate::bootstrap_cache::{BootstrapCache, BootstrapTokenStore};
 use crate::bounded_pending_buffer::BoundedPendingBuffer;
 use crate::connection_router::{ConnectionRouter, RouterConfig};
 use crate::connection_strategy::{
     ConnectionMethod, ConnectionStage, ConnectionStrategy, StrategyConfig,
 };
+use crate::constrained::ConnectionId as ConstrainedConnectionId;
+use crate::constrained::EngineEvent;
 use crate::crypto::raw_public_keys::key_utils::{
     derive_peer_id_from_public_key, generate_ml_dsa_keypair,
 };
+pub use crate::nat_traversal_api::TraversalPhase;
 use crate::nat_traversal_api::{
     NatTraversalEndpoint, NatTraversalError, NatTraversalEvent, NatTraversalStatistics, PeerId,
 };
-use crate::transport::{ProtocolEngine, TransportRegistry};
-
-// Re-export TraversalPhase from nat_traversal_api for convenience
-use crate::Side;
-use crate::bootstrap_cache::{BootstrapCache, BootstrapTokenStore};
-pub use crate::nat_traversal_api::TraversalPhase;
+use crate::transport::{ProtocolEngine, TransportAddr, TransportRegistry};
 use crate::unified_config::P2pConfig;
 
 /// Event channel capacity
@@ -97,6 +91,9 @@ const MAX_UNI_STREAM_READ_BYTES: usize = 1024 * 1024;
 
 /// Sleep interval for the constrained transport poller when idle (ms)
 const CONSTRAINED_POLL_INTERVAL_MS: u64 = 1;
+
+/// Maximum time to wait for graceful shutdown of the inner endpoint
+const SHUTDOWN_TIMEOUT_SECS: u64 = 5;
 
 /// Derive a synthetic PeerId by hashing a `TransportAddr` display string.
 ///
@@ -760,7 +757,7 @@ impl P2pEndpoint {
             .inner
             .extract_peer_id_from_connection(&connection)
             .await
-            .unwrap_or_else(|| self.derive_peer_id_from_address(addr));
+            .unwrap_or_else(|| peer_id_from_socket_addr(addr));
 
         // Store connection
         self.inner
@@ -869,8 +866,7 @@ impl P2pEndpoint {
                 })?;
 
                 // Create a synthetic peer ID for constrained connections if not provided
-                let actual_peer_id =
-                    peer_id.unwrap_or_else(|| self.derive_peer_id_from_transport_addr(addr));
+                let actual_peer_id = peer_id.unwrap_or_else(|| peer_id_from_transport_addr(addr));
 
                 let peer_conn = PeerConnection {
                     peer_id: actual_peer_id,
@@ -1006,11 +1002,6 @@ impl P2pEndpoint {
             .map(|(peer_id, _)| *peer_id)
     }
 
-    /// Derive a peer ID from a transport address (for constrained connections)
-    fn derive_peer_id_from_transport_addr(&self, addr: &TransportAddr) -> PeerId {
-        peer_id_from_transport_addr(addr)
-    }
-
     /// Connect to a peer using dual-stack strategy (tries both IPv4 and IPv6 in parallel)
     ///
     /// This method implements the user requirement: **"connect on ip4 and 6 we do both"**
@@ -1048,8 +1039,6 @@ impl P2pEndpoint {
         addresses: &[SocketAddr],
         peer_id: Option<PeerId>,
     ) -> Result<PeerConnection, EndpointError> {
-        use std::net::IpAddr;
-
         if self.shutdown.is_cancelled() {
             return Err(EndpointError::ShuttingDown);
         }
@@ -1132,8 +1121,6 @@ impl P2pEndpoint {
         addresses: &[SocketAddr],
         family_name: &str,
     ) -> Option<PeerConnection> {
-        use tokio::time::{Duration, timeout};
-
         if addresses.is_empty() {
             debug!("{}: No addresses to try", family_name);
             return None;
@@ -1345,8 +1332,6 @@ impl P2pEndpoint {
         strategy_config: Option<StrategyConfig>,
         peer_id: Option<PeerId>,
     ) -> Result<(PeerConnection, ConnectionMethod), EndpointError> {
-        use tokio::time::timeout;
-
         if self.shutdown.is_cancelled() {
             return Err(EndpointError::ShuttingDown);
         }
@@ -1458,7 +1443,7 @@ impl P2pEndpoint {
                     // Use our existing NAT traversal infrastructure
                     // If peer_id provided, use it. Otherwise derive from address.
                     let target_peer_id =
-                        peer_id.unwrap_or_else(|| self.derive_peer_id_from_address(target));
+                        peer_id.unwrap_or_else(|| peer_id_from_socket_addr(target));
 
                     match timeout(
                         strategy.holepunch_timeout(),
@@ -1656,12 +1641,21 @@ impl P2pEndpoint {
     }
 
     /// Accept incoming connections
+    ///
+    /// Returns `None` if the endpoint is shutting down or the accept fails.
+    /// This method races the inner accept against the shutdown token, so it
+    /// will return promptly when `shutdown()` is called.
     pub async fn accept(&self) -> Option<PeerConnection> {
         if self.shutdown.is_cancelled() {
             return None;
         }
 
-        match self.inner.accept_connection().await {
+        let result = tokio::select! {
+            r = self.inner.accept_connection() => r,
+            _ = self.shutdown.cancelled() => return None,
+        };
+
+        match result {
             Ok((peer_id, connection)) => {
                 let remote_addr = connection.remote_address();
                 let mut resolved_peer_id = peer_id;
@@ -2068,7 +2062,16 @@ impl P2pEndpoint {
             let _ = self.disconnect(&peer_id).await;
         }
 
-        let _ = self.inner.shutdown().await;
+        // Bounded timeout prevents blocking when the remote peer is unresponsive.
+        if timeout(
+            Duration::from_secs(SHUTDOWN_TIMEOUT_SECS),
+            self.inner.shutdown(),
+        )
+        .await
+        .is_err()
+        {
+            warn!("Inner endpoint shutdown timed out, proceeding");
+        }
     }
 
     /// Check if endpoint is running
@@ -2082,10 +2085,6 @@ impl P2pEndpoint {
     }
 
     // === Internal helpers ===
-
-    fn derive_peer_id_from_address(&self, addr: SocketAddr) -> PeerId {
-        peer_id_from_socket_addr(addr)
-    }
 
     /// Spawn a background tokio task that reads uni streams from a QUIC connection
     /// and forwards received data into the shared `data_tx` channel.

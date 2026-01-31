@@ -17,6 +17,9 @@ use std::{fmt, net::SocketAddr, sync::Arc, time::Duration};
 use crate::constrained::{ConstrainedEngine, EngineConfig, EngineEvent};
 use crate::transport::TransportRegistry;
 
+/// Maximum time to wait for QUIC connections to drain during shutdown
+const SHUTDOWN_DRAIN_TIMEOUT_SECS: u64 = 5;
+
 /// Creates a bind address that allows the OS to select a random available port
 ///
 /// This provides protocol obfuscation by preventing port fingerprinting, which improves
@@ -3989,9 +3992,18 @@ impl NatTraversalEndpoint {
             }
         }
 
-        // Wait for connection to be closed
+        // Bounded drain: in simultaneous-shutdown scenarios both sides may
+        // close at once, so wait_idle can stall until the idle timeout.
         if let Some(ref endpoint) = self.inner_endpoint {
-            endpoint.wait_idle().await;
+            if tokio::time::timeout(
+                Duration::from_secs(SHUTDOWN_DRAIN_TIMEOUT_SECS),
+                endpoint.wait_idle(),
+            )
+            .await
+            .is_err()
+            {
+                info!("wait_idle timed out during shutdown, proceeding");
+            }
         }
 
         // Wait for transport listener tasks to complete
