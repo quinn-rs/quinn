@@ -794,7 +794,7 @@ impl P2pEndpoint {
 
         // Spawn background reader task for this QUIC connection
         if let Ok(Some(conn)) = self.inner.get_connection(&peer_id) {
-            self.spawn_reader_task(peer_id, conn);
+            self.spawn_reader_task(peer_id, conn).await;
         }
 
         // Update stats
@@ -1273,7 +1273,7 @@ impl P2pEndpoint {
 
                         // Spawn background reader task for this QUIC connection
                         if let Ok(Some(conn)) = self.inner.get_connection(&peer_id) {
-                            self.spawn_reader_task(peer_id, conn);
+                            self.spawn_reader_task(peer_id, conn).await;
                         }
 
                         return Ok(peer_conn);
@@ -1587,7 +1587,7 @@ impl P2pEndpoint {
 
                         // Spawn background reader task for this QUIC connection
                         if let Ok(Some(conn)) = self.inner.get_connection(&evt_peer) {
-                            self.spawn_reader_task(evt_peer, conn);
+                            self.spawn_reader_task(evt_peer, conn).await;
                         }
 
                         return Ok(peer_conn);
@@ -1706,7 +1706,7 @@ impl P2pEndpoint {
 
                 // Spawn background reader task for this QUIC connection
                 if let Ok(Some(conn)) = self.inner.get_connection(&resolved_peer_id) {
-                    self.spawn_reader_task(resolved_peer_id, conn);
+                    self.spawn_reader_task(resolved_peer_id, conn).await;
                 }
 
                 {
@@ -2097,70 +2097,68 @@ impl P2pEndpoint {
     /// and forwards received data into the shared `data_tx` channel.
     ///
     /// The task exits naturally when the connection is closed or the channel is dropped.
-    fn spawn_reader_task(&self, peer_id: PeerId, connection: crate::high_level::Connection) {
+    async fn spawn_reader_task(&self, peer_id: PeerId, connection: crate::high_level::Connection) {
         let data_tx = self.data_tx.clone();
         let connected_peers = Arc::clone(&self.connected_peers);
         let event_tx = self.event_tx.clone();
-        let reader_handles = Arc::clone(&self.reader_handles);
-        let reader_tasks = Arc::clone(&self.reader_tasks);
 
-        // Spawn into the JoinSet via a secondary task (JoinSet::spawn requires &mut)
-        tokio::spawn(async move {
-            let abort_handle = reader_tasks.lock().await.spawn(async move {
-                loop {
-                    // Accept the next unidirectional stream
-                    let mut recv_stream = match connection.accept_uni().await {
-                        Ok(stream) => stream,
-                        Err(e) => {
-                            debug!(
-                                "Reader task for peer {:?} ending: accept_uni error: {}",
-                                peer_id, e
-                            );
-                            break;
-                        }
-                    };
-
-                    let data = match recv_stream.read_to_end(MAX_UNI_STREAM_READ_BYTES).await {
-                        Ok(data) if data.is_empty() => continue,
-                        Ok(data) => data,
-                        Err(e) => {
-                            debug!(
-                                "Reader task for peer {:?}: read_to_end error: {}",
-                                peer_id, e
-                            );
-                            break;
-                        }
-                    };
-
-                    let data_len = data.len();
-                    tracing::trace!("Reader task: {} bytes from peer {:?}", data_len, peer_id);
-
-                    // Update last_activity
-                    if let Some(peer_conn) = connected_peers.write().await.get_mut(&peer_id) {
-                        peer_conn.last_activity = Instant::now();
-                    }
-
-                    // Emit DataReceived event
-                    let _ = event_tx.send(P2pEvent::DataReceived {
-                        peer_id,
-                        bytes: data_len,
-                    });
-
-                    // Send through channel; if the receiver is dropped, exit
-                    if data_tx.send((peer_id, data)).await.is_err() {
+        let abort_handle = self.reader_tasks.lock().await.spawn(async move {
+            loop {
+                // Accept the next unidirectional stream
+                let mut recv_stream = match connection.accept_uni().await {
+                    Ok(stream) => stream,
+                    Err(e) => {
                         debug!(
-                            "Reader task for peer {:?}: channel closed, exiting",
-                            peer_id
+                            "Reader task for peer {:?} ending: accept_uni error: {}",
+                            peer_id, e
                         );
                         break;
                     }
+                };
+
+                let data = match recv_stream.read_to_end(MAX_UNI_STREAM_READ_BYTES).await {
+                    Ok(data) if data.is_empty() => continue,
+                    Ok(data) => data,
+                    Err(e) => {
+                        debug!(
+                            "Reader task for peer {:?}: read_to_end error: {}",
+                            peer_id, e
+                        );
+                        break;
+                    }
+                };
+
+                let data_len = data.len();
+                tracing::trace!("Reader task: {} bytes from peer {:?}", data_len, peer_id);
+
+                // Update last_activity
+                if let Some(peer_conn) = connected_peers.write().await.get_mut(&peer_id) {
+                    peer_conn.last_activity = Instant::now();
                 }
 
-                peer_id
-            });
+                // Emit DataReceived event
+                let _ = event_tx.send(P2pEvent::DataReceived {
+                    peer_id,
+                    bytes: data_len,
+                });
 
-            reader_handles.write().await.insert(peer_id, abort_handle);
+                // Send through channel; if the receiver is dropped, exit
+                if data_tx.send((peer_id, data)).await.is_err() {
+                    debug!(
+                        "Reader task for peer {:?}: channel closed, exiting",
+                        peer_id
+                    );
+                    break;
+                }
+            }
+
+            peer_id
         });
+
+        self.reader_handles
+            .write()
+            .await
+            .insert(peer_id, abort_handle);
     }
 
     /// Spawn a single background task that polls constrained transport events
