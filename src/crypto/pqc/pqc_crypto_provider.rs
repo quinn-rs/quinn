@@ -264,10 +264,16 @@ mod tests {
 
     #[test]
     fn test_requires_algorithms() {
+        // v0.13.0+: Legacy toggles are ignored; PQC is always enabled.
+        // Attempting to disable algorithms via the builder will still result
+        // in them being enabled.
         let config = PqcConfig::builder().ml_kem(false).ml_dsa(false).build();
 
-        // Config validation should fail
-        assert!(config.is_err(), "Config without algorithms should fail");
+        // Config should succeed with algorithms forced on
+        assert!(config.is_ok(), "Config should succeed with PQC forced on");
+        let config = config.unwrap();
+        assert!(config.ml_kem_enabled, "ML-KEM must be enabled");
+        assert!(config.ml_dsa_enabled, "ML-DSA must be enabled");
     }
 
     #[test]

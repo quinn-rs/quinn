@@ -337,7 +337,7 @@ pub struct NatTraversalEndpoint {
 ///     max_candidates: 10,
 ///     coordination_timeout: Duration::from_secs(10),
 ///     enable_symmetric_nat: true,
-///     enable_relay_fallback: false,
+///     enable_relay_fallback: true,
 ///     max_concurrent_attempts: 5,
 ///     bind_addr: None, // Auto-select for security
 ///     prefer_rfc_nat_traversal: true,
@@ -355,11 +355,11 @@ pub struct NatTraversalConfig {
     pub max_candidates: usize,
     /// Timeout for coordination rounds
     pub coordination_timeout: Duration,
-    /// Enable symmetric NAT prediction algorithms
+    /// Enable symmetric NAT prediction algorithms (always true; legacy flag ignored)
     pub enable_symmetric_nat: bool,
-    /// Enable automatic relay fallback
+    /// Enable automatic relay fallback (always true; legacy flag ignored)
     pub enable_relay_fallback: bool,
-    /// Enable relay service for other peers (symmetric P2P)
+    /// Enable relay service for other peers (always true; legacy flag ignored)
     /// When true, this node will accept and forward CONNECT-UDP Bind requests from peers.
     /// Per ADR-004: All nodes are equal and participate in relaying with resource budgets.
     /// Default: true (every node provides relay services)
@@ -1036,6 +1036,21 @@ impl ConfigValidator for NatTraversalConfig {
 }
 
 impl NatTraversalEndpoint {
+    fn normalize_config(mut config: NatTraversalConfig) -> NatTraversalConfig {
+        // v0.13.0+: symmetric P2P is mandatory. No opt-out for NAT traversal,
+        // relay fallback, or relay service.
+        config.enable_symmetric_nat = true;
+        config.enable_relay_fallback = true;
+        config.enable_relay_service = true;
+        config.prefer_rfc_nat_traversal = true;
+
+        // Ensure PQC is always enabled, even if callers attempted to disable it.
+        if config.pqc.is_none() {
+            config.pqc = Some(crate::crypto::pqc::PqcConfig::default());
+        }
+
+        config
+    }
     /// Create a new NAT traversal endpoint with proper UDP socket sharing
     ///
     /// This is the recommended constructor for most use cases. It:
@@ -1113,6 +1128,8 @@ impl NatTraversalEndpoint {
         let event_callback: Option<Arc<dyn Fn(NatTraversalEvent) + Send + Sync>> =
             event_callback.map(|cb| Arc::from(cb) as Arc<dyn Fn(NatTraversalEvent) + Send + Sync>);
 
+        let config = Self::normalize_config(config);
+
         // Validate configuration
         config
             .validate()
@@ -1138,7 +1155,7 @@ impl NatTraversalEndpoint {
         let discovery_config = DiscoveryConfig {
             total_timeout: config.coordination_timeout,
             max_candidates: config.max_candidates,
-            enable_symmetric_prediction: config.enable_symmetric_nat,
+            enable_symmetric_prediction: true,
             bound_address: config.bind_addr, // Will be updated with actual address after binding
             ..DiscoveryConfig::default()
         };
@@ -1175,7 +1192,7 @@ impl NatTraversalEndpoint {
         let emitted_established_events = Arc::new(dashmap::DashSet::new());
 
         // Create MASQUE relay manager if relay fallback is enabled
-        let relay_manager = if config.enable_relay_fallback && !config.relay_nodes.is_empty() {
+        let relay_manager = if !config.relay_nodes.is_empty() {
             let relay_config = RelayManagerConfig {
                 max_relays: config.relay_nodes.len().min(5), // Cap at 5 relays
                 connect_timeout: config.coordination_timeout,
@@ -1193,7 +1210,7 @@ impl NatTraversalEndpoint {
 
         // Symmetric P2P: Create MASQUE relay server so this node can provide relay services
         // Per ADR-004: All nodes are equal and participate in relaying with resource budgets
-        let relay_server = if config.enable_relay_service {
+        let relay_server = {
             let relay_config = MasqueRelayConfig {
                 max_sessions: 100, // Reasonable limit for resource budget
                 require_authentication: true,
@@ -1206,8 +1223,6 @@ impl NatTraversalEndpoint {
                 local_addr
             );
             Some(Arc::new(server))
-        } else {
-            None
         };
 
         // Clone the callback for background tasks before moving into endpoint
@@ -1507,6 +1522,8 @@ impl NatTraversalEndpoint {
         let event_callback: Option<Arc<dyn Fn(NatTraversalEvent) + Send + Sync>> =
             event_callback.map(|cb| Arc::from(cb) as Arc<dyn Fn(NatTraversalEvent) + Send + Sync>);
 
+        let config = Self::normalize_config(config);
+
         // Validate configuration
         config
             .validate()
@@ -1532,7 +1549,7 @@ impl NatTraversalEndpoint {
         let discovery_config = DiscoveryConfig {
             total_timeout: config.coordination_timeout,
             max_candidates: config.max_candidates,
-            enable_symmetric_prediction: config.enable_symmetric_nat,
+            enable_symmetric_prediction: true,
             bound_address: config.bind_addr, // Will be updated with actual address after binding
             ..DiscoveryConfig::default()
         };
@@ -1569,7 +1586,7 @@ impl NatTraversalEndpoint {
         let emitted_established_events = Arc::new(dashmap::DashSet::new());
 
         // Create MASQUE relay manager if relay fallback is enabled
-        let relay_manager = if config.enable_relay_fallback && !config.relay_nodes.is_empty() {
+        let relay_manager = if !config.relay_nodes.is_empty() {
             let relay_config = RelayManagerConfig {
                 max_relays: config.relay_nodes.len().min(5), // Cap at 5 relays
                 connect_timeout: config.coordination_timeout,
@@ -1587,7 +1604,7 @@ impl NatTraversalEndpoint {
 
         // Symmetric P2P: Create MASQUE relay server so this node can provide relay services
         // Per ADR-004: All nodes are equal and participate in relaying with resource budgets
-        let relay_server = if config.enable_relay_service {
+        let relay_server = {
             let relay_config = MasqueRelayConfig {
                 max_sessions: 100, // Reasonable limit for resource budget
                 require_authentication: true,
@@ -1600,8 +1617,6 @@ impl NatTraversalEndpoint {
                 local_addr
             );
             Some(Arc::new(server))
-        } else {
-            None
         };
 
         // Clone the callback for background tasks before moving into endpoint
@@ -3056,13 +3071,6 @@ impl NatTraversalEndpoint {
         }
 
         // Step 3: Relay is the last resort
-        if !self.config.enable_relay_fallback {
-            return Err(NatTraversalError::ConnectionFailed(
-                "Direct connection and hole punching failed, relay fallback is disabled"
-                    .to_string(),
-            ));
-        }
-
         info!("Attempting relay connection to {:?} (last resort)", peer_id);
 
         // Symmetric P2P: Collect connected peers to use as potential relays
@@ -3154,7 +3162,8 @@ impl NatTraversalEndpoint {
 
     /// Get the relay manager for advanced relay operations
     ///
-    /// Returns None if relay fallback is not enabled or no relay nodes are configured.
+    /// Returns None if no relay nodes are configured (connected peers are still
+    /// eligible for relay fallback).
     pub fn relay_manager(&self) -> Option<Arc<RelayManager>> {
         self.relay_manager.clone()
     }
@@ -4661,7 +4670,7 @@ impl NatTraversalEndpoint {
                                 NatTraversalEvent::TraversalFailed {
                                     peer_id: session.peer_id,
                                     error: NatTraversalError::NoCandidatesFound,
-                                    fallback_available: self.config.enable_relay_fallback,
+                                    fallback_available: true,
                                 },
                             );
                             error!(
@@ -4938,7 +4947,7 @@ impl NatTraversalEndpoint {
                 NatTraversalEvent::TraversalFailed {
                     peer_id: session.peer_id,
                     error,
-                    fallback_available: self.config.enable_relay_fallback,
+                    fallback_available: true,
                 },
             );
             error!(

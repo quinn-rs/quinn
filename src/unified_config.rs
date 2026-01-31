@@ -100,13 +100,13 @@ pub struct NatConfig {
     /// Maximum number of address candidates to track
     pub max_candidates: usize,
 
-    /// Enable symmetric NAT prediction algorithms
+    /// Enable symmetric NAT prediction algorithms (legacy flag, always true)
     pub enable_symmetric_nat: bool,
 
-    /// Enable automatic relay fallback when direct connection fails
+    /// Enable automatic relay fallback when direct connection fails (legacy flag, always true)
     pub enable_relay_fallback: bool,
 
-    /// Enable relay service for other peers (symmetric P2P)
+    /// Enable relay service for other peers (legacy flag, always true)
     /// When true, this node will accept and forward CONNECT-UDP Bind requests from peers.
     /// Per ADR-004: All nodes are equal and participate in relaying with resource budgets.
     pub enable_relay_service: bool,
@@ -259,9 +259,9 @@ impl P2pConfig {
                 .collect(),
             max_candidates: self.nat.max_candidates,
             coordination_timeout: self.timeouts.nat_traversal.coordination_timeout,
-            enable_symmetric_nat: self.nat.enable_symmetric_nat,
-            enable_relay_fallback: self.nat.enable_relay_fallback,
-            enable_relay_service: self.nat.enable_relay_service,
+            enable_symmetric_nat: true,
+            enable_relay_fallback: true,
+            enable_relay_service: true,
             relay_nodes: self.nat.relay_nodes.clone(),
             max_concurrent_attempts: self.nat.max_concurrent_attempts,
             bind_addr: self
@@ -851,7 +851,7 @@ mod tests {
 
         let nat_config = config.to_nat_config();
         assert_eq!(nat_config.max_candidates, 20);
-        assert!(!nat_config.enable_symmetric_nat);
+        assert!(nat_config.enable_symmetric_nat);
     }
 
     #[test]

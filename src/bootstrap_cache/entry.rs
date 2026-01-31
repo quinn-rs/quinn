@@ -61,10 +61,10 @@ fn default_quality_score() -> f64 {
 /// Peer capabilities and features
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct PeerCapabilities {
-    /// Peer supports relay traffic
+    /// Peer supports relay traffic (observed, not self-asserted)
     pub supports_relay: bool,
 
-    /// Peer supports NAT traversal coordination
+    /// Peer supports NAT traversal coordination (observed, not self-asserted)
     pub supports_coordination: bool,
 
     /// Protocol identifiers advertised by this peer (as hex strings for serialization)

@@ -893,26 +893,28 @@ mod proptest_tests {
         }
 
         /// Test PQC config validation
+        ///
+        /// v0.13.0+: PQC is always enabled. Legacy toggle parameters are ignored.
         #[test]
         fn test_pqc_config_validation(
-            ml_kem in any::<bool>(),
-            ml_dsa in any::<bool>(),
+            _ml_kem in any::<bool>(),
+            _ml_dsa in any::<bool>(),
             pool_size in 1usize..200usize,
         ) {
             use ant_quic::PqcConfig;
 
             let result = PqcConfig::builder()
-                .ml_kem(ml_kem)
-                .ml_dsa(ml_dsa)
+                .ml_kem(_ml_kem)
+                .ml_dsa(_ml_dsa)
                 .memory_pool_size(pool_size)
                 .build();
 
-            // Config should succeed if at least one algorithm is enabled
-            if ml_kem || ml_dsa {
-                prop_assert!(result.is_ok(), "Config should succeed with at least one algorithm");
-            } else {
-                prop_assert!(result.is_err(), "Config should fail without algorithms");
-            }
+            // v0.13.0+: Config always succeeds - PQC algorithms are forced on
+            prop_assert!(result.is_ok(), "Config should succeed with PQC forced on");
+
+            let config = result.unwrap();
+            prop_assert!(config.ml_kem_enabled, "ML-KEM must be enabled");
+            prop_assert!(config.ml_dsa_enabled, "ML-DSA must be enabled");
         }
     }
 }

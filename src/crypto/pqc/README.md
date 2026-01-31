@@ -12,7 +12,7 @@ This module implements post-quantum cryptography support for ant-quic.
 ## Current Status
 
 The PQC module is ready with placeholder implementations:
-- ✅ PQC feature flag in Cargo.toml
+- ✅ PQC always enabled (no feature flag)
 - ✅ Comprehensive type definitions for ML-KEM and ML-DSA
 - ✅ Error types with detailed error messages
 - ✅ ML-KEM-768 wrapper with full API
@@ -91,10 +91,10 @@ The PQC module is ready with placeholder implementations:
 
 ## Usage
 
-Enable the PQC feature in Cargo.toml:
+PQC is always enabled. Add ant-quic as a normal dependency:
 ```toml
 [dependencies]
-ant-quic = { version = "0.4", features = ["pqc"] }
+ant-quic = "0.4"
 ```
 
 ### Example Usage

@@ -123,9 +123,10 @@ pub fn select_epsilon_greedy(peers: &[CachedPeer], count: usize, epsilon: f64) -
     selected
 }
 
-/// Select peers with specific capability requirements
+/// Select peers with specific capability preferences
 ///
-/// Filters peers by capability flags and returns sorted by quality.
+/// Prefers peers with observed capability flags, but does not exclude
+/// unverified peers. This supports "measure, don't trust" selection.
 #[allow(dead_code)]
 pub fn select_with_capabilities(
     peers: &[CachedPeer],
@@ -133,26 +134,35 @@ pub fn select_with_capabilities(
     require_relay: bool,
     require_coordination: bool,
 ) -> Vec<&CachedPeer> {
-    let mut filtered: Vec<&CachedPeer> = peers
-        .iter()
-        .filter(|p| {
-            (!require_relay || p.capabilities.supports_relay)
-                && (!require_coordination || p.capabilities.supports_coordination)
-        })
-        .collect();
-
-    if filtered.is_empty() {
+    if peers.is_empty() || count == 0 {
         return Vec::new();
     }
 
-    // Sort by quality score descending
-    filtered.sort_by(|a, b| {
-        b.quality_score
-            .partial_cmp(&a.quality_score)
-            .unwrap_or(std::cmp::Ordering::Equal)
+    fn preference_score(peer: &CachedPeer, require_relay: bool, require_coordination: bool) -> u8 {
+        let mut score = 0u8;
+        if require_relay && peer.capabilities.supports_relay {
+            score = score.saturating_add(1);
+        }
+        if require_coordination && peer.capabilities.supports_coordination {
+            score = score.saturating_add(1);
+        }
+        score
+    }
+
+    let mut candidates: Vec<&CachedPeer> = peers.iter().collect();
+
+    // Prefer observed capabilities, but do not exclude unverified peers.
+    candidates.sort_by(|a, b| {
+        let a_pref = preference_score(a, require_relay, require_coordination);
+        let b_pref = preference_score(b, require_relay, require_coordination);
+        b_pref.cmp(&a_pref).then_with(|| {
+            b.quality_score
+                .partial_cmp(&a.quality_score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
     });
 
-    filtered.into_iter().take(count).collect()
+    candidates.into_iter().take(count).collect()
 }
 
 /// Select relay peers that can reach a target IP version.
@@ -171,21 +181,20 @@ pub fn select_relays_for_target(
     target_is_ipv4: bool,
     prefer_dual_stack: bool,
 ) -> Vec<&CachedPeer> {
-    // Filter to relay peers that can reach the target IP version
-    let mut filtered: Vec<&CachedPeer> = peers
+    if peers.is_empty() || count == 0 {
+        return Vec::new();
+    }
+
+    let mut candidates: Vec<&CachedPeer> = peers
         .iter()
         .filter(|p| {
-            // Must be a relay
-            if !p.capabilities.supports_relay {
-                return false;
-            }
-
-            // Check if can reach target IP version
+            // Exclude peers we have evidence cannot reach the target IP version.
             if p.capabilities.supports_dual_stack() {
-                return true; // Dual-stack can reach any target
+                return true;
             }
-
-            // Non-dual-stack must have matching IP version
+            if p.capabilities.external_addresses.is_empty() {
+                return true; // Unknown capability; allow testing.
+            }
             if target_is_ipv4 {
                 p.capabilities.has_ipv4()
             } else {
@@ -194,27 +203,40 @@ pub fn select_relays_for_target(
         })
         .collect();
 
-    if filtered.is_empty() {
+    if candidates.is_empty() {
         return Vec::new();
     }
 
-    // Sort: dual-stack first (if preferred), then by quality
-    filtered.sort_by(|a, b| {
+    let ip_match = |peer: &CachedPeer| {
+        if peer.capabilities.external_addresses.is_empty() {
+            0u8
+        } else if target_is_ipv4 {
+            u8::from(peer.capabilities.has_ipv4())
+        } else {
+            u8::from(peer.capabilities.has_ipv6())
+        }
+    };
+
+    candidates.sort_by(|a, b| {
         if prefer_dual_stack {
-            // Dual-stack relays first
             let a_ds = a.capabilities.supports_dual_stack();
             let b_ds = b.capabilities.supports_dual_stack();
             if a_ds != b_ds {
                 return b_ds.cmp(&a_ds);
             }
         }
-        // Then by quality
-        b.quality_score
-            .partial_cmp(&a.quality_score)
-            .unwrap_or(std::cmp::Ordering::Equal)
+
+        let a_pref = (u8::from(a.capabilities.supports_relay) * 2).saturating_add(ip_match(a));
+        let b_pref = (u8::from(b.capabilities.supports_relay) * 2).saturating_add(ip_match(b));
+
+        b_pref.cmp(&a_pref).then_with(|| {
+            b.quality_score
+                .partial_cmp(&a.quality_score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
     });
 
-    filtered.into_iter().take(count).collect()
+    candidates.into_iter().take(count).collect()
 }
 
 /// Select peers that support dual-stack (IPv4 + IPv6) bridging.
@@ -223,18 +245,22 @@ pub fn select_relays_for_target(
 pub fn select_dual_stack_relays(peers: &[CachedPeer], count: usize) -> Vec<&CachedPeer> {
     let mut filtered: Vec<&CachedPeer> = peers
         .iter()
-        .filter(|p| p.capabilities.supports_relay && p.capabilities.supports_dual_stack())
+        .filter(|p| p.capabilities.supports_dual_stack())
         .collect();
 
     if filtered.is_empty() {
         return Vec::new();
     }
 
-    // Sort by quality
+    // Prefer observed relay capability, then quality.
     filtered.sort_by(|a, b| {
-        b.quality_score
-            .partial_cmp(&a.quality_score)
-            .unwrap_or(std::cmp::Ordering::Equal)
+        let a_pref = u8::from(a.capabilities.supports_relay);
+        let b_pref = u8::from(b.capabilities.supports_relay);
+        b_pref.cmp(&a_pref).then_with(|| {
+            b.quality_score
+                .partial_cmp(&a.quality_score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
     });
 
     filtered.into_iter().take(count).collect()
@@ -356,13 +382,15 @@ mod tests {
         peers[5].capabilities.supports_relay = true;
         peers[9].capabilities.supports_relay = true;
 
-        let relays = select_with_capabilities(&peers, 10, true, false);
-        assert_eq!(relays.len(), 3);
+        let relays = select_with_capabilities(&peers, 5, true, false);
+        assert_eq!(relays.len(), 5);
 
-        // All selected should support relay
-        for peer in &relays {
-            assert!(peer.capabilities.supports_relay);
-        }
+        // Relay-capable peers should be preferred, but not required.
+        let relay_count = relays
+            .iter()
+            .filter(|peer| peer.capabilities.supports_relay)
+            .count();
+        assert!(relay_count >= 3, "Expected relay peers to be prioritized");
     }
 
     #[test]
@@ -528,7 +556,8 @@ mod tests {
         peers.push(non_relay);
 
         let selected = select_relays_for_target(&peers, 10, true, false);
-        assert_eq!(selected.len(), 1);
+        assert_eq!(selected.len(), 2);
+        // Relay-capable peer should be preferred even if lower quality.
         assert_eq!(selected[0].peer_id.0[0], 1);
     }
 

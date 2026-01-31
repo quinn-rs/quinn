@@ -376,13 +376,11 @@ impl TransportConfig {
     /// This is a convenience method that enables NAT traversal with sensible defaults
     /// for a client endpoint. Use `nat_traversal_config()` for more control.
     pub fn enable_nat_traversal(&mut self, enabled: bool) -> &mut Self {
-        if enabled {
-            use crate::transport_parameters::NatTraversalConfig;
-            // Default to client support (empty parameter)
-            self.nat_traversal_config = Some(NatTraversalConfig::ClientSupport);
-        } else {
-            self.nat_traversal_config = None;
-        }
+        // v0.13.0+: NAT traversal is mandatory in symmetric P2P.
+        // The `enabled` flag is ignored and kept only for legacy configs.
+        let _ = enabled;
+        use crate::transport_parameters::NatTraversalConfig;
+        self.nat_traversal_config = Some(NatTraversalConfig::ClientSupport);
         self
     }
 
@@ -403,13 +401,11 @@ impl TransportConfig {
     /// This is a convenience method that enables address discovery with sensible defaults.
     /// Use `address_discovery_config()` for more control.
     pub fn enable_address_discovery(&mut self, enabled: bool) -> &mut Self {
-        if enabled {
-            use crate::transport_parameters::AddressDiscoveryConfig;
-            // Default configuration - willing to both send and receive address observations
-            self.address_discovery_config = Some(AddressDiscoveryConfig::SendAndReceive);
-        } else {
-            self.address_discovery_config = None;
-        }
+        // v0.13.0+: Address discovery is mandatory in symmetric P2P.
+        // The `enabled` flag is ignored and kept only for legacy configs.
+        let _ = enabled;
+        use crate::transport_parameters::AddressDiscoveryConfig;
+        self.address_discovery_config = Some(AddressDiscoveryConfig::SendAndReceive);
         self
     }
 
@@ -430,16 +426,14 @@ impl TransportConfig {
     /// This is a convenience method that enables all standard PQC algorithms.
     /// Use `pqc_algorithms()` for more control over which algorithms to support.
     pub fn enable_pqc(&mut self, enabled: bool) -> &mut Self {
-        if enabled {
-            use crate::transport_parameters::PqcAlgorithms;
-            // v0.2: Enable pure PQC algorithms only
-            self.pqc_algorithms = Some(PqcAlgorithms {
-                ml_kem_768: true,
-                ml_dsa_65: true,
-            });
-        } else {
-            self.pqc_algorithms = None;
-        }
+        // v0.13.0+: PQC is mandatory. The `enabled` flag is ignored and kept
+        // only for legacy configs.
+        let _ = enabled;
+        use crate::transport_parameters::PqcAlgorithms;
+        self.pqc_algorithms = Some(PqcAlgorithms {
+            ml_kem_768: true,
+            ml_dsa_65: true,
+        });
         self
     }
 

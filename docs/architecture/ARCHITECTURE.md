@@ -8,7 +8,7 @@ ant-quic is a QUIC transport protocol implementation with advanced NAT traversal
 - Every node is identical - can connect, accept, and coordinate
 - 100% Post-Quantum Cryptography (ML-KEM-768, ML-DSA-65) on every connection
 - No client/server/bootstrap role distinctions
-- Hybrid PQC Raw Public Keys for authentication (see `docs/rfcs/ant-quic-pqc-authentication.md`)
+- Pure PQC Raw Public Keys for authentication (see `docs/rfcs/ant-quic-pqc-authentication.md`)
 
 ## Three-Layer Architecture
 
@@ -26,7 +26,7 @@ This layer contains the core QUIC protocol implementation.
   - `OBSERVED_ADDRESS` (0x9f81a6 IPv4, 0x9f81a7 IPv6) - Report observed external address
 - **`src/crypto/`** - Cryptographic implementations:
   - TLS 1.3 support via rustls
-  - Hybrid PQC Raw Public Keys with Ed25519 + ML-DSA-65
+  - Pure PQC Raw Public Keys with ML-DSA-65 (Ed25519 only for PeerId identifiers)
   - Post-Quantum Cryptography (ML-KEM-768, ML-DSA-65)
 - **`src/transport_parameters.rs`** - QUIC transport parameters including:
   - `0x3d7e9f0bca12fea6` - NAT traversal capability negotiation
@@ -65,7 +65,7 @@ This layer provides developer-friendly APIs wrapping the low-level protocol.
 - **`src/quic_node.rs`** - `QuicP2PNode` class
   - Application-ready P2P node
   - Peer discovery and connection management
-  - Authentication with Ed25519
+  - Authentication with ML-DSA-65 raw public keys
   - Chat protocol support
   - Connection state tracking and statistics
 
@@ -148,7 +148,7 @@ There are no special roles. The term "known_peers" replaces "bootstrap_nodes" - 
 - Address observation happens through normal QUIC connections
 - More efficient and simpler architecture
 
-### Hybrid PQC Raw Public Keys
+### Pure PQC Raw Public Keys
 - Implements certificate-free operation inspired by RFC 7250
 - Ed25519 keys for peer identity
 - X25519 + ML-KEM-768 hybrid key exchange (IANA 0x11EC)
@@ -218,7 +218,7 @@ The architecture supports extensions through:
 ### Completed
 - Core QUIC protocol (RFC 9000)
 - NAT traversal extension frames (0x3d7e90+, 0x9f81a6+)
-- Hybrid PQC Raw Public Keys (ant-quic-pqc-authentication.md)
+- Pure PQC Raw Public Keys (ant-quic-pqc-authentication.md)
 - 100% Post-Quantum Cryptography (v0.13.0+)
 - Symmetric P2P architecture (v0.13.0+)
 - High-level APIs (`P2pEndpoint`, `NatTraversalEndpoint`)
@@ -268,5 +268,5 @@ Ensure all changes are compatible with the core specifications:
 - RFC 9000 (QUIC)
 - draft-seemann-quic-nat-traversal-02
 - draft-ietf-quic-address-discovery-00
-- ant-quic-pqc-authentication.md (Hybrid PQC Raw Public Keys)
+- ant-quic-pqc-authentication.md (Pure PQC Raw Public Keys)
 - FIPS 203 (ML-KEM), FIPS 204 (ML-DSA)

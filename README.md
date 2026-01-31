@@ -76,6 +76,10 @@ In v0.13.0, we removed all role distinctions:
 
 The term "known_peers" replaces "bootstrap_nodes" - they're just addresses to connect to first. Any connected peer can help with address discovery.
 
+**Measure, don't trust**: capability hints are treated as unverified signals.
+Peers are selected based on observed reachability and success rates, not
+self-asserted roles.
+
 ### Three-Layer Design
 
 1. **Protocol Layer**: QUIC + NAT traversal extension frames

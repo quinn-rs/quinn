@@ -77,6 +77,7 @@ We implement a **Universal Connectivity Architecture** that combines five key de
 - `known_peers` configuration (not "bootstrap servers")
 - OBSERVED_ADDRESS frames from any connected peer
 - PUNCH_ME_NOW coordination through any peer
+ - Capability selection based on observed success rates (measure, don't trust)
 
 ```
 ┌─────────────────────────────────────────────────────────────┐

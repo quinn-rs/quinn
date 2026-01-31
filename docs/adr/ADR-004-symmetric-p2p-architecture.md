@@ -47,6 +47,11 @@ pub struct P2pEndpoint {
 - Every node participates in NAT traversal coordination
 - Relaying is mandatory via MASQUE (ADR-006) with configurable rate limits
 
+**Measure, don't trust**:
+- Capability claims are treated as hints only
+- Peer selection is based on observed success rates and reachability
+- Nodes are not excluded from roles a priori; they are tested and scored in practice
+
 ## Consequences
 
 ### Benefits

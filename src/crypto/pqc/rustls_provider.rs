@@ -29,7 +29,7 @@ pub struct RustlsPqcConfig {
     pub enable_ml_dsa: bool,
     /// Prefer PQC algorithms over classical
     pub prefer_pqc: bool,
-    /// Allow downgrade to classical if PQC fails
+    /// Allow downgrade to classical if PQC fails (legacy flag; always false)
     pub allow_downgrade: bool,
 }
 
@@ -39,7 +39,7 @@ impl Default for RustlsPqcConfig {
             enable_ml_kem: true,
             enable_ml_dsa: true,
             prefer_pqc: true,
-            allow_downgrade: true,
+            allow_downgrade: false,
         }
     }
 }
@@ -58,6 +58,15 @@ pub struct PqcCryptoProvider {
 }
 
 impl PqcCryptoProvider {
+    fn normalize_config(mut config: RustlsPqcConfig) -> RustlsPqcConfig {
+        // v0.13.0+: Pure PQC only. No downgrade or partial algorithm disablement.
+        config.enable_ml_kem = true;
+        config.enable_ml_dsa = true;
+        config.prefer_pqc = true;
+        config.allow_downgrade = false;
+        config
+    }
+
     /// Create a new PQC crypto provider with default config
     pub fn new() -> Result<Self, PqcError> {
         Self::with_config(Some(RustlsPqcConfig::default()))
@@ -65,8 +74,9 @@ impl PqcCryptoProvider {
 
     /// Create with specific configuration
     pub fn with_config(config: Option<RustlsPqcConfig>) -> Result<Self, PqcError> {
-        let config =
-            config.ok_or_else(|| PqcError::CryptoError("PQC config is required".to_string()))?;
+        let config = config
+            .ok_or_else(|| PqcError::CryptoError("PQC config is required".to_string()))
+            .map(Self::normalize_config)?;
 
         // Validate configuration
         validate_config(&config)?;
@@ -107,15 +117,14 @@ impl PqcCryptoProvider {
 
 /// Validate PQC configuration
 pub fn validate_config(config: &RustlsPqcConfig) -> Result<(), PqcError> {
-    if !config.enable_ml_kem && !config.enable_ml_dsa {
+    if !config.enable_ml_kem || !config.enable_ml_dsa {
         return Err(PqcError::CryptoError(
-            "At least one PQC algorithm must be enabled".to_string(),
+            "Pure PQC requires ML-KEM and ML-DSA to be enabled".to_string(),
         ));
     }
-
-    if config.prefer_pqc && !config.allow_downgrade && !config.enable_ml_kem {
+    if config.allow_downgrade {
         return Err(PqcError::CryptoError(
-            "Cannot prefer PQC without ML-KEM enabled or downgrade allowed".to_string(),
+            "PQC downgrade is not supported in symmetric P2P mode".to_string(),
         ));
     }
 
@@ -241,7 +250,7 @@ mod tests {
         assert!(config.enable_ml_kem);
         assert!(config.enable_ml_dsa);
         assert!(config.prefer_pqc);
-        assert!(config.allow_downgrade);
+        assert!(!config.allow_downgrade);
     }
 
     #[test]
@@ -256,6 +265,14 @@ mod tests {
             enable_ml_dsa: false,
             prefer_pqc: false,
             allow_downgrade: false,
+        };
+        assert!(validate_config(&invalid).is_err());
+
+        let invalid = RustlsPqcConfig {
+            enable_ml_kem: true,
+            enable_ml_dsa: true,
+            prefer_pqc: true,
+            allow_downgrade: true,
         };
         assert!(validate_config(&invalid).is_err());
     }

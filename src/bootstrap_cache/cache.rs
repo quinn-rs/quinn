@@ -126,44 +126,28 @@ impl BootstrapCache {
 
     /// Select peers that support relay functionality.
     ///
-    /// Returns peers sorted by quality score that have relay capability.
+    /// Returns peers sorted by quality score, preferring observed relay capability.
     pub async fn select_relay_peers(&self, count: usize) -> Vec<CachedPeer> {
         let data = self.data.read().await;
-        let mut relays: Vec<CachedPeer> = data
-            .peers
-            .values()
-            .filter(|p| p.capabilities.supports_relay)
+        let peers: Vec<CachedPeer> = data.peers.values().cloned().collect();
+
+        super::selection::select_with_capabilities(&peers, count, true, false)
+            .into_iter()
             .cloned()
-            .collect();
-
-        relays.sort_by(|a, b| {
-            b.quality_score
-                .partial_cmp(&a.quality_score)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
-
-        relays.into_iter().take(count).collect()
+            .collect()
     }
 
     /// Select peers that support NAT coordination.
     ///
-    /// Returns peers sorted by quality score that have coordination capability.
+    /// Returns peers sorted by quality score, preferring observed coordination capability.
     pub async fn select_coordinators(&self, count: usize) -> Vec<CachedPeer> {
         let data = self.data.read().await;
-        let mut coordinators: Vec<CachedPeer> = data
-            .peers
-            .values()
-            .filter(|p| p.capabilities.supports_coordination)
+        let peers: Vec<CachedPeer> = data.peers.values().cloned().collect();
+
+        super::selection::select_with_capabilities(&peers, count, false, true)
+            .into_iter()
             .cloned()
-            .collect();
-
-        coordinators.sort_by(|a, b| {
-            b.quality_score
-                .partial_cmp(&a.quality_score)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
-
-        coordinators.into_iter().take(count).collect()
+            .collect()
     }
 
     /// Select relay peers that can reach a target IP version.
@@ -689,12 +673,17 @@ mod tests {
             cache.upsert(peer).await;
         }
 
+        // v0.13.0+: Measure, don't trust - returns all peers but prefers
+        // those with observed relay capability.
         let relays = cache.select_relay_peers(10).await;
-        assert_eq!(relays.len(), 5); // Only half support relay
+        assert_eq!(relays.len(), 10); // All peers are candidates
 
-        // All selected should support relay
-        for peer in &relays {
-            assert!(peer.capabilities.supports_relay);
-        }
+        // First 5 should have relay capability (prioritized)
+        let relay_capable = relays
+            .iter()
+            .take(5)
+            .filter(|p| p.capabilities.supports_relay)
+            .count();
+        assert_eq!(relay_capable, 5, "Relay-capable peers should be first");
     }
 }

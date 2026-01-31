@@ -21,9 +21,9 @@ use std::fmt;
 /// specific PQC algorithms are used and performance tuning parameters.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct PqcConfig {
-    /// Enable ML-KEM-768 for key encapsulation
+    /// Enable ML-KEM-768 for key encapsulation (always true; legacy flag ignored)
     pub ml_kem_enabled: bool,
-    /// Enable ML-DSA-65 for digital signatures
+    /// Enable ML-DSA-65 for digital signatures (always true; legacy flag ignored)
     pub ml_dsa_enabled: bool,
     /// Size of the memory pool for PQC objects
     pub memory_pool_size: usize,
@@ -148,13 +148,15 @@ impl PqcConfigBuilder {
 
     /// Enable or disable ML-KEM-768
     pub fn ml_kem(mut self, enabled: bool) -> Self {
-        self.ml_kem_enabled = enabled;
+        let _ = enabled;
+        self.ml_kem_enabled = true;
         self
     }
 
     /// Enable or disable ML-DSA-65
     pub fn ml_dsa(mut self, enabled: bool) -> Self {
-        self.ml_dsa_enabled = enabled;
+        let _ = enabled;
+        self.ml_dsa_enabled = true;
         self
     }
 
@@ -213,20 +215,15 @@ mod tests {
 
     #[test]
     fn test_requires_at_least_one_algorithm() {
-        // Should fail with no algorithms
-        let result = PqcConfig::builder().ml_kem(false).ml_dsa(false).build();
-
-        assert!(matches!(result, Err(ConfigError::NoPqcAlgorithmsEnabled)));
-
-        // Should succeed with at least one algorithm
+        // Legacy toggles are ignored; PQC algorithms must remain enabled.
         let config = PqcConfig::builder()
-            .ml_kem(true)
+            .ml_kem(false)
             .ml_dsa(false)
             .build()
             .unwrap();
 
         assert!(config.ml_kem_enabled);
-        assert!(!config.ml_dsa_enabled);
+        assert!(config.ml_dsa_enabled);
     }
 
     #[test]
