@@ -17,7 +17,9 @@ use std::{fmt, net::SocketAddr, sync::Arc, time::Duration};
 use crate::constrained::{ConstrainedEngine, EngineConfig, EngineEvent};
 use crate::transport::TransportRegistry;
 
-/// Maximum time to wait for QUIC connections to drain during shutdown
+/// Maximum time to wait for QUIC connections to drain during shutdown.
+///
+/// Shared with `SHUTDOWN_TIMEOUT_SECS` in `p2p_endpoint` — keep in sync.
 const SHUTDOWN_DRAIN_TIMEOUT_SECS: u64 = 5;
 
 /// Creates a bind address that allows the OS to select a random available port
@@ -4017,12 +4019,21 @@ impl NatTraversalEndpoint {
                 "Waiting for {} transport listener tasks to complete",
                 handles.len()
             );
-            for handle in handles {
-                if let Err(e) = handle.await {
-                    warn!("Transport listener task failed during shutdown: {}", e);
-                }
+            match tokio::time::timeout(
+                Duration::from_secs(SHUTDOWN_DRAIN_TIMEOUT_SECS),
+                async {
+                    for handle in handles {
+                        if let Err(e) = handle.await {
+                            warn!("Transport listener task failed during shutdown: {e}");
+                        }
+                    }
+                },
+            )
+            .await
+            {
+                Ok(()) => debug!("All transport listener tasks completed"),
+                Err(_) => warn!("Transport listener tasks timed out during shutdown, proceeding"),
             }
-            debug!("All transport listener tasks completed");
         }
 
         info!("NAT traversal endpoint shutdown completed");
