@@ -17,10 +17,7 @@ use std::{fmt, net::SocketAddr, sync::Arc, time::Duration};
 use crate::constrained::{ConstrainedEngine, EngineConfig, EngineEvent};
 use crate::transport::TransportRegistry;
 
-/// Maximum time to wait for QUIC connections to drain during shutdown.
-///
-/// Shared with `SHUTDOWN_TIMEOUT_SECS` in `p2p_endpoint` — keep in sync.
-const SHUTDOWN_DRAIN_TIMEOUT_SECS: u64 = 5;
+use crate::SHUTDOWN_DRAIN_TIMEOUT;
 
 /// Creates a bind address that allows the OS to select a random available port
 ///
@@ -3997,12 +3994,9 @@ impl NatTraversalEndpoint {
         // Bounded drain: in simultaneous-shutdown scenarios both sides may
         // close at once, so wait_idle can stall until the idle timeout.
         if let Some(ref endpoint) = self.inner_endpoint {
-            if tokio::time::timeout(
-                Duration::from_secs(SHUTDOWN_DRAIN_TIMEOUT_SECS),
-                endpoint.wait_idle(),
-            )
-            .await
-            .is_err()
+            if tokio::time::timeout(SHUTDOWN_DRAIN_TIMEOUT, endpoint.wait_idle())
+                .await
+                .is_err()
             {
                 info!("wait_idle timed out during shutdown, proceeding");
             }
@@ -4019,16 +4013,13 @@ impl NatTraversalEndpoint {
                 "Waiting for {} transport listener tasks to complete",
                 handles.len()
             );
-            match tokio::time::timeout(
-                Duration::from_secs(SHUTDOWN_DRAIN_TIMEOUT_SECS),
-                async {
-                    for handle in handles {
-                        if let Err(e) = handle.await {
-                            warn!("Transport listener task failed during shutdown: {e}");
-                        }
+            match tokio::time::timeout(SHUTDOWN_DRAIN_TIMEOUT, async {
+                for handle in handles {
+                    if let Err(e) = handle.await {
+                        warn!("Transport listener task failed during shutdown: {e}");
                     }
-                },
-            )
+                }
+            })
             .await
             {
                 Ok(()) => debug!("All transport listener tasks completed"),

@@ -577,6 +577,11 @@ pub(crate) use web_time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 // Useful internal constants
 //
 
+/// Maximum time to wait for QUIC connections and tasks to drain during shutdown.
+///
+/// Used by both `P2pEndpoint` and `NatTraversalEndpoint` to bound graceful-shutdown waits.
+pub const SHUTDOWN_DRAIN_TIMEOUT: Duration = Duration::from_secs(5);
+
 /// The maximum number of CIDs we bother to issue per connection
 pub(crate) const LOC_CID_COUNT: u64 = 8;
 pub(crate) const RESET_TOKEN_SIZE: usize = 16;
