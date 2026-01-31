@@ -780,16 +780,18 @@ impl P2pEndpoint {
             last_activity: Instant::now(),
         };
 
-        // Store peer
+        // Spawn background reader task BEFORE storing peer in connected_peers
+        // This prevents a race where recv() called immediately after connect()
+        // returns might miss early data if the peer sends before the task starts
+        if let Ok(Some(conn)) = self.inner.get_connection(&peer_id) {
+            self.spawn_reader_task(peer_id, conn).await;
+        }
+
+        // Store peer (reader task is already running, so no data loss window)
         self.connected_peers
             .write()
             .await
             .insert(peer_id, peer_conn.clone());
-
-        // Spawn background reader task for this QUIC connection
-        if let Ok(Some(conn)) = self.inner.get_connection(&peer_id) {
-            self.spawn_reader_task(peer_id, conn).await;
-        }
 
         // Update stats
         {
@@ -1260,15 +1262,16 @@ impl P2pEndpoint {
                             last_activity: Instant::now(),
                         };
 
+                        // Spawn background reader task BEFORE storing in connected_peers
+                        // to prevent race where recv() misses early data
+                        if let Ok(Some(conn)) = self.inner.get_connection(&peer_id) {
+                            self.spawn_reader_task(peer_id, conn).await;
+                        }
+
                         self.connected_peers
                             .write()
                             .await
                             .insert(peer_id, peer_conn.clone());
-
-                        // Spawn background reader task for this QUIC connection
-                        if let Ok(Some(conn)) = self.inner.get_connection(&peer_id) {
-                            self.spawn_reader_task(peer_id, conn).await;
-                        }
 
                         return Ok(peer_conn);
                     }
@@ -1574,15 +1577,16 @@ impl P2pEndpoint {
                             last_activity: Instant::now(),
                         };
 
+                        // Spawn background reader task BEFORE storing in connected_peers
+                        // to prevent race where recv() misses early data
+                        if let Ok(Some(conn)) = self.inner.get_connection(&evt_peer) {
+                            self.spawn_reader_task(evt_peer, conn).await;
+                        }
+
                         self.connected_peers
                             .write()
                             .await
                             .insert(evt_peer, peer_conn.clone());
-
-                        // Spawn background reader task for this QUIC connection
-                        if let Ok(Some(conn)) = self.inner.get_connection(&evt_peer) {
-                            self.spawn_reader_task(evt_peer, conn).await;
-                        }
 
                         return Ok(peer_conn);
                     }
@@ -1693,15 +1697,16 @@ impl P2pEndpoint {
                     last_activity: Instant::now(),
                 };
 
+                // Spawn background reader task BEFORE storing in connected_peers
+                // to prevent race where recv() misses early data
+                if let Ok(Some(conn)) = self.inner.get_connection(&resolved_peer_id) {
+                    self.spawn_reader_task(resolved_peer_id, conn).await;
+                }
+
                 self.connected_peers
                     .write()
                     .await
                     .insert(resolved_peer_id, peer_conn.clone());
-
-                // Spawn background reader task for this QUIC connection
-                if let Ok(Some(conn)) = self.inner.get_connection(&resolved_peer_id) {
-                    self.spawn_reader_task(resolved_peer_id, conn).await;
-                }
 
                 {
                     let mut stats = self.stats.write().await;
