@@ -88,6 +88,13 @@ pub struct P2pConfig {
     /// endpoint can use for connectivity. If empty, a default UDP transport
     /// is created automatically.
     pub transport_registry: TransportRegistry,
+
+    /// Capacity of the data channel shared between background reader tasks and `recv()`.
+    ///
+    /// This controls the bounded `mpsc` buffer that reader tasks push into.
+    /// Higher values allow more in-flight messages before back-pressure is applied.
+    /// Default: 256.
+    pub data_channel_capacity: usize,
 }
 // v0.13.0: enable_coordinator removed - all nodes are coordinators
 
@@ -239,11 +246,15 @@ impl Default for P2pConfig {
             keypair: None,
             bootstrap_cache: BootstrapCacheConfig::default(),
             transport_registry: TransportRegistry::new(),
+            data_channel_capacity: Self::DEFAULT_DATA_CHANNEL_CAPACITY,
         }
     }
 }
 
 impl P2pConfig {
+    /// Default capacity of the data channel between reader tasks and `recv()`.
+    pub const DEFAULT_DATA_CHANNEL_CAPACITY: usize = 256;
+
     /// Create a new configuration builder
     pub fn builder() -> P2pConfigBuilder {
         P2pConfigBuilder::default()
@@ -307,6 +318,7 @@ pub struct P2pConfigBuilder {
     keypair: Option<(MlDsaPublicKey, MlDsaSecretKey)>,
     bootstrap_cache: Option<BootstrapCacheConfig>,
     transport_registry: Option<TransportRegistry>,
+    data_channel_capacity: Option<usize>,
 }
 
 /// Error type for configuration validation
@@ -610,6 +622,16 @@ impl P2pConfigBuilder {
         self
     }
 
+    /// Set the capacity of the data channel between reader tasks and `recv()`.
+    ///
+    /// Controls the bounded `mpsc` buffer size. Higher values allow more
+    /// in-flight messages before back-pressure is applied to reader tasks.
+    /// Default: [`P2pConfig::DEFAULT_DATA_CHANNEL_CAPACITY`] (256).
+    pub fn data_channel_capacity(mut self, capacity: usize) -> Self {
+        self.data_channel_capacity = Some(capacity);
+        self
+    }
+
     /// Build the configuration with validation
     pub fn build(self) -> Result<P2pConfig, ConfigError> {
         // Validate max_connections
@@ -634,6 +656,9 @@ impl P2pConfigBuilder {
             keypair: self.keypair,
             bootstrap_cache: self.bootstrap_cache.unwrap_or_default(),
             transport_registry: self.transport_registry.unwrap_or_default(),
+            data_channel_capacity: self
+                .data_channel_capacity
+                .unwrap_or(P2pConfig::DEFAULT_DATA_CHANNEL_CAPACITY),
         })
     }
 }

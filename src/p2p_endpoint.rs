@@ -83,9 +83,6 @@ use crate::unified_config::P2pConfig;
 /// Event channel capacity
 const EVENT_CHANNEL_CAPACITY: usize = 256;
 
-/// Capacity of the data channel shared between background reader tasks and recv()
-const DATA_CHANNEL_CAPACITY: usize = 256;
-
 /// Maximum payload size for a single uni stream read (1 MB)
 const MAX_UNI_STREAM_READ_BYTES: usize = 1024 * 1024;
 
@@ -659,7 +656,7 @@ impl P2pEndpoint {
         router.set_quic_endpoint(Arc::clone(&inner_arc));
 
         // Create channel for data received from background reader tasks
-        let (data_tx, data_rx) = mpsc::channel(DATA_CHANNEL_CAPACITY);
+        let (data_tx, data_rx) = mpsc::channel(config.data_channel_capacity);
         let reader_tasks = Arc::new(tokio::sync::Mutex::new(tokio::task::JoinSet::new()));
         let reader_handles = Arc::new(RwLock::new(HashMap::new()));
 
