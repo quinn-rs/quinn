@@ -1932,11 +1932,15 @@ impl P2pEndpoint {
             }
         }
 
-        // Wait for data from the shared channel (fed by background reader tasks)
+        // Wait for data from the shared channel (fed by background reader tasks),
+        // racing against the shutdown token so callers unblock promptly on shutdown.
         let mut rx = self.data_rx.lock().await;
-        match rx.recv().await {
-            Some(msg) => Ok(msg),
-            None => Err(EndpointError::ShuttingDown),
+        tokio::select! {
+            msg = rx.recv() => match msg {
+                Some(msg) => Ok(msg),
+                None => Err(EndpointError::ShuttingDown),
+            },
+            _ = self.shutdown.cancelled() => Err(EndpointError::ShuttingDown),
         }
     }
 
