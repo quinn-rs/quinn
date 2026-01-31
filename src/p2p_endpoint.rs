@@ -86,9 +86,6 @@ const EVENT_CHANNEL_CAPACITY: usize = 256;
 /// Maximum payload size for a single uni stream read (1 MB)
 const MAX_UNI_STREAM_READ_BYTES: usize = 1024 * 1024;
 
-/// Sleep interval for the constrained transport poller when idle (ms)
-const CONSTRAINED_POLL_INTERVAL_MS: u64 = 100;
-
 use crate::SHUTDOWN_DRAIN_TIMEOUT;
 
 /// Derive a synthetic PeerId by hashing a `TransportAddr` display string.

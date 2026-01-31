@@ -165,7 +165,7 @@ use parking_lot::{Mutex as ParkingMutex, RwLock as ParkingRwLock};
 
 use tokio::{
     net::UdpSocket,
-    sync::mpsc,
+    sync::{Mutex as TokioMutex, mpsc},
     time::{sleep, timeout},
 };
 
@@ -305,7 +305,8 @@ pub struct NatTraversalEndpoint {
     constrained_event_tx: mpsc::UnboundedSender<ConstrainedEventWithAddr>,
     /// Receiver for constrained engine events
     /// P2pEndpoint polls this to receive data from constrained transports
-    constrained_event_rx: ParkingMutex<mpsc::UnboundedReceiver<ConstrainedEventWithAddr>>,
+    /// Uses TokioMutex (not ParkingMutex) because MutexGuard is held across .await
+    constrained_event_rx: TokioMutex<mpsc::UnboundedReceiver<ConstrainedEventWithAddr>>,
 }
 
 /// Configuration for NAT traversal behavior
@@ -1264,7 +1265,7 @@ impl NatTraversalEndpoint {
             transport_listener_handles: Arc::new(ParkingMutex::new(Vec::new())),
             constrained_engine,
             constrained_event_tx: constrained_event_tx.clone(),
-            constrained_event_rx: ParkingMutex::new(constrained_event_rx),
+            constrained_event_rx: TokioMutex::new(constrained_event_rx),
         };
 
         // Multi-transport listening: Spawn receive tasks for all online transports
@@ -1658,7 +1659,7 @@ impl NatTraversalEndpoint {
             transport_listener_handles: Arc::new(ParkingMutex::new(Vec::new())),
             constrained_engine,
             constrained_event_tx: constrained_event_tx.clone(),
-            constrained_event_rx: ParkingMutex::new(constrained_event_rx),
+            constrained_event_rx: TokioMutex::new(constrained_event_rx),
         };
 
         // Multi-transport listening: Spawn receive tasks for all online transports
@@ -1920,7 +1921,8 @@ impl NatTraversalEndpoint {
     /// - `Some(event)` - An event with the data and source transport address
     /// - `None` - No events currently available
     pub fn try_recv_constrained_event(&self) -> Option<ConstrainedEventWithAddr> {
-        self.constrained_event_rx.lock().try_recv().ok()
+        // Use try_lock() since this is a synchronous function
+        self.constrained_event_rx.try_lock().ok()?.try_recv().ok()
     }
 
     /// Receive a constrained engine event asynchronously
@@ -1933,7 +1935,7 @@ impl NatTraversalEndpoint {
     /// - `Some(event)` - An event with the data and source transport address
     /// - `None` - The channel has been closed
     pub async fn recv_constrained_event(&self) -> Option<ConstrainedEventWithAddr> {
-        self.constrained_event_rx.lock().recv().await
+        self.constrained_event_rx.lock().await.recv().await
     }
 
     /// Get a reference to the constrained event sender for testing
