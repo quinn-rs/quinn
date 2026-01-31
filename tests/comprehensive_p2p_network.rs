@@ -999,9 +999,8 @@ mod channel_recv_and_shutdown_tests {
 
         // Spawn server accept so handshake completes and reader task is spawned
         let server_clone = server.clone();
-        let accept_handle = tokio::spawn(async move {
-            timeout(SHORT_TIMEOUT, server_clone.accept()).await
-        });
+        let accept_handle =
+            tokio::spawn(async move { timeout(SHORT_TIMEOUT, server_clone.accept()).await });
 
         tokio::time::sleep(Duration::from_millis(100)).await;
 
@@ -1012,7 +1011,10 @@ mod channel_recv_and_shutdown_tests {
         let peer_conn = match connect_result {
             Ok(Ok(pc)) => pc,
             other => {
-                println!("Connection not established ({:?}), skipping recv test", other.err());
+                println!(
+                    "Connection not established ({:?}), skipping recv test",
+                    other.err()
+                );
                 accept_handle.abort();
                 shutdown_with_timeout(client).await;
                 shutdown_with_timeout(server).await;
@@ -1029,7 +1031,10 @@ mod channel_recv_and_shutdown_tests {
         match send_result {
             Ok(Ok(())) => println!("Data sent successfully"),
             other => {
-                println!("Send did not succeed ({:?}), skipping recv assertion", other.err());
+                println!(
+                    "Send did not succeed ({:?}), skipping recv assertion",
+                    other.err()
+                );
                 shutdown_with_timeout(client).await;
                 shutdown_with_timeout(server).await;
                 return;
@@ -1083,10 +1088,7 @@ mod channel_recv_and_shutdown_tests {
         let deadline = Duration::from_secs(1);
         match timeout(deadline, accept_handle).await {
             Ok(Ok(result)) => {
-                assert!(
-                    result.is_none(),
-                    "accept() should return None on shutdown"
-                );
+                assert!(result.is_none(), "accept() should return None on shutdown");
                 println!("accept() returned None promptly after shutdown");
             }
             Ok(Err(e)) => {
@@ -1113,9 +1115,8 @@ mod channel_recv_and_shutdown_tests {
 
         // Spawn accept so handshake can complete
         let server_clone = server.clone();
-        let accept_handle = tokio::spawn(async move {
-            timeout(SHORT_TIMEOUT, server_clone.accept()).await
-        });
+        let accept_handle =
+            tokio::spawn(async move { timeout(SHORT_TIMEOUT, server_clone.accept()).await });
 
         tokio::time::sleep(Duration::from_millis(100)).await;
 
