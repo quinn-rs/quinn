@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.20.3] - 2026-01-31
+
+### Changed
+
+- **"Measure, Don't Trust" Peer Selection**: Capability selection now prefers peers with observed support but no longer filters out unverified peers
+  - `select_with_capabilities()` uses preference scoring instead of capability filtering
+  - All peers participate in selection, ranked by observed capabilities then quality score
+  - Achieves the "measure, don't trust" philosophy - test all peers, prefer those that deliver
+
+- **Mandatory PQC/NAT Features**: All P2P features are now always-on in symmetric P2P mode
+  - PQC (ML-KEM-768, ML-DSA-65) cannot be disabled - legacy flags are ignored
+  - NAT traversal, relay fallback, and relay service are mandatory
+  - `normalize_config()` enforces mandatory features at construction time
+  - Downgrade to classical crypto is prevented at validation layer
+
+### Documentation
+
+- Updated ADR-004, ADR-008, and ARCHITECTURE.md to reflect "measure, don't trust" philosophy
+- Documentation now states all nodes are equal with roles as hints, not requirements
+- README updated with symmetric P2P and PQC-only messaging
+
 ## [0.20.2] - 2026-01-30
 
 ### Added
