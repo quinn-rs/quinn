@@ -17,6 +17,8 @@ use std::{fmt, net::SocketAddr, sync::Arc, time::Duration};
 use crate::constrained::{ConstrainedEngine, EngineConfig, EngineEvent};
 use crate::transport::TransportRegistry;
 
+use crate::SHUTDOWN_DRAIN_TIMEOUT;
+
 /// Creates a bind address that allows the OS to select a random available port
 ///
 /// This provides protocol obfuscation by preventing port fingerprinting, which improves
@@ -163,7 +165,7 @@ use parking_lot::{Mutex as ParkingMutex, RwLock as ParkingRwLock};
 
 use tokio::{
     net::UdpSocket,
-    sync::mpsc,
+    sync::{Mutex as TokioMutex, mpsc},
     time::{sleep, timeout},
 };
 
@@ -303,7 +305,8 @@ pub struct NatTraversalEndpoint {
     constrained_event_tx: mpsc::UnboundedSender<ConstrainedEventWithAddr>,
     /// Receiver for constrained engine events
     /// P2pEndpoint polls this to receive data from constrained transports
-    constrained_event_rx: ParkingMutex<mpsc::UnboundedReceiver<ConstrainedEventWithAddr>>,
+    /// Uses TokioMutex (not ParkingMutex) because MutexGuard is held across .await
+    constrained_event_rx: TokioMutex<mpsc::UnboundedReceiver<ConstrainedEventWithAddr>>,
 }
 
 /// Configuration for NAT traversal behavior
@@ -1262,7 +1265,7 @@ impl NatTraversalEndpoint {
             transport_listener_handles: Arc::new(ParkingMutex::new(Vec::new())),
             constrained_engine,
             constrained_event_tx: constrained_event_tx.clone(),
-            constrained_event_rx: ParkingMutex::new(constrained_event_rx),
+            constrained_event_rx: TokioMutex::new(constrained_event_rx),
         };
 
         // Multi-transport listening: Spawn receive tasks for all online transports
@@ -1656,7 +1659,7 @@ impl NatTraversalEndpoint {
             transport_listener_handles: Arc::new(ParkingMutex::new(Vec::new())),
             constrained_engine,
             constrained_event_tx: constrained_event_tx.clone(),
-            constrained_event_rx: ParkingMutex::new(constrained_event_rx),
+            constrained_event_rx: TokioMutex::new(constrained_event_rx),
         };
 
         // Multi-transport listening: Spawn receive tasks for all online transports
@@ -1918,7 +1921,21 @@ impl NatTraversalEndpoint {
     /// - `Some(event)` - An event with the data and source transport address
     /// - `None` - No events currently available
     pub fn try_recv_constrained_event(&self) -> Option<ConstrainedEventWithAddr> {
-        self.constrained_event_rx.lock().try_recv().ok()
+        // Use try_lock() since this is a synchronous function
+        self.constrained_event_rx.try_lock().ok()?.try_recv().ok()
+    }
+
+    /// Receive a constrained engine event asynchronously
+    ///
+    /// Waits for the next event from constrained transports (BLE/LoRa) without polling.
+    /// This eliminates the need for polling loops with sleep intervals.
+    ///
+    /// # Returns
+    ///
+    /// - `Some(event)` - An event with the data and source transport address
+    /// - `None` - The channel has been closed
+    pub async fn recv_constrained_event(&self) -> Option<ConstrainedEventWithAddr> {
+        self.constrained_event_rx.lock().await.recv().await
     }
 
     /// Get a reference to the constrained event sender for testing
@@ -4008,9 +4025,15 @@ impl NatTraversalEndpoint {
             }
         }
 
-        // Wait for connection to be closed
+        // Bounded drain: in simultaneous-shutdown scenarios both sides may
+        // close at once, so wait_idle can stall until the idle timeout.
         if let Some(ref endpoint) = self.inner_endpoint {
-            endpoint.wait_idle().await;
+            if tokio::time::timeout(SHUTDOWN_DRAIN_TIMEOUT, endpoint.wait_idle())
+                .await
+                .is_err()
+            {
+                info!("wait_idle timed out during shutdown, proceeding");
+            }
         }
 
         // Wait for transport listener tasks to complete
@@ -4024,12 +4047,18 @@ impl NatTraversalEndpoint {
                 "Waiting for {} transport listener tasks to complete",
                 handles.len()
             );
-            for handle in handles {
-                if let Err(e) = handle.await {
-                    warn!("Transport listener task failed during shutdown: {}", e);
+            match tokio::time::timeout(SHUTDOWN_DRAIN_TIMEOUT, async {
+                for handle in handles {
+                    if let Err(e) = handle.await {
+                        warn!("Transport listener task failed during shutdown: {e}");
+                    }
                 }
+            })
+            .await
+            {
+                Ok(()) => debug!("All transport listener tasks completed"),
+                Err(_) => warn!("Transport listener tasks timed out during shutdown, proceeding"),
             }
-            debug!("All transport listener tasks completed");
         }
 
         info!("NAT traversal endpoint shutdown completed");

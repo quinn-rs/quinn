@@ -44,9 +44,10 @@ use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::RwLock;
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
 /// E2E Test Node - Enhanced P2P node for comprehensive testing
@@ -330,7 +331,7 @@ async fn main() -> anyhow::Result<()> {
     info!("═══════════════════════════════════════════════════════════════");
 
     // Setup state
-    let shutdown = Arc::new(AtomicBool::new(false));
+    let shutdown = CancellationToken::new();
     let shutdown_clone = shutdown.clone();
     let stats = Arc::new(RuntimeStats::default());
     let peers: Arc<RwLock<HashMap<PeerId, PeerState>>> = Arc::new(RwLock::new(HashMap::new()));
@@ -343,7 +344,7 @@ async fn main() -> anyhow::Result<()> {
             error!("Failed to listen for ctrl-c: {}", e);
         }
         info!("Shutdown signal received");
-        shutdown_clone.store(true, Ordering::SeqCst);
+        shutdown_clone.cancel();
     });
 
     // Event handler task
@@ -356,7 +357,7 @@ async fn main() -> anyhow::Result<()> {
 
     let event_handle = tokio::spawn(async move {
         let mut events = endpoint_events.subscribe();
-        while !shutdown_events.load(Ordering::SeqCst) {
+        while !shutdown_events.is_cancelled() {
             match tokio::time::timeout(Duration::from_millis(100), events.recv()).await {
                 Ok(Ok(event)) => {
                     handle_event(
@@ -390,7 +391,7 @@ async fn main() -> anyhow::Result<()> {
             let client = reqwest::Client::new();
             let mut interval_timer = tokio::time::interval(Duration::from_secs(interval));
 
-            while !shutdown_metrics.load(Ordering::SeqCst) {
+            while !shutdown_metrics.is_cancelled() {
                 interval_timer.tick().await;
 
                 let report = build_metrics_report(
@@ -436,8 +437,12 @@ async fn main() -> anyhow::Result<()> {
     let json = args.json;
 
     let recv_handle = tokio::spawn(async move {
-        while !shutdown_recv.load(Ordering::SeqCst) {
-            match endpoint_recv.recv(Duration::from_millis(100)).await {
+        loop {
+            let result = tokio::select! {
+                r = endpoint_recv.recv() => r,
+                _ = shutdown_recv.cancelled() => break,
+            };
+            match result {
                 Ok((peer_id, data)) => {
                     stats_recv
                         .bytes_received
@@ -580,7 +585,7 @@ async fn main() -> anyhow::Result<()> {
             let mut last_progress = Instant::now();
 
             for (idx, chunk) in chunks.iter().enumerate() {
-                if shutdown_data.load(Ordering::SeqCst) {
+                if shutdown_data.is_cancelled() {
                     break;
                 }
 
@@ -666,7 +671,7 @@ async fn main() -> anyhow::Result<()> {
 
     info!("Ready. Press Ctrl+C to shutdown.");
 
-    while !shutdown.load(Ordering::SeqCst) {
+    while !shutdown.is_cancelled() {
         if let Some(max_duration) = duration {
             if start_time.elapsed() > max_duration {
                 info!("Duration limit reached");
@@ -703,7 +708,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Shutdown
     info!("Shutting down...");
-    shutdown.store(true, Ordering::SeqCst);
+    shutdown.cancel();
 
     endpoint.shutdown().await;
     event_handle.abort();

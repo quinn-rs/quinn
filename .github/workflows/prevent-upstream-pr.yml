@@ -9,7 +9,7 @@ on:
 jobs:
   check-pr-target:
     runs-on: ubuntu-latest
-    if: github.repository == 'dirvine/ant-quic'
+    if: github.repository == 'dirvine/ant-quic' || github.repository == 'saorsa-labs/ant-quic'
     steps:
       - name: Check PR Target
         run: |
@@ -21,10 +21,10 @@ jobs:
             echo "❌ ERROR: This PR targets quinn-rs/quinn!"
             echo ""
             echo "ant-quic is NOT a fork of Quinn - it's an independent project."
-            echo "PRs should target dirvine/ant-quic only."
+            echo "PRs should target saorsa-labs/ant-quic only."
             echo ""
             echo "Please close this PR and create a new one targeting:"
-            echo "  https://github.com/dirvine/ant-quic"
+            echo "  https://github.com/saorsa-labs/ant-quic"
             exit 1
           fi
 
