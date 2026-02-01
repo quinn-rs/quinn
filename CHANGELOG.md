@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.21.0] - 2026-02-01
+
+### Breaking Changes
+
+- **Channel-Based recv() Architecture**: Replaced polling-based `recv()` with event-driven channel-based system
+  - Background reader tasks now feed a shared `mpsc` channel, eliminating O(n×timeout) peer iteration delays
+  - `recv()` and `accept()` now race against shutdown tokens via `tokio::select!` for prompt shutdown
+  - Data channel capacity is now configurable via `P2pConfig::data_channel_capacity`
+
+### Changed
+
+- **CancellationToken Shutdown**: Replaced `AtomicBool` shutdown flags with `tokio_util::sync::CancellationToken`
+  - Enables cooperative cancellation across all endpoints
+  - More idiomatic Rust async shutdown pattern
+
+- **Zero-Latency Constrained Events**: Constrained transport events (BLE/LoRa) switched from 100ms polling to async `recv()`
+  - New `recv_constrained_event()` async method for zero-latency event processing
+  - Eliminates busy-wait polling loops
+
+### Fixed
+
+- **Reader Task Race Condition**: Fixed race where `recv()` called immediately after `connect()` could miss early data
+  - Now spawns reader task before storing connection in `connected_peers`
+  - Ensures data channel is ready when `connect()` returns
+
+- **Send Bound Violation**: Fixed `parking_lot::MutexGuard` held across `.await` causing non-`Send` futures
+  - Changed `constrained_event_rx` to use `tokio::sync::Mutex`
+
+### Added
+
+- `P2pConfig::data_channel_capacity` - Configurable capacity for the data receive channel
+- `SHUTDOWN_DRAIN_TIMEOUT` constant (5s) for unified shutdown timeout handling
+- Comprehensive E2E tests for channel-recv and CancellationToken improvements
+
 ## [0.20.3] - 2026-01-31
 
 ### Changed

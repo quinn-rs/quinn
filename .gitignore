@@ -49,3 +49,9 @@ dave
 *_issues_*.json
 issues.txt
 prs.txt
+
+# Planning files
+.planning/
+
+# Proptest regressions
+*.proptest-regressions
