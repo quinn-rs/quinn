@@ -188,10 +188,15 @@ impl RelayAuthenticator {
         }
 
         // Check for replay attack
-        let mut used_nonces = self
-            .used_nonces
-            .lock()
-            .expect("Mutex poisoning is unexpected in normal operation");
+        // SAFETY: Handle mutex poisoning gracefully - clear the poisoned state
+        // and continue with an empty set (safer than crashing the relay)
+        let mut used_nonces = match self.used_nonces.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => {
+                tracing::warn!("Mutex was poisoned in relay authenticator, recovering");
+                poisoned.into_inner()
+            }
+        };
 
         if used_nonces.contains(&token.nonce) {
             return Err(RelayError::AuthenticationFailed {

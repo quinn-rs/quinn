@@ -133,11 +133,14 @@ impl Incoming {
     }
 
     /// The original destination CID when initiating the connection
+    ///
+    /// Returns an empty ConnectionId if state is not available (rather than
+    /// a weak default with all zeros that could be confused with a real CID).
     pub fn orig_dst_cid(&self) -> ConnectionId {
         self.0
             .as_ref()
             .map(|state| *state.inner.orig_dst_cid())
-            .unwrap_or_else(|| ConnectionId::new(&[0]))
+            .unwrap_or_else(|| ConnectionId::new(&[]))
     }
 }
 
