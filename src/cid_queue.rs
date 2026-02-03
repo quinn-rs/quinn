@@ -189,7 +189,6 @@ mod tests {
         }
         for i in seqs {
             let (_, retire) = q.next().unwrap();
-            dbg!(&retire);
             assert_eq!(q.active_seq(), i);
             assert_eq!(retire, (q.active_seq().saturating_sub(2))..q.active_seq());
         }

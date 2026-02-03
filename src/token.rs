@@ -261,7 +261,11 @@ impl Token {
         // Encrypt
         let aead_key = key.aead_from_hkdf(&self.nonce.to_le_bytes());
         if aead_key.seal(&mut buf, &[]).is_err() {
-            // Encryption failure: return empty token to signal no-op to the receiver
+            // SECURITY: Encryption failure is a critical error that should not happen
+            // in normal operation. Log the error and return empty token, which will
+            // cause the connection to proceed without address validation (less secure
+            // but recoverable). In production, this indicates a crypto subsystem issue.
+            tracing::error!("Token encryption failed - crypto subsystem may be compromised");
             return Vec::new();
         }
         buf.extend(&self.nonce.to_le_bytes());
@@ -387,18 +391,38 @@ fn decode_unix_secs<B: Buf>(buf: &mut B) -> Option<SystemTime> {
 
 /// Try to decode a v2 token format.
 /// Returns Some(RetryTokenDecoded) if the token decodes successfully, None otherwise.
-/// Note: This is a temporary implementation that uses a fallback key for v2 token decoding.
-/// In production, proper key management integration would be needed.
+///
+/// SECURITY: v2 token decoding requires proper key derivation from the HandshakeTokenKey.
+/// We derive a v2-specific key from the HandshakeTokenKey's AEAD to ensure tokens
+/// cannot be forged by attackers.
 fn try_decode_v2_token(
     token_bytes: &[u8],
-    _token_key: &dyn HandshakeTokenKey,
+    token_key: &dyn HandshakeTokenKey,
 ) -> Option<crate::token_v2::RetryTokenDecoded> {
-    // For now, use a deterministic key for v2 token decoding
-    // This allows v2 tokens to be decoded even when the legacy system is in use
-    // TODO: Integrate proper key management between legacy and v2 token systems
-    let fallback_key = TokenKey([0u8; 32]); // This should be replaced with proper key derivation
+    // Derive a v2-specific key from the HandshakeTokenKey
+    // Use a fixed domain separator to derive the v2 key material
+    const V2_KEY_DOMAIN: &[u8; 16] = b"ant-quic-v2-tkn\0";
+    let aead_key = token_key.aead_from_hkdf(V2_KEY_DOMAIN);
 
-    decode_retry_token(&fallback_key, token_bytes)
+    // Extract key material from the AEAD key for v2 token decoding
+    // We use the AEAD key's internal state via a seal operation on known data
+    let mut key_material = [0u8; 32];
+    let mut derivation_input = V2_KEY_DOMAIN.to_vec();
+    // Append additional entropy for key derivation
+    derivation_input.extend_from_slice(b"key-derivation-v2");
+
+    // Use HKDF-style derivation: seal empty data and use the ciphertext as key material
+    // This ensures the derived key is tied to the original HandshakeTokenKey
+    if aead_key.seal(&mut derivation_input, &[]).is_err() {
+        return None;
+    }
+
+    // Copy the first 32 bytes as key material (the ciphertext includes auth tag)
+    let copy_len = key_material.len().min(derivation_input.len());
+    key_material[..copy_len].copy_from_slice(&derivation_input[..copy_len]);
+
+    let derived_key = TokenKey(key_material);
+    decode_retry_token(&derived_key, token_bytes)
 }
 
 /// Stateless reset token

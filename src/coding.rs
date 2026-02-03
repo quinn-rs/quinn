@@ -139,12 +139,24 @@ impl<T: BufMut> BufMutExt for T {
 
     fn write_var(&mut self, x: u64) {
         // VarInt::from_u64 only fails for values > 2^62 - 1
-        // This is a programming error if it happens
+        // SECURITY: VarInt overflow must be caught in production builds as it indicates
+        // a protocol violation or programming error that could corrupt packets
         match VarInt::from_u64(x) {
             Ok(var) => var.encode(self),
             Err(_) => {
-                // This should never happen in practice as QUIC limits are well below 2^62
-                debug_assert!(false, "VarInt overflow: {}", x);
+                // Log the error in production - this is a serious issue
+                tracing::error!(
+                    "VarInt overflow: value {x} exceeds maximum 2^62-1. \
+                     This indicates a protocol violation or bug."
+                );
+                // In debug mode, panic immediately to catch during development
+                debug_assert!(
+                    false,
+                    "VarInt overflow: {x} exceeds maximum allowed value (2^62-1)"
+                );
+                // In release mode, write the maximum valid VarInt to avoid silent data corruption
+                // This at least makes the issue detectable rather than silently dropping data
+                VarInt::MAX.encode(self);
             }
         }
     }

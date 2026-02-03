@@ -211,6 +211,8 @@ impl ArrayRangeSet {
     }
 
     pub fn max(&self) -> Option<u64> {
-        self.iter().next_back().map(|x| x.end - 1)
+        // SAFETY: Use checked_sub to prevent underflow if end is 0
+        // (though this shouldn't happen with valid ranges, defensive programming is important)
+        self.iter().next_back().and_then(|x| x.end.checked_sub(1))
     }
 }

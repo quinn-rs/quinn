@@ -188,7 +188,11 @@ impl RangeSet {
     }
 
     pub fn max(&self) -> Option<u64> {
-        self.0.last_key_value().map(|(_, &end)| end - 1)
+        // SAFETY: Use checked_sub to prevent underflow if end is 0
+        // (though this shouldn't happen with valid ranges, defensive programming is important)
+        self.0
+            .last_key_value()
+            .and_then(|(_, &end)| end.checked_sub(1))
     }
 
     pub fn len(&self) -> usize {

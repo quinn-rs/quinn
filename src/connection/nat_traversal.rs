@@ -3108,8 +3108,10 @@ impl NatTraversalState {
 
             // Generate ADD_ADDRESS frame to inform peer of their observed address
             let sequence = self.next_sequence;
-            self.next_sequence =
-                VarInt::from_u32((self.next_sequence.into_inner() + 1).try_into().unwrap());
+            // SAFETY: Use saturating add and handle potential overflow gracefully
+            // Sequence numbers should never realistically reach u32::MAX in practice
+            let next_val = self.next_sequence.into_inner().saturating_add(1);
+            self.next_sequence = VarInt::from_u32(u32::try_from(next_val).unwrap_or(u32::MAX));
 
             let priority = VarInt::from_u32(100); // Server-reflexive priority
             let add_address_frame =
