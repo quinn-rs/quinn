@@ -9,7 +9,7 @@ use std::{
 
 use anyhow::Result;
 use clap::Parser;
-use proto::{congestion, TransportConfig};
+use proto::{TransportConfig, congestion};
 use quinn::{ClientConfig, Endpoint, ServerConfig};
 use rand::{Rng, RngCore, SeedableRng, rngs::StdRng};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
@@ -116,15 +116,18 @@ async fn run_proxy(
 }
 
 async fn run_scenario(scenario: &Scenario) -> Result<ScenarioResult> {
-    let congestion_factory: Arc<dyn congestion::ControllerFactory + Send + Sync> = match scenario.cc.as_str() {
-        "cubic" => Arc::new(congestion::CubicConfig::default()),
-        "quicdc" => Arc::new(congestion::QuicDcConfig::default()),
-        _ => panic!("Unknown cc"),
-    };
+    let congestion_factory: Arc<dyn congestion::ControllerFactory + Send + Sync> =
+        match scenario.cc.as_str() {
+            "cubic" => Arc::new(congestion::CubicConfig::default()),
+            "quicdc" => Arc::new(congestion::QuicDcConfig::default()),
+            _ => panic!("Unknown cc"),
+        };
 
     let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
     let cert_der = CertificateDer::from(cert.cert);
-    let priv_key = PrivateKeyDer::Pkcs8(rustls::pki_types::PrivatePkcs8KeyDer::from(cert.signing_key.serialize_der()));
+    let priv_key = PrivateKeyDer::Pkcs8(rustls::pki_types::PrivatePkcs8KeyDer::from(
+        cert.signing_key.serialize_der(),
+    ));
 
     let server_port = if scenario.proxy { 9998 } else { 9999 };
     let server_addr: SocketAddr = format!("127.0.0.1:{}", server_port).parse().unwrap();
@@ -182,13 +185,25 @@ async fn run_scenario(scenario: &Scenario) -> Result<ScenarioResult> {
             // For now, transfer_duration is not measured on server, set to ZERO
             let transfer_duration = Duration::ZERO;
 
-            let _ = tx.send((total_bytes, loss_ratio, stats.path.rtt, queuing_delay, transfer_duration));
+            let _ = tx.send((
+                total_bytes,
+                loss_ratio,
+                stats.path.rtt,
+                queuing_delay,
+                transfer_duration,
+            ));
         })
     };
 
     // Run proxy if needed
     let client_target_addr = if scenario.proxy {
-        run_proxy(server_addr, Duration::from_millis(scenario.delay_ms), scenario.loss_percent, scenario.ecn).await?
+        run_proxy(
+            server_addr,
+            Duration::from_millis(scenario.delay_ms),
+            scenario.loss_percent,
+            scenario.ecn,
+        )
+        .await?
     } else {
         server_addr
     };
@@ -204,12 +219,14 @@ async fn run_scenario(scenario: &Scenario) -> Result<ScenarioResult> {
     let mut client_endpoint = Endpoint::client("127.0.0.1:0".parse().unwrap())?;
     client_endpoint.set_default_client_config(client_config);
 
-    let conn = client_endpoint.connect(client_target_addr, "localhost")?.await?;
+    let conn = client_endpoint
+        .connect(client_target_addr, "localhost")?
+        .await?;
     let (mut send, _recv) = conn.open_bi().await?;
     let mut rng = StdRng::from_seed([123u8; 32]);
     let mut data = vec![0u8; 1024 * 1024]; // 1MB
     rng.fill_bytes(&mut data);
-    let transfer_start = std::time::Instant::now();
+    let transfer_start = Instant::now();
     send.write_all(&data).await?;
     let transfer_duration = transfer_start.elapsed();
     send.finish()?;
@@ -243,12 +260,48 @@ async fn main() -> Result<()> {
 
     if opt.demo {
         let scenarios = vec![
-            Scenario { cc: "cubic".to_string(), proxy: false, ecn: false, delay_ms: 0, loss_percent: 0 },
-            Scenario { cc: "quicdc".to_string(), proxy: false, ecn: false, delay_ms: 0, loss_percent: 0 },
-            Scenario { cc: "cubic".to_string(), proxy: true, ecn: false, delay_ms: 1, loss_percent: 0 },
-            Scenario { cc: "quicdc".to_string(), proxy: true, ecn: false, delay_ms: 1, loss_percent: 0 },
-            Scenario { cc: "cubic".to_string(), proxy: true, ecn: true, delay_ms: 1, loss_percent: 0 },
-            Scenario { cc: "quicdc".to_string(), proxy: true, ecn: true, delay_ms: 1, loss_percent: 0 },
+            Scenario {
+                cc: "cubic".to_string(),
+                proxy: false,
+                ecn: false,
+                delay_ms: 0,
+                loss_percent: 0,
+            },
+            Scenario {
+                cc: "quicdc".to_string(),
+                proxy: false,
+                ecn: false,
+                delay_ms: 0,
+                loss_percent: 0,
+            },
+            Scenario {
+                cc: "cubic".to_string(),
+                proxy: true,
+                ecn: false,
+                delay_ms: 1,
+                loss_percent: 0,
+            },
+            Scenario {
+                cc: "quicdc".to_string(),
+                proxy: true,
+                ecn: false,
+                delay_ms: 1,
+                loss_percent: 0,
+            },
+            Scenario {
+                cc: "cubic".to_string(),
+                proxy: true,
+                ecn: true,
+                delay_ms: 1,
+                loss_percent: 0,
+            },
+            Scenario {
+                cc: "quicdc".to_string(),
+                proxy: true,
+                ecn: true,
+                delay_ms: 1,
+                loss_percent: 0,
+            },
         ];
 
         let mut results = Vec::new();
@@ -261,9 +314,11 @@ async fn main() -> Result<()> {
             tokio::time::sleep(Duration::from_millis(500)).await; // Wait for ports to be released
         }
 
-        // Print table
+        // Print preformatted table
         println!("\nResults Table:");
+        #[rustfmt::skip]
         println!("| CC     | Proxy | ECN | Delay | Loss | Data Transferred | Loss Ratio | RTT       | Transfer Duration |");
+        #[rustfmt::skip]
         println!("|--------|-------|-----|-------|------|------------------|------------|-----------|-------------------|");
         for result in &results {
             let proxy_type = if result.scenario.proxy {
@@ -271,16 +326,17 @@ async fn main() -> Result<()> {
             } else {
                 "None"
             };
-            println!("| {:<6} | {:<5} | {:<3} | {:<5} | {:<4} | {:<16} | {:<10.4} | {:<9} | {:<17} |",
-                     result.scenario.cc,
-                     proxy_type,
-                     if result.scenario.ecn { "Yes" } else { "No" },
-                     result.scenario.delay_ms,
-                     result.scenario.loss_percent,
-                     result.data_transferred,
-                     result.loss_ratio,
-                     format!("{:.2}ms", result.rtt.as_secs_f64() * 1000.0),
-                     format!("{:.2}ms", result.transfer_duration.as_secs_f64() * 1000.0),
+            println!(
+                "| {:<6} | {:<5} | {:<3} | {:<5} | {:<4} | {:<16} | {:<10.4} | {:<9} | {:<17} |",
+                result.scenario.cc,
+                proxy_type,
+                if result.scenario.ecn { "Yes" } else { "No" },
+                result.scenario.delay_ms,
+                result.scenario.loss_percent,
+                result.data_transferred,
+                result.loss_ratio,
+                format!("{:.2}ms", result.rtt.as_secs_f64() * 1000.0),
+                format!("{:.2}ms", result.transfer_duration.as_secs_f64() * 1000.0),
             );
         }
     } else {

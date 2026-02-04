@@ -1,7 +1,7 @@
 //! Logic for controlling the rate at which data is sent
 
-use crate::{Duration, Instant};
 use crate::connection::RttEstimator;
+use crate::{Duration, Instant};
 use std::any::Any;
 use std::sync::Arc;
 
