@@ -110,6 +110,10 @@ required-features = ["rustls-ring"]
 name = "connection"
 required-features = ["rustls-ring"]
 
+[[example]]
+name = "congestion_comparison"
+required-features = ["rustls-ring"]
+
 [[test]]
 name = "post_quantum"
 required-features = ["__rustls-post-quantum-test"]
