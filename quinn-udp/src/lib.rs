@@ -161,6 +161,7 @@ impl Transmit<'_> {
     /// This case is actually quite common when splitting up a prepared GSO batch
     /// again after GSO has been disabled because the last datagram in a GSO
     /// batch is allowed to be smaller than the segment size.
+    #[cfg_attr(apple_fast, allow(dead_code))] // Used by prepare_msg, which is unused when apple_fast
     fn effective_segment_size(&self) -> Option<usize> {
         match self.segment_size? {
             size if size >= self.contents.len() => None,
