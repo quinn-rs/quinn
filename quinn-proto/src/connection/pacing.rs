@@ -83,8 +83,9 @@ impl Pacer {
             "zero-sized congestion control window is nonsense"
         );
 
-        // No pacing until we have a valid RTT estimate
-        if smoothed_rtt.as_nanos() == 0 {
+        if smoothed_rtt.as_nanos() == 0
+            && matches!(self.config.rate_mode, PacingRateMode::RttDependent)
+        {
             return None;
         }
 
@@ -162,39 +163,44 @@ fn compute_pacing_params(
     let mtu_u64 = u64::from(mtu);
     let rtt_nanos = smoothed_rtt.as_nanos();
 
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum RttRate {
+        Available(u64),
+        Unavailable,
+        TooHigh,
+    }
+
     // For RttDependent, the rate is `cwnd × 1.25 / RTT` as recommended in
     // <https://tools.ietf.org/html/draft-ietf-quic-recovery-34#section-7.7>,
     // such that `window` bytes of traffic are spread over 4/5 of the RTT.
     //
-    // Returns None if RTT is zero or rate exceeds reasonable bounds (~4GB/s)
-    let rtt_rate = || -> Option<u64> {
+    // Returns Unavailable if RTT is zero or rate rounds to zero, and TooHigh if
+    // the rate exceeds reasonable bounds (~4GB/s).
+    // Unavailable disables pacing only for RttDependent; other modes may still pace.
+    let rtt_rate = || -> RttRate {
         if rtt_nanos == 0 {
-            return None;
+            return RttRate::Unavailable;
         }
         let rate = (window as f64 * 1.25) / smoothed_rtt.as_secs_f64();
         let rate = rate.round() as u64;
-        if rate > u64::from(u32::MAX) {
-            return None;
+        if rate == 0 {
+            return RttRate::Unavailable;
         }
-        Some(rate)
+        if rate > u64::from(u32::MAX) {
+            return RttRate::TooHigh;
+        }
+        RttRate::Available(rate)
     };
 
-    // Original Quinn formula: window * burst_interval / rtt
-    // When rtt is 0, .max(1) ensures capacity stays valid (large), matching original Quinn.
-    // Pacing is still disabled via rtt_rate() returning None.
     let rtt_capacity = |burst_interval: Duration| -> u64 {
         (window as u128 * burst_interval.as_nanos() / rtt_nanos.max(1)) as u64
     };
 
-    // Capacity from a fixed rate: rate * burst_interval.
-    // No burst_size clamping: delay() is robust against bytes_to_send > capacity.
     let fixed_capacity = |rate: u64| -> u64 {
         let cap = (rate as u128 * config.target_burst_interval.as_nanos() / 1_000_000_000) as u64;
         cap.max(mtu_u64)
     };
 
-    // RTT-dependent capacity: window * burst_interval / rtt, clamped by burst_size
-    // bounds and max_burst_interval.
     let rtt_dependent_capacity = || -> u64 {
         let target = rtt_capacity(config.target_burst_interval);
         let max_cap = rtt_capacity(config.max_burst_interval).max(mtu_u64);
@@ -207,16 +213,28 @@ fn compute_pacing_params(
     };
 
     match config.rate_mode {
-        PacingRateMode::RttDependent => (rtt_rate(), rtt_dependent_capacity()),
-        PacingRateMode::Fixed(bytes_per_second) => {
-            (Some(bytes_per_second), fixed_capacity(bytes_per_second))
-        }
-        PacingRateMode::RttDependentWithFloor(min_bytes_per_second) => match rtt_rate() {
-            Some(rate) if rate >= min_bytes_per_second => {
-                (Some(rate), rtt_dependent_capacity())
-            }
-            _ => (Some(min_bytes_per_second), fixed_capacity(min_bytes_per_second)),
+        PacingRateMode::RttDependent => match rtt_rate() {
+            RttRate::Available(rate) => (Some(rate), rtt_dependent_capacity()),
+            RttRate::Unavailable | RttRate::TooHigh => (None, rtt_dependent_capacity()),
         },
+        PacingRateMode::Fixed(bytes_per_second) => {
+            let pacing_rate = (bytes_per_second != 0).then_some(bytes_per_second);
+            (pacing_rate, fixed_capacity(bytes_per_second))
+        }
+        PacingRateMode::RttDependentWithFloor(min_bytes_per_second) => {
+            let floor_rate = (min_bytes_per_second != 0).then_some(min_bytes_per_second);
+            match rtt_rate() {
+                RttRate::Available(rate) => match floor_rate {
+                    Some(floor) if rate < floor => (Some(floor), fixed_capacity(floor)),
+                    _ => (Some(rate), rtt_dependent_capacity()),
+                },
+                RttRate::Unavailable => match floor_rate {
+                    Some(floor) => (Some(floor), fixed_capacity(floor)),
+                    None => (None, rtt_dependent_capacity()),
+                },
+                RttRate::TooHigh => (None, rtt_dependent_capacity()),
+            }
+        }
     }
 }
 
@@ -382,6 +400,14 @@ mod tests {
         let rtt = Duration::from_millis(50);
         let now = Instant::now();
 
+        // RTT is unknown: fixed rate still applies
+        let pacer = Pacer::new(config.clone(), Duration::ZERO, window, mtu, now);
+        assert_eq!(pacer.pacing_rate, Some(fixed_rate));
+        assert_eq!(
+            pacer.capacity,
+            (fixed_rate as u128 * TARGET_BURST_INTERVAL.as_nanos() / 1_000_000_000) as u64
+        );
+
         // capacity = fixed_rate * burst_interval
         let mut pacer = Pacer::new(config.clone(), rtt, window, mtu, now);
         let capacity = pacer.capacity;
@@ -466,9 +492,57 @@ mod tests {
 
         // Zero RTT: falls back to floor (not disabled)
         let pacer = Pacer::new(config, Duration::ZERO, window, mtu, now);
+        assert_eq!(pacer.pacing_rate, Some(min_rate));
         assert_eq!(
             pacer.capacity,
             (min_rate as u128 * TARGET_BURST_INTERVAL.as_nanos() / 1_000_000_000) as u64
         );
+    }
+
+    #[test]
+    fn zero_rate_disables_pacing() {
+        let window = 2_000_000u64;
+        let mtu = 1500u16;
+        let rtt = Duration::from_millis(50);
+        let now = Instant::now();
+
+        let config = PacingConfig {
+            rate_mode: PacingRateMode::Fixed(0),
+            ..Default::default()
+        };
+        let pacer = Pacer::new(config, rtt, window, mtu, now);
+        assert!(pacer.pacing_rate.is_none());
+
+        let config = PacingConfig {
+            rate_mode: PacingRateMode::RttDependentWithFloor(0),
+            ..Default::default()
+        };
+        let pacer = Pacer::new(config, Duration::ZERO, window, mtu, now);
+        assert!(pacer.pacing_rate.is_none());
+
+        let config = PacingConfig {
+            rate_mode: PacingRateMode::RttDependentWithFloor(0),
+            ..Default::default()
+        };
+        let pacer = Pacer::new(config, rtt, window, mtu, now);
+        assert!(pacer.pacing_rate.is_some());
+    }
+
+    #[test]
+    fn too_high_rtt_rate_disables_pacing() {
+        let window = 10_000_000u64;
+        let mtu = 1500u16;
+        let rtt = Duration::from_micros(1);
+        let now = Instant::now();
+
+        let pacer = Pacer::new(default_config(), rtt, window, mtu, now);
+        assert!(pacer.pacing_rate.is_none());
+
+        let config = PacingConfig {
+            rate_mode: PacingRateMode::RttDependentWithFloor(20_000_000),
+            ..Default::default()
+        };
+        let pacer = Pacer::new(config, rtt, window, mtu, now);
+        assert!(pacer.pacing_rate.is_none());
     }
 }
