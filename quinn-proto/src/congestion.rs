@@ -1,17 +1,18 @@
 //! Logic for controlling the rate at which data is sent
 
-use crate::Instant;
 use crate::connection::RttEstimator;
 pub use crate::packet::SpaceId;
+use crate::{Duration, Instant};
 use std::any::Any;
 use std::sync::Arc;
-use std::time::Duration;
 
 mod bbr;
+mod bbr3;
 mod cubic;
 mod new_reno;
 
 pub use bbr::{Bbr, BbrConfig};
+pub use bbr3::{Bbr3, Bbr3Config};
 pub use cubic::{Cubic, CubicConfig};
 pub use new_reno::{NewReno, NewRenoConfig};
 
@@ -161,7 +162,7 @@ pub struct ControllerMetrics {
     pub ssthresh: Option<u64>,
     /// Pacing rate (bytes/s)
     pub pacing_rate: Option<u64>,
-    /// Estimated sustainable path bandwidth (bits/s)
+    /// Estimated sustainable path bandwidth (bytes/s)
     pub bandwidth_estimate: Option<u64>,
     /// Send Quantum (bytes) used to control the size of packet bursts
     pub send_quantum: Option<u64>,
