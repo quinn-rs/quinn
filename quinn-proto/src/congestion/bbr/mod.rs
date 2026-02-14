@@ -497,7 +497,8 @@ impl Controller for Bbr {
         ControllerMetrics {
             congestion_window: self.window(),
             ssthresh: None,
-            pacing_rate: Some(self.pacing_rate * 8),
+            pacing_rate: Some(self.pacing_rate),
+            send_quantum: None,
         }
     }
 

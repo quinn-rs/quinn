@@ -85,11 +85,14 @@ pub trait Controller: Send + Sync {
     fn window(&self) -> u64;
 
     /// Retrieve implementation-specific metrics used to populate `qlog` traces when they are enabled
+    /// This is also used to alter the pacing of the connection with
+    /// `pacing_rate` and `send_quantum`
     fn metrics(&self) -> ControllerMetrics {
         ControllerMetrics {
             congestion_window: self.window(),
             ssthresh: None,
             pacing_rate: None,
+            send_quantum: None,
         }
     }
 
@@ -103,7 +106,9 @@ pub trait Controller: Send + Sync {
     fn into_any(self: Box<Self>) -> Box<dyn Any>;
 }
 
-/// Common congestion controller metrics
+/// Common congestion controller metrics used both for logging purposes
+/// but also to alter the pacing of the connection with
+/// `pacing_rate` and `send_quantum`
 #[derive(Default)]
 #[non_exhaustive]
 pub struct ControllerMetrics {
@@ -111,8 +116,10 @@ pub struct ControllerMetrics {
     pub congestion_window: u64,
     /// Slow start threshold (bytes)
     pub ssthresh: Option<u64>,
-    /// Pacing rate (bits/s)
+    /// Pacing rate (bytes/s)
     pub pacing_rate: Option<u64>,
+    /// Send Quantum (bytes) used to control the size of packet bursts
+    pub send_quantum: Option<u64>,
 }
 
 /// Constructs controllers on demand
