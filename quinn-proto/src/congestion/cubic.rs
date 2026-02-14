@@ -107,15 +107,16 @@ impl Controller for Cubic {
         now: Instant,
         sent: Instant,
         bytes: u64,
+        _pn: u64,
         app_limited: bool,
         rtt: &RttEstimator,
     ) {
         if app_limited
             || self
-                .state
-                .recovery_start_time
-                .map(|recovery_start_time| sent <= recovery_start_time)
-                .unwrap_or(false)
+            .state
+            .recovery_start_time
+            .map(|recovery_start_time| sent <= recovery_start_time)
+            .unwrap_or(false)
         {
             return;
         }
@@ -187,6 +188,7 @@ impl Controller for Cubic {
         is_persistent_congestion: bool,
         is_ecn: bool,
         _lost_bytes: u64,
+        _largest_lost: u64,
     ) {
         if self
             .state

@@ -213,9 +213,9 @@ impl Bbr {
     fn is_min_rtt_expired(&self, now: Instant, app_limited: bool) -> bool {
         !app_limited
             && self
-                .probe_rtt_last_started_at
-                .map(|last| now.saturating_duration_since(last) > Duration::from_secs(10))
-                .unwrap_or(true)
+            .probe_rtt_last_started_at
+            .map(|last| now.saturating_duration_since(last) > Duration::from_secs(10))
+            .unwrap_or(true)
     }
 
     fn maybe_enter_or_exit_probe_rtt(
@@ -402,6 +402,7 @@ impl Controller for Bbr {
         now: Instant,
         sent: Instant,
         bytes: u64,
+        _pn: u64,
         app_limited: bool,
         rtt: &RttEstimator,
     ) {
@@ -472,6 +473,7 @@ impl Controller for Bbr {
         _is_persistent_congestion: bool,
         _is_ecn: bool,
         lost_bytes: u64,
+        _largest_lost: u64,
     ) {
         self.loss_state.lost_bytes += lost_bytes;
     }
@@ -562,8 +564,8 @@ impl AckAggregationState {
         // bandwidth is correct.
         let expected_bytes_acked = max_bandwidth
             * now
-                .saturating_duration_since(self.aggregation_epoch_start_time.unwrap_or(now))
-                .as_micros() as u64
+            .saturating_duration_since(self.aggregation_epoch_start_time.unwrap_or(now))
+            .as_micros() as u64
             / 1_000_000;
 
         // Reset the current aggregation epoch as soon as the ack arrival rate is
