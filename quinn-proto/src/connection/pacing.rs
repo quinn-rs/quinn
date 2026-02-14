@@ -132,8 +132,11 @@ impl Pacer {
             return None;
         }
 
-        // Calculate delay: time to refill the token bucket
-        let tokens_needed = self.capacity - self.tokens;
+        // Calculate delay based on the larger of capacity and bytes_to_send.
+        // If bytes_to_send exceeds capacity, this intentionally oversleeps (the bucket can't
+        // grow past capacity), but the deadlock-avoidance threshold above still allows a single
+        // oversized batch once a full bucket is available.
+        let tokens_needed = bytes_to_send.max(self.capacity) - self.tokens;
         let delay_secs = tokens_needed as f64 / pacing_rate as f64;
         let delay = Duration::from_secs_f64(delay_secs);
 
