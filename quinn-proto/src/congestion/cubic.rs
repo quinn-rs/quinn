@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use super::{BASE_DATAGRAM_SIZE, Controller, ControllerFactory};
 use crate::connection::RttEstimator;
+use crate::packet::SpaceId;
 use crate::{Duration, Instant};
 
 /// CUBIC Constants.
@@ -107,6 +108,8 @@ impl Controller for Cubic {
         now: Instant,
         sent: Instant,
         bytes: u64,
+        _pn: u64,
+        _space: SpaceId,
         app_limited: bool,
         rtt: &RttEstimator,
     ) {
@@ -189,6 +192,8 @@ impl Controller for Cubic {
         is_persistent_congestion: bool,
         is_ecn: bool,
         _lost_bytes: u64,
+        _largest_lost: u64,
+        _space: SpaceId,
     ) {
         if self
             .state
@@ -248,6 +253,8 @@ impl Controller for Cubic {
         self.current_mtu = new_mtu as u64;
         self.state.window = self.state.window.max(self.minimum_window());
     }
+
+    fn on_packet_discarded(&mut self, _bytes: u16, _packet_number: u64, _space: SpaceId) {}
 
     fn window(&self) -> u64 {
         self.state.window
@@ -319,7 +326,15 @@ mod tests {
         cubic.state.ssthresh = window;
         cubic.state.w_max = 12.0 * BASE_DATAGRAM_SIZE as f64;
 
-        cubic.on_congestion_event(now, now + Duration::from_millis(1), false, false, 0);
+        cubic.on_congestion_event(
+            now,
+            now + Duration::from_millis(1),
+            false,
+            false,
+            0,
+            0,
+            SpaceId::Data,
+        );
 
         assert_eq!(cubic.state.w_max, window as f64 * (1.0 + BETA_CUBIC) / 2.0);
         assert_eq!(cubic.state.ssthresh, (window as f64 * BETA_CUBIC) as u64);
@@ -337,7 +352,15 @@ mod tests {
         cubic.state.ssthresh = window;
         cubic.state.w_max = window as f64;
 
-        cubic.on_congestion_event(now, now + Duration::from_millis(1), true, false, 0);
+        cubic.on_congestion_event(
+            now,
+            now + Duration::from_millis(1),
+            true,
+            false,
+            0,
+            0,
+            SpaceId::Initial,
+        );
 
         // RFC 9438 §4.8 (Timeout): ssthresh is the pre-event window reduced by β_cubic
         // exactly once, as in §4.6; only cwnd is lowered to the minimum window.
@@ -366,6 +389,8 @@ mod tests {
             now,
             now + Duration::from_millis(1),
             BASE_DATAGRAM_SIZE,
+            0,
+            SpaceId::Data,
             false,
             &rtt,
         );
@@ -391,7 +416,15 @@ mod tests {
         // After ten days without a congestion event, w_cubic exceeds u64::MAX.
         // Before this fix, computing the window increment overflowed.
         let later = now + Duration::from_secs(10 * 24 * 60 * 60);
-        cubic.on_ack(later, later, BASE_DATAGRAM_SIZE, false, &rtt);
+        cubic.on_ack(
+            later,
+            later,
+            BASE_DATAGRAM_SIZE,
+            0,
+            SpaceId::Data,
+            false,
+            &rtt,
+        );
 
         assert_eq!(cubic.state.window, window + BASE_DATAGRAM_SIZE);
     }
