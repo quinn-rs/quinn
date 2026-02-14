@@ -391,6 +391,62 @@ mod tests {
     }
 
     #[test]
+    fn oversized_send_oversleeps() {
+        let window = 2_000_000u64;
+        let mtu = 1000u16;
+        let rtt = Duration::from_millis(50);
+        let now = Instant::now();
+
+        let mut pacer = Pacer::new(default_config(), rtt, window, mtu, now);
+        let capacity = pacer.capacity;
+        let pacing_rate = pacer.pacing_rate.unwrap();
+
+        // Drain tokens by sending packets
+        while pacer.tokens >= mtu as u64 {
+            assert_eq!(
+                pacer.delay(rtt, mtu as u64, mtu, window, now),
+                None,
+                "When capacity is available packets should be sent immediately"
+            );
+            pacer.on_transmit(mtu);
+        }
+        pacer.tokens = 0;
+        pacer.prev = now;
+
+        let bytes_to_send = capacity + mtu as u64;
+
+        let expected_delay_nanos =
+            bytes_to_send as u128 * 1_000_000_000 / pacing_rate as u128;
+        let expected_delay = Duration::from_nanos(expected_delay_nanos as u64);
+
+        let actual_delay = pacer
+            .delay(rtt, bytes_to_send, mtu, window, now)
+            .expect("Send must be delayed")
+            .duration_since(now);
+
+        let diff = actual_delay.abs_diff(expected_delay);
+        assert!(
+            diff < Duration::from_micros(10),
+            "expected ≈ {expected_delay:?}, got {actual_delay:?} (diff {diff:?})"
+        );
+
+        let burst_delay_nanos =
+            capacity as u128 * 1_000_000_000 / pacing_rate as u128;
+        let burst_delay = Duration::from_nanos(burst_delay_nanos as u64);
+        assert!(
+            actual_delay > burst_delay,
+            "Oversleep expected when bytes_to_send > capacity"
+        );
+
+        // Even with bytes_to_send > capacity, a full bucket is sufficient.
+        assert_eq!(
+            pacer.delay(rtt, bytes_to_send, mtu, window, now + burst_delay),
+            None,
+            "With a full bucket we can send even if bytes_to_send > capacity"
+        );
+    }
+
+    #[test]
     fn fixed_rate_mode() {
         let fixed_rate = 10_000_000u64; // 10 MB/s
         let config = PacingConfig {
