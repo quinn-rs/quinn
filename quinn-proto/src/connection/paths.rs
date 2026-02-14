@@ -486,12 +486,12 @@ mod tests {
         let remote = "203.0.113.1:4433".parse().unwrap();
         let mut path = PathData::new(remote, true, None, 0, now, &config);
         let mtu = path.current_mtu();
-        let window = path.congestion.window();
+        let metrics = path.congestion.metrics();
 
         for _ in 0..1000 {
             if path
                 .pacing
-                .delay(path.rtt.get(), mtu.into(), mtu, window, now)
+                .delay(path.rtt.get(), mtu.into(), mtu, now, &metrics)
                 .is_some()
             {
                 break;
@@ -500,19 +500,21 @@ mod tests {
         }
         assert!(
             path.pacing
-                .delay(path.rtt.get(), mtu.into(), mtu, window, now)
+                .delay(path.rtt.get(), mtu.into(), mtu, now, &metrics)
                 .is_some()
         );
 
         path.reset(now, &config);
 
+        // `reset` rebuilds the controller, so take a fresh snapshot of its metrics.
+        let metrics = path.congestion.metrics();
         assert_eq!(
             path.pacing.delay(
                 path.rtt.get(),
                 path.current_mtu().into(),
                 path.current_mtu(),
-                path.congestion.window(),
-                now
+                now,
+                &metrics
             ),
             None
         );
