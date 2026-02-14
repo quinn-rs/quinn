@@ -9,6 +9,7 @@ use crate::congestion::ControllerMetrics;
 use crate::congestion::bbr::bw_estimation::BandwidthEstimation;
 use crate::congestion::bbr::min_max::MinMax;
 use crate::connection::RttEstimator;
+use crate::packet::SpaceId;
 use crate::{Duration, Instant};
 
 use super::{BASE_DATAGRAM_SIZE, Controller, ControllerFactory};
@@ -402,6 +403,8 @@ impl Controller for Bbr {
         now: Instant,
         sent: Instant,
         bytes: u64,
+        _pn: u64,
+        _space: SpaceId,
         app_limited: bool,
         rtt: &RttEstimator,
     ) {
@@ -419,6 +422,7 @@ impl Controller for Bbr {
         in_flight: u64,
         app_limited: bool,
         largest_packet_num_acked: Option<u64>,
+        _space: SpaceId,
     ) {
         let bytes_acked = self.max_bandwidth.bytes_acked_this_window();
         let excess_acked = self.ack_aggregation.update_ack_aggregation_bytes(
@@ -472,6 +476,8 @@ impl Controller for Bbr {
         _is_persistent_congestion: bool,
         _is_ecn: bool,
         lost_bytes: u64,
+        _largest_lost: u64,
+        _space: SpaceId,
     ) {
         self.loss_state.lost_bytes += lost_bytes;
     }
