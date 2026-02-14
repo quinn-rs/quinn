@@ -46,6 +46,7 @@ impl Controller for NewReno {
         _now: Instant,
         sent: Instant,
         bytes: u64,
+        _pn: u64,
         app_limited: bool,
         _rtt: &RttEstimator,
     ) {
@@ -89,6 +90,7 @@ impl Controller for NewReno {
         is_persistent_congestion: bool,
         _is_ecn: bool,
         _lost_bytes: u64,
+        _largest_lost: u64,
     ) {
         if sent <= self.recovery_start_time {
             return;
