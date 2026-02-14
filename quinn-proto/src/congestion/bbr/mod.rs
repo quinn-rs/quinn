@@ -213,9 +213,9 @@ impl Bbr {
     fn is_min_rtt_expired(&self, now: Instant, app_limited: bool) -> bool {
         !app_limited
             && self
-            .probe_rtt_last_started_at
-            .map(|last| now.saturating_duration_since(last) > Duration::from_secs(10))
-            .unwrap_or(true)
+                .probe_rtt_last_started_at
+                .map(|last| now.saturating_duration_since(last) > Duration::from_secs(10))
+                .unwrap_or(true)
     }
 
     fn maybe_enter_or_exit_probe_rtt(
@@ -565,8 +565,8 @@ impl AckAggregationState {
         // bandwidth is correct.
         let expected_bytes_acked = max_bandwidth
             * now
-            .saturating_duration_since(self.aggregation_epoch_start_time.unwrap_or(now))
-            .as_micros() as u64
+                .saturating_duration_since(self.aggregation_epoch_start_time.unwrap_or(now))
+                .as_micros() as u64
             / 1_000_000;
 
         // Reset the current aggregation epoch as soon as the ack arrival rate is

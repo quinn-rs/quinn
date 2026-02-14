@@ -113,10 +113,10 @@ impl Controller for Cubic {
     ) {
         if app_limited
             || self
-            .state
-            .recovery_start_time
-            .map(|recovery_start_time| sent <= recovery_start_time)
-            .unwrap_or(false)
+                .state
+                .recovery_start_time
+                .map(|recovery_start_time| sent <= recovery_start_time)
+                .unwrap_or(false)
         {
             return;
         }
@@ -322,7 +322,7 @@ mod tests {
         cubic.state.ssthresh = window;
         cubic.state.w_max = 12.0 * BASE_DATAGRAM_SIZE as f64;
 
-        cubic.on_congestion_event(now, now + Duration::from_millis(1), false, false, 0);
+        cubic.on_congestion_event(now, now + Duration::from_millis(1), false, false, 0, 0);
 
         assert_eq!(cubic.state.w_max, window as f64 * (1.0 + BETA_CUBIC) / 2.0);
         assert_eq!(cubic.state.ssthresh, (window as f64 * BETA_CUBIC) as u64);
@@ -350,6 +350,7 @@ mod tests {
             now,
             now + Duration::from_millis(1),
             BASE_DATAGRAM_SIZE,
+            0,
             false,
             &rtt,
         );
