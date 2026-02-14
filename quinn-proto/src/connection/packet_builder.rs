@@ -222,6 +222,9 @@ impl PacketBuilder {
                     conn.reset_idle_timeout(now, space_id);
                 }
                 conn.permit_idle_reset = false;
+                conn.path
+                    .congestion
+                    .on_packet_sent(now, size, exact_number, space_id);
             }
             conn.set_loss_detection_timer(now);
             conn.path.pacing.on_transmit(size);

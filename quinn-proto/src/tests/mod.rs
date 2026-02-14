@@ -161,6 +161,8 @@ fn stats_include_congestion_controller_bandwidth_estimate() {
             _is_persistent_congestion: bool,
             _is_ecn: bool,
             _lost_bytes: u64,
+            _largest_lost: u64,
+            _space: SpaceId,
         ) {
         }
 
