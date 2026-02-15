@@ -1,5 +1,5 @@
 use bytes::Bytes;
-use rand::Rng;
+use rand::RngExt;
 use tracing::{debug, trace, trace_span};
 
 use super::{Connection, SentFrames, spaces::SentPacket};

@@ -53,8 +53,8 @@ impl Pair {
     }
 
     pub(super) fn new(endpoint_config: Arc<EndpointConfig>, server_config: ServerConfig) -> Self {
-        let server = Endpoint::new(endpoint_config.clone(), Some(Arc::new(server_config)), true);
-        let client = Endpoint::new(endpoint_config, None, true);
+        let server = Endpoint::new(endpoint_config.clone(), Some(Arc::new(server_config)), true).unwrap();
+        let client = Endpoint::new(endpoint_config, None, true).unwrap();
 
         Self::new_from_endpoint(client, server)
     }
