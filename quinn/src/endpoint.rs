@@ -351,13 +351,13 @@ impl Endpoint {
 #[non_exhaustive]
 #[derive(Debug, Default, Copy, Clone)]
 pub struct EndpointStats {
-    /// Cummulative number of Quic handshakes accepted by this [Endpoint]
+    /// Cumulative number of Quic handshakes accepted by this [Endpoint]
     pub accepted_handshakes: u64,
-    /// Cummulative number of Quic handshakees sent from this [Endpoint]
+    /// Cumulative number of Quic handshakes sent from this [Endpoint]
     pub outgoing_handshakes: u64,
-    /// Cummulative number of Quic handshakes refused on this [Endpoint]
+    /// Cumulative number of Quic handshakes refused on this [Endpoint]
     pub refused_handshakes: u64,
-    /// Cummulative number of Quic handshakes ignored on this [Endpoint]
+    /// Cumulative number of Quic handshakes ignored on this [Endpoint]
     pub ignored_handshakes: u64,
 }
 
