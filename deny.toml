@@ -9,6 +9,7 @@ allow = [
     "NCSA",
     "OpenSSL",
     "Unicode-3.0",
+    "Zlib",
 ]
 private = { ignore = true }
 
