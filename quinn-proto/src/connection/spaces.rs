@@ -5,7 +5,7 @@ use std::{
     ops::{Bound, Index, IndexMut},
 };
 
-use rand::Rng;
+use rand::{Rng, RngExt};
 use rustc_hash::FxHashSet;
 use tracing::trace;
 
