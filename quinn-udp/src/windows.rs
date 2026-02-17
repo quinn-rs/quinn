@@ -442,12 +442,6 @@ fn send(
     let is_ipv4 = transmit.destination.is_ipv4()
         || matches!(transmit.destination.ip(), IpAddr::V6(addr) if addr.to_ipv4_mapped().is_some());
 
-    let ecn_supported = if is_ipv4 {
-        ecn_v4_supported
-    } else {
-        ecn_v6_supported
-    };
-
     if (is_ipv4 && ecn_v4_supported) || (!is_ipv4 && ecn_v6_supported) {
         // ECN is a C integer https://learn.microsoft.com/en-us/windows/win32/winsock/winsock-ecn
         let ecn = transmit.ecn.map_or(0, |x| x as c_int);
