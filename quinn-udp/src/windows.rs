@@ -448,7 +448,7 @@ fn send(
         ecn_v6_supported
     };
 
-    if ecn_supported {
+    if (is_ipv4 && ecn_v4_supported) || (!is_ipv4 && ecn_v6_supported) {
         // ECN is a C integer https://learn.microsoft.com/en-us/windows/win32/winsock/winsock-ecn
         let ecn = transmit.ecn.map_or(0, |x| x as c_int);
         if is_ipv4 {
