@@ -78,10 +78,6 @@ impl UdpSocketState {
 
         // ECN is best-effort on Windows: if the Winsock provider doesn't support these options
         // (common under Wine/Proton), we disable ECN and keep working.
-        //
-        // Typical errors:
-        // - WSAENOPROTOOPT (10042): option not supported
-        // - WSAEOPNOTSUPP (10045): operation not supported
         let is_ecn_unsupported = |e: &io::Error| {
             matches!(
                 e.raw_os_error(),
