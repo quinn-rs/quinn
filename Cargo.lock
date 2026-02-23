@@ -917,11 +917,11 @@ dependencies = [
 
 [[package]]
 name = "fastbloom"
-version = "0.14.1"
+version = "0.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4e7f34442dbe69c60fe8eaf58a8cafff81a1f278816d8ab4db255b3bef4ac3c4"
+checksum = "01ce41532c1038044a485af216b83fd9a5f31916022eb691b83df540905b34ec"
 dependencies = [
- "getrandom 0.3.4",
+ "foldhash",
  "libm",
  "rand",
  "siphasher",
@@ -954,6 +954,12 @@ name = "fnv"
 version = "1.0.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3f9eec918d3f24069decb9af1554cad7c880e2da24a9afd88aca000531ab82c1"
+
+[[package]]
+name = "foldhash"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "77ce24cb58228fbb8aa041425bb1050850ac19177686ea6e0f41a70416f56fdb"
 
 [[package]]
 name = "form_urlencoded"
