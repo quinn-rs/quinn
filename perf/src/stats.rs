@@ -120,12 +120,11 @@ impl Stats {
 
     #[cfg(feature = "json-output")]
     pub fn print_json(&self, path: &Path) -> io::Result<()> {
-        match path {
-            path if path == Path::new("-") => json::print(self, std::io::stdout()),
-            _ => {
-                let file = File::create(path)?;
-                json::print(self, file)
-            }
+        if path == Path::new("-") {
+            json::print(self, std::io::stdout());
+        } else {
+            let file = File::create(path)?;
+            json::print(self, file)
         }
         Ok(())
     }
