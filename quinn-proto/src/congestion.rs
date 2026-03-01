@@ -106,7 +106,7 @@ pub struct ControllerMetrics {
 /// Constructs controllers on demand
 pub trait ControllerFactory {
     /// Construct a fresh `Controller`
-    fn build(self: Arc<Self>, now: Instant, current_mtu: u16) -> Box<dyn Controller>;
+    fn build(self: Arc<Self>, now: Instant, current_mtu: u16) -> Result<Box<dyn Controller>, Box<dyn std::error::Error>>;
 }
 
 const BASE_DATAGRAM_SIZE: u64 = 1200;
