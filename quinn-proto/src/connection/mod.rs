@@ -615,12 +615,15 @@ impl Connection {
 
                     // Check whether the next datagram is blocked by pacing
                     let smoothed_rtt = self.path.rtt.get();
+                    let controller_metrics = self.path.congestion.metrics();
                     if let Some(delay) = self.path.pacing.delay(
                         smoothed_rtt,
                         bytes_to_send,
                         self.path.current_mtu(),
                         self.path.congestion.window(),
                         now,
+                        controller_metrics.send_quantum,
+                        controller_metrics.pacing_rate,
                     ) {
                         self.timers.set(Timer::Pacing, delay);
                         congestion_blocked = true;
@@ -1497,7 +1500,7 @@ impl Connection {
                 // Notify ack frequency that a packet was acked, because it might contain an ACK_FREQUENCY frame
                 self.ack_frequency.on_acked(packet);
 
-                self.on_packet_acked(now, info);
+                self.on_packet_acked(now, info, packet);
             }
         }
 
@@ -1540,8 +1543,16 @@ impl Connection {
                 // of newly acked packets that remains well-defined in the presence of arbitrary packet
                 // reordering.
                 if new_largest {
-                    let sent = self.spaces[space].largest_acked_packet_sent;
-                    self.process_ecn(now, space, newly_acked.len() as u64, ecn, sent);
+                    let packet_space = &self.spaces[space];
+                    let sent = packet_space.largest_acked_packet_sent;
+                    self.process_ecn(
+                        now,
+                        space,
+                        newly_acked.len() as u64,
+                        ecn,
+                        sent,
+                        packet_space.largest_acked_packet.unwrap(),
+                    );
                 }
             } else {
                 // We always start out sending ECN, so any ack that doesn't acknowledge it disables it.
@@ -1599,6 +1610,7 @@ impl Connection {
         newly_acked: u64,
         ecn: frame::EcnCounts,
         largest_sent_time: Instant,
+        largest_sent: u64,
     ) {
         match self.spaces[space].detect_ecn(newly_acked, ecn) {
             Err(e) => {
@@ -1611,16 +1623,21 @@ impl Connection {
             Ok(false) => {}
             Ok(true) => {
                 self.stats.path.congestion_events += 1;
-                self.path
-                    .congestion
-                    .on_congestion_event(now, largest_sent_time, false, true, 0);
+                self.path.congestion.on_congestion_event(
+                    now,
+                    largest_sent_time,
+                    false,
+                    true,
+                    0,
+                    largest_sent,
+                );
             }
         }
     }
 
     // Not timing-aware, so it's safe to call this for inferred acks, such as arise from
     // high-latency handshakes
-    fn on_packet_acked(&mut self, now: Instant, info: SentPacket) {
+    fn on_packet_acked(&mut self, now: Instant, info: SentPacket, pn: u64) {
         self.remove_in_flight(&info);
         if info.ack_eliciting && self.path.challenge.is_none() {
             // Only pass ACKs to the congestion controller if we are not validating the current
@@ -1629,6 +1646,7 @@ impl Connection {
                 now,
                 info.time_sent,
                 info.size.into(),
+                pn,
                 self.app_limited,
                 &self.path.rtt,
             );
@@ -1785,6 +1803,7 @@ impl Connection {
 
             for &packet in &lost_packets {
                 let info = self.spaces[pn_space].take(packet).unwrap(); // safe: lost_packets is populated just above
+                self.path.congestion.on_packet_lost(info.size, packet, now);
                 self.config.qlog_sink.emit_packet_lost(
                     packet,
                     &info,
@@ -1835,6 +1854,7 @@ impl Connection {
                     in_persistent_congestion,
                     false,
                     size_of_lost_packets,
+                    largest_lost,
                 );
             }
         }
@@ -2527,7 +2547,7 @@ impl Connection {
 
                 let space = &mut self.spaces[SpaceId::Initial];
                 if let Some(info) = space.take(0) {
-                    self.on_packet_acked(now, info);
+                    self.on_packet_acked(now, info, 0);
                 };
 
                 self.discard_space(now, SpaceId::Initial); // Make sure we clean up after any retransmitted Initials
