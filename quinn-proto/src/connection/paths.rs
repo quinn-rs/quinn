@@ -10,7 +10,7 @@ use super::{
 use crate::{Duration, Instant, TIMER_GRANULARITY, TransportConfig, congestion, packet::SpaceId};
 
 #[cfg(feature = "qlog")]
-use qlog::events::quic::MetricsUpdated;
+use qlog::events::{ExData, quic::MetricsUpdated};
 
 /// Description of a particular network path
 pub(super) struct PathData {
@@ -264,6 +264,7 @@ impl RecoveryMetrics {
         }
 
         Some(MetricsUpdated {
+            ex_data: ExData::default(),
             min_rtt: updated.min_rtt.map(|rtt| rtt.as_secs_f32()),
             smoothed_rtt: updated.smoothed_rtt.map(|rtt| rtt.as_secs_f32()),
             latest_rtt: updated.latest_rtt.map(|rtt| rtt.as_secs_f32()),
