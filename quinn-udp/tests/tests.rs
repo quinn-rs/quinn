@@ -369,3 +369,95 @@ fn ip_to_v6_mapped(x: IpAddr) -> IpAddr {
         IpAddr::V6(_) => x,
     }
 }
+
+/// Test Apple fast datapath enable/disable functionality.
+///
+/// This test verifies that:
+/// 1. `max_gso_segments()` returns 1 by default (fast path disabled)
+/// 2. After calling `set_apple_fast_path()`, `max_gso_segments()` returns `BATCH_SIZE`
+/// 3. Send/recv still works correctly with the fast path enabled
+#[test]
+#[cfg(apple_fast)]
+fn apple_fast_datapath() {
+    let send = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+    let recv = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+    let dst_addr = recv.local_addr().unwrap();
+
+    let send_state = UdpSocketState::new((&send).into()).unwrap();
+    let recv_state = UdpSocketState::new((&recv).into()).unwrap();
+
+    // Initially, fast path should be disabled and max_gso_segments should be 1
+    assert!(
+        !send_state.is_apple_fast_path_enabled(),
+        "fast path should be disabled initially"
+    );
+    assert_eq!(
+        send_state.max_gso_segments(),
+        1,
+        "max_gso_segments should be 1 before enabling fast path"
+    );
+
+    // Enable the fast path
+    // SAFETY: Assume that sendmsg_x/recvmsg_x are available on the macOS test host.
+    unsafe {
+        send_state.set_apple_fast_path();
+        recv_state.set_apple_fast_path();
+    }
+
+    // After enabling, fast path should be enabled and max_gso_segments should be BATCH_SIZE
+    assert!(
+        send_state.is_apple_fast_path_enabled(),
+        "fast path should be enabled after calling set_apple_fast_path()"
+    );
+    assert_eq!(
+        send_state.max_gso_segments(),
+        quinn_udp::BATCH_SIZE,
+        "max_gso_segments should be BATCH_SIZE after enabling fast path"
+    );
+
+    // Verify send/recv still works with fast path enabled
+    recv.set_nonblocking(false).unwrap();
+
+    const SEGMENT_SIZE: usize = 128;
+    let segments = send_state.max_gso_segments();
+    let msg = vec![0xAB; SEGMENT_SIZE * segments];
+
+    send_state
+        .try_send(
+            (&send).into(),
+            &Transmit {
+                destination: dst_addr,
+                ecn: None,
+                contents: &msg,
+                segment_size: Some(SEGMENT_SIZE),
+                src_ip: None,
+            },
+        )
+        .unwrap();
+
+    // Receive all segments
+    let mut buf = [0u8; u16::MAX as usize];
+    let mut total_received = 0;
+    while total_received < segments {
+        let mut meta = RecvMeta::default();
+        let n = recv_state
+            .recv(
+                (&recv).into(),
+                &mut [IoSliceMut::new(&mut buf)],
+                slice::from_mut(&mut meta),
+            )
+            .unwrap();
+        assert_eq!(n, 1);
+        let received_segments = meta.len / meta.stride;
+        for i in 0..received_segments {
+            assert_eq!(
+                &buf[i * meta.stride..(i + 1) * meta.stride],
+                &msg[(total_received + i) * SEGMENT_SIZE..(total_received + i + 1) * SEGMENT_SIZE],
+                "segment {} content mismatch",
+                total_received + i
+            );
+        }
+        total_received += received_segments;
+    }
+    assert_eq!(total_received, segments, "should receive all segments");
+}
