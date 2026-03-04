@@ -34,3 +34,9 @@ name = "packet"
 path = "fuzz_targets/packet.rs"
 test = false
 doc = false
+
+[[bin]]
+name = "params"
+path = "fuzz_targets/params.rs"
+test = false
+doc = false
