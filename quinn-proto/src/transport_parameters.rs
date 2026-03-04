@@ -469,15 +469,13 @@ impl TransportParameters {
                     if len > 8 || params.max_datagram_frame_size.is_some() {
                         return Err(Error::Malformed);
                     }
-                    params.max_datagram_frame_size = Some(r.get().unwrap());
+                    params.max_datagram_frame_size = Some(r.get()?);
                 }
                 TransportParameterId::GreaseQuicBit => match len {
                     0 => params.grease_quic_bit = true,
                     _ => return Err(Error::Malformed),
                 },
-                TransportParameterId::MinAckDelayDraft07 => {
-                    params.min_ack_delay = Some(r.get().unwrap())
-                }
+                TransportParameterId::MinAckDelayDraft07 => params.min_ack_delay = Some(r.get()?),
                 _ => {
                     macro_rules! parse {
                         {$($(#[$doc:meta])* $name:ident ($id:ident) = $default:expr,)*} => {
