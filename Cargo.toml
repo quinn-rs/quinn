@@ -24,14 +24,14 @@ crc = "3"
 directories-next = "2"
 fastbloom = "0.14"
 futures-io = "0.3.19"
-getrandom = { version = "0.3", default-features = false }
+getrandom = { version = "0.4", default-features = false }
 hdrhistogram = { version = "7.2", default-features = false }
 hex-literal = "1"
 lru-slab = "0.1.2"
 log = "0.4"
 pin-project-lite = "0.2"
 qlog = "0.15.2"
-rand = "0.9"
+rand = "0.10"
 rcgen = "0.14"
 ring = "0.17"
 rustc-hash = "2"
