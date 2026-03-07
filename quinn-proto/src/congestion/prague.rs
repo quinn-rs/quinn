@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use super::{BASE_DATAGRAM_SIZE, Controller, ControllerFactory};
 use crate::connection::RttEstimator;
-use crate::{Duration, Instant};
+use crate::Instant;
 
 /// Prague congestion controller implementing L4S-compatible ECN-based congestion control.
 ///
@@ -286,6 +286,7 @@ impl ControllerFactory for PragueConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Duration;
 
     fn config() -> Arc<PragueConfig> {
         Arc::new(PragueConfig::default())
