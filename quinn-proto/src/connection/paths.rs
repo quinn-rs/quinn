@@ -62,6 +62,7 @@ impl PathData {
         generation: u64,
         now: Instant,
         config: &TransportConfig,
+        interface_mtu_constraint: Option<u16>,
     ) -> Self {
         let congestion = config
             .congestion_controller_factory
@@ -95,6 +96,7 @@ impl PathData {
                             config.min_mtu,
                             peer_max_udp_payload_size,
                             mtud_config.clone(),
+                            interface_mtu_constraint,
                         )
                     },
                 ),
