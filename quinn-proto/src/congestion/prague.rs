@@ -3,8 +3,8 @@ use std::cmp;
 use std::sync::Arc;
 
 use super::{BASE_DATAGRAM_SIZE, Controller, ControllerFactory};
-use crate::connection::RttEstimator;
 use crate::Instant;
+use crate::connection::RttEstimator;
 
 /// Prague congestion controller implementing L4S-compatible ECN-based congestion control.
 ///
