@@ -115,6 +115,20 @@ impl UdpSocketState {
     pub fn may_fragment(&self) -> bool {
         true
     }
+
+    /// Stub: Apple's fast UDP datapath is not available on this platform.
+    ///
+    /// # Safety
+    ///
+    /// No-op on this platform. Present for API compatibility with the Unix implementation.
+    pub unsafe fn set_apple_fast_path(&self) {}
+
+    /// Returns whether Apple's fast UDP datapath is enabled for this socket.
+    ///
+    /// Always returns `false` on this platform.
+    pub fn is_apple_fast_path_enabled(&self) -> bool {
+        false
+    }
 }
 
 fn send(socket: UdpSockRef<'_>, transmit: &Transmit<'_>) -> io::Result<()> {

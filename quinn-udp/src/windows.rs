@@ -373,6 +373,20 @@ impl UdpSocketState {
     pub fn may_fragment(&self) -> bool {
         false
     }
+
+    /// Stub: Apple's fast UDP datapath is not available on Windows.
+    ///
+    /// # Safety
+    ///
+    /// No-op on Windows. Present for API compatibility with the Unix implementation.
+    pub unsafe fn set_apple_fast_path(&self) {}
+
+    /// Returns whether Apple's fast UDP datapath is enabled for this socket.
+    ///
+    /// Always returns `false` on Windows.
+    pub fn is_apple_fast_path_enabled(&self) -> bool {
+        false
+    }
 }
 
 fn send(
