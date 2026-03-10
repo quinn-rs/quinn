@@ -4,7 +4,7 @@ use std::{
     io::{self, IoSliceMut},
     mem::{self, MaybeUninit},
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
-    os::unix::io::AsRawFd,
+    os::fd::AsRawFd,
     sync::{
         Mutex,
         atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -194,8 +194,8 @@ impl UdpSocketState {
         let now = Instant::now();
         Ok(Self {
             last_send_error: Mutex::new(now.checked_sub(2 * IO_ERROR_LOG_INTERVAL).unwrap_or(now)),
-            max_gso_segments: AtomicUsize::new(gso::max_gso_segments()),
-            gro_segments: gro::gro_segments(),
+            max_gso_segments: AtomicUsize::new(gso::max_gso_segments(&*io)),
+            gro_segments: gro::gro_segments(&*io),
             may_fragment,
             sendmsg_einval: AtomicBool::new(false),
             #[cfg(apple_fast)]
@@ -1010,22 +1010,16 @@ mod gso {
 
     /// Checks whether GSO support is available by checking the kernel version followed by setting
     /// the UDP_SEGMENT option on a socket
-    pub(crate) fn max_gso_segments() -> usize {
+    pub(crate) fn max_gso_segments(socket: &impl AsRawFd) -> usize {
         const GSO_SIZE: libc::c_int = 1500;
 
         if !SUPPORTED_BY_CURRENT_KERNEL.get_or_init(supported_by_current_kernel) {
             return 1;
         }
 
-        let Ok(socket) = std::net::UdpSocket::bind("[::]:0")
-            .or_else(|_| std::net::UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)))
-        else {
-            return 1;
-        };
-
         // As defined in linux/udp.h
         // #define UDP_MAX_SEGMENTS        (1 << 6UL)
-        match set_socket_option(&socket, libc::SOL_UDP, libc::UDP_SEGMENT, GSO_SIZE) {
+        match set_socket_option(socket, libc::SOL_UDP, libc::UDP_SEGMENT, GSO_SIZE) {
             Ok(()) => 64,
             Err(_e) => {
                 crate::log::debug!(
@@ -1164,7 +1158,7 @@ mod gso {
 mod gso {
     use super::*;
 
-    pub(super) fn max_gso_segments() -> usize {
+    pub(super) fn max_gso_segments(_socket: &impl AsRawFd) -> usize {
         1
     }
 
@@ -1181,13 +1175,7 @@ mod gso {
 mod gro {
     use super::*;
 
-    pub(crate) fn gro_segments() -> usize {
-        let Ok(socket) = std::net::UdpSocket::bind("[::]:0")
-            .or_else(|_| std::net::UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)))
-        else {
-            return 1;
-        };
-
+    pub(crate) fn gro_segments(socket: &impl AsRawFd) -> usize {
         // As defined in net/ipv4/udp_offload.c
         // #define UDP_GRO_CNT_MAX 64
         //
@@ -1195,7 +1183,7 @@ mod gro {
         // (get_max_udp_payload_size() * gro_segments()) is large enough to hold the largest GRO
         // list the kernel might potentially produce. See
         // https://github.com/quinn-rs/quinn/pull/1354.
-        match set_socket_option(&socket, libc::SOL_UDP, libc::UDP_GRO, OPTION_ON) {
+        match set_socket_option(socket, libc::SOL_UDP, libc::UDP_GRO, OPTION_ON) {
             Ok(()) => 64,
             Err(_) => 1,
         }
@@ -1246,7 +1234,9 @@ const OPTION_ON: libc::c_int = 1;
 
 #[cfg(not(any(target_os = "linux", target_os = "android")))]
 mod gro {
-    pub(super) fn gro_segments() -> usize {
+    use super::*;
+
+    pub(super) fn gro_segments(_socket: &impl AsRawFd) -> usize {
         1
     }
 }
