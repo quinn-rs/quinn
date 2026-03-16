@@ -127,6 +127,12 @@ impl UdpSocketState {
         }
 
         let mut may_fragment = false;
+        #[cfg_attr(
+            not(any(target_os = "linux", target_os = "android")),
+            expect(unused_mut)
+        )]
+        let mut gro_segments = 1;
+
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
             // opportunistically try to enable GRO. See gro::gro_segments().
@@ -151,6 +157,17 @@ impl UdpSocketState {
                     libc::IPV6_MTU_DISCOVER,
                     libc::IPV6_PMTUDISC_PROBE,
                 )?;
+            }
+
+            if set_socket_option(&*io, libc::SOL_UDP, libc::UDP_GRO, OPTION_ON).is_ok() {
+                // As defined in net/ipv4/udp_offload.c
+                // #define UDP_GRO_CNT_MAX 64
+                //
+                // NOTE: this MUST be set to UDP_GRO_CNT_MAX to ensure that the receive buffer size
+                // (get_max_udp_payload_size() * gro_segments()) is large enough to hold the largest GRO
+                // list the kernel might potentially produce. See
+                // https://github.com/quinn-rs/quinn/pull/1354.
+                gro_segments = 64
             }
         }
         #[cfg(any(target_os = "freebsd", apple))]
@@ -195,7 +212,7 @@ impl UdpSocketState {
         Ok(Self {
             last_send_error: Mutex::new(now.checked_sub(2 * IO_ERROR_LOG_INTERVAL).unwrap_or(now)),
             max_gso_segments: AtomicUsize::new(gso::max_gso_segments(&*io)),
-            gro_segments: gro::gro_segments(&*io),
+            gro_segments,
             may_fragment,
             sendmsg_einval: AtomicBool::new(false),
             #[cfg(apple_fast)]
@@ -1171,25 +1188,6 @@ mod gso {
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "android"))]
-mod gro {
-    use super::*;
-
-    pub(crate) fn gro_segments(socket: &impl AsRawFd) -> usize {
-        // As defined in net/ipv4/udp_offload.c
-        // #define UDP_GRO_CNT_MAX 64
-        //
-        // NOTE: this MUST be set to UDP_GRO_CNT_MAX to ensure that the receive buffer size
-        // (get_max_udp_payload_size() * gro_segments()) is large enough to hold the largest GRO
-        // list the kernel might potentially produce. See
-        // https://github.com/quinn-rs/quinn/pull/1354.
-        match set_socket_option(socket, libc::SOL_UDP, libc::UDP_GRO, OPTION_ON) {
-            Ok(()) => 64,
-            Err(_) => 1,
-        }
-    }
-}
-
 /// Returns whether the given socket option is supported on the current platform
 ///
 /// Yields `Ok(true)` if the option was set successfully, `Ok(false)` if setting
@@ -1231,12 +1229,3 @@ fn set_socket_option(
 }
 
 const OPTION_ON: libc::c_int = 1;
-
-#[cfg(not(any(target_os = "linux", target_os = "android")))]
-mod gro {
-    use super::*;
-
-    pub(super) fn gro_segments(_socket: &impl AsRawFd) -> usize {
-        1
-    }
-}
