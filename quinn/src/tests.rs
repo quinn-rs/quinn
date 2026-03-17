@@ -10,6 +10,7 @@ use std::{
     future::Future,
     io,
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, UdpSocket},
+    pin::pin,
     str,
     sync::{
         Arc,
@@ -27,8 +28,11 @@ use rustls::{
     RootCertStore,
     pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer},
 };
-use tokio::runtime::{Builder, Runtime};
 use tokio::time::{sleep, timeout};
+use tokio::{
+    join,
+    runtime::{Builder, Runtime},
+};
 use tracing::{error_span, info};
 use tracing_futures::Instrument as _;
 use tracing_subscriber::EnvFilter;
@@ -1005,6 +1009,52 @@ async fn stream_drop_removes_blocked_reader() {
 
         server_task.await.unwrap();
     }
+}
+
+/// Test that dropping a `RecvStream` after cancelling a read and then
+/// explicitly `stop`ing it doesn't panic.
+#[tokio::test]
+async fn recv_stream_cancel_stop_drop() {
+    let _guard = subscribe();
+    let factory = EndpointFactory::new();
+    let server = {
+        let _guard = error_span!("server").entered();
+        factory.endpoint()
+    };
+    let server_addr = server.local_addr().unwrap();
+
+    let client = {
+        let _guard = error_span!("client").entered();
+        factory.endpoint()
+    };
+    let recv_dropped = tokio::sync::SetOnce::new();
+    join!(
+        async {
+            let conn = server.accept().await.unwrap().await.unwrap();
+            let mut recv = conn.accept_uni().await.unwrap();
+            // Create a future to read from the stream, poll it once, then immediately drop it
+            {
+                let fut = pin!(recv.read_to_end(usize::MAX));
+                let mut cx = Context::from_waker(Waker::noop());
+                assert!(fut.poll(&mut cx).is_pending());
+            }
+            recv_dropped.set(()).unwrap();
+            recv.stop(0u32.into()).unwrap();
+        },
+        async {
+            let conn = client
+                .connect(server_addr, "localhost")
+                .unwrap()
+                .await
+                .unwrap();
+            let mut send = conn.open_uni().await.unwrap();
+            _ = send.write_all(b"hello").await;
+            // Don't drop (finish) the send stream until the read has been
+            // cancelled by the server, ensuring that read_to_end can't complete
+            // immediately.
+            recv_dropped.wait().await;
+        },
+    );
 }
 
 #[derive(Default)]

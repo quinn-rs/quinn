@@ -280,6 +280,9 @@ impl RecvStream {
         conn.inner.recv_stream(self.stream).stop(error_code)?;
         conn.wake();
         self.all_data_read = true;
+        // Clean up shared state that might be left over from a cancalled read
+        // operation, so `drop` doesn't have to
+        conn.blocked_readers.remove(&self.stream);
         Ok(())
     }
 

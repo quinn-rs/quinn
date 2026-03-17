@@ -1456,6 +1456,7 @@ impl Connection {
         };
 
         if self.detect_spurious_loss(&ack, space) {
+            self.stats.path.spurious_congestion_events += 1;
             self.path.congestion.on_spurious_congestion_event();
         }
 

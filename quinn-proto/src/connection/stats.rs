@@ -140,6 +140,8 @@ pub struct PathStats {
     pub cwnd: u64,
     /// Congestion events on the connection
     pub congestion_events: u64,
+    /// Spurious congestion events on the connection
+    pub spurious_congestion_events: u64,
     /// The amount of packets lost on this path
     pub lost_packets: u64,
     /// The amount of bytes lost on this path

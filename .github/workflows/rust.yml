@@ -2,11 +2,15 @@ name: CI
 
 on:
   push:
-    branches: ['main', '0.8.x']
+    branches: ['main', '0.11.x']
   pull_request:
   merge_group:
   schedule:
     - cron: "21 3 * * 5"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   test-freebsd:
@@ -150,7 +154,7 @@ jobs:
           ! wasm-tools print --skeleton target/wasm32-unknown-unknown/debug/quinn.wasm | grep 'import "env"'
 
       # Match the version of wasm-bindgen used in `Cargo.lock`
-      - run: cargo binstall wasm-bindgen-cli@0.2.108 --locked --no-confirm
+      - run: cargo binstall wasm-bindgen-cli@0.2.114 --locked --no-confirm
       - run: cargo test --locked -p quinn-proto --target wasm32-unknown-unknown
 
   msrv:
