@@ -135,9 +135,6 @@ impl UdpSocketState {
 
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
-            // opportunistically try to enable GRO. See gro::gro_segments().
-            let _ = set_socket_option(&*io, libc::SOL_UDP, libc::UDP_GRO, OPTION_ON);
-
             // Forbid IPv4 fragmentation. Set even for IPv6 to account for IPv6 mapped IPv4 addresses.
             // Set `may_fragment` to `true` if this option is not supported on the platform.
             may_fragment |= !set_socket_option_supported(
