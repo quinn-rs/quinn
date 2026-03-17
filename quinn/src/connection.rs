@@ -386,9 +386,14 @@ impl Connection {
             .clone()
     }
 
-    /// If the connection is closed, the reason why.
+    /// Whether the connection is closed, and why.
     ///
-    /// Returns `None` if the connection is still open.
+    /// The close_reason is always set to `Some(ConnectionError)` when a socket is
+    /// closed; whether it was closed manually by calling [`Connection::close()`] or due to
+    /// an internal error (such as an idle timeout or the peer closing the
+    /// connection).
+    ///
+    /// Note: when the connection is closed, `connection.close_reason().is_some()` will always be true.
     pub fn close_reason(&self) -> Option<ConnectionError> {
         self.0.state.lock("close_reason").error.clone()
     }
