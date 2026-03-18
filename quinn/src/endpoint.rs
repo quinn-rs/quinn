@@ -107,23 +107,37 @@ impl Endpoint {
 
     /// Helper to construct an endpoint for use with both incoming and outgoing connections
     ///
-    /// Platform defaults for dual-stack sockets vary. For example, any socket bound to a wildcard
-    /// IPv6 address on Windows will not by default be able to communicate with IPv4
-    /// addresses. Portable applications should bind an address that matches the family they wish to
-    /// communicate within.
+    /// Note that `addr` is the *local* address to bind to, which should usually be a wildcard
+    /// address like `0.0.0.0:0` or `[::]:0`, which allow communication with any reachable IPv4 or
+    /// IPv6 address respectively from an OS-assigned port.
+    ///
+    /// If an IPv6 address is provided, attempts to make the socket dual-stack so as to allow
+    /// communication with both IPv4 and IPv6 clients. As such, calling `Endpoint::server` with
+    /// the address `[::]:0` is a reasonable default to maximize the ability to accept connections
+    /// from any address.
+    ///
+    /// Some environments may not allow creation of dual-stack sockets, in which case an IPv6
+    /// server will only be able to accept connections from IPv6 clients. An IPv4 server is never
+    /// dual-stack.
     #[cfg(all(
         not(wasm_browser),
         any(feature = "runtime-tokio", feature = "runtime-smol"),
         any(feature = "aws-lc-rs", feature = "ring"), // `EndpointConfig::default()` is only available with these
     ))]
     pub fn server(config: ServerConfig, addr: SocketAddr) -> io::Result<Self> {
-        let socket = std::net::UdpSocket::bind(addr)?;
+        let socket = Socket::new(Domain::for_address(addr), Type::DGRAM, Some(Protocol::UDP))?;
+        if addr.is_ipv6() {
+            if let Err(e) = socket.set_only_v6(false) {
+                tracing::debug!(%e, "unable to make socket dual-stack");
+            }
+        }
+        socket.bind(&addr.into())?;
         let runtime =
             default_runtime().ok_or_else(|| io::Error::other("no async runtime found"))?;
         Self::new_with_abstract_socket(
             EndpointConfig::default(),
             Some(config),
-            runtime.wrap_udp_socket(socket)?,
+            runtime.wrap_udp_socket(socket.into())?,
             runtime,
         )
     }
