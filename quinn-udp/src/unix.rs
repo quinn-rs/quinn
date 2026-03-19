@@ -34,20 +34,36 @@ pub(crate) struct msghdr_x {
 }
 
 #[cfg(apple_fast)]
-extern "C" {
-    fn recvmsg_x(
-        s: libc::c_int,
-        msgp: *const msghdr_x,
-        cnt: libc::c_uint,
-        flags: libc::c_int,
-    ) -> isize;
+type SendmsgXFn =
+    unsafe extern "C" fn(libc::c_int, *const msghdr_x, libc::c_uint, libc::c_int) -> isize;
+#[cfg(apple_fast)]
+type RecvmsgXFn =
+    unsafe extern "C" fn(libc::c_int, *mut msghdr_x, libc::c_uint, libc::c_int) -> isize;
 
-    fn sendmsg_x(
-        s: libc::c_int,
-        msgp: *const msghdr_x,
-        cnt: libc::c_uint,
-        flags: libc::c_int,
-    ) -> isize;
+/// Returns the `sendmsg_x` function pointer, resolving it via `dlsym` on first call.
+///
+/// Returns `None` if the symbol is not available on the current OS version.
+#[cfg(apple_fast)]
+fn sendmsg_x_fn() -> Option<SendmsgXFn> {
+    static FN: std::sync::OnceLock<Option<SendmsgXFn>> = std::sync::OnceLock::new();
+    *FN.get_or_init(|| {
+        let ptr = unsafe { libc::dlsym(libc::RTLD_DEFAULT, b"sendmsg_x\0".as_ptr().cast()) };
+        (!ptr.is_null())
+            .then(|| unsafe { std::mem::transmute::<*mut libc::c_void, SendmsgXFn>(ptr) })
+    })
+}
+
+/// Returns the `recvmsg_x` function pointer, resolving it via `dlsym` on first call.
+///
+/// Returns `None` if the symbol is not available on the current OS version.
+#[cfg(apple_fast)]
+fn recvmsg_x_fn() -> Option<RecvmsgXFn> {
+    static FN: std::sync::OnceLock<Option<RecvmsgXFn>> = std::sync::OnceLock::new();
+    *FN.get_or_init(|| {
+        let ptr = unsafe { libc::dlsym(libc::RTLD_DEFAULT, b"recvmsg_x\0".as_ptr().cast()) };
+        (!ptr.is_null())
+            .then(|| unsafe { std::mem::transmute::<*mut libc::c_void, RecvmsgXFn>(ptr) })
+    })
 }
 
 #[cfg(target_os = "freebsd")]
@@ -510,6 +526,8 @@ fn send_via_sendmsg_x(
         hdrs[i].msg_datalen = chunk.len();
         cnt += 1;
     }
+    let sendmsg_x = sendmsg_x_fn()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::Unsupported, "sendmsg_x not available"))?;
     loop {
         let n = unsafe { sendmsg_x(io.as_raw_fd(), hdrs.as_ptr(), cnt as u32, 0) };
 
@@ -636,6 +654,8 @@ fn recv_via_recvmsg_x(
     for i in 0..max_msg_count {
         prepare_recv_x(&mut bufs[i], &mut names[i], &mut ctrls[i], &mut hdrs[i]);
     }
+    let recvmsg_x = recvmsg_x_fn()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::Unsupported, "recvmsg_x not available"))?;
     let msg_count = loop {
         let n = unsafe { recvmsg_x(io.as_raw_fd(), hdrs.as_mut_ptr(), max_msg_count as _, 0) };
 
