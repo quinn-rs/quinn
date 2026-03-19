@@ -1306,7 +1306,9 @@ impl Connection {
     /// Whether the connection is in the process of being established
     ///
     /// If this returns `false`, the connection may be either established or closed, signaled by the
-    /// emission of a `Connected` or `ConnectionLost` message respectively.
+    /// emission of a [`Connected`](Event::Connected) or [`ConnectionLost`](Event::ConnectionLost)
+    /// event respectively. Note that locally-initiated closes via [`close()`](Self::close) do not
+    /// emit a `ConnectionLost` event.
     pub fn is_handshaking(&self) -> bool {
         self.state.is_handshake()
     }
@@ -1317,7 +1319,10 @@ impl Connection {
     /// either peer application intentionally closes it, or when either transport layer detects an
     /// error such as a time-out or certificate validation failure.
     ///
-    /// A `ConnectionLost` event is emitted with details when the connection becomes closed.
+    /// A [`ConnectionLost`](Event::ConnectionLost) event is emitted with details when the
+    /// connection is closed by the peer or due to an error. When the local application closes
+    /// the connection via [`close()`](Self::close), no `ConnectionLost` event is emitted;
+    /// instead, pending operations fail with [`ConnectionError::LocallyClosed`].
     pub fn is_closed(&self) -> bool {
         self.state.is_closed()
     }
@@ -4034,7 +4039,10 @@ pub enum Event {
     HandshakeConfirmed,
     /// The connection was lost
     ///
-    /// Emitted if the peer closes the connection or an error is encountered.
+    /// Emitted when the connection is closed due to an error, a timeout, or the peer closing it.
+    /// This is **not** emitted when the local application closes the connection via
+    /// [`Connection::close()`](crate::Connection::close). In that case, pending operations will
+    /// fail with [`ConnectionError::LocallyClosed`].
     ConnectionLost {
         /// Reason that the connection was closed
         reason: ConnectionError,
