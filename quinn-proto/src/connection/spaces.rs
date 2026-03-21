@@ -319,6 +319,7 @@ pub(super) struct LostPacket {
 pub struct Retransmits {
     pub(super) max_data: bool,
     pub(super) max_stream_id: [bool; 2],
+    pub(super) streams_blocked: [bool; 2],
     pub(super) reset_stream: Vec<(StreamId, VarInt)>,
     pub(super) stop_sending: Vec<frame::StopSending>,
     pub(super) max_stream_data: FxHashSet<StreamId>,
@@ -350,6 +351,7 @@ impl Retransmits {
     pub(super) fn is_empty(&self, streams: &StreamsState) -> bool {
         !self.max_data
             && !self.max_stream_id.into_iter().any(|x| x)
+            && !self.streams_blocked.into_iter().any(|x| x)
             && self.reset_stream.is_empty()
             && self.stop_sending.is_empty()
             && self
@@ -372,6 +374,7 @@ impl ::std::ops::BitOrAssign for Retransmits {
         self.max_data |= rhs.max_data;
         for dir in Dir::iter() {
             self.max_stream_id[dir as usize] |= rhs.max_stream_id[dir as usize];
+            self.streams_blocked[dir as usize] |= rhs.streams_blocked[dir as usize];
         }
         self.reset_stream.extend_from_slice(&rhs.reset_stream);
         self.stop_sending.extend_from_slice(&rhs.stop_sending);
