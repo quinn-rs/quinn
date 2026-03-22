@@ -28,11 +28,11 @@ pub struct FlowControlStats {
     ///
     /// This is the peer's advertised `MAX_DATA` limit minus the sum of data offsets across all
     /// send streams. When this reaches zero, the connection is send-blocked at the flow control
-    /// level and a `DATA_BLOCKED` frame will be emitted.
+    /// level.
     pub send_credit_remaining: u64,
     /// Remaining receive credit on the connection
     ///
-    /// This is our advertised `MAX_DATA` limit minus the sum of data received across all receive
+    /// This is our advertised `MAX_DATA` limit minus the sum of max offsets across all receive
     /// streams. When the peer exhausts this credit it must stop sending until we issue a new
     /// `MAX_DATA` frame.
     pub recv_credit_remaining: u64,
@@ -890,9 +890,10 @@ impl StreamsState {
     /// Affects the `MAX_STREAM_DATA` limit advertised to the peer for all streams opened after
     /// this call, and for already-open streams on their next flow control update.
     ///
-    /// The value is not copied into per-stream state. Instead, `max_stream_data()` reads
-    /// `self.stream_receive_window` each time it is called, so updating it here takes effect on
-    /// the next flow control decision for any stream.
+    /// No explicit `MAX_STREAM_DATA` transmission is triggered because `max_stream_data()` reads
+    /// `stream_receive_window` on every flow control evaluation. The next time data is consumed
+    /// and Quinn checks whether to send a `MAX_STREAM_DATA` update, it will use the new window
+    /// value and advertise accordingly.
     ///
     /// Only expansion is safe at the QUIC protocol level. Shrinking does not revoke previously
     /// advertised limits; it only reduces what is advertised on future updates.
