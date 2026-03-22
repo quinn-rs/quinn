@@ -1270,6 +1270,12 @@ impl Connection {
         stats.path.rtt = self.path.rtt.get();
         stats.path.cwnd = self.path.congestion.window();
         stats.path.current_mtu = self.path.mtud.current_mtu();
+        stats.path.bytes_in_flight = self.path.in_flight.bytes;
+        stats.path.packets_in_flight = self.path.in_flight.ack_eliciting;
+        stats.path.min_rtt = self.path.rtt.min();
+        stats.path.latest_rtt = self.path.rtt.latest();
+        stats.path.rtt_variance = self.path.rtt.var();
+        stats.path.pto_count = self.pto_count;
 
         stats
     }
