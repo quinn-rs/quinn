@@ -981,6 +981,46 @@ fn stream_id_limit() {
 }
 
 #[test]
+fn streams_blocked() {
+    let _guard = subscribe();
+    let server = ServerConfig {
+        transport: Arc::new(TransportConfig {
+            max_concurrent_uni_streams: 1u32.into(),
+            ..TransportConfig::default()
+        }),
+        ..server_config()
+    };
+    let mut pair = Pair::new(Default::default(), server);
+    let (client_ch, server_ch) = pair.connect();
+
+    // Use up the only stream slot, then try to open another
+    let s = pair
+        .client_streams(client_ch)
+        .open(Dir::Uni)
+        .expect("first uni stream");
+    assert_eq!(pair.client_streams(client_ch).open(Dir::Uni), None);
+
+    // Send data so the STREAMS_BLOCKED piggybacks on an outgoing packet
+    pair.client_send(client_ch, s).write(b"hi").unwrap();
+    pair.drive();
+
+    assert_eq!(
+        pair.client_conn_mut(client_ch)
+            .stats()
+            .frame_tx
+            .streams_blocked_uni,
+        1
+    );
+    assert_eq!(
+        pair.server_conn_mut(server_ch)
+            .stats()
+            .frame_rx
+            .streams_blocked_uni,
+        1
+    );
+}
+
+#[test]
 fn key_update_simple() {
     let _guard = subscribe();
     let mut pair = Pair::default();
