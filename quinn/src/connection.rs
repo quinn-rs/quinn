@@ -678,6 +678,16 @@ impl Connection {
         conn.wake();
     }
 
+    /// Set the per-stream receive window at runtime
+    ///
+    /// See [`proto::TransportConfig::stream_receive_window()`]. Only expansion is safe — the
+    /// QUIC protocol does not allow revoking previously advertised `MAX_STREAM_DATA` limits.
+    pub fn set_stream_receive_window(&self, window: VarInt) {
+        let mut conn = self.0.state.lock("set_stream_receive_window");
+        conn.inner.set_stream_receive_window(window);
+        conn.wake();
+    }
+
     /// See [`proto::TransportConfig::receive_window()`]
     pub fn set_receive_window(&self, receive_window: VarInt) {
         let mut conn = self.0.state.lock("set_receive_window");
