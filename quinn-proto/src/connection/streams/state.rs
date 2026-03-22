@@ -20,6 +20,29 @@ use crate::{
     transport_parameters::TransportParameters,
 };
 
+/// Snapshot of connection-level flow control utilization
+#[derive(Debug, Default, Copy, Clone)]
+#[non_exhaustive]
+pub struct FlowControlStats {
+    /// Remaining send credit on the connection
+    ///
+    /// This is the peer's advertised `MAX_DATA` limit minus the sum of data offsets across all
+    /// send streams. When this reaches zero, the connection is send-blocked at the flow control
+    /// level and a `DATA_BLOCKED` frame will be emitted.
+    pub send_credit_remaining: u64,
+    /// Remaining receive credit on the connection
+    ///
+    /// This is our advertised `MAX_DATA` limit minus the sum of data received across all receive
+    /// streams. When the peer exhausts this credit it must stop sending until we issue a new
+    /// `MAX_DATA` frame.
+    pub recv_credit_remaining: u64,
+    /// Number of streams currently blocked on connection-level flow control
+    ///
+    /// These are streams that attempted a write but could not proceed because the connection-level
+    /// send credit was exhausted.
+    pub streams_blocked_by_conn_fc: u64,
+}
+
 /// Wrapper around `Recv` that facilitates reusing `Recv` instances
 #[derive(Debug)]
 pub(super) enum StreamRecv {
@@ -860,6 +883,30 @@ impl StreamsState {
         }
         self.receive_window = receive_window;
         expanded
+    }
+
+    /// Set the per-stream receive window
+    ///
+    /// Affects the `MAX_STREAM_DATA` limit advertised to the peer for all streams opened after
+    /// this call, and for already-open streams on their next flow control update.
+    ///
+    /// The value is not copied into per-stream state. Instead, `max_stream_data()` reads
+    /// `self.stream_receive_window` each time it is called, so updating it here takes effect on
+    /// the next flow control decision for any stream.
+    ///
+    /// Only expansion is safe at the QUIC protocol level. Shrinking does not revoke previously
+    /// advertised limits; it only reduces what is advertised on future updates.
+    pub(crate) fn set_stream_receive_window(&mut self, window: u64) {
+        self.stream_receive_window = window;
+    }
+
+    /// Snapshot of connection-level flow control utilization
+    pub(crate) fn flow_control_stats(&self) -> FlowControlStats {
+        FlowControlStats {
+            send_credit_remaining: self.max_data.saturating_sub(self.data_sent),
+            recv_credit_remaining: self.local_max_data.saturating_sub(self.data_recvd),
+            streams_blocked_by_conn_fc: self.connection_blocked.len() as u64,
+        }
     }
 
     pub(super) fn insert(&mut self, remote: bool, id: StreamId) {
