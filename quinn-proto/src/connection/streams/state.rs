@@ -890,10 +890,10 @@ impl StreamsState {
     /// Affects the `MAX_STREAM_DATA` limit advertised to the peer for all streams opened after
     /// this call, and for already-open streams on their next flow control update.
     ///
-    /// No explicit `MAX_STREAM_DATA` transmission is triggered because `max_stream_data()` reads
-    /// `stream_receive_window` on every flow control evaluation. The next time data is consumed
-    /// and Quinn checks whether to send a `MAX_STREAM_DATA` update, it will use the new window
-    /// value and advertise accordingly.
+    /// No explicit `MAX_STREAM_DATA` transmission is triggered. The new window takes effect the
+    /// next time data is consumed on a stream and Quinn evaluates whether to send a
+    /// `MAX_STREAM_DATA` update. Idle streams will not see the updated window until they become
+    /// active again.
     ///
     /// Only expansion is safe at the QUIC protocol level. Shrinking does not revoke previously
     /// advertised limits; it only reduces what is advertised on future updates.
