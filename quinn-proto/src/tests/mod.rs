@@ -1004,8 +1004,20 @@ fn streams_blocked() {
     pair.client_send(client_ch, s).write(b"hi").unwrap();
     pair.drive();
 
-    assert_eq!(pair.client_conn_mut(client_ch).stats().frame_tx.streams_blocked_uni, 1);
-    assert_eq!(pair.server_conn_mut(server_ch).stats().frame_rx.streams_blocked_uni, 1);
+    assert_eq!(
+        pair.client_conn_mut(client_ch)
+            .stats()
+            .frame_tx
+            .streams_blocked_uni,
+        1
+    );
+    assert_eq!(
+        pair.server_conn_mut(server_ch)
+            .stats()
+            .frame_rx
+            .streams_blocked_uni,
+        1
+    );
 }
 
 #[test]
