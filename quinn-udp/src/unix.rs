@@ -510,20 +510,8 @@ fn send_via_sendmsg_x(
         hdrs[i].msg_datalen = chunk.len();
         cnt += 1;
     }
-    loop {
-        let n = unsafe { sendmsg_x(io.as_raw_fd(), hdrs.as_ptr(), cnt as u32, 0) };
-
-        if n >= 0 {
-            return Ok(());
-        }
-
-        let e = io::Error::last_os_error();
-        match e.kind() {
-            // Retry the transmission
-            io::ErrorKind::Interrupted => continue,
-            _ => return Err(e),
-        }
-    }
+    retry_if_interrupted(|| unsafe { sendmsg_x(io.as_raw_fd(), hdrs.as_ptr(), cnt as u32, 0) })?;
+    Ok(())
 }
 
 #[cfg(any(target_os = "openbsd", target_os = "netbsd", apple_slow))]
@@ -547,20 +535,8 @@ fn send_single(state: &UdpSocketState, io: SockRef<'_>, transmit: &Transmit<'_>)
         cfg!(apple) || cfg!(target_os = "openbsd") || cfg!(target_os = "netbsd"),
         state.sendmsg_einval(),
     );
-    loop {
-        let n = unsafe { libc::sendmsg(io.as_raw_fd(), &hdr, 0) };
-
-        if n >= 0 {
-            return Ok(());
-        }
-
-        let e = io::Error::last_os_error();
-        match e.kind() {
-            // Retry the transmission
-            io::ErrorKind::Interrupted => continue,
-            _ => return Err(e),
-        }
-    }
+    retry_if_interrupted(|| unsafe { libc::sendmsg(io.as_raw_fd(), &hdr, 0) })?;
+    Ok(())
 }
 
 /// Receive using the batched `recvmmsg` syscall.
@@ -588,28 +564,15 @@ fn recv_via_recvmmsg(
             &mut hdrs[i].msg_hdr,
         );
     }
-    let msg_count = loop {
-        let n = unsafe {
-            libc::recvmmsg(
-                io.as_raw_fd(),
-                hdrs.as_mut_ptr(),
-                bufs.len().min(BATCH_SIZE) as _,
-                0,
-                ptr::null_mut::<libc::timespec>(),
-            )
-        };
-
-        if n >= 0 {
-            break n;
-        }
-
-        let e = io::Error::last_os_error();
-        match e.kind() {
-            // Retry receiving
-            io::ErrorKind::Interrupted => continue,
-            _ => return Err(e),
-        }
-    };
+    let msg_count = retry_if_interrupted(|| unsafe {
+        libc::recvmmsg(
+            io.as_raw_fd(),
+            hdrs.as_mut_ptr(),
+            bufs.len().min(BATCH_SIZE) as _,
+            0,
+            ptr::null_mut::<libc::timespec>(),
+        ) as isize
+    })?;
     for i in 0..(msg_count as usize) {
         meta[i] = decode_recv(&names[i], &hdrs[i].msg_hdr, hdrs[i].msg_len as usize)?;
     }
@@ -636,20 +599,9 @@ fn recv_via_recvmsg_x(
     for i in 0..max_msg_count {
         prepare_recv_x(&mut bufs[i], &mut names[i], &mut ctrls[i], &mut hdrs[i]);
     }
-    let msg_count = loop {
-        let n = unsafe { recvmsg_x(io.as_raw_fd(), hdrs.as_mut_ptr(), max_msg_count as _, 0) };
-
-        if n >= 0 {
-            break n;
-        }
-
-        let e = io::Error::last_os_error();
-        match e.kind() {
-            // Retry receiving
-            io::ErrorKind::Interrupted => continue,
-            _ => return Err(e),
-        }
-    };
+    let msg_count = retry_if_interrupted(|| unsafe {
+        recvmsg_x(io.as_raw_fd(), hdrs.as_mut_ptr(), max_msg_count as _, 0)
+    })?;
     for i in 0..(msg_count as usize) {
         meta[i] = decode_recv(&names[i], &hdrs[i], hdrs[i].msg_datalen as usize)?;
     }
@@ -1226,3 +1178,18 @@ fn set_socket_option(
 }
 
 const OPTION_ON: libc::c_int = 1;
+
+/// Calls `f` in a loop, retrying on `EINTR`, and returns the non-negative result or the first
+/// non-`EINTR` error.
+fn retry_if_interrupted(mut f: impl FnMut() -> isize) -> io::Result<isize> {
+    loop {
+        let n = f();
+        if n >= 0 {
+            return Ok(n);
+        }
+        let e = io::Error::last_os_error();
+        if e.kind() != io::ErrorKind::Interrupted {
+            return Err(e);
+        }
+    }
+}
