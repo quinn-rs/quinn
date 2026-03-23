@@ -34,20 +34,44 @@ pub(crate) struct msghdr_x {
 }
 
 #[cfg(apple_fast)]
-extern "C" {
-    fn recvmsg_x(
-        s: libc::c_int,
-        msgp: *const msghdr_x,
-        cnt: libc::c_uint,
-        flags: libc::c_int,
-    ) -> isize;
+type SendmsgXFn =
+    unsafe extern "C" fn(libc::c_int, *const msghdr_x, libc::c_uint, libc::c_int) -> isize;
+#[cfg(apple_fast)]
+type RecvmsgXFn =
+    unsafe extern "C" fn(libc::c_int, *mut msghdr_x, libc::c_uint, libc::c_int) -> isize;
 
-    fn sendmsg_x(
-        s: libc::c_int,
-        msgp: *const msghdr_x,
-        cnt: libc::c_uint,
-        flags: libc::c_int,
-    ) -> isize;
+/// Resolves a symbol via `dlsym` on first call, caching the result.
+///
+/// Returns `None` if the symbol is not available on the current OS version.
+#[cfg(apple_fast)]
+fn resolve_symbol(lock: &std::sync::OnceLock<usize>, name: &std::ffi::CStr) -> Option<usize> {
+    let addr =
+        *lock.get_or_init(|| unsafe { libc::dlsym(libc::RTLD_DEFAULT, name.as_ptr()) as usize });
+    (addr != 0).then_some(addr)
+}
+
+/// Returns the `sendmsg_x` function pointer, resolving it via `dlsym` on first call.
+///
+/// Returns `None` if the symbol is not available on the current OS version.
+#[cfg(apple_fast)]
+fn sendmsg_x_fn() -> Option<SendmsgXFn> {
+    static ADDR: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    // SAFETY: `resolve_symbol` only returns non-zero addresses obtained from `dlsym`, which
+    // guarantees a callable symbol whose type matches the declaration above.
+    resolve_symbol(&ADDR, c"sendmsg_x")
+        .map(|addr| unsafe { std::mem::transmute::<usize, SendmsgXFn>(addr) })
+}
+
+/// Returns the `recvmsg_x` function pointer, resolving it via `dlsym` on first call.
+///
+/// Returns `None` if the symbol is not available on the current OS version.
+#[cfg(apple_fast)]
+fn recvmsg_x_fn() -> Option<RecvmsgXFn> {
+    static ADDR: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    // SAFETY: `resolve_symbol` only returns non-zero addresses obtained from `dlsym`, which
+    // guarantees a callable symbol whose type matches the declaration above.
+    resolve_symbol(&ADDR, c"recvmsg_x")
+        .map(|addr| unsafe { std::mem::transmute::<usize, RecvmsgXFn>(addr) })
 }
 
 #[cfg(target_os = "freebsd")]
@@ -272,7 +296,7 @@ impl UdpSocketState {
         meta: &mut [RecvMeta],
     ) -> io::Result<usize> {
         if self.is_apple_fast_path_enabled() {
-            recv_via_recvmsg_x(socket.0, bufs, meta)
+            recv_via_recvmsg_x(self, socket.0, bufs, meta)
         } else {
             recv_single(socket.0, bufs, meta)
         }
@@ -375,6 +399,39 @@ impl UdpSocketState {
     #[cfg(apple_fast)]
     pub fn is_apple_fast_path_enabled(&self) -> bool {
         self.apple_fast_path.load(Ordering::Relaxed)
+    }
+
+    /// Disables Apple's fast UDP datapath, reverting to `sendmsg`/`recvmsg`.
+    #[cfg(apple_fast)]
+    fn disable_apple_fast_path(&self) {
+        self.apple_fast_path.store(false, Ordering::Relaxed);
+        self.max_gso_segments.store(1, Ordering::Relaxed);
+    }
+
+    /// Resolves an Apple fast-path function pointer via `resolver`, disabling the fast path if
+    /// the symbol is absent so that future calls use the slow path directly.
+    #[cfg(apple_fast)]
+    fn resolve_apple_fast_fn<T>(&self, resolver: fn() -> Option<T>) -> Option<T> {
+        let f = resolver();
+        if f.is_none() {
+            self.disable_apple_fast_path();
+        }
+        f
+    }
+}
+
+/// Calls `f` in a loop, retrying on `EINTR`, and returns the non-negative result or the first
+/// non-`EINTR` error.
+fn call_with_eintr_retry(mut f: impl FnMut() -> isize) -> io::Result<isize> {
+    loop {
+        let n = f();
+        if n >= 0 {
+            return Ok(n);
+        }
+        let e = io::Error::last_os_error();
+        if e.kind() != io::ErrorKind::Interrupted {
+            return Err(e);
+        }
     }
 }
 
@@ -510,20 +567,11 @@ fn send_via_sendmsg_x(
         hdrs[i].msg_datalen = chunk.len();
         cnt += 1;
     }
-    loop {
-        let n = unsafe { sendmsg_x(io.as_raw_fd(), hdrs.as_ptr(), cnt as u32, 0) };
-
-        if n >= 0 {
-            return Ok(());
-        }
-
-        let e = io::Error::last_os_error();
-        match e.kind() {
-            // Retry the transmission
-            io::ErrorKind::Interrupted => continue,
-            _ => return Err(e),
-        }
-    }
+    let Some(sendmsg_x) = state.resolve_apple_fast_fn(sendmsg_x_fn) else {
+        return send_single(state, io, transmit);
+    };
+    call_with_eintr_retry(|| unsafe { sendmsg_x(io.as_raw_fd(), hdrs.as_ptr(), cnt as u32, 0) })?;
+    Ok(())
 }
 
 #[cfg(any(target_os = "openbsd", target_os = "netbsd", apple_slow))]
@@ -547,20 +595,8 @@ fn send_single(state: &UdpSocketState, io: SockRef<'_>, transmit: &Transmit<'_>)
         cfg!(apple) || cfg!(target_os = "openbsd") || cfg!(target_os = "netbsd"),
         state.sendmsg_einval(),
     );
-    loop {
-        let n = unsafe { libc::sendmsg(io.as_raw_fd(), &hdr, 0) };
-
-        if n >= 0 {
-            return Ok(());
-        }
-
-        let e = io::Error::last_os_error();
-        match e.kind() {
-            // Retry the transmission
-            io::ErrorKind::Interrupted => continue,
-            _ => return Err(e),
-        }
-    }
+    call_with_eintr_retry(|| unsafe { libc::sendmsg(io.as_raw_fd(), &hdr, 0) })?;
+    Ok(())
 }
 
 /// Receive using the batched `recvmmsg` syscall.
@@ -588,28 +624,15 @@ fn recv_via_recvmmsg(
             &mut hdrs[i].msg_hdr,
         );
     }
-    let msg_count = loop {
-        let n = unsafe {
-            libc::recvmmsg(
-                io.as_raw_fd(),
-                hdrs.as_mut_ptr(),
-                bufs.len().min(BATCH_SIZE) as _,
-                0,
-                ptr::null_mut::<libc::timespec>(),
-            )
-        };
-
-        if n >= 0 {
-            break n;
-        }
-
-        let e = io::Error::last_os_error();
-        match e.kind() {
-            // Retry receiving
-            io::ErrorKind::Interrupted => continue,
-            _ => return Err(e),
-        }
-    };
+    let msg_count = call_with_eintr_retry(|| unsafe {
+        libc::recvmmsg(
+            io.as_raw_fd(),
+            hdrs.as_mut_ptr(),
+            bufs.len().min(BATCH_SIZE) as _,
+            0,
+            ptr::null_mut::<libc::timespec>(),
+        ) as isize
+    })?;
     for i in 0..(msg_count as usize) {
         meta[i] = decode_recv(&names[i], &hdrs[i].msg_hdr, hdrs[i].msg_len as usize)?;
     }
@@ -619,6 +642,7 @@ fn recv_via_recvmmsg(
 /// Receive using the fast `recvmsg_x` API.
 #[cfg(apple_fast)]
 fn recv_via_recvmsg_x(
+    state: &UdpSocketState,
     io: SockRef<'_>,
     bufs: &mut [IoSliceMut<'_>],
     meta: &mut [RecvMeta],
@@ -636,20 +660,12 @@ fn recv_via_recvmsg_x(
     for i in 0..max_msg_count {
         prepare_recv_x(&mut bufs[i], &mut names[i], &mut ctrls[i], &mut hdrs[i]);
     }
-    let msg_count = loop {
-        let n = unsafe { recvmsg_x(io.as_raw_fd(), hdrs.as_mut_ptr(), max_msg_count as _, 0) };
-
-        if n >= 0 {
-            break n;
-        }
-
-        let e = io::Error::last_os_error();
-        match e.kind() {
-            // Retry receiving
-            io::ErrorKind::Interrupted => continue,
-            _ => return Err(e),
-        }
+    let Some(recvmsg_x) = state.resolve_apple_fast_fn(recvmsg_x_fn) else {
+        return recv_single(io, bufs, meta);
     };
+    let msg_count = call_with_eintr_retry(|| unsafe {
+        recvmsg_x(io.as_raw_fd(), hdrs.as_mut_ptr(), max_msg_count as _, 0)
+    })?;
     for i in 0..(msg_count as usize) {
         meta[i] = decode_recv(&names[i], &hdrs[i], hdrs[i].msg_datalen as usize)?;
     }
