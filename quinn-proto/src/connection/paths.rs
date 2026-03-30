@@ -75,6 +75,7 @@ impl PathData {
                 config.initial_rtt,
                 congestion.initial_window(),
                 config.get_initial_mtu(),
+                config.max_outgoing_bytes_per_second,
                 now,
             ),
             congestion,
@@ -118,7 +119,13 @@ impl PathData {
         Self {
             remote,
             rtt: prev.rtt,
-            pacing: Pacer::new(smoothed_rtt, congestion.window(), prev.current_mtu(), now),
+            pacing: Pacer::new(
+                smoothed_rtt,
+                congestion.window(),
+                prev.current_mtu(),
+                prev.pacing.get_max_bytes_per_second(),
+                now,
+            ),
             sending_ecn: true,
             congestion,
             challenge: None,
