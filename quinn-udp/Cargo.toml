@@ -33,7 +33,8 @@ windows-sys = { workspace = true }
 
 [dev-dependencies]
 criterion = { version = "0.8", default-features = false, features = ["async_tokio"] }
-tokio = { workspace = true, features = ["rt", "rt-multi-thread", "net"] }
+libc = "0.2.175"
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "net", "time", "macros"] }
 
 [build-dependencies]
 cfg_aliases = { workspace = true }
