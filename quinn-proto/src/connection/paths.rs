@@ -322,6 +322,16 @@ impl RttEstimator {
         self.min
     }
 
+    /// Most recent RTT sample
+    pub fn latest(&self) -> Duration {
+        self.latest
+    }
+
+    /// Current RTT variance estimate, computed as described in RFC 6298
+    pub fn var(&self) -> Duration {
+        self.var
+    }
+
     // PTO computed as described in RFC9002#6.2.1
     pub(crate) fn pto_base(&self) -> Duration {
         self.get() + cmp::max(4 * self.var, TIMER_GRANULARITY)
