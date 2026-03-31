@@ -84,8 +84,8 @@ pub use streams::StreamsState;
 #[cfg(not(fuzzing))]
 use streams::StreamsState;
 pub use streams::{
-    Chunks, ClosedStream, FinishError, ReadError, ReadableError, RecvStream, SendStream,
-    ShouldTransmit, StreamEvent, Streams, WriteError, Written,
+    Chunks, ClosedStream, FinishError, FlowControlStats, ReadError, ReadableError, RecvStream,
+    SendStream, ShouldTransmit, StreamEvent, Streams, WriteError, Written,
 };
 
 mod timer;
@@ -1270,6 +1270,7 @@ impl Connection {
         stats.path.rtt = self.path.rtt.get();
         stats.path.cwnd = self.path.congestion.window();
         stats.path.current_mtu = self.path.mtud.current_mtu();
+        stats.flow_control = self.streams.flow_control_stats();
 
         stats
     }
@@ -1423,6 +1424,15 @@ impl Connection {
     /// See [`TransportConfig::send_window()`]
     pub fn set_send_window(&mut self, send_window: u64) {
         self.streams.set_send_window(send_window);
+    }
+
+    /// Set the per-stream receive window at runtime
+    ///
+    /// See [`TransportConfig::stream_receive_window()`]. Only expansion is safe at the QUIC
+    /// protocol level — the protocol does not allow revoking previously advertised
+    /// `MAX_STREAM_DATA` limits.
+    pub fn set_stream_receive_window(&mut self, window: VarInt) {
+        self.streams.set_stream_receive_window(window.into());
     }
 
     /// See [`TransportConfig::receive_window()`]
