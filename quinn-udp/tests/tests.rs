@@ -370,6 +370,95 @@ fn ip_to_v6_mapped(x: IpAddr) -> IpAddr {
     }
 }
 
+/// Reproducer for <https://github.com/quinn-rs/quinn/issues/2293>.
+///
+/// On macOS, `ENOBUFS` ("No buffer space available", os error 55) is returned by
+/// `sendmsg` when the kernel's network buffer pool (mbufs) is exhausted. Unlike
+/// `EAGAIN`/`EWOULDBLOCK` — which signals that the per-socket send buffer is full and
+/// for which the I/O driver reliably fires a WRITE event once buffer space returns —
+/// `ENOBUFS` is a system-wide condition the I/O driver has no direct visibility into.
+///
+/// Mapping `ENOBUFS` to `WouldBlock` is therefore incorrect: after `ENOBUFS`, the
+/// I/O driver may not re-signal writability, so a task waiting for a WRITE event can
+/// suspend indefinitely (confirmed by Firezone in production).
+///
+/// This test verifies the expected behaviour: after `ENOBUFS` is returned and the
+/// receiver has drained its buffer (freeing kernel memory), the tokio reactor IS
+/// woken up so that the sender can retry.
+///
+/// Run with: `cargo test --test tests enobufs_task_wakeup -- --nocapture`
+#[tokio::test]
+#[cfg(target_os = "macos")]
+async fn enobufs_task_wakeup() {
+    use std::time::Duration;
+
+    // Send to TEST-NET-1 (RFC 5737): packets are routed into the network stack
+    // but never delivered, building kernel buffer pressure more effectively than
+    // loopback where packets are consumed immediately.
+    let dst_addr: std::net::SocketAddr =
+        SocketAddrV4::new(Ipv4Addr::new(25, 43, 64, 0), 1234).into();
+
+    let sender_std = UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0)).unwrap();
+    sender_std.set_nonblocking(true).unwrap();
+    let sender = tokio::net::UdpSocket::from_std(sender_std).unwrap();
+
+    let send_state = UdpSocketState::new((&sender).into()).unwrap();
+
+    let payload = vec![0u8; 1400];
+
+    // Flood the socket to exhaust kernel network buffers (mbufs).
+    // We stop as soon as ENOBUFS is observed.
+    let mut enobufs_seen = false;
+    for _ in 0..50_000 {
+        let transmit = Transmit {
+            destination: dst_addr,
+            ecn: None,
+            contents: &payload,
+            segment_size: None,
+            src_ip: None,
+        };
+        match send_state.try_send((&sender).into(), &transmit) {
+            Ok(()) => {}
+            Err(e) if e.raw_os_error() == Some(libc::ENOBUFS) => {
+                enobufs_seen = true;
+                break;
+            }
+            // WouldBlock means the per-socket send buffer is full; keep going so
+            // we can build up more pressure toward ENOBUFS.
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
+            Err(e) => eprintln!("unexpected send error: {e:?}"),
+        }
+    }
+
+    assert!(
+        enobufs_seen,
+        "ENOBUFS was not triggered after 50000 sends; \
+         the test requires ENOBUFS to validate the wakeup behaviour"
+    );
+
+    eprintln!("ENOBUFS observed; waiting for task wakeup");
+
+    // After ENOBUFS the kernel will eventually free mbufs as it processes/drops
+    // the outbound packets (non-routable destination). The I/O driver must then
+    // wake this task so it can retry. If it never re-signals writability the
+    // timeout fires, demonstrating the "task suspends indefinitely" bug.
+    let probe = Transmit {
+        destination: dst_addr,
+        ecn: None,
+        contents: b"probe",
+        segment_size: None,
+        src_ip: None,
+    };
+    tokio::time::timeout(Duration::from_secs(5), async {
+        sender.writable().await.unwrap();
+        send_state
+            .try_send((&sender).into(), &probe)
+            .expect("send after ENOBUFS should succeed once buffers are freed");
+    })
+    .await
+    .expect("task was not woken up after ENOBUFS");
+}
+
 /// Test Apple fast datapath enable/disable functionality.
 ///
 /// This test verifies that:
