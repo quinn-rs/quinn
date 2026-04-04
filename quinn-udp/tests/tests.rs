@@ -392,21 +392,20 @@ fn ip_to_v6_mapped(x: IpAddr) -> IpAddr {
 async fn enobufs_task_wakeup() {
     use std::time::Duration;
 
-    let sender_std = UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0)).unwrap();
-    let receiver_std = UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0)).unwrap();
-    let dst_addr = receiver_std.local_addr().unwrap();
+    // Send to TEST-NET-1 (RFC 5737): packets are routed into the network stack
+    // but never delivered, building kernel buffer pressure more effectively than
+    // loopback where packets are consumed immediately.
+    let dst_addr: std::net::SocketAddr = SocketAddrV4::new(Ipv4Addr::new(192, 0, 2, 1), 1234).into();
 
-    // tokio::net::UdpSocket::from_std requires the socket to be non-blocking already.
+    let sender_std = UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0)).unwrap();
     sender_std.set_nonblocking(true).unwrap();
     let sender = tokio::net::UdpSocket::from_std(sender_std).unwrap();
 
     let send_state = UdpSocketState::new((&sender).into()).unwrap();
 
-    // Use a typical QUIC packet size to avoid EMSGSIZE while still building
-    // buffer pressure quickly.
     let payload = vec![0u8; 1400];
 
-    // Flood the socket without draining the receiver to maximise buffer pressure.
+    // Flood the socket to exhaust kernel network buffers (mbufs).
     // We stop as soon as ENOBUFS is observed.
     let mut enobufs_seen = false;
     for _ in 0..50_000 {
@@ -432,30 +431,16 @@ async fn enobufs_task_wakeup() {
 
     assert!(
         enobufs_seen,
-        "ENOBUFS was not triggered after 5000 sends; \
+        "ENOBUFS was not triggered after 50000 sends; \
          the test requires ENOBUFS to validate the wakeup behaviour"
     );
 
-    eprintln!("ENOBUFS observed; draining receiver and waiting for task wakeup");
+    eprintln!("ENOBUFS observed; waiting for task wakeup");
 
-    // Drain the receiver in a background task so the kernel can reclaim mbufs.
-    receiver_std.set_nonblocking(true).unwrap();
-    let drain_task = tokio::task::spawn_blocking(move || {
-        let mut buf = vec![0u8; 65507];
-        loop {
-            match receiver_std.recv(&mut buf) {
-                Ok(_) => {}
-                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
-                Err(_) => break,
-            }
-        }
-    });
-
-    // After ENOBUFS + receiver drain the tokio reactor must wake this task so it
-    // can retry. The async loop awaits write-readiness, then attempts to send.
-    // On success this proves the task was woken up with send space available.
-    // If the I/O driver never re-signals writability the outer timeout fires,
-    // demonstrating the "task suspends indefinitely" bug described in the issue.
+    // After ENOBUFS the kernel will eventually free mbufs as it processes/drops
+    // the outbound packets (non-routable destination). The I/O driver must then
+    // wake this task so it can retry. If it never re-signals writability the
+    // timeout fires, demonstrating the "task suspends indefinitely" bug.
     let probe = Transmit {
         destination: dst_addr,
         ecn: None,
@@ -467,12 +452,10 @@ async fn enobufs_task_wakeup() {
         sender.writable().await.unwrap();
         send_state
             .try_send((&sender).into(), &probe)
-            .expect("send after ENOBUFS + receiver drain should succeed");
+            .expect("send after ENOBUFS should succeed once buffers are freed");
     })
     .await
-    .expect("task was not woken up after ENOBUFS + receiver drain");
-
-    drain_task.await.unwrap();
+    .expect("task was not woken up after ENOBUFS");
 }
 
 /// Test Apple fast datapath enable/disable functionality.
