@@ -395,7 +395,8 @@ async fn enobufs_task_wakeup() {
     // Send to TEST-NET-1 (RFC 5737): packets are routed into the network stack
     // but never delivered, building kernel buffer pressure more effectively than
     // loopback where packets are consumed immediately.
-    let dst_addr: std::net::SocketAddr = SocketAddrV4::new(Ipv4Addr::new(192, 0, 2, 1), 1234).into();
+    let dst_addr: std::net::SocketAddr =
+        SocketAddrV4::new(Ipv4Addr::new(25, 43, 64, 0), 1234).into();
 
     let sender_std = UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0)).unwrap();
     sender_std.set_nonblocking(true).unwrap();
