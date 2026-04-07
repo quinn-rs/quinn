@@ -10,7 +10,7 @@ use super::{
 use crate::{Duration, Instant, TIMER_GRANULARITY, TransportConfig, congestion, packet::SpaceId};
 
 #[cfg(feature = "qlog")]
-use qlog::events::{ExData, quic::MetricsUpdated};
+use qlog::events::{ExData, quic::RecoveryMetricsUpdated};
 
 /// Description of a particular network path
 pub(super) struct PathData {
@@ -181,7 +181,10 @@ impl PathData {
     }
 
     #[cfg(feature = "qlog")]
-    pub(super) fn qlog_recovery_metrics(&mut self, pto_count: u32) -> Option<MetricsUpdated> {
+    pub(super) fn qlog_recovery_metrics(
+        &mut self,
+        pto_count: u32,
+    ) -> Option<RecoveryMetricsUpdated> {
         let controller_metrics = self.congestion.metrics();
 
         let metrics = RecoveryMetrics {
@@ -256,14 +259,14 @@ impl RecoveryMetrics {
     }
 
     /// Emit a `MetricsUpdated` event containing only updated values
-    fn to_qlog_event(&self, previous: &Self) -> Option<MetricsUpdated> {
+    fn to_qlog_event(&self, previous: &Self) -> Option<RecoveryMetricsUpdated> {
         let updated = self.retain_updated(previous);
 
         if updated == Self::default() {
             return None;
         }
 
-        Some(MetricsUpdated {
+        Some(RecoveryMetricsUpdated {
             ex_data: ExData::default(),
             min_rtt: updated.min_rtt.map(|rtt| rtt.as_secs_f32()),
             smoothed_rtt: updated.smoothed_rtt.map(|rtt| rtt.as_secs_f32()),

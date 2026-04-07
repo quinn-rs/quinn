@@ -34,7 +34,7 @@ impl QlogStream {
     fn emit_event(&self, orig_rem_cid: ConnectionId, event: EventData, now: Instant) {
         // Time will be overwritten by `add_event_with_instant`
         let mut event = Event::with_time(0.0, event);
-        event.group_id = Some(orig_rem_cid.to_string());
+        event.group_id = Some(Box::new(orig_rem_cid.to_string()));
 
         let mut qlog_streamer = self.0.lock().unwrap();
         if let Err(e) = qlog_streamer.add_event_with_instant(event, now) {
@@ -79,7 +79,7 @@ impl QlogSink {
                 return;
             };
 
-            stream.emit_event(orig_rem_cid, EventData::MetricsUpdated(metrics), now);
+            stream.emit_event(orig_rem_cid, EventData::QuicMetricsUpdated(metrics), now);
         }
     }
 
@@ -106,6 +106,7 @@ impl QlogSink {
                     ..Default::default()
                 }),
                 frames: None,
+                is_mtu_probe_packet: None,
                 trigger: Some(
                     match info.time_sent.saturating_duration_since(now) >= loss_delay {
                         true => PacketLostTrigger::TimeThreshold,
@@ -114,7 +115,7 @@ impl QlogSink {
                 ),
             };
 
-            stream.emit_event(orig_rem_cid, EventData::PacketLost(event), now);
+            stream.emit_event(orig_rem_cid, EventData::QuicPacketLost(event), now);
         }
     }
 
@@ -143,7 +144,7 @@ impl QlogSink {
                 ..Default::default()
             };
 
-            stream.emit_event(orig_rem_cid, EventData::PacketSent(event), now);
+            stream.emit_event(orig_rem_cid, EventData::QuicPacketSent(event), now);
         }
     }
 
@@ -170,7 +171,7 @@ impl QlogSink {
                 ..Default::default()
             };
 
-            stream.emit_event(orig_rem_cid, EventData::PacketReceived(event), now);
+            stream.emit_event(orig_rem_cid, EventData::QuicPacketReceived(event), now);
         }
     }
 }
