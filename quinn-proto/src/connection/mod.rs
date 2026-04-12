@@ -2981,9 +2981,9 @@ impl Connection {
                         }
                     };
 
-                    if self.side.is_server() && self.rem_cids.active_seq() == 0 {
-                        // We're a server still using the initial remote CID for the client, so
-                        // let's switch immediately to enable clientside stateless resets.
+                    if self.rem_cids.active_seq() == 0 {
+                        // We're a server still using the initial remote CID for the client or
+                        // server, so let's switch immediately to enable clientside stateless resets.
                         self.update_rem_cid();
                     }
                 }
