@@ -932,7 +932,7 @@ impl Clone for ConnectionRef {
 
 impl Drop for ConnectionRef {
     fn drop(&mut self) {
-        if self.shared.ref_count.fetch_sub(1, Ordering::Relaxed) > 0 {
+        if self.shared.ref_count.fetch_sub(1, Ordering::Relaxed) > 1 {
             return;
         }
 
