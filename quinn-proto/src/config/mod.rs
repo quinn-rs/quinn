@@ -74,11 +74,11 @@ impl EndpointConfig {
     /// information in local connection IDs, e.g. to support stateless packet-level load balancers.
     ///
     /// Defaults to [`HashedConnectionIdGenerator`].
-    pub fn cid_generator<F: Fn() -> Box<dyn ConnectionIdGenerator> + Send + Sync + 'static>(
+    pub fn cid_generator(
         &mut self,
-        factory: F,
+        factory: Arc<dyn Fn() -> Box<dyn ConnectionIdGenerator> + Send + Sync>,
     ) -> &mut Self {
-        self.connection_id_generator_factory = Arc::new(factory);
+        self.connection_id_generator_factory = factory;
         self
     }
 
