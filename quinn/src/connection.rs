@@ -291,6 +291,19 @@ impl Future for ConnectionDriver {
 pub struct Connection(ConnectionRef);
 
 impl Connection {
+    /// Returns whether the TLS handshake accepted 0-RTT early data on this
+    /// connection.
+    ///
+    /// Server consumers accepting 0-RTT need this signal to gate replay-
+    /// sensitive logic (non-idempotent HTTP methods, etc.) on streams that
+    /// actually arrived as 0-RTT. Prior to this accessor `accepted_0rtt()`
+    /// was public only on the internal `quinn_proto::Connection`, forcing
+    /// server code to fall back to time-window heuristics.
+    pub fn accepted_0rtt(&self) -> bool {
+        let conn = self.0.state.lock("accepted_0rtt");
+        conn.inner.accepted_0rtt()
+    }
+
     /// Initiate a new outgoing unidirectional stream.
     ///
     /// Streams are cheap and instantaneous to open unless blocked by flow control. As a
