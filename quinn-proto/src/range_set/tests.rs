@@ -11,7 +11,9 @@ macro_rules! common_set_tests {
             fn merge_and_split() {
                 let mut set = $set_type::new();
                 assert!(set.insert(0..2));
+                assert!(set.contains(0));
                 assert!(set.insert(2..4));
+                assert!(set.contains(3));
                 assert!(!set.insert(1..3));
                 assert_eq!(set.len(), 1);
                 assert_eq!(&set.elts().collect::<Vec<_>>()[..], [0, 1, 2, 3]);
