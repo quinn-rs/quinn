@@ -325,7 +325,7 @@ async fn zero_rtt() {
     tokio::spawn(async move {
         for _ in 0..2 {
             let incoming = endpoint2.accept().await.unwrap().accept().unwrap();
-            let (connection, established) = incoming.into_0rtt().unwrap_or_else(|_| unreachable!());
+            let connection = incoming.into_0rtt().unwrap_or_else(|_| unreachable!());
             let c = connection.clone();
             tokio::spawn(async move {
                 while let Ok(mut x) = c.accept_uni().await {
@@ -337,7 +337,7 @@ async fn zero_rtt() {
             let mut s = connection.open_uni().await.expect("open_uni");
             s.write_all(MSG0).await.expect("write");
             s.finish().unwrap();
-            established.await;
+            connection.authenticated().await.expect("connected");
             info!("sending 1-RTT");
             let mut s = connection.open_uni().await.expect("open_uni");
             s.write_all(MSG1).await.expect("write");
@@ -369,7 +369,7 @@ async fn zero_rtt() {
 
     info!("initial connection complete");
 
-    let (connection, zero_rtt) = endpoint
+    let connection = endpoint
         .connect(endpoint.local_addr().unwrap(), "localhost")
         .unwrap()
         .into_0rtt()
@@ -388,7 +388,7 @@ async fn zero_rtt() {
     let mut stream = connection.accept_uni().await.expect("incoming streams");
     let msg = stream.read_to_end(usize::MAX).await.expect("read_to_end");
     assert_eq!(msg, MSG0);
-    assert!(zero_rtt.await);
+    connection.authenticated().await.expect("connected");
 
     drop((stream, connection));
 
