@@ -381,6 +381,8 @@ async fn zero_rtt() {
         info!("sending 0-RTT");
         s.write_all(MSG0).await.expect("0-RTT write");
         s.finish().unwrap();
+        // Ensure 0-RTT was accepted
+        s.stopped().await.expect("0-RTT stopped");
     });
 
     let mut stream = connection.accept_uni().await.expect("incoming streams");
