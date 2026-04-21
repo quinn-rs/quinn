@@ -322,13 +322,15 @@ async fn zero_rtt() {
     const MSG0: &[u8] = b"zero";
     const MSG1: &[u8] = b"one";
     let endpoint2 = endpoint.clone();
-    tokio::spawn(async move {
-        for _ in 0..2 {
+    let accept_connection = move |expect_0rtt| {
+        let endpoint2 = endpoint2.clone();
+        async move {
             let incoming = endpoint2.accept().await.unwrap().accept().unwrap();
             let connection = incoming.into_0rtt().unwrap_or_else(|_| unreachable!());
             let c = connection.clone();
             tokio::spawn(async move {
                 while let Ok(mut x) = c.accept_uni().await {
+                    assert_eq!(x.is_0rtt(), expect_0rtt);
                     let msg = x.read_to_end(usize::MAX).await.unwrap();
                     assert_eq!(msg, MSG0);
                 }
@@ -344,14 +346,15 @@ async fn zero_rtt() {
             // The peer might close the connection before ACKing
             let _ = s.finish();
         }
-    });
+    };
+
+    tokio::spawn(accept_connection(false));
 
     let connection = endpoint
         .connect(endpoint.local_addr().unwrap(), "localhost")
         .unwrap()
         .into_0rtt()
-        .err()
-        .expect("0-RTT succeeded without keys")
+        .expect_err("0-RTT succeeded without keys")
         .await
         .expect("connect");
 
@@ -374,23 +377,26 @@ async fn zero_rtt() {
         .unwrap()
         .into_0rtt()
         .unwrap_or_else(|_| panic!("missing 0-RTT keys"));
-    // Send something ASAP to use 0-RTT
-    let c = connection.clone();
-    tokio::spawn(async move {
-        let mut s = c.open_uni().await.expect("0-RTT open uni");
-        info!("sending 0-RTT");
-        s.write_all(MSG0).await.expect("0-RTT write");
-        s.finish().unwrap();
-        // Ensure 0-RTT was accepted
-        s.stopped().await.expect("0-RTT stopped");
-    });
 
+    // Send something before the handshake can make progress, thereby forcing 0-RTT
+    let mut stream_0rtt = connection.open_uni().await.expect("0-RTT open uni");
+    info!("sending 0-RTT");
+    stream_0rtt.write_all(MSG0).await.expect("0-RTT write");
+    stream_0rtt.finish().unwrap();
+
+    tokio::spawn(accept_connection(true));
+
+    // Receive 0.5-RTT
     let mut stream = connection.accept_uni().await.expect("incoming streams");
     let msg = stream.read_to_end(usize::MAX).await.expect("read_to_end");
     assert_eq!(msg, MSG0);
     connection.authenticated().await.expect("connected");
 
-    drop((stream, connection));
+    // Ensure 0-RTT was accepted
+    stream_0rtt.stopped().await.expect("0-RTT stopped");
+
+    // Allow the connection to close
+    drop((stream_0rtt, stream, connection));
 
     endpoint.wait_idle().await;
 }
