@@ -575,7 +575,7 @@ impl ProtectedHeader {
 
     /// Decode a plain header from given buffer, with given [`ConnectionIdParser`].
     pub fn decode(
-        buf: &mut io::Cursor<BytesMut>,
+        buf: &mut io::Cursor<impl AsRef<[u8]>>,
         cid_parser: &(impl ConnectionIdParser + ?Sized),
         supported_versions: &[u32],
         grease_quic_bit: bool,
