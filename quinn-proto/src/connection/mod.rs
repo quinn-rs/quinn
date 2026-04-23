@@ -421,6 +421,7 @@ impl Connection {
     #[must_use]
     pub fn recv_stream(&mut self, id: StreamId) -> RecvStream<'_> {
         assert!(id.dir() == Dir::Bi || id.initiator() != self.side.side());
+        self.streams.ensure_open(id);
         RecvStream {
             id,
             state: &mut self.streams,

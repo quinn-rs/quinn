@@ -83,6 +83,8 @@ pub struct StreamsState {
     sent_max_remote: [u64; 2],
     /// Number of streams that we've given the peer permission to open and which aren't fully closed
     pub(super) allocated_remote_count: [u64; 2],
+    /// Number of remotely-initiated streams we've allocated state for, per direction
+    initialized_remote_count: [u64; 2],
     /// Size of the desired stream flow control window. May be smaller than `allocated_remote_count`
     /// due to `set_max_concurrent` calls.
     max_concurrent_remote_count: [u64; 2],
@@ -149,7 +151,7 @@ impl StreamsState {
         receive_window: VarInt,
         stream_receive_window: VarInt,
     ) -> Self {
-        let mut this = Self {
+        Self {
             side,
             send: FxHashMap::default(),
             recv: FxHashMap::default(),
@@ -159,6 +161,7 @@ impl StreamsState {
             max_remote: [max_remote_bi.into(), max_remote_uni.into()],
             sent_max_remote: [max_remote_bi.into(), max_remote_uni.into()],
             allocated_remote_count: [max_remote_bi.into(), max_remote_uni.into()],
+            initialized_remote_count: [0, 0],
             max_concurrent_remote_count: [max_remote_bi.into(), max_remote_uni.into()],
             flow_control_adjusted: false,
             next_remote: [0, 0],
@@ -181,15 +184,7 @@ impl StreamsState {
             initial_max_stream_data_bidi_local: 0u32.into(),
             initial_max_stream_data_bidi_remote: 0u32.into(),
             receive_window_shrink_debt: 0,
-        };
-
-        for dir in Dir::iter() {
-            for i in 0..this.max_remote[dir as usize] {
-                this.insert(true, StreamId::new(!side, dir, i));
-            }
         }
-
-        this
     }
 
     pub(crate) fn set_params(&mut self, params: &TransportParameters) {
@@ -199,7 +194,7 @@ impl StreamsState {
         self.max[Dir::Bi as usize] = params.initial_max_streams_bidi.into();
         self.max[Dir::Uni as usize] = params.initial_max_streams_uni.into();
         self.received_max_data(params.initial_max_data);
-        for i in 0..self.max_remote[Dir::Bi as usize] {
+        for i in 0..self.initialized_remote_count[Dir::Bi as usize] {
             let id = StreamId::new(!self.side, Dir::Bi, i);
             if let Some(s) = self.send.get_mut(&id).and_then(|s| s.as_mut()) {
                 s.max_data = params.initial_max_stream_data_bidi_local.into();
@@ -207,17 +202,33 @@ impl StreamsState {
         }
     }
 
-    /// Ensure we have space for at least a full flow control window of remotely-initiated streams
-    /// to be open, and notify the peer if the window has moved
+    /// Ensure the peer has enough stream credit for at least a full flow control window of
+    /// remotely-initiated streams to be open, and notify the peer if the window has moved
     fn ensure_remote_streams(&mut self, dir: Dir) {
         let new_count = self.max_concurrent_remote_count[dir as usize]
             .saturating_sub(self.allocated_remote_count[dir as usize]);
-        for i in 0..new_count {
-            let id = StreamId::new(!self.side, dir, self.max_remote[dir as usize] + i);
-            self.insert(true, id);
-        }
         self.allocated_remote_count[dir as usize] += new_count;
         self.max_remote[dir as usize] += new_count;
+    }
+
+    /// Lazily allocate state for remotely-initiated streams through `id`.
+    ///
+    /// Opening a stream implicitly opens all lower-numbered streams of the same type, so allocation
+    /// still needs to be contiguous. This only tracks the highest stream index that has actually
+    /// been used, not the highest index we've granted credit for.
+    fn ensure_remote_stream_state(&mut self, id: StreamId) {
+        debug_assert_ne!(id.initiator(), self.side);
+        let dir = id.dir();
+        let start = self.initialized_remote_count[dir as usize];
+        let end = id.index() + 1;
+        if end <= start {
+            return;
+        }
+        for i in start..end {
+            let id = StreamId::new(!self.side, dir, i);
+            self.insert(true, id);
+        }
+        self.initialized_remote_count[dir as usize] = end;
     }
 
     pub(crate) fn zero_rtt_rejected(&mut self) {
@@ -259,6 +270,7 @@ impl StreamsState {
         self.validate_receive_id(id).inspect_err(|_| {
             debug!("received illegal STREAM frame");
         })?;
+        self.ensure_open(id);
 
         let Some(rs) = self
             .recv
@@ -309,6 +321,7 @@ impl StreamsState {
         self.validate_receive_id(id).inspect_err(|_| {
             debug!("received illegal RESET_STREAM frame");
         })?;
+        self.ensure_open(id);
 
         let Some(rs) = self
             .recv
@@ -354,6 +367,8 @@ impl StreamsState {
     /// Process incoming `STOP_SENDING` frame
     #[allow(unreachable_pub)] // fuzzing only
     pub fn received_stop_sending(&mut self, id: StreamId, error_code: VarInt) {
+        self.ensure_open(id);
+
         let max_send_data = self.max_send_data(id);
         let Some(stream) = self
             .send
@@ -719,6 +734,7 @@ impl StreamsState {
                 "MAX_STREAM_DATA on recv-only stream",
             ));
         }
+        self.ensure_open(id);
 
         let write_limit = self.write_limit();
         let max_send_data = self.max_send_data(id);
@@ -834,6 +850,17 @@ impl StreamsState {
         self.flow_control_adjusted = true;
         self.max_concurrent_remote_count[dir as usize] = count.into();
         self.ensure_remote_streams(dir);
+    }
+
+    /// Ensure that state for a peer-initiated stream is allocated, so long as `id` falls within the
+    /// granted stream limit. A no-op for locally-initiated ids or ids that exceed the limit.
+    ///
+    /// Call this at every entry point that may touch `self.recv` / `self.send` for a stream id
+    /// coming from the peer.
+    pub(crate) fn ensure_open(&mut self, id: StreamId) {
+        if id.initiator() != self.side && id.index() < self.max_remote[id.dir() as usize] {
+            self.ensure_remote_stream_state(id);
+        }
     }
 
     pub(crate) fn max_concurrent(&self, dir: Dir) -> u64 {
@@ -1847,13 +1874,65 @@ mod tests {
     #[test]
     fn remote_stream_capacity() {
         let mut client = make(Side::Client);
+        assert_eq!(client.recv.len(), 0);
+        assert_eq!(client.send.len(), 0);
         for _ in 0..2 {
             client.set_max_concurrent(Dir::Uni, 200u32.into());
             client.set_max_concurrent(Dir::Bi, 201u32.into());
-            assert_eq!(client.recv.len(), 200 + 201);
+            assert_eq!(client.recv.len(), 0);
+            assert_eq!(client.send.len(), 0);
+            assert_eq!(client.initialized_remote_count[Dir::Uni as usize], 0);
+            assert_eq!(client.initialized_remote_count[Dir::Bi as usize], 0);
             assert_eq!(client.max_remote[Dir::Uni as usize], 200);
             assert_eq!(client.max_remote[Dir::Bi as usize], 201);
         }
+    }
+
+    #[test]
+    fn remote_stream_state_is_allocated_lazily() {
+        let mut client = make(Side::Client);
+        client.set_max_concurrent(Dir::Uni, 200u32.into());
+
+        let id = StreamId::new(Side::Server, Dir::Uni, 130);
+        assert_eq!(
+            client.received(
+                frame::Stream {
+                    id,
+                    offset: 0,
+                    fin: false,
+                    data: Bytes::new(),
+                },
+                0,
+            ),
+            Ok(ShouldTransmit(false))
+        );
+
+        assert_eq!(client.initialized_remote_count[Dir::Uni as usize], 131);
+        assert_eq!(client.recv.len(), 131);
+        assert!(client.recv.contains_key(&id));
+        assert!(
+            !client
+                .recv
+                .contains_key(&StreamId::new(Side::Server, Dir::Uni, 131))
+        );
+    }
+
+    #[test]
+    fn remote_bidi_control_frame_allocates_stream_state() {
+        let mut client = make(Side::Client);
+        let id = StreamId::new(Side::Server, Dir::Bi, 3);
+        let error_code = 42u32.into();
+
+        client.received_stop_sending(id, error_code);
+
+        assert_eq!(client.initialized_remote_count[Dir::Bi as usize], 4);
+        assert_eq!(client.recv.len(), 4);
+        assert_eq!(client.send.len(), 4);
+        assert!(
+            client
+                .events
+                .contains(&StreamEvent::Stopped { id, error_code })
+        );
     }
 
     #[test]
