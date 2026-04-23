@@ -350,7 +350,7 @@ impl Endpoint {
         loop {
             {
                 let endpoint = &mut *self.inner.state.lock().unwrap();
-                if endpoint.recv_state.connections.is_empty() {
+                if endpoint.is_idle() {
                     break;
                 }
                 // Construct future while lock is held to avoid race
@@ -407,9 +407,7 @@ impl Future for EndpointDriver {
             self.0.shared.incoming.notify_waiters();
         }
 
-        if self.0.shared.ref_count.load(Ordering::Relaxed) == 0
-            && endpoint.recv_state.connections.is_empty()
-        {
+        if self.0.shared.ref_count.load(Ordering::Relaxed) == 0 && endpoint.is_idle() {
             Poll::Ready(Ok(()))
         } else {
             drop(endpoint);
@@ -447,25 +445,53 @@ impl EndpointInner {
         incoming: proto::Incoming,
         server_config: Option<Arc<ServerConfig>>,
     ) -> Result<Connecting, ConnectionError> {
-        let mut state = self.state.lock().unwrap();
         let mut response_buffer = Vec::new();
-        let now = state.runtime.now();
-        match state
-            .inner
-            .accept(incoming, now, &mut response_buffer, server_config)
-        {
-            Ok((handle, conn)) => {
+
+        // Phase 1: acquire lock, do the minimum work that needs endpoint state.
+        let accepting = {
+            let mut state = self.state.lock().unwrap();
+            let now = state.runtime.now();
+            match state
+                .inner
+                .start_accept(incoming, now, &mut response_buffer, server_config)
+            {
+                Ok(accepting) => accepting,
+                Err(error) => {
+                    if let Some(transmit) = error.response {
+                        respond(transmit, &response_buffer, &mut state.sender);
+                    }
+                    return Err(error.cause);
+                }
+            }
+        };
+
+        // Phase 2: do the expensive connection construction and first-packet handling
+        // WITHOUT holding the lock. Final bookkeeping still needs endpoint state.
+        // Only the error cleanup path requires re-acquiring the lock.
+        match accepting.finish_without_endpoint() {
+            Ok(accepted) => {
+                let mut state = self.state.lock().unwrap();
                 state.stats.accepted_handshakes += 1;
                 let sender = state.socket.create_sender();
                 let runtime = state.runtime.clone();
-                Ok(state
+                let (handle, conn) = state.inner.finish_accept(accepted);
+                let connecting = state
                     .recv_state
                     .connections
-                    .insert(handle, conn, sender, runtime))
+                    .insert(handle, conn, sender, runtime);
+                Ok(connecting)
             }
             Err(error) => {
+                let mut state = self.state.lock().unwrap();
+                let error = state.inner.finish_accept_error(error, &mut response_buffer);
                 if let Some(transmit) = error.response {
                     respond(transmit, &response_buffer, &mut state.sender);
+                }
+                // The failed accept consumed a `pending_accepts` slot. If that was the last
+                // work in flight, `wait_idle` needs an explicit wake — the only other path
+                // that notifies it is the drained-connection path, which we don't hit here.
+                if state.is_idle() {
+                    self.shared.idle.notify_waiters();
                 }
                 Err(error.cause)
             }
@@ -522,6 +548,10 @@ pub(crate) struct Shared {
 }
 
 impl State {
+    fn is_idle(&self) -> bool {
+        self.recv_state.connections.is_empty() && self.inner.pending_accepts() == 0
+    }
+
     fn drive_recv(&mut self, cx: &mut Context<'_>, now: Instant) -> Result<bool, io::Error> {
         let get_time = || self.runtime.now();
         self.recv_state.recv_limiter.start_cycle(get_time);
@@ -569,7 +599,7 @@ impl State {
 
             if event.is_drained() {
                 self.recv_state.connections.senders.remove(&ch);
-                if self.recv_state.connections.is_empty() {
+                if self.is_idle() {
                     shared.idle.notify_waiters();
                 }
             }
