@@ -43,6 +43,8 @@ pub struct Endpoint {
     rng: StdRng,
     index: ConnectionIndex,
     connections: Slab<ConnectionMeta>,
+    open_connections: usize,
+    pending_accepts: usize,
     local_cid_generator: Box<dyn ConnectionIdGenerator>,
     config: Arc<EndpointConfig>,
     server_config: Option<Arc<ServerConfig>>,
@@ -72,6 +74,8 @@ impl Endpoint {
                 .map_or_else(StdRng::from_os_rng, StdRng::from_seed),
             index: ConnectionIndex::default(),
             connections: Slab::new(),
+            open_connections: 0,
+            pending_accepts: 0,
             local_cid_generator: (config.connection_id_generator_factory.as_ref())(),
             config,
             server_config,
@@ -118,9 +122,7 @@ impl Endpoint {
                 }
             }
             Drained => {
-                if let Some(conn) = self.connections.try_remove(ch.0) {
-                    self.index.remove(&conn);
-                } else {
+                if self.remove_connection(ch).is_none() {
                     // This indicates a bug in downstream code, which could cause spurious
                     // connection loss instead of this error if the CID was (re)allocated prior to
                     // the illegal call.
@@ -201,7 +203,8 @@ impl Endpoint {
         if let Some(route_to) = self.index.get(&addresses, &event.first_decode) {
             // Handle packet on existing connection
             match route_to {
-                RouteDatagramTo::Incoming(incoming_idx) => {
+                RouteDatagramTo::Incoming(incoming_idx)
+                | RouteDatagramTo::Accepting(incoming_idx) => {
                     let incoming_buffer = &mut self.incoming_buffers[incoming_idx];
                     let config = &self.server_config.as_ref().unwrap();
 
@@ -336,7 +339,7 @@ impl Endpoint {
         trace!(initial_dcid = %remote_id);
 
         let ch = ConnectionHandle(self.connections.vacant_key());
-        let loc_cid = self.new_cid(ch);
+        let loc_cid = self.new_cid(RouteDatagramTo::Connection(ch));
         let params = TransportParameters::new(
             &config.transport,
             &self.config,
@@ -378,7 +381,7 @@ impl Endpoint {
     ) -> ConnectionEvent {
         let mut ids = vec![];
         for _ in 0..num {
-            let id = self.new_cid(ch);
+            let id = self.new_cid(RouteDatagramTo::Connection(ch));
             let meta = &mut self.connections[ch];
             let sequence = meta.cids_issued;
             meta.cids_issued += 1;
@@ -392,8 +395,8 @@ impl Endpoint {
         ConnectionEvent(ConnectionEventInner::NewIdentifiers(ids, now))
     }
 
-    /// Generate a connection ID for `ch`
-    fn new_cid(&mut self, ch: ConnectionHandle) -> ConnectionId {
+    /// Generate and reserve a local connection ID
+    fn new_cid(&mut self, route_to: RouteDatagramTo) -> ConnectionId {
         loop {
             let cid = self.local_cid_generator.generate_cid();
             if cid.is_empty() {
@@ -402,7 +405,7 @@ impl Endpoint {
                 return cid;
             }
             if let hash_map::Entry::Vacant(e) = self.index.connection_ids.entry(cid) {
-                e.insert(ch);
+                e.insert(route_to);
                 break cid;
             }
         }
@@ -513,15 +516,31 @@ impl Endpoint {
     // box err to avoid clippy::result_large_err
     pub fn accept(
         &mut self,
-        mut incoming: Incoming,
+        incoming: Incoming,
         now: Instant,
         buf: &mut Vec<u8>,
         server_config: Option<Arc<ServerConfig>>,
     ) -> Result<(ConnectionHandle, Connection), Box<AcceptError>> {
+        let accepting = self.start_accept(incoming, now, buf, server_config)?;
+        match accepting.finish_without_endpoint() {
+            Ok((ch, conn, accepting_idx)) => Ok(self.finish_accept(ch, conn, accepting_idx)),
+            Err(error) => Err(self.finish_accept_error(error, buf)),
+        }
+    }
+
+    /// First phase of connection acceptance: everything that requires `&mut Endpoint`.
+    /// Creates the connection and registers it in the index, but does NOT process the
+    /// first packet or buffered datagrams. This is the minimum work that must happen
+    /// under the endpoint lock.
+    #[doc(hidden)]
+    pub fn start_accept(
+        &mut self,
+        mut incoming: Incoming,
+        now: Instant,
+        buf: &mut Vec<u8>,
+        server_config: Option<Arc<ServerConfig>>,
+    ) -> Result<Accepting, Box<AcceptError>> {
         let remote_address_validated = incoming.remote_address_validated();
-        incoming.improper_drop_warner.dismiss();
-        let incoming_buffer = self.incoming_buffers.remove(incoming.incoming_idx);
-        self.all_incoming_buffers_total_bytes -= incoming_buffer.total_bytes;
 
         let packet_number = incoming.packet.header.number.expand(0);
         let InitialHeader {
@@ -541,7 +560,8 @@ impl Endpoint {
             })
         {
             debug!("abandoning accept of stale initial");
-            self.index.remove_initial(dst_cid);
+            self.clean_up_incoming(&incoming);
+            incoming.improper_drop_warner.dismiss();
             return Err(Box::new(AcceptError {
                 cause: ConnectionError::TimedOut,
                 response: None,
@@ -550,17 +570,19 @@ impl Endpoint {
 
         if self.cids_exhausted() {
             debug!("refusing connection");
-            self.index.remove_initial(dst_cid);
+            let response = self.initial_close(
+                version,
+                incoming.addresses,
+                &incoming.crypto,
+                src_cid,
+                TransportError::CONNECTION_REFUSED(""),
+                buf,
+            );
+            self.clean_up_incoming(&incoming);
+            incoming.improper_drop_warner.dismiss();
             return Err(Box::new(AcceptError {
                 cause: ConnectionError::CidsExhausted,
-                response: Some(self.initial_close(
-                    version,
-                    incoming.addresses,
-                    &incoming.crypto,
-                    src_cid,
-                    TransportError::CONNECTION_REFUSED(""),
-                    buf,
-                )),
+                response: Some(response),
             }));
         }
 
@@ -576,15 +598,23 @@ impl Endpoint {
             .is_err()
         {
             debug!(packet_number, "failed to authenticate initial packet");
-            self.index.remove_initial(dst_cid);
+            self.clean_up_incoming(&incoming);
+            incoming.improper_drop_warner.dismiss();
             return Err(Box::new(AcceptError {
                 cause: TransportError::PROTOCOL_VIOLATION("authentication failed").into(),
                 response: None,
             }));
         };
 
+        let accepting_idx = incoming.incoming_idx;
+        if !dst_cid.is_empty() {
+            self.index
+                .connection_ids_initial
+                .insert(dst_cid, RouteDatagramTo::Accepting(accepting_idx));
+        }
+
         let ch = ConnectionHandle(self.connections.vacant_key());
-        let loc_cid = self.new_cid(ch);
+        let loc_cid = self.new_cid(RouteDatagramTo::Accepting(accepting_idx));
         let mut params = TransportParameters::new(
             &server_config.transport,
             &self.config,
@@ -598,7 +628,7 @@ impl Endpoint {
         params.retry_src_cid = incoming.token.retry_src_cid;
         let mut pref_addr_cid = None;
         if server_config.has_preferred_address() {
-            let cid = self.new_cid(ch);
+            let cid = self.new_cid(RouteDatagramTo::Accepting(accepting_idx));
             pref_addr_cid = Some(cid);
             params.preferred_address = Some(PreferredAddress {
                 address_v4: server_config.preferred_address_v4,
@@ -608,60 +638,119 @@ impl Endpoint {
             });
         }
 
-        let tls = server_config.crypto.clone().start_session(version, &params);
         let transport_config = server_config.transport.clone();
-        let mut conn = self.add_connection(
+
+        // Gather everything needed to create the Connection outside the lock.
+        let mut rng_seed = [0; 32];
+        self.rng.fill_bytes(&mut rng_seed);
+        let endpoint_config = self.config.clone();
+        let cid_len = self.local_cid_generator.cid_len();
+        let cid_lifetime = self.local_cid_generator.cid_lifetime();
+        let allow_mtud = self.allow_mtud;
+
+        // Reserve the connection slot in the slab and update the index.
+        // This is cheap and must happen under the lock to prevent handle reuse.
+        let side = Side::Server;
+        let mut cids_issued = 0;
+        let mut loc_cids = FxHashMap::default();
+        loc_cids.insert(cids_issued, loc_cid);
+        cids_issued += 1;
+        if let Some(cid) = pref_addr_cid {
+            debug_assert_eq!(cids_issued, 1, "preferred address cid seq must be 1");
+            loc_cids.insert(cids_issued, cid);
+            cids_issued += 1;
+        }
+        let id = self.connections.insert(ConnectionMeta {
+            state: ConnectionStatus::Accepting { accepting_idx },
+            init_cid: dst_cid,
+            cids_issued,
+            loc_cids,
+            addresses: incoming.addresses,
+            side,
+            reset_token: None,
+        });
+        debug_assert_eq!(id, ch.0, "connection handle allocation out of sync");
+        self.pending_accepts += 1;
+
+        Ok(Accepting {
             ch,
-            version,
+            accepting_idx,
             dst_cid,
             loc_cid,
+            version,
             src_cid,
-            incoming.addresses,
-            incoming.received_at,
-            tls,
-            transport_config,
-            SideArgs::Server {
-                server_config,
-                pref_addr_cid,
-                path_validated: remote_address_validated,
-            },
-        );
-        self.index.insert_initial(dst_cid, ch);
-
-        match conn.handle_first_packet(
-            incoming.received_at,
-            incoming.addresses.remote,
-            incoming.ecn,
             packet_number,
-            incoming.packet,
-            incoming.rest,
-        ) {
-            Ok(()) => {
-                trace!(id = ch.0, icid = %dst_cid, "new connection");
+            incoming,
+            // Deferred connection creation state
+            server_config,
+            transport_config,
+            params,
+            pref_addr_cid,
+            remote_address_validated,
+            rng_seed,
+            endpoint_config,
+            cid_len,
+            cid_lifetime,
+            allow_mtud,
+        })
+    }
 
-                for event in incoming_buffer.datagrams {
-                    conn.handle_event(ConnectionEvent(ConnectionEventInner::Datagram(event)))
-                }
+    #[doc(hidden)]
+    pub fn finish_accept(
+        &mut self,
+        ch: ConnectionHandle,
+        mut conn: Connection,
+        accepting_idx: usize,
+    ) -> (ConnectionHandle, Connection) {
+        let accepting_buffer = self.incoming_buffers.remove(accepting_idx);
+        self.all_incoming_buffers_total_bytes -= accepting_buffer.total_bytes;
 
-                Ok((ch, conn))
-            }
-            Err(e) => {
-                debug!("handshake failed: {}", e);
-                self.handle_event(ch, EndpointEvent(EndpointEventInner::Drained));
-                let response = match e {
-                    ConnectionError::TransportError(ref e) => Some(self.initial_close(
-                        version,
-                        incoming.addresses,
-                        &incoming.crypto,
-                        src_cid,
-                        e.clone(),
-                        buf,
-                    )),
-                    _ => None,
-                };
-                Err(Box::new(AcceptError { cause: e, response }))
-            }
+        {
+            let conn_meta = &mut self.connections[ch];
+            debug_assert_eq!(
+                conn_meta.state,
+                ConnectionStatus::Accepting { accepting_idx },
+                "finish_accept called for non-accepting connection"
+            );
+            self.index.activate_connection(conn_meta, ch);
+            conn_meta.state = ConnectionStatus::Active;
         }
+        debug_assert!(self.pending_accepts > 0);
+        self.pending_accepts -= 1;
+        self.open_connections += 1;
+
+        for event in accepting_buffer.datagrams {
+            conn.handle_event(ConnectionEvent(ConnectionEventInner::Datagram(event)))
+        }
+
+        (ch, conn)
+    }
+
+    /// Clean up after a failed [`Accepting::finish_without_endpoint`].
+    /// Drains the connection and optionally generates a close response.
+    #[doc(hidden)]
+    pub fn finish_accept_error(
+        &mut self,
+        error: Box<AcceptingError>,
+        buf: &mut Vec<u8>,
+    ) -> Box<AcceptError> {
+        debug!("handshake failed: {}", error.cause);
+        self.remove_connection(error.ch);
+        let response = match error.cause {
+            ConnectionError::TransportError(ref e) => Some(self.initial_close(
+                error.version,
+                error.addresses,
+                &error.crypto,
+                error.src_cid,
+                e.clone(),
+                buf,
+            )),
+            _ => None,
+        };
+        Box::new(AcceptError {
+            cause: error.cause,
+            response,
+        })
     }
 
     /// Check if we should refuse a connection attempt regardless of the packet's contents
@@ -777,6 +866,31 @@ impl Endpoint {
         self.all_incoming_buffers_total_bytes -= incoming_buffer.total_bytes;
     }
 
+    fn clean_up_accepting(&mut self, accepting_idx: usize) {
+        let accepting_buffer = self.incoming_buffers.remove(accepting_idx);
+        self.all_incoming_buffers_total_bytes -= accepting_buffer.total_bytes;
+    }
+
+    /// Remove the slab entry for `ch`, prune its index routes, reclaim any accepting buffer,
+    /// and decrement the matching counter. Returns the removed metadata, or `None` if no
+    /// connection was registered for `ch`.
+    fn remove_connection(&mut self, ch: ConnectionHandle) -> Option<ConnectionMeta> {
+        let conn = self.connections.try_remove(ch.0)?;
+        self.index.remove(&conn);
+        match conn.state {
+            ConnectionStatus::Active => {
+                debug_assert!(self.open_connections > 0);
+                self.open_connections -= 1;
+            }
+            ConnectionStatus::Accepting { accepting_idx } => {
+                self.clean_up_accepting(accepting_idx);
+                debug_assert!(self.pending_accepts > 0);
+                self.pending_accepts -= 1;
+            }
+        }
+        Some(conn)
+    }
+
     fn add_connection(
         &mut self,
         ch: ConnectionHandle,
@@ -825,6 +939,7 @@ impl Endpoint {
         }
 
         let id = self.connections.insert(ConnectionMeta {
+            state: ConnectionStatus::Active,
             init_cid,
             cids_issued,
             loc_cids,
@@ -833,8 +948,9 @@ impl Endpoint {
             reset_token: None,
         });
         debug_assert_eq!(id, ch.0, "connection handle allocation out of sync");
-
-        self.index.insert_conn(addresses, loc_cid, ch, side);
+        self.open_connections += 1;
+        let conn_meta = &self.connections[ch];
+        self.index.activate_connection(conn_meta, ch);
 
         conn
     }
@@ -883,11 +999,18 @@ impl Endpoint {
 
     /// Number of connections that are currently open
     pub fn open_connections(&self) -> usize {
-        self.connections.len()
+        self.open_connections
+    }
+
+    /// Number of incoming accepts that have reserved endpoint state but have not yet been
+    /// finalized into active outer connections.
+    pub fn pending_accepts(&self) -> usize {
+        self.pending_accepts
     }
 
     /// Counter for the number of bytes currently used
     /// in the buffers for Initial and 0-RTT messages for pending incoming connections
+    /// and accepts that are still being finalized
     pub fn incoming_buffer_bytes(&self) -> u64 {
         self.all_incoming_buffers_total_bytes
     }
@@ -935,6 +1058,8 @@ impl fmt::Debug for Endpoint {
             .field("rng", &self.rng)
             .field("index", &self.index)
             .field("connections", &self.connections)
+            .field("open_connections", &self.open_connections)
+            .field("pending_accepts", &self.pending_accepts)
             .field("config", &self.config)
             .field("server_config", &self.server_config)
             // incoming_buffers too large
@@ -958,6 +1083,7 @@ struct IncomingBuffer {
 #[derive(Copy, Clone, Debug)]
 enum RouteDatagramTo {
     Incoming(usize),
+    Accepting(usize),
     Connection(ConnectionHandle),
 }
 
@@ -973,7 +1099,7 @@ struct ConnectionIndex {
     /// Identifies connections based on locally created CIDs
     ///
     /// Uses a cheaper hash function since keys are locally created
-    connection_ids: FxHashMap<ConnectionId, ConnectionHandle>,
+    connection_ids: FxHashMap<ConnectionId, RouteDatagramTo>,
     /// Identifies incoming connections with zero-length CIDs
     ///
     /// Uses a standard `HashMap` to protect against hash collision attacks.
@@ -1022,28 +1148,26 @@ impl ConnectionIndex {
             .insert(dst_cid, RouteDatagramTo::Connection(connection));
     }
 
-    /// Associate a connection with its first locally-chosen destination CID if used, or otherwise
-    /// its current 4-tuple
-    fn insert_conn(
-        &mut self,
-        addresses: FourTuple,
-        dst_cid: ConnectionId,
-        connection: ConnectionHandle,
-        side: Side,
-    ) {
-        match dst_cid.len() {
-            0 => match side {
-                Side::Server => {
-                    self.incoming_connection_remotes
-                        .insert(addresses, connection);
+    /// Promote all routes for a newly active connection from `Accepting` to `Connection`.
+    fn activate_connection(&mut self, conn: &ConnectionMeta, connection: ConnectionHandle) {
+        if conn.side.is_server() {
+            self.insert_initial(conn.init_cid, connection);
+        }
+        for cid in conn.loc_cids.values() {
+            if cid.is_empty() {
+                match conn.side {
+                    Side::Server => {
+                        self.incoming_connection_remotes
+                            .insert(conn.addresses, connection);
+                    }
+                    Side::Client => {
+                        self.outgoing_connection_remotes
+                            .insert(conn.addresses.remote, connection);
+                    }
                 }
-                Side::Client => {
-                    self.outgoing_connection_remotes
-                        .insert(addresses.remote, connection);
-                }
-            },
-            _ => {
-                self.connection_ids.insert(dst_cid, connection);
+            } else {
+                self.connection_ids
+                    .insert(*cid, RouteDatagramTo::Connection(connection));
             }
         }
     }
@@ -1072,13 +1196,13 @@ impl ConnectionIndex {
     /// Find the existing connection that `datagram` should be routed to, if any
     fn get(&self, addresses: &FourTuple, datagram: &PartialDecode) -> Option<RouteDatagramTo> {
         if !datagram.dst_cid().is_empty() {
-            if let Some(&ch) = self.connection_ids.get(&datagram.dst_cid()) {
-                return Some(RouteDatagramTo::Connection(ch));
+            if let Some(&route) = self.connection_ids.get(&datagram.dst_cid()) {
+                return Some(route);
             }
         }
         if datagram.is_initial() || datagram.is_0rtt() {
-            if let Some(&ch) = self.connection_ids_initial.get(&datagram.dst_cid()) {
-                return Some(ch);
+            if let Some(&route) = self.connection_ids_initial.get(&datagram.dst_cid()) {
+                return Some(route);
             }
         }
         if datagram.dst_cid().is_empty() {
@@ -1102,6 +1226,7 @@ impl ConnectionIndex {
 
 #[derive(Debug)]
 pub(crate) struct ConnectionMeta {
+    state: ConnectionStatus,
     init_cid: ConnectionId,
     /// Number of local connection IDs that have been issued in NEW_CONNECTION_ID frames.
     cids_issued: u64,
@@ -1115,6 +1240,12 @@ pub(crate) struct ConnectionMeta {
     /// Reset token provided by the peer for the CID we're currently sending to, and the address
     /// being sent to
     reset_token: Option<(SocketAddr, ResetToken)>,
+}
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+enum ConnectionStatus {
+    Accepting { accepting_idx: usize },
+    Active,
 }
 
 /// Internal identifier for a `Connection` currently associated with an endpoint
@@ -1272,6 +1403,112 @@ pub struct AcceptError {
     pub cause: ConnectionError,
     /// Optional response to transmit back
     pub response: Option<Transmit>,
+}
+
+/// Internal split-accept handle used by `quinn`.
+#[doc(hidden)]
+#[allow(unnameable_types)] // reachable only with feature = "__internal_split_accept"
+pub struct Accepting {
+    ch: ConnectionHandle,
+    accepting_idx: usize,
+    dst_cid: ConnectionId,
+    loc_cid: ConnectionId,
+    version: u32,
+    src_cid: ConnectionId,
+    packet_number: u64,
+    incoming: Incoming,
+    // State for deferred Connection creation
+    server_config: Arc<ServerConfig>,
+    transport_config: Arc<TransportConfig>,
+    params: TransportParameters,
+    pref_addr_cid: Option<ConnectionId>,
+    remote_address_validated: bool,
+    rng_seed: [u8; 32],
+    endpoint_config: Arc<EndpointConfig>,
+    cid_len: usize,
+    cid_lifetime: Option<Duration>,
+    allow_mtud: bool,
+}
+
+impl Accepting {
+    /// Complete computationally expensive connection setup steps without holding the endpoint lock.
+    ///
+    /// Creates the `Connection` and processes the first packet.
+    /// None of this requires `&mut Endpoint`.
+    ///
+    /// On success, returns the connection plus the accepting buffer slot that
+    /// still needs to be activated under the endpoint lock.
+    #[doc(hidden)]
+    pub fn finish_without_endpoint(
+        self,
+    ) -> Result<(ConnectionHandle, Connection, usize), Box<AcceptingError>> {
+        // By reaching Accepting we are committed to handling this connection attempt;
+        // suppress the Incoming-dropped warning. This partial move is fine because
+        // Incoming itself has no Drop.
+        self.incoming.improper_drop_warner.dismiss();
+
+        // Create TLS session and Connection (the expensive part) without the endpoint lock.
+        let tls = self
+            .server_config
+            .crypto
+            .clone()
+            .start_session(self.version, &self.params);
+        let mut conn = Connection::new(
+            self.endpoint_config,
+            self.transport_config,
+            self.dst_cid,
+            self.loc_cid,
+            self.src_cid,
+            self.incoming.addresses.remote,
+            self.incoming.addresses.local_ip,
+            tls,
+            self.cid_len,
+            self.cid_lifetime,
+            self.incoming.received_at,
+            self.version,
+            self.allow_mtud,
+            self.rng_seed,
+            SideArgs::Server {
+                server_config: self.server_config,
+                pref_addr_cid: self.pref_addr_cid,
+                path_validated: self.remote_address_validated,
+            },
+        );
+
+        match conn.handle_first_packet(
+            self.incoming.received_at,
+            self.incoming.addresses.remote,
+            self.incoming.ecn,
+            self.packet_number,
+            self.incoming.packet,
+            self.incoming.rest,
+        ) {
+            Ok(()) => {
+                trace!(id = self.ch.0, icid = %self.dst_cid, "new connection");
+                Ok((self.ch, conn, self.accepting_idx))
+            }
+            Err(e) => Err(Box::new(AcceptingError {
+                cause: e,
+                ch: self.ch,
+                version: self.version,
+                src_cid: self.src_cid,
+                addresses: self.incoming.addresses,
+                crypto: self.incoming.crypto,
+            })),
+        }
+    }
+}
+
+/// Internal split-accept failure state used by `quinn`.
+#[doc(hidden)]
+#[allow(unnameable_types)] // reachable only with feature = "__internal_split_accept"
+pub struct AcceptingError {
+    cause: ConnectionError,
+    ch: ConnectionHandle,
+    version: u32,
+    src_cid: ConnectionId,
+    addresses: FourTuple,
+    crypto: Keys,
 }
 
 /// Error for attempting to retry an [`Incoming`] which already bears a token from a previous retry

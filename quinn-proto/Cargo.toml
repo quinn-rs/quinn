@@ -40,6 +40,10 @@ qlog = ["dep:qlog"]
 # Don't rely on these whatsoever. They may disappear at any time.
 
 __rustls-post-quantum-test =  []
+# Exposes the split-accept hooks (`start_accept`/`finish_accept`/`finish_accept_error`
+# and the `Accepting`/`AcceptingError` types) so that `quinn` can release the endpoint
+# lock around the expensive TLS handshake step. Not covered by semver.
+__internal_split_accept = []
 
 [dependencies]
 arbitrary = { workspace = true, optional = true }
