@@ -35,6 +35,9 @@ impl Datagrams<'_> {
         if data.len() > max {
             return Err(SendDatagramError::TooLarge);
         }
+        if data.len() > self.conn.config.datagram_send_buffer_size {
+            return Err(SendDatagramError::TooLarge);
+        }
         if drop {
             self.conn
                 .datagrams
