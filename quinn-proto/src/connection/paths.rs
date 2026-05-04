@@ -275,10 +275,16 @@ impl RecoveryMetrics {
 
         Some(RecoveryMetricsUpdated {
             ex_data: ExData::default(),
-            min_rtt: updated.min_rtt.map(|rtt| rtt.as_secs_f32()),
-            smoothed_rtt: updated.smoothed_rtt.map(|rtt| rtt.as_secs_f32()),
-            latest_rtt: updated.latest_rtt.map(|rtt| rtt.as_secs_f32()),
-            rtt_variance: updated.rtt_variance.map(|rtt| rtt.as_secs_f32()),
+            min_rtt: updated.min_rtt.map(|rtt| rtt.as_micros() as f32 / 1000.0),
+            smoothed_rtt: updated
+                .smoothed_rtt
+                .map(|rtt| rtt.as_micros() as f32 / 1000.0),
+            latest_rtt: updated
+                .latest_rtt
+                .map(|rtt| rtt.as_micros() as f32 / 1000.0),
+            rtt_variance: updated
+                .rtt_variance
+                .map(|rtt| rtt.as_micros() as f32 / 1000.0),
             pto_count: updated
                 .pto_count
                 .map(|count| count.try_into().unwrap_or(u16::MAX)),
