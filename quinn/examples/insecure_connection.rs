@@ -68,7 +68,7 @@ struct SkipServerVerification(Arc<rustls::crypto::CryptoProvider>);
 
 impl SkipServerVerification {
     fn new() -> Arc<Self> {
-        Arc::new(Self(Arc::new(rustls::crypto::ring::default_provider())))
+        Arc::new(Self(quinn::crypto::rustls::configured_provider()))
     }
 }
 

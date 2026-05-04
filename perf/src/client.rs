@@ -16,9 +16,9 @@ use tokio::sync::Semaphore;
 use tracing::{debug, error, info};
 
 use crate::{
-    CommonOpt, PERF_CIPHER_SUITES,
+    CommonOpt,
     noprotection::NoProtectionClientConfig,
-    parse_byte_size,
+    parse_byte_size, perf_cipher_suites,
     stats::{OpenStreamStats, Stats},
 };
 
@@ -104,9 +104,9 @@ pub async fn run(opt: Opt) -> Result<()> {
 
     let endpoint = quinn::Endpoint::new(endpoint_cfg, None, socket, Arc::new(TokioRuntime))?;
 
-    let default_provider = rustls::crypto::ring::default_provider();
+    let default_provider = (*quinn::crypto::rustls::configured_provider()).clone();
     let provider = Arc::new(rustls::crypto::CryptoProvider {
-        cipher_suites: PERF_CIPHER_SUITES.into(),
+        cipher_suites: perf_cipher_suites(),
         ..default_provider
     });
 

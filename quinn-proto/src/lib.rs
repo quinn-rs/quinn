@@ -20,6 +20,17 @@
 #![allow(clippy::too_many_arguments)]
 #![warn(clippy::use_self)]
 
+// #[cfg(all(
+//     not(feature = "rustls-ring"),
+//     not(feature = "rustls-aws-lc-rs"),
+//     not(feature = "rustls-aws-lc-rs-fips"),
+//     not(feature = "rustls-openssl"),
+// ))]
+// compile_error!(
+//     "quinn-proto requires at least one TLS backend feature: \
+//      rustls-ring, rustls-aws-lc-rs, rustls-aws-lc-rs-fips, or rustls-openssl."
+// );
+
 use std::{
     fmt,
     net::{IpAddr, SocketAddr},
@@ -30,7 +41,14 @@ mod cid_queue;
 pub mod coding;
 mod constant_time;
 mod range_set;
-#[cfg(all(test, any(feature = "rustls-aws-lc-rs", feature = "rustls-ring")))]
+#[cfg(all(
+    test,
+    any(
+        feature = "rustls-aws-lc-rs",
+        feature = "rustls-ring",
+        feature = "rustls-openssl"
+    )
+))]
 mod tests;
 pub mod transport_parameters;
 mod varint;

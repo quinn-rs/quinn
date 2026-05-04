@@ -36,6 +36,9 @@ rustls-ring = ["dep:rustls", "ring", "proto/rustls-ring", "proto/ring"]
 # Outside wasm*-unknown-unknown targets, this enables `Endpoint::client` and `Endpoint::server` conveniences.
 ring = ["proto/ring"]
 runtime-tokio = ["tokio/time", "tokio/rt", "tokio/net"]
+# Enable rustls with the `openssl` crypto provider (system OpenSSL)
+openssl = ["proto/openssl"]
+rustls-openssl = ["dep:rustls", "openssl", "proto/rustls-openssl", "proto/openssl"]
 runtime-smol = ["dep:async-io", "dep:smol"]
 
 # Configure `tracing` to log events via `log` if no `tracing` subscriber exists.

@@ -1,4 +1,8 @@
-#![cfg(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring"))]
+#![cfg(any(
+    feature = "rustls-aws-lc-rs",
+    feature = "rustls-ring",
+    feature = "rustls-openssl"
+))]
 //! Commonly used code in most examples.
 
 use quinn::{ClientConfig, Endpoint, ServerConfig};

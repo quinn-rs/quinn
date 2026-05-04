@@ -18,6 +18,8 @@ async-io = "2"
 assert_matches = "1.1"
 aws-lc-rs = { version = "1.9", default-features = false }
 bencher = "0.1.5"
+openssl = { version = "0.10" }
+rustls-openssl = { version = "0.3" }
 bytes = "1"
 clap = { version = "4", features = ["derive"] }
 crc = "3"
@@ -33,7 +35,7 @@ pin-project-lite = "0.2"
 qlog = "0.17"
 rand = "0.9"
 rcgen = "0.14"
-ring = "0.17"
+ring = { version = "0.17" }
 rustc-hash = "2"
 rustls = { version = "0.23.5", default-features = false, features = ["std"] }
 rustls-platform-verifier = "0.7"

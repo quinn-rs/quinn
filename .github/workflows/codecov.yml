@@ -19,15 +19,21 @@ jobs:
         # they have complex build requirements:
         #     https://github.com/aws/aws-lc/blob/3263ce2a553e4e917217fb487f8c6f488fcb1866/BUILDING.md#build-prerequisites
         #
+        # On Windows, OpenSSL is installed but the Rust `openssl` crate needs OPENSSL_DIR to
+        # locate it since pkg-config is not available.
+        #
         # This list of features was determined using:
         #     cargo metadata --format-version 1 --no-deps \
         #       | jq -r ' .packages[].features | keys[]' \
         #       | sort -u \
         #       | grep -vFx -e 'default' -e 'aws-lc-rs-fips' -e 'rustls-aws-lc-rs-fips' \
         #       | paste -sd ',' -
+        env:
+          # Help the `openssl` crate find OpenSSL on Windows (pre-installed via Chocolatey)
+          OPENSSL_DIR: ${{ runner.os == 'Windows' && 'C:\Program Files\OpenSSL-Win64' || '' }}
         run: |
           cargo llvm-cov \
-            --features="arbitrary,aws-lc-rs,bloom,log,fast-apple-datapath,futures-io,json-output,lock_tracking,tracing-log,platform-verifier,qlog,ring,runtime-smol,runtime-tokio,rustls,rustls-aws-lc-rs,rustls-log,rustls-ring,serde,serde_json,smol,tracing" \
+            --features="arbitrary,aws-lc-rs,bloom,log,fast-apple-datapath,futures-io,json-output,lock_tracking,tracing-log,openssl,platform-verifier,qlog,ring,runtime-smol,runtime-tokio,rustls,rustls-aws-lc-rs,rustls-log,rustls-openssl,rustls-ring,serde,serde_json,smol,tracing" \
             --workspace --lcov --output-path lcov.info
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v6

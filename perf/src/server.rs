@@ -7,7 +7,7 @@ use quinn::{TokioRuntime, crypto::rustls::QuicServerConfig};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer, pem::PemObject};
 use tracing::{debug, error, info};
 
-use crate::{CommonOpt, PERF_CIPHER_SUITES, noprotection::NoProtectionServerConfig};
+use crate::{CommonOpt, noprotection::NoProtectionServerConfig, perf_cipher_suites};
 
 #[derive(Parser)]
 #[clap(name = "server")]
@@ -44,9 +44,9 @@ pub async fn run(opt: Opt) -> Result<()> {
         }
     };
 
-    let default_provider = rustls::crypto::ring::default_provider();
+    let default_provider = (*quinn::crypto::rustls::configured_provider()).clone();
     let provider = rustls::crypto::CryptoProvider {
-        cipher_suites: PERF_CIPHER_SUITES.into(),
+        cipher_suites: perf_cipher_suites(),
         ..default_provider
     };
 

@@ -191,11 +191,8 @@ impl crypto::Session for TlsSession {
             _ => unreachable!(),
         };
 
-        let nonce = aead::Nonce::assume_unique_for_key(nonce);
-        let key = aead::LessSafeKey::new(aead::UnboundKey::new(&aead::AES_128_GCM, &key).unwrap());
-
         let (aad, tag) = pseudo_packet.split_at_mut(tag_start);
-        key.open_in_place(nonce, aead::Aad::from(aad), tag).is_ok()
+        retry_aes128gcm_open(&key, &nonce, aad, tag)
     }
 
     fn export_keying_material(
@@ -209,6 +206,70 @@ impl crypto::Session for TlsSession {
             .map_err(|_| ExportKeyingMaterialError)?;
         Ok(())
     }
+}
+
+/// Verify an AES-128-GCM authenticated ciphertext for QUIC retry integrity.
+///
+/// `data` must be laid out as `ciphertext || 16-byte tag`.
+fn retry_aes128gcm_open(key: &[u8; 16], nonce: &[u8; 12], aad: &[u8], data: &mut [u8]) -> bool {
+    #[cfg(any(feature = "ring", feature = "aws-lc-rs"))]
+    {
+        let n = aead::Nonce::assume_unique_for_key(*nonce);
+        let k = aead::LessSafeKey::new(aead::UnboundKey::new(&aead::AES_128_GCM, key).unwrap());
+        return k.open_in_place(n, aead::Aad::from(aad), data).is_ok();
+    }
+    #[cfg(all(
+        feature = "rustls-openssl",
+        not(feature = "ring"),
+        not(feature = "aws-lc-rs")
+    ))]
+    {
+        use openssl::symm::{Cipher, decrypt_aead};
+        if data.len() < 16 {
+            return false;
+        }
+        let tag_pos = data.len() - 16;
+        return decrypt_aead(
+            Cipher::aes_128_gcm(),
+            key,
+            Some(nonce),
+            aad,
+            &data[..tag_pos],
+            &data[tag_pos..],
+        )
+        .is_ok();
+    }
+    #[allow(unreachable_code)]
+    false
+}
+
+/// Produce an AES-128-GCM authentication tag over `aad` for QUIC retry integrity.
+fn retry_aes128gcm_seal_tag(key: &[u8; 16], nonce: &[u8; 12], aad: &[u8]) -> [u8; 16] {
+    #[cfg(any(feature = "ring", feature = "aws-lc-rs"))]
+    {
+        let n = aead::Nonce::assume_unique_for_key(*nonce);
+        let k = aead::LessSafeKey::new(aead::UnboundKey::new(&aead::AES_128_GCM, key).unwrap());
+        let tag = k
+            .seal_in_place_separate_tag(n, aead::Aad::from(aad), &mut [])
+            .unwrap();
+        let mut result = [0u8; 16];
+        result.copy_from_slice(tag.as_ref());
+        return result;
+    }
+    #[cfg(all(
+        feature = "rustls-openssl",
+        not(feature = "ring"),
+        not(feature = "aws-lc-rs")
+    ))]
+    {
+        use openssl::symm::{Cipher, encrypt_aead};
+        let mut tag = [0u8; 16];
+        encrypt_aead(Cipher::aes_128_gcm(), key, Some(nonce), aad, &[], &mut tag)
+            .expect("openssl AES-128-GCM seal failed");
+        return tag;
+    }
+    #[allow(unreachable_code)]
+    [0u8; 16]
 }
 
 const RETRY_INTEGRITY_KEY_DRAFT: [u8; 16] = [
@@ -552,15 +613,7 @@ impl crypto::ServerConfig for QuicServerConfig {
         pseudo_packet.extend_from_slice(&orig_dst_cid);
         pseudo_packet.extend_from_slice(packet);
 
-        let nonce = aead::Nonce::assume_unique_for_key(nonce);
-        let key = aead::LessSafeKey::new(aead::UnboundKey::new(&aead::AES_128_GCM, &key).unwrap());
-
-        let tag = key
-            .seal_in_place_separate_tag(nonce, aead::Aad::from(pseudo_packet), &mut [])
-            .unwrap();
-        let mut result = [0; 16];
-        result.copy_from_slice(tag.as_ref());
-        result
+        retry_aes128gcm_seal_tag(&key, &nonce, &pseudo_packet)
     }
 }
 
@@ -579,11 +632,24 @@ pub(crate) fn initial_suite_from_provider(
         .flatten()
 }
 
-pub(crate) fn configured_provider() -> Arc<rustls::crypto::CryptoProvider> {
-    #[cfg(all(feature = "rustls-aws-lc-rs", not(feature = "rustls-ring")))]
-    let provider = rustls::crypto::aws_lc_rs::default_provider();
+/// Returns the active rustls [`CryptoProvider`][rustls::crypto::CryptoProvider] selected at
+/// compile time by the enabled backend feature (`rustls-ring`, `rustls-aws-lc-rs`, or
+/// `rustls-openssl`).
+///
+/// This is useful for building rustls configurations that stay in sync with the provider quinn
+/// was compiled against, e.g. when filtering cipher suites or constructing a custom
+/// [`rustls::ClientConfig`].
+pub fn configured_provider() -> Arc<rustls::crypto::CryptoProvider> {
     #[cfg(feature = "rustls-ring")]
     let provider = rustls::crypto::ring::default_provider();
+    #[cfg(all(feature = "rustls-aws-lc-rs", not(feature = "rustls-ring")))]
+    let provider = rustls::crypto::aws_lc_rs::default_provider();
+    #[cfg(all(
+        feature = "rustls-openssl",
+        not(feature = "rustls-ring"),
+        not(feature = "rustls-aws-lc-rs")
+    ))]
+    let provider = rustls_openssl::default_provider();
     Arc::new(provider)
 }
 

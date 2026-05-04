@@ -5,9 +5,17 @@ use std::{
     sync::Arc,
 };
 
-#[cfg(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring"))]
+#[cfg(any(
+    feature = "rustls-aws-lc-rs",
+    feature = "rustls-ring",
+    feature = "rustls-openssl"
+))]
 use rustls::client::WebPkiServerVerifier;
-#[cfg(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring"))]
+#[cfg(any(
+    feature = "rustls-aws-lc-rs",
+    feature = "rustls-ring",
+    feature = "rustls-openssl"
+))]
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use thiserror::Error;
 
@@ -15,7 +23,11 @@ use thiserror::Error;
 use crate::BloomTokenLog;
 #[cfg(not(feature = "bloom"))]
 use crate::NoneTokenLog;
-#[cfg(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring"))]
+#[cfg(any(
+    feature = "rustls-aws-lc-rs",
+    feature = "rustls-ring",
+    feature = "rustls-openssl"
+))]
 use crate::crypto::rustls::{QuicServerConfig, configured_provider};
 use crate::{
     DEFAULT_SUPPORTED_VERSIONS, Duration, MAX_CID_SIZE, RandomConnectionIdGenerator, SystemTime,
@@ -174,19 +186,27 @@ impl fmt::Debug for EndpointConfig {
     }
 }
 
-#[cfg(any(feature = "aws-lc-rs", feature = "ring"))]
+#[cfg(any(feature = "aws-lc-rs", feature = "ring", feature = "openssl"))]
 impl Default for EndpointConfig {
     fn default() -> Self {
-        #[cfg(all(feature = "aws-lc-rs", not(feature = "ring")))]
-        use aws_lc_rs::hmac;
         use rand::RngCore;
-        #[cfg(feature = "ring")]
-        use ring::hmac;
-
         let mut reset_key = [0; 64];
         rand::rng().fill_bytes(&mut reset_key);
 
-        Self::new(Arc::new(hmac::Key::new(hmac::HMAC_SHA256, &reset_key)))
+        #[cfg(feature = "ring")]
+        let key: Arc<dyn HmacKey> = {
+            use ring::hmac;
+            Arc::new(hmac::Key::new(hmac::HMAC_SHA256, &reset_key))
+        };
+        #[cfg(all(feature = "aws-lc-rs", not(feature = "ring")))]
+        let key: Arc<dyn HmacKey> = {
+            use aws_lc_rs::hmac;
+            Arc::new(hmac::Key::new(hmac::HMAC_SHA256, &reset_key))
+        };
+        #[cfg(all(feature = "openssl", not(feature = "ring"), not(feature = "aws-lc-rs")))]
+        let key: Arc<dyn HmacKey> = Arc::new(crate::crypto::openssl_like::HmacKey::new(&reset_key));
+
+        Self::new(key)
     }
 }
 
@@ -373,7 +393,11 @@ impl ServerConfig {
     }
 }
 
-#[cfg(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring"))]
+#[cfg(any(
+    feature = "rustls-aws-lc-rs",
+    feature = "rustls-ring",
+    feature = "rustls-openssl"
+))]
 impl ServerConfig {
     /// Create a server config with the given certificate chain to be presented to clients
     ///
@@ -388,24 +412,35 @@ impl ServerConfig {
     }
 }
 
-#[cfg(any(feature = "aws-lc-rs", feature = "ring"))]
+#[cfg(any(feature = "aws-lc-rs", feature = "ring", feature = "openssl"))]
 impl ServerConfig {
     /// Create a server config with the given [`crypto::ServerConfig`]
     ///
     /// Uses a randomized handshake token key.
     pub fn with_crypto(crypto: Arc<dyn crypto::ServerConfig>) -> Self {
-        #[cfg(all(feature = "aws-lc-rs", not(feature = "ring")))]
-        use aws_lc_rs::hkdf;
         use rand::RngCore;
-        #[cfg(feature = "ring")]
-        use ring::hkdf;
-
         let rng = &mut rand::rng();
         let mut master_key = [0u8; 64];
         rng.fill_bytes(&mut master_key);
-        let master_key = hkdf::Salt::new(hkdf::HKDF_SHA256, &[]).extract(&master_key);
 
-        Self::new(crypto, Arc::new(master_key))
+        #[cfg(feature = "ring")]
+        let token_key: Arc<dyn HandshakeTokenKey> = {
+            use ring::hkdf;
+            let prk = hkdf::Salt::new(hkdf::HKDF_SHA256, &[]).extract(&master_key);
+            Arc::new(prk)
+        };
+        #[cfg(all(feature = "aws-lc-rs", not(feature = "ring")))]
+        let token_key: Arc<dyn HandshakeTokenKey> = {
+            use aws_lc_rs::hkdf;
+            let prk = hkdf::Salt::new(hkdf::HKDF_SHA256, &[]).extract(&master_key);
+            Arc::new(prk)
+        };
+        #[cfg(all(feature = "openssl", not(feature = "ring"), not(feature = "aws-lc-rs")))]
+        let token_key: Arc<dyn HandshakeTokenKey> = Arc::new(
+            crate::crypto::openssl_like::HkdfPrk::extract(&[], &master_key),
+        );
+
+        Self::new(crypto, token_key)
     }
 }
 
@@ -618,7 +653,11 @@ impl ClientConfig {
     }
 }
 
-#[cfg(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring"))]
+#[cfg(any(
+    feature = "rustls-aws-lc-rs",
+    feature = "rustls-ring",
+    feature = "rustls-openssl"
+))]
 impl ClientConfig {
     /// Create a client configuration that trusts the platform's native roots
     #[cfg(feature = "platform-verifier")]

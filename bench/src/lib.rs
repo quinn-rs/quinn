@@ -63,7 +63,7 @@ pub async fn connect_client(
     let mut roots = RootCertStore::empty();
     roots.add(server_cert)?;
 
-    let default_provider = rustls::crypto::ring::default_provider();
+    let default_provider = (*quinn::crypto::rustls::configured_provider()).clone();
     let provider = rustls::crypto::CryptoProvider {
         cipher_suites: vec![opt.cipher.as_rustls()],
         ..default_provider
@@ -231,12 +231,23 @@ pub enum CipherSuite {
 
 impl CipherSuite {
     pub fn as_rustls(self) -> rustls::SupportedCipherSuite {
-        use rustls::crypto::ring::cipher_suite;
-        match self {
-            Self::Aes128 => cipher_suite::TLS13_AES_128_GCM_SHA256,
-            Self::Aes256 => cipher_suite::TLS13_AES_256_GCM_SHA384,
-            Self::Chacha20 => cipher_suite::TLS13_CHACHA20_POLY1305_SHA256,
-        }
+        use rustls::CipherSuite;
+        let id = match self {
+            Self::Aes128 => CipherSuite::TLS13_AES_128_GCM_SHA256,
+            Self::Aes256 => CipherSuite::TLS13_AES_256_GCM_SHA384,
+            Self::Chacha20 => CipherSuite::TLS13_CHACHA20_POLY1305_SHA256,
+        };
+        quinn::crypto::rustls::configured_provider()
+            .cipher_suites
+            .iter()
+            .find(|cs| cs.suite() == id)
+            .copied()
+            .unwrap_or_else(|| {
+                panic!(
+                    "cipher suite {:?} not supported by the active crypto provider",
+                    id
+                )
+            })
     }
 }
 

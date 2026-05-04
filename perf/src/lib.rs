@@ -11,7 +11,6 @@ use quinn::{
     congestion::{self, ControllerFactory},
     udp::UdpSocketState,
 };
-use rustls::crypto::ring::cipher_suite;
 use socket2::{Domain, Protocol, Socket, Type};
 use tracing::warn;
 
@@ -214,8 +213,21 @@ impl CongestionAlgorithm {
     }
 }
 
-pub static PERF_CIPHER_SUITES: &[rustls::SupportedCipherSuite] = &[
-    cipher_suite::TLS13_AES_128_GCM_SHA256,
-    cipher_suite::TLS13_AES_256_GCM_SHA384,
-    cipher_suite::TLS13_CHACHA20_POLY1305_SHA256,
-];
+/// Returns the cipher suites used by the perf tool, filtered from the active crypto provider.
+///
+/// Replaces the former `PERF_CIPHER_SUITES` static so the list is not tied to a specific
+/// backend's compile-time constants.
+pub fn perf_cipher_suites() -> Vec<rustls::SupportedCipherSuite> {
+    use rustls::CipherSuite;
+    let desired = [
+        CipherSuite::TLS13_AES_128_GCM_SHA256,
+        CipherSuite::TLS13_AES_256_GCM_SHA384,
+        CipherSuite::TLS13_CHACHA20_POLY1305_SHA256,
+    ];
+    quinn::crypto::rustls::configured_provider()
+        .cipher_suites
+        .iter()
+        .filter(|cs| desired.contains(&cs.suite()))
+        .copied()
+        .collect()
+}

@@ -17,11 +17,18 @@ use crate::{
     transport_parameters::TransportParameters,
 };
 
+/// Cryptography interface based on OpenSSL (system library)
+#[cfg(feature = "openssl")]
+pub(crate) mod openssl_like;
 /// Cryptography interface based on *ring*
 #[cfg(any(feature = "aws-lc-rs", feature = "ring"))]
 pub(crate) mod ring_like;
 /// TLS interface based on rustls
-#[cfg(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring"))]
+#[cfg(any(
+    feature = "rustls-aws-lc-rs",
+    feature = "rustls-ring",
+    feature = "rustls-openssl"
+))]
 pub mod rustls;
 
 /// A cryptographic session (commonly TLS)

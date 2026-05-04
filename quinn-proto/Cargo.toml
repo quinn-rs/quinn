@@ -26,6 +26,9 @@ rustls-aws-lc-rs-fips = ["rustls-aws-lc-rs", "aws-lc-rs-fips"]
 # Enable rustls with the `ring` crypto provider
 rustls-ring = ["dep:rustls", "rustls?/ring", "ring"]
 ring = ["dep:ring"]
+# Enable rustls with the `openssl` crypto provider (system OpenSSL)
+openssl = ["dep:openssl"]
+rustls-openssl = ["dep:rustls", "dep:rustls-openssl", "openssl"]
 # Enable rustls ring provider and direct ring usage
 # Provides `ClientConfig::with_platform_verifier()` convenience method
 platform-verifier = ["dep:rustls-platform-verifier"]
@@ -50,8 +53,10 @@ lru-slab = { workspace = true }
 qlog = { workspace = true, optional = true }
 rustc-hash = { workspace = true }
 rand = { workspace = true }
+openssl = { workspace = true, optional = true }
 ring = { workspace = true, optional = true }
 rustls = { workspace = true, optional = true }
+rustls-openssl = { workspace = true, optional = true }
 rustls-platform-verifier = { workspace = true, optional = true }
 slab = { workspace = true }
 thiserror = { workspace = true }

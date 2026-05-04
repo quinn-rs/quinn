@@ -68,7 +68,11 @@ pub use proto::{
 };
 #[cfg(feature = "qlog")]
 pub use proto::{QlogConfig, QlogStream};
-#[cfg(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring"))]
+#[cfg(any(
+    feature = "rustls-aws-lc-rs",
+    feature = "rustls-ring",
+    feature = "rustls-openssl"
+))]
 pub use rustls;
 pub use udp;
 
