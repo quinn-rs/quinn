@@ -495,9 +495,7 @@ impl EndpointInner {
                 // The failed accept consumed a `pending_accepts` slot. If that was the last
                 // work in flight, `wait_idle` needs an explicit wake — the only other path
                 // that notifies it is the drained-connection path, which we don't hit here.
-                if state.recv_state.connections.is_empty()
-                    && state.inner.pending_accepts() == 0
-                {
+                if state.recv_state.connections.is_empty() && state.inner.pending_accepts() == 0 {
                     self.shared.idle.notify_waiters();
                 }
                 Err(error.cause)
