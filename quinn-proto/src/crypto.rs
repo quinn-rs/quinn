@@ -18,7 +18,7 @@ use crate::{
 };
 
 /// Cryptography interface based on OpenSSL (system library)
-#[cfg(feature = "openssl")]
+#[cfg(all(feature = "openssl", not(feature = "ring"), not(feature = "aws-lc-rs")))]
 pub(crate) mod openssl_like;
 /// Cryptography interface based on *ring*
 #[cfg(any(feature = "aws-lc-rs", feature = "ring"))]
