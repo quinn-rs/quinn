@@ -123,7 +123,7 @@ impl LinuxError {
     }
 
     /// Control message buffer size for socket error queue (MSG_ERRQUEUE)
-    const ERR_CMSG_LEN: usize = 128;
+    const ERR_CMSG_LEN: usize = 256;
 }
 
 #[cfg(any(target_os = "linux", target_os = "android"))]

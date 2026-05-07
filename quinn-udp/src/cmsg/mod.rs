@@ -153,4 +153,4 @@ pub(crate) trait CMsgHdr {
 }
 
 #[cfg(unix)]
-pub(crate) const LEN: usize = 88;
+pub(crate) const LEN: usize = 96;

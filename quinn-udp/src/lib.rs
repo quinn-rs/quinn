@@ -27,16 +27,14 @@
 #![warn(unreachable_pub)]
 #![warn(clippy::use_self)]
 
+use core::time::Duration;
 use std::net::{IpAddr, Ipv6Addr, SocketAddr};
 #[cfg(unix)]
 use std::os::unix::io::AsFd;
 #[cfg(windows)]
 use std::os::windows::io::AsSocket;
 #[cfg(not(wasm_browser))]
-use std::{
-    sync::Mutex,
-    time::{Duration, Instant},
-};
+use std::{sync::Mutex, time::Instant};
 
 #[cfg(apple_fast)]
 mod apple_fast;
@@ -124,6 +122,10 @@ pub struct RecvMeta {
     pub dst_ip: Option<IpAddr>,
     /// The interface index of the interface on which the datagram was received
     pub interface_index: Option<u32>,
+    /// Kernel receive timestamp as Unix epoch
+    ///
+    /// Populated on platforms: Linux, Android.
+    pub timestamp: Option<Duration>,
 }
 
 impl Default for RecvMeta {
@@ -136,6 +138,7 @@ impl Default for RecvMeta {
             ecn: None,
             dst_ip: None,
             interface_index: None,
+            timestamp: None,
         }
     }
 }
