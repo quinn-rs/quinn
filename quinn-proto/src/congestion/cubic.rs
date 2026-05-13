@@ -178,20 +178,19 @@ impl Controller for Cubic {
         }
 
         self.recovery_start_time = Some(now);
+        let window = self.window as f64;
 
-        // Fast convergence
-        #[allow(clippy::branches_sharing_code)]
-        // https://github.com/rust-lang/rust-clippy/issues/7198
-        if (self.window as f64) < self.cubic_state.w_max {
-            self.cubic_state.w_max = self.window as f64 * (1.0 + BETA_CUBIC) / 2.0;
+        // Fast convergence lowers W_max first; the 0.7 loss reduction still
+        // applies to the old window, not to that already-reduced W_max.
+        // https://www.rfc-editor.org/rfc/rfc9438.html#section-4.7
+        // https://www.rfc-editor.org/rfc/rfc9438.html#section-4.6
+        if window < self.cubic_state.w_max {
+            self.cubic_state.w_max = window * (1.0 + BETA_CUBIC) / 2.0;
         } else {
-            self.cubic_state.w_max = self.window as f64;
+            self.cubic_state.w_max = window;
         }
 
-        self.ssthresh = cmp::max(
-            (self.cubic_state.w_max * BETA_CUBIC) as u64,
-            self.minimum_window(),
-        );
+        self.ssthresh = cmp::max((window * BETA_CUBIC) as u64, self.minimum_window());
         self.window = self.ssthresh;
         self.cubic_state.k = self.cubic_state.cubic_k(self.current_mtu);
 
@@ -262,5 +261,31 @@ impl Default for CubicConfig {
 impl ControllerFactory for CubicConfig {
     fn build(self: Arc<Self>, now: Instant, current_mtu: u16) -> Box<dyn Controller> {
         Box::new(Cubic::new(self, now, current_mtu))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fast_convergence_reduces_w_max_without_double_reducing_window() {
+        let now = Instant::now();
+        let config = Arc::new(CubicConfig::default());
+        let mut cubic = Cubic::new(config, now, BASE_DATAGRAM_SIZE as u16);
+        let window = 8 * BASE_DATAGRAM_SIZE;
+
+        cubic.window = window;
+        cubic.ssthresh = window;
+        cubic.cubic_state.w_max = 12.0 * BASE_DATAGRAM_SIZE as f64;
+
+        cubic.on_congestion_event(now, now + Duration::from_millis(1), false, 0);
+
+        assert_eq!(
+            cubic.cubic_state.w_max,
+            window as f64 * (1.0 + BETA_CUBIC) / 2.0
+        );
+        assert_eq!(cubic.ssthresh, (window as f64 * BETA_CUBIC) as u64);
+        assert_eq!(cubic.window, cubic.ssthresh);
     }
 }
