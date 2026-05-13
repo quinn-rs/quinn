@@ -2,14 +2,13 @@ use std::any::Any;
 use std::fmt::Debug;
 use std::sync::Arc;
 
-use rand::rngs::{StdRng, SysRng};
-use rand::{Rng, RngExt, SeedableRng};
+use rand::{RngExt, SeedableRng};
+use rand_pcg::Pcg32;
 
 use crate::congestion::ControllerMetrics;
 use crate::congestion::bbr::bw_estimation::BandwidthEstimation;
 use crate::congestion::bbr::min_max::MinMax;
 use crate::connection::RttEstimator;
-use crate::endpoint::NoRandomBytes;
 use crate::{Duration, Instant};
 
 use super::{BASE_DATAGRAM_SIZE, Controller, ControllerFactory};
@@ -58,14 +57,14 @@ pub struct Bbr {
     bw_at_last_round: u64,
     round_wo_bw_gain: u64,
     ack_aggregation: AckAggregationState,
-    random_number_generator: StdRng,
+    random_number_generator: Pcg32,
 }
 
 impl Bbr {
     /// Construct a state using the given `config` and current time `now`
-    pub fn new(config: Arc<BbrConfig>, current_mtu: u16) -> Result<Self, NoRandomBytes> {
+    pub fn new(config: Arc<BbrConfig>, current_mtu: u16) -> Self {
         let initial_window = config.initial_window;
-        Ok(Self {
+        Self {
             config,
             current_mtu: current_mtu as u64,
             max_bandwidth: BandwidthEstimation::default(),
@@ -99,8 +98,8 @@ impl Bbr {
             bw_at_last_round: 0,
             round_wo_bw_gain: 0,
             ack_aggregation: AckAggregationState::default(),
-            random_number_generator: StdRng::try_from_rng(&mut SysRng)?,
-        })
+            random_number_generator: Pcg32::from_rng(&mut rand::rng()),
+        }
     }
 
     fn enter_startup_mode(&mut self) {
