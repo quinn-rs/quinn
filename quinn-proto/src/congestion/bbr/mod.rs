@@ -2,7 +2,8 @@ use std::any::Any;
 use std::fmt::Debug;
 use std::sync::Arc;
 
-use rand::{Rng, SeedableRng};
+use rand::rngs::{StdRng, SysRng};
+use rand::{Rng, RngExt, SeedableRng};
 
 use crate::congestion::ControllerMetrics;
 use crate::congestion::bbr::bw_estimation::BandwidthEstimation;
@@ -56,7 +57,7 @@ pub struct Bbr {
     bw_at_last_round: u64,
     round_wo_bw_gain: u64,
     ack_aggregation: AckAggregationState,
-    random_number_generator: rand::rngs::StdRng,
+    random_number_generator: StdRng,
 }
 
 impl Bbr {
@@ -97,7 +98,7 @@ impl Bbr {
             bw_at_last_round: 0,
             round_wo_bw_gain: 0,
             ack_aggregation: AckAggregationState::default(),
-            random_number_generator: rand::rngs::StdRng::from_os_rng(),
+            random_number_generator: StdRng::try_from_rng(&mut SysRng).unwrap(),
         }
     }
 
