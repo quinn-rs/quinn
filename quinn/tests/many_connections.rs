@@ -8,7 +8,7 @@ use std::{
 
 use crc::Crc;
 use quinn::{ConnectionError, ReadError, StoppedError, TransportConfig, WriteError};
-use rand::{self, RngCore};
+use rand::{self, Rng};
 use rustls::pki_types::{CertificateDer, PrivatePkcs8KeyDer};
 use tokio::runtime::Builder;
 
