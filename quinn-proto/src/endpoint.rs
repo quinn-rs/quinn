@@ -8,7 +8,10 @@ use std::{
 };
 
 use bytes::{BufMut, Bytes, BytesMut};
-use rand::{Rng, RngCore, SeedableRng, rngs::StdRng};
+use rand::{
+    Rng, RngExt, SeedableRng,
+    rngs::{StdRng, SysRng},
+};
 use rustc_hash::FxHashMap;
 use slab::Slab;
 use thiserror::Error;
@@ -61,15 +64,19 @@ impl Endpoint {
     /// `allow_mtud` enables path MTU detection when requested by `Connection` configuration for
     /// better performance. This requires that outgoing packets are never fragmented, which can be
     /// achieved via e.g. the `IPV6_DONTFRAG` socket option.
+    ///
+    /// Returns an error if the endpoint cannot be seeded from the operating system random source.
     pub fn new(
         config: Arc<EndpointConfig>,
         server_config: Option<Arc<ServerConfig>>,
         allow_mtud: bool,
     ) -> Self {
         Self {
-            rng: config
-                .rng_seed
-                .map_or_else(StdRng::from_os_rng, StdRng::from_seed),
+            rng: match config.rng_seed {
+                Some(seed) => StdRng::from_seed(seed),
+                None => StdRng::try_from_rng(&mut SysRng)
+                    .expect("failed to seed random number generator from system"),
+            },
             index: ConnectionIndex::default(),
             connections: Slab::new(),
             local_cid_generator: (config.connection_id_generator_factory.as_ref())(),
