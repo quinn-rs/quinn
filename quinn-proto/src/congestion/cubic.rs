@@ -253,6 +253,7 @@ impl Controller for Cubic {
             congestion_window: self.window(),
             ssthresh: Some(self.state.ssthresh),
             pacing_rate: None,
+            min_rtt: None,
         }
     }
 

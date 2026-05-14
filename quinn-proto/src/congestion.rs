@@ -1,17 +1,19 @@
 //! Logic for controlling the rate at which data is sent
 
-use crate::Instant;
 use crate::connection::RttEstimator;
+use crate::{Duration, Instant};
 use std::any::Any;
 use std::sync::Arc;
 
 mod bbr;
 mod cubic;
 mod new_reno;
+mod quic_dc;
 
 pub use bbr::{Bbr, BbrConfig};
 pub use cubic::{Cubic, CubicConfig};
 pub use new_reno::{NewReno, NewRenoConfig};
+pub use quic_dc::{QuicDc, QuicDcConfig};
 
 /// Common interface for different congestion controllers
 pub trait Controller: Send + Sync {
@@ -78,6 +80,7 @@ pub trait Controller: Send + Sync {
             congestion_window: self.window(),
             ssthresh: None,
             pacing_rate: None,
+            min_rtt: None,
         }
     }
 
@@ -101,6 +104,8 @@ pub struct ControllerMetrics {
     pub ssthresh: Option<u64>,
     /// Pacing rate (bits/s)
     pub pacing_rate: Option<u64>,
+    /// Minimum RTT observed
+    pub min_rtt: Option<Duration>,
 }
 
 /// Constructs controllers on demand
