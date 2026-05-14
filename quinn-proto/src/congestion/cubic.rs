@@ -107,6 +107,7 @@ impl Controller for Cubic {
         now: Instant,
         sent: Instant,
         bytes: u64,
+        _pn: u64,
         app_limited: bool,
         rtt: &RttEstimator,
     ) {
@@ -187,6 +188,7 @@ impl Controller for Cubic {
         is_persistent_congestion: bool,
         is_ecn: bool,
         _lost_bytes: u64,
+        _largest_lost: u64,
     ) {
         if self
             .state
@@ -259,6 +261,7 @@ impl Controller for Cubic {
             congestion_window: self.window(),
             ssthresh: Some(self.state.ssthresh),
             pacing_rate: None,
+            send_quantum: None,
         }
     }
 
