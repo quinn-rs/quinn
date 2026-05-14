@@ -4,6 +4,7 @@ use std::{
     io::IoSliceMut,
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddrV4, UdpSocket},
     slice,
+    time::Duration,
 };
 
 use quinn_udp::{EcnCodepoint, RecvMeta, Transmit, UdpSocketState};
@@ -358,6 +359,26 @@ fn test_send_recv(send: &Socket, recv: &Socket, transmit: Transmit<'_>) {
             assert_eq!(meta.ecn, None);
         } else {
             assert_eq!(meta.ecn, transmit.ecn);
+        }
+
+        // On Linux and Android, we expect the kernel to provide a receive timestamp
+        // since we explicitly enabled `SO_TIMESTAMPNS`.
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        {
+            assert!(
+                meta.timestamp.is_some(),
+                "Kernel timestamp should be present on Linux/Android"
+            );
+            assert!(
+                meta.timestamp.unwrap() > Duration::ZERO,
+                "Kernel timestamp should be non-zero"
+            );
+        }
+
+        // On other platforms, the timestamp should remain `None`.
+        #[cfg(not(any(target_os = "linux", target_os = "android")))]
+        {
+            assert!(meta.timestamp.is_none());
         }
     }
     assert_eq!(datagrams, expected_datagrams);

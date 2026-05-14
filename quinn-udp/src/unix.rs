@@ -9,7 +9,7 @@ use std::{
         Mutex,
         atomic::{AtomicBool, AtomicUsize, Ordering},
     },
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 use socket2::SockRef;
@@ -148,6 +148,12 @@ impl UdpSocketState {
                 // list the kernel might potentially produce. See
                 // https://github.com/quinn-rs/quinn/pull/1354.
                 gro_segments = 64
+            }
+
+            if let Err(_err) =
+                set_socket_option(&*io, libc::SOL_SOCKET, libc::SO_TIMESTAMPNS, OPTION_ON)
+            {
+                crate::log::debug!("Ignoring error setting SO_TIMESTAMPNS on socket: {_err:?}");
             }
         }
         #[cfg(any(target_os = "freebsd", apple))]
@@ -696,7 +702,7 @@ fn recv_single(
     Ok(1)
 }
 
-const CMSG_LEN: usize = 88;
+const CMSG_LEN: usize = 96;
 
 #[cfg_attr(apple_fast, allow(dead_code))] // Unused when apple_fast is enabled
 fn prepare_msg(
@@ -894,6 +900,7 @@ fn decode_recv<M: cmsg::MsgHdr<ControlMessage = libc::cmsghdr>>(
         dst_ip: None,
         interface_index: None,
         stride: len,
+        timestamp: None,
     };
 
     let cmsg_iter = unsafe { cmsg::Iter::new(hdr) };
@@ -908,6 +915,7 @@ fn decode_recv<M: cmsg::MsgHdr<ControlMessage = libc::cmsghdr>>(
         ecn: EcnCodepoint::from_bits(ctrl.ecn_bits),
         dst_ip: ctrl.dst_ip,
         interface_index: ctrl.interface_index,
+        timestamp: ctrl.timestamp,
     })
 }
 
@@ -917,6 +925,7 @@ struct ControlMetadata {
     dst_ip: Option<IpAddr>,
     interface_index: Option<u32>,
     stride: usize,
+    timestamp: Option<Duration>,
 }
 
 impl ControlMetadata {
@@ -973,6 +982,13 @@ impl ControlMetadata {
             (libc::SOL_UDP, libc::UDP_GRO) => unsafe {
                 self.stride = cmsg::decode::<libc::c_int, libc::cmsghdr>(cmsg) as usize;
             },
+            #[cfg(any(target_os = "linux", target_os = "android"))]
+            (libc::SOL_SOCKET, libc::SCM_TIMESTAMPNS) => {
+                let ts = unsafe { cmsg::decode::<libc::timespec, libc::cmsghdr>(cmsg) };
+                let secs = u64::try_from(ts.tv_sec).unwrap_or(0);
+                let nsecs = u32::try_from(ts.tv_nsec).unwrap_or(0);
+                self.timestamp = Some(Duration::new(secs, nsecs));
+            }
             _ => {}
         }
     }
