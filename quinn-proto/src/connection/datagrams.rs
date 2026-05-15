@@ -35,19 +35,17 @@ impl Datagrams<'_> {
         if data.len() > max {
             return Err(SendDatagramError::TooLarge);
         }
+        if data.len() > self.conn.config.datagram_send_buffer_size {
+            return Err(SendDatagramError::TooLarge);
+        }
         if drop {
-            while self.conn.datagrams.outgoing_total > self.conn.config.datagram_send_buffer_size {
-                let prev = self
-                    .conn
-                    .datagrams
-                    .outgoing
-                    .pop_front()
-                    .expect("datagrams.outgoing_total desynchronized");
-                trace!(len = prev.data.len(), "dropping outgoing datagram");
-                self.conn.datagrams.outgoing_total -= prev.data.len();
-            }
-        } else if self.conn.datagrams.outgoing_total + data.len()
-            > self.conn.config.datagram_send_buffer_size
+            self.conn
+                .datagrams
+                .make_space_for(data.len(), self.conn.config.datagram_send_buffer_size);
+        } else if !self
+            .conn
+            .datagrams
+            .has_send_buffer_space(data.len(), self.conn.config.datagram_send_buffer_size)
         {
             self.conn.datagrams.send_blocked = true;
             return Err(SendDatagramError::Blocked(data));
@@ -140,6 +138,22 @@ impl DatagramState {
         Ok(was_empty)
     }
 
+    fn make_space_for(&mut self, datagram_len: usize, send_buffer_size: usize) {
+        while !self.has_send_buffer_space(datagram_len, send_buffer_size) {
+            let Some(prev) = self.outgoing.pop_front() else {
+                break;
+            };
+            trace!(len = prev.data.len(), "dropping outgoing datagram");
+            self.outgoing_total -= prev.data.len();
+        }
+    }
+
+    fn has_send_buffer_space(&self, datagram_len: usize, send_buffer_size: usize) -> bool {
+        self.outgoing_total
+            .checked_add(datagram_len)
+            .is_some_and(|total| total <= send_buffer_size)
+    }
+
     /// Discard outgoing datagrams with a payload larger than `max_payload` bytes
     ///
     /// Returns whether any datagrams were dropped.
@@ -191,6 +205,43 @@ impl DatagramState {
         let x = self.incoming.pop_front()?.data;
         self.recv_buffered -= x.len();
         Some(x)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn make_space_for_accounts_for_new_datagram() {
+        let mut state = DatagramState::default();
+        state.outgoing.push_back(Datagram {
+            data: Bytes::from_static(&[0; 7]),
+        });
+        state.outgoing.push_back(Datagram {
+            data: Bytes::from_static(&[0; 2]),
+        });
+        state.outgoing_total = 9;
+
+        state.make_space_for(4, 10);
+
+        assert_eq!(state.outgoing.len(), 1);
+        assert_eq!(state.outgoing[0].data.len(), 2);
+        assert_eq!(state.outgoing_total, 2);
+    }
+
+    #[test]
+    fn make_space_for_handles_overflowing_capacity_check() {
+        let mut state = DatagramState::default();
+        state.outgoing.push_back(Datagram {
+            data: Bytes::from_static(&[0]),
+        });
+        state.outgoing_total = usize::MAX - 1;
+
+        state.make_space_for(2, usize::MAX);
+
+        assert!(state.outgoing.is_empty());
+        assert_eq!(state.outgoing_total, usize::MAX - 2);
     }
 }
 
