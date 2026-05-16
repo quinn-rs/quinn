@@ -157,6 +157,20 @@ pub struct PathStats {
     pub black_holes_detected: u64,
     /// Largest UDP payload size the path currently supports
     pub current_mtu: u16,
+    /// Number of bytes considered in-flight by congestion control
+    ///
+    /// Does not include IP or UDP overhead. Packets containing only ACK frames are excluded.
+    pub bytes_in_flight: u64,
+    /// Number of ack-eliciting packets currently in flight
+    pub packets_in_flight: u64,
+    /// Minimum RTT observed on this path, ignoring ack delay
+    pub min_rtt: Duration,
+    /// Most recently observed RTT sample
+    pub latest_rtt: Duration,
+    /// Estimated variance of RTT samples, computed as described in RFC 6298
+    pub rtt_variance: Duration,
+    /// Number of probe timeout (PTO) events fired
+    pub pto_count: u32,
 }
 
 /// Connection statistics
