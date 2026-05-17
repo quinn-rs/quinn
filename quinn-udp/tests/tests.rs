@@ -461,3 +461,116 @@ fn apple_fast_datapath() {
     }
     assert_eq!(total_received, segments, "should receive all segments");
 }
+
+#[test]
+#[cfg(any(target_os = "linux", target_os = "android"))]
+fn recv_transport_error() {
+    let sock = Socket::from(UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap());
+
+    let state = UdpSocketState::new((&sock).into()).unwrap();
+
+    // Pick an unused port by binding then dropping.
+    let unused_port = {
+        let tmp = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        tmp.local_addr().unwrap().port()
+    };
+
+    let dst = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, unused_port));
+
+    state
+        .try_send(
+            (&sock).into(),
+            &Transmit {
+                destination: dst,
+                ecn: None,
+                contents: b"hello",
+                segment_size: None,
+                src_ip: None,
+            },
+        )
+        .unwrap();
+
+    let mut received = None;
+    for _ in 0..100 {
+        match state.recv_transport_error((&sock).into()) {
+            Ok(Some(err)) => {
+                received = Some(err);
+                break;
+            }
+            _ => {
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+        }
+    }
+
+    let err = received.expect("ICMP Port Unreachable was not received");
+
+    assert!(
+        matches!(err.category, quinn_udp::TransportErrorCategory::Unreachable),
+        "expected ICMP destination unreachable transport error"
+    );
+    assert_eq!(
+        err.raw_errno,
+        libc::ECONNREFUSED,
+        "unexpected errno decoded from MSG_ERRQUEUE"
+    );
+    // Linux may report port 0 in SO_EE_OFFENDER for ICMP errors.
+    if let Some(addr) = err.addr {
+        assert_eq!(
+            addr.ip(),
+            dst.ip(),
+            "decoded offender IP does not match destination"
+        );
+    }
+}
+
+#[test]
+#[cfg(any(target_os = "linux", target_os = "android"))]
+fn recv_transport_error_ipv6() {
+    let sock = Socket::from(UdpSocket::bind((Ipv6Addr::LOCALHOST, 0)).unwrap());
+
+    let state = UdpSocketState::new((&sock).into()).unwrap();
+
+    let unused_port = {
+        let tmp = UdpSocket::bind((Ipv6Addr::LOCALHOST, 0)).unwrap();
+        tmp.local_addr().unwrap().port()
+    };
+
+    let dst = SocketAddr::V6(SocketAddrV6::new(Ipv6Addr::LOCALHOST, unused_port, 0, 0));
+
+    state
+        .try_send(
+            (&sock).into(),
+            &Transmit {
+                destination: dst,
+                ecn: None,
+                contents: b"hello",
+                segment_size: None,
+                src_ip: None,
+            },
+        )
+        .unwrap();
+
+    let mut received = None;
+
+    for _ in 0..100 {
+        if let Ok(Some(err)) = state.recv_transport_error((&sock).into()) {
+            received = Some(err);
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+
+    let err = received.expect("ICMPv6 Port Unreachable not received");
+
+    assert!(matches!(
+        err.category,
+        quinn_udp::TransportErrorCategory::Unreachable
+    ));
+
+    assert_eq!(err.raw_errno, libc::ECONNREFUSED);
+
+    if let Some(addr) = err.addr {
+        assert_eq!(addr.ip(), dst.ip());
+    }
+}
