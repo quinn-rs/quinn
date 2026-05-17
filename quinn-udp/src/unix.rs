@@ -15,8 +15,12 @@ use std::{
 use socket2::SockRef;
 
 use super::{
-    EcnCodepoint, IO_ERROR_LOG_INTERVAL, RecvMeta, Transmit, UdpSockRef, cmsg, log_sendmsg_error,
+    EcnCodepoint, IO_ERROR_LOG_INTERVAL, RecvMeta, Transmit, TransportError, UdpSockRef, cmsg,
+    log_sendmsg_error,
 };
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
+use super::TransportErrorCategory;
 
 // Adapted from https://github.com/apple-oss-distributions/xnu/blob/8d741a5de7ff4191bf97d57b9f54c2f6d4a15585/bsd/sys/socket_private.h
 #[cfg(apple_fast)]
@@ -149,6 +153,21 @@ impl UdpSocketState {
                 // https://github.com/quinn-rs/quinn/pull/1354.
                 gro_segments = 64
             }
+
+            if is_ipv4 || !io.only_v6()? {
+                if let Err(_err) =
+                    set_socket_option(&*io, libc::IPPROTO_IP, libc::IP_RECVERR, OPTION_ON)
+                {
+                    crate::log::debug!("Ignoring error setting IP_RECVERR on socket: {_err:?}");
+                }
+            }
+            if !is_ipv4 {
+                if let Err(_err) =
+                    set_socket_option(&*io, libc::IPPROTO_IPV6, libc::IPV6_RECVERR, OPTION_ON)
+                {
+                    crate::log::debug!("Ignoring error setting IPV6_RECVERR on socket: {_err:?}");
+                }
+            }
         }
         #[cfg(any(target_os = "freebsd", apple))]
         {
@@ -275,6 +294,20 @@ impl UdpSocketState {
         meta: &mut [RecvMeta],
     ) -> io::Result<usize> {
         recv_single(socket.0, bufs, meta)
+    }
+
+    /// Receives a pending asynchronous transport-layer error from this socket
+    ///
+    /// On Linux and Android this pops one entry from the socket error queue
+    /// (`MSG_ERRQUEUE`). Returns `None` if the queue is empty or if the
+    /// underlying platform is unsupported.
+    ///
+    /// Returns an error if the underlying system call fails unexpectedly.
+    pub fn recv_transport_error(
+        &self,
+        socket: UdpSockRef<'_>,
+    ) -> io::Result<Option<TransportError>> {
+        recv_transport_error(socket.0)
     }
 
     /// The maximum amount of segments which can be transmitted if a platform
@@ -694,6 +727,162 @@ fn recv_single(
     };
     meta[0] = decode_recv(&name, &hdr, n as usize)?;
     Ok(1)
+}
+
+// Control message buffer size for socket error queue (MSG_ERRQUEUE)
+#[cfg(any(target_os = "linux", target_os = "android"))]
+const ERR_CMSG_LEN: usize = 128;
+
+// Reads one entry from the Linux socket error queue (MSG_ERRQUEUE)
+#[cfg(any(target_os = "linux", target_os = "android"))]
+fn recv_linux_error(io: SockRef<'_>) -> io::Result<Option<LinuxError>> {
+    let mut name = MaybeUninit::<libc::sockaddr_storage>::uninit();
+    let mut ctrl = cmsg::Aligned(MaybeUninit::<[u8; ERR_CMSG_LEN]>::uninit());
+
+    // Linux requires at least one iovec even for MSG_ERRQUEUE.
+    let mut iov_data = [0u8; 1];
+    let mut iov = libc::iovec {
+        iov_base: iov_data.as_mut_ptr() as *mut _,
+        iov_len: iov_data.len(),
+    };
+
+    let mut hdr = unsafe { mem::zeroed::<libc::msghdr>() };
+
+    hdr.msg_name = name.as_mut_ptr() as _;
+    hdr.msg_namelen = mem::size_of::<libc::sockaddr_storage>() as _;
+    hdr.msg_iov = &mut iov;
+    hdr.msg_iovlen = 1;
+    hdr.msg_control = ctrl.0.as_mut_ptr() as _;
+    hdr.msg_controllen = ERR_CMSG_LEN as _;
+
+    if let Err(err) = retry_if_interrupted(|| unsafe {
+        libc::recvmsg(
+            io.as_raw_fd(),
+            &mut hdr,
+            libc::MSG_ERRQUEUE | libc::MSG_DONTWAIT,
+        )
+    }) {
+        if err.kind() == io::ErrorKind::WouldBlock {
+            return Ok(None);
+        }
+        return Err(err);
+    };
+
+    if hdr.msg_flags & libc::MSG_CTRUNC != 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "control message truncated",
+        ));
+    }
+
+    let cmsg_iter = unsafe { cmsg::Iter::new(&hdr) };
+
+    for cmsg in cmsg_iter {
+        if (cmsg.cmsg_level == libc::IPPROTO_IP && cmsg.cmsg_type == libc::IP_RECVERR)
+            || (cmsg.cmsg_level == libc::IPPROTO_IPV6 && cmsg.cmsg_type == libc::IPV6_RECVERR)
+        {
+            if let Some(raw) = LinuxError::decode(cmsg) {
+                return Ok(Some(raw));
+            }
+        }
+    }
+
+    Ok(None)
+}
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
+fn recv_transport_error(io: SockRef<'_>) -> io::Result<Option<TransportError>> {
+    Ok(recv_linux_error(io)?.map(decode_transport_err))
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "android")))]
+fn recv_transport_error(io: SockRef<'_>) -> io::Result<Option<TransportError>> {
+    let _ = io;
+    Ok(None)
+}
+
+/// Converts a Linux socket error queue entry into a transport-level error
+#[cfg(any(target_os = "linux", target_os = "android"))]
+fn decode_transport_err(raw: LinuxError) -> TransportError {
+    crate::log::debug!(
+        "decoding Linux socket error: ee_origin={} ee_type={} ee_code={} ee_errno={} ee_info={}",
+        raw.ee.ee_origin,
+        raw.ee.ee_type,
+        raw.ee.ee_code,
+        raw.ee.ee_errno,
+        raw.ee.ee_info,
+    );
+    let (category, mtu) = match (raw.ee.ee_origin, raw.ee.ee_type, raw.ee.ee_code) {
+        // IPv4: Fragmentation Needed (Type 3, Code 4)
+        (libc::SO_EE_ORIGIN_ICMP, 3, 4) => (TransportErrorCategory::TooBig, Some(raw.ee.ee_info)),
+        // IPv6: Packet Too Big (Type 2, Code 0)
+        (libc::SO_EE_ORIGIN_ICMP6, 2, 0) => (TransportErrorCategory::TooBig, Some(raw.ee.ee_info)),
+        // Unreachable cases
+        (libc::SO_EE_ORIGIN_ICMP, 3, _) | (libc::SO_EE_ORIGIN_ICMP6, 1, _) => {
+            (TransportErrorCategory::Unreachable, None)
+        }
+        _ => (TransportErrorCategory::Other, None),
+    };
+
+    TransportError {
+        addr: raw.offender,
+        category,
+        mtu,
+        raw_errno: raw.ee.ee_errno as i32,
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
+struct LinuxError {
+    ee: libc::sock_extended_err,
+    offender: Option<SocketAddr>,
+}
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
+impl LinuxError {
+    /// Decodes a Linux `sock_extended_err` from a MSG_ERRQUEUE control message
+    ///
+    /// Assumes the control message payload follows the kernel's
+    /// `sock_extended_err + sockaddr` layout used by IP_RECVERR/IPV6_RECVERR.
+    fn decode(cmsg: &libc::cmsghdr) -> Option<Self> {
+        let required =
+            unsafe { libc::CMSG_LEN(mem::size_of::<libc::sock_extended_err>() as _) as usize };
+
+        if cmsg.cmsg_len < required {
+            return None;
+        }
+
+        let ee_ptr = unsafe { libc::CMSG_DATA(cmsg) as *const libc::sock_extended_err };
+        let (ee, offender_ptr, mut storage) = unsafe {
+            (
+                std::ptr::read_unaligned(ee_ptr),
+                libc::SO_EE_OFFENDER(ee_ptr),
+                std::mem::zeroed::<libc::sockaddr_storage>(),
+            )
+        };
+
+        let family = unsafe { (*offender_ptr).sa_family as i32 };
+        let len = match family {
+            libc::AF_INET => std::mem::size_of::<libc::sockaddr_in>(),
+            libc::AF_INET6 => std::mem::size_of::<libc::sockaddr_in6>(),
+            libc::AF_UNSPEC => {
+                return Some(Self { ee, offender: None });
+            }
+            _ => return None,
+        };
+
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                offender_ptr as *const u8,
+                &mut storage as *mut _ as *mut u8,
+                len,
+            );
+        }
+
+        let offender = Some(decode_socket_addr(&storage).ok()?);
+
+        Some(Self { ee, offender })
+    }
 }
 
 const CMSG_LEN: usize = 88;

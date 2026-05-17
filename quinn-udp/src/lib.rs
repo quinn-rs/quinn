@@ -170,6 +170,42 @@ impl Transmit<'_> {
     }
 }
 
+/// Asynchronous transport-layer errors reported by the operating system
+///
+/// On Linux and Android these are delivered via the socket error queue
+/// (`MSG_ERRQUEUE`) and originate from ICMP messages.
+///
+/// These errors are out-of-band and do not correspond to a received packet.
+#[derive(Debug, Copy, Clone)]
+#[non_exhaustive]
+pub struct TransportError {
+    /// Address associated with the error
+    ///
+    /// This is the remote peer or an intermediate network device that triggered the error.
+    /// Returns `None` if the kernel cannot determine the source (e.g. `AF_UNSPEC`).
+    pub addr: Option<SocketAddr>,
+    /// The general category of the error
+    pub category: TransportErrorCategory,
+    /// The recommended Maximum Transmission Unit (MTU)
+    ///
+    /// Present when `category` is [`TransportErrorCategory::TooBig`].
+    pub mtu: Option<u32>,
+    /// The raw error code from the underlying operating system
+    pub raw_errno: i32,
+}
+
+/// Classification of transport-layer errors
+#[derive(Debug, Copy, Clone)]
+#[non_exhaustive]
+pub enum TransportErrorCategory {
+    /// Destination host or port is unreachable
+    Unreachable,
+    /// Packet exceeds path MTU
+    TooBig,
+    /// Other transport-layer or kernel-reported error
+    Other,
+}
+
 /// Log at most 1 IO error per minute
 #[cfg(not(wasm_browser))]
 const IO_ERROR_LOG_INTERVAL: Duration = std::time::Duration::from_secs(60);
