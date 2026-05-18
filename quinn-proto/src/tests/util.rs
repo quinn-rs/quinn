@@ -21,7 +21,7 @@ use tracing::{info_span, trace};
 
 use super::crypto::rustls::{QuicClientConfig, QuicServerConfig, configured_provider};
 use super::*;
-use crate::{Duration, Instant};
+use crate::{Duration, Instant, endpoint::Accepting};
 
 pub(super) const DEFAULT_MTU: usize = 1452;
 
@@ -212,7 +212,11 @@ impl Pair {
         client_ch
     }
 
-    fn finish_connect(&mut self, client_ch: ConnectionHandle, server_ch: ConnectionHandle) {
+    pub(super) fn finish_connect(
+        &mut self,
+        client_ch: ConnectionHandle,
+        server_ch: ConnectionHandle,
+    ) {
         assert_matches!(
             self.client_conn_mut(client_ch).poll(),
             Some(Event::HandshakeDataReady)
@@ -488,6 +492,28 @@ impl TestEndpoint {
                 Err(error.cause)
             }
         }
+    }
+
+    pub(super) fn pop_waiting_incoming(&mut self) -> Incoming {
+        let incoming = self.waiting_incoming.pop().unwrap();
+        assert!(self.waiting_incoming.is_empty());
+        incoming
+    }
+
+    pub(super) fn start_split_accept(&mut self, incoming: Incoming, now: Instant) -> Accepting {
+        let mut buf = Vec::new();
+        self.endpoint
+            .start_accept(incoming, now, &mut buf, None)
+            .unwrap()
+    }
+
+    pub(super) fn finish_split_accept(&mut self, accepting: Accepting) -> ConnectionHandle {
+        let Ok(accepted) = accepting.finish_without_endpoint() else {
+            panic!("split accept unexpectedly failed")
+        };
+        let (ch, conn) = self.endpoint.finish_accept(accepted);
+        self.connections.insert(ch, conn);
+        ch
     }
 
     pub(super) fn retry(&mut self, incoming: Incoming) {
