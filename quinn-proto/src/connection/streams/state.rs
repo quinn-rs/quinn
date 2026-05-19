@@ -2033,8 +2033,6 @@ mod tests {
         const N: u64 = 5_000;
 
         let mut client = make(Side::Client);
-        // Give ourselves enough room up front to accept every id we're about to churn through.
-        client.set_max_concurrent(Dir::Uni, N.try_into().unwrap());
         for i in 0..N {
             let id = StreamId::new(Side::Server, Dir::Uni, i);
             assert_eq!(
