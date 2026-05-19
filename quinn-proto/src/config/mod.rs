@@ -310,13 +310,15 @@ impl ServerConfig {
         self
     }
 
-    /// Maximum number of [`Incoming`][crate::Incoming] to allow to exist at a time
+    /// Maximum number of incoming connection attempts to hold before they become active
     ///
     /// An [`Incoming`][crate::Incoming] comes into existence when an incoming connection attempt
     /// is received and stops existing when the application either accepts it or otherwise disposes
-    /// of it. While this limit is reached, new incoming connection attempts are immediately
-    /// refused. Larger values have greater worst-case memory consumption, but accommodate greater
-    /// application latency in handling incoming connection attempts.
+    /// of it. After the application accepts it, it remains counted against this limit until the
+    /// connection is fully established in the endpoint. While this limit is reached, new incoming
+    /// connection attempts are immediately refused. Larger values have greater worst-case memory
+    /// consumption, but accommodate greater application latency in handling incoming connection
+    /// attempts.
     ///
     /// The default value is set to 65536. With a typical Ethernet MTU of 1500 bytes, this limits
     /// memory consumption from this to under 100 MiB--a generous amount that still prevents memory

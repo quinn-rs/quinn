@@ -801,6 +801,129 @@ fn zero_rtt_incoming_buffer_size_total() {
     });
 }
 
+/// Verify that datagrams arriving while a connection is in the `Accepting` state (between
+/// `start_accept` and `finish_accept`) are buffered in `pending_buffers` and replayed into the
+/// connection after `finish_accept`. Drives through the full handshake and clean shutdown to
+/// confirm no endpoint state is leaked.
+#[test]
+fn accepting_state_buffers_retransmitted_initials() {
+    let _guard = subscribe();
+    let mut pair = Pair::default();
+    pair.server.handle_incoming = Box::new(|_| IncomingConnectionBehavior::Wait);
+
+    let client_ch = pair.begin_connect(client_config());
+    pair.drive_client();
+    pair.drive_server();
+
+    let incoming = pair.server.waiting_incoming.pop().unwrap();
+    assert!(pair.server.waiting_incoming.is_empty());
+
+    let mut buf = Vec::new();
+    let accepting = pair
+        .server
+        .start_accept(incoming, pair.time, &mut buf, None)
+        .unwrap();
+    assert_eq!(pair.server.incoming_buffer_bytes(), 0);
+    assert_eq!(pair.server.open_connections(), 0);
+    assert_eq!(pair.server.pending_accepts(), 1);
+
+    pair.time = pair.client.next_wakeup().unwrap();
+    pair.drive_client();
+    assert!(!pair.server.inbound.is_empty());
+    pair.drive_server();
+
+    assert!(pair.server.waiting_incoming.is_empty());
+    assert!(pair.server.incoming_buffer_bytes() > 0);
+
+    let Ok((server_ch, conn, accepting_idx)) = accepting.finish_without_endpoint() else {
+        panic!("split accept unexpectedly failed");
+    };
+    let (server_ch, conn) = pair.server.finish_accept(server_ch, conn, accepting_idx);
+    pair.server.connections.insert(server_ch, conn);
+    assert_eq!(pair.server.incoming_buffer_bytes(), 0);
+    assert_eq!(pair.server.open_connections(), 1);
+    assert_eq!(pair.server.pending_accepts(), 0);
+
+    pair.drive();
+    assert_matches!(
+        pair.client_conn_mut(client_ch).poll(),
+        Some(Event::HandshakeDataReady)
+    );
+    assert_matches!(
+        pair.client_conn_mut(client_ch).poll(),
+        Some(Event::Connected)
+    );
+    assert_matches!(
+        pair.server_conn_mut(server_ch).poll(),
+        Some(Event::HandshakeDataReady)
+    );
+    assert_matches!(
+        pair.server_conn_mut(server_ch).poll(),
+        Some(Event::HandshakeConfirmed)
+    );
+    assert_matches!(
+        pair.server_conn_mut(server_ch).poll(),
+        Some(Event::Connected)
+    );
+    assert_matches!(
+        pair.client_conn_mut(client_ch).poll(),
+        Some(Event::HandshakeConfirmed)
+    );
+
+    pair.client
+        .connections
+        .get_mut(&client_ch)
+        .unwrap()
+        .close(pair.time, VarInt(42), Bytes::new());
+    pair.drive();
+    assert_eq!(pair.client.known_connections(), 0);
+    assert_eq!(pair.client.known_cids(), 0);
+    assert_eq!(pair.server.known_connections(), 0);
+    assert_eq!(pair.server.known_cids(), 0);
+}
+
+/// Verify that attempts in the `Accepting` state count toward `max_incoming`, so a second
+/// connection attempt is refused while the first attempt is still between `start_accept`
+/// and `finish_accept`.
+#[test]
+fn max_incoming_counts_accepts_in_progress() {
+    let _guard = subscribe();
+    let mut server_config = server_config();
+    server_config.max_incoming(1);
+    let mut pair = Pair::new(Arc::new(EndpointConfig::default()), server_config);
+    pair.server.handle_incoming = Box::new(|_| IncomingConnectionBehavior::Wait);
+
+    let _client_ch = pair.begin_connect(client_config());
+    pair.drive_client();
+    pair.drive_server();
+
+    let incoming = pair.server.waiting_incoming.pop().unwrap();
+    assert!(pair.server.waiting_incoming.is_empty());
+
+    let mut buf = Vec::new();
+    let accepting = pair
+        .server
+        .start_accept(incoming, pair.time, &mut buf, None)
+        .unwrap();
+    assert_eq!(pair.server.open_connections(), 0);
+    assert_eq!(pair.server.pending_accepts(), 1);
+
+    let _refused_ch = pair.begin_connect(client_config());
+    pair.drive_client();
+    pair.drive_server();
+    assert!(pair.server.waiting_incoming.is_empty());
+    assert_eq!(pair.server.open_connections(), 0);
+    assert_eq!(pair.server.pending_accepts(), 1);
+
+    let Ok((server_ch, conn, accepting_idx)) = accepting.finish_without_endpoint() else {
+        panic!("split accept unexpectedly failed");
+    };
+    let (server_ch, conn) = pair.server.finish_accept(server_ch, conn, accepting_idx);
+    pair.server.connections.insert(server_ch, conn);
+    assert_eq!(pair.server.open_connections(), 1);
+    assert_eq!(pair.server.pending_accepts(), 0);
+}
+
 #[test]
 fn alpn_success() {
     let _guard = subscribe();
