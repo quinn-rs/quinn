@@ -784,7 +784,7 @@ impl Clone for EndpointRef {
 
 impl Drop for EndpointRef {
     fn drop(&mut self) {
-        if self.shared.ref_count.fetch_sub(1, Ordering::Relaxed) > 0 {
+        if self.shared.ref_count.fetch_sub(1, Ordering::Relaxed) > 1 {
             return;
         }
 

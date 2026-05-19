@@ -162,14 +162,20 @@ impl Controller for Cubic {
             }
 
             // Update the increment and increase cwnd by MSS.
-            self.state.cwnd_inc += cubic_cwnd - self.state.window;
+            // Keep release builds from wrapping the retained credit.
+            self.state.cwnd_inc = self
+                .state
+                .cwnd_inc
+                .saturating_add(cubic_cwnd - self.state.window);
 
             // cwnd_inc can be more than 1 MSS in the late stage of max probing.
             // however RFC9002 §7.3.3 (Congestion Avoidance) limits
             // the increase of cwnd to 1 max_datagram_size per cwnd acknowledged.
+            // Keep the excess credit for later ACKs instead of discarding it.
+            // https://www.rfc-editor.org/rfc/rfc9002.html#section-7.3.3
             if self.state.cwnd_inc >= self.current_mtu {
                 self.state.window += self.current_mtu;
-                self.state.cwnd_inc = 0;
+                self.state.cwnd_inc -= self.current_mtu;
             }
         }
     }
@@ -197,18 +203,19 @@ impl Controller for Cubic {
         }
 
         self.state.recovery_start_time = Some(now);
+        let window = self.state.window as f64;
 
-        // Fast convergence
-        if (self.state.window as f64) < self.state.w_max {
-            self.state.w_max = self.state.window as f64 * (1.0 + BETA_CUBIC) / 2.0;
+        // Fast convergence lowers W_max first; the 0.7 loss reduction still
+        // applies to the old window, not to that already-reduced W_max.
+        // https://www.rfc-editor.org/rfc/rfc9438.html#section-4.7
+        // https://www.rfc-editor.org/rfc/rfc9438.html#section-4.6
+        if window < self.state.w_max {
+            self.state.w_max = window * (1.0 + BETA_CUBIC) / 2.0;
         } else {
-            self.state.w_max = self.state.window as f64;
+            self.state.w_max = window;
         }
 
-        self.state.ssthresh = cmp::max(
-            (self.state.w_max * BETA_CUBIC) as u64,
-            self.minimum_window(),
-        );
+        self.state.ssthresh = cmp::max((window * BETA_CUBIC) as u64, self.minimum_window());
         self.state.window = self.state.ssthresh;
         self.state.k = self.state.cubic_k(self.current_mtu);
 
@@ -295,5 +302,58 @@ impl Default for CubicConfig {
 impl ControllerFactory for CubicConfig {
     fn build(self: Arc<Self>, now: Instant, current_mtu: u16) -> Box<dyn Controller> {
         Box::new(Cubic::new(self, now, current_mtu))
+    }
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fast_convergence_reduces_w_max_without_double_reducing_window() {
+        let now = Instant::now();
+        let config = Arc::new(CubicConfig::default());
+        let mut cubic = Cubic::new(config, now, BASE_DATAGRAM_SIZE as u16);
+        let window = 8 * BASE_DATAGRAM_SIZE;
+
+        cubic.state.window = window;
+        cubic.state.ssthresh = window;
+        cubic.state.w_max = 12.0 * BASE_DATAGRAM_SIZE as f64;
+
+        cubic.on_congestion_event(now, now + Duration::from_millis(1), false, false, 0);
+
+        assert_eq!(cubic.state.w_max, window as f64 * (1.0 + BETA_CUBIC) / 2.0);
+        assert_eq!(cubic.state.ssthresh, (window as f64 * BETA_CUBIC) as u64);
+        assert_eq!(cubic.state.window, cubic.state.ssthresh);
+    }
+
+    #[test]
+    fn congestion_avoidance_preserves_excess_cwnd_increment() {
+        let now = Instant::now();
+        let rtt = RttEstimator::new(Duration::from_millis(100));
+        let config = Arc::new(CubicConfig::default());
+        let mut cubic = Cubic::new(config, now, BASE_DATAGRAM_SIZE as u16);
+
+        // Put CUBIC directly into congestion avoidance.
+        cubic.state.ssthresh = cubic.state.window;
+        cubic.state.recovery_start_time = Some(now);
+        cubic.state.w_max = cubic.state.window as f64;
+
+        // Simulate accumulated credit from earlier ACKs. One ACK may only grow
+        // the window by one MTU, but the extra credit must remain for later ACKs.
+        cubic.state.cwnd_inc = 2 * BASE_DATAGRAM_SIZE + 1;
+        let window = cubic.state.window;
+
+        cubic.on_ack(
+            now,
+            now + Duration::from_millis(1),
+            BASE_DATAGRAM_SIZE,
+            false,
+            &rtt,
+        );
+
+        // Before this fix, the window grew by one MTU and the remainder was
+        // reset to zero.
+        assert_eq!(cubic.state.window, window + BASE_DATAGRAM_SIZE);
+        assert_eq!(cubic.state.cwnd_inc, BASE_DATAGRAM_SIZE + 1);
     }
 }

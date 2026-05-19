@@ -322,13 +322,15 @@ async fn zero_rtt() {
     const MSG0: &[u8] = b"zero";
     const MSG1: &[u8] = b"one";
     let endpoint2 = endpoint.clone();
-    tokio::spawn(async move {
-        for _ in 0..2 {
+    let accept_connection = move |expect_0rtt| {
+        let endpoint2 = endpoint2.clone();
+        async move {
             let incoming = endpoint2.accept().await.unwrap().accept().unwrap();
-            let (connection, established) = incoming.into_0rtt().unwrap_or_else(|_| unreachable!());
+            let connection = incoming.into_0rtt().unwrap_or_else(|_| unreachable!());
             let c = connection.clone();
             tokio::spawn(async move {
                 while let Ok(mut x) = c.accept_uni().await {
+                    assert_eq!(x.is_0rtt(), expect_0rtt);
                     let msg = x.read_to_end(usize::MAX).await.unwrap();
                     assert_eq!(msg, MSG0);
                 }
@@ -337,21 +339,22 @@ async fn zero_rtt() {
             let mut s = connection.open_uni().await.expect("open_uni");
             s.write_all(MSG0).await.expect("write");
             s.finish().unwrap();
-            established.await;
+            connection.authenticated().await.expect("connected");
             info!("sending 1-RTT");
             let mut s = connection.open_uni().await.expect("open_uni");
             s.write_all(MSG1).await.expect("write");
             // The peer might close the connection before ACKing
             let _ = s.finish();
         }
-    });
+    };
+
+    tokio::spawn(accept_connection(false));
 
     let connection = endpoint
         .connect(endpoint.local_addr().unwrap(), "localhost")
         .unwrap()
         .into_0rtt()
-        .err()
-        .expect("0-RTT succeeded without keys")
+        .expect_err("0-RTT succeeded without keys")
         .await
         .expect("connect");
 
@@ -369,26 +372,31 @@ async fn zero_rtt() {
 
     info!("initial connection complete");
 
-    let (connection, zero_rtt) = endpoint
+    let connection = endpoint
         .connect(endpoint.local_addr().unwrap(), "localhost")
         .unwrap()
         .into_0rtt()
         .unwrap_or_else(|_| panic!("missing 0-RTT keys"));
-    // Send something ASAP to use 0-RTT
-    let c = connection.clone();
-    tokio::spawn(async move {
-        let mut s = c.open_uni().await.expect("0-RTT open uni");
-        info!("sending 0-RTT");
-        s.write_all(MSG0).await.expect("0-RTT write");
-        s.finish().unwrap();
-    });
 
+    // Send something before the handshake can make progress, thereby forcing 0-RTT
+    let mut stream_0rtt = connection.open_uni().await.expect("0-RTT open uni");
+    info!("sending 0-RTT");
+    stream_0rtt.write_all(MSG0).await.expect("0-RTT write");
+    stream_0rtt.finish().unwrap();
+
+    tokio::spawn(accept_connection(true));
+
+    // Receive 0.5-RTT
     let mut stream = connection.accept_uni().await.expect("incoming streams");
     let msg = stream.read_to_end(usize::MAX).await.expect("read_to_end");
     assert_eq!(msg, MSG0);
-    assert!(zero_rtt.await);
+    connection.authenticated().await.expect("connected");
 
-    drop((stream, connection));
+    // Ensure 0-RTT was accepted
+    stream_0rtt.stopped().await.expect("0-RTT stopped");
+
+    // Allow the connection to close
+    drop((stream_0rtt, stream, connection));
 
     endpoint.wait_idle().await;
 }
@@ -826,7 +834,7 @@ async fn multiple_conns_with_zero_length_cids() {
     let mut factory = EndpointFactory::new();
     factory
         .endpoint_config
-        .cid_generator(|| Box::new(RandomConnectionIdGenerator::new(0)));
+        .cid_generator(Arc::new(|| Box::new(RandomConnectionIdGenerator::new(0))));
     let server = {
         let _guard = error_span!("server").entered();
         factory.endpoint()
@@ -1055,6 +1063,43 @@ async fn recv_stream_cancel_stop_drop() {
             recv_dropped.wait().await;
         },
     );
+}
+
+#[tokio::test(start_paused = true)]
+async fn dropped_endpoint_cleans_up() {
+    let _guard = subscribe();
+
+    let mut endpoint_factory = EndpointFactory::new();
+    let cid_generator = Arc::new(|| -> Box<dyn proto::ConnectionIdGenerator> {
+        Box::<proto::HashedConnectionIdGenerator>::default()
+    });
+    endpoint_factory
+        .endpoint_config
+        .cid_generator(cid_generator.clone());
+    let endpoint = endpoint_factory.endpoint();
+    drop(endpoint_factory);
+    assert_eq!(Arc::strong_count(&cid_generator), 2);
+    drop(endpoint);
+    // Let the driver task run; paused runtimes are guaranteed to drain pending work on sleep.
+    tokio::time::sleep(Duration::from_millis(1)).await;
+    assert_eq!(Arc::strong_count(&cid_generator), 1);
+}
+
+#[tokio::test]
+async fn dropped_connection_cleans_up() {
+    let _guard = subscribe();
+    let endpoint = endpoint();
+    join!(
+        async {
+            endpoint
+                .connect(endpoint.local_addr().unwrap(), "localhost")
+                .unwrap()
+                .await
+                .unwrap()
+        },
+        async { endpoint.accept().await.unwrap().await.unwrap() }
+    );
+    endpoint.wait_idle().await;
 }
 
 #[derive(Default)]
