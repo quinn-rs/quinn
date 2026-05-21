@@ -806,7 +806,7 @@ impl ControlMetadata {
             (libc::IPPROTO_IPV6, libc::IPV6_PKTINFO) => {
                 let pktinfo = unsafe { cmsg::decode::<libc::in6_pktinfo, libc::cmsghdr>(cmsg) };
                 self.dst_ip = Some(IpAddr::V6(Ipv6Addr::from(pktinfo.ipi6_addr.s6_addr)));
-                #[cfg_attr(not(target_os = "android"), expect(clippy::unnecessary_cast))]
+                #[allow(clippy::unnecessary_cast)]
                 {
                     self.interface_index = Some(pktinfo.ipi6_ifindex as u32);
                 }
