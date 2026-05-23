@@ -1,4 +1,4 @@
-use std::{any::Any, io, str, sync::Arc};
+use std::{any::Any, io, mem, str, sync::Arc};
 
 #[cfg(all(feature = "aws-lc-rs", not(feature = "ring")))]
 use aws_lc_rs::aead;
@@ -11,7 +11,7 @@ use rustls::NamedGroup;
 use rustls::{
     self, CipherSuite,
     client::danger::ServerCertVerifier,
-    pki_types::{CertificateDer, PrivateKeyDer, ServerName},
+    pki_types::{CertificateDer, DnsName, PrivateKeyDer, ServerName},
     quic::{Connection, HeaderProtectionKey, KeyChange, PacketKey, Secrets, Suite, Version},
 };
 #[cfg(feature = "platform-verifier")]
@@ -172,30 +172,7 @@ impl crypto::Session for TlsSession {
     }
 
     fn is_valid_retry(&self, orig_dst_cid: &ConnectionId, header: &[u8], payload: &[u8]) -> bool {
-        let tag_start = match payload.len().checked_sub(16) {
-            Some(x) => x,
-            None => return false,
-        };
-
-        let mut pseudo_packet =
-            Vec::with_capacity(header.len() + payload.len() + orig_dst_cid.len() + 1);
-        pseudo_packet.push(orig_dst_cid.len() as u8);
-        pseudo_packet.extend_from_slice(orig_dst_cid);
-        pseudo_packet.extend_from_slice(header);
-        let tag_start = tag_start + pseudo_packet.len();
-        pseudo_packet.extend_from_slice(payload);
-
-        let (nonce, key) = match self.version {
-            Version::V1 => (RETRY_INTEGRITY_NONCE_V1, RETRY_INTEGRITY_KEY_V1),
-            Version::V1Draft => (RETRY_INTEGRITY_NONCE_DRAFT, RETRY_INTEGRITY_KEY_DRAFT),
-            _ => unreachable!(),
-        };
-
-        let nonce = aead::Nonce::assume_unique_for_key(nonce);
-        let key = aead::LessSafeKey::new(aead::UnboundKey::new(&aead::AES_128_GCM, &key).unwrap());
-
-        let (aad, tag) = pseudo_packet.split_at_mut(tag_start);
-        key.open_in_place(nonce, aead::Aad::from(aad), tag).is_ok()
+        retry_tag_is_valid(self.version, *orig_dst_cid, header, payload)
     }
 
     fn export_keying_material(
@@ -268,6 +245,63 @@ pub struct HandshakeData {
     /// The key exchange group negotiated with the peer
     #[cfg(feature = "__rustls-post-quantum-test")]
     pub negotiated_key_exchange_group: NamedGroup,
+}
+
+/// ClientHello data available before a server TLS configuration has been selected
+#[derive(Clone, Copy, Debug)]
+pub struct ClientHello<'a> {
+    server_name: Option<&'a str>,
+    alpn_protocols: Option<&'a [u8]>,
+}
+
+impl<'a> ClientHello<'a> {
+    /// The server name specified by the client, if any
+    pub fn server_name(&self) -> Option<&'a str> {
+        self.server_name
+    }
+
+    /// The ALPN protocol identifiers submitted by the client, if any
+    pub fn alpn(&self) -> Option<impl Iterator<Item = &'a [u8]>> {
+        self.alpn_protocols
+            .map(|bytes| ClientHelloAlpnProtocols { bytes })
+    }
+}
+
+/// ALPN protocol identifiers submitted in a [`ClientHello`]
+#[derive(Clone, Debug)]
+struct ClientHelloAlpnProtocols<'a> {
+    bytes: &'a [u8],
+}
+
+impl<'a> Iterator for ClientHelloAlpnProtocols<'a> {
+    type Item = &'a [u8];
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let (&len, rest) = self.bytes.split_first()?;
+        let len = usize::from(len);
+        if rest.len() < len {
+            self.bytes = &[];
+            return None;
+        }
+        let (protocol, rest) = rest.split_at(len);
+        self.bytes = rest;
+        Some(protocol)
+    }
+}
+
+/// Selects a rustls server configuration from ClientHello data
+pub trait ServerConfigSelector: Send + Sync + 'static {
+    /// Return `Some` to use a specific configuration, or `None` to use the default.
+    fn select(&self, client_hello: ClientHello<'_>) -> Option<Arc<rustls::ServerConfig>>;
+}
+
+impl<F> ServerConfigSelector for F
+where
+    F: for<'a> Fn(ClientHello<'a>) -> Option<Arc<rustls::ServerConfig>> + Send + Sync + 'static,
+{
+    fn select(&self, client_hello: ClientHello<'_>) -> Option<Arc<rustls::ServerConfig>> {
+        self(client_hello)
+    }
 }
 
 /// A QUIC-compatible TLS client configuration
@@ -509,6 +543,226 @@ impl TryFrom<Arc<rustls::ServerConfig>> for QuicServerConfig {
     }
 }
 
+/// A QUIC-compatible TLS server configuration selected using ClientHello data
+///
+/// This is useful when a server needs to select a complete [`rustls::ServerConfig`]
+/// based on SNI or ALPN. The default configuration is used for QUIC Initial key
+/// derivation and as a fallback when the selector returns `None`.
+///
+/// ClientHello data is buffered until the complete message is available. The
+/// selected configurations must be valid for rustls QUIC server connections.
+pub struct ClientHelloServerConfig {
+    default: Arc<rustls::ServerConfig>,
+    selector: Arc<dyn ServerConfigSelector>,
+    initial: Suite,
+}
+
+impl ClientHelloServerConfig {
+    /// Create a server configuration that selects the final rustls config per connection
+    pub fn new<S>(
+        default: Arc<rustls::ServerConfig>,
+        selector: S,
+    ) -> Result<Self, NoInitialCipherSuite>
+    where
+        S: ServerConfigSelector,
+    {
+        Ok(Self {
+            initial: initial_suite_from_provider(default.crypto_provider())
+                .ok_or(NoInitialCipherSuite { specific: false })?,
+            default,
+            selector: Arc::new(selector),
+        })
+    }
+}
+
+impl crypto::ServerConfig for ClientHelloServerConfig {
+    fn start_session(
+        self: Arc<Self>,
+        version: u32,
+        params: &TransportParameters,
+    ) -> Box<dyn crypto::Session> {
+        // Safe: `start_session()` is never called if `initial_keys()` rejected `version`
+        let version = interpret_version(version).unwrap();
+        let mut encoded_params = Vec::new();
+        params.write(&mut encoded_params);
+        Box::new(ClientHelloSession {
+            suite: self.initial,
+            state: ClientHelloSessionState::Reading {
+                version,
+                params: encoded_params,
+                default: self.default.clone(),
+                selector: self.selector.clone(),
+                buffered: Vec::new(),
+            },
+        })
+    }
+
+    fn initial_keys(
+        &self,
+        version: u32,
+        dst_cid: &ConnectionId,
+    ) -> Result<Keys, UnsupportedVersion> {
+        let version = interpret_version(version)?;
+        Ok(initial_keys(version, *dst_cid, Side::Server, &self.initial))
+    }
+
+    fn retry_tag(&self, version: u32, orig_dst_cid: &ConnectionId, packet: &[u8]) -> [u8; 16] {
+        // Safe: `start_session()` is never called if `initial_keys()` rejected `version`
+        let version = interpret_version(version).unwrap();
+        retry_tag(version, *orig_dst_cid, packet)
+    }
+}
+
+struct ClientHelloSession {
+    suite: Suite,
+    state: ClientHelloSessionState,
+}
+
+enum ClientHelloSessionState {
+    Reading {
+        version: Version,
+        params: Vec<u8>,
+        default: Arc<rustls::ServerConfig>,
+        selector: Arc<dyn ServerConfigSelector>,
+        buffered: Vec<u8>,
+    },
+    Active(Box<TlsSession>),
+}
+
+impl ClientHelloSession {
+    fn active(&self) -> Option<&TlsSession> {
+        match &self.state {
+            ClientHelloSessionState::Active(session) => Some(session),
+            ClientHelloSessionState::Reading { .. } => None,
+        }
+    }
+
+    fn active_mut(&mut self) -> Option<&mut TlsSession> {
+        match &mut self.state {
+            ClientHelloSessionState::Active(session) => Some(session),
+            ClientHelloSessionState::Reading { .. } => None,
+        }
+    }
+}
+
+impl crypto::Session for ClientHelloSession {
+    fn initial_keys(&self, dst_cid: &ConnectionId, side: Side) -> Keys {
+        initial_keys(self.version(), *dst_cid, side, &self.suite)
+    }
+
+    fn handshake_data(&self) -> Option<Box<dyn Any>> {
+        self.active()?.handshake_data()
+    }
+
+    fn peer_identity(&self) -> Option<Box<dyn Any>> {
+        self.active()?.peer_identity()
+    }
+
+    fn early_crypto(&self) -> Option<(Box<dyn HeaderKey>, Box<dyn crypto::PacketKey>)> {
+        self.active()?.early_crypto()
+    }
+
+    fn early_data_accepted(&self) -> Option<bool> {
+        self.active()?.early_data_accepted()
+    }
+
+    fn is_handshaking(&self) -> bool {
+        self.active()
+            .map(TlsSession::is_handshaking)
+            .unwrap_or(true)
+    }
+
+    fn read_handshake(&mut self, buf: &[u8]) -> Result<bool, TransportError> {
+        if let Some(session) = self.active_mut() {
+            return session.read_handshake(buf);
+        }
+
+        let ClientHelloSessionState::Reading {
+            version,
+            params,
+            default,
+            selector,
+            buffered,
+        } = &mut self.state
+        else {
+            unreachable!();
+        };
+
+        if buffered
+            .len()
+            .checked_add(buf.len())
+            .is_none_or(|len| len > MAX_BUFFERED_CLIENT_HELLO)
+        {
+            return Err(ClientHelloParseError::Invalid.into());
+        }
+        buffered.extend_from_slice(buf);
+        let Some(client_hello) = parse_client_hello(buffered)? else {
+            return Ok(false);
+        };
+
+        let config = selector
+            .select(client_hello)
+            .unwrap_or_else(|| default.clone());
+        let mut session = TlsSession {
+            version: *version,
+            got_handshake_data: false,
+            next_secrets: None,
+            inner: rustls::quic::Connection::Server(
+                rustls::quic::ServerConnection::new(config, *version, mem::take(params))
+                    .map_err(config_error)?,
+            ),
+            suite: self.suite,
+        };
+        let buffered = mem::take(buffered);
+        let result = session.read_handshake(&buffered)?;
+        self.state = ClientHelloSessionState::Active(Box::new(session));
+        Ok(result)
+    }
+
+    fn transport_parameters(&self) -> Result<Option<TransportParameters>, TransportError> {
+        match self.active() {
+            Some(session) => session.transport_parameters(),
+            None => Ok(None),
+        }
+    }
+
+    fn write_handshake(&mut self, buf: &mut Vec<u8>) -> Option<Keys> {
+        self.active_mut()?.write_handshake(buf)
+    }
+
+    fn next_1rtt_keys(&mut self) -> Option<KeyPair<Box<dyn crypto::PacketKey>>> {
+        self.active_mut()?.next_1rtt_keys()
+    }
+
+    fn is_valid_retry(&self, orig_dst_cid: &ConnectionId, header: &[u8], payload: &[u8]) -> bool {
+        match self.active() {
+            Some(session) => session.is_valid_retry(orig_dst_cid, header, payload),
+            None => retry_tag_is_valid(self.version(), *orig_dst_cid, header, payload),
+        }
+    }
+
+    fn export_keying_material(
+        &self,
+        output: &mut [u8],
+        label: &[u8],
+        context: &[u8],
+    ) -> Result<(), ExportKeyingMaterialError> {
+        match self.active() {
+            Some(session) => session.export_keying_material(output, label, context),
+            None => Err(ExportKeyingMaterialError),
+        }
+    }
+}
+
+impl ClientHelloSession {
+    fn version(&self) -> Version {
+        match &self.state {
+            ClientHelloSessionState::Reading { version, .. } => *version,
+            ClientHelloSessionState::Active(session) => session.version,
+        }
+    }
+}
+
 impl crypto::ServerConfig for QuicServerConfig {
     fn start_session(
         self: Arc<Self>,
@@ -541,27 +795,232 @@ impl crypto::ServerConfig for QuicServerConfig {
     fn retry_tag(&self, version: u32, orig_dst_cid: &ConnectionId, packet: &[u8]) -> [u8; 16] {
         // Safe: `start_session()` is never called if `initial_keys()` rejected `version`
         let version = interpret_version(version).unwrap();
-        let (nonce, key) = match version {
-            Version::V1 => (RETRY_INTEGRITY_NONCE_V1, RETRY_INTEGRITY_KEY_V1),
-            Version::V1Draft => (RETRY_INTEGRITY_NONCE_DRAFT, RETRY_INTEGRITY_KEY_DRAFT),
-            _ => unreachable!(),
-        };
-
-        let mut pseudo_packet = Vec::with_capacity(packet.len() + orig_dst_cid.len() + 1);
-        pseudo_packet.push(orig_dst_cid.len() as u8);
-        pseudo_packet.extend_from_slice(orig_dst_cid);
-        pseudo_packet.extend_from_slice(packet);
-
-        let nonce = aead::Nonce::assume_unique_for_key(nonce);
-        let key = aead::LessSafeKey::new(aead::UnboundKey::new(&aead::AES_128_GCM, &key).unwrap());
-
-        let tag = key
-            .seal_in_place_separate_tag(nonce, aead::Aad::from(pseudo_packet), &mut [])
-            .unwrap();
-        let mut result = [0; 16];
-        result.copy_from_slice(tag.as_ref());
-        result
+        retry_tag(version, *orig_dst_cid, packet)
     }
+}
+
+fn config_error(error: rustls::Error) -> TransportError {
+    TransportError::INTERNAL_ERROR(format!("TLS config error: {error}"))
+}
+
+#[derive(Debug)]
+enum ClientHelloParseError {
+    Invalid,
+}
+
+impl From<ClientHelloParseError> for TransportError {
+    fn from(_: ClientHelloParseError) -> Self {
+        Self::PROTOCOL_VIOLATION("invalid TLS ClientHello")
+    }
+}
+
+const CLIENT_HELLO_HEADER_LEN: usize = 4;
+// Match rustls' maximum TLS handshake message size.
+const MAX_CLIENT_HELLO_SIZE: usize = 0xffff;
+const MAX_BUFFERED_CLIENT_HELLO: usize = CLIENT_HELLO_HEADER_LEN + MAX_CLIENT_HELLO_SIZE;
+
+fn parse_client_hello(buf: &[u8]) -> Result<Option<ClientHello<'_>>, ClientHelloParseError> {
+    const CLIENT_HELLO: u8 = 1;
+
+    if buf.len() < CLIENT_HELLO_HEADER_LEN {
+        return Ok(None);
+    }
+    if buf[0] != CLIENT_HELLO {
+        return Err(ClientHelloParseError::Invalid);
+    }
+
+    let len = (usize::from(buf[1]) << 16) | (usize::from(buf[2]) << 8) | usize::from(buf[3]);
+    if len > MAX_CLIENT_HELLO_SIZE {
+        return Err(ClientHelloParseError::Invalid);
+    }
+    let Some(end) = CLIENT_HELLO_HEADER_LEN.checked_add(len) else {
+        return Err(ClientHelloParseError::Invalid);
+    };
+    if buf.len() < end {
+        return Ok(None);
+    }
+
+    let mut reader = ClientHelloReader::new(&buf[CLIENT_HELLO_HEADER_LEN..end]);
+    reader.take(2)?; // legacy_version
+    reader.take(32)?; // random
+    let session_id_len = usize::from(reader.take_u8()?);
+    reader.take(session_id_len)?;
+    let cipher_suites_len = usize::from(reader.take_u16()?);
+    if cipher_suites_len % 2 != 0 {
+        return Err(ClientHelloParseError::Invalid);
+    }
+    reader.take(cipher_suites_len)?;
+    let compression_methods_len = usize::from(reader.take_u8()?);
+    reader.take(compression_methods_len)?;
+
+    let mut server_name_seen = false;
+    let mut server_name = None;
+    let mut alpn_protocols = None;
+    if !reader.is_empty() {
+        let extensions_len = usize::from(reader.take_u16()?);
+        let mut extensions = ClientHelloReader::new(reader.take(extensions_len)?);
+        if !reader.is_empty() {
+            return Err(ClientHelloParseError::Invalid);
+        }
+
+        while !extensions.is_empty() {
+            let extension_type = extensions.take_u16()?;
+            let extension_len = usize::from(extensions.take_u16()?);
+            let extension = extensions.take(extension_len)?;
+            match extension_type {
+                0 => {
+                    if server_name_seen {
+                        return Err(ClientHelloParseError::Invalid);
+                    }
+                    server_name_seen = true;
+                    server_name = parse_server_name(extension)?;
+                }
+                16 => {
+                    if alpn_protocols.is_some() {
+                        return Err(ClientHelloParseError::Invalid);
+                    }
+                    alpn_protocols = Some(parse_alpn_protocols(extension)?);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    Ok(Some(ClientHello {
+        server_name,
+        alpn_protocols,
+    }))
+}
+
+fn parse_server_name(buf: &[u8]) -> Result<Option<&str>, ClientHelloParseError> {
+    let mut reader = ClientHelloReader::new(buf);
+    let names_len = usize::from(reader.take_u16()?);
+    let mut names = ClientHelloReader::new(reader.take(names_len)?);
+    if !reader.is_empty() {
+        return Err(ClientHelloParseError::Invalid);
+    }
+
+    let mut server_name = None;
+    while !names.is_empty() {
+        let name_type = names.take_u8()?;
+        let name_len = usize::from(names.take_u16()?);
+        let name = names.take(name_len)?;
+        if name_type == 0 {
+            if server_name.is_some() {
+                return Err(ClientHelloParseError::Invalid);
+            }
+            DnsName::try_from(name).map_err(|_| ClientHelloParseError::Invalid)?;
+            server_name = Some(str::from_utf8(name).map_err(|_| ClientHelloParseError::Invalid)?);
+        }
+    }
+
+    Ok(server_name)
+}
+
+fn parse_alpn_protocols(buf: &[u8]) -> Result<&[u8], ClientHelloParseError> {
+    let mut reader = ClientHelloReader::new(buf);
+    let protocols_len = usize::from(reader.take_u16()?);
+    let protocols = reader.take(protocols_len)?;
+    if !reader.is_empty() {
+        return Err(ClientHelloParseError::Invalid);
+    }
+
+    let mut reader = ClientHelloReader::new(protocols);
+    while !reader.is_empty() {
+        let protocol_len = usize::from(reader.take_u8()?);
+        if protocol_len == 0 {
+            return Err(ClientHelloParseError::Invalid);
+        }
+        reader.take(protocol_len)?;
+    }
+
+    Ok(protocols)
+}
+
+struct ClientHelloReader<'a> {
+    bytes: &'a [u8],
+}
+
+impl<'a> ClientHelloReader<'a> {
+    fn new(bytes: &'a [u8]) -> Self {
+        Self { bytes }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.bytes.is_empty()
+    }
+
+    fn take(&mut self, len: usize) -> Result<&'a [u8], ClientHelloParseError> {
+        if self.bytes.len() < len {
+            return Err(ClientHelloParseError::Invalid);
+        }
+        let (head, tail) = self.bytes.split_at(len);
+        self.bytes = tail;
+        Ok(head)
+    }
+
+    fn take_u8(&mut self) -> Result<u8, ClientHelloParseError> {
+        Ok(self.take(1)?[0])
+    }
+
+    fn take_u16(&mut self) -> Result<u16, ClientHelloParseError> {
+        let bytes = self.take(2)?;
+        Ok(u16::from_be_bytes([bytes[0], bytes[1]]))
+    }
+}
+
+fn retry_tag(version: Version, orig_dst_cid: ConnectionId, packet: &[u8]) -> [u8; 16] {
+    let (nonce, key) = match version {
+        Version::V1 => (RETRY_INTEGRITY_NONCE_V1, RETRY_INTEGRITY_KEY_V1),
+        Version::V1Draft => (RETRY_INTEGRITY_NONCE_DRAFT, RETRY_INTEGRITY_KEY_DRAFT),
+        _ => unreachable!(),
+    };
+
+    let mut pseudo_packet = Vec::with_capacity(packet.len() + orig_dst_cid.len() + 1);
+    pseudo_packet.push(orig_dst_cid.len() as u8);
+    pseudo_packet.extend_from_slice(&orig_dst_cid);
+    pseudo_packet.extend_from_slice(packet);
+
+    let nonce = aead::Nonce::assume_unique_for_key(nonce);
+    let key = aead::LessSafeKey::new(aead::UnboundKey::new(&aead::AES_128_GCM, &key).unwrap());
+
+    let tag = key
+        .seal_in_place_separate_tag(nonce, aead::Aad::from(pseudo_packet), &mut [])
+        .unwrap();
+    let mut result = [0; 16];
+    result.copy_from_slice(tag.as_ref());
+    result
+}
+
+fn retry_tag_is_valid(
+    version: Version,
+    orig_dst_cid: ConnectionId,
+    header: &[u8],
+    payload: &[u8],
+) -> bool {
+    let Some(tag_start) = payload.len().checked_sub(16) else {
+        return false;
+    };
+
+    let mut pseudo_packet =
+        Vec::with_capacity(header.len() + payload.len() + orig_dst_cid.len() + 1);
+    pseudo_packet.push(orig_dst_cid.len() as u8);
+    pseudo_packet.extend_from_slice(&orig_dst_cid);
+    pseudo_packet.extend_from_slice(header);
+    let tag_start = tag_start + pseudo_packet.len();
+    pseudo_packet.extend_from_slice(payload);
+
+    let (nonce, key) = match version {
+        Version::V1 => (RETRY_INTEGRITY_NONCE_V1, RETRY_INTEGRITY_KEY_V1),
+        Version::V1Draft => (RETRY_INTEGRITY_NONCE_DRAFT, RETRY_INTEGRITY_KEY_DRAFT),
+        _ => unreachable!(),
+    };
+
+    let nonce = aead::Nonce::assume_unique_for_key(nonce);
+    let key = aead::LessSafeKey::new(aead::UnboundKey::new(&aead::AES_128_GCM, &key).unwrap());
+
+    let (aad, tag) = pseudo_packet.split_at_mut(tag_start);
+    key.open_in_place(nonce, aead::Aad::from(aad), tag).is_ok()
 }
 
 pub(crate) fn initial_suite_from_provider(

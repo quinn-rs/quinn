@@ -28,7 +28,9 @@ use super::*;
 use crate::{
     Duration, Instant,
     cid_generator::{ConnectionIdGenerator, RandomConnectionIdGenerator},
-    crypto::rustls::QuicServerConfig,
+    crypto::rustls::{
+        ClientHello as RustlsClientHello, ClientHelloServerConfig, HandshakeData, QuicServerConfig,
+    },
     frame::FrameStruct,
     transport_parameters::TransportParameters,
 };
@@ -498,6 +500,64 @@ fn reject_missing_client_cert() {
     assert_matches!(pair.server_conn_mut(server_ch).poll(),
                     Some(Event::ConnectionLost { reason: ConnectionError::TransportError(ref error)})
                     if error.code == TransportErrorCode::crypto(AlertDescription::CertificateRequired.into()));
+}
+
+#[test]
+fn select_server_config_from_client_hello() {
+    let _guard = subscribe();
+
+    let default_cert = rcgen::generate_simple_self_signed(vec!["default.example".into()]).unwrap();
+    let default_key = PrivateKeyDer::Pkcs8(default_cert.signing_key.serialize_der().into());
+    let default = Arc::new(
+        QuicServerConfig::inner(vec![default_cert.cert.der().clone()], default_key).unwrap(),
+    );
+
+    let selected_key = PrivateKeyDer::Pkcs8(CERTIFIED_KEY.signing_key.serialize_der().into());
+    let mut selected =
+        QuicServerConfig::inner(vec![CERTIFIED_KEY.cert.der().clone()], selected_key).unwrap();
+    selected.alpn_protocols = vec![b"hq-test".to_vec()];
+    let selected = Arc::new(selected);
+
+    let seen = Arc::new(Mutex::new(None));
+    let seen_selector = seen.clone();
+    let crypto =
+        ClientHelloServerConfig::new(default, move |client_hello: RustlsClientHello<'_>| {
+            let alpn: Vec<Vec<u8>> = client_hello
+                .alpn()
+                .map(|protocols| protocols.map(Vec::from).collect())
+                .unwrap_or_default();
+            *seen_selector.lock().unwrap() =
+                Some((client_hello.server_name().map(String::from), alpn));
+
+            match client_hello.server_name() {
+                Some("localhost") => Some(selected.clone()),
+                _ => None,
+            }
+        })
+        .unwrap();
+
+    let mut pair = Pair::new(
+        Default::default(),
+        ServerConfig::with_crypto(Arc::new(crypto)),
+    );
+    let (_, server_ch) =
+        pair.connect_with(ClientConfig::new(Arc::new(client_crypto_with_alpn(vec![
+            b"hq-test".to_vec(),
+        ]))));
+
+    let seen = seen.lock().unwrap().take().unwrap();
+    assert_eq!(seen.0.as_deref(), Some("localhost"));
+    assert_eq!(seen.1, vec![b"hq-test".to_vec()]);
+
+    let handshake_data = pair
+        .server_conn_mut(server_ch)
+        .crypto_session()
+        .handshake_data()
+        .unwrap()
+        .downcast::<HandshakeData>()
+        .unwrap();
+    assert_eq!(handshake_data.protocol.as_deref(), Some(&b"hq-test"[..]));
+    assert_eq!(handshake_data.server_name.as_deref(), Some("localhost"));
 }
 
 #[test]
