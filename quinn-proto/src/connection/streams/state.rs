@@ -743,11 +743,17 @@ impl StreamsState {
         id: StreamId,
         offset: u64,
     ) -> Result<(), TransportError> {
-        if id.initiator() != self.side && id.dir() == Dir::Uni {
-            debug!("got MAX_STREAM_DATA on recv-only {}", id);
-            return Err(TransportError::STREAM_STATE_ERROR(
-                "MAX_STREAM_DATA on recv-only stream",
-            ));
+        if id.initiator() != self.side {
+            if id.dir() == Dir::Uni {
+                debug!("got MAX_STREAM_DATA on recv-only {}", id);
+                return Err(TransportError::STREAM_STATE_ERROR(
+                    "MAX_STREAM_DATA on recv-only stream",
+                ));
+            }
+            if id.index() >= self.max_remote[id.dir() as usize] {
+                debug!("got MAX_STREAM_DATA on stream {} exceeding limit", id);
+                return Err(TransportError::STREAM_LIMIT_ERROR(""));
+            }
         }
 
         let write_limit = self.write_limit();
@@ -858,6 +864,11 @@ impl StreamsState {
     /// Whether a locally initiated stream has never been open
     pub(crate) fn is_local_unopened(&self, id: StreamId) -> bool {
         id.index() >= self.next[id.dir() as usize]
+    }
+
+    /// Whether a remotely initiated stream exceeds the advertised stream limit
+    pub(crate) fn exceeds_stream_limit(&self, id: StreamId) -> bool {
+        id.index() >= self.max_remote[id.dir() as usize]
     }
 
     pub(crate) fn set_max_concurrent(&mut self, dir: Dir, count: VarInt) {
@@ -1872,6 +1883,41 @@ mod tests {
             ),
             Ok(ShouldTransmit(false))
         );
+    }
+
+    #[test]
+    fn stop_sending_out_of_bounds() {
+        // STOP_SENDING on a remote-initiated bidi stream beyond max_remote must be a
+        // STREAM_LIMIT_ERROR, not silently ignored.
+        let server = make(Side::Server);
+        // make() gives 128 bi and 128 uni from each side.
+        // Server's max_remote[Bi] = 128, so stream index 128 is out of bounds.
+        let oob_id = StreamId::new(Side::Client, Dir::Bi, 128);
+        assert!(server.exceeds_stream_limit(oob_id));
+
+        // Within bounds: index 0 is fine (silently ignored if not open, which is expected).
+        let ok_id = StreamId::new(Side::Client, Dir::Bi, 0);
+        assert!(!server.exceeds_stream_limit(ok_id));
+    }
+
+    #[test]
+    fn max_stream_data_out_of_bounds() {
+        // MAX_STREAM_DATA on a remote-initiated bidi stream beyond max_remote must
+        // return a STREAM_LIMIT_ERROR transport error.
+        let mut server = make(Side::Server);
+        // Server's max_remote[Bi] = 128; index 128 is out of bounds.
+        let oob_id = StreamId::new(Side::Client, Dir::Bi, 128);
+        assert_eq!(
+            server
+                .received_max_stream_data(oob_id, 1024)
+                .unwrap_err()
+                .code,
+            TransportErrorCode::STREAM_LIMIT_ERROR
+        );
+
+        // A stream within bounds (index 0) does not produce an error.
+        let ok_id = StreamId::new(Side::Client, Dir::Bi, 0);
+        assert!(server.received_max_stream_data(ok_id, 1024).is_ok());
     }
 
     #[test]

@@ -2908,6 +2908,9 @@ impl Connection {
                                 "STOP_SENDING on recv-only stream",
                             ));
                         }
+                        if self.streams.exceeds_stream_limit(id) {
+                            return Err(TransportError::STREAM_LIMIT_ERROR(""));
+                        }
                     } else if self.streams.is_local_unopened(id) {
                         return Err(TransportError::STREAM_STATE_ERROR(
                             "STOP_SENDING on unopened stream",
