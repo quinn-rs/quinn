@@ -68,6 +68,7 @@ impl UdpSocketState {
     pub fn new(sock: UdpSockRef<'_>) -> io::Result<Self> {
         let io = sock.0;
         let mut cmsg_platform_space = 0;
+        #[cfg(not(target_os = "redox"))]
         if cfg!(target_os = "linux")
             || cfg!(bsd)
             || cfg!(apple)
@@ -173,6 +174,7 @@ impl UdpSocketState {
         }
 
         // Options standardized in RFC 3542
+        #[cfg(not(target_os = "redox"))]
         if !is_ipv4 {
             set_socket_option(&*io, libc::IPPROTO_IPV6, libc::IPV6_RECVPKTINFO, OPTION_ON)?;
             set_socket_option(&*io, libc::IPPROTO_IPV6, libc::IPV6_RECVTCLASS, OPTION_ON)?;
@@ -236,6 +238,7 @@ impl UdpSocketState {
         target_os = "openbsd",
         target_os = "netbsd",
         target_os = "dragonfly",
+        target_os = "redox",
         solarish
     )))]
     pub fn recv(
@@ -265,6 +268,7 @@ impl UdpSocketState {
         target_os = "openbsd",
         target_os = "netbsd",
         target_os = "dragonfly",
+        target_os = "redox",
         solarish,
         apple_slow
     ))]
@@ -549,6 +553,7 @@ fn send_single(state: &UdpSocketState, io: SockRef<'_>, transmit: &Transmit<'_>)
     target_os = "openbsd",
     target_os = "netbsd",
     target_os = "dragonfly",
+    target_os = "redox",
     solarish
 )))]
 fn recv_via_recvmmsg(
@@ -661,6 +666,7 @@ fn resolve_symbol(lock: &std::sync::OnceLock<usize>, name: &std::ffi::CStr) -> O
     target_os = "openbsd",
     target_os = "netbsd",
     target_os = "dragonfly",
+    target_os = "redox",
     solarish,
     apple
 ))]
@@ -739,6 +745,7 @@ fn prepare_msg(
             }
         }
     } else {
+        #[cfg(not(target_os = "redox"))]
         encoder.push(libc::IPPROTO_IPV6, libc::IPV6_TCLASS, ecn);
     }
 
@@ -774,6 +781,9 @@ fn prepare_msg(
                     }
                 }
             }
+            #[cfg(target_os = "redox")]
+            IpAddr::V6(v6) => {}
+            #[cfg(not(target_os = "redox"))]
             IpAddr::V6(v6) => {
                 let pktinfo = libc::in6_pktinfo {
                     ipi6_ifindex: 0,
@@ -936,6 +946,7 @@ impl ControlMetadata {
             (libc::IPPROTO_IP, libc::IP_RECVTOS) => unsafe {
                 self.ecn_bits = cmsg::decode::<u8, libc::cmsghdr>(cmsg);
             },
+            #[cfg(not(target_os = "redox",))]
             (libc::IPPROTO_IPV6, libc::IPV6_TCLASS) => unsafe {
                 // Temporary hack around broken macos ABI. Remove once upstream fixes it.
                 // https://bugreport.apple.com/web/?problemID=48761855
@@ -961,6 +972,7 @@ impl ControlMetadata {
                 let in_addr = unsafe { cmsg::decode::<libc::in_addr, libc::cmsghdr>(cmsg) };
                 self.dst_ip = Some(IpAddr::V4(Ipv4Addr::from(in_addr.s_addr.to_ne_bytes())));
             }
+            #[cfg(not(target_os = "redox",))]
             (libc::IPPROTO_IPV6, libc::IPV6_PKTINFO) => {
                 let pktinfo = unsafe { cmsg::decode::<libc::in6_pktinfo, libc::cmsghdr>(cmsg) };
                 self.dst_ip = Some(IpAddr::V6(Ipv6Addr::from(pktinfo.ipi6_addr.s6_addr)));
