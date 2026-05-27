@@ -782,7 +782,7 @@ fn prepare_msg(
                 }
             }
             #[cfg(target_os = "redox")]
-            IpAddr::V6(v6) => {}
+            IpAddr::V6(_) => {}
             #[cfg(not(target_os = "redox"))]
             IpAddr::V6(v6) => {
                 let pktinfo = libc::in6_pktinfo {
