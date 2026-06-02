@@ -33,7 +33,10 @@ impl Datagrams<'_> {
             .max_size()
             .ok_or(SendDatagramError::UnsupportedByPeer)?;
         let send_buffer_size = self.conn.config.datagram_send_buffer_size;
-        if data.len() > max {
+        let Some(max_buffer_payload) = send_buffer_size.checked_sub(size_of::<Datagram>()) else {
+            return Err(SendDatagramError::TooLarge);
+        };
+        if data.len() > Ord::min(max, max_buffer_payload) {
             return Err(SendDatagramError::TooLarge);
         }
         if drop {
