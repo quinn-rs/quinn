@@ -627,8 +627,6 @@ impl Endpoint {
             });
         }
 
-        let transport_config = server_config.transport.clone();
-
         // Gather everything needed to create the Connection outside the lock.
         let mut rng_seed = [0; 32];
         self.rng.fill_bytes(&mut rng_seed);
@@ -654,7 +652,6 @@ impl Endpoint {
             incoming,
             // Deferred connection creation state
             server_config,
-            transport_config,
             params,
             remote_address_validated,
             rng_seed,
@@ -1390,7 +1387,6 @@ pub struct Accepting {
     incoming: Incoming,
     // State for deferred Connection creation
     server_config: Arc<ServerConfig>,
-    transport_config: Arc<TransportConfig>,
     params: TransportParameters,
     remote_address_validated: bool,
     rng_seed: [u8; 32],
@@ -1412,6 +1408,7 @@ impl Accepting {
     pub fn finish_without_endpoint(self) -> Result<Accepted, Box<AcceptingError>> {
         self.incoming.improper_drop_warner.dismiss();
 
+        let transport_config = self.server_config.transport.clone();
         let tls = self
             .server_config
             .crypto
@@ -1419,7 +1416,7 @@ impl Accepting {
             .start_session(self.version, &self.params);
         let mut conn = Connection::new(
             self.endpoint_config,
-            self.transport_config,
+            transport_config,
             self.reservation.init_cid,
             self.reservation.loc_cid,
             self.src_cid,
