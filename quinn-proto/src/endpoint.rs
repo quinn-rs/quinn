@@ -626,7 +626,6 @@ impl Endpoint {
                 path_validated: remote_address_validated,
             },
         );
-        self.index.insert_initial(dst_cid, ch);
 
         match conn.handle_first_packet(
             incoming.received_at,
@@ -777,6 +776,61 @@ impl Endpoint {
         self.all_incoming_buffers_total_bytes -= incoming_buffer.total_bytes;
     }
 
+    /// Register endpoint-owned metadata and routes for an active connection.
+    fn register_connection(
+        &mut self,
+        ch: ConnectionHandle,
+        init_cid: ConnectionId,
+        loc_cid: ConnectionId,
+        pref_addr_cid: Option<ConnectionId>,
+        addresses: FourTuple,
+        side: Side,
+    ) {
+        let mut loc_cids = FxHashMap::default();
+
+        loc_cids.insert(0, loc_cid);
+        let cids_issued = if let Some(cid) = pref_addr_cid {
+            loc_cids.insert(1, cid);
+            2
+        } else {
+            1
+        };
+
+        let id = self.connections.insert(ConnectionMeta {
+            init_cid,
+            cids_issued,
+            loc_cids,
+            addresses,
+            side,
+            reset_token: None,
+        });
+        debug_assert_eq!(id, ch.0, "connection handle allocation out of sync");
+        let conn_meta = &self.connections[ch];
+        if conn_meta.side.is_server() {
+            self.index.insert_initial(conn_meta.init_cid, ch);
+        }
+        for cid in conn_meta.loc_cids.values() {
+            if cid.is_empty() {
+                match conn_meta.side {
+                    Side::Server => {
+                        self.index
+                            .incoming_connection_remotes
+                            .insert(conn_meta.addresses, ch);
+                    }
+                    Side::Client => {
+                        self.index
+                            .outgoing_connection_remotes
+                            .insert(conn_meta.addresses.remote, ch);
+                    }
+                }
+            } else {
+                self.index
+                    .connection_ids
+                    .insert(*cid, RouteDatagramTo::Connection(ch));
+            }
+        }
+    }
+
     fn add_connection(
         &mut self,
         ch: ConnectionHandle,
@@ -812,29 +866,7 @@ impl Endpoint {
             side_args,
         );
 
-        let mut cids_issued = 0;
-        let mut loc_cids = FxHashMap::default();
-
-        loc_cids.insert(cids_issued, loc_cid);
-        cids_issued += 1;
-
-        if let Some(cid) = pref_addr_cid {
-            debug_assert_eq!(cids_issued, 1, "preferred address cid seq must be 1");
-            loc_cids.insert(cids_issued, cid);
-            cids_issued += 1;
-        }
-
-        let id = self.connections.insert(ConnectionMeta {
-            init_cid,
-            cids_issued,
-            loc_cids,
-            addresses,
-            side,
-            reset_token: None,
-        });
-        debug_assert_eq!(id, ch.0, "connection handle allocation out of sync");
-
-        self.index.insert_conn(addresses, loc_cid, ch, side);
+        self.register_connection(ch, init_cid, loc_cid, pref_addr_cid, addresses, side);
 
         conn
     }
@@ -1020,33 +1052,6 @@ impl ConnectionIndex {
         }
         self.connection_ids_initial
             .insert(dst_cid, RouteDatagramTo::Connection(connection));
-    }
-
-    /// Associate a connection with its first locally-chosen destination CID if used, or otherwise
-    /// its current 4-tuple
-    fn insert_conn(
-        &mut self,
-        addresses: FourTuple,
-        dst_cid: ConnectionId,
-        connection: ConnectionHandle,
-        side: Side,
-    ) {
-        match dst_cid.len() {
-            0 => match side {
-                Side::Server => {
-                    self.incoming_connection_remotes
-                        .insert(addresses, connection);
-                }
-                Side::Client => {
-                    self.outgoing_connection_remotes
-                        .insert(addresses.remote, connection);
-                }
-            },
-            _ => {
-                self.connection_ids
-                    .insert(dst_cid, RouteDatagramTo::Connection(connection));
-            }
-        }
     }
 
     /// Discard a connection ID
