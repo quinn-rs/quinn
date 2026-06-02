@@ -883,6 +883,43 @@ fn max_incoming_counts_accepts_in_progress() {
     assert_eq!(pair.server.pending_accepts(), 0);
 }
 
+/// Verify that when the off-lock handshake fails (here via ALPN mismatch) after `start_accept`
+/// has reserved endpoint state, `finish_accept_error` releases the pending-accept slot and the
+/// reserved CIDs/buffer, leaving no endpoint state behind.
+#[test]
+fn accepting_state_cleaned_up_on_handshake_failure() {
+    let _guard = subscribe();
+    let server_config =
+        ServerConfig::with_crypto(Arc::new(server_crypto_with_alpn(vec!["foo".into()])));
+    let mut pair = Pair::new(Arc::new(EndpointConfig::default()), server_config);
+    pair.server.handle_incoming = Box::new(|_| IncomingConnectionBehavior::Wait);
+
+    let _client_ch =
+        pair.begin_connect(ClientConfig::new(Arc::new(client_crypto_with_alpn(vec![
+            "bar".into(),
+        ]))));
+    pair.drive_client();
+    pair.drive_server();
+
+    let incoming = pair.server.pop_waiting_incoming();
+    let accepting = pair.server.start_split_accept(incoming, pair.time);
+    assert_eq!(pair.server.pending_accepts(), 1);
+
+    // The TLS handshake runs in finish_without_endpoint and fails on the ALPN mismatch.
+    let cause = pair.server.finish_split_accept_error(accepting);
+    assert_matches!(
+        cause,
+        ConnectionError::TransportError(ref e) if e.code == TransportErrorCode::crypto(0x78)
+    );
+
+    // The failed accept must leave no reserved endpoint state behind.
+    assert_eq!(pair.server.pending_accepts(), 0);
+    assert_eq!(pair.server.open_connections(), 0);
+    assert_eq!(pair.server.incoming_buffer_bytes(), 0);
+    assert_eq!(pair.server.known_connections(), 0);
+    assert_eq!(pair.server.known_cids(), 0);
+}
+
 #[test]
 fn alpn_success() {
     let _guard = subscribe();

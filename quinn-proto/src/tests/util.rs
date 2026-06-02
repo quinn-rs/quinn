@@ -516,6 +516,16 @@ impl TestEndpoint {
         ch
     }
 
+    /// Like `finish_split_accept`, but expects the off-lock handshake to fail. Runs the
+    /// error-cleanup path (`finish_accept_error`) and returns the resulting cause.
+    pub(super) fn finish_split_accept_error(&mut self, accepting: Accepting) -> ConnectionError {
+        let mut buf = Vec::new();
+        let Err(error) = accepting.finish_without_endpoint() else {
+            panic!("split accept unexpectedly succeeded")
+        };
+        self.endpoint.finish_accept_error(error, &mut buf).cause
+    }
+
     pub(super) fn retry(&mut self, incoming: Incoming) {
         let mut buf = Vec::new();
         let transmit = self.endpoint.retry(incoming, &mut buf).unwrap();
