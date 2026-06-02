@@ -37,16 +37,7 @@ impl Datagrams<'_> {
             return Err(SendDatagramError::TooLarge);
         }
         if drop {
-            while self.conn.datagrams.outgoing_total > send_buffer_size {
-                let prev = self
-                    .conn
-                    .datagrams
-                    .outgoing
-                    .pop_front()
-                    .expect("datagrams.outgoing_total desynchronized");
-                trace!(len = prev.data.len(), "dropping outgoing datagram");
-                self.conn.datagrams.outgoing_total -= prev.data.len();
-            }
+            self.conn.datagrams.make_space_for(send_buffer_size);
         } else if self.conn.datagrams.outgoing_total + data.len() > send_buffer_size
         {
             self.conn.datagrams.send_blocked = true;
@@ -138,6 +129,16 @@ impl DatagramState {
         self.recv_buffered += datagram.data.len();
         self.incoming.push_back(datagram);
         Ok(was_empty)
+    }
+
+    fn make_space_for(&mut self, send_buffer_size: usize) {
+        while self.outgoing_total > send_buffer_size {
+            let Some(prev) = self.outgoing.pop_front() else {
+                break;
+            };
+            trace!(len = prev.data.len(), "dropping outgoing datagram");
+            self.outgoing_total -= prev.data.len();
+        }
     }
 
     /// Discard outgoing datagrams with a payload larger than `max_payload` bytes
