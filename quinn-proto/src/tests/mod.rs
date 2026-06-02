@@ -2042,6 +2042,28 @@ fn datagram_recv_buffer_overflow() {
 }
 
 #[test]
+fn datagram_larger_than_send_buffer_is_too_large() {
+    let _guard = subscribe();
+    let mut pair = Pair::default();
+    let mut client_config = client_config();
+    let mut transport_config = TransportConfig::default();
+    transport_config.datagram_send_buffer_size(1);
+    client_config.transport_config(transport_config.into());
+    let (client_ch, _) = pair.connect_with(client_config);
+
+    assert_matches!(
+        pair.client_datagrams(client_ch)
+            .send(Bytes::from_static(&[0; 2]), true),
+        Err(SendDatagramError::TooLarge)
+    );
+    assert_matches!(
+        pair.client_datagrams(client_ch)
+            .send(Bytes::from_static(&[0; 2]), false),
+        Err(SendDatagramError::TooLarge)
+    );
+}
+
+#[test]
 fn datagram_unsupported() {
     let _guard = subscribe();
     let server = ServerConfig {
