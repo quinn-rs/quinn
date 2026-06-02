@@ -38,8 +38,10 @@ impl Datagrams<'_> {
         }
         if drop {
             self.conn.datagrams.make_space_for(send_buffer_size);
-        } else if self.conn.datagrams.outgoing.payload_bytes + data.len() + size_of::<Datagram>()
-            > send_buffer_size
+        } else if !self
+            .conn
+            .datagrams
+            .has_send_buffer_space(data.len(), send_buffer_size)
         {
             self.conn.datagrams.send_blocked = true;
             return Err(SendDatagramError::Blocked(data));
@@ -136,6 +138,10 @@ impl DatagramState {
             };
             trace!(len = prev.data.len(), "dropping outgoing datagram");
         }
+    }
+
+    fn has_send_buffer_space(&self, datagram_len: usize, send_buffer_size: usize) -> bool {
+        self.outgoing.payload_bytes + datagram_len + size_of::<Datagram>() <= send_buffer_size
     }
 
     /// Discard outgoing datagrams with a payload larger than `max_payload` bytes
