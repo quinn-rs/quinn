@@ -32,13 +32,12 @@ impl Datagrams<'_> {
         let max = self
             .max_size()
             .ok_or(SendDatagramError::UnsupportedByPeer)?;
+        let send_buffer_size = self.conn.config.datagram_send_buffer_size;
         if data.len() > max {
             return Err(SendDatagramError::TooLarge);
         }
         if drop {
-            while self.conn.datagrams.outgoing.memory_used()
-                > self.conn.config.datagram_send_buffer_size
-            {
+            while self.conn.datagrams.outgoing.memory_used() > send_buffer_size {
                 let prev = self
                     .conn
                     .datagrams
@@ -48,7 +47,7 @@ impl Datagrams<'_> {
                 trace!(len = prev.data.len(), "dropping outgoing datagram");
             }
         } else if self.conn.datagrams.outgoing.payload_bytes + data.len() + size_of::<Datagram>()
-            > self.conn.config.datagram_send_buffer_size
+            > send_buffer_size
         {
             self.conn.datagrams.send_blocked = true;
             return Err(SendDatagramError::Blocked(data));
