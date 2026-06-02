@@ -2036,6 +2036,108 @@ fn datagram_send_buffer_space_preserves_queued_datagrams() {
 }
 
 #[test]
+fn datagram_larger_than_send_buffer_is_too_large() {
+    let _guard = subscribe();
+    let mut pair = Pair::default();
+    let mut client_config = client_config();
+    let mut transport_config = TransportConfig::default();
+    transport_config.datagram_send_buffer_size(1 + size_of::<Datagram>());
+    client_config.transport_config(transport_config.into());
+    let (client_ch, _) = pair.connect_with(client_config);
+
+    assert_matches!(
+        pair.client_datagrams(client_ch)
+            .send(Bytes::from_static(&[0; 2]), true),
+        Err(SendDatagramError::TooLarge)
+    );
+    assert_matches!(
+        pair.client_datagrams(client_ch)
+            .send(Bytes::from_static(&[0; 2]), false),
+        Err(SendDatagramError::TooLarge)
+    );
+}
+
+#[test]
+fn datagram_send_buffer_metadata_boundaries() {
+    let _guard = subscribe();
+    for window in [
+        0,
+        size_of::<Datagram>() - 1,
+        size_of::<Datagram>(),
+        size_of::<Datagram>() + 1,
+    ] {
+        for drop in [true, false] {
+            let mut pair = Pair::default();
+            let mut client_config = client_config();
+            let mut transport_config = TransportConfig::default();
+            transport_config.datagram_send_buffer_size(window);
+            client_config.transport_config(transport_config.into());
+            let (client_ch, server_ch) = pair.connect_with(client_config);
+
+            let Some(payload_capacity) = window.checked_sub(size_of::<Datagram>()) else {
+                assert_matches!(
+                    pair.client_datagrams(client_ch).send(Bytes::new(), drop),
+                    Err(SendDatagramError::TooLarge)
+                );
+                continue;
+            };
+
+            // An exact fit succeeds, and rejecting a larger datagram preserves the queued one.
+            let data = Bytes::from(vec![0xAB; payload_capacity]);
+            pair.client_datagrams(client_ch)
+                .send(data.clone(), drop)
+                .unwrap();
+            assert_matches!(
+                pair.client_datagrams(client_ch)
+                    .send(vec![0; payload_capacity + 1].into(), drop),
+                Err(SendDatagramError::TooLarge)
+            );
+            pair.drive();
+            assert_eq!(pair.server_datagrams(server_ch).recv(), Some(data));
+            assert_matches!(pair.server_datagrams(server_ch).recv(), None);
+        }
+    }
+}
+
+#[test]
+fn datagram_send_buffer_blocks_until_drained() {
+    let _guard = subscribe();
+    const LEN: usize = 4;
+    let mut pair = Pair::default();
+    let mut client_config = client_config();
+    let mut transport_config = TransportConfig::default();
+    transport_config.datagram_send_buffer_size(2 * (LEN + size_of::<Datagram>()));
+    client_config.transport_config(transport_config.into());
+    let (client_ch, server_ch) = pair.connect_with(client_config);
+
+    for i in 0..2u8 {
+        pair.client_datagrams(client_ch)
+            .send(vec![i; LEN].into(), false)
+            .unwrap();
+    }
+    let data = Bytes::from_static(&[2; LEN]);
+    assert_eq!(
+        pair.client_datagrams(client_ch).send(data.clone(), false),
+        Err(SendDatagramError::Blocked(data.clone()))
+    );
+    pair.drive();
+    for i in 0..2u8 {
+        assert_eq!(
+            pair.server_datagrams(server_ch).recv().unwrap(),
+            vec![i; LEN]
+        );
+    }
+    assert_matches!(pair.server_datagrams(server_ch).recv(), None);
+
+    pair.client_datagrams(client_ch)
+        .send(data.clone(), false)
+        .unwrap();
+    pair.drive();
+    assert_eq!(pair.server_datagrams(server_ch).recv(), Some(data));
+    assert_matches!(pair.server_datagrams(server_ch).recv(), None);
+}
+
+#[test]
 fn datagram_unsupported() {
     let _guard = subscribe();
     let server = ServerConfig {
