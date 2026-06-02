@@ -684,7 +684,9 @@ impl Endpoint {
         let Accepted {
             reservation,
             mut conn,
+            guard,
         } = accepted;
+        guard.dismiss();
         let accepting_buffer = self.remove_accept_reservation(&reservation);
         let ch = ConnectionHandle(self.connections.vacant_key());
         self.register_connection(
@@ -718,7 +720,9 @@ impl Endpoint {
             version,
             src_cid,
             crypto,
+            guard,
         } = *error;
+        guard.dismiss();
         debug!("handshake failed: {}", cause);
         let response = match cause {
             ConnectionError::TransportError(ref e) => Some(self.initial_close(
@@ -1332,6 +1336,29 @@ impl Drop for IncomingImproperDropWarner {
     }
 }
 
+/// Warns if a finalized split-accept state (`Accepted`/`AcceptingError`) is dropped without being
+/// passed back to `Endpoint::finish_accept`/`finish_accept_error`. Doing so leaks the reserved
+/// CIDs, the buffered Initial/0-RTT slot, and the pending-accept count, since that cleanup needs
+/// the endpoint and cannot run from `Drop`. The earlier `Accepting` state is instead covered by
+/// the `Incoming` it still holds, whose own warner stays armed until `finish_without_endpoint`.
+struct AcceptDropGuard;
+
+impl AcceptDropGuard {
+    fn dismiss(self) {
+        mem::forget(self);
+    }
+}
+
+impl Drop for AcceptDropGuard {
+    fn drop(&mut self) {
+        warn!(
+            "quinn_proto split-accept state dropped without passing to \
+             Endpoint::finish_accept/finish_accept_error (leaks reserved CIDs, buffered packets, \
+             and the pending-accept slot)"
+        );
+    }
+}
+
 /// Errors in the parameters being used to create a new connection
 ///
 /// These arise before any I/O has been performed.
@@ -1389,6 +1416,7 @@ struct AcceptReservation {
 pub struct Accepted {
     reservation: AcceptReservation,
     conn: Connection,
+    guard: AcceptDropGuard,
 }
 
 /// Internal split-accept handle used by `quinn`.
@@ -1462,6 +1490,7 @@ impl Accepting {
             Ok(()) => Ok(Accepted {
                 reservation: self.reservation,
                 conn,
+                guard: AcceptDropGuard,
             }),
             Err(e) => Err(Box::new(AcceptingError {
                 cause: e,
@@ -1469,6 +1498,7 @@ impl Accepting {
                 version: self.version,
                 src_cid: self.src_cid,
                 crypto: self.incoming.crypto,
+                guard: AcceptDropGuard,
             })),
         }
     }
@@ -1483,6 +1513,7 @@ pub struct AcceptingError {
     version: u32,
     src_cid: ConnectionId,
     crypto: Keys,
+    guard: AcceptDropGuard,
 }
 
 /// Error for attempting to retry an [`Incoming`] which already bears a token from a previous retry
