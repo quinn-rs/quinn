@@ -1994,11 +1994,43 @@ fn datagram_send_buffer_overflow() {
         pair.server_conn_mut(server_ch).poll(),
         Some(Event::DatagramReceived)
     );
-    for i in 7..10u8 {
+    // The window holds two datagrams, including their metadata.
+    for i in 8..10u8 {
         assert_eq!(
             pair.server_datagrams(server_ch).recv().unwrap(),
             vec![i; LEN]
         );
+    }
+    assert_matches!(pair.server_datagrams(server_ch).recv(), None);
+}
+
+#[test]
+fn datagram_send_buffer_space_preserves_queued_datagrams() {
+    let _guard = subscribe();
+    let mut pair = Pair::default();
+    let mut client_config = client_config();
+    let mut transport_config = TransportConfig::default();
+    transport_config.datagram_send_buffer_size(100 + 3 * size_of::<Datagram>());
+    client_config.transport_config(transport_config.into());
+    let (client_ch, server_ch) = pair.connect_with(client_config);
+
+    let first = Bytes::from_static(&[1; 7]);
+    let second = Bytes::from_static(&[2; 2]);
+    for data in [&first, &second] {
+        pair.client_datagrams(client_ch)
+            .send(data.clone(), true)
+            .unwrap();
+    }
+    let available = pair.client_datagrams(client_ch).send_buffer_space();
+    assert!(available > 0);
+    let third = Bytes::from(vec![3; available]);
+    pair.client_datagrams(client_ch)
+        .send(third.clone(), true)
+        .unwrap();
+    pair.drive();
+
+    for data in [first, second, third] {
+        assert_eq!(pair.server_datagrams(server_ch).recv(), Some(data));
     }
     assert_matches!(pair.server_datagrams(server_ch).recv(), None);
 }
