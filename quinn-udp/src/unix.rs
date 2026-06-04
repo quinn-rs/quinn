@@ -62,16 +62,16 @@ impl UdpSocketState {
             || cfg!(solarish)
         {
             cmsg_platform_space +=
-                unsafe { libc::CMSG_SPACE(mem::size_of::<libc::in6_pktinfo>() as _) as usize };
+                unsafe { libc::CMSG_SPACE(size_of::<libc::in6_pktinfo>() as _) as usize };
         }
 
         assert!(
             cmsg::LEN
-                >= unsafe { libc::CMSG_SPACE(mem::size_of::<libc::c_int>() as _) as usize }
+                >= unsafe { libc::CMSG_SPACE(size_of::<libc::c_int>() as _) as usize }
                     + cmsg_platform_space
         );
         assert!(
-            mem::align_of::<libc::cmsghdr>() <= mem::align_of::<cmsg::Aligned<[u8; 0]>>(),
+            align_of::<libc::cmsghdr>() <= align_of::<cmsg::Aligned<[u8; 0]>>(),
             "control message buffers will be misaligned"
         );
 
@@ -467,9 +467,7 @@ fn send(
                         crate::log::info!(
                             "`libc::sendmsg` failed with {e}; halting segmentation offload"
                         );
-                        state
-                            .max_gso_segments
-                            .store(1, std::sync::atomic::Ordering::Relaxed);
+                        state.max_gso_segments.store(1, Ordering::Relaxed);
                     }
                 }
 
@@ -708,7 +706,7 @@ fn prepare_recv(
     hdr: &mut libc::msghdr,
 ) {
     hdr.msg_name = name.as_mut_ptr() as _;
-    hdr.msg_namelen = mem::size_of::<libc::sockaddr_storage>() as _;
+    hdr.msg_namelen = size_of::<libc::sockaddr_storage>() as _;
     hdr.msg_iov = buf as *mut IoSliceMut<'_> as *mut libc::iovec;
     hdr.msg_iovlen = 1;
     hdr.msg_control = ctrl.0.as_mut_ptr() as _;
@@ -775,7 +773,7 @@ impl ControlMetadata {
                 // https://bugreport.apple.com/web/?problemID=48761855
                 #[allow(clippy::unnecessary_cast)] // cmsg.cmsg_len defined as size_t
                 if cfg!(apple)
-                    && cmsg.cmsg_len as usize == libc::CMSG_LEN(mem::size_of::<u8>() as _) as usize
+                    && cmsg.cmsg_len as usize == libc::CMSG_LEN(size_of::<u8>() as _) as usize
                 {
                     self.ecn_bits = cmsg::decode::<u8, libc::cmsghdr>(cmsg);
                 } else {
@@ -906,7 +904,7 @@ pub(crate) fn set_socket_option(
             level,
             name,
             &value as *const _ as _,
-            mem::size_of_val(&value) as _,
+            size_of_val(&value) as _,
         )
     };
 

@@ -142,7 +142,7 @@ impl Context {
     pub(crate) fn make_client(
         &self,
         server_addr: SocketAddr,
-    ) -> (quinn::Endpoint, quinn::Connection, Runtime) {
+    ) -> (Endpoint, quinn::Connection, Runtime) {
         let runtime = rt();
         let endpoint = {
             let _guard = runtime.enter();

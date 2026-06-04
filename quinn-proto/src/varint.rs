@@ -91,7 +91,7 @@ impl From<u32> for VarInt {
     }
 }
 
-impl std::convert::TryFrom<u64> for VarInt {
+impl TryFrom<u64> for VarInt {
     type Error = VarIntBoundsExceeded;
     /// Succeeds iff `x` < 2^62
     fn try_from(x: u64) -> Result<Self, VarIntBoundsExceeded> {
@@ -99,7 +99,7 @@ impl std::convert::TryFrom<u64> for VarInt {
     }
 }
 
-impl std::convert::TryFrom<u128> for VarInt {
+impl TryFrom<u128> for VarInt {
     type Error = VarIntBoundsExceeded;
     /// Succeeds iff `x` < 2^62
     fn try_from(x: u128) -> Result<Self, VarIntBoundsExceeded> {
@@ -107,7 +107,7 @@ impl std::convert::TryFrom<u128> for VarInt {
     }
 }
 
-impl std::convert::TryFrom<usize> for VarInt {
+impl TryFrom<usize> for VarInt {
     type Error = VarIntBoundsExceeded;
     /// Succeeds iff `x` < 2^62
     fn try_from(x: usize) -> Result<Self, VarIntBoundsExceeded> {

@@ -668,7 +668,7 @@ impl TransportParameterId {
     ];
 }
 
-impl std::cmp::PartialEq<u64> for TransportParameterId {
+impl PartialEq<u64> for TransportParameterId {
     fn eq(&self, other: &u64) -> bool {
         *other == (*self as u64)
     }

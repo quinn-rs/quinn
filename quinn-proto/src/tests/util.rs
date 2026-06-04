@@ -646,7 +646,7 @@ fn client_crypto_inner(
     certs: Option<Vec<CertificateDer<'static>>>,
     alpn: Option<Vec<Vec<u8>>>,
 ) -> QuicClientConfig {
-    let mut roots = rustls::RootCertStore::empty();
+    let mut roots = RootCertStore::empty();
     for cert in certs.unwrap_or_else(|| vec![CERTIFIED_KEY.cert.der().clone()]) {
         roots.add(cert).unwrap();
     }

@@ -35,7 +35,7 @@ fn connect_n_nodes_to_1_and_send_1mb_data() {
 
     let expected_messages = 50;
 
-    let crc = crc::Crc::<u32>::new(&crc::CRC_32_ISO_HDLC);
+    let crc = Crc::<u32>::new(&crc::CRC_32_ISO_HDLC);
     let shared2 = shared.clone();
     let endpoint2 = endpoint.clone();
     let read_incoming_data = async move {
@@ -92,8 +92,8 @@ fn connect_n_nodes_to_1_and_send_1mb_data() {
     }
 }
 
-async fn read_from_peer(mut stream: quinn::RecvStream) -> Result<(), quinn::ConnectionError> {
-    let crc = crc::Crc::<u32>::new(&crc::CRC_32_ISO_HDLC);
+async fn read_from_peer(mut stream: quinn::RecvStream) -> Result<(), ConnectionError> {
+    let crc = Crc::<u32>::new(&crc::CRC_32_ISO_HDLC);
     match stream.read_to_end(1024 * 1024 * 5).await {
         Ok(data) => {
             assert!(hash_correct(&data, &crc));

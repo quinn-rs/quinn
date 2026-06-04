@@ -136,7 +136,7 @@ fn sendmsg_x_fn() -> Option<SendmsgXFn> {
     // SAFETY: `resolve_symbol` only returns non-zero addresses obtained from `dlsym`, which
     // guarantees a callable symbol whose type matches the declaration above.
     resolve_symbol(&ADDR, c"sendmsg_x")
-        .map(|addr| unsafe { std::mem::transmute::<usize, SendmsgXFn>(addr) })
+        .map(|addr| unsafe { mem::transmute::<usize, SendmsgXFn>(addr) })
 }
 
 type SendmsgXFn =
@@ -182,7 +182,7 @@ fn prepare_recv_x(
     hdr: &mut msghdr_x,
 ) {
     hdr.msg_name = name.as_mut_ptr() as _;
-    hdr.msg_namelen = mem::size_of::<libc::sockaddr_storage>() as _;
+    hdr.msg_namelen = size_of::<libc::sockaddr_storage>() as _;
     hdr.msg_iov = buf as *mut IoSliceMut<'_> as *mut libc::iovec;
     hdr.msg_iovlen = 1;
     hdr.msg_control = ctrl.0.as_mut_ptr() as _;
@@ -199,7 +199,7 @@ fn recvmsg_x_fn() -> Option<RecvmsgXFn> {
     // SAFETY: `resolve_symbol` only returns non-zero addresses obtained from `dlsym`, which
     // guarantees a callable symbol whose type matches the declaration above.
     resolve_symbol(&ADDR, c"recvmsg_x")
-        .map(|addr| unsafe { std::mem::transmute::<usize, RecvmsgXFn>(addr) })
+        .map(|addr| unsafe { mem::transmute::<usize, RecvmsgXFn>(addr) })
 }
 
 type RecvmsgXFn =

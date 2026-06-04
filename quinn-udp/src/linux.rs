@@ -37,7 +37,7 @@ impl LinuxError {
         let mut hdr = unsafe { mem::zeroed::<libc::msghdr>() };
 
         hdr.msg_name = name.as_mut_ptr() as _;
-        hdr.msg_namelen = mem::size_of::<libc::sockaddr_storage>() as _;
+        hdr.msg_namelen = size_of::<libc::sockaddr_storage>() as _;
         hdr.msg_iov = &mut iov;
         hdr.msg_iovlen = 1;
         hdr.msg_control = ctrl.0.as_mut_ptr() as _;
@@ -85,7 +85,7 @@ impl LinuxError {
         }
 
         let required =
-            unsafe { libc::CMSG_LEN(mem::size_of::<libc::sock_extended_err>() as _) as usize };
+            unsafe { libc::CMSG_LEN(size_of::<libc::sock_extended_err>() as _) as usize };
 
         if cmsg.cmsg_len < required {
             return None;
@@ -102,8 +102,8 @@ impl LinuxError {
 
         let family = unsafe { (*offender_ptr).sa_family as i32 };
         let len = match family {
-            libc::AF_INET => mem::size_of::<libc::sockaddr_in>(),
-            libc::AF_INET6 => mem::size_of::<libc::sockaddr_in6>(),
+            libc::AF_INET => size_of::<libc::sockaddr_in>(),
+            libc::AF_INET6 => size_of::<libc::sockaddr_in6>(),
             libc::AF_UNSPEC => return Some(Self { ee, offender: None }),
             _ => return None,
         };
@@ -352,8 +352,7 @@ mod tests {
             sin_zero: [0; 8],
         };
 
-        let payload_len =
-            mem::size_of::<libc::sock_extended_err>() + mem::size_of::<libc::sockaddr_in>();
+        let payload_len = size_of::<libc::sock_extended_err>() + size_of::<libc::sockaddr_in>();
         let cmsg_len = unsafe { libc::CMSG_LEN(payload_len as _) as usize };
         let mut buffer = vec![0u8; cmsg_len];
 
@@ -367,7 +366,7 @@ mod tests {
             let data = libc::CMSG_DATA(cmsg);
             ptr::write(data as *mut libc::sock_extended_err, mock_ee);
 
-            let offender_ptr = data.add(mem::size_of::<libc::sock_extended_err>());
+            let offender_ptr = data.add(size_of::<libc::sock_extended_err>());
             ptr::write(offender_ptr as *mut libc::sockaddr_in, mock_addr);
 
             LinuxError::decode(&*cmsg)

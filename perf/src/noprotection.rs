@@ -131,7 +131,7 @@ impl crypto::Session for NoProtectionSession {
 
 impl crypto::ClientConfig for NoProtectionClientConfig {
     fn start_session(
-        self: std::sync::Arc<Self>,
+        self: Arc<Self>,
         version: u32,
         server_name: &str,
         params: &transport_parameters::TransportParameters,

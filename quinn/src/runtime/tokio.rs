@@ -77,7 +77,7 @@ impl AsyncUdpSocket for UdpSocket {
     fn poll_recv(
         &mut self,
         cx: &mut Context<'_>,
-        bufs: &mut [std::io::IoSliceMut<'_>],
+        bufs: &mut [io::IoSliceMut<'_>],
         meta: &mut [udp::RecvMeta],
     ) -> Poll<io::Result<usize>> {
         loop {
