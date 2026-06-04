@@ -839,7 +839,7 @@ fn alpn_success() {
         .crypto_session()
         .handshake_data()
         .unwrap()
-        .downcast::<crate::crypto::rustls::HandshakeData>()
+        .downcast::<crypto::rustls::HandshakeData>()
         .unwrap();
     assert_eq!(hd.protocol.unwrap(), &b"bar"[..]);
 }

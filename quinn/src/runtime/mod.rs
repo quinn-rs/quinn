@@ -6,7 +6,7 @@ use std::{
     io::{self, IoSliceMut},
     net::SocketAddr,
     pin::Pin,
-    task::{Context, Poll},
+    task::{self, Context, Poll},
 };
 
 use udp::{RecvMeta, Transmit};
@@ -151,7 +151,7 @@ impl<Socket, MakeWritableFutFn, WriteableFut>
     }
 }
 
-impl<Socket, MakeWritableFutFn, WritableFut> super::UdpSender
+impl<Socket, MakeWritableFutFn, WritableFut> UdpSender
     for UdpSenderHelper<Socket, MakeWritableFutFn, WritableFut>
 where
     Socket: UdpSenderHelperSocket,
@@ -160,7 +160,7 @@ where
 {
     fn poll_send(
         self: Pin<&mut Self>,
-        transmit: &udp::Transmit<'_>,
+        transmit: &Transmit<'_>,
         cx: &mut Context<'_>,
     ) -> Poll<io::Result<()>> {
         let mut this = self.project();
@@ -173,8 +173,7 @@ where
             // obtain an `&mut WritableFut` after storing it in `self.writable_fut` when `self` is already behind `Pin`,
             // and if we didn't store it then we wouldn't be able to keep it alive between
             // `poll_send` calls.
-            let result =
-                std::task::ready!(this.writable_fut.as_mut().as_pin_mut().unwrap().poll(cx));
+            let result = task::ready!(this.writable_fut.as_mut().as_pin_mut().unwrap().poll(cx));
 
             // Polling an arbitrary `Future` after it becomes ready is a logic error, so arrange for
             // a new `Future` to be created on the next call.
@@ -209,7 +208,7 @@ trait UdpSenderHelperSocket: Send + Sync + 'static {
     /// If not write-ready, this is allowed to return [`std::io::ErrorKind::WouldBlock`].
     ///
     /// The [`UdpSenderHelper`] will use this to implement [`UdpSender::poll_send`].
-    fn try_send(&self, transmit: &udp::Transmit<'_>) -> io::Result<()>;
+    fn try_send(&self, transmit: &Transmit<'_>) -> io::Result<()>;
 
     /// See [`UdpSender::max_transmit_segments`].
     fn max_transmit_segments(&self) -> usize;

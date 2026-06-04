@@ -223,7 +223,7 @@ pub enum TransportErrorPayload {
 
 /// Log at most 1 IO error per minute
 #[cfg(not(wasm_browser))]
-const IO_ERROR_LOG_INTERVAL: Duration = std::time::Duration::from_secs(60);
+const IO_ERROR_LOG_INTERVAL: Duration = Duration::from_secs(60);
 
 /// Logs a warning message when sendmsg fails
 ///

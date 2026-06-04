@@ -22,9 +22,9 @@ mod tracking {
         inner: std::sync::Mutex<Inner<T>>,
     }
 
-    impl<T: Debug> std::fmt::Debug for Mutex<T> {
+    impl<T: Debug> Debug for Mutex<T> {
         fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-            std::fmt::Debug::fmt(&self.inner, f)
+            Debug::fmt(&self.inner, f)
         }
     }
 

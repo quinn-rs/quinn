@@ -1,6 +1,6 @@
 use std::{
     ffi::{c_int, c_uchar},
-    mem, ptr,
+    ptr,
 };
 
 #[cfg(unix)]
@@ -43,8 +43,8 @@ impl<'a, M: MsgHdr> Encoder<'a, M> {
     /// - If insufficient buffer space remains.
     /// - If `T` has stricter alignment requirements than `M::ControlMessage`
     pub(crate) fn push<T: Copy>(&mut self, level: c_int, ty: c_int, value: T) {
-        assert!(mem::align_of::<T>() <= mem::align_of::<M::ControlMessage>());
-        let space = M::ControlMessage::cmsg_space(mem::size_of_val(&value));
+        assert!(align_of::<T>() <= align_of::<M::ControlMessage>());
+        let space = M::ControlMessage::cmsg_space(size_of_val(&value));
         assert!(
             self.hdr.control_len() >= self.len + space,
             "control message buffer too small. Required: {}, Available: {}",
@@ -52,11 +52,7 @@ impl<'a, M: MsgHdr> Encoder<'a, M> {
             self.hdr.control_len()
         );
         let cmsg = self.cmsg.take().expect("no control buffer space remaining");
-        cmsg.set(
-            level,
-            ty,
-            M::ControlMessage::cmsg_len(mem::size_of_val(&value)),
-        );
+        cmsg.set(level, ty, M::ControlMessage::cmsg_len(size_of_val(&value)));
         unsafe {
             ptr::write(cmsg.cmsg_data() as *const T as *mut T, value);
         }
@@ -82,8 +78,8 @@ impl<M: MsgHdr> Drop for Encoder<'_, M> {
 ///
 /// `cmsg` must refer to a native cmsg containing a payload of type `T`
 pub(crate) unsafe fn decode<T: Copy, C: CMsgHdr>(cmsg: &impl CMsgHdr) -> T {
-    assert!(mem::align_of::<T>() <= mem::align_of::<C>());
-    debug_assert_eq!(cmsg.len(), C::cmsg_len(mem::size_of::<T>()));
+    assert!(align_of::<T>() <= align_of::<C>());
+    debug_assert_eq!(cmsg.len(), C::cmsg_len(size_of::<T>()));
     ptr::read(cmsg.cmsg_data() as *const T)
 }
 
@@ -118,7 +114,7 @@ impl<'a, M: MsgHdr> Iterator for Iter<'a, M> {
             // On MacOS < 14 CMSG_NXTHDR might continuously return a zeroed cmsg. In
             // such case, return `None` instead, thus indicating the end of
             // the cmsghdr chain.
-            if current.len() < mem::size_of::<M::ControlMessage>() {
+            if current.len() < size_of::<M::ControlMessage>() {
                 return None;
             }
         }

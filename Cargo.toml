@@ -67,6 +67,7 @@ elided_lifetimes_in_paths = "warn"
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(fuzzing)'] }
 unnameable_types = "warn"
 unreachable_pub = "warn"
+unused_qualifications = "warn"
 
 [workspace.lints.clippy]
 manual_let_else = "warn"

@@ -568,7 +568,7 @@ impl Dedup {
 type Window = u128;
 
 /// Number of packets tracked by `Dedup`
-const WINDOW_SIZE: u64 = 1 + mem::size_of::<Window>() as u64 * 8;
+const WINDOW_SIZE: u64 = 1 + size_of::<Window>() as u64 * 8;
 
 /// Indicates which data is available for sending
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -1097,6 +1097,6 @@ mod test {
     fn sent_packet_size() {
         // The tracking state of sent packets should be minimal, and not grow
         // over time.
-        assert!(std::mem::size_of::<SentPacket>() <= 128);
+        assert!(size_of::<SentPacket>() <= 128);
     }
 }

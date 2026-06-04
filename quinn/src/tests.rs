@@ -53,9 +53,9 @@ fn handshake_timeout() {
     let mut roots = RootCertStore::empty();
     roots.add(cert.cert.into()).unwrap();
 
-    let mut client_config = crate::ClientConfig::with_root_certificates(Arc::new(roots)).unwrap();
+    let mut client_config = ClientConfig::with_root_certificates(Arc::new(roots)).unwrap();
     const IDLE_TIMEOUT: Duration = Duration::from_millis(500);
-    let mut transport_config = crate::TransportConfig::default();
+    let mut transport_config = TransportConfig::default();
     transport_config
         .max_idle_timeout(Some(IDLE_TIMEOUT.try_into().unwrap()))
         .initial_rtt(Duration::from_millis(10));
@@ -297,7 +297,7 @@ impl EndpointFactory {
             crate::ServerConfig::with_single_cert(vec![self.cert.cert.der().clone()], key).unwrap();
         server_config.transport_config(transport_config.clone());
 
-        let mut roots = rustls::RootCertStore::empty();
+        let mut roots = RootCertStore::empty();
         roots.add(self.cert.cert.der().clone()).unwrap();
         let endpoint = Endpoint::new(
             self.endpoint_config.clone(),
@@ -526,7 +526,7 @@ fn run_echo(args: EchoArgs) {
             .unwrap()
         };
 
-        let mut roots = rustls::RootCertStore::empty();
+        let mut roots = RootCertStore::empty();
         roots.add(cert).unwrap();
         let mut client_crypto =
             rustls::ClientConfig::builder_with_provider(default_provider().into())
@@ -667,7 +667,7 @@ fn subscribe() -> tracing::subscriber::DefaultGuard {
 
 struct TestWriter;
 
-impl std::io::Write for TestWriter {
+impl io::Write for TestWriter {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         print!(
             "{}",
@@ -696,7 +696,7 @@ async fn rebind_recv() {
     let key = PrivatePkcs8KeyDer::from(cert.signing_key.serialize_der());
     let cert = CertificateDer::from(cert.cert);
 
-    let mut roots = rustls::RootCertStore::empty();
+    let mut roots = RootCertStore::empty();
     roots.add(cert.clone()).unwrap();
 
     let client = Endpoint::client(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0)).unwrap();
@@ -1081,7 +1081,7 @@ async fn dropped_endpoint_cleans_up() {
     assert_eq!(Arc::strong_count(&cid_generator), 2);
     drop(endpoint);
     // Let the driver task run; paused runtimes are guaranteed to drain pending work on sleep.
-    tokio::time::sleep(Duration::from_millis(1)).await;
+    sleep(Duration::from_millis(1)).await;
     assert_eq!(Arc::strong_count(&cid_generator), 1);
 }
 

@@ -121,7 +121,7 @@ impl Stats {
     #[cfg(feature = "json-output")]
     pub fn print_json(&self, path: &Path) -> io::Result<()> {
         if path == Path::new("-") {
-            json::print(self, std::io::stdout());
+            json::print(self, io::stdout());
         } else {
             let file = File::create(path)?;
             json::print(self, file)
@@ -281,7 +281,7 @@ mod json {
 
     fn serialize_timestamp<S>(time: &SystemTime, s: S) -> Result<S::Ok, S::Error>
     where
-        S: serde::Serializer,
+        S: Serializer,
     {
         use serde::ser::SerializeMap;
         let mut state = s.serialize_map(Some(1))?;
@@ -355,7 +355,7 @@ mod json {
 
     impl Stream {
         fn from_stream_interval_stats(
-            stats: &stats::StreamIntervalStats,
+            stats: &StreamIntervalStats,
             period: &stats::IntervalPeriod,
         ) -> Self {
             let bits_per_second = stats.bytes as f64 * 8.0 / period.seconds;

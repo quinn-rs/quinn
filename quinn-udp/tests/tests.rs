@@ -96,7 +96,7 @@ fn ecn_v4() {
 #[test]
 #[cfg(not(any(target_os = "openbsd", target_os = "netbsd", solarish)))]
 fn ecn_v6_dualstack() {
-    let recv = socket2::Socket::new(
+    let recv = Socket::new(
         socket2::Domain::IPV6,
         socket2::Type::DGRAM,
         Some(socket2::Protocol::UDP),
@@ -142,7 +142,7 @@ fn ecn_v6_dualstack() {
 #[test]
 #[cfg(not(any(target_os = "openbsd", target_os = "netbsd", solarish)))]
 fn ecn_v4_mapped_v6() {
-    let send = socket2::Socket::new(
+    let send = Socket::new(
         socket2::Domain::IPV6,
         socket2::Type::DGRAM,
         Some(socket2::Protocol::UDP),
@@ -218,13 +218,13 @@ fn socket_buffers() {
         1 // Everyone else is sane.
     };
 
-    let send = socket2::Socket::new(
+    let send = Socket::new(
         socket2::Domain::IPV4,
         socket2::Type::DGRAM,
         Some(socket2::Protocol::UDP),
     )
     .unwrap();
-    let recv = socket2::Socket::new(
+    let recv = Socket::new(
         socket2::Domain::IPV4,
         socket2::Type::DGRAM,
         Some(socket2::Protocol::UDP),
