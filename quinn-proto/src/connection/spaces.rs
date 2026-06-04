@@ -561,13 +561,13 @@ impl Dedup {
     }
 }
 
-/// Inner bitfield type.
+/// Inner bitfield type
 ///
 /// Because QUIC never reuses packet numbers, this only needs to be large enough to deal with
 /// packets that are reordered but still delivered in a timely manner.
 type Window = u128;
 
-/// Number of packets tracked by `Dedup`.
+/// Number of packets tracked by `Dedup`
 const WINDOW_SIZE: u64 = 1 + mem::size_of::<Window>() as u64 * 8;
 
 /// Indicates which data is available for sending
