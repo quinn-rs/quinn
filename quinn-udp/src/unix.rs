@@ -428,155 +428,6 @@ impl UdpSocketState {
     }
 }
 
-/// Decoded entry from the Linux socket error queue (`MSG_ERRQUEUE`)
-#[cfg(any(target_os = "linux", target_os = "android"))]
-struct LinuxError {
-    ee: libc::sock_extended_err,
-    offender: Option<SocketAddr>,
-}
-
-#[cfg(any(target_os = "linux", target_os = "android"))]
-impl LinuxError {
-    /// Control message buffer size for socket error queue (MSG_ERRQUEUE)
-    const ERR_CMSG_LEN: usize = 128;
-
-    /// Reads one entry from the Linux socket error queue (MSG_ERRQUEUE)
-    fn recv(io: SockRef<'_>) -> io::Result<Option<Self>> {
-        let mut name = MaybeUninit::<libc::sockaddr_storage>::uninit();
-        let mut ctrl = cmsg::Aligned(MaybeUninit::<[u8; Self::ERR_CMSG_LEN]>::uninit());
-
-        // Linux requires at least one iovec even for MSG_ERRQUEUE.
-        let mut iov_data = [0u8; 1];
-        let mut iov = libc::iovec {
-            iov_base: iov_data.as_mut_ptr() as *mut _,
-            iov_len: iov_data.len(),
-        };
-
-        let mut hdr = unsafe { mem::zeroed::<libc::msghdr>() };
-
-        hdr.msg_name = name.as_mut_ptr() as _;
-        hdr.msg_namelen = mem::size_of::<libc::sockaddr_storage>() as _;
-        hdr.msg_iov = &mut iov;
-        hdr.msg_iovlen = 1;
-        hdr.msg_control = ctrl.0.as_mut_ptr() as _;
-        hdr.msg_controllen = Self::ERR_CMSG_LEN as _;
-
-        if let Err(err) = retry_if_interrupted(|| unsafe {
-            libc::recvmsg(
-                io.as_raw_fd(),
-                &mut hdr,
-                libc::MSG_ERRQUEUE | libc::MSG_DONTWAIT,
-            )
-        }) {
-            if err.kind() == io::ErrorKind::WouldBlock {
-                return Ok(None);
-            }
-            return Err(err);
-        };
-
-        if hdr.msg_flags & libc::MSG_CTRUNC != 0 {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "control message truncated",
-            ));
-        }
-
-        let cmsg_iter = unsafe { cmsg::Iter::new(&hdr) };
-
-        for cmsg in cmsg_iter {
-            if let Some(raw) = Self::decode(cmsg) {
-                return Ok(Some(raw));
-            }
-        }
-
-        Ok(None)
-    }
-
-    /// Attempts to decode a Linux `sock_extended_err` from a MSG_ERRQUEUE control message
-    fn decode(cmsg: &libc::cmsghdr) -> Option<Self> {
-        if cmsg.cmsg_level != libc::IPPROTO_IP && cmsg.cmsg_level != libc::IPPROTO_IPV6 {
-            return None;
-        }
-
-        if cmsg.cmsg_type != libc::IP_RECVERR && cmsg.cmsg_type != libc::IPV6_RECVERR {
-            return None;
-        }
-
-        let required =
-            unsafe { libc::CMSG_LEN(mem::size_of::<libc::sock_extended_err>() as _) as usize };
-
-        if cmsg.cmsg_len < required {
-            return None;
-        }
-
-        let ee_ptr = unsafe { libc::CMSG_DATA(cmsg) as *const libc::sock_extended_err };
-        let (ee, offender_ptr, mut storage) = unsafe {
-            (
-                std::ptr::read_unaligned(ee_ptr),
-                libc::SO_EE_OFFENDER(ee_ptr),
-                std::mem::zeroed::<libc::sockaddr_storage>(),
-            )
-        };
-
-        let family = unsafe { (*offender_ptr).sa_family as i32 };
-        let len = match family {
-            libc::AF_INET => std::mem::size_of::<libc::sockaddr_in>(),
-            libc::AF_INET6 => std::mem::size_of::<libc::sockaddr_in6>(),
-            libc::AF_UNSPEC => {
-                return Some(Self { ee, offender: None });
-            }
-            _ => return None,
-        };
-
-        unsafe {
-            std::ptr::copy_nonoverlapping(
-                offender_ptr as *const u8,
-                &mut storage as *mut _ as *mut u8,
-                len,
-            );
-        }
-
-        let offender = Some(decode_socket_addr(&storage).ok()?);
-
-        Some(Self { ee, offender })
-    }
-}
-
-#[cfg(any(target_os = "linux", target_os = "android"))]
-impl From<LinuxError> for TransportError {
-    fn from(raw: LinuxError) -> Self {
-        crate::log::trace!(
-            "decoding Linux socket error: ee_origin={} ee_type={} ee_code={} ee_errno={} ee_info={}",
-            raw.ee.ee_origin,
-            raw.ee.ee_type,
-            raw.ee.ee_code,
-            raw.ee.ee_errno,
-            raw.ee.ee_info,
-        );
-        let payload = match (raw.ee.ee_origin, raw.ee.ee_type, raw.ee.ee_code) {
-            // IPv4: Fragmentation Needed (Type 3, Code 4)
-            (libc::SO_EE_ORIGIN_ICMP, 3, 4) => TransportErrorPayload::TooBig {
-                mtu: raw.ee.ee_info,
-            },
-            // IPv6: Packet Too Big (Type 2, Code 0)
-            (libc::SO_EE_ORIGIN_ICMP6, 2, 0) => TransportErrorPayload::TooBig {
-                mtu: raw.ee.ee_info,
-            },
-            // Unreachable cases
-            (libc::SO_EE_ORIGIN_ICMP, 3, _) | (libc::SO_EE_ORIGIN_ICMP6, 1, _) => {
-                TransportErrorPayload::Unreachable
-            }
-            _ => TransportErrorPayload::Other,
-        };
-
-        Self {
-            addr: raw.offender,
-            payload,
-            raw_errno: raw.ee.ee_errno as i32,
-        }
-    }
-}
-
 #[cfg(not(any(apple, target_os = "openbsd", target_os = "netbsd")))]
 fn send(
     #[allow(unused_variables)] // only used on Linux
@@ -1210,6 +1061,155 @@ fn decode_socket_addr(name: &libc::sockaddr_storage) -> io::Result<SocketAddr> {
         f => Err(io::Error::other(format!(
             "expected AF_INET or AF_INET6, got {f}"
         ))),
+    }
+}
+
+/// Decoded entry from the Linux socket error queue (`MSG_ERRQUEUE`)
+#[cfg(any(target_os = "linux", target_os = "android"))]
+struct LinuxError {
+    ee: libc::sock_extended_err,
+    offender: Option<SocketAddr>,
+}
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
+impl LinuxError {
+    /// Control message buffer size for socket error queue (MSG_ERRQUEUE)
+    const ERR_CMSG_LEN: usize = 128;
+
+    /// Reads one entry from the Linux socket error queue (MSG_ERRQUEUE)
+    fn recv(io: SockRef<'_>) -> io::Result<Option<Self>> {
+        let mut name = MaybeUninit::<libc::sockaddr_storage>::uninit();
+        let mut ctrl = cmsg::Aligned(MaybeUninit::<[u8; Self::ERR_CMSG_LEN]>::uninit());
+
+        // Linux requires at least one iovec even for MSG_ERRQUEUE.
+        let mut iov_data = [0u8; 1];
+        let mut iov = libc::iovec {
+            iov_base: iov_data.as_mut_ptr() as *mut _,
+            iov_len: iov_data.len(),
+        };
+
+        let mut hdr = unsafe { mem::zeroed::<libc::msghdr>() };
+
+        hdr.msg_name = name.as_mut_ptr() as _;
+        hdr.msg_namelen = mem::size_of::<libc::sockaddr_storage>() as _;
+        hdr.msg_iov = &mut iov;
+        hdr.msg_iovlen = 1;
+        hdr.msg_control = ctrl.0.as_mut_ptr() as _;
+        hdr.msg_controllen = Self::ERR_CMSG_LEN as _;
+
+        if let Err(err) = retry_if_interrupted(|| unsafe {
+            libc::recvmsg(
+                io.as_raw_fd(),
+                &mut hdr,
+                libc::MSG_ERRQUEUE | libc::MSG_DONTWAIT,
+            )
+        }) {
+            if err.kind() == io::ErrorKind::WouldBlock {
+                return Ok(None);
+            }
+            return Err(err);
+        };
+
+        if hdr.msg_flags & libc::MSG_CTRUNC != 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "control message truncated",
+            ));
+        }
+
+        let cmsg_iter = unsafe { cmsg::Iter::new(&hdr) };
+
+        for cmsg in cmsg_iter {
+            if let Some(raw) = Self::decode(cmsg) {
+                return Ok(Some(raw));
+            }
+        }
+
+        Ok(None)
+    }
+
+    /// Attempts to decode a Linux `sock_extended_err` from a MSG_ERRQUEUE control message
+    fn decode(cmsg: &libc::cmsghdr) -> Option<Self> {
+        if cmsg.cmsg_level != libc::IPPROTO_IP && cmsg.cmsg_level != libc::IPPROTO_IPV6 {
+            return None;
+        }
+
+        if cmsg.cmsg_type != libc::IP_RECVERR && cmsg.cmsg_type != libc::IPV6_RECVERR {
+            return None;
+        }
+
+        let required =
+            unsafe { libc::CMSG_LEN(mem::size_of::<libc::sock_extended_err>() as _) as usize };
+
+        if cmsg.cmsg_len < required {
+            return None;
+        }
+
+        let ee_ptr = unsafe { libc::CMSG_DATA(cmsg) as *const libc::sock_extended_err };
+        let (ee, offender_ptr, mut storage) = unsafe {
+            (
+                std::ptr::read_unaligned(ee_ptr),
+                libc::SO_EE_OFFENDER(ee_ptr),
+                std::mem::zeroed::<libc::sockaddr_storage>(),
+            )
+        };
+
+        let family = unsafe { (*offender_ptr).sa_family as i32 };
+        let len = match family {
+            libc::AF_INET => std::mem::size_of::<libc::sockaddr_in>(),
+            libc::AF_INET6 => std::mem::size_of::<libc::sockaddr_in6>(),
+            libc::AF_UNSPEC => {
+                return Some(Self { ee, offender: None });
+            }
+            _ => return None,
+        };
+
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                offender_ptr as *const u8,
+                &mut storage as *mut _ as *mut u8,
+                len,
+            );
+        }
+
+        let offender = Some(decode_socket_addr(&storage).ok()?);
+
+        Some(Self { ee, offender })
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
+impl From<LinuxError> for TransportError {
+    fn from(raw: LinuxError) -> Self {
+        crate::log::trace!(
+            "decoding Linux socket error: ee_origin={} ee_type={} ee_code={} ee_errno={} ee_info={}",
+            raw.ee.ee_origin,
+            raw.ee.ee_type,
+            raw.ee.ee_code,
+            raw.ee.ee_errno,
+            raw.ee.ee_info,
+        );
+        let payload = match (raw.ee.ee_origin, raw.ee.ee_type, raw.ee.ee_code) {
+            // IPv4: Fragmentation Needed (Type 3, Code 4)
+            (libc::SO_EE_ORIGIN_ICMP, 3, 4) => TransportErrorPayload::TooBig {
+                mtu: raw.ee.ee_info,
+            },
+            // IPv6: Packet Too Big (Type 2, Code 0)
+            (libc::SO_EE_ORIGIN_ICMP6, 2, 0) => TransportErrorPayload::TooBig {
+                mtu: raw.ee.ee_info,
+            },
+            // Unreachable cases
+            (libc::SO_EE_ORIGIN_ICMP, 3, _) | (libc::SO_EE_ORIGIN_ICMP6, 1, _) => {
+                TransportErrorPayload::Unreachable
+            }
+            _ => TransportErrorPayload::Other,
+        };
+
+        Self {
+            addr: raw.offender,
+            payload,
+            raw_errno: raw.ee.ee_errno as i32,
+        }
     }
 }
 
