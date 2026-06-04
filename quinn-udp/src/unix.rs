@@ -64,7 +64,7 @@ impl UdpSocketState {
         }
 
         assert!(
-            CMSG_LEN
+            cmsg::LEN
                 >= unsafe { libc::CMSG_SPACE(mem::size_of::<libc::c_int>() as _) as usize }
                     + cmsg_platform_space
         );
@@ -429,7 +429,7 @@ fn send(
     }
     let mut msg_hdr: libc::msghdr = unsafe { mem::zeroed() };
     let mut iovec: libc::iovec = unsafe { mem::zeroed() };
-    let mut cmsgs = cmsg::Aligned([0u8; CMSG_LEN]);
+    let mut cmsgs = cmsg::Aligned([0u8; cmsg::LEN]);
     let dst_addr = socket2::SockAddr::from(transmit.destination);
     prepare_msg(
         transmit,
@@ -511,7 +511,7 @@ fn send_via_sendmsg_x(
 ) -> io::Result<()> {
     let mut hdrs = unsafe { mem::zeroed::<[msghdr_x; BATCH_SIZE]>() };
     let mut iovs = unsafe { mem::zeroed::<[libc::iovec; BATCH_SIZE]>() };
-    let mut ctrls = [cmsg::Aligned([0u8; CMSG_LEN]); BATCH_SIZE];
+    let mut ctrls = [cmsg::Aligned([0u8; cmsg::LEN]); BATCH_SIZE];
     let addr = socket2::SockAddr::from(transmit.destination);
     let segment_size = transmit.segment_size.unwrap_or(transmit.contents.len());
     let mut cnt = 0;
@@ -557,7 +557,7 @@ fn send(state: &UdpSocketState, io: SockRef<'_>, transmit: &Transmit<'_>) -> io:
 fn send_single(state: &UdpSocketState, io: SockRef<'_>, transmit: &Transmit<'_>) -> io::Result<()> {
     let mut hdr: libc::msghdr = unsafe { mem::zeroed() };
     let mut iov: libc::iovec = unsafe { mem::zeroed() };
-    let mut ctrl = cmsg::Aligned([0u8; CMSG_LEN]);
+    let mut ctrl = cmsg::Aligned([0u8; cmsg::LEN]);
     let addr = socket2::SockAddr::from(transmit.destination);
     prepare_msg(
         transmit,
@@ -587,7 +587,7 @@ fn recv_via_recvmmsg(
     meta: &mut [RecvMeta],
 ) -> io::Result<usize> {
     let mut names = [MaybeUninit::<libc::sockaddr_storage>::uninit(); BATCH_SIZE];
-    let mut ctrls = [cmsg::Aligned(MaybeUninit::<[u8; CMSG_LEN]>::uninit()); BATCH_SIZE];
+    let mut ctrls = [cmsg::Aligned(MaybeUninit::<[u8; cmsg::LEN]>::uninit()); BATCH_SIZE];
     let mut hdrs = unsafe { mem::zeroed::<[libc::mmsghdr; BATCH_SIZE]>() };
     let max_msg_count = bufs.len().min(BATCH_SIZE);
     for i in 0..max_msg_count {
@@ -628,7 +628,7 @@ fn recv_via_recvmsg_x(
     // uninitialized memory, do not use `MaybeUninit` for `ctrls`, instead
     // initialize `ctrls` with `0`s. A control message of all `0`s is
     // automatically skipped by `libc::CMSG_NXTHDR`.
-    let mut ctrls = [cmsg::Aligned([0u8; CMSG_LEN]); BATCH_SIZE];
+    let mut ctrls = [cmsg::Aligned([0u8; cmsg::LEN]); BATCH_SIZE];
     let mut hdrs = unsafe { mem::zeroed::<[msghdr_x; BATCH_SIZE]>() };
     let max_msg_count = bufs.len().min(BATCH_SIZE);
     for i in 0..max_msg_count {
@@ -702,7 +702,7 @@ fn recv_single(
     meta: &mut [RecvMeta],
 ) -> io::Result<usize> {
     let mut name = MaybeUninit::<libc::sockaddr_storage>::uninit();
-    let mut ctrl = cmsg::Aligned(MaybeUninit::<[u8; CMSG_LEN]>::uninit());
+    let mut ctrl = cmsg::Aligned(MaybeUninit::<[u8; cmsg::LEN]>::uninit());
     let mut hdr = unsafe { mem::zeroed::<libc::msghdr>() };
     prepare_recv(&mut bufs[0], &mut name, &mut ctrl, &mut hdr);
     let n = loop {
@@ -727,15 +727,13 @@ fn recv_single(
     Ok(1)
 }
 
-const CMSG_LEN: usize = 88;
-
 #[cfg_attr(apple_fast, allow(dead_code))] // Unused when apple_fast is enabled
 fn prepare_msg(
     transmit: &Transmit<'_>,
     dst_addr: &socket2::SockAddr,
     hdr: &mut libc::msghdr,
     iov: &mut libc::iovec,
-    ctrl: &mut cmsg::Aligned<[u8; CMSG_LEN]>,
+    ctrl: &mut cmsg::Aligned<[u8; cmsg::LEN]>,
     #[allow(unused_variables)] // only used on FreeBSD & macOS
     encode_src_ip: bool,
     sendmsg_einval: bool,
@@ -756,7 +754,7 @@ fn prepare_msg(
     hdr.msg_iovlen = 1;
 
     hdr.msg_control = ctrl.0.as_mut_ptr() as _;
-    hdr.msg_controllen = CMSG_LEN as _;
+    hdr.msg_controllen = cmsg::LEN as _;
     let mut encoder = unsafe { cmsg::Encoder::new(hdr) };
     let ecn = transmit.ecn.map_or(0, |x| x as libc::c_int);
     // True for IPv4 or IPv4-Mapped IPv6
@@ -831,7 +829,7 @@ fn prepare_msg_x(
     dst_addr: &socket2::SockAddr,
     hdr: &mut msghdr_x,
     iov: &mut libc::iovec,
-    ctrl: &mut cmsg::Aligned<[u8; CMSG_LEN]>,
+    ctrl: &mut cmsg::Aligned<[u8; cmsg::LEN]>,
     #[allow(unused_variables)] encode_src_ip: bool,
     sendmsg_einval: bool,
 ) {
@@ -846,7 +844,7 @@ fn prepare_msg_x(
     hdr.msg_iovlen = 1;
 
     hdr.msg_control = ctrl.0.as_mut_ptr() as _;
-    hdr.msg_controllen = CMSG_LEN as _;
+    hdr.msg_controllen = cmsg::LEN as _;
     let mut encoder = unsafe { cmsg::Encoder::new(hdr) };
     let ecn = transmit.ecn.map_or(0, |x| x as libc::c_int);
     let is_ipv4 = transmit.destination.is_ipv4()
@@ -888,7 +886,7 @@ fn prepare_msg_x(
 fn prepare_recv(
     buf: &mut IoSliceMut<'_>,
     name: &mut MaybeUninit<libc::sockaddr_storage>,
-    ctrl: &mut cmsg::Aligned<MaybeUninit<[u8; CMSG_LEN]>>,
+    ctrl: &mut cmsg::Aligned<MaybeUninit<[u8; cmsg::LEN]>>,
     hdr: &mut libc::msghdr,
 ) {
     hdr.msg_name = name.as_mut_ptr() as _;
@@ -896,7 +894,7 @@ fn prepare_recv(
     hdr.msg_iov = buf as *mut IoSliceMut<'_> as *mut libc::iovec;
     hdr.msg_iovlen = 1;
     hdr.msg_control = ctrl.0.as_mut_ptr() as _;
-    hdr.msg_controllen = CMSG_LEN as _;
+    hdr.msg_controllen = cmsg::LEN as _;
     hdr.msg_flags = 0;
 }
 
@@ -905,7 +903,7 @@ fn prepare_recv(
 fn prepare_recv_x(
     buf: &mut IoSliceMut<'_>,
     name: &mut MaybeUninit<libc::sockaddr_storage>,
-    ctrl: &mut cmsg::Aligned<[u8; CMSG_LEN]>,
+    ctrl: &mut cmsg::Aligned<[u8; cmsg::LEN]>,
     hdr: &mut msghdr_x,
 ) {
     hdr.msg_name = name.as_mut_ptr() as _;
@@ -913,7 +911,7 @@ fn prepare_recv_x(
     hdr.msg_iov = buf as *mut IoSliceMut<'_> as *mut libc::iovec;
     hdr.msg_iovlen = 1;
     hdr.msg_control = ctrl.0.as_mut_ptr() as _;
-    hdr.msg_controllen = CMSG_LEN as _;
+    hdr.msg_controllen = cmsg::LEN as _;
     hdr.msg_flags = 0;
     hdr.msg_datalen = buf.len();
 }
@@ -1059,7 +1057,7 @@ impl LinuxError {
     /// Reads one entry from the Linux socket error queue (MSG_ERRQUEUE)
     fn recv(io: SockRef<'_>) -> io::Result<Option<Self>> {
         let mut name = MaybeUninit::<libc::sockaddr_storage>::uninit();
-        let mut ctrl = cmsg::Aligned(MaybeUninit::<[u8; Self::ERR_CMSG_LEN]>::uninit());
+        let mut ctrl = cmsg::Aligned(MaybeUninit::<[u8; Self::ERR_cmsg::LEN]>::uninit());
 
         // Linux requires at least one iovec even for MSG_ERRQUEUE.
         let mut iov_data = [0u8; 1];
@@ -1075,7 +1073,7 @@ impl LinuxError {
         hdr.msg_iov = &mut iov;
         hdr.msg_iovlen = 1;
         hdr.msg_control = ctrl.0.as_mut_ptr() as _;
-        hdr.msg_controllen = Self::ERR_CMSG_LEN as _;
+        hdr.msg_controllen = Self::ERR_cmsg::LEN as _;
 
         if let Err(err) = retry_if_interrupted(|| unsafe {
             libc::recvmsg(
@@ -1119,7 +1117,7 @@ impl LinuxError {
         }
 
         let required =
-            unsafe { libc::CMSG_LEN(mem::size_of::<libc::sock_extended_err>() as _) as usize };
+            unsafe { libc::cmsg::LEN(mem::size_of::<libc::sock_extended_err>() as _) as usize };
 
         if cmsg.cmsg_len < required {
             return None;
@@ -1492,7 +1490,7 @@ mod tests {
 
         let payload_len =
             mem::size_of::<libc::sock_extended_err>() + mem::size_of::<libc::sockaddr_in>();
-        let cmsg_len = unsafe { libc::CMSG_LEN(payload_len as _) as usize };
+        let cmsg_len = unsafe { libc::cmsg::LEN(payload_len as _) as usize };
         let mut buffer = vec![0u8; cmsg_len];
 
         let decoded = unsafe {
