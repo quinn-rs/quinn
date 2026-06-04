@@ -59,6 +59,22 @@ impl Incoming {
         })
     }
 
+    /// Accept this incoming connection with a server config selected after reading ClientHello.
+    ///
+    /// This is a typed helper over [`acceptor`][Self::acceptor]. Use
+    /// [`acceptor`][Self::acceptor] directly when the caller needs custom control flow between
+    /// reading ClientHello and continuing the handshake.
+    #[cfg(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring"))]
+    pub async fn accept_with_selector<S>(
+        self,
+        selector: &S,
+    ) -> Result<Connecting, AcceptWithSelectorError<S::Error>>
+    where
+        S: ServerConfigSelector + ?Sized,
+    {
+        self.acceptor()?.await?.accept_with_selector(selector).await
+    }
+
     /// Reject this incoming connection attempt
     pub fn refuse(mut self) {
         let state = self.0.take().unwrap();
@@ -132,6 +148,36 @@ impl Drop for Incoming {
 struct State {
     inner: proto::Incoming,
     endpoint: EndpointRef,
+}
+
+/// Error returned by [`Incoming::accept_with_selector`] or
+/// [`Accepted::accept_with_selector`].
+#[cfg(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring"))]
+#[derive(Debug, Error)]
+pub enum AcceptWithSelectorError<E> {
+    /// The QUIC connection failed while reading ClientHello or continuing the handshake.
+    #[error(transparent)]
+    Connection(#[from] ConnectionError),
+    /// The caller-provided selector failed.
+    #[error("server config selection failed")]
+    Selection(E),
+}
+
+/// Selects the server config to use after rustls has read ClientHello.
+///
+/// This is a convenience layer over the staged acceptor API. Implementors may do synchronous or
+/// asynchronous work before returning a config. Returning `None` continues with the endpoint's
+/// default server config.
+#[cfg(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring"))]
+pub trait ServerConfigSelector {
+    /// Error returned by the selector.
+    type Error;
+
+    /// Select a server config for the provided ClientHello.
+    fn select_server_config<'a>(
+        &'a self,
+        client_hello: rustls::server::ClientHello<'a>,
+    ) -> impl Future<Output = Result<Option<Arc<ServerConfig>>, Self::Error>> + 'a;
 }
 
 /// Future that resolves once rustls has read the incoming ClientHello.
@@ -214,6 +260,29 @@ impl Accepted {
     /// Get the rustls ClientHello for this connection.
     pub fn client_hello(&self) -> rustls::server::ClientHello<'_> {
         self.state.as_ref().unwrap().accepted.client_hello()
+    }
+
+    /// Select a server config with `selector` and continue the QUIC handshake.
+    ///
+    /// This is a typed helper over [`client_hello`][Self::client_hello],
+    /// [`accept`][Self::accept], and [`accept_with`][Self::accept_with]. The lower-level staged
+    /// API remains available when callers need custom control flow.
+    pub async fn accept_with_selector<S>(
+        self,
+        selector: &S,
+    ) -> Result<Connecting, AcceptWithSelectorError<S::Error>>
+    where
+        S: ServerConfigSelector + ?Sized,
+    {
+        let server_config = selector
+            .select_server_config(self.client_hello())
+            .await
+            .map_err(AcceptWithSelectorError::Selection)?;
+
+        match server_config {
+            Some(server_config) => self.accept_with(server_config).map_err(Into::into),
+            None => self.accept().map_err(Into::into),
+        }
     }
 
     /// Continue the QUIC handshake using the endpoint's configured server configuration.

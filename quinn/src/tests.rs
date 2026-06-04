@@ -1,7 +1,7 @@
 #![cfg(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring"))]
 
 use std::{
-    convert::TryInto,
+    convert::{Infallible, TryInto},
     future::Future,
     io,
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, UdpSocket},
@@ -33,7 +33,10 @@ use tracing::{error_span, info};
 use tracing_futures::Instrument as _;
 use tracing_subscriber::EnvFilter;
 
-use super::{ClientConfig, Endpoint, EndpointConfig, RecvStream, SendStream, TransportConfig};
+use super::{
+    ClientConfig, Endpoint, EndpointConfig, RecvStream, SendStream, ServerConfigSelector,
+    TransportConfig,
+};
 
 #[cfg(all(feature = "rustls-aws-lc-rs-fips", not(feature = "rustls-ring")))]
 fn default_provider() -> rustls::crypto::CryptoProvider {
@@ -420,6 +423,96 @@ async fn incoming_acceptor_can_continue_with_default_server_config() {
             Some("localhost")
         );
         accepted.accept().unwrap().await.unwrap()
+    };
+
+    let client_task = async {
+        client
+            .connect(server_addr, "localhost")
+            .unwrap()
+            .await
+            .unwrap()
+    };
+
+    let (server_conn, client_conn) = join!(server_task, client_task);
+    client_conn.close(0u32.into(), b"done");
+    server_conn.closed().await;
+}
+
+#[tokio::test]
+async fn incoming_acceptor_can_use_server_config_selector() {
+    let _guard = subscribe();
+    let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
+    let cert_der = CertificateDer::from(cert.cert);
+    let alpn = b"quinn-selector-test";
+
+    let server_config = |alpn: &[u8]| {
+        let mut server_crypto = rustls::ServerConfig::builder(Arc::new(default_provider()))
+            .with_no_client_auth()
+            .with_single_cert(
+                Arc::new(Identity::from_cert_chain(vec![cert_der.clone()]).unwrap()),
+                PrivatePkcs8KeyDer::from(cert.signing_key.serialize_der()).into(),
+            )
+            .unwrap();
+        server_crypto.alpn_protocols = vec![alpn.to_vec().into()];
+        crate::ServerConfig::with_crypto(Arc::new(
+            crate::crypto::rustls::QuicServerConfig::try_from(server_crypto).unwrap(),
+        ))
+    };
+    let default_server_config = server_config(b"default-alpn");
+    let selected_server_config = Arc::new(server_config(alpn));
+
+    struct TestSelector {
+        selected: Arc<crate::ServerConfig>,
+    }
+
+    impl ServerConfigSelector for TestSelector {
+        type Error = Infallible;
+
+        async fn select_server_config<'a>(
+            &'a self,
+            client_hello: rustls::server::ClientHello<'a>,
+        ) -> Result<Option<Arc<crate::ServerConfig>>, Self::Error> {
+            assert_eq!(
+                client_hello.server_name().map(|name| name.as_ref()),
+                Some("localhost")
+            );
+            tokio::task::yield_now().await;
+            Ok(Some(self.selected.clone()))
+        }
+    }
+
+    let server = Endpoint::new(
+        EndpointConfig::default(),
+        Some(default_server_config),
+        UdpSocket::bind(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0)).unwrap(),
+        Arc::new(TokioRuntime),
+    )
+    .unwrap();
+    let server_addr = server.local_addr().unwrap();
+
+    let mut roots = RootCertStore::empty();
+    roots.add(cert_der).unwrap();
+    let mut client_crypto = rustls::ClientConfig::builder(Arc::new(default_provider()))
+        .with_root_certificates(roots)
+        .with_no_client_auth()
+        .unwrap();
+    client_crypto.alpn_protocols = vec![alpn.as_slice().into()];
+    let client = Endpoint::client(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0)).unwrap();
+    client.set_default_client_config(ClientConfig::new(Arc::new(
+        QuicClientConfig::try_from(client_crypto).unwrap(),
+    )));
+
+    let selector = TestSelector {
+        selected: selected_server_config,
+    };
+    let server_task = async {
+        let incoming = server.accept().await.unwrap();
+        incoming
+            .accept_with_selector(&selector)
+            .await
+            .unwrap()
+            .await
+            .unwrap()
     };
 
     let client_task = async {
