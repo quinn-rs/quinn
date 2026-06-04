@@ -3,6 +3,7 @@ use std::{
     mem::{self, MaybeUninit},
     net::SocketAddr,
     os::fd::AsRawFd,
+    ptr,
 };
 
 use socket2::SockRef;
@@ -21,9 +22,6 @@ pub(crate) struct LinuxError {
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
 impl LinuxError {
-    /// Control message buffer size for socket error queue (MSG_ERRQUEUE)
-    const ERR_CMSG_LEN: usize = 128;
-
     /// Reads one entry from the Linux socket error queue (MSG_ERRQUEUE)
     pub(crate) fn recv(io: SockRef<'_>) -> io::Result<Option<Self>> {
         let mut name = MaybeUninit::<libc::sockaddr_storage>::uninit();
@@ -96,34 +94,36 @@ impl LinuxError {
         let ee_ptr = unsafe { libc::CMSG_DATA(cmsg) as *const libc::sock_extended_err };
         let (ee, offender_ptr, mut storage) = unsafe {
             (
-                std::ptr::read_unaligned(ee_ptr),
+                ptr::read_unaligned(ee_ptr),
                 libc::SO_EE_OFFENDER(ee_ptr),
-                std::mem::zeroed::<libc::sockaddr_storage>(),
+                mem::zeroed::<libc::sockaddr_storage>(),
             )
         };
 
         let family = unsafe { (*offender_ptr).sa_family as i32 };
         let len = match family {
-            libc::AF_INET => std::mem::size_of::<libc::sockaddr_in>(),
-            libc::AF_INET6 => std::mem::size_of::<libc::sockaddr_in6>(),
-            libc::AF_UNSPEC => {
-                return Some(Self { ee, offender: None });
-            }
+            libc::AF_INET => mem::size_of::<libc::sockaddr_in>(),
+            libc::AF_INET6 => mem::size_of::<libc::sockaddr_in6>(),
+            libc::AF_UNSPEC => return Some(Self { ee, offender: None }),
             _ => return None,
         };
 
         unsafe {
-            std::ptr::copy_nonoverlapping(
+            ptr::copy_nonoverlapping(
                 offender_ptr as *const u8,
                 &mut storage as *mut _ as *mut u8,
                 len,
             );
         }
 
-        let offender = Some(decode_socket_addr(&storage).ok()?);
-
-        Some(Self { ee, offender })
+        Some(Self {
+            ee,
+            offender: Some(decode_socket_addr(&storage).ok()?),
+        })
     }
+
+    /// Control message buffer size for socket error queue (MSG_ERRQUEUE)
+    const ERR_CMSG_LEN: usize = 128;
 }
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
