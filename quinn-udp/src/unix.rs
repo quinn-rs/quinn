@@ -309,16 +309,15 @@ impl UdpSocketState {
     /// Returns an error if the underlying system call fails unexpectedly.
     pub fn recv_transport_error(
         &self,
-        socket: UdpSockRef<'_>,
+        _socket: UdpSockRef<'_>,
     ) -> io::Result<Option<TransportError>> {
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
-            Ok(LinuxError::recv(socket.0)?.map(TransportError::from))
+            Ok(LinuxError::recv(_socket.0)?.map(TransportError::from))
         }
 
         #[cfg(not(any(target_os = "linux", target_os = "android")))]
         {
-            let _ = socket;
             Ok(None)
         }
     }
