@@ -612,6 +612,8 @@ impl QlogConfig {
             self.start_time,
             trace,
             qlog::events::EventImportance::Core,
+            // `Instant` should have sub-microsecond precision on most platforms
+            qlog::streamer::EventTimePrecision::NanoSeconds,
             writer,
         );
 
