@@ -38,6 +38,9 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[cfg(apple_fast)]
+mod apple_fast;
+
 #[cfg(any(unix, windows))]
 mod cmsg;
 
