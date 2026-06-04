@@ -86,8 +86,8 @@ impl UdpSocketState {
             matches!(
                 e.raw_os_error(),
                 Some(code)
-                    if code == WinSock::WSAENOPROTOOPT as i32
-                    || code == WinSock::WSAEOPNOTSUPP as i32
+                    if code == WinSock::WSAENOPROTOOPT
+                    || code == WinSock::WSAEOPNOTSUPP
             )
         };
 
