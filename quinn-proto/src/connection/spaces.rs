@@ -514,7 +514,7 @@ impl Dedup {
     fn smallest_missing_in_interval(&self, lower_bound: u64, upper_bound: u64) -> Option<u64> {
         debug_assert!(lower_bound <= upper_bound);
         debug_assert!(upper_bound <= self.highest());
-        const BITFIELD_SIZE: u64 = (mem::size_of::<Window>() * 8) as u64;
+        const BITFIELD_SIZE: u64 = Window::BITS as u64;
 
         // Since we already know the packets at the boundaries have been received, we only need to
         // check those in between them (this removes the necessity of extra logic to deal with the
