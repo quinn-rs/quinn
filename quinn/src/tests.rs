@@ -21,6 +21,7 @@ use proto::{RandomConnectionIdGenerator, crypto::rustls::QuicClientConfig};
 use rand::{Rng, SeedableRng, rngs::StdRng};
 use rustls::{
     RootCertStore,
+    crypto::Identity,
     pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer},
 };
 use tokio::time::{sleep, timeout};
@@ -290,6 +291,148 @@ fn endpoint() -> Endpoint {
 
 fn endpoint_with_config(transport_config: TransportConfig) -> Endpoint {
     EndpointFactory::new().endpoint_with_config(transport_config)
+}
+
+#[tokio::test]
+async fn incoming_acceptor_exposes_client_hello() {
+    let _guard = subscribe();
+    let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
+    let cert_der = CertificateDer::from(cert.cert);
+    let alpn = b"quinn-acceptor-test";
+
+    let server_config = |alpn: &[u8]| {
+        let mut server_crypto = rustls::ServerConfig::builder(Arc::new(default_provider()))
+            .with_no_client_auth()
+            .with_single_cert(
+                Arc::new(Identity::from_cert_chain(vec![cert_der.clone()]).unwrap()),
+                PrivatePkcs8KeyDer::from(cert.signing_key.serialize_der()).into(),
+            )
+            .unwrap();
+        server_crypto.alpn_protocols = vec![alpn.to_vec().into()];
+        crate::ServerConfig::with_crypto(Arc::new(
+            crate::crypto::rustls::QuicServerConfig::try_from(server_crypto).unwrap(),
+        ))
+    };
+    let default_server_config = server_config(b"default-alpn");
+    let selected_server_config = server_config(alpn);
+
+    let server = Endpoint::new(
+        EndpointConfig::default(),
+        Some(default_server_config),
+        UdpSocket::bind(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0)).unwrap(),
+        Arc::new(TokioRuntime),
+    )
+    .unwrap();
+    let server_addr = server.local_addr().unwrap();
+
+    let mut roots = RootCertStore::empty();
+    roots.add(cert_der).unwrap();
+    let mut client_crypto = rustls::ClientConfig::builder(Arc::new(default_provider()))
+        .with_root_certificates(roots)
+        .with_no_client_auth()
+        .unwrap();
+    client_crypto.alpn_protocols = vec![alpn.as_slice().into()];
+    let client = Endpoint::client(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0)).unwrap();
+    client.set_default_client_config(ClientConfig::new(Arc::new(
+        QuicClientConfig::try_from(client_crypto).unwrap(),
+    )));
+
+    let server_task = async {
+        let incoming = server.accept().await.unwrap();
+        let accepted = incoming.acceptor().unwrap().await.unwrap();
+        let hello = accepted.client_hello();
+        assert_eq!(
+            hello.server_name().map(|name| name.as_ref()),
+            Some("localhost")
+        );
+        assert_eq!(
+            hello.alpn().unwrap().map(<[_]>::to_vec).collect::<Vec<_>>(),
+            vec![alpn.to_vec()]
+        );
+        accepted
+            .accept_with(Arc::new(selected_server_config))
+            .unwrap()
+            .await
+            .unwrap()
+    };
+
+    let client_task = async {
+        client
+            .connect(server_addr, "localhost")
+            .unwrap()
+            .await
+            .unwrap()
+    };
+
+    let (server_conn, client_conn) = join!(server_task, client_task);
+    client_conn.close(0u32.into(), b"done");
+    server_conn.closed().await;
+}
+
+#[tokio::test]
+async fn incoming_acceptor_can_continue_with_default_server_config() {
+    let _guard = subscribe();
+    let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
+    let cert_der = CertificateDer::from(cert.cert);
+    let alpn = b"quinn-acceptor-default-test";
+
+    let mut server_crypto = rustls::ServerConfig::builder(Arc::new(default_provider()))
+        .with_no_client_auth()
+        .with_single_cert(
+            Arc::new(Identity::from_cert_chain(vec![cert_der.clone()]).unwrap()),
+            PrivatePkcs8KeyDer::from(cert.signing_key.serialize_der()).into(),
+        )
+        .unwrap();
+    server_crypto.alpn_protocols = vec![alpn.to_vec().into()];
+    let server_config = crate::ServerConfig::with_crypto(Arc::new(
+        crate::crypto::rustls::QuicServerConfig::try_from(server_crypto).unwrap(),
+    ));
+
+    let server = Endpoint::new(
+        EndpointConfig::default(),
+        Some(server_config),
+        UdpSocket::bind(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0)).unwrap(),
+        Arc::new(TokioRuntime),
+    )
+    .unwrap();
+    let server_addr = server.local_addr().unwrap();
+
+    let mut roots = RootCertStore::empty();
+    roots.add(cert_der).unwrap();
+    let mut client_crypto = rustls::ClientConfig::builder(Arc::new(default_provider()))
+        .with_root_certificates(roots)
+        .with_no_client_auth()
+        .unwrap();
+    client_crypto.alpn_protocols = vec![alpn.as_slice().into()];
+    let client = Endpoint::client(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0)).unwrap();
+    client.set_default_client_config(ClientConfig::new(Arc::new(
+        QuicClientConfig::try_from(client_crypto).unwrap(),
+    )));
+
+    let server_task = async {
+        let incoming = server.accept().await.unwrap();
+        let accepted = incoming.acceptor().unwrap().await.unwrap();
+        assert_eq!(
+            accepted
+                .client_hello()
+                .server_name()
+                .map(|name| name.as_ref()),
+            Some("localhost")
+        );
+        accepted.accept().unwrap().await.unwrap()
+    };
+
+    let client_task = async {
+        client
+            .connect(server_addr, "localhost")
+            .unwrap()
+            .await
+            .unwrap()
+    };
+
+    let (server_conn, client_conn) = join!(server_task, client_task);
+    client_conn.close(0u32.into(), b"done");
+    server_conn.closed().await;
 }
 
 /// Constructs endpoints suitable for connecting to themselves and each other
