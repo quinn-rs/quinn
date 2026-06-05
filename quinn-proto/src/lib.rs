@@ -73,6 +73,8 @@ mod endpoint;
 pub use crate::endpoint::{
     AcceptError, ConnectError, ConnectionHandle, DatagramEvent, Endpoint, Incoming, RetryError,
 };
+#[cfg(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring"))]
+pub use crate::endpoint::{RustlsAccepted, RustlsAcceptor};
 
 mod packet;
 pub use packet::{

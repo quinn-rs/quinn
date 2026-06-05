@@ -38,6 +38,9 @@ use crate::{
     transport_parameters::{PreferredAddress, TransportParameters},
 };
 
+#[cfg(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring"))]
+use crate::{connection::assembler::Assembler, frame::Close};
+
 /// The main entry point to the library
 ///
 /// This object performs no I/O whatsoever. Instead, it consumes incoming packets and
@@ -638,6 +641,72 @@ impl Endpoint {
         )
     }
 
+    /// Poll the rustls acceptor for an incoming connection.
+    #[cfg(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring"))]
+    pub fn poll_rustls_acceptor(
+        &mut self,
+        incoming: &mut Incoming,
+        acceptor: &mut RustlsAcceptor,
+        buf: &mut Vec<u8>,
+    ) -> Result<(Option<RustlsAccepted>, Option<Transmit>), Box<AcceptError>> {
+        let server_config = self.server_config.as_ref().unwrap();
+        let crypto_buffer_size = server_config.transport.crypto_buffer_size;
+        let InitialHeader {
+            src_cid, version, ..
+        } = incoming.packet.header.clone();
+
+        if !acceptor.processed_first_packet {
+            acceptor.processed_first_packet = true;
+            let packet_number = incoming.packet.header.number.expand(acceptor.rx_packet + 1);
+            match Self::decrypt_initial_payload(
+                &incoming.crypto,
+                packet_number,
+                &incoming.packet.header_data,
+                incoming.packet.payload.clone(),
+            ) {
+                Ok(payload) => {
+                    match acceptor.read_initial_payload(
+                        payload.freeze(),
+                        incoming.packet.payload.len(),
+                        crypto_buffer_size,
+                        packet_number,
+                    ) {
+                        Ok(Some(accepted)) => return Ok((Some(accepted), None)),
+                        Ok(None) => {}
+                        Err(cause) => {
+                            return Err(Box::new(AcceptError {
+                                response: Some(self.initial_close(
+                                    version,
+                                    incoming.addresses,
+                                    &incoming.crypto,
+                                    src_cid,
+                                    cause.clone(),
+                                    buf,
+                                )),
+                                cause: cause.into(),
+                            }));
+                        }
+                    }
+                }
+                Err(cause) => {
+                    return Err(Box::new(AcceptError {
+                        response: Some(self.initial_close(
+                            version,
+                            incoming.addresses,
+                            &incoming.crypto,
+                            src_cid,
+                            cause.clone(),
+                            buf,
+                        )),
+                        cause: cause.into(),
+                    }));
+                }
+            }
+        }
+
+        Ok((None, None))
+    }
+
     fn accept_inner(
         &mut self,
         incoming_buffer: IncomingBuffer,
@@ -712,6 +781,21 @@ impl Endpoint {
                 Err(Box::new(AcceptError { cause: e, response }))
             }
         }
+    }
+
+    #[cfg(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring"))]
+    fn decrypt_initial_payload(
+        crypto: &Keys,
+        packet_number: u64,
+        header_data: &Bytes,
+        mut payload: BytesMut,
+    ) -> Result<BytesMut, TransportError> {
+        crypto
+            .packet
+            .remote
+            .decrypt(packet_number, header_data, &mut payload)
+            .map_err(|_| TransportError::PROTOCOL_VIOLATION("authentication failed"))?;
+        Ok(payload)
     }
 
     /// Check if we should refuse a connection attempt regardless of the packet's contents
@@ -913,7 +997,7 @@ impl Endpoint {
         let partial_encode = header.encode(buf);
         let max_len =
             INITIAL_MTU as usize - partial_encode.header_len - crypto.packet.local.tag_len();
-        frame::Close::from(reason).encode(buf, max_len);
+        Close::from(reason).encode(buf, max_len);
         buf.resize(buf.len() + crypto.packet.local.tag_len(), 0);
         partial_encode.finish(buf, &*crypto.header.local, Some((0, &*crypto.packet.local)));
         Transmit {
@@ -1210,6 +1294,88 @@ pub struct Incoming {
     token: IncomingToken,
     incoming_idx: usize,
     improper_drop_warner: IncomingImproperDropWarner,
+}
+
+/// State for reading a rustls QUIC ClientHello before choosing a server config.
+#[cfg(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring"))]
+pub struct RustlsAcceptor {
+    tls: crypto::rustls::Acceptor,
+    crypto_stream: Assembler,
+    processed_first_packet: bool,
+    rx_packet: u64,
+}
+
+#[cfg(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring"))]
+impl RustlsAcceptor {
+    /// Create a rustls acceptor for an incoming connection.
+    pub fn new(incoming: &Incoming) -> Result<Self, UnsupportedVersion> {
+        Ok(Self {
+            tls: crypto::rustls::Acceptor::new(incoming.packet.header.version)?,
+            crypto_stream: Assembler::new(),
+            processed_first_packet: false,
+            rx_packet: 0,
+        })
+    }
+
+    fn read_initial_payload(
+        &mut self,
+        payload: Bytes,
+        payload_len: usize,
+        crypto_buffer_size: usize,
+        packet_number: u64,
+    ) -> Result<Option<RustlsAccepted>, TransportError> {
+        for result in frame::Iter::new(payload)? {
+            match result? {
+                frame::Frame::Crypto(frame) => {
+                    let end = frame.offset + frame.data.len() as u64;
+                    let max = end.saturating_sub(self.crypto_stream.bytes_read());
+                    if max > crypto_buffer_size as u64 {
+                        return Err(TransportError::CRYPTO_BUFFER_EXCEEDED(""));
+                    }
+
+                    self.crypto_stream
+                        .insert(frame.offset, frame.data.clone(), payload_len);
+                    while let Some(chunk) = self.crypto_stream.read(usize::MAX, true) {
+                        self.tls.read_hs(&chunk.bytes)?;
+                        if let Some(tls) = self.tls.accept()? {
+                            return Ok(Some(RustlsAccepted { tls }));
+                        }
+                    }
+                }
+                frame::Frame::Padding | frame::Frame::Ping | frame::Frame::Ack(_) => {}
+                frame::Frame::Close(Close::Connection(reason)) => {
+                    return Err(TransportError::NO_ERROR(String::from_utf8_lossy(
+                        &reason.reason,
+                    )));
+                }
+                frame => {
+                    let mut err =
+                        TransportError::PROTOCOL_VIOLATION("illegal frame type in handshake");
+                    err.frame = Some(frame.ty());
+                    return Err(err);
+                }
+            }
+        }
+
+        if packet_number > self.rx_packet {
+            self.rx_packet = packet_number;
+        }
+        Ok(None)
+    }
+}
+
+/// A rustls ClientHello and the state required to continue the QUIC handshake.
+#[cfg(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring"))]
+pub struct RustlsAccepted {
+    tls: crypto::rustls::Accepted,
+}
+
+#[cfg(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring"))]
+impl RustlsAccepted {
+    /// Get the rustls ClientHello for this connection.
+    pub fn client_hello(&self) -> rustls::server::ClientHello<'_> {
+        self.tls.client_hello()
+    }
 }
 
 impl Incoming {

@@ -22,9 +22,9 @@ use rustls::{
     error::AlertDescription,
     pki_types::{CertificateDer, PrivateKeyDer, ServerName},
     quic::{
-        Accepted as RustlsAccepted, ClientConnection, Connection as _, DirectionalKeys,
-        HeaderProtectionKey, KeyChange, PacketKey, Secrets, ServerConnection, Side as QuicSide,
-        Suite, Version,
+        Accepted as RustlsAccepted, Acceptor as RustlsAcceptor, ClientConnection, Connection as _,
+        DirectionalKeys, HeaderProtectionKey, KeyChange, PacketKey, Secrets, ServerConnection,
+        Side as QuicSide, Suite, Version,
     },
 };
 #[cfg(feature = "platform-verifier")]
@@ -159,6 +159,31 @@ pub(crate) fn transport_error_from_rustls(e: Error) -> TransportError {
         }
     } else {
         TransportError::PROTOCOL_VIOLATION(format!("TLS error: {e}"))
+    }
+}
+
+pub(crate) struct Acceptor {
+    inner: RustlsAcceptor,
+}
+
+impl Acceptor {
+    pub(crate) fn new(version: u32) -> Result<Self, UnsupportedVersion> {
+        Ok(Self {
+            inner: RustlsAcceptor::new(interpret_version(version)?),
+        })
+    }
+
+    pub(crate) fn read_hs(&mut self, plaintext: &[u8]) -> Result<(), TransportError> {
+        self.inner
+            .read_hs(plaintext)
+            .map_err(transport_error_from_rustls)
+    }
+
+    pub(crate) fn accept(&mut self) -> Result<Option<Accepted>, TransportError> {
+        self.inner
+            .accept()
+            .map(|accepted| accepted.map(|inner| Accepted { inner }))
+            .map_err(transport_error_from_rustls)
     }
 }
 
