@@ -1300,6 +1300,11 @@ impl Connection {
         &*self.crypto
     }
 
+    /// Get a mutable session reference
+    pub fn crypto_session_mut(&mut self) -> &mut dyn crypto::Session {
+        &mut *self.crypto
+    }
+
     /// Whether the connection is in the process of being established
     ///
     /// If this returns `false`, the connection may be either established or closed, signaled by the

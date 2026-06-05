@@ -63,17 +63,12 @@ pub async fn connect_client(
     let mut roots = RootCertStore::empty();
     roots.add(server_cert)?;
 
-    let default_provider = rustls::crypto::ring::default_provider();
-    let provider = rustls::crypto::CryptoProvider {
-        cipher_suites: vec![opt.cipher.as_rustls()],
-        ..default_provider
-    };
+    let mut provider = rustls_aws_lc_rs::DEFAULT_PROVIDER;
+    provider.tls13_cipher_suites = vec![opt.cipher.as_rustls()].into();
 
-    let crypto = rustls::ClientConfig::builder_with_provider(provider.into())
-        .with_protocol_versions(&[&rustls::version::TLS13])
-        .unwrap()
+    let crypto = rustls::ClientConfig::builder(Arc::new(provider))
         .with_root_certificates(roots)
-        .with_no_client_auth();
+        .with_no_client_auth()?;
 
     let mut client_config = quinn::ClientConfig::new(Arc::new(QuicClientConfig::try_from(crypto)?));
     client_config.transport_config(Arc::new(transport_config(&opt)));
@@ -230,8 +225,8 @@ pub enum CipherSuite {
 }
 
 impl CipherSuite {
-    pub fn as_rustls(self) -> rustls::SupportedCipherSuite {
-        use rustls::crypto::ring::cipher_suite;
+    pub fn as_rustls(self) -> &'static rustls::Tls13CipherSuite {
+        use rustls_aws_lc_rs::cipher_suite;
         match self {
             Self::Aes128 => cipher_suite::TLS13_AES_128_GCM_SHA256,
             Self::Aes256 => cipher_suite::TLS13_AES_256_GCM_SHA384,
