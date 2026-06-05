@@ -10,7 +10,7 @@ use crate::range_set::RangeSet;
 
 /// Helper to assemble unordered stream frames into an ordered stream
 #[derive(Debug, Default)]
-pub(super) struct Assembler {
+pub(crate) struct Assembler {
     state: State,
     data: BinaryHeap<Buffer>,
     /// Total number of buffered bytes, including duplicates in ordered mode.
@@ -25,7 +25,7 @@ pub(super) struct Assembler {
 }
 
 impl Assembler {
-    pub(super) fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self::default()
     }
 
@@ -57,7 +57,7 @@ impl Assembler {
     }
 
     /// Get the the next chunk
-    pub(super) fn read(&mut self, max_length: usize, ordered: bool) -> Option<Chunk> {
+    pub(crate) fn read(&mut self, max_length: usize, ordered: bool) -> Option<Chunk> {
         loop {
             let mut chunk = self.data.peek_mut()?;
 
@@ -147,7 +147,7 @@ impl Assembler {
 
     // Note: If a packet contains many frames from the same stream, the estimated over-allocation
     // will be much higher because we are counting the same allocation multiple times.
-    pub(super) fn insert(&mut self, mut offset: u64, mut bytes: Bytes, allocation_size: usize) {
+    pub(crate) fn insert(&mut self, mut offset: u64, mut bytes: Bytes, allocation_size: usize) {
         debug_assert!(
             bytes.len() <= allocation_size,
             "allocation_size less than bytes.len(): {:?} < {:?}",
@@ -209,7 +209,7 @@ impl Assembler {
     }
 
     /// Number of bytes consumed by the application
-    pub(super) fn bytes_read(&self) -> u64 {
+    pub(crate) fn bytes_read(&self) -> u64 {
         self.bytes_read
     }
 

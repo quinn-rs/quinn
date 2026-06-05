@@ -41,7 +41,7 @@ use crate::{
 mod ack_frequency;
 use ack_frequency::AckFrequencyState;
 
-mod assembler;
+pub(crate) mod assembler;
 pub use assembler::Chunk;
 
 mod cid_state;
