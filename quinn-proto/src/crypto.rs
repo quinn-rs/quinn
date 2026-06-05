@@ -139,6 +139,19 @@ pub trait ServerConfig: Send + Sync {
         version: u32,
         params: &TransportParameters,
     ) -> Box<dyn Session>;
+
+    /// Continue a server session after a rustls QUIC acceptor has read the ClientHello.
+    #[cfg(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring"))]
+    fn start_session_from_accepted(
+        self: Arc<Self>,
+        _version: u32,
+        _params: &TransportParameters,
+        _accepted: rustls::Accepted,
+    ) -> Result<Box<dyn Session>, TransportError> {
+        Err(TransportError::PROTOCOL_VIOLATION(
+            "server crypto config does not support rustls acceptor",
+        ))
+    }
 }
 
 /// Keys used to protect packet payloads

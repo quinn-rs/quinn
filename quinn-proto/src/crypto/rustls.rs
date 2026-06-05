@@ -22,8 +22,9 @@ use rustls::{
     error::AlertDescription,
     pki_types::{CertificateDer, PrivateKeyDer, ServerName},
     quic::{
-        ClientConnection, Connection as _, DirectionalKeys, HeaderProtectionKey, KeyChange,
-        PacketKey, Secrets, ServerConnection, Side as QuicSide, Suite, Version,
+        Accepted as RustlsAccepted, ClientConnection, Connection as _, DirectionalKeys,
+        HeaderProtectionKey, KeyChange, PacketKey, Secrets, ServerConnection, Side as QuicSide,
+        Suite, Version,
     },
 };
 #[cfg(feature = "platform-verifier")]
@@ -158,6 +159,18 @@ pub(crate) fn transport_error_from_rustls(e: Error) -> TransportError {
         }
     } else {
         TransportError::PROTOCOL_VIOLATION(format!("TLS error: {e}"))
+    }
+}
+
+/// A rustls QUIC ClientHello and the state needed to continue the handshake.
+pub struct Accepted {
+    inner: RustlsAccepted,
+}
+
+impl Accepted {
+    /// Get the ClientHello for this connection.
+    pub fn client_hello(&self) -> rustls::server::ClientHello<'_> {
+        self.inner.client_hello()
     }
 }
 
@@ -636,6 +649,29 @@ impl crypto::ServerConfig for QuicServerConfig {
             ),
             suite: self.initial,
         })
+    }
+
+    fn start_session_from_accepted(
+        self: Arc<Self>,
+        version: u32,
+        params: &TransportParameters,
+        accepted: Accepted,
+    ) -> Result<Box<dyn crypto::Session>, TransportError> {
+        // Safe: `start_session_from_accepted()` is never called if `initial_keys()` rejected
+        // `version`.
+        let version = interpret_version(version).unwrap();
+        let inner = accepted
+            .inner
+            .into_connection(self.inner.clone(), to_vec(params))
+            .map_err(transport_error_from_rustls)?;
+        Ok(Box::new(TlsSession {
+            version,
+            got_handshake_data: false,
+            next_secrets: None,
+            exporter: None,
+            inner: QuicConnection::Server(inner),
+            suite: self.initial,
+        }))
     }
 
     fn initial_keys(
