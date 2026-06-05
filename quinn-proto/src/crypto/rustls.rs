@@ -148,6 +148,19 @@ impl TlsSession {
     }
 }
 
+pub(crate) fn transport_error_from_rustls(e: Error) -> TransportError {
+    if let Ok(alert) = AlertDescription::try_from(&e) {
+        TransportError {
+            code: TransportErrorCode::crypto(alert.into()),
+            frame: None,
+            reason: e.to_string(),
+            crypto: Some(Arc::new(e)),
+        }
+    } else {
+        TransportError::PROTOCOL_VIOLATION(format!("TLS error: {e}"))
+    }
+}
+
 impl crypto::Session for TlsSession {
     fn initial_keys(&self, dst_cid: ConnectionId, side: Side) -> Keys {
         initial_keys(self.version, dst_cid, side, &self.suite)
@@ -209,18 +222,9 @@ impl crypto::Session for TlsSession {
     }
 
     fn read_handshake(&mut self, buf: &[u8]) -> Result<bool, TransportError> {
-        self.inner.read_hs(buf).map_err(|e| {
-            if let Ok(alert) = AlertDescription::try_from(&e) {
-                TransportError {
-                    code: TransportErrorCode::crypto(alert.into()),
-                    frame: None,
-                    reason: e.to_string(),
-                    crypto: Some(Arc::new(e)),
-                }
-            } else {
-                TransportError::PROTOCOL_VIOLATION(format!("TLS error: {e}"))
-            }
-        })?;
+        self.inner
+            .read_hs(buf)
+            .map_err(transport_error_from_rustls)?;
         if !self.got_handshake_data {
             // Hack around the lack of an explicit signal from rustls to reflect ClientHello being
             // ready on incoming connections, or ALPN negotiation completing on outgoing
