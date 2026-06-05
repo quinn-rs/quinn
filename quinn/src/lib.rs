@@ -77,6 +77,8 @@ pub use crate::connection::{
     SendDatagramError,
 };
 pub use crate::endpoint::{Accept, Endpoint, EndpointStats};
+#[cfg(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring"))]
+pub use crate::incoming::{Accepted, Acceptor};
 pub use crate::incoming::{Incoming, IncomingFuture, RetryError};
 pub use crate::recv_stream::{ReadError, ReadExactError, ReadToEndError, RecvStream, ResetError};
 #[cfg(feature = "runtime-smol")]
