@@ -63,10 +63,20 @@ impl crypto::Session for TlsSession {
         }
         Some(Box::new(HandshakeData {
             protocol: self.inner.alpn_protocol().map(|x| x.into()),
-            server_name: match self.inner {
+            server_name: match &self.inner {
                 Connection::Client(_) => None,
-                Connection::Server(ref session) => session.server_name().map(|x| x.into()),
+                Connection::Server(session) => session.server_name().map(|x| x.into()),
             },
+            protocol_version: match &self.inner {
+                Connection::Client(session) => session.protocol_version(),
+                Connection::Server(session) => session.protocol_version(),
+            }
+            .map(|x| -> Box<dyn Any> { Box::new(x) }),
+            cipher_suite: match &self.inner {
+                Connection::Client(session) => session.negotiated_cipher_suite(),
+                Connection::Server(session) => session.negotiated_cipher_suite(),
+            }
+            .map(|suite| -> Box<dyn Any> { Box::new(suite.suite()) }),
             #[cfg(feature = "__rustls-post-quantum-test")]
             negotiated_key_exchange_group: self
                 .inner
@@ -265,6 +275,10 @@ pub struct HandshakeData {
     ///
     /// Always `None` for outgoing connections
     pub server_name: Option<String>,
+    /// The protocol version negotiated with the peer, if any
+    pub protocol_version: Option<Box<dyn Any>>,
+    /// The cipher suite negotiated with the peer, if any
+    pub cipher_suite: Option<Box<dyn Any>>,
     /// The key exchange group negotiated with the peer
     #[cfg(feature = "__rustls-post-quantum-test")]
     pub negotiated_key_exchange_group: NamedGroup,
