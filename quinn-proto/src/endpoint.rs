@@ -616,6 +616,49 @@ impl Endpoint {
         }
 
         let tls = server_config.crypto.clone().start_session(version, &params);
+        self.accept_inner(
+            incoming_buffer,
+            ch,
+            loc_cid,
+            incoming.received_at,
+            incoming.addresses,
+            incoming.ecn,
+            incoming.packet,
+            incoming.rest,
+            incoming.crypto,
+            remote_address_validated,
+            packet_number,
+            src_cid,
+            dst_cid,
+            version,
+            buf,
+            server_config,
+            tls,
+            pref_addr_cid,
+        )
+    }
+
+    fn accept_inner(
+        &mut self,
+        incoming_buffer: IncomingBuffer,
+        ch: ConnectionHandle,
+        loc_cid: ConnectionId,
+        received_at: Instant,
+        addresses: FourTuple,
+        ecn: Option<EcnCodepoint>,
+        packet: InitialPacket,
+        rest: Option<BytesMut>,
+        crypto: Keys,
+        remote_address_validated: bool,
+        packet_number: u64,
+        src_cid: ConnectionId,
+        dst_cid: ConnectionId,
+        version: u32,
+        buf: &mut Vec<u8>,
+        server_config: Arc<ServerConfig>,
+        tls: Box<dyn crypto::Session>,
+        pref_addr_cid: Option<ConnectionId>,
+    ) -> Result<(ConnectionHandle, Connection), Box<AcceptError>> {
         let transport_config = server_config.transport.clone();
         let mut conn = self.add_connection(
             ch,
@@ -623,8 +666,8 @@ impl Endpoint {
             dst_cid,
             loc_cid,
             src_cid,
-            incoming.addresses,
-            incoming.received_at,
+            addresses,
+            received_at,
             tls,
             transport_config,
             SideArgs::Server {
@@ -636,12 +679,12 @@ impl Endpoint {
         self.index.insert_initial(dst_cid, ch);
 
         match conn.handle_first_packet(
-            incoming.received_at,
-            incoming.addresses.remote,
-            incoming.ecn,
+            received_at,
+            addresses.remote,
+            ecn,
             packet_number,
-            incoming.packet,
-            incoming.rest,
+            packet,
+            rest,
         ) {
             Ok(()) => {
                 trace!(id = ch.0, icid = %dst_cid, "new connection");
@@ -658,8 +701,8 @@ impl Endpoint {
                 let response = match e {
                     ConnectionError::TransportError(ref e) => Some(self.initial_close(
                         version,
-                        incoming.addresses,
-                        &incoming.crypto,
+                        addresses,
+                        &crypto,
                         src_cid,
                         e.clone(),
                         buf,
