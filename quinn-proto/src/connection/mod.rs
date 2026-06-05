@@ -1305,6 +1305,15 @@ impl Connection {
         &mut *self.crypto
     }
 
+    pub(crate) fn skip_initial_crypto(&mut self, offset: u64) {
+        self.spaces[SpaceId::Initial].crypto_stream.skip_to(offset);
+    }
+
+    pub(crate) fn skip_initial_packet_number(&mut self, next: u64) {
+        let space = &mut self.spaces[SpaceId::Initial];
+        space.next_packet_number = space.next_packet_number.max(next);
+    }
+
     /// Whether the connection is in the process of being established
     ///
     /// If this returns `false`, the connection may be either established or closed, signaled by the

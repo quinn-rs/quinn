@@ -213,6 +213,11 @@ impl Assembler {
         self.bytes_read
     }
 
+    pub(crate) fn skip_to(&mut self, offset: u64) {
+        self.bytes_read = self.bytes_read.max(offset);
+        self.end = self.end.max(offset);
+    }
+
     /// Discard all buffered data
     pub(super) fn clear(&mut self) {
         self.data.clear();
