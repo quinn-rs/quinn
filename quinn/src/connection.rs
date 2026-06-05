@@ -674,7 +674,7 @@ impl Connection {
             .state
             .lock("export_keying_material")
             .inner
-            .crypto_session()
+            .crypto_session_mut()
             .export_keying_material(output, label, context)
     }
 
