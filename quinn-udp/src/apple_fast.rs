@@ -101,13 +101,13 @@ fn send_via_sendmsg_x(
                     remainder.len()
                 );
 
-                *pending = Some(PartialTransmit {
-                    destination: transmit.destination,
-                    ecn: transmit.ecn,
-                    src_ip: transmit.src_ip,
-                    segment_size,
-                    buf: remainder.to_vec(),
-                });
+                // *pending = Some(PartialTransmit {
+                //     destination: transmit.destination,
+                //     ecn: transmit.ecn,
+                //     src_ip: transmit.src_ip,
+                //     segment_size,
+                //     buf: remainder.to_vec(),
+                // });
                 return Ok(());
             }
             // Surface any other error without buffering / retry.
