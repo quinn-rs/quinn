@@ -1,0 +1,5 @@
+[formatting]
+# default 80 is too narrow for modern screens
+column_width = 120
+indent_string = "    "
+align_comments = false
