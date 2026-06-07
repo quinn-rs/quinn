@@ -20,7 +20,7 @@ use super::{
 };
 
 #[cfg(apple_fast)]
-use super::apple_fast::{msghdr_x, recv_via_recvmsg_x, send};
+use super::apple_fast::{PartialTransmit, msghdr_x, recv_via_recvmsg_x, send};
 #[cfg(any(target_os = "linux", target_os = "android"))]
 use super::linux::{LinuxError, gso};
 
@@ -48,6 +48,11 @@ pub struct UdpSocketState {
     /// Apple OS versions. Callers must verify availability before enabling.
     #[cfg(apple_fast)]
     apple_fast_path: AtomicBool,
+
+    /// Unsent tail of a partially-completed `sendmsg_x` invocation, flushed before the
+    /// next send so that a batch is accepted atomically.
+    #[cfg(apple_fast)]
+    partial_transmit: parking_lot::Mutex<Option<PartialTransmit>>,
 }
 
 impl UdpSocketState {
@@ -200,6 +205,8 @@ impl UdpSocketState {
             sendmsg_einval: AtomicBool::new(false),
             #[cfg(apple_fast)]
             apple_fast_path: AtomicBool::new(false),
+            #[cfg(apple_fast)]
+            partial_transmit: parking_lot::Mutex::new(None),
         })
     }
 
@@ -407,6 +414,13 @@ impl UdpSocketState {
             self.disable_apple_fast_path();
         }
         f
+    }
+
+    /// The queue holding the unsent tail of a partially-completed `sendmsg_x`
+    /// batch, flushed before the next send.
+    #[cfg(apple_fast)]
+    pub(crate) fn partial_transmit(&self) -> parking_lot::MutexGuard<'_, Option<PartialTransmit>> {
+        self.partial_transmit.lock()
     }
 }
 

@@ -2054,6 +2054,7 @@ dependencies = [
  "criterion",
  "libc",
  "log",
+ "parking_lot",
  "socket2",
  "tokio",
  "tracing",

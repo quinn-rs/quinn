@@ -1,14 +1,14 @@
 use std::{
     io::{self, IoSliceMut},
     mem::{self, MaybeUninit},
-    net::IpAddr,
+    net::{IpAddr, SocketAddr},
     os::fd::AsRawFd,
 };
 
 use socket2::SockRef;
 
 use crate::{
-    RecvMeta, Transmit, UdpSocketState,
+    EcnCodepoint, RecvMeta, Transmit, UdpSocketState,
     cmsg::{self, MsgHdr},
     imp::{BATCH_SIZE, IpTosTy, decode_recv, recv_single, retry_if_interrupted, send_single},
 };
@@ -25,48 +25,141 @@ pub(crate) fn send(
     }
 }
 
-/// Send using the fast `sendmsg_x` API
+/// Send using the fast `sendmsg_x` API.
 fn send_via_sendmsg_x(
     state: &UdpSocketState,
     io: SockRef<'_>,
     transmit: &Transmit<'_>,
 ) -> io::Result<()> {
+    let Some(sendmsg_x) = state.resolve_apple_fast_fn(sendmsg_x_fn) else {
+        return send_single(state, io, transmit);
+    };
+
+    let mut pending = state.partial_transmit();
+
+    if let Some(p) = pending.as_mut() {
+        while !p.buf.is_empty() {
+            match send_chunks(
+                &io,
+                sendmsg_x,
+                p.destination,
+                p.ecn,
+                p.src_ip,
+                state.sendmsg_einval(),
+                p.segment_size,
+                &p.buf,
+            ) {
+                Ok(sent) => {
+                    debug_assert!(sent > 0, "sendmsg_x returned Ok(0); would spin");
+                    let n = (sent * p.segment_size).min(p.buf.len());
+                    p.buf.drain(..n);
+                }
+                Err(e) if e.kind() == io::ErrorKind::WouldBlock => return Err(e),
+                Err(_e) => {
+                    crate::log::debug!("dropping queued datagram after sendmsg_x error: {_e}");
+                    let n = p.segment_size.min(p.buf.len());
+                    p.buf.drain(..n);
+                }
+            }
+        }
+    }
+
+    *pending = None;
+
+    let segment_size = transmit.segment_size.unwrap_or(transmit.contents.len());
+    let total = transmit.contents.len().div_ceil(segment_size);
+    let mut sent_datagrams = 0;
+
+    while sent_datagrams < total {
+        let remaining = &transmit.contents[sent_datagrams * segment_size..];
+        match send_chunks(
+            &io,
+            sendmsg_x,
+            transmit.destination,
+            transmit.ecn,
+            transmit.src_ip,
+            state.sendmsg_einval(),
+            segment_size,
+            remaining,
+        ) {
+            // We sent some datagrams, continue.
+            Ok(sent) => {
+                sent_datagrams += sent;
+            }
+            // We could not send any datagrams, suspend.
+            Err(e) if e.kind() == io::ErrorKind::WouldBlock && sent_datagrams == 0 => {
+                return Err(e);
+            }
+            // We sent some datagrams (in a prior iteration) and now we are blocked.
+            // Buffer the remainder and return `Ok(())`.
+            // The caller will call us with the next datagram and we will suspend as
+            // part of the draining of the buffered packet.
+            Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
+                let remainder = &transmit.contents[sent_datagrams * segment_size..];
+                crate::log::debug!(
+                    "sendmsg_x sent {sent_datagrams}/{total} datagrams; queuing remaining {} bytes for retry",
+                    remainder.len()
+                );
+
+                *pending = Some(PartialTransmit {
+                    destination: transmit.destination,
+                    ecn: transmit.ecn,
+                    src_ip: transmit.src_ip,
+                    segment_size,
+                    buf: remainder.to_vec(),
+                });
+                return Ok(());
+            }
+            // Surface any other error without buffering / retry.
+            Err(e) => return Err(e),
+        }
+    }
+
+    Ok(())
+}
+
+/// Splits `contents` into `segment_size`-sized datagrams and submits them with a
+/// single `sendmsg_x` call.
+#[allow(clippy::too_many_arguments)]
+fn send_chunks(
+    io: &SockRef<'_>,
+    sendmsg_x: SendmsgXFn,
+    destination: SocketAddr,
+    ecn: Option<EcnCodepoint>,
+    src_ip: Option<IpAddr>,
+    sendmsg_einval: bool,
+    segment_size: usize,
+    contents: &[u8],
+) -> io::Result<usize> {
     let mut hdrs = unsafe { mem::zeroed::<[msghdr_x; BATCH_SIZE]>() };
     let mut iovs = unsafe { mem::zeroed::<[libc::iovec; BATCH_SIZE]>() };
     let mut ctrls = [cmsg::Aligned([0u8; cmsg::LEN]); BATCH_SIZE];
-    let addr = socket2::SockAddr::from(transmit.destination);
-    let segment_size = transmit.segment_size.unwrap_or(transmit.contents.len());
+    let addr = socket2::SockAddr::from(destination);
     let mut cnt = 0;
-    debug_assert!(transmit.contents.len().div_ceil(segment_size) <= BATCH_SIZE);
-    for (i, chunk) in transmit
-        .contents
-        .chunks(segment_size)
-        .enumerate()
-        .take(BATCH_SIZE)
-    {
+    debug_assert!(contents.len().div_ceil(segment_size) <= BATCH_SIZE);
+    for (i, chunk) in contents.chunks(segment_size).enumerate().take(BATCH_SIZE) {
         prepare_msg_x(
             &Transmit {
-                destination: transmit.destination,
-                ecn: transmit.ecn,
+                destination,
+                ecn,
                 contents: chunk,
                 segment_size: Some(chunk.len()),
-                src_ip: transmit.src_ip,
+                src_ip,
             },
             &addr,
             &mut hdrs[i],
             &mut iovs[i],
             &mut ctrls[i],
             true,
-            state.sendmsg_einval(),
+            sendmsg_einval,
         );
         hdrs[i].msg_datalen = chunk.len();
         cnt += 1;
     }
-    let Some(sendmsg_x) = state.resolve_apple_fast_fn(sendmsg_x_fn) else {
-        return send_single(state, io, transmit);
-    };
-    retry_if_interrupted(|| unsafe { sendmsg_x(io.as_raw_fd(), hdrs.as_ptr(), cnt as u32, 0) })?;
-    Ok(())
+    let sent = retry_if_interrupted(|| unsafe {
+        sendmsg_x(io.as_raw_fd(), hdrs.as_ptr(), cnt as u32, 0)
+    })?;
+    Ok(sent as usize)
 }
 
 /// Prepares an `msghdr_x` for use with `sendmsg_x`
@@ -141,6 +234,16 @@ fn sendmsg_x_fn() -> Option<SendmsgXFn> {
 
 type SendmsgXFn =
     unsafe extern "C" fn(libc::c_int, *const msghdr_x, libc::c_uint, libc::c_int) -> isize;
+
+/// The unsent tail of a partially-completed `sendmsg_x` invocation.
+#[derive(Debug)]
+pub(crate) struct PartialTransmit {
+    destination: SocketAddr,
+    ecn: Option<EcnCodepoint>,
+    src_ip: Option<IpAddr>,
+    segment_size: usize,
+    buf: Vec<u8>,
+}
 
 /// Receive using the fast `recvmsg_x` API
 pub(crate) fn recv_via_recvmsg_x(
