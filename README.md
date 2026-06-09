@@ -26,6 +26,30 @@ The project was founded by [Dirkjan Ochtman](https://github.com/djc) and
 - Future-based async API
 - Minimum supported Rust version of 1.74.1
 
+## TLS and Crypto Features
+
+By default, Quinn enables `rustls-ring`, which uses [rustls][rustls] with the
+[ring][ring] crypto provider. Applications that want a different provider can
+disable default features and select one explicitly.
+
+- `rustls`: alias for `rustls-ring`, kept for backwards compatibility.
+- `rustls-aws-lc-rs`: enables rustls with the [aws-lc-rs]([aws-lc-rs]) provider.
+- `rustls-aws-lc-rs-fips`: enables rustls with [aws-lc-rs][aws-lc-rs] in FIPS mode.
+- `rustls-ring`: enables rustls with the [ring][ring] provider.
+- `rustls-no-provider`: enables Quinn's rustls integration without selecting a
+  rustls crypto provider.
+
+Use `rustls-no-provider` for applications that install a process-wide rustls
+`CryptoProvider` themselves, or that pass Quinn already-built rustls
+configuration values. Code using Quinn's rustls convenience constructors with
+`rustls-no-provider` must install a default provider before constructing those
+configs.
+
+The lower-level `aws-lc-rs` and `ring` features enable Quinn's direct use of
+those crates for transport helpers such as randomized endpoint and server
+configuration constructors. The provider-specific rustls features enable these
+direct features automatically.
+
 ## Overview
 
 - **quinn:** High-level async API based on tokio, see [examples][examples] for usage. This will be used by most developers. (Basic benchmarks are included.)
@@ -115,6 +139,7 @@ crates will always be at least 6 months old at the time of release.
 [quic]: https://quicwg.github.io/
 [issues]: https://github.com/djc/quinn/issues
 [rustls]: https://github.com/ctz/rustls
+[aws-lc-rs]: https://github.com/aws/aws-lc-rs
 [ring]: https://github.com/briansmith/ring
 [talk]: https://paris.rustfest.eu/sessions/a-quic-future-in-rust
 [slides]: https://github.com/djc/talks/blob/ff760845b51ba4836cce82e7f2c640ecb5fd59fa/2018-05-26%20A%20QUIC%20future%20in%20Rust/Quinn-Speaker.pdf

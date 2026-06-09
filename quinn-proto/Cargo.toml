@@ -20,6 +20,8 @@ aws-lc-rs-fips = ["aws-lc-rs", "aws-lc-rs?/fips"]
 bloom = ["dep:fastbloom"]
 # For backwards compatibility, `rustls` forwards to `rustls-ring`
 rustls = ["rustls-ring"]
+# Enable rustls without selecting a crypto provider
+rustls-no-provider = ["dep:rustls", "dep:aes-gcm"]
 # Enable rustls with the `aws-lc-rs` crypto provider
 rustls-aws-lc-rs = ["dep:rustls", "rustls?/aws-lc-rs", "aws-lc-rs"]
 rustls-aws-lc-rs-fips = ["rustls-aws-lc-rs", "aws-lc-rs-fips"]
@@ -43,6 +45,7 @@ __rustls-post-quantum-test =  []
 
 [dependencies]
 arbitrary = { workspace = true, optional = true }
+aes-gcm = { workspace = true, optional = true }
 aws-lc-rs = { workspace = true, optional = true }
 bytes = { workspace = true }
 fastbloom = { workspace = true, optional = true }
@@ -81,4 +84,4 @@ unexpected_cfgs = { level = "warn", check-cfg = ['cfg(fuzzing)'] }
 
 [package.metadata.docs.rs]
 # all non-default features except fips (cannot build on docs.rs environment)
-features = ["rustls-aws-lc-rs", "rustls-ring", "platform-verifier", "log", "rustls-log"]
+features = ["rustls-no-provider", "rustls-aws-lc-rs", "rustls-ring", "platform-verifier", "log", "rustls-log"]

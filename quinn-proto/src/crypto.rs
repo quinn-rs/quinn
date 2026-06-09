@@ -2,8 +2,8 @@
 //!
 //! The protocol logic in Quinn is contained in types that abstract over the actual
 //! cryptographic protocol used. This module contains the traits used for this
-//! abstraction layer as well as a single implementation of these traits that uses
-//! *ring* and rustls to implement the TLS protocol support.
+//! abstraction layer as well as a single implementation of these traits that uses rustls to
+//! implement the TLS protocol support.
 //!
 //! Note that usage of any protocol (version) other than TLS 1.3 does not conform to any
 //! published versions of the specification, and will not be supported in QUIC v1.
@@ -21,7 +21,11 @@ use crate::{
 #[cfg(any(feature = "aws-lc-rs", feature = "ring"))]
 pub(crate) mod ring_like;
 /// TLS interface based on rustls
-#[cfg(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring"))]
+#[cfg(any(
+    feature = "rustls-no-provider",
+    feature = "rustls-aws-lc-rs",
+    feature = "rustls-ring"
+))]
 pub mod rustls;
 
 /// A cryptographic session (commonly TLS)

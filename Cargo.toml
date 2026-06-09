@@ -17,6 +17,7 @@ arbitrary = { version = "1.0.1", features = ["derive"] }
 async-io = "2"
 async-std = "1.11"
 assert_matches = "1.1"
+aes-gcm = { version = "0.10", default-features = false, features = ["aes"] }
 aws-lc-rs = { version = "1.9", default-features = false }
 bencher = "0.1.5"
 bytes = "1"

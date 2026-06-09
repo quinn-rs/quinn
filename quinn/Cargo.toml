@@ -27,6 +27,8 @@ lock_tracking = []
 platform-verifier = ["proto/platform-verifier"]
 # For backwards compatibility, `rustls` forwards to `rustls-ring`
 rustls = ["rustls-ring"]
+# Enable rustls without selecting a crypto provider
+rustls-no-provider = ["dep:rustls", "proto/rustls-no-provider"]
 # Enable rustls with the `aws-lc-rs` crypto provider
 rustls-aws-lc-rs = ["dep:rustls", "aws-lc-rs", "proto/rustls-aws-lc-rs", "proto/aws-lc-rs"]
 rustls-aws-lc-rs-fips = ["dep:rustls", "aws-lc-rs-fips", "proto/rustls-aws-lc-rs-fips", "proto/aws-lc-rs-fips"]
@@ -120,4 +122,4 @@ required-features = ["rustls-ring"]
 
 [package.metadata.docs.rs]
 # all non-default features except fips (cannot build on docs.rs environment)
-features = ["lock_tracking", "rustls-aws-lc-rs", "rustls-ring", "runtime-tokio", "runtime-async-std", "runtime-smol", "log", "rustls-log"]
+features = ["lock_tracking", "rustls-no-provider", "rustls-aws-lc-rs", "rustls-ring", "runtime-tokio", "runtime-async-std", "runtime-smol", "log", "rustls-log"]
