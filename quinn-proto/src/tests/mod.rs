@@ -2674,6 +2674,11 @@ fn single_ack_eliciting_packet_triggers_ack_after_delay() {
             delay,
             default_max_ack_delay_ms * 1_000 - TIMER_GRANULARITY.as_micros() as u64
         );
+        // The reported delay fits under the advertised max_ack_delay (timer base plus one
+        // granularity of alarm headroom), so the peer's RFC 9002 §5.3 clamp discards none of it
+        let advertised_max_ack_delay_us =
+            (default_max_ack_delay_ms + TIMER_GRANULARITY.as_millis() as u64) * 1_000;
+        assert!(delay <= advertised_max_ack_delay_us);
     } else {
         panic!("Expected ACK frame");
     }
