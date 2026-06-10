@@ -467,3 +467,38 @@ impl InFlight {
         self.ack_eliciting -= u64::from(packet.ack_eliciting);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rtt_first_sample_ignores_ack_delay() {
+        let mut rtt = RttEstimator::new(Duration::from_millis(333));
+        rtt.update(Duration::from_millis(10), Duration::from_micros(100));
+        assert_eq!(rtt.get(), Duration::from_micros(100));
+        assert_eq!(rtt.min(), Duration::from_micros(100));
+        assert_eq!(rtt.var, Duration::from_micros(50));
+    }
+
+    #[test]
+    fn rtt_subtracts_ack_delay_when_above_min() {
+        let mut rtt = RttEstimator::new(Duration::from_millis(333));
+        rtt.update(Duration::ZERO, Duration::from_micros(100));
+        // Raw sample 25.2ms with 25ms ack delay adjusts to 200µs
+        rtt.update(Duration::from_millis(25), Duration::from_micros(25_200));
+        assert_eq!(rtt.get(), Duration::from_nanos((7 * 100_000 + 200_000) / 8));
+        assert_eq!(rtt.min(), Duration::from_micros(100));
+    }
+
+    #[test]
+    fn rtt_min_tracks_raw_samples() {
+        let mut rtt = RttEstimator::new(Duration::from_millis(333));
+        rtt.update(Duration::ZERO, Duration::from_micros(100));
+        rtt.update(Duration::ZERO, Duration::from_micros(50));
+        assert_eq!(rtt.min(), Duration::from_micros(50));
+        // min ignores ack delay: a 60µs raw sample does not lower it further
+        rtt.update(Duration::from_micros(40), Duration::from_micros(60));
+        assert_eq!(rtt.min(), Duration::from_micros(50));
+    }
+}
