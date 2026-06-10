@@ -26,7 +26,7 @@ use tracing::info;
 
 use super::*;
 use crate::{
-    Duration, Instant,
+    Duration, Instant, TIMER_GRANULARITY,
     cid_generator::{ConnectionIdGenerator, RandomConnectionIdGenerator},
     crypto::rustls::QuicServerConfig,
     frame::FrameStruct,
@@ -2652,11 +2652,12 @@ fn single_ack_eliciting_packet_triggers_ack_after_delay() {
         1
     );
 
-    // The time is start + max_ack_delay
+    // The timer is armed one granularity early so late-firing alarms stay within the
+    // max_ack_delay the peer subtracts from its RTT samples
     let default_max_ack_delay_ms = TransportParameters::default().max_ack_delay.into_inner();
     assert_eq!(
         pair.time,
-        start + Duration::from_millis(default_max_ack_delay_ms)
+        start + Duration::from_millis(default_max_ack_delay_ms) - TIMER_GRANULARITY
     );
 
     // The ACK delay is properly calculated
@@ -2669,7 +2670,10 @@ fn single_ack_eliciting_packet_triggers_ack_after_delay() {
     if let Frame::Ack(ack) = frames.remove(0) {
         let ack_delay_exp = TransportParameters::default().ack_delay_exponent;
         let delay = ack.delay << ack_delay_exp.into_inner();
-        assert_eq!(delay, default_max_ack_delay_ms * 1_000);
+        assert_eq!(
+            delay,
+            default_max_ack_delay_ms * 1_000 - TIMER_GRANULARITY.as_micros() as u64
+        );
     } else {
         panic!("Expected ACK frame");
     }
@@ -2885,7 +2889,10 @@ fn ack_frequency_ack_delayed_from_first_of_flight() {
 #[test]
 fn ack_frequency_ack_sent_after_max_ack_delay() {
     let _guard = subscribe();
-    let max_ack_delay = Duration::from_millis(30);
+    // Must stay below MIN_AUTOMATIC_ACK_DELAY: `candidate_max_ack_delay` clamps larger
+    // requests down, which would silently decouple this test's arithmetic from the
+    // delay actually in effect
+    let max_ack_delay = Duration::from_millis(20);
     let (mut pair, client_ch, server_ch) = setup_ack_frequency_test(max_ack_delay);
 
     // Client sends a ping
@@ -2906,8 +2913,18 @@ fn ack_frequency_ack_sent_after_max_ack_delay() {
         0
     );
 
-    // Server: send an ack after max_ack_delay has elapsed
-    pair.time += max_ack_delay;
+    // Server: still no ACK one granularity before the early-armed timer's deadline
+    pair.time += max_ack_delay - 2 * TIMER_GRANULARITY;
+    let server_stats_before = pair.server_conn_mut(server_ch).stats();
+    pair.drive_server();
+    let server_stats_after = pair.server_conn_mut(server_ch).stats();
+    assert_eq!(
+        server_stats_after.frame_tx.acks - server_stats_before.frame_tx.acks,
+        0
+    );
+
+    // Server: send an ack once the timer fires, one granularity before max_ack_delay
+    pair.time += TIMER_GRANULARITY;
     let server_stats_before = pair.server_conn_mut(server_ch).stats();
     pair.drive_server();
     let server_stats_after = pair.server_conn_mut(server_ch).stats();
