@@ -17,7 +17,9 @@ use super::{AsyncUdpSocket, Runtime, UdpSender, UdpSenderHelper, UdpSenderHelper
 pub struct SmolRuntime;
 
 impl Runtime for SmolRuntime {
-    fn new_timer(&self, t: Instant) -> Pin<Box<dyn AsyncTimer>> {
+    type Instant = Instant;
+
+    fn new_timer(&self, t: Instant) -> Pin<Box<dyn AsyncTimer<Instant = Self::Instant>>> {
         Box::pin(Timer::at(t))
     }
 
@@ -31,6 +33,8 @@ impl Runtime for SmolRuntime {
 }
 
 impl AsyncTimer for Timer {
+    type Instant = Instant;
+
     fn reset(mut self: Pin<&mut Self>, t: Instant) {
         self.set_at(t)
     }
