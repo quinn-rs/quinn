@@ -11,12 +11,48 @@ use std::{
 
 use udp::{RecvMeta, Transmit};
 
-use crate::Instant;
+/// Abstracts the `Instant` type for server-side WASM environments that require their own
+/// timer implementations.
+pub trait RuntimeInstant: Clone {
+    /// The `Duration` type used by the abstraction
+    type Duration;
+
+    /// Returns an instant corresponding to "now".
+    fn now() -> Self;
+
+    /// Returns the amount of time elapsed from another instant to this one,
+    /// or zero duration if that instant is later than this one.
+    fn duration_since(&self, earlier: Self) -> Self::Duration;
+
+    /// Returns the amount of time elapsed from another instant to this one,
+    /// or None if that instant is later than this one.
+    fn checked_duration_since(&self, earlier: Self) -> Option<Self::Duration>;
+
+    /// Returns the amount of time elapsed from another instant to this one,
+    /// or zero duration if that instant is later than this one.
+    fn saturating_duration_since(&self, earlier: Self) -> Self::Duration;
+
+    /// Returns the amount of time elapsed since this instant.
+    fn elapsed(&self) -> Self::Duration;
+
+    /// Returns `Some(t)` where `t` is the time `self + duration` if `t` can be represented as
+    /// `Instant` (which means it's inside the bounds of the underlying data structure), `None`
+    /// otherwise.
+    fn checked_add(&self, duration: Self::Duration) -> Option<Self>;
+
+    /// Returns `Some(t)` where `t` is the time `self - duration` if `t` can be represented as
+    /// `Instant` (which means it's inside the bounds of the underlying data structure), `None`
+    /// otherwise.
+    fn checked_sub(&self, duration: Self::Duration) -> Option<Self>;
+}
 
 /// Abstracts I/O and timer operations for runtime independence
 pub trait Runtime: Send + Sync + Debug + 'static {
+    /// Abstracts the `Instant` type for server-side WASM environments
+    type Instant: RuntimeInstant;
+
     /// Construct a timer that will expire at `i`
-    fn new_timer(&self, i: Instant) -> Pin<Box<dyn AsyncTimer>>;
+    fn new_timer(&self, i: Self::Instant) -> Pin<Box<dyn AsyncTimer<Instant = Self::Instant>>>;
     /// Drive `future` to completion in the background
     #[track_caller]
     fn spawn(&self, future: Pin<Box<dyn Future<Output = ()> + Send>>);
@@ -26,15 +62,18 @@ pub trait Runtime: Send + Sync + Debug + 'static {
     /// Look up the current time
     ///
     /// Allows simulating the flow of time for testing.
-    fn now(&self) -> Instant {
-        Instant::now()
+    fn now(&self) -> Self::Instant {
+        Self::Instant::now()
     }
 }
 
 /// Abstract implementation of an async timer for runtime independence
 pub trait AsyncTimer: Send + Debug + 'static {
+    /// Abstracts the `Instant` type for server-side WASM environments
+    type Instant: RuntimeInstant;
+
     /// Update the timer to expire at `i`
-    fn reset(self: Pin<&mut Self>, i: Instant);
+    fn reset(self: Pin<&mut Self>, i: Self::Instant);
     /// Check whether the timer has expired, and register to be woken if not
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<()>;
 }
@@ -214,6 +253,72 @@ trait UdpSenderHelperSocket: Send + Sync + 'static {
     fn max_transmit_segments(&self) -> usize;
 }
 
+#[cfg(not(wasm_browser))]
+impl RuntimeInstant for std::time::Instant {
+    type Duration = std::time::Duration;
+
+    fn now() -> Self {
+        std::time::Instant::now()
+    }
+
+    fn duration_since(&self, earlier: Self) -> Self::Duration {
+        std::time::Instant::duration_since(self, earlier)
+    }
+
+    fn checked_duration_since(&self, earlier: Self) -> Option<Self::Duration> {
+        std::time::Instant::checked_duration_since(self, earlier)
+    }
+
+    fn saturating_duration_since(&self, earlier: Self) -> Self::Duration {
+        std::time::Instant::saturating_duration_since(self, earlier)
+    }
+
+    fn elapsed(&self) -> Self::Duration {
+        std::time::Instant::elapsed(self)
+    }
+
+    fn checked_add(&self, duration: Self::Duration) -> Option<Self> {
+        std::time::Instant::checked_add(self, duration)
+    }
+
+    fn checked_sub(&self, duration: Self::Duration) -> Option<Self> {
+        std::time::Instant::checked_sub(self, duration)
+    }
+}
+
+#[cfg(wasm_browser)]
+impl RuntimeInstant for web_time::Instant {
+    type Duration = web_time::Duration;
+
+    fn now() -> Self {
+        web_time::Instant::now()
+    }
+
+    fn duration_since(&self, earlier: Self) -> Self::Duration {
+        web_time::Instant::duration_since(self, earlier)
+    }
+
+    fn checked_duration_since(&self, earlier: Self) -> Option<Self::Duration> {
+        web_time::Instant::checked_duration_since(self, earlier)
+    }
+
+    fn saturating_duration_since(&self, earlier: Self) -> Self::Duration {
+        web_time::Instant::saturating_duration_since(self, earlier)
+    }
+
+    fn elapsed(&self) -> Self::Duration {
+        web_time::Instant::elapsed(self)
+    }
+
+    fn checked_add(&self, duration: Self::Duration) -> Option<Self> {
+        web_time::Instant::checked_add(self, duration)
+    }
+
+    fn checked_sub(&self, duration: Self::Duration) -> Option<Self> {
+        web_time::Instant::checked_sub(self, duration)
+    }
+}
+
 /// Automatically select an appropriate runtime from those enabled at compile time
 ///
 /// If `runtime-tokio` is enabled and this function is called from within a Tokio runtime context,
@@ -221,7 +326,7 @@ trait UdpSenderHelperSocket: Send + Sync + 'static {
 /// returned. Otherwise, `None` is returned.
 #[cfg(any(feature = "runtime-tokio", feature = "runtime-smol"))]
 #[allow(clippy::needless_return)] // Be sure we return the right thing
-pub fn default_runtime() -> Option<Arc<dyn Runtime>> {
+pub fn default_runtime() -> Option<Arc<dyn Runtime<Instant = crate::Instant>>> {
     #[cfg(feature = "runtime-tokio")]
     {
         if ::tokio::runtime::Handle::try_current().is_ok() {

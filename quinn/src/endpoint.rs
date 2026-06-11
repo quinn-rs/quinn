@@ -56,7 +56,7 @@ use crate::{
 #[derive(Debug, Clone)]
 pub struct Endpoint {
     pub(crate) inner: EndpointRef,
-    runtime: Arc<dyn Runtime>,
+    runtime: Arc<dyn Runtime<Instant = crate::Instant>>,
 }
 
 impl Endpoint {
@@ -148,7 +148,7 @@ impl Endpoint {
         config: EndpointConfig,
         server_config: Option<ServerConfig>,
         socket: std::net::UdpSocket,
-        runtime: Arc<dyn Runtime>,
+        runtime: Arc<dyn Runtime<Instant = crate::Instant>>,
     ) -> io::Result<Self> {
         let socket = runtime.wrap_udp_socket(socket)?;
         Self::new_with_abstract_socket(config, server_config, socket, runtime)
@@ -162,7 +162,7 @@ impl Endpoint {
         config: EndpointConfig,
         server_config: Option<ServerConfig>,
         socket: Box<dyn AsyncUdpSocket>,
-        runtime: Arc<dyn Runtime>,
+        runtime: Arc<dyn Runtime<Instant = crate::Instant>>,
     ) -> io::Result<Self> {
         let addr = socket.local_addr()?;
         let allow_mtud = !socket.may_fragment();
@@ -508,7 +508,7 @@ pub(crate) struct State {
     ipv6: bool,
     events: mpsc::UnboundedReceiver<(ConnectionHandle, EndpointEvent)>,
     driver_lost: bool,
-    runtime: Arc<dyn Runtime>,
+    runtime: Arc<dyn Runtime<Instant = crate::Instant>>,
     stats: EndpointStats,
     default_client_config: Option<ClientConfig>,
 }
@@ -673,7 +673,7 @@ impl ConnectionSet {
         handle: ConnectionHandle,
         conn: proto::Connection,
         sender: Pin<Box<dyn UdpSender>>,
-        runtime: Arc<dyn Runtime>,
+        runtime: Arc<dyn Runtime<Instant = crate::Instant>>,
     ) -> Connecting {
         let (send, recv) = mpsc::unbounded_channel();
         if let Some((error_code, ref reason)) = self.close {
@@ -746,7 +746,7 @@ impl EndpointRef {
         socket: Box<dyn AsyncUdpSocket>,
         inner: proto::Endpoint,
         ipv6: bool,
-        runtime: Arc<dyn Runtime>,
+        runtime: Arc<dyn Runtime<Instant = crate::Instant>>,
     ) -> Self {
         let (sender, events) = mpsc::unbounded_channel();
         let recv_state = RecvState::new(sender, socket.max_receive_segments(), &inner);
@@ -842,7 +842,7 @@ impl RecvState {
         endpoint: &mut proto::Endpoint,
         socket: &mut dyn AsyncUdpSocket,
         sender: &mut Pin<Box<dyn UdpSender>>,
-        runtime: &dyn Runtime,
+        runtime: &dyn Runtime<Instant = crate::Instant>,
         now: Instant,
     ) -> Result<PollProgress, io::Error> {
         let mut received_connection_packet = false;

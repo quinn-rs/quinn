@@ -19,7 +19,9 @@ use super::{AsyncTimer, AsyncUdpSocket, Runtime, UdpSenderHelper, UdpSenderHelpe
 pub struct TokioRuntime;
 
 impl Runtime for TokioRuntime {
-    fn new_timer(&self, t: Instant) -> Pin<Box<dyn AsyncTimer>> {
+    type Instant = Instant;
+
+    fn new_timer(&self, t: Instant) -> Pin<Box<dyn AsyncTimer<Instant = Self::Instant>>> {
         Box::pin(sleep_until(t.into()))
     }
 
@@ -40,6 +42,8 @@ impl Runtime for TokioRuntime {
 }
 
 impl AsyncTimer for Sleep {
+    type Instant = Instant;
+
     fn reset(self: Pin<&mut Self>, t: Instant) {
         Self::reset(self, t.into())
     }

@@ -51,7 +51,7 @@ impl Connecting {
         endpoint_events: mpsc::UnboundedSender<(ConnectionHandle, EndpointEvent)>,
         conn_events: mpsc::UnboundedReceiver<ConnectionEvent>,
         sender: Pin<Box<dyn UdpSender>>,
-        runtime: Arc<dyn Runtime>,
+        runtime: Arc<dyn Runtime<Instant = crate::Instant>>,
     ) -> Self {
         let (on_handshake_data_send, on_handshake_data_recv) = oneshot::channel();
 
@@ -1002,7 +1002,7 @@ pub(crate) struct State {
     on_handshake_data: Option<oneshot::Sender<()>>,
     connected: bool,
     handshake_confirmed: bool,
-    timer: Option<Pin<Box<dyn AsyncTimer>>>,
+    timer: Option<Pin<Box<dyn AsyncTimer<Instant = crate::Instant>>>>,
     timer_deadline: Option<Instant>,
     conn_events: mpsc::UnboundedReceiver<ConnectionEvent>,
     endpoint_events: mpsc::UnboundedSender<(ConnectionHandle, EndpointEvent)>,
@@ -1012,7 +1012,7 @@ pub(crate) struct State {
     /// Always set to Some before the connection becomes drained
     pub(crate) error: Option<ConnectionError>,
     sender: Pin<Box<dyn UdpSender>>,
-    runtime: Arc<dyn Runtime>,
+    runtime: Arc<dyn Runtime<Instant = crate::Instant>>,
     send_buffer: Vec<u8>,
     /// We buffer a transmit when the underlying I/O would block
     buffered_transmit: Option<proto::Transmit>,
@@ -1027,7 +1027,7 @@ impl State {
         conn_events: mpsc::UnboundedReceiver<ConnectionEvent>,
         on_handshake_data: oneshot::Sender<()>,
         sender: Pin<Box<dyn UdpSender>>,
-        runtime: Arc<dyn Runtime>,
+        runtime: Arc<dyn Runtime<Instant = crate::Instant>>,
     ) -> Self {
         Self {
             inner,
