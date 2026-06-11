@@ -356,14 +356,20 @@ impl StreamsState {
 
     /// Process incoming `STOP_SENDING` frame
     #[allow(unreachable_pub)] // fuzzing only
-    pub fn received_stop_sending(&mut self, id: StreamId, error_code: VarInt) {
+    pub fn received_stop_sending(
+        &mut self,
+        id: StreamId,
+        error_code: VarInt,
+    ) -> Result<(), TransportError> {
+        self.validate_send_id(id, "STOP_SENDING")?;
+
         let max_send_data = self.max_send_data(id);
         let Some(stream) = self
             .send
             .get_mut(&id)
             .map(get_or_insert_send(max_send_data))
         else {
-            return;
+            return Ok(());
         };
 
         if stream.try_stop(error_code) {
@@ -371,6 +377,8 @@ impl StreamsState {
                 .push_back(StreamEvent::Stopped { id, error_code });
             self.on_stream_frame(false, id);
         }
+
+        Ok(())
     }
 
     pub(crate) fn reset_acked(&mut self, id: StreamId) {
@@ -743,12 +751,8 @@ impl StreamsState {
         id: StreamId,
         offset: u64,
     ) -> Result<(), TransportError> {
-        if id.initiator() != self.side && id.dir() == Dir::Uni {
-            debug!("got MAX_STREAM_DATA on recv-only {}", id);
-            return Err(TransportError::STREAM_STATE_ERROR(
-                "MAX_STREAM_DATA on recv-only stream",
-            ));
-        }
+        self.validate_send_id(id, "MAX_STREAM_DATA")
+            .inspect_err(|_| debug!("received illegal MAX_STREAM_DATA frame"))?;
 
         let write_limit = self.write_limit();
         let max_send_data = self.max_send_data(id);
@@ -768,11 +772,6 @@ impl StreamsState {
                     self.connection_blocked.push(id);
                 }
             }
-        } else if id.initiator() == self.side && self.is_local_unopened(id) {
-            debug!("got MAX_STREAM_DATA on unopened {}", id);
-            return Err(TransportError::STREAM_STATE_ERROR(
-                "MAX_STREAM_DATA on unopened stream",
-            ));
         }
 
         self.on_stream_frame(false, id);
@@ -831,7 +830,7 @@ impl StreamsState {
     }
 
     /// Check for errors entailed by the peer's use of `id` as a send stream
-    fn validate_receive_id(&mut self, id: StreamId) -> Result<(), TransportError> {
+    fn validate_receive_id(&self, id: StreamId) -> Result<(), TransportError> {
         if self.side == id.initiator() {
             match id.dir() {
                 Dir::Uni => {
@@ -851,6 +850,27 @@ impl StreamsState {
             if id.index() >= limit {
                 return Err(TransportError::STREAM_LIMIT_ERROR(""));
             }
+        }
+        Ok(())
+    }
+
+    /// Check for errors entailed by the peer's use of `id` as a receive stream
+    ///
+    /// Applicable to frames like STOP_SENDING and MAX_STREAM_DATA which
+    /// reference the peer's send stream (our receive stream).
+    fn validate_send_id(&self, id: StreamId, frame: &'static str) -> Result<(), TransportError> {
+        if self.side == id.initiator() {
+            if self.is_local_unopened(id) {
+                return Err(TransportError::STREAM_STATE_ERROR(format!(
+                    "{frame} on unopened stream"
+                )));
+            }
+        } else if id.dir() == Dir::Uni {
+            return Err(TransportError::STREAM_STATE_ERROR(format!(
+                "{frame} on recv-only stream"
+            )));
+        } else if id.index() >= self.max_remote[id.dir() as usize] {
+            return Err(TransportError::STREAM_LIMIT_ERROR(""));
         }
         Ok(())
     }
@@ -1315,7 +1335,7 @@ mod tests {
         };
 
         let error_code = 0u32.into();
-        stream.state.received_stop_sending(id, error_code);
+        stream.state.received_stop_sending(id, error_code).unwrap();
         assert!(
             stream
                 .state
@@ -1330,7 +1350,7 @@ mod tests {
         assert_eq!(stream.write(&[]), Err(WriteError::ClosedStream));
 
         // A duplicate frame is a no-op
-        stream.state.received_stop_sending(id, error_code);
+        stream.state.received_stop_sending(id, error_code).unwrap();
         assert!(stream.state.events.is_empty());
     }
 
