@@ -1355,6 +1355,30 @@ mod tests {
     }
 
     #[test]
+    fn stop_sending_above_remote_stream_limit() {
+        let mut client = make(Side::Client);
+        assert_eq!(
+            client
+                .received_stop_sending(StreamId::new(Side::Server, Dir::Bi, 128), 0u32.into())
+                .unwrap_err()
+                .code,
+            TransportErrorCode::STREAM_LIMIT_ERROR
+        );
+    }
+
+    #[test]
+    fn max_stream_data_above_remote_stream_limit() {
+        let mut client = make(Side::Client);
+        assert_eq!(
+            client
+                .received_max_stream_data(StreamId::new(Side::Server, Dir::Bi, 128), 0)
+                .unwrap_err()
+                .code,
+            TransportErrorCode::STREAM_LIMIT_ERROR
+        );
+    }
+
+    #[test]
     fn final_offset_flow_control() {
         let mut client = make(Side::Client);
         assert_eq!(
