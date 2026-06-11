@@ -258,31 +258,31 @@ impl RuntimeInstant for std::time::Instant {
     type Duration = std::time::Duration;
 
     fn now() -> Self {
-        std::time::Instant::now()
+        Self::now()
     }
 
     fn duration_since(&self, earlier: Self) -> Self::Duration {
-        std::time::Instant::duration_since(self, earlier)
+        Self::duration_since(self, earlier)
     }
 
     fn checked_duration_since(&self, earlier: Self) -> Option<Self::Duration> {
-        std::time::Instant::checked_duration_since(self, earlier)
+        Self::checked_duration_since(self, earlier)
     }
 
     fn saturating_duration_since(&self, earlier: Self) -> Self::Duration {
-        std::time::Instant::saturating_duration_since(self, earlier)
+        Self::saturating_duration_since(self, earlier)
     }
 
     fn elapsed(&self) -> Self::Duration {
-        std::time::Instant::elapsed(self)
+        Self::elapsed(self)
     }
 
     fn checked_add(&self, duration: Self::Duration) -> Option<Self> {
-        std::time::Instant::checked_add(self, duration)
+        Self::checked_add(self, duration)
     }
 
     fn checked_sub(&self, duration: Self::Duration) -> Option<Self> {
-        std::time::Instant::checked_sub(self, duration)
+        Self::checked_sub(self, duration)
     }
 }
 
