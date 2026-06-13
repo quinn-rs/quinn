@@ -425,15 +425,24 @@ impl Endpoint {
         let dst_cid = event.first_decode.dst_cid();
         let header = event.first_decode.initial_header().unwrap();
 
-        let Some(server_config) = &self.server_config else {
+        if self.server_config.is_none() {
             debug!("packet for unrecognized connection {}", dst_cid);
             return self
                 .stateless_reset(event.now, datagram_len, addresses, dst_cid, buf)
                 .map(DatagramEvent::Response);
-        };
+        }
 
         if datagram_len < MIN_INITIAL_SIZE as usize {
             debug!("ignoring short initial for connection {}", dst_cid);
+            return None;
+        }
+
+        let server_config = self.server_config.as_ref().unwrap();
+        if self.cids_exhausted() || self.incoming_buffers.len() >= server_config.max_incoming {
+            debug!(
+                "ignoring initial for connection {} due to saturation",
+                dst_cid
+            );
             return None;
         }
 
@@ -671,16 +680,11 @@ impl Endpoint {
         }
     }
 
-    /// Check if we should refuse a connection attempt regardless of the packet's contents
+    /// Check if we should refuse a connection attempt
     fn early_validate_first_packet(
         &mut self,
         header: &ProtectedInitialHeader,
     ) -> Result<(), TransportError> {
-        let config = &self.server_config.as_ref().unwrap();
-        if self.cids_exhausted() || self.incoming_buffers.len() >= config.max_incoming {
-            return Err(TransportError::CONNECTION_REFUSED(""));
-        }
-
         // RFC9000 §7.2 dictates that initial (client-chosen) destination CIDs must be at least 8
         // bytes. If this is a Retry packet, then the length must instead match our usual CID
         // length. If we ever issue non-Retry address validation tokens via `NEW_TOKEN`, then we'll
