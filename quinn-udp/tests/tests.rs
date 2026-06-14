@@ -483,6 +483,105 @@ fn apple_fast_datapath() {
     assert_eq!(total_received, segments, "should receive all segments");
 }
 
+/// A partial `sendmsg_x` batch must not silently drop its unsent tail.
+///
+/// `sendmsg_x` can accept fewer datagrams than submitted when the send buffer
+/// fills mid-batch. Shrinking `SO_SNDBUF` well below one batch forces that on
+/// essentially every call. Every datagram handed to the socket must still arrive
+/// exactly once and in order — none dropped, duplicated, or reordered — even as
+/// the unsent tail is carried over to the following send.
+#[test]
+#[cfg(apple_fast)]
+fn apple_fast_partial_send_is_not_dropped() {
+    let send = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+    let recv = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+    let dst_addr = recv.local_addr().unwrap();
+
+    let send_state = UdpSocketState::new((&send).into()).unwrap();
+
+    // SAFETY: assume `sendmsg_x`/`recvmsg_x` are available on the macOS test host.
+    unsafe {
+        send_state.set_apple_fast_path();
+    }
+
+    let segments = send_state.max_gso_segments();
+    assert!(segments > 1, "fast path should batch multiple datagrams");
+
+    const SEGMENT_SIZE: usize = 1024;
+
+    // A send buffer far smaller than a full batch makes each `sendmsg_x` accept
+    // only part of the batch, exercising the carry-over of the unsent tail.
+    send_state
+        .set_send_buffer_size((&send).into(), SEGMENT_SIZE * 4)
+        .unwrap();
+
+    recv.set_nonblocking(true).unwrap();
+
+    // Datagrams we require delivered before declaring success. Kept below 256 so
+    // each datagram's global index fits in the single-byte tag.
+    let target = (segments * 4).min(200);
+
+    // The first byte of each datagram carries its global index. Because every
+    // send flushes the previous remainder first, the received tags must form the
+    // contiguous, strictly increasing sequence 0, 1, 2, ...: a gap is a drop, a
+    // repeat a duplicate, disorder a reorder.
+    let mut next_to_send = 0usize;
+    let mut received: Vec<usize> = Vec::with_capacity(target);
+    let mut buf = [0u8; u16::MAX as usize];
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+
+    while received.len() < target {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "timed out after receiving {}/{target} datagrams; tail was dropped",
+            received.len()
+        );
+
+        // Keep feeding fresh batches so the final batch's remainder is always
+        // flushed by a subsequent send.
+        let mut msg = vec![0u8; SEGMENT_SIZE * segments];
+        for i in 0..segments {
+            msg[i * SEGMENT_SIZE] = ((next_to_send + i) % 256) as u8;
+        }
+        match send_state.try_send(
+            (&send).into(),
+            &Transmit {
+                destination: dst_addr,
+                ecn: None,
+                contents: &msg,
+                segment_size: Some(SEGMENT_SIZE),
+                src_ip: None,
+            },
+        ) {
+            // Whole batch accepted; any unsent tail is now queued internally.
+            Ok(()) => next_to_send += segments,
+            // Socket still backed up: drain, then retry the same batch.
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
+            Err(e) => panic!("unexpected send error: {e}"),
+        }
+
+        // Drain everything currently buffered on the receiver.
+        loop {
+            match recv.recv_from(&mut buf) {
+                Ok((n, _)) => {
+                    assert_eq!(n, SEGMENT_SIZE, "unexpected datagram length");
+                    received.push(buf[0] as usize);
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
+                Err(e) => panic!("unexpected recv error: {e}"),
+            }
+        }
+    }
+
+    for (i, &tag) in received.iter().enumerate() {
+        assert_eq!(
+            tag,
+            i % 256,
+            "datagram {i} arrived as tag {tag}: a partial send dropped, duplicated, or reordered the batch tail"
+        );
+    }
+}
+
 #[test]
 #[cfg(any(target_os = "linux", target_os = "android"))]
 fn recv_transport_error() {
