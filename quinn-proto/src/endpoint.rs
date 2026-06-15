@@ -38,6 +38,9 @@ use crate::{
     transport_parameters::{PreferredAddress, TransportParameters},
 };
 
+#[cfg(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring"))]
+use crate::{connection::assembler::Assembler, range_set::ArrayRangeSet};
+
 /// The main entry point to the library
 ///
 /// This object performs no I/O whatsoever. Instead, it consumes incoming packets and
@@ -512,6 +515,8 @@ impl Endpoint {
             crypto,
             token,
             incoming_idx,
+            #[cfg(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring"))]
+            rustls_local_cid: None,
             improper_drop_warner: IncomingImproperDropWarner,
         }))
     }
@@ -616,6 +621,400 @@ impl Endpoint {
         }
 
         let tls = server_config.crypto.clone().start_session(version, &params);
+        self.accept_inner(
+            incoming_buffer,
+            ch,
+            loc_cid,
+            incoming.received_at,
+            incoming.addresses,
+            incoming.ecn,
+            incoming.packet,
+            incoming.rest,
+            incoming.crypto,
+            remote_address_validated,
+            packet_number,
+            src_cid,
+            dst_cid,
+            version,
+            buf,
+            server_config,
+            tls,
+            0,
+            0,
+            pref_addr_cid,
+        )
+    }
+
+    /// Poll the rustls acceptor for an incoming connection.
+    #[cfg(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring"))]
+    pub fn poll_rustls_acceptor(
+        &mut self,
+        incoming: &mut Incoming,
+        acceptor: &mut RustlsAcceptor,
+        buf: &mut Vec<u8>,
+    ) -> Result<(Option<RustlsAccepted>, Option<Transmit>), Box<AcceptError>> {
+        let server_config = self.server_config.as_ref().unwrap();
+        let crypto_buffer_size = server_config.transport.crypto_buffer_size;
+        let InitialHeader {
+            src_cid, version, ..
+        } = incoming.packet.header.clone();
+
+        if !acceptor.processed_first_packet {
+            acceptor.processed_first_packet = true;
+            let packet_number = incoming.packet.header.number.expand(acceptor.rx_packet + 1);
+            match Self::decrypt_initial_payload(
+                &incoming.crypto,
+                packet_number,
+                &incoming.packet.header_data,
+                incoming.packet.payload.clone(),
+            ) {
+                Ok(payload) => {
+                    match acceptor.read_initial_payload(
+                        payload.freeze(),
+                        incoming.packet.payload.len(),
+                        crypto_buffer_size,
+                        packet_number,
+                    ) {
+                        Ok(Some(accepted)) => return Ok((Some(accepted), None)),
+                        Ok(None) => {}
+                        Err(cause) => {
+                            return Err(Box::new(AcceptError {
+                                response: Some(self.initial_close(
+                                    version,
+                                    incoming.addresses,
+                                    &incoming.crypto,
+                                    src_cid,
+                                    cause.clone(),
+                                    buf,
+                                )),
+                                cause: cause.into(),
+                            }));
+                        }
+                    }
+                }
+                Err(cause) => {
+                    return Err(Box::new(AcceptError {
+                        response: Some(self.initial_close(
+                            version,
+                            incoming.addresses,
+                            &incoming.crypto,
+                            src_cid,
+                            cause.clone(),
+                            buf,
+                        )),
+                        cause: cause.into(),
+                    }));
+                }
+            }
+        }
+
+        if !acceptor.processed_first_datagram_tail {
+            acceptor.processed_first_datagram_tail = true;
+            let mut remaining = incoming.rest.clone();
+            while let Some(data) = remaining {
+                match PartialDecode::new(
+                    data,
+                    &FixedLengthConnectionIdParser::new(self.local_cid_generator.cid_len()),
+                    &[version],
+                    self.config.grease_quic_bit,
+                ) {
+                    Ok((partial_decode, rest)) => {
+                        remaining = rest;
+                        if let Some(accepted) = acceptor
+                            .read_initial_decode(
+                                partial_decode,
+                                &incoming.crypto,
+                                crypto_buffer_size,
+                            )
+                            .map_err(|cause| {
+                                Box::new(AcceptError {
+                                    response: Some(self.initial_close(
+                                        version,
+                                        incoming.addresses,
+                                        &incoming.crypto,
+                                        src_cid,
+                                        cause.clone(),
+                                        buf,
+                                    )),
+                                    cause: cause.into(),
+                                })
+                            })?
+                        {
+                            return Ok((Some(accepted), None));
+                        }
+                    }
+                    Err(_) => break,
+                }
+            }
+        }
+
+        let incoming_buffer = &self.incoming_buffers[incoming.incoming_idx];
+        for event in incoming_buffer
+            .datagrams
+            .iter()
+            .skip(acceptor.processed_buffered_datagrams)
+        {
+            acceptor.processed_buffered_datagrams += 1;
+            let Some(_) = event.first_decode.initial_header() else {
+                continue;
+            };
+            match acceptor.read_initial_decode(
+                event.first_decode.clone(),
+                &incoming.crypto,
+                crypto_buffer_size,
+            ) {
+                Ok(Some(accepted)) => return Ok((Some(accepted), None)),
+                Ok(None) => {}
+                Err(cause) => {
+                    return Err(Box::new(AcceptError {
+                        response: Some(self.initial_close(
+                            version,
+                            incoming.addresses,
+                            &incoming.crypto,
+                            src_cid,
+                            cause.clone(),
+                            buf,
+                        )),
+                        cause: cause.into(),
+                    }));
+                }
+            }
+        }
+
+        let response = self.poll_rustls_initial_ack(incoming, acceptor, buf);
+        Ok((None, response))
+    }
+
+    #[cfg(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring"))]
+    fn poll_rustls_initial_ack(
+        &mut self,
+        incoming: &mut Incoming,
+        acceptor: &mut RustlsAcceptor,
+        buf: &mut Vec<u8>,
+    ) -> Option<Transmit> {
+        if acceptor.pending_initial_acks.is_empty() {
+            return None;
+        }
+
+        let src_cid = self.rustls_local_cid(incoming);
+        let packet_number = acceptor.next_initial_packet_number;
+        acceptor.next_initial_packet_number += 1;
+
+        let header = Header::Initial(InitialHeader {
+            dst_cid: incoming.packet.header.src_cid,
+            src_cid,
+            number: PacketNumber::new(packet_number, 0),
+            token: Bytes::new(),
+            version: incoming.packet.header.version,
+        });
+
+        let partial_encode = header.encode(buf);
+        frame::Ack::encode(0, &acceptor.pending_initial_acks, None, buf);
+        buf.resize(buf.len() + incoming.crypto.packet.local.tag_len(), 0);
+        partial_encode.finish(
+            buf,
+            &*incoming.crypto.header.local,
+            Some((packet_number, &*incoming.crypto.packet.local)),
+        );
+        acceptor.pending_initial_acks = ArrayRangeSet::new();
+        Some(Transmit {
+            destination: incoming.addresses.remote,
+            ecn: None,
+            size: buf.len(),
+            segment_size: None,
+            src_ip: incoming.addresses.local_ip,
+        })
+    }
+
+    #[cfg(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring"))]
+    fn rustls_local_cid(&mut self, incoming: &mut Incoming) -> ConnectionId {
+        if let Some(cid) = incoming.rustls_local_cid {
+            return cid;
+        }
+
+        let cid = loop {
+            let cid = self.local_cid_generator.generate_cid();
+            if cid.is_empty()
+                || (!self.index.connection_ids.contains_key(&cid)
+                    && !self.index.connection_ids_initial.contains_key(&cid))
+            {
+                break cid;
+            }
+        };
+        self.index
+            .insert_initial_incoming(cid, incoming.incoming_idx);
+        incoming.rustls_local_cid = Some(cid);
+        cid
+    }
+
+    /// Accept an incoming connection after rustls has read its ClientHello.
+    #[cfg(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring"))]
+    pub fn accept_rustls(
+        &mut self,
+        mut incoming: Incoming,
+        accepted: RustlsAccepted,
+        now: Instant,
+        buf: &mut Vec<u8>,
+        server_config: Option<Arc<ServerConfig>>,
+    ) -> Result<(ConnectionHandle, Connection), Box<AcceptError>> {
+        let remote_address_validated = incoming.remote_address_validated();
+        incoming.improper_drop_warner.dismiss();
+        let incoming_buffer = self.incoming_buffers.remove(incoming.incoming_idx);
+        self.all_incoming_buffers_total_bytes -= incoming_buffer.total_bytes;
+
+        let packet_number = incoming.packet.header.number.expand(0);
+        let InitialHeader {
+            src_cid,
+            dst_cid,
+            version,
+            ..
+        } = incoming.packet.header.clone();
+        let server_config =
+            server_config.unwrap_or_else(|| self.server_config.as_ref().unwrap().clone());
+
+        self.index.remove_initial(dst_cid);
+        if let Some(cid) = incoming.rustls_local_cid.as_ref() {
+            self.index.remove_initial_if_present(cid);
+        }
+
+        if server_config
+            .transport
+            .max_idle_timeout
+            .is_some_and(|timeout| {
+                incoming.received_at + Duration::from_millis(timeout.into()) <= now
+            })
+        {
+            debug!("abandoning accept of stale initial");
+            return Err(Box::new(AcceptError {
+                cause: ConnectionError::TimedOut,
+                response: None,
+            }));
+        }
+
+        if self.cids_exhausted() {
+            debug!("refusing connection");
+            return Err(Box::new(AcceptError {
+                cause: ConnectionError::CidsExhausted,
+                response: Some(self.initial_close(
+                    version,
+                    incoming.addresses,
+                    &incoming.crypto,
+                    src_cid,
+                    TransportError::CONNECTION_REFUSED(""),
+                    buf,
+                )),
+            }));
+        }
+
+        if incoming
+            .crypto
+            .packet
+            .remote
+            .decrypt(
+                packet_number,
+                &incoming.packet.header_data,
+                &mut incoming.packet.payload,
+            )
+            .is_err()
+        {
+            debug!(packet_number, "failed to authenticate initial packet");
+            return Err(Box::new(AcceptError {
+                cause: TransportError::PROTOCOL_VIOLATION("authentication failed").into(),
+                response: None,
+            }));
+        };
+
+        let ch = ConnectionHandle(self.connections.vacant_key());
+        let loc_cid = incoming
+            .rustls_local_cid
+            .unwrap_or_else(|| self.new_cid(ch));
+        let mut params = TransportParameters::new(
+            &server_config.transport,
+            &self.config,
+            self.local_cid_generator.as_ref(),
+            loc_cid,
+            Some(&server_config),
+            &mut self.rng,
+        );
+        params.stateless_reset_token = Some(ResetToken::new(&*self.config.reset_key, loc_cid));
+        params.original_dst_cid = Some(incoming.token.orig_dst_cid);
+        params.retry_src_cid = incoming.token.retry_src_cid;
+        let mut pref_addr_cid = None;
+        if server_config.has_preferred_address() {
+            let cid = self.new_cid(ch);
+            pref_addr_cid = Some(cid);
+            params.preferred_address = Some(PreferredAddress {
+                address_v4: server_config.preferred_address_v4,
+                address_v6: server_config.preferred_address_v6,
+                connection_id: cid,
+                stateless_reset_token: ResetToken::new(&*self.config.reset_key, cid),
+            });
+        }
+
+        let tls = server_config
+            .crypto
+            .clone()
+            .start_session_from_accepted(version, &params, accepted.tls)
+            .map_err(|cause| {
+                Box::new(AcceptError {
+                    response: Some(self.initial_close(
+                        version,
+                        incoming.addresses,
+                        &incoming.crypto,
+                        src_cid,
+                        cause.clone(),
+                        buf,
+                    )),
+                    cause: cause.into(),
+                })
+            })?;
+        self.accept_inner(
+            incoming_buffer,
+            ch,
+            loc_cid,
+            incoming.received_at,
+            incoming.addresses,
+            incoming.ecn,
+            incoming.packet,
+            incoming.rest,
+            incoming.crypto,
+            remote_address_validated,
+            packet_number,
+            src_cid,
+            dst_cid,
+            version,
+            buf,
+            server_config,
+            tls,
+            accepted.consumed_initial_crypto,
+            accepted.next_initial_packet_number,
+            pref_addr_cid,
+        )
+    }
+
+    fn accept_inner(
+        &mut self,
+        incoming_buffer: IncomingBuffer,
+        ch: ConnectionHandle,
+        loc_cid: ConnectionId,
+        received_at: Instant,
+        addresses: FourTuple,
+        ecn: Option<EcnCodepoint>,
+        packet: InitialPacket,
+        rest: Option<BytesMut>,
+        crypto: Keys,
+        remote_address_validated: bool,
+        packet_number: u64,
+        src_cid: ConnectionId,
+        dst_cid: ConnectionId,
+        version: u32,
+        buf: &mut Vec<u8>,
+        server_config: Arc<ServerConfig>,
+        tls: Box<dyn crypto::Session>,
+        consumed_initial_crypto: u64,
+        next_initial_packet_number: u64,
+        pref_addr_cid: Option<ConnectionId>,
+    ) -> Result<(ConnectionHandle, Connection), Box<AcceptError>> {
         let transport_config = server_config.transport.clone();
         let mut conn = self.add_connection(
             ch,
@@ -623,8 +1022,8 @@ impl Endpoint {
             dst_cid,
             loc_cid,
             src_cid,
-            incoming.addresses,
-            incoming.received_at,
+            addresses,
+            received_at,
             tls,
             transport_config,
             SideArgs::Server {
@@ -633,15 +1032,19 @@ impl Endpoint {
                 path_validated: remote_address_validated,
             },
         );
+        conn.skip_initial_crypto(consumed_initial_crypto);
+        if next_initial_packet_number != 0 {
+            conn.skip_initial_packet_number(next_initial_packet_number);
+        }
         self.index.insert_initial(dst_cid, ch);
 
         match conn.handle_first_packet(
-            incoming.received_at,
-            incoming.addresses.remote,
-            incoming.ecn,
+            received_at,
+            addresses.remote,
+            ecn,
             packet_number,
-            incoming.packet,
-            incoming.rest,
+            packet,
+            rest,
         ) {
             Ok(()) => {
                 trace!(id = ch.0, icid = %dst_cid, "new connection");
@@ -658,8 +1061,8 @@ impl Endpoint {
                 let response = match e {
                     ConnectionError::TransportError(ref e) => Some(self.initial_close(
                         version,
-                        incoming.addresses,
-                        &incoming.crypto,
+                        addresses,
+                        &crypto,
                         src_cid,
                         e.clone(),
                         buf,
@@ -669,6 +1072,21 @@ impl Endpoint {
                 Err(Box::new(AcceptError { cause: e, response }))
             }
         }
+    }
+
+    #[cfg(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring"))]
+    fn decrypt_initial_payload(
+        crypto: &Keys,
+        packet_number: u64,
+        header_data: &Bytes,
+        mut payload: BytesMut,
+    ) -> Result<BytesMut, TransportError> {
+        crypto
+            .packet
+            .remote
+            .decrypt(packet_number, header_data, &mut payload)
+            .map_err(|_| TransportError::PROTOCOL_VIOLATION("authentication failed"))?;
+        Ok(payload)
     }
 
     /// Check if we should refuse a connection attempt regardless of the packet's contents
@@ -780,6 +1198,10 @@ impl Endpoint {
     /// Clean up endpoint data structures associated with an `Incoming`.
     fn clean_up_incoming(&mut self, incoming: &Incoming) {
         self.index.remove_initial(incoming.packet.header.dst_cid);
+        #[cfg(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring"))]
+        if let Some(cid) = incoming.rustls_local_cid.as_ref() {
+            self.index.remove_initial_if_present(cid);
+        }
         let incoming_buffer = self.incoming_buffers.remove(incoming.incoming_idx);
         self.all_incoming_buffers_total_bytes -= incoming_buffer.total_bytes;
     }
@@ -1019,6 +1441,15 @@ impl ConnectionIndex {
         debug_assert!(removed.is_some());
     }
 
+    /// Remove an initial destination CID route, if one exists.
+    #[cfg(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring"))]
+    fn remove_initial_if_present(&mut self, dst_cid: &ConnectionId) {
+        if dst_cid.is_empty() {
+            return;
+        }
+        self.connection_ids_initial.remove(dst_cid);
+    }
+
     /// Associate a connection with its initial destination CID
     fn insert_initial(&mut self, dst_cid: ConnectionId, connection: ConnectionHandle) {
         if dst_cid.is_empty() {
@@ -1166,7 +1597,142 @@ pub struct Incoming {
     crypto: Keys,
     token: IncomingToken,
     incoming_idx: usize,
+    #[cfg(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring"))]
+    rustls_local_cid: Option<ConnectionId>,
     improper_drop_warner: IncomingImproperDropWarner,
+}
+
+/// State for reading a rustls QUIC ClientHello before choosing a server config.
+#[cfg(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring"))]
+pub struct RustlsAcceptor {
+    tls: crypto::rustls::Acceptor,
+    crypto_stream: Assembler,
+    processed_first_packet: bool,
+    processed_first_datagram_tail: bool,
+    processed_buffered_datagrams: usize,
+    consumed_initial_crypto: u64,
+    rx_packet: u64,
+    pending_initial_acks: ArrayRangeSet,
+    next_initial_packet_number: u64,
+}
+
+#[cfg(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring"))]
+impl RustlsAcceptor {
+    /// Create a rustls acceptor for an incoming connection.
+    pub fn new(incoming: &Incoming) -> Result<Self, UnsupportedVersion> {
+        Ok(Self {
+            tls: crypto::rustls::Acceptor::new(incoming.packet.header.version)?,
+            crypto_stream: Assembler::new(),
+            processed_first_packet: false,
+            processed_first_datagram_tail: false,
+            processed_buffered_datagrams: 0,
+            consumed_initial_crypto: 0,
+            rx_packet: 0,
+            pending_initial_acks: ArrayRangeSet::new(),
+            next_initial_packet_number: 0,
+        })
+    }
+
+    fn read_initial_decode(
+        &mut self,
+        partial_decode: PartialDecode,
+        crypto: &Keys,
+        crypto_buffer_size: usize,
+    ) -> Result<Option<RustlsAccepted>, TransportError> {
+        let Ok(packet) = partial_decode.finish(Some(&*crypto.header.remote)) else {
+            return Ok(None);
+        };
+        if !packet.reserved_bits_valid() {
+            return Ok(None);
+        }
+        let Header::Initial(header) = packet.header else {
+            return Ok(None);
+        };
+        let packet_number = header.number.expand(self.rx_packet + 1);
+        let payload_len = packet.payload.len();
+        let Ok(payload) = Endpoint::decrypt_initial_payload(
+            crypto,
+            packet_number,
+            &packet.header_data,
+            packet.payload,
+        ) else {
+            return Ok(None);
+        };
+        self.read_initial_payload(
+            payload.freeze(),
+            payload_len,
+            crypto_buffer_size,
+            packet_number,
+        )
+    }
+
+    fn read_initial_payload(
+        &mut self,
+        payload: Bytes,
+        payload_len: usize,
+        crypto_buffer_size: usize,
+        packet_number: u64,
+    ) -> Result<Option<RustlsAccepted>, TransportError> {
+        for result in frame::Iter::new(payload)? {
+            match result? {
+                frame::Frame::Crypto(frame) => {
+                    let end = frame.offset + frame.data.len() as u64;
+                    let max = end.saturating_sub(self.crypto_stream.bytes_read());
+                    if max > crypto_buffer_size as u64 {
+                        return Err(TransportError::CRYPTO_BUFFER_EXCEEDED(""));
+                    }
+
+                    self.crypto_stream
+                        .insert(frame.offset, frame.data.clone(), payload_len);
+                    while let Some(chunk) = self.crypto_stream.read(usize::MAX, true) {
+                        self.tls.read_hs(&chunk.bytes)?;
+                        self.consumed_initial_crypto += chunk.bytes.len() as u64;
+                        if let Some(tls) = self.tls.accept()? {
+                            return Ok(Some(RustlsAccepted {
+                                tls,
+                                consumed_initial_crypto: self.consumed_initial_crypto,
+                                next_initial_packet_number: self.next_initial_packet_number,
+                            }));
+                        }
+                    }
+                }
+                frame::Frame::Padding | frame::Frame::Ping | frame::Frame::Ack(_) => {}
+                frame::Frame::Close(frame::Close::Connection(reason)) => {
+                    return Err(TransportError::NO_ERROR(String::from_utf8_lossy(
+                        &reason.reason,
+                    )));
+                }
+                frame => {
+                    let mut err =
+                        TransportError::PROTOCOL_VIOLATION("illegal frame type in handshake");
+                    err.frame = Some(frame.ty());
+                    return Err(err);
+                }
+            }
+        }
+
+        self.pending_initial_acks.insert_one(packet_number);
+        if packet_number > self.rx_packet {
+            self.rx_packet = packet_number;
+        }
+        Ok(None)
+    }
+}
+
+/// A rustls ClientHello and the state required to continue the QUIC handshake.
+#[cfg(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring"))]
+pub struct RustlsAccepted {
+    tls: crypto::rustls::Accepted,
+    consumed_initial_crypto: u64,
+    next_initial_packet_number: u64,
+}
+
+#[cfg(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring"))]
+impl RustlsAccepted {
+    /// Get the rustls ClientHello for this connection.
+    pub fn client_hello(&self) -> rustls::server::ClientHello<'_> {
+        self.tls.client_hello()
+    }
 }
 
 impl Incoming {

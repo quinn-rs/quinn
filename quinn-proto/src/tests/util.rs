@@ -13,13 +13,13 @@ use std::{
 use assert_matches::assert_matches;
 use bytes::BytesMut;
 use rustls::{
-    KeyLogFile,
     client::WebPkiServerVerifier,
+    crypto::{CryptoProvider, Identity},
     pki_types::{CertificateDer, PrivateKeyDer},
 };
 use tracing::{info_span, trace};
 
-use super::crypto::rustls::{QuicClientConfig, QuicServerConfig, configured_provider};
+use super::crypto::rustls::{QuicClientConfig, QuicServerConfig};
 use super::*;
 use crate::{Duration, Instant};
 
@@ -610,9 +610,17 @@ fn server_crypto_inner(
         )
     });
 
-    let mut config = QuicServerConfig::inner(vec![cert], key).unwrap();
+    let provider = test_provider();
+    let mut config = rustls::ServerConfig::builder(provider)
+        .with_no_client_auth()
+        .with_single_cert(
+            Arc::new(Identity::from_cert_chain(vec![cert]).unwrap()),
+            key,
+        )
+        .unwrap();
+    config.max_early_data_size = u32::MAX;
     if let Some(alpn) = alpn {
-        config.alpn_protocols = alpn;
+        config.alpn_protocols = alpn.into_iter().map(Into::into).collect();
     }
 
     config.try_into().unwrap()
@@ -651,17 +659,46 @@ fn client_crypto_inner(
         roots.add(cert).unwrap();
     }
 
-    let mut inner = QuicClientConfig::inner(
-        WebPkiServerVerifier::builder_with_provider(Arc::new(roots), configured_provider())
-            .build()
-            .unwrap(),
-    );
-    inner.key_log = Arc::new(KeyLogFile::new());
+    let provider = test_provider();
+    let verifier = WebPkiServerVerifier::builder(Arc::new(roots), &provider)
+        .build()
+        .unwrap();
+    let mut inner = rustls::ClientConfig::builder(provider)
+        .dangerous()
+        .with_custom_certificate_verifier(Arc::new(verifier))
+        .with_no_client_auth()
+        .expect("test provider is valid for QUIC");
+    inner.enable_early_data = true;
     if let Some(alpn) = alpn {
-        inner.alpn_protocols = alpn;
+        inner.alpn_protocols = alpn.into_iter().map(Into::into).collect();
     }
 
     inner.try_into().unwrap()
+}
+
+#[cfg(all(feature = "rustls-aws-lc-rs-fips", not(feature = "rustls-ring")))]
+fn test_provider() -> Arc<CryptoProvider> {
+    Arc::new(CryptoProvider {
+        kx_groups: std::borrow::Cow::Owned(vec![rustls_aws_lc_rs::kx_group::SECP256R1]),
+        ..rustls_aws_lc_rs::DEFAULT_FIPS_PROVIDER
+    })
+}
+
+#[cfg(all(
+    feature = "rustls-aws-lc-rs",
+    not(feature = "rustls-aws-lc-rs-fips"),
+    not(feature = "rustls-ring")
+))]
+fn test_provider() -> Arc<CryptoProvider> {
+    Arc::new(CryptoProvider {
+        kx_groups: std::borrow::Cow::Owned(vec![rustls_aws_lc_rs::kx_group::X25519]),
+        ..rustls_aws_lc_rs::DEFAULT_PROVIDER
+    })
+}
+
+#[cfg(feature = "rustls-ring")]
+fn test_provider() -> Arc<CryptoProvider> {
+    Arc::new(rustls_ring::DEFAULT_PROVIDER)
 }
 
 pub(super) fn min_opt<T: Ord>(x: Option<T>, y: Option<T>) -> Option<T> {

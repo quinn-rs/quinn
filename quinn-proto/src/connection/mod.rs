@@ -41,7 +41,7 @@ use crate::{
 mod ack_frequency;
 use ack_frequency::AckFrequencyState;
 
-mod assembler;
+pub(crate) mod assembler;
 pub use assembler::Chunk;
 
 mod cid_state;
@@ -1298,6 +1298,20 @@ impl Connection {
     /// Get a session reference
     pub fn crypto_session(&self) -> &dyn crypto::Session {
         &*self.crypto
+    }
+
+    /// Get a mutable session reference
+    pub fn crypto_session_mut(&mut self) -> &mut dyn crypto::Session {
+        &mut *self.crypto
+    }
+
+    pub(crate) fn skip_initial_crypto(&mut self, offset: u64) {
+        self.spaces[SpaceId::Initial].crypto_stream.skip_to(offset);
+    }
+
+    pub(crate) fn skip_initial_packet_number(&mut self, next: u64) {
+        let space = &mut self.spaces[SpaceId::Initial];
+        space.next_packet_number = space.next_packet_number.max(next);
     }
 
     /// Whether the connection is in the process of being established

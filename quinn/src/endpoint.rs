@@ -400,7 +400,7 @@ impl Future for EndpointDriver {
 
         let now = endpoint.runtime.now();
         let mut keep_going = false;
-        keep_going |= endpoint.drive_recv(cx, now)?;
+        keep_going |= endpoint.drive_recv(cx, now, &self.0.shared)?;
         keep_going |= endpoint.handle_events(cx, &self.0.shared);
 
         if !endpoint.recv_state.incoming.is_empty() {
@@ -472,6 +472,72 @@ impl EndpointInner {
         }
     }
 
+    #[cfg(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring"))]
+    pub(crate) fn poll_rustls_acceptor(
+        &self,
+        incoming: &mut proto::Incoming,
+        acceptor: &mut proto::RustlsAcceptor,
+    ) -> Result<Option<proto::RustlsAccepted>, ConnectionError> {
+        let mut state = self.state.lock().unwrap();
+        if state.driver_lost || state.recv_state.connections.close.is_some() {
+            return Err(ConnectionError::LocallyClosed);
+        }
+        let mut response_buffer = Vec::new();
+        match state
+            .inner
+            .poll_rustls_acceptor(incoming, acceptor, &mut response_buffer)
+        {
+            Ok((accepted, response)) => {
+                if let Some(transmit) = response {
+                    respond(transmit, &response_buffer, &mut state.sender);
+                }
+                Ok(accepted)
+            }
+            Err(error) => {
+                state.stats.refused_handshakes += 1;
+                if let Some(transmit) = error.response {
+                    respond(transmit, &response_buffer, &mut state.sender);
+                }
+                Err(error.cause)
+            }
+        }
+    }
+
+    #[cfg(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring"))]
+    pub(crate) fn accept_rustls(
+        &self,
+        incoming: proto::Incoming,
+        accepted: proto::RustlsAccepted,
+        server_config: Option<Arc<ServerConfig>>,
+    ) -> Result<Connecting, ConnectionError> {
+        let mut state = self.state.lock().unwrap();
+        let mut response_buffer = Vec::new();
+        let now = state.runtime.now();
+        match state.inner.accept_rustls(
+            incoming,
+            accepted,
+            now,
+            &mut response_buffer,
+            server_config,
+        ) {
+            Ok((handle, conn)) => {
+                state.stats.accepted_handshakes += 1;
+                let sender = state.socket.create_sender();
+                let runtime = state.runtime.clone();
+                Ok(state
+                    .recv_state
+                    .connections
+                    .insert(handle, conn, sender, runtime))
+            }
+            Err(error) => {
+                if let Some(transmit) = error.response {
+                    respond(transmit, &response_buffer, &mut state.sender);
+                }
+                Err(error.cause)
+            }
+        }
+    }
+
     pub(crate) fn refuse(&self, incoming: proto::Incoming) {
         let mut state = self.state.lock().unwrap();
         state.stats.refused_handshakes += 1;
@@ -515,14 +581,19 @@ pub(crate) struct State {
 
 #[derive(Debug)]
 pub(crate) struct Shared {
-    incoming: Notify,
+    pub(crate) incoming: Arc<Notify>,
     idle: Notify,
     /// Number of live handles that can be used to initiate or handle I/O; excludes the driver
     ref_count: AtomicUsize,
 }
 
 impl State {
-    fn drive_recv(&mut self, cx: &mut Context<'_>, now: Instant) -> Result<bool, io::Error> {
+    fn drive_recv(
+        &mut self,
+        cx: &mut Context<'_>,
+        now: Instant,
+        shared: &Shared,
+    ) -> Result<bool, io::Error> {
         let get_time = || self.runtime.now();
         self.recv_state.recv_limiter.start_cycle(get_time);
         if let Some(socket) = &mut self.prev_socket {
@@ -549,6 +620,9 @@ impl State {
         );
         self.recv_state.recv_limiter.finish_cycle(get_time);
         let poll_res = poll_res?;
+        if poll_res.received_datagram {
+            shared.incoming.notify_waiters();
+        }
         if poll_res.received_connection_packet {
             // Traffic has arrived on self.socket, therefore there is no need for the abandoned
             // one anymore. TODO: Account for multiple outgoing connections.
@@ -753,7 +827,7 @@ impl EndpointRef {
         let sender = socket.create_sender();
         Self(Arc::new(EndpointInner {
             shared: Shared {
-                incoming: Notify::new(),
+                incoming: Arc::new(Notify::new()),
                 idle: Notify::new(),
                 ref_count: AtomicUsize::new(0),
             },
@@ -846,6 +920,7 @@ impl RecvState {
         now: Instant,
     ) -> Result<PollProgress, io::Error> {
         let mut received_connection_packet = false;
+        let mut received_datagram = false;
         let mut metas = [RecvMeta::default(); BATCH_SIZE];
         let mut iovs: [IoSliceMut<'_>; BATCH_SIZE] = {
             let mut bufs = self
@@ -861,6 +936,7 @@ impl RecvState {
         loop {
             match socket.poll_recv(cx, &mut iovs, &mut metas) {
                 Poll::Ready(Ok(msgs)) => {
+                    received_datagram |= msgs != 0;
                     self.recv_limiter.record_work(msgs);
                     for (meta, buf) in metas.iter().zip(iovs.iter()).take(msgs) {
                         let mut data: BytesMut = buf[0..meta.len].into();
@@ -904,6 +980,7 @@ impl RecvState {
                 }
                 Poll::Pending => {
                     return Ok(PollProgress {
+                        received_datagram,
                         received_connection_packet,
                         keep_going: false,
                     });
@@ -919,6 +996,7 @@ impl RecvState {
             }
             if !self.recv_limiter.allow_work(|| runtime.now()) {
                 return Ok(PollProgress {
+                    received_datagram,
                     received_connection_packet,
                     keep_going: true,
                 });
@@ -940,6 +1018,8 @@ impl fmt::Debug for RecvState {
 
 #[derive(Default)]
 struct PollProgress {
+    /// Whether any datagram was received
+    received_datagram: bool,
     /// Whether a datagram was routed to an existing connection
     received_connection_packet: bool,
     /// Whether datagram handling was interrupted early by the work limiter for fairness
