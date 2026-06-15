@@ -1207,6 +1207,16 @@ impl State {
             return false;
         };
 
+        // Use the clock rather than the async timer to detect expiry: Sleep::poll
+        // respects Tokio's cooperative budget and can return Pending for elapsed
+        // deadlines.
+        let now = self.runtime.now();
+        if now >= deadline {
+            self.inner.handle_timeout(now);
+            self.timer_deadline = None;
+            return true;
+        }
+
         match &mut self.timer {
             // Avoid resetting the timer when the deadline is unchanged.
             Some(delay) if self.timer_deadline != Some(deadline) => {
@@ -1225,13 +1235,10 @@ impl State {
             .expect("timer must exist in this state")
             .as_mut();
         if delay.poll(cx).is_pending() {
-            // Since there wasn't a timeout event, there is nothing new
-            // for the connection to do
             return false;
         }
 
-        // A timer expired, so the caller needs to check for
-        // new transmits, which might cause new timers to be set.
+        // The deadline elapsed in the window between the clock check and poll.
         self.inner.handle_timeout(self.runtime.now());
         self.timer_deadline = None;
         true
