@@ -1157,37 +1157,33 @@ impl State {
         }
     }
 
-    fn drive_timer(&mut self, cx: &mut Context) -> bool {
-        // Check whether we need to (re)set the timer. If so, we must poll again to ensure the
-        // timer is registered with the runtime (and check whether it's already
-        // expired).
-        match self.inner.poll_timeout() {
-            Some(deadline) => {
-                if let Some(delay) = &mut self.timer {
-                    // There is no need to reset the tokio timer if the deadline
-                    // did not change
-                    if self
-                        .timer_deadline
-                        .map(|current_deadline| current_deadline != deadline)
-                        .unwrap_or(true)
-                    {
-                        delay.as_mut().reset(deadline);
-                    }
-                } else {
-                    self.timer = Some(self.runtime.new_timer(deadline));
-                }
-                // Store the actual expiration time of the timer
-                self.timer_deadline = Some(deadline);
-            }
-            None => {
-                self.timer_deadline = None;
-                return false;
-            }
+    fn drive_timer(&mut self, cx: &mut Context<'_>) -> bool {
+        let Some(deadline) = self.inner.poll_timeout() else {
+            self.timer_deadline = None;
+            return false;
+        };
+
+        // Use the clock rather than the async timer to detect expiry: Sleep::poll
+        // respects Tokio's cooperative budget and can return Pending for elapsed
+        // deadlines.
+        let now = self.runtime.now();
+        if now >= deadline {
+            self.inner.handle_timeout(now);
+            self.timer_deadline = None;
+            return true;
         }
 
-        if self.timer_deadline.is_none() {
-            return false;
+        match &mut self.timer {
+            // Avoid resetting the timer when the deadline is unchanged.
+            Some(delay) if self.timer_deadline != Some(deadline) => {
+                delay.as_mut().reset(deadline);
+            }
+            None => {
+                self.timer = Some(self.runtime.new_timer(deadline));
+            }
+            _ => {}
         }
+        self.timer_deadline = Some(deadline);
 
         let delay = self
             .timer
@@ -1195,13 +1191,10 @@ impl State {
             .expect("timer must exist in this state")
             .as_mut();
         if delay.poll(cx).is_pending() {
-            // Since there wasn't a timeout event, there is nothing new
-            // for the connection to do
             return false;
         }
 
-        // A timer expired, so the caller needs to check for
-        // new transmits, which might cause new timers to be set.
+        // The deadline elapsed in the window between the clock check and poll.
         self.inner.handle_timeout(self.runtime.now());
         self.timer_deadline = None;
         true
