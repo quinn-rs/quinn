@@ -824,6 +824,21 @@ impl Endpoint {
             side_args,
         );
 
+        self.register_connection(ch, init_cid, loc_cid, pref_addr_cid, addresses, side);
+
+        conn
+    }
+
+    /// Register endpoint-owned metadata and routes for an active connection.
+    fn register_connection(
+        &mut self,
+        ch: ConnectionHandle,
+        init_cid: ConnectionId,
+        loc_cid: ConnectionId,
+        pref_addr_cid: Option<ConnectionId>,
+        addresses: FourTuple,
+        side: Side,
+    ) {
         let mut cids_issued = 0;
         let mut loc_cids = FxHashMap::default();
 
@@ -847,8 +862,6 @@ impl Endpoint {
         debug_assert_eq!(id, ch.0, "connection handle allocation out of sync");
 
         self.index.insert_conn(addresses, loc_cid, ch, side);
-
-        conn
     }
 
     fn initial_close(
