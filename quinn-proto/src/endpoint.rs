@@ -643,7 +643,6 @@ impl Endpoint {
                 path_validated: remote_address_validated,
             },
         );
-        self.index.insert_initial(dst_cid, ch);
 
         match conn.handle_first_packet(
             incoming.received_at,
@@ -862,6 +861,9 @@ impl Endpoint {
         debug_assert_eq!(id, ch.0, "connection handle allocation out of sync");
 
         let conn_meta = &self.connections[ch];
+        if conn_meta.side.is_server() {
+            self.index.insert_initial(conn_meta.init_cid, ch);
+        }
         for cid in conn_meta.loc_cids.values() {
             if cid.is_empty() {
                 match conn_meta.side {
