@@ -55,6 +55,9 @@ impl UdpSocketState {
         socket.0.set_nonblocking(true)?;
         let addr = socket.0.local_addr()?;
         let is_ipv6 = addr.as_socket_ipv6().is_some();
+        let socket_addr = addr.as_socket().ok_or_else(|| {
+            io::Error::new(io::ErrorKind::InvalidInput, "socket address must be IP")
+        })?;
         let v6only = unsafe {
             let mut result: u32 = 0;
             let mut len = size_of_val(&result) as i32;
@@ -70,7 +73,7 @@ impl UdpSocketState {
             }
             result != 0
         };
-        let is_ipv4 = should_set_ipv4_options(addr, v6only);
+        let is_ipv4 = should_set_ipv4_options(socket_addr, v6only);
 
         // We don't support old versions of Windows that do not enable access to `WSARecvMsg()`
         if WSARECVMSG_PTR.is_none() {
