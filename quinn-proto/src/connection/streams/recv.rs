@@ -78,7 +78,9 @@ impl Recv {
         // Don't bother storing data or releasing stream-level flow control credit if the stream's
         // already stopped
         if !self.stopped {
-            self.assembler.insert(frame.offset, frame.data, payload_len);
+            self.assembler
+                .insert(frame.offset, frame.data, payload_len)
+                .map_err(|_| TransportError::INTERNAL_ERROR("too many gaps in stream buffer"))?;
         }
 
         Ok((new_bytes, frame.fin && self.stopped))
